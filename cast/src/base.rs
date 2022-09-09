@@ -7,6 +7,7 @@ use std::{
     convert::{Infallible, TryFrom, TryInto},
     fmt::{Binary, Debug, Display, Formatter, LowerHex, Octal, Result as FmtResult},
     iter::FromIterator,
+    num::IntErrorKind,
     str::FromStr,
 };
 
@@ -72,7 +73,7 @@ impl TryFrom<u32> for Base {
             8 => Ok(Self::Octal),
             10 => Ok(Self::Decimal),
             16 => Ok(Self::Hexadecimal),
-            _ => Err(eyre::eyre!("Invalid base. Possible options: 2, 8, 10, 16")),
+            n => Err(eyre::eyre!("Invalid base \"{}\". Possible options: 2, 8, 10, 16", n)),
         }
     }
 }
@@ -131,9 +132,26 @@ impl Base {
         match s {
             // Ignore sign
             _ if s.starts_with(['+', '-']) => Self::detect(&s[1..]),
-            // Cannot verify binary and octal as they cannot be parsed into U256
-            _ if s.starts_with("0b") => Ok(Self::Binary),
-            _ if s.starts_with("0o") => Ok(Self::Octal),
+            // Verify binary and octal values with u128::from_str_radix as U256 does not support
+            // them;
+            // assume overflows are within u128::MAX and U256::MAX, we're not using the parsed value
+            // anyway;
+            // strip prefix when using u128::from_str_radix because it does not recognize it as
+            // valid.
+            _ if s.starts_with("0b") => match u128::from_str_radix(&s[2..], 2) {
+                Ok(_) => Ok(Self::Binary),
+                Err(e) => match e.kind() {
+                    IntErrorKind::PosOverflow => Ok(Self::Binary),
+                    _ => Err(eyre::eyre!("could not parse binary value: {}", e)),
+                },
+            },
+            _ if s.starts_with("0o") => match u128::from_str_radix(&s[2..], 8) {
+                Ok(_) => Ok(Self::Octal),
+                Err(e) => match e.kind() {
+                    IntErrorKind::PosOverflow => Ok(Self::Octal),
+                    _ => Err(eyre::eyre!("could not parse octal value: {}", e)),
+                },
+            },
             _ if s.starts_with("0x") => match U256::from_str_radix(s, 16) {
                 Ok(_) => Ok(Self::Hexadecimal),
                 Err(e) => Err(eyre::eyre!("could not parse hex value: {}", e)),
@@ -438,10 +456,99 @@ mod tests {
     use super::*;
     use Base::*;
 
-    const POS_NUM: [i32; 14] = [1, 2, 8, 10, 16, 32, 64, 100, 128, 200, 500, 1000, 10000, i32::MAX];
+    const POS_NUM: [i128; 44] = [
+        1,
+        2,
+        3,
+        5,
+        7,
+        8,
+        10,
+        11,
+        13,
+        16,
+        17,
+        19,
+        23,
+        29,
+        31,
+        32,
+        37,
+        41,
+        43,
+        47,
+        53,
+        59,
+        61,
+        64,
+        67,
+        71,
+        73,
+        79,
+        83,
+        89,
+        97,
+        100,
+        128,
+        200,
+        333,
+        500,
+        666,
+        1000,
+        6666,
+        10000,
+        i16::MAX as i128,
+        i32::MAX as i128,
+        i64::MAX as i128,
+        i128::MAX,
+    ];
 
-    const NEG_NUM: [i32; 14] =
-        [-1, -2, -8, -10, -16, -32, -64, -100, -128, -200, -500, -1000, -10000, i32::MIN];
+    const NEG_NUM: [i128; 44] = [
+        -1,
+        -2,
+        -3,
+        -5,
+        -7,
+        -8,
+        -10,
+        -11,
+        -13,
+        -16,
+        -17,
+        -19,
+        -23,
+        -29,
+        -31,
+        -32,
+        -37,
+        -41,
+        -43,
+        -47,
+        -53,
+        -59,
+        -61,
+        -64,
+        -67,
+        -71,
+        -73,
+        -79,
+        -83,
+        -89,
+        -97,
+        -100,
+        -128,
+        -200,
+        -333,
+        -500,
+        -666,
+        -1000,
+        -6666,
+        -10000,
+        i16::MIN as i128,
+        i32::MIN as i128,
+        i64::MIN as i128,
+        i128::MIN,
+    ];
 
     #[test]
     fn test_defaults() {
