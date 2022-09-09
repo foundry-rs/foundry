@@ -65,14 +65,6 @@ async fn main() -> eyre::Result<()> {
             let value = unwrap_or_stdin(hexdata)?;
             println!("{}", SimpleCast::to_ascii(&value)?);
         }
-        Subcommands::ToDec { hexvalue } => {
-            let value = unwrap_or_stdin(hexvalue)?;
-            println!("{}", SimpleCast::to_dec(&value)?);
-        }
-        Subcommands::ToHex { decimal } => {
-            let value = unwrap_or_stdin(decimal)?;
-            println!("{}", SimpleCast::to_hex(&value)?);
-        }
         Subcommands::FromFixedPoint { decimals, value } => {
             let value = unwrap_or_stdin(value)?;
             let decimals = unwrap_or_stdin(decimals)?;

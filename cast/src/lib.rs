@@ -724,44 +724,6 @@ impl SimpleCast {
         Ok(ascii)
     }
 
-    /// Converts hex input to decimal
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    /// use ethers_core::types::U256;
-    ///
-    /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Cast::to_dec("0x67932")?, "424242");
-    ///     assert_eq!(Cast::to_dec("0x4d2")?, "1234");
-    ///
-    ///     Ok(())
-    /// }
-    pub fn to_dec(value: &str) -> Result<String> {
-        Self::to_base(value, None, "dec")
-    }
-
-    /// Converts decimal input to hex
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    /// use ethers_core::types::U256;
-    ///
-    /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Cast::to_hex("424242")?, "0x67932");
-    ///     assert_eq!(Cast::to_hex("1234")?, "0x4d2");
-    ///     assert_eq!(Cast::to_hex("115792089237316195423570985008687907853269984665640564039457584007913129639935")?, "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    pub fn to_hex(value: &str) -> Result<String> {
-        Self::to_base(value, None, "hex")
-    }
-
     /// Converts fixed point number into specified number of decimals
     /// ```
     /// use cast::SimpleCast as Cast;
