@@ -4,6 +4,7 @@ use crate::{
     executor::{Executor, RawCallResult},
     trace::CallTraceArena,
 };
+use error::{FuzzError, ASSUME_MAGIC_RETURN_CODE};
 use ethers::{
     abi::{Abi, Function, Token},
     types::{Address, Bytes, Log},
@@ -19,11 +20,9 @@ use strategies::{
     EvmFuzzState,
 };
 
+pub mod error;
 pub mod invariant;
 pub mod strategies;
-
-/// Magic return code for the `assume` cheatcode
-pub const ASSUME_MAGIC_RETURN_CODE: &[u8] = b"FOUNDRY::ASSUME";
 
 /// Wrapper around an [`Executor`] which provides fuzzing support using [`proptest`](https://docs.rs/proptest/1.0.0/proptest/).
 ///
@@ -100,9 +99,10 @@ impl<'a> FuzzedExecutor<'a> {
             let call = self
                 .executor
                 .call_raw(self.sender, address, calldata.0.clone(), 0.into())
-                .expect("Could not call contract with fuzzed input.");
+                .map_err(|_| FuzzError::FailedContractCall)
+                .unwrap();
             let state_changeset =
-                call.state_changeset.as_ref().expect("We should have a state changeset.");
+                call.state_changeset.as_ref().ok_or(FuzzError::EmptyChangeset).unwrap();
 
             // Build fuzzer state
             collect_state_from_call(
@@ -182,10 +182,9 @@ impl<'a> FuzzedExecutor<'a> {
             // `vm.assume` cheatcode, thus we surface this info to the user when the fuzz test
             // aborts due to too many global rejects, making the error message more actionable.
             Err(TestError::Abort(reason)) if reason.message() == "Too many global rejects" => {
-                result.reason = Some(format!(
-                    "The `vm.assume` cheatcode rejected too many inputs ({} allowed)",
-                    self.runner.config().max_global_rejects
-                ));
+                result.reason = Some(
+                    FuzzError::TooManyRejects(self.runner.config().max_global_rejects).to_string(),
+                );
             }
             Err(TestError::Abort(reason)) => {
                 result.reason = Some(reason.to_string());
@@ -196,7 +195,8 @@ impl<'a> FuzzedExecutor<'a> {
 
                 let args = func
                     .decode_input(&calldata.as_ref()[4..])
-                    .expect("could not decode fuzzer inputs");
+                    .map_err(|_| FuzzError::FailedDecodeInput)
+                    .unwrap();
 
                 result.counterexample = Some(CounterExample::Single(BaseCounterExample {
                     sender: None,
@@ -250,15 +250,19 @@ impl BaseCounterExample {
         contracts: &ContractsByAddress,
         traces: Option<CallTraceArena>,
     ) -> Self {
-        let (name, abi) = &contracts.get(&addr).expect("Couldnt call unknown contract");
+        let (name, abi) = &contracts.get(&addr).ok_or(FuzzError::UnknownContract).unwrap();
 
         let func = abi
             .functions()
             .find(|f| f.short_signature() == bytes.0.as_ref()[0..4])
-            .expect("Couldnt find function");
+            .ok_or(FuzzError::UnknownFunction)
+            .unwrap();
 
         // skip the function selector when decoding
-        let args = func.decode_input(&bytes.0.as_ref()[4..]).expect("Unable to decode input");
+        let args = func
+            .decode_input(&bytes.0.as_ref()[4..])
+            .map_err(|_| FuzzError::FailedDecodeInput)
+            .unwrap();
 
         BaseCounterExample {
             sender: Some(sender),

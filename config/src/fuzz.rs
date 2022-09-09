@@ -14,7 +14,7 @@ pub struct FuzzConfig {
     /// `max_local_rejects` option isn't exposed here since we're not using
     /// `prop_filter`.
     pub max_test_rejects: u32,
-    /// Beging deprecated in favor of `max_test_rejects`. Will be removed in future versions.
+    /// Being deprecated in favor of `max_test_rejects`. Will be removed in future versions.
     pub max_global_rejects: u32,
     /// Optional seed for the fuzzing RNG algorithm
     #[serde(
