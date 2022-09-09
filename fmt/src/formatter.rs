@@ -1749,7 +1749,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 })?;
             }
             Expression::List(loc, items) => {
-                // TODO: items.first().map(|item| item.0.start()).unwrap_or_else(|| loc.start())
                 self.surrounded(
                     SurroundingChunk::new(
                         "(",
