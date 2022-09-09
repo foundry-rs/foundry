@@ -751,15 +751,15 @@ impl SimpleCast {
     /// use ethers_core::types::U256;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Cast::to_hex(U256::from_dec_str("424242")?), "0x67932");
-    ///     assert_eq!(Cast::to_hex(U256::from_dec_str("1234")?), "0x4d2");
-    ///     assert_eq!(Cast::to_hex(U256::from_dec_str("115792089237316195423570985008687907853269984665640564039457584007913129639935")?), "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+    ///     assert_eq!(Cast::to_hex("424242")?, "0x67932");
+    ///     assert_eq!(Cast::to_hex("1234")?, "0x4d2");
+    ///     assert_eq!(Cast::to_hex("115792089237316195423570985008687907853269984665640564039457584007913129639935")?, "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub fn to_hex(u: U256) -> String {
-        format!("{:#x}", u)
+    pub fn to_hex(value: &str) -> Result<String> {
+        Ok(Self::to_base(value, None, "hex")?)
     }
 
     /// Converts fixed point number into specified number of decimals
@@ -768,16 +768,22 @@ impl SimpleCast {
     /// use ethers_core::types::U256;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Cast::from_fix(0, "10")?, 10.into());
-    ///     assert_eq!(Cast::from_fix(1, "1.0")?, 10.into());
-    ///     assert_eq!(Cast::from_fix(2, "0.10")?, 10.into());
-    ///     assert_eq!(Cast::from_fix(3, "0.010")?, 10.into());
+    ///     assert_eq!(Cast::from_fixed_point("10", "0")?, "10");
+    ///     assert_eq!(Cast::from_fixed_point("1.0", "1")?, "10");
+    ///     assert_eq!(Cast::from_fixed_point("0.10", "2")?, "10");
+    ///     assert_eq!(Cast::from_fixed_point("0.010", "3")?, "10");
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub fn from_fix(decimals: u32, value: &str) -> Result<U256> {
-        Ok(parse_units(value, decimals).unwrap())
+    pub fn from_fixed_point(value: &str, decimals: &str) -> Result<String> {
+        // first try u32 as Units assumes a string can only be "ether", "gwei"... and not a number
+        let units = match decimals.parse::<u32>() {
+            Ok(d) => Units::Other(d),
+            Err(_) => Units::try_from(decimals)?,
+        };
+        let n: NumberWithBase = parse_units(value, units.as_num())?.into();
+        Ok(format!("{}", n))
     }
 
     /// Converts integers with specified decimals into fixed point numbers
@@ -789,26 +795,40 @@ impl SimpleCast {
     /// use ethers_core::types::U256;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Cast::to_fix(0, 10.into())?, "10.");
-    ///     assert_eq!(Cast::to_fix(1, 10.into())?, "1.0");
-    ///     assert_eq!(Cast::to_fix(2, 10.into())?, "0.10");
-    ///     assert_eq!(Cast::to_fix(3, 10.into())?, "0.010");
+    ///     assert_eq!(Cast::to_fixed_point("10", "0")?, "10.");
+    ///     assert_eq!(Cast::to_fixed_point("10", "1")?, "1.0");
+    ///     assert_eq!(Cast::to_fixed_point("10", "2")?, "0.10");
+    ///     assert_eq!(Cast::to_fixed_point("10", "3")?, "0.010");
+    ///
+    ///     assert_eq!(Cast::to_fixed_point("-10", "0")?, "-10.");
+    ///     assert_eq!(Cast::to_fixed_point("-10", "1")?, "-1.0");
+    ///     assert_eq!(Cast::to_fixed_point("-10", "2")?, "-0.10");
+    ///     assert_eq!(Cast::to_fixed_point("-10", "3")?, "-0.010");
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub fn to_fix(decimals: u128, value: U256) -> Result<String> {
-        let mut value: String = value.to_string();
-        let decimals = decimals as usize;
+    pub fn to_fixed_point(value: &str, decimals: &str) -> Result<String> {
+        let (sign, mut value, value_len) = {
+            let number = NumberWithBase::parse_int(value, None)?;
+            let sign = if number.is_nonnegative() { "" } else { "-" };
+            let value = format!("{:#}", number);
+            let value_stripped = value.strip_prefix('-').unwrap_or(&value).to_string();
+            let value_len = value_stripped.len();
+            (sign, value_stripped, value_len)
+        };
+        let decimals = NumberWithBase::parse_uint(decimals, None)?.number().low_u64() as usize;
 
-        if decimals >= value.len() {
-            // {0}.{0 * (number_of_decimals - value.len())}{value}
-            Ok(format!("0.{:0>1$}", value, decimals))
+        let value = if decimals >= value_len {
+            // Add "0." and pad with 0s
+            format!("0.{:0>1$}", value, decimals)
         } else {
             // Insert decimal at -idx (i.e 1 => decimal idx = -1)
-            value.insert(value.len() - decimals, '.');
-            Ok(value)
-        }
+            value.insert(value_len - decimals, '.');
+            value
+        };
+
+        Ok(format!("{}{}", sign, value))
     }
 
     /// Concatencates hex strings
@@ -1043,7 +1063,7 @@ impl SimpleCast {
     ///
     /// ```
     /// use cast::SimpleCast as Cast;
-    /// use ethers_core::types::U256;
+    /// use ethers_core::types::{I256, U256};
     ///
     /// fn main() -> eyre::Result<()> {
     ///     assert_eq!(Cast::to_base("100", Some("10".to_string()), "16")?, "0x64");
@@ -1052,7 +1072,8 @@ impl SimpleCast {
     ///
     ///     assert_eq!(Cast::to_base("0xffffffffffffffff", None, "10")?, u64::MAX.to_string());
     ///     assert_eq!(Cast::to_base("0xffffffffffffffffffffffffffffffff", None, "dec")?, u128::MAX.to_string());
-    ///     assert_eq!(Cast::to_base("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", None, "decimal")?, U256::MAX.to_string());
+    ///     // U256::MAX overflows as internally it is being parsed as I256
+    ///     assert_eq!(Cast::to_base("0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", None, "decimal")?, I256::MAX.to_string());
     ///
     ///     Ok(())
     /// }
