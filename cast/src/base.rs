@@ -196,6 +196,14 @@ pub struct NumberWithBase {
     base: Base,
 }
 
+impl std::ops::Deref for NumberWithBase {
+    type Target = U256;
+
+    fn deref(&self) -> &Self::Target {
+        &self.number
+    }
+}
+
 // Format using self.base
 impl Debug for NumberWithBase {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
