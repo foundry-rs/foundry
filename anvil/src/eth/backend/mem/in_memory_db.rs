@@ -61,6 +61,7 @@ impl Db for MemDb {
     fn load_state(&mut self, state: SerializableState) -> DatabaseResult<bool> {
         for (addr, account) in state.accounts.into_iter() {
             let old_account = self.inner.accounts.get(&addr);
+            let old_account_nonce = old_account.map(|a| a.info.nonce).unwrap_or_default();
 
             self.insert_account(
                 addr,
@@ -74,10 +75,7 @@ impl Db for MemDb {
                     },
                     // use max nonce in case account is imported multiple times with difference
                     // nonces to prevent collisions
-                    nonce: std::cmp::max(
-                        old_account.map(|a| a.info.nonce).unwrap_or_default(),
-                        account.nonce,
-                    ),
+                    nonce: std::cmp::max(old_account_nonce, account.nonce),
                 },
             );
 
