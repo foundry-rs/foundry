@@ -958,7 +958,7 @@ impl SimpleCast {
                 .trim_end_matches(".000000000")
                 .to_string(),
             "wei" => ethers_core::utils::format_units(value, 0)?.trim_end_matches(".0").to_string(),
-            _ => eyre::bail!("invalid unit"),
+            _ => eyre::bail!("invalid unit: \"{}\"", unit),
         })
     }
 
