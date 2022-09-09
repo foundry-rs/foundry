@@ -58,6 +58,7 @@ debug = 0
 #[patch."https://github.com/gakonst/ethers-rs"]
 #ethers = { path = "../ethers-rs" }
 #ethers-core = { path = "../ethers-rs/ethers-core" }
+#ethers-contract = { path = "../ethers-rs/ethers-contract" }
 #ethers-providers = { path = "../ethers-rs/ethers-providers" }
 #ethers-signers = { path = "../ethers-rs/ethers-signers" }
 #ethers-etherscan = { path = "../ethers-rs/ethers-etherscan" }

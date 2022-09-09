@@ -3,10 +3,11 @@
 //! Contains core function implementation for `cast`
 use crate::rlp_converter::Item;
 use chrono::NaiveDateTime;
+use ethers_contract::RawAbi;
 use ethers_core::{
     abi::{
         token::{LenientTokenizer, Tokenizer},
-        Abi, Function, HumanReadableParser, Token,
+        Function, HumanReadableParser, Token,
     },
     types::{Chain, *},
     utils::{
@@ -688,14 +689,14 @@ impl SimpleCast {
     pub async fn generate_interface(
         address_or_path: InterfacePath,
     ) -> Result<Vec<InterfaceSource>> {
-        let (contract_abis, contract_names): (Vec<Abi>, Vec<String>) = match address_or_path {
+        let (contract_abis, contract_names): (Vec<RawAbi>, Vec<String>) = match address_or_path {
             InterfacePath::Local { path, name } => {
                 let file = std::fs::read_to_string(&path).wrap_err("unable to read abi file")?;
 
                 let mut json: serde_json::Value = serde_json::from_str(&file)?;
                 let json = if !json["abi"].is_null() { json["abi"].take() } else { json };
 
-                let abi: Abi =
+                let abi: RawAbi =
                     serde_json::from_value(json).wrap_err("unable to parse json ABI from file")?;
 
                 (vec![abi], vec![name.unwrap_or_else(|| "Interface".to_owned())])
@@ -727,14 +728,21 @@ impl SimpleCast {
                     .iter()
                     .map(|item| item.contract_name.clone())
                     .collect::<Vec<String>>();
-                (contract_source.abis()?, contract_source_names)
+
+                let mut abis = Vec::with_capacity(contract_source.items.len());
+                for item in &contract_source.items {
+                    abis.push(serde_json::from_str(&item.abi)?);
+                }
+
+                (abis, contract_source_names)
             }
         };
         contract_abis
             .iter()
             .zip(&contract_names)
             .map(|(contract_abi, contract_name)| {
-                let interface_source = foundry_utils::abi_to_solidity(contract_abi, contract_name)?;
+                let interface_source =
+                    foundry_utils::abi::abi_to_solidity(contract_abi, contract_name)?;
                 Ok(InterfaceSource { name: contract_name.to_owned(), source: interface_source })
             })
             .collect::<Result<Vec<InterfaceSource>>>()
