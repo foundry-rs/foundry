@@ -272,7 +272,7 @@ async fn main() -> eyre::Result<()> {
             let pubkey = Address::from_str(&address).expect("invalid pubkey provided");
             let provider = get_http_provider(rpc_url);
             let addr = Cast::new(&provider).compute_address(pubkey, nonce).await?;
-            println!("Computed Address: {}", SimpleCast::to_checksum_address(&addr)?);
+            println!("Computed Address: {}", SimpleCast::to_checksum_address(&addr));
         }
         Subcommands::FindBlock(cmd) => cmd.run()?.await?,
         Subcommands::GasPrice { rpc_url } => {
@@ -342,7 +342,7 @@ async fn main() -> eyre::Result<()> {
             println!("{}", Cast::new(&provider).transaction(hash, field, to_json).await?)
         }
 
-        // Sigethsamczsuncom & 4Byte
+        // 4Byte
         Subcommands::FourByte { selector } => {
             let sigs = decode_function_selector(&selector).await?;
             sigs.iter().for_each(|sig| println!("{}", sig));
@@ -416,7 +416,7 @@ async fn main() -> eyre::Result<()> {
                     name, who
                 );
             }
-            println!("{}", SimpleCast::to_checksum_address(&address)?);
+            println!("{}", SimpleCast::to_checksum_address(&address));
         }
 
         // Misc
