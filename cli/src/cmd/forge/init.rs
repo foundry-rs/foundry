@@ -5,7 +5,7 @@ use crate::{
         forge::install::{ensure_git_status_clean, install, DependencyInstallOpts},
         Cmd,
     },
-    opts::forge::Dependency,
+    opts::Dependency,
     utils::{p_println, CommandUtils},
 };
 use clap::{Parser, ValueHint};

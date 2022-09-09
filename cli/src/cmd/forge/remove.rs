@@ -1,6 +1,6 @@
 use crate::{
     cmd::{Cmd, LoadConfig},
-    opts::forge::Dependency,
+    opts::Dependency,
     utils::CommandUtils,
 };
 use clap::{Parser, ValueHint};
