@@ -4,10 +4,12 @@ use crate::{
     executor::{Executor, RawCallResult},
     trace::CallTraceArena,
 };
+use error::{FuzzError, ASSUME_MAGIC_RETURN_CODE};
 use ethers::{
     abi::{Abi, Function, Token},
     types::{Address, Bytes, Log},
 };
+use eyre::Result;
 use foundry_common::{calc, contracts::ContractsByAddress};
 use foundry_config::FuzzConfig;
 pub use proptest::test_runner::Reason;
@@ -19,11 +21,9 @@ use strategies::{
     EvmFuzzState,
 };
 
+pub mod error;
 pub mod invariant;
 pub mod strategies;
-
-/// Magic return code for the `assume` cheatcode
-pub const ASSUME_MAGIC_RETURN_CODE: &[u8] = b"FOUNDRY::ASSUME";
 
 /// Wrapper around an [`Executor`] which provides fuzzing support using [`proptest`](https://docs.rs/proptest/1.0.0/proptest/).
 ///
@@ -63,7 +63,7 @@ impl<'a> FuzzedExecutor<'a> {
         address: Address,
         should_fail: bool,
         errors: Option<&Abi>,
-    ) -> FuzzTestResult {
+    ) -> Result<FuzzTestResult> {
         // Stores the consumed gas and calldata of every successful fuzz call
         let cases: RefCell<Vec<FuzzCase>> = RefCell::default();
 
@@ -100,9 +100,11 @@ impl<'a> FuzzedExecutor<'a> {
             let call = self
                 .executor
                 .call_raw(self.sender, address, calldata.0.clone(), 0.into())
-                .expect("Could not call contract with fuzzed input.");
-            let state_changeset =
-                call.state_changeset.as_ref().expect("We should have a state changeset.");
+                .map_err(|_| TestCaseError::fail(FuzzError::FailedContractCall))?;
+            let state_changeset = call
+                .state_changeset
+                .as_ref()
+                .ok_or_else(|| TestCaseError::fail(FuzzError::EmptyChangeset))?;
 
             // Build fuzzer state
             collect_state_from_call(
@@ -115,7 +117,7 @@ impl<'a> FuzzedExecutor<'a> {
 
             // When assume cheat code is triggered return a special string "FOUNDRY::ASSUME"
             if call.result.as_ref() == ASSUME_MAGIC_RETURN_CODE {
-                return Err(TestCaseError::reject("ASSUME: Too many rejects"))
+                return Err(TestCaseError::reject(FuzzError::AssumeReject))
             }
 
             let success = self.executor.is_success(
@@ -178,6 +180,14 @@ impl<'a> FuzzedExecutor<'a> {
         };
 
         match run_result {
+            // Currently the only operation that can trigger proptest global rejects is the
+            // `vm.assume` cheatcode, thus we surface this info to the user when the fuzz test
+            // aborts due to too many global rejects, making the error message more actionable.
+            Err(TestError::Abort(reason)) if reason.message() == "Too many global rejects" => {
+                result.reason = Some(
+                    FuzzError::TooManyRejects(self.runner.config().max_global_rejects).to_string(),
+                );
+            }
             Err(TestError::Abort(reason)) => {
                 result.reason = Some(reason.to_string());
             }
@@ -187,7 +197,7 @@ impl<'a> FuzzedExecutor<'a> {
 
                 let args = func
                     .decode_input(&calldata.as_ref()[4..])
-                    .expect("could not decode fuzzer inputs");
+                    .map_err(|_| FuzzError::FailedDecodeInput)?;
 
                 result.counterexample = Some(CounterExample::Single(BaseCounterExample {
                     sender: None,
@@ -202,7 +212,7 @@ impl<'a> FuzzedExecutor<'a> {
             _ => (),
         }
 
-        result
+        Ok(result)
     }
 }
 
@@ -240,18 +250,19 @@ impl BaseCounterExample {
         bytes: &Bytes,
         contracts: &ContractsByAddress,
         traces: Option<CallTraceArena>,
-    ) -> Self {
-        let (name, abi) = &contracts.get(&addr).expect("Couldnt call unknown contract");
+    ) -> Result<Self> {
+        let (name, abi) = &contracts.get(&addr).ok_or(FuzzError::UnknownContract)?;
 
         let func = abi
             .functions()
             .find(|f| f.short_signature() == bytes.0.as_ref()[0..4])
-            .expect("Couldnt find function");
+            .ok_or(FuzzError::UnknownFunction)?;
 
         // skip the function selector when decoding
-        let args = func.decode_input(&bytes.0.as_ref()[4..]).expect("Unable to decode input");
+        let args =
+            func.decode_input(&bytes.0.as_ref()[4..]).map_err(|_| FuzzError::FailedDecodeInput)?;
 
-        BaseCounterExample {
+        Ok(BaseCounterExample {
             sender: Some(sender),
             addr: Some(addr),
             calldata: bytes.clone(),
@@ -259,7 +270,7 @@ impl BaseCounterExample {
             contract_name: Some(name.clone()),
             traces,
             args,
-        }
+        })
     }
 }
 

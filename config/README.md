@@ -12,7 +12,7 @@ in `FOUNDRY_PROFILE`. But all custom profiles inherit from the `default` profile
 
 ## foundry.toml
 
-Foundry's tools search for a `foundry.toml`  or the filename in a `FOUNDRY_CONFIG` environment variable starting at the
+Foundry's tools search for a `foundry.toml` or the filename in a `FOUNDRY_CONFIG` environment variable starting at the
 current working directory. If it is not found, the parent directory, its parent directory, and so on are searched until
 the file is found or the root is reached. But the typical location for the global `foundry.toml` would
 be `~/.foundry/foundry.toml`, which is also checked. If the path set in `FOUNDRY_CONFIG` is absolute, no such search
@@ -68,7 +68,7 @@ out = 'out'
 libs = ['lib']
 remappings = []
 # list of libraries to link in the form of `<path to lib>:<lib name>:<address>`: `"src/MyLib.sol:MyLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"`
-# the <path to lib> supports remappings 
+# the <path to lib> supports remappings
 libraries = []
 cache = true
 cache_path = 'cache'
@@ -166,8 +166,7 @@ root = "root"
 fs_permissions = []
 [fuzz]
 runs = 256
-max_local_rejects = 1024
-max_global_rejects = 65536
+max_test_rejects = 65536
 seed = '0x3e8'
 dictionary_weight = 40
 include_storage = true
@@ -232,7 +231,7 @@ The `etherscan` value accepts a list of `alias = "{key = "", url? ="", chain?= "
 
 the `key` attribute is always required and should contain the actual API key for that chain or an env var that holds the key in the form `${ENV_VAR}`
 The `chain` attribute is optional if the `alias` is the already the `chain` name, such as in `mainnet = { key = "${ETHERSCAN_MAINNET_KEY}"}`
-The optional `url` attribute can be used to explicitly set the Etherscan API url, this is the recommended setting for chains not natively supported by name. 
+The optional `url` attribute can be used to explicitly set the Etherscan API url, this is the recommended setting for chains not natively supported by name.
 
 ```toml
 [etherscan]
