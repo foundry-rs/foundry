@@ -44,12 +44,11 @@ impl FromStr for Base {
             "10" | "d" | "dec" | "decimal" => Ok(Self::Decimal),
             "16" | "h" | "hex" | "hexadecimal" => Ok(Self::Hexadecimal),
             s => Err(eyre::eyre!(
-                r#"Invalid base "{}". Possible options:
+                r#"Invalid base "{}". Possible values:
 2, b, bin, binary
 8, o, oct, octal
 10, d, dec, decimal
-16, h, hex, hexadecimal
-                "#,
+16, h, hex, hexadecimal"#,
                 s
             )),
         }
@@ -73,7 +72,7 @@ impl TryFrom<u32> for Base {
             8 => Ok(Self::Octal),
             10 => Ok(Self::Decimal),
             16 => Ok(Self::Hexadecimal),
-            n => Err(eyre::eyre!("Invalid base \"{}\". Possible options: 2, 8, 10, 16", n)),
+            n => Err(eyre::eyre!("Invalid base \"{}\". Possible values: 2, 8, 10, 16", n)),
         }
     }
 }
