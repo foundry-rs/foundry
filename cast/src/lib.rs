@@ -739,7 +739,7 @@ impl SimpleCast {
     ///     Ok(())
     /// }
     pub fn to_dec(value: &str) -> Result<String> {
-        Ok(Self::to_base(value, None, "dec")?)
+        Self::to_base(value, None, "dec")
     }
 
     /// Converts decimal input to hex
@@ -759,7 +759,7 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn to_hex(value: &str) -> Result<String> {
-        Ok(Self::to_base(value, None, "hex")?)
+        Self::to_base(value, None, "hex")
     }
 
     /// Converts fixed point number into specified number of decimals
