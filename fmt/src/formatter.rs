@@ -1922,7 +1922,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                         func.params
                             .first()
                             .map(|param| param.0.start())
-                            .unwrap_or(params_loc.end()),
+                            .unwrap_or_else(|| params_loc.end()),
                     ),
                 );
                 fmt.surrounded(
@@ -2244,7 +2244,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             let first_chunk = self.chunk_to_string(&name)?;
             self.surrounded(
                 SurroundingChunk::new(&first_chunk, Some(byte_offset), None),
-                SurroundingChunk::new(&last_chunk, None, Some(event.loc.end())),
+                SurroundingChunk::new(last_chunk, None, Some(event.loc.end())),
                 |fmt, multiline| {
                     let params = fmt.items_to_chunks(
                         None,
