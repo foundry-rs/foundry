@@ -26,7 +26,7 @@ use std::{path::PathBuf, str::FromStr};
 pub use tx::TxBuilder;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
 
-mod base;
+pub mod base;
 mod rlp_converter;
 mod tx;
 
