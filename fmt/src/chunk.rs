@@ -22,7 +22,7 @@ impl From<&str> for Chunk {
     }
 }
 
-// TODO: doc
+// The struct with information about chunks used in the [Formatter::surrounded] method
 #[derive(Debug)]
 pub struct SurroundingChunk {
     pub before: Option<usize>,
