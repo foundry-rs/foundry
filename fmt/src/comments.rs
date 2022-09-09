@@ -114,28 +114,6 @@ impl CommentWithMetadata {
 
         let (position, has_newline_before) = {
             // comment sits on a line without code
-            let c = Self::new(comment.clone(), CommentPosition::Prefix, false, indent_len);
-            let c = c.contents();
-            if c.contains("comment12") || c.contains("comment15") {
-                println!(
-                    "comment12 or 15 info >>> {} {:?}\nthis line: {} {}\nlast line: {:?}\n{} {} {} {} {}",
-                    code_end,
-                    last_comment,
-                    // src_before,
-                    this_line,
-                    this_line.len(),
-                    last_line,
-                    src_before[code_end..].contains('\n'),
-                    code_end,
-                    src_before[code_end..].to_owned().len(),
-                    src_before[code_end..].to_owned(),
-                    last_comment
-                        .filter(|last_comment| {
-                            last_comment.loc.end() > code_end && !last_comment.is_prefix()
-                        })
-                        .is_some()
-                );
-            }
             if src_before[code_end..].contains('\n') {
                 // comment sits on a line without code
                 if let Some(last_line) = last_line {
@@ -160,19 +138,6 @@ impl CommentWithMetadata {
                                     |indent, ch| if ch == '\n' { 0 } else { indent + 1 },
                                 );
 
-                            let c = Self::new(
-                                comment.clone(),
-                                CommentPosition::Prefix,
-                                false,
-                                indent_len,
-                            );
-                            let c = c.contents();
-                            if c.contains("comment12") || c.contains("comment15") {
-                                println!(
-                                    "comment12 or 15 info2 >>> {} {}",
-                                    indent_len, next_indent_len
-                                );
-                            }
                             if indent_len > next_indent_len {
                                 // the comment indent is bigger than the next code indent
                                 (CommentPosition::Postfix, false)
@@ -195,12 +160,6 @@ impl CommentWithMetadata {
                 (CommentPosition::Postfix, false)
             }
         };
-
-        let c = Self::new(comment.clone(), CommentPosition::Prefix, false, indent_len);
-        let c = c.contents();
-        if c.contains("comment12") || c.contains("comment15") {
-            println!("comment12 or 15 result >>> {:?}", position);
-        }
 
         Self::new(comment, position, has_newline_before, indent_len)
     }

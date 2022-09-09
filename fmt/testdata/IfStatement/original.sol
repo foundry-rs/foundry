@@ -46,6 +46,14 @@ contract IfStatement {
           } // comment13
           /* comment14 */ else { } // comment15
 
+          if (
+            // comment16 
+            condition       /* comment17 */
+        )
+        {
+            execute();
+        }
+
           if (condition)
             execute();
         else
