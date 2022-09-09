@@ -98,6 +98,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, Validator: TransactionValidator> 
     pub parent_hash: H256,
     /// Cumulative gas used by all executed transactions
     pub gas_used: U256,
+    pub enable_steps_tracing: bool,
 }
 
 impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'a, DB, Validator> {
@@ -251,7 +252,10 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         evm.database(&mut self.db);
 
         // records all call and step traces
-        let mut inspector = Inspector::default().with_tracing().with_steps_tracing();
+        let mut inspector = Inspector::default().with_tracing();
+        if self.enable_steps_tracing {
+            inspector = inspector.with_steps_tracing();
+        }
 
         trace!(target: "backend", "[{:?}] executing", transaction.hash());
         // transact and commit the transaction

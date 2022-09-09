@@ -139,6 +139,7 @@ pub struct Backend {
     new_block_listeners: Arc<Mutex<Vec<UnboundedSender<NewBlockNotification>>>>,
     /// keeps track of active snapshots at a specific block
     active_snapshots: Arc<Mutex<HashMap<U256, (u64, H256)>>>,
+    enable_steps_tracing: bool,
 }
 
 impl Backend {
@@ -149,6 +150,7 @@ impl Backend {
         genesis: GenesisConfig,
         fees: FeeManager,
         fork: Option<ClientFork>,
+        enable_steps_tracing: bool,
     ) -> Self {
         // if this is a fork then adjust the blockchain storage
         let blockchain = if let Some(ref fork) = fork {
@@ -176,6 +178,7 @@ impl Backend {
             fees,
             genesis,
             active_snapshots: Arc::new(Mutex::new(Default::default())),
+            enable_steps_tracing,
         };
 
         // Note: this can only fail in forking mode, in which case we can't recover
@@ -593,6 +596,7 @@ impl Backend {
             cfg_env: env.cfg,
             parent_hash: storage.best_hash,
             gas_used: U256::zero(),
+            enable_steps_tracing: self.enable_steps_tracing,
         };
 
         // create a new pending block
@@ -642,6 +646,7 @@ impl Backend {
                     cfg_env: env.cfg.clone(),
                     parent_hash: best_hash,
                     gas_used: U256::zero(),
+                    enable_steps_tracing: self.enable_steps_tracing,
                 };
                 let executed_tx = executor.execute();
 
