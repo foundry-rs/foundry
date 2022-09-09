@@ -99,7 +99,9 @@ where
     type Error = io::Error;
 
     fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.project().0.poll_ready(cx)
+        // NOTE: we always flush here this prevents any backpressure buffer in the underlying
+        // `Framed` impl that would cause stalled requests
+        self.project().0.poll_flush(cx)
     }
 
     fn start_send(self: Pin<&mut Self>, item: String) -> Result<(), Self::Error> {

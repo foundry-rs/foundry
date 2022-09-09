@@ -111,7 +111,7 @@ impl PubSubRpcHandler for PubSubEthRpcHandler {
     type Subscription = EthSubscription;
 
     async fn on_request(&self, request: Self::Request, cx: PubSubContext<Self>) -> ResponseResult {
-        trace!(target: "rpc::ws", "received ws request {:?}", request);
+        trace!(target: "rpc", "received pubsub request {:?}", request);
         match request {
             EthRpcCall::Request(request) => self.api.execute(*request).await,
             EthRpcCall::PubSub(pubsub) => self.on_pub_sub(pubsub, cx).await,

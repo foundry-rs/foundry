@@ -55,10 +55,10 @@ impl<Handler: PubSubRpcHandler> PubSubContext<Handler> {
         let mut subscriptions = self.subscriptions.lock();
         let mut removed = None;
         if let Some(idx) = subscriptions.iter().position(|(i, _)| id == *i) {
-            trace!(target: "rpc::ws", ?id,  "removed subscription");
+            trace!(target: "rpc", ?id,  "removed subscription");
             removed = Some(subscriptions.swap_remove(idx).1);
         }
-        trace!(target: "rpc::ws", ?id,  "added subscription");
+        trace!(target: "rpc", ?id,  "added subscription");
         subscriptions.push((id, subscription));
         removed
     }
@@ -70,7 +70,7 @@ impl<Handler: PubSubRpcHandler> PubSubContext<Handler> {
     ) -> Option<Handler::Subscription> {
         let mut subscriptions = self.subscriptions.lock();
         if let Some(idx) = subscriptions.iter().position(|(i, _)| id == i) {
-            trace!(target: "rpc::ws", ?id,  "removed subscription");
+            trace!(target: "rpc", ?id,  "removed subscription");
             return Some(subscriptions.swap_remove(idx).1)
         }
         None
@@ -152,7 +152,7 @@ impl<Handler: PubSubRpcHandler, Connection> PubSubConnection<Handler, Connection
                     .await
                     .unwrap_or_else(|| Response::error(RpcError::invalid_request())),
                 Err(err) => {
-                    error!(target: "rpc::ws", ?err, "invalid request");
+                    error!(target: "rpc", ?err, "invalid request");
                     Response::error(RpcError::invalid_request())
                 }
             }
@@ -176,7 +176,7 @@ where
                 // only start sending if socket is ready
                 if let Some(msg) = pin.pending.pop_front() {
                     if let Err(err) = pin.connection.start_send_unpin(msg) {
-                        error!(target: "rpc::ws", ?err, "Failed to send message");
+                        error!(target: "rpc", ?err, "Failed to send message");
                     }
                 } else {
                     break
@@ -209,7 +209,7 @@ where
                         _ => {}
                     },
                     Poll::Ready(None) => {
-                        trace!(target: "rpc::ws", "socket connection finished");
+                        trace!(target: "rpc", "socket connection finished");
                         return Poll::Ready(())
                     }
                     Poll::Pending => break,

@@ -21,7 +21,6 @@ fn ipc_config() -> NodeConfig {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_block_number_ipc() {
-    crate::init_tracing();
     let (api, handle) = spawn(ipc_config()).await;
 
     let block_num = api.block_number().unwrap();
