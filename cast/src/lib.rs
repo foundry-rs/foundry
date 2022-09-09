@@ -831,7 +831,7 @@ impl SimpleCast {
             values
                 .into_iter()
                 .map(|s| s.strip_prefix("0x").unwrap_or(&s).to_string())
-                .collect::<Vec::<String>>()
+                .collect::<Vec<String>>()
                 .join("")
         )
     }
@@ -848,14 +848,14 @@ impl SimpleCast {
     ///
     /// # fn main() -> eyre::Result<()> {
     /// let addr = Address::from_str("0xb7e390864a90b7b923c9f9310c6f98aafe43f707")?;
-    /// let addr = Cast::to_checksum_address(&addr)?;
+    /// let addr = Cast::to_checksum_address(&addr);
     /// assert_eq!(addr, "0xB7e390864a90b7b923C9f9310C6F98aafE43F707");
     ///
     /// # Ok(())
     /// # }
     /// ```
-    pub fn to_checksum_address(address: &Address) -> Result<String> {
-        Ok(utils::to_checksum(address, None))
+    pub fn to_checksum_address(address: &Address) -> String {
+        utils::to_checksum(address, None)
     }
 
     /// Converts a number into uint256 hex string with 0x prefix
