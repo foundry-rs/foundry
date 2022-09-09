@@ -244,6 +244,7 @@ impl ScriptArgs {
                     target,
                     &script_config.config,
                     chain,
+                    self.broadcast || self.resume,
                 )?;
 
                 deployment_sequence.add_libraries(libraries);

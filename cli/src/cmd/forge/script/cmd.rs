@@ -71,8 +71,13 @@ impl ScriptArgs {
 
             verify.set_chain(&script_config.config, chain.into());
 
-            let mut deployment_sequence =
-                ScriptSequence::load(&script_config.config, &self.sig, &target, chain)?;
+            let mut deployment_sequence = ScriptSequence::load(
+                &script_config.config,
+                &self.sig,
+                &target,
+                chain,
+                self.broadcast || self.resume,
+            )?;
 
             receipts::wait_for_pending(provider, &mut deployment_sequence).await?;
 
