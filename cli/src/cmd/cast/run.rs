@@ -230,7 +230,7 @@ fn configure_tx_env(env: &mut forge::revm::Env, tx: &Transaction) {
         .collect();
     env.tx.value = tx.value;
     env.tx.data = tx.input.0.clone();
-    env.tx.transact_to = tx.to.map(TransactTo::Call).unwrap_or_else(|| TransactTo::create())
+    env.tx.transact_to = tx.to.map(TransactTo::Call).unwrap_or_else(TransactTo::create)
 }
 
 fn run_debugger(result: RunResult, decoder: CallTraceDecoder) -> eyre::Result<()> {
