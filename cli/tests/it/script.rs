@@ -250,8 +250,7 @@ contract DeployScript is Script {
                 run_object["receipts"][0]["contractAddress"].as_str().unwrap(),
             )
             .unwrap(),
-        )
-        .unwrap();
+        );
 
         let run_code = r#"
 // SPDX-License-Identifier: UNLICENSED
