@@ -60,8 +60,8 @@ impl Db for MemDb {
 
     fn load_state(&mut self, state: SerializableState) -> DatabaseResult<bool> {
         for (addr, account) in state.accounts.into_iter() {
-            let old_account = self.inner.accounts.get(&addr);
-            let old_account_nonce = old_account.map(|a| a.info.nonce).unwrap_or_default();
+            let old_account_nonce =
+                self.inner.accounts.get(&addr).map(|a| a.info.nonce).unwrap_or_default();
 
             self.insert_account(
                 addr,
