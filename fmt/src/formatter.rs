@@ -516,17 +516,6 @@ impl<'a, W: Write> Formatter<'a, W> {
         if let Some(chunks) = self.simulate_to_single_line(|fmt| {
             fmt.write_chunks_separated(items.iter().copied(), separator, false)
         })? {
-            if chunks.chars().next().is_some() {
-                // TODO:
-                println!(
-                    "will? - {}. len - {}. curr - {}. total - {}. chunks - {}",
-                    self.will_it_fit(format_string.replacen("{}", &chunks, 1)),
-                    chunks.len(),
-                    self.current_line_len(),
-                    self.total_indent_len(),
-                    chunks
-                );
-            }
             Ok(!self.will_it_fit(format_string.replacen("{}", &chunks, 1)))
         } else {
             Ok(true)

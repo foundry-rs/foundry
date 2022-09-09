@@ -130,11 +130,6 @@ impl<W: Sized> FormatBuffer<W> {
         self.current_line_len
     }
 
-    /// Set the current position
-    pub fn set_current_line_len(&mut self, len: usize) {
-        self.current_line_len = len
-    }
-
     /// Check if the buffer is at the beggining of a new line
     pub fn is_beginning_of_line(&self) -> bool {
         matches!(self.state, WriteState::LineStart(_))
@@ -233,17 +228,11 @@ impl<W: Write> Write for FormatBuffer<W> {
                             let (head, tail) = s.split_at(len);
                             self.w.write_str(head)?;
                             self.w.write_str(&indent)?;
-                            // self.last_indent = indent.clone();
-                            // self.base_indent_len = indent.len();
                             self.current_line_len = 0;
                             self.last_char = Some(' ');
                             // a newline has been inserted
                             if len > 0 {
-                                if self.last_indent_group_skipped() &&
-                                    comment_state != CommentState::Block &&
-                                    comment_state != CommentState::BlockStart1 &&
-                                    comment_state != CommentState::BlockStart2
-                                {
+                                if self.last_indent_group_skipped() {
                                     indent = " ".repeat(self.current_indent_len() + self.tab_width);
                                     self.set_last_indent_group_skipped(false);
                                 }
@@ -321,7 +310,6 @@ impl<W: Write> Write for FormatBuffer<W> {
                             self.w.write_str(head)?;
                             if let Some((_, last)) = head.rsplit_once('\n') {
                                 self.set_last_indent_group_skipped(false);
-                                // TODO: self.last_indent = String::new();
                                 self.current_line_len = last.len();
                             } else {
                                 self.current_line_len += head.len();
@@ -346,26 +334,106 @@ mod tests {
     const TAB_WIDTH: usize = 4;
 
     #[test]
-    fn test_identical_temp_buf() -> std::fmt::Result {
-        let w = String::new();
-        let mut buf = FormatBuffer::new(w, TAB_WIDTH);
-        let mut temp = buf.create_temp_buf();
+    fn test_buffer_indents() -> std::fmt::Result {
+        let delta = 1;
 
+        let mut buf = FormatBuffer::new(String::new(), TAB_WIDTH);
+        assert_eq!(buf.indents.len(), 0);
+        assert_eq!(buf.level(), 0);
+        assert_eq!(buf.current_indent_len(), 0);
+
+        buf.indent(delta);
+        assert_eq!(buf.indents.len(), delta);
+        assert_eq!(buf.level(), delta);
+        assert_eq!(buf.current_indent_len(), delta * TAB_WIDTH);
+
+        buf.indent(delta);
+        buf.set_last_indent_group_skipped(true);
+        assert!(buf.last_indent_group_skipped());
+        assert_eq!(buf.indents.len(), delta * 2);
+        assert_eq!(buf.level(), delta);
+        assert_eq!(buf.current_indent_len(), delta * TAB_WIDTH);
+        buf.dedent(delta);
+
+        buf.dedent(delta);
+        assert_eq!(buf.indents.len(), 0);
+        assert_eq!(buf.level(), 0);
+        assert_eq!(buf.current_indent_len(), 0);
+
+        // panics on extra dedent
+        let res = std::panic::catch_unwind(|| buf.clone().dedent(delta));
+        assert!(res.is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_identical_temp_buf() -> std::fmt::Result {
         let content = "test string";
-        write!(buf, "{content}")?;
-        write!(temp, "{content}")?;
-        assert_eq!(temp.base_indent_len, buf.total_indent_len());
+        let multiline_content = "test\nmultiline\nmultiple";
+        let mut buf = FormatBuffer::new(String::new(), TAB_WIDTH);
+
+        // create identical temp buf
+        let mut temp = buf.create_temp_buf();
+        writeln!(buf, "{content}")?;
+        writeln!(temp, "{content}")?;
+        assert_eq!(buf.w, format!("{content}\n"));
         assert_eq!(temp.w, buf.w);
+        assert_eq!(temp.current_line_len, buf.current_line_len);
+        assert_eq!(temp.base_indent_len, buf.total_indent_len());
 
         let delta = 1;
         buf.indent(delta);
+
         let mut temp_indented = buf.create_temp_buf();
-        write!(temp_indented, "{content}")?;
+        assert!(temp_indented.w.is_empty());
         assert_eq!(temp_indented.base_indent_len, buf.total_indent_len());
         assert_eq!(temp_indented.level() + delta, buf.level());
-        assert_eq!(temp_indented.w, buf.w);
 
-        assert_eq!(1, 2);
+        let indent = " ".repeat(delta * TAB_WIDTH);
+
+        let mut original_buf = buf.clone();
+        write!(buf, "{multiline_content}")?;
+        let expected_content = format!(
+            "{}\n{}{}",
+            content,
+            indent,
+            multiline_content.lines().collect::<Vec<_>>().join(&format!("\n{}", indent))
+        );
+        assert_eq!(buf.w, expected_content);
+
+        write!(temp_indented, "{multiline_content}")?;
+
+        // write temp buf to original and assert the result
+        write!(original_buf, "{}", temp_indented.w)?;
+        assert_eq!(buf.w, original_buf.w);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_preserves_original_content_with_default_settings() -> std::fmt::Result {
+        let contents = vec![
+            "simple line",
+            r#"
+            some 
+                    multiline
+    content"#,
+            "// comment",
+            "/* comment */",
+            r#"mutliline
+            content
+            // comment1
+            with comments
+            /* comment2 */ "#,
+        ];
+
+        for content in contents.iter() {
+            let mut buf = FormatBuffer::new(String::new(), TAB_WIDTH);
+            write!(buf, "{content}")?;
+            assert_eq!(&buf.w, content);
+        }
+
         Ok(())
     }
 }
