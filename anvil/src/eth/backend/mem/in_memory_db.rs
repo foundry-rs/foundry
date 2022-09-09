@@ -62,6 +62,9 @@ impl Db for MemDb {
         for (addr, account) in state.accounts.into_iter() {
             let old_account_nonce =
                 self.inner.accounts.get(&addr).map(|a| a.info.nonce).unwrap_or_default();
+            // use max nonce in case account is imported multiple times with difference
+            // nonces to prevent collisions
+            let nonce = std::cmp::max(old_account_nonce, account.nonce);
 
             self.insert_account(
                 addr,
@@ -73,9 +76,7 @@ impl Db for MemDb {
                     } else {
                         Some(Bytecode::new_raw(account.code.0).to_checked())
                     },
-                    // use max nonce in case account is imported multiple times with difference
-                    // nonces to prevent collisions
-                    nonce: std::cmp::max(old_account_nonce, account.nonce),
+                    nonce,
                 },
             );
 
