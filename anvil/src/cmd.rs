@@ -160,6 +160,7 @@ impl NodeArgs {
             .with_chain_id(self.evm_opts.chain_id)
             .with_transaction_order(self.order)
             .with_genesis(self.init)
+            .with_steps_tracing(self.evm_opts.steps_tracing)
     }
 
     fn account_generator(&self) -> AccountGenerator {
@@ -312,6 +313,9 @@ pub struct AnvilEvmArgs {
     /// The chain ID.
     #[clap(long, alias = "chain", value_name = "CHAIN_ID", help_heading = "ENVIRONMENT CONFIG")]
     pub chain_id: Option<Chain>,
+
+    #[clap(long, help = "Enable steps tracing used for debug calls returning geth-style traces")]
+    pub steps_tracing: bool,
 }
 
 /// Represents the input URL for a fork with an optional trailing block number:
