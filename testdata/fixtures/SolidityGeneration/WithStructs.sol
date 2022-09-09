@@ -22,7 +22,9 @@ interface test {
     event ResolverMaxGasPriceSet(uint128 amount);
     event ValidatorAddressDisabled(address indexed validator, uint128 indexed auction_number);
     event ValidatorAddressEnabled(address indexed validator, uint128 indexed auction_number);
-    event ValidatorPreferencesSet(address indexed validator, uint256 minAutoshipAmount, address validatorPayableAddress);
+    event ValidatorPreferencesSet(
+        address indexed validator, uint256 minAutoshipAmount, address validatorPayableAddress
+    );
     event ValidatorWithdrawnBalance(
         address indexed validator,
         uint128 indexed auction_number,
