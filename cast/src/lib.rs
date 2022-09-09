@@ -11,8 +11,8 @@ use ethers_core::{
     },
     types::{Chain, *},
     utils::{
-        self, format_bytes32_string, get_contract_address, keccak256, parse_bytes32_string,
-        parse_units, rlp,
+        self, format_bytes32_string, format_units, get_contract_address, keccak256,
+        parse_bytes32_string, parse_units, rlp, Units,
     },
 };
 use ethers_etherscan::Client;
@@ -733,13 +733,13 @@ impl SimpleCast {
     /// use ethers_core::types::U256;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(U256::from_dec_str("424242")?, Cast::to_dec("0x67932")?);
-    ///     assert_eq!(U256::from_dec_str("1234")?, Cast::to_dec("0x4d2")?);
+    ///     assert_eq!(Cast::to_dec("0x67932")?, "424242");
+    ///     assert_eq!(Cast::to_dec("0x4d2")?, "1234");
     ///
     ///     Ok(())
     /// }
-    pub fn to_dec(hex: &str) -> Result<U256> {
-        Ok(U256::from_str(hex)?)
+    pub fn to_dec(value: &str) -> Result<String> {
+        Ok(Self::to_base(value, None, "dec")?)
     }
 
     /// Converts decimal input to hex
@@ -960,11 +960,11 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn from_wei(value: &str, unit: &str) -> Result<String> {
-        let value = U256::from_dec_str(value)?;
+        let value = NumberWithBase::parse_int(value, None)?.number();
 
         Ok(match unit {
-            "gwei" => ethers_core::utils::format_units(value, 9),
-            _ => ethers_core::utils::format_units(value, 18),
+            "gwei" => format_units(value, 9),
+            _ => format_units(value, 18),
         }?)
     }
 
@@ -985,11 +985,11 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn to_wei(value: &str, unit: &str) -> Result<String> {
-        Ok(match unit {
-            "gwei" => ethers_core::utils::parse_units(value, 9),
-            _ => ethers_core::utils::parse_units(value, 18),
-        }?
-        .to_string())
+        let wei = match unit {
+            "gwei" => parse_units(value, 9),
+            _ => parse_units(value, 18),
+        }?;
+        Ok(wei.to_string())
     }
 
     /// Decodes rlp encoded list with hex data
