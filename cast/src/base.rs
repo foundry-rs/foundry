@@ -13,11 +13,11 @@ use std::{
 
 /* -------------------------------------------- Base -------------------------------------------- */
 
-// TODO: UpperHex and LowerHex
+// TODO: Split Hexadecimal into UpperHex and LowerHex and implement formatting
 /// Represents a number's [radix] or base. Currently it supports the same bases that [std::fmt]
 /// supports.
 ///
-/// [Radix] = (https://en.wikipedia.org/wiki/Radix)
+/// [radix]: https://en.wikipedia.org/wiki/Radix
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Base {
@@ -189,10 +189,40 @@ impl Base {
 
 /* --------------------------------------- NumberWithBase --------------------------------------- */
 
+/// Utility struct for parsing numbers and formatting them into different [bases][Base].
+///
+/// # Example
+///
+/// ```
+/// use cast::base::NumberWithBase;
+/// use ethers_core::types::U256;
+///
+/// let number: NumberWithBase = U256::from(12345).into();
+/// assert_eq!(number.format(), "12345");
+///
+/// // Debug uses number.base() to determine which base to format to, which defaults to Base::Decimal
+/// assert_eq!(format!("{:?}", number), "12345");
+///
+/// // Display uses Base::Decimal
+/// assert_eq!(format!("{}", number), "12345");
+///
+/// // The alternate formatter ("#") prepends the base's prefix
+/// assert_eq!(format!("{:x}", number), "3039");
+/// assert_eq!(format!("{:#x}", number), "0x3039");
+///
+/// assert_eq!(format!("{:b}", number), "11000000111001");
+/// assert_eq!(format!("{:#b}", number), "0b11000000111001");
+///
+/// assert_eq!(format!("{:o}", number), "30071");
+/// assert_eq!(format!("{:#o}", number), "0o30071");
+/// ```
 #[derive(Clone, Copy)]
 pub struct NumberWithBase {
+    /// The number.
     number: U256,
-    is_positive: bool,
+    /// Whether the number is positive or zero.
+    is_nonnegative: bool,
+    /// The base to format to.
     base: Base,
 }
 
@@ -283,20 +313,21 @@ impl From<NumberWithBase> for String {
 }
 
 impl NumberWithBase {
-    pub fn new(number: impl Into<U256>, is_positive: bool, base: impl Into<Base>) -> Self {
-        Self { number: number.into(), is_positive, base: base.into() }
+    pub fn new(number: impl Into<U256>, is_nonnegative: bool, base: impl Into<Base>) -> Self {
+        Self { number: number.into(), is_nonnegative, base: base.into() }
     }
 
+    /// Creates a copy of the number with the provided base.
     pub fn with_base(&self, base: impl Into<Base>) -> Self {
-        Self::new(self.number, self.is_positive, base)
+        Self::new(self.number, self.is_nonnegative, base)
     }
 
     /// Parses a string slice into a signed integer. If base is None then it tries to determine base
     /// from the prefix, otherwise defaults to Decimal.
     pub fn parse_int(s: &str, base: Option<String>) -> Result<Self> {
         let base = Base::unwrap_or_detect(base, s)?;
-        let (number, is_positive) = Self::_parse_int(s, base)?;
-        Ok(Self { number, is_positive, base })
+        let (number, is_nonnegative) = Self::_parse_int(s, base)?;
+        Ok(Self { number, is_nonnegative, base })
     }
 
     /// Parses a string slice into an unsigned integer. If base is None then it tries to determine
@@ -304,21 +335,21 @@ impl NumberWithBase {
     pub fn parse_uint(s: &str, base: Option<String>) -> Result<Self> {
         let base = Base::unwrap_or_detect(base, s)?;
         let number = Self::_parse_uint(s, base)?;
-        Ok(Self { number, is_positive: true, base })
+        Ok(Self { number, is_nonnegative: true, base })
     }
 
-    /// Returns the underlying number as an unsigned integer. If the value is negative then the
-    /// two's complement of its absolute value will be returned.
+    /// Returns a copy of the underlying number as an unsigned integer. If the value is negative
+    /// then the two's complement of its absolute value will be returned.
     pub fn number(&self) -> U256 {
         self.number
     }
 
-    /// Returns whether the underlying number is to be treated as a signed integer.
-    pub fn is_positive(&self) -> bool {
-        self.is_positive
+    /// Returns whether the underlying number is positive or zero.
+    pub fn is_nonnegative(&self) -> bool {
+        self.is_nonnegative
     }
 
-    /// Returns the underlying base. Defaults to [`Decimal`][Base].
+    /// Returns the underlying base. Defaults to [Decimal][Base].
     pub fn base(&self) -> Base {
         self.base
     }
@@ -353,7 +384,7 @@ impl NumberWithBase {
         format!("{}{}", prefix, s)
     }
 
-    /// Iterates over every digit and calls [std::char::from_digit] to create a String.
+    /// Constructs a String from every digit of the number using [std::char::from_digit].
     ///
     /// Modified from: https://stackoverflow.com/a/50278316
     fn format_radix(&self) -> String {
@@ -390,7 +421,7 @@ impl NumberWithBase {
     }
 
     fn _parse_uint(s: &str, base: Base) -> Result<U256> {
-        // TODO: Parse from binary or octal str into U256
+        // TODO: Parse from binary or octal str into U256, requires a parser
         U256::from_str_radix(s, base as u32).map_err(|e| {
             if matches!(e.kind(), FromStrRadixErrKind::UnsupportedRadix) {
                 eyre::eyre!("numbers in base {} are currently not supported as input", base)
@@ -407,6 +438,24 @@ impl NumberWithBase {
 pub trait ToBase {
     type Err;
 
+    /// Formats self into a base, specifying whether to add the base prefix or not.
+    ///
+    /// Tries converting `self` into a [NumberWithBase] and then formats into the provided base by
+    /// using the [Debug] implementation.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use cast::base::{Base, ToBase};
+    /// use ethers_core::types::U256;
+    ///
+    /// // Any type that implements ToBase
+    /// let number = U256::from(12345);
+    /// assert_eq!(number.to_base(Base::Decimal, false).unwrap(), "12345");
+    /// assert_eq!(number.to_base(Base::Hexadecimal, false).unwrap(), "3039");
+    /// assert_eq!(number.to_base(Base::Hexadecimal, true).unwrap(), "0x3039");
+    /// assert_eq!(number.to_base(Base::Binary, true).unwrap(), "0b11000000111001");
+    /// assert_eq!(number.to_base(Base::Octal, true).unwrap(), "0o30071");
     fn to_base(&self, base: Base, add_prefix: bool) -> Result<String, Self::Err>;
 }
 
