@@ -24,6 +24,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     str::FromStr,
 };
+use tracing::trace;
 use ui::{TUIExitReason, Tui, Ui};
 use yansi::Paint;
 
@@ -122,13 +123,14 @@ impl RunArgs {
                         if tx.hash().eq(&tx_hash) {
                             break
                         }
-                        // executor.set_gas_limit(past_tx.gas);
+
                         configure_tx_env(&mut env, &tx);
 
                         if let Some(to) = tx.to {
-                            env.tx.transact_to = TransactTo::Call(to);
+                            trace!(tx=?tx.hash,?to, "executing previous call transaction");
                             executor.commit_tx_with_env(env.clone()).unwrap();
                         } else {
+                            trace!(tx=?tx.hash, "executing previous create transaction");
                             executor.deploy_with_env(env.clone(), None).unwrap();
                         }
 
@@ -144,7 +146,7 @@ impl RunArgs {
                 configure_tx_env(&mut env, &tx);
 
                 if let Some(to) = tx.to {
-                    env.tx.transact_to = TransactTo::Call(to);
+                    trace!(tx=?tx.hash,to=?to, "executing call transaction");
                     let RawCallResult {
                         reverted,
                         gas_used: gas,
@@ -161,6 +163,7 @@ impl RunArgs {
                         gas_used: gas,
                     }
                 } else {
+                    trace!(tx=?tx.hash, "executing create transaction");
                     let DeployResult { gas_used, traces, debug: run_debug, .. }: DeployResult =
                         executor.deploy_with_env(env, None).unwrap();
 
@@ -227,6 +230,7 @@ fn configure_tx_env(env: &mut forge::revm::Env, tx: &Transaction) {
         .collect();
     env.tx.value = tx.value;
     env.tx.data = tx.input.0.clone();
+    env.tx.transact_to = tx.to.map(TransactTo::Call).unwrap_or_else(TransactTo::create)
 }
 
 fn run_debugger(result: RunResult, decoder: CallTraceDecoder) -> eyre::Result<()> {
