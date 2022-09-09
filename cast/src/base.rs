@@ -241,9 +241,12 @@ impl Debug for NumberWithBase {
         if self.number.is_zero() {
             f.pad_integral(true, prefix, "0")
         } else {
-            // Debug adds sign even if we're not formatting as decimal
-            let is_negative = matches!(self.base, Base::Decimal) && !self.is_positive;
-            f.pad_integral(!is_negative, prefix, &self.format(false))
+            // Add sign only for decimal
+            let is_nonnegative = match self.base {
+                Base::Decimal => self.is_nonnegative,
+                _ => true,
+            };
+            f.pad_integral(is_nonnegative, prefix, &self.format())
         }
     }
 }
@@ -254,15 +257,15 @@ impl Binary for NumberWithBase {
     }
 }
 
-impl Display for NumberWithBase {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        Debug::fmt(&self.with_base(Base::Decimal), f)
-    }
-}
-
 impl Octal for NumberWithBase {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         Debug::fmt(&self.with_base(Base::Octal), f)
+    }
+}
+
+impl Display for NumberWithBase {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        Debug::fmt(&self.with_base(Base::Decimal), f)
     }
 }
 
@@ -306,9 +309,11 @@ impl From<NumberWithBase> for U256 {
 }
 
 impl From<NumberWithBase> for String {
-    /// Formats the number into the specified base with its prefix
+    /// Formats the number into the specified base. See [NumberWithBase::format].
+    ///
+    /// [NumberWithBase::format]: NumberWithBase
     fn from(n: NumberWithBase) -> Self {
-        n.format(true)
+        n.format()
     }
 }
 
@@ -366,22 +371,21 @@ impl NumberWithBase {
     }
 
     /// Formats the number into the specified base.
-    pub fn format(&self, add_prefix: bool) -> String {
-        let prefix = if add_prefix { self.prefix() } else { "" };
-        let s = match self.base {
+    ///
+    /// **Note**: this method only formats the number into the base, without adding any prefixes,
+    /// signs or padding. Refer to the [std::fmt] module documentation on how to format this
+    /// number with the aforementioned properties.
+    pub fn format(&self) -> String {
+        match self.base {
             // Binary and Octal traits are not implemented for primitive-types types, so we're using
             // a custom formatter
             Base::Binary | Base::Octal => self.format_radix(),
             Base::Decimal => {
-                if self.is_positive {
-                    self.number.to_string()
-                } else {
-                    I256::from_raw(self.number).to_string()
-                }
+                let s = I256::from_raw(self.number).to_string();
+                s.strip_prefix('-').unwrap_or(&s).to_string()
             }
             Base::Hexadecimal => format!("{:x}", self.number),
-        };
-        format!("{}{}", prefix, s)
+        }
     }
 
     /// Constructs a String from every digit of the number using [std::char::from_digit].
@@ -422,12 +426,11 @@ impl NumberWithBase {
 
     fn _parse_uint(s: &str, base: Base) -> Result<U256> {
         // TODO: Parse from binary or octal str into U256, requires a parser
-        U256::from_str_radix(s, base as u32).map_err(|e| {
-            if matches!(e.kind(), FromStrRadixErrKind::UnsupportedRadix) {
+        U256::from_str_radix(s, base as u32).map_err(|e| match e.kind() {
+            FromStrRadixErrKind::UnsupportedRadix => {
                 eyre::eyre!("numbers in base {} are currently not supported as input", base)
-            } else {
-                eyre::eyre!(e)
             }
+            _ => eyre::eyre!(e),
         })
     }
 }
@@ -456,6 +459,7 @@ pub trait ToBase {
     /// assert_eq!(number.to_base(Base::Hexadecimal, true).unwrap(), "0x3039");
     /// assert_eq!(number.to_base(Base::Binary, true).unwrap(), "0b11000000111001");
     /// assert_eq!(number.to_base(Base::Octal, true).unwrap(), "0o30071");
+    /// ```
     fn to_base(&self, base: Base, add_prefix: bool) -> Result<String, Self::Err>;
 }
 
@@ -463,25 +467,38 @@ impl ToBase for NumberWithBase {
     type Err = Infallible;
 
     fn to_base(&self, base: Base, add_prefix: bool) -> Result<String, Self::Err> {
-        Ok(self.with_base(base).format(add_prefix))
+        let n = self.with_base(base);
+        if add_prefix {
+            Ok(format!("{:#?}", n))
+        } else {
+            Ok(format!("{:?}", n))
+        }
     }
 }
 
 impl ToBase for I256 {
     type Err = Infallible;
 
-    /// Cannot fail.
     fn to_base(&self, base: Base, add_prefix: bool) -> Result<String, Self::Err> {
-        Ok(NumberWithBase::from(*self).set_base(base).format(add_prefix))
+        let n = NumberWithBase::from(*self).with_base(base);
+        if add_prefix {
+            Ok(format!("{:#?}", n))
+        } else {
+            Ok(format!("{:?}", n))
+        }
     }
 }
 
 impl ToBase for U256 {
     type Err = Infallible;
 
-    /// Cannot fail.
     fn to_base(&self, base: Base, add_prefix: bool) -> Result<String, Self::Err> {
-        Ok(NumberWithBase::from(*self).set_base(base).format(add_prefix))
+        let n = NumberWithBase::from(*self).with_base(base);
+        if add_prefix {
+            Ok(format!("{:#?}", n))
+        } else {
+            Ok(format!("{:?}", n))
+        }
     }
 }
 
@@ -497,7 +514,12 @@ impl ToBase for str {
     type Err = eyre::Report;
 
     fn to_base(&self, base: Base, add_prefix: bool) -> Result<String, Self::Err> {
-        Ok(self.parse::<NumberWithBase>()?.set_base(base).format(add_prefix))
+        let n = NumberWithBase::from_str(self)?.with_base(base);
+        if add_prefix {
+            Ok(format!("{:#?}", n))
+        } else {
+            Ok(format!("{:?}", n))
+        }
     }
 }
 
@@ -660,62 +682,45 @@ mod tests {
     }
 
     #[test]
-    fn test_fmt_pos() {
+    fn test_format_pos() {
         let expected_2: Vec<_> = POS_NUM.iter().map(|n| format!("{:b}", n)).collect();
-        let expected_2_alt: Vec<_> = POS_NUM.iter().map(|n| format!("{:#b}", n)).collect();
         let expected_8: Vec<_> = POS_NUM.iter().map(|n| format!("{:o}", n)).collect();
-        let expected_8_alt: Vec<_> = POS_NUM.iter().map(|n| format!("{:#o}", n)).collect();
         let expected_10: Vec<_> = POS_NUM.iter().map(|n| format!("{:}", n)).collect();
-        let expected_10_alt: Vec<_> = POS_NUM.iter().map(|n| format!("{:#}", n)).collect();
-        let expected_16: Vec<_> = POS_NUM.iter().map(|n| format!("{:x}", n)).collect();
-        let expected_16_alt: Vec<_> = POS_NUM.iter().map(|n| format!("{:#x}", n)).collect();
+        let expected_l16: Vec<_> = POS_NUM.iter().map(|n| format!("{:x}", n)).collect();
+        // let expected_u16: Vec<_> = POS_NUM.iter().map(|n| format!("{:X}", n)).collect();
 
-        let mut alt;
         for (i, n) in POS_NUM.into_iter().enumerate() {
             let mut num: NumberWithBase = I256::from(n).into();
 
-            alt = false;
-            assert_eq!(num.set_base(Binary).format(alt), expected_2[i]);
-            assert_eq!(num.set_base(Octal).format(alt), expected_8[i]);
-            assert_eq!(num.set_base(Decimal).format(alt), expected_10[i]);
-            assert_eq!(num.set_base(Hexadecimal).format(alt), expected_16[i]);
-
-            alt = true;
-            assert_eq!(num.set_base(Binary).format(alt), expected_2_alt[i]);
-            assert_eq!(num.set_base(Octal).format(alt), expected_8_alt[i]);
-            assert_eq!(num.set_base(Decimal).format(alt), expected_10_alt[i]);
-            assert_eq!(num.set_base(Hexadecimal).format(alt), expected_16_alt[i]);
+            assert_eq!(num.set_base(Binary).format(), expected_2[i]);
+            assert_eq!(num.set_base(Octal).format(), expected_8[i]);
+            assert_eq!(num.set_base(Decimal).format(), expected_10[i]);
+            assert_eq!(num.set_base(Hexadecimal).format(), expected_l16[i]);
         }
     }
 
     #[test]
-    fn test_fmt_neg() {
+    fn test_format_neg() {
         // underlying is 256 bits so we have to pad left manually
+
         let expected_2: Vec<_> = NEG_NUM.iter().map(|n| format!("{:1>256b}", n)).collect();
-        let expected_2_alt: Vec<_> = NEG_NUM.iter().map(|n| format!("0b{:1>256b}", n)).collect();
+
         // TODO: create expected for octal
         // let expected_8: Vec<_> = NEG_NUM.iter().map(|n| format!("1{:7>85o}", n)).collect();
-        // let expected_8_alt: Vec<_> = NEG_NUM.iter().map(|n| format!("0o1{:7>85o}", n)).collect();
-        let expected_10: Vec<_> = NEG_NUM.iter().map(|n| format!("{:}", n)).collect();
-        let expected_10_alt: Vec<_> = NEG_NUM.iter().map(|n| format!("{:#}", n)).collect();
-        let expected_16: Vec<_> = NEG_NUM.iter().map(|n| format!("{:f>64x}", n)).collect();
-        let expected_16_alt: Vec<_> = NEG_NUM.iter().map(|n| format!("0x{:f>64x}", n)).collect();
 
-        let mut alt;
+        // Sign not included, see NumberWithBase::format
+        let expected_10: Vec<_> =
+            NEG_NUM.iter().map(|n| format!("{:}", n).trim_matches('-').to_string()).collect();
+
+        let expected_16: Vec<_> = NEG_NUM.iter().map(|n| format!("{:f>64x}", n)).collect();
+
         for (i, n) in NEG_NUM.into_iter().enumerate() {
             let mut num: NumberWithBase = I256::from(n).into();
 
-            alt = false;
-            assert_eq!(num.set_base(Binary).format(alt), expected_2[i]);
-            // assert_eq!(num.set_base(Octal).format(alt), expected_8[i]);
-            assert_eq!(num.set_base(Decimal).format(alt), expected_10[i]);
-            assert_eq!(num.set_base(Hexadecimal).format(alt), expected_16[i]);
-
-            alt = true;
-            assert_eq!(num.set_base(Binary).format(alt), expected_2_alt[i]);
-            // assert_eq!(num.set_base(Octal).format(alt), expected_8_alt[i]);
-            assert_eq!(num.set_base(Decimal).format(alt), expected_10_alt[i]);
-            assert_eq!(num.set_base(Hexadecimal).format(alt), expected_16_alt[i]);
+            assert_eq!(num.set_base(Binary).format(), expected_2[i]);
+            // assert_eq!(num.set_base(Octal).format(), expected_8[i]);
+            assert_eq!(num.set_base(Decimal).format(), expected_10[i]);
+            assert_eq!(num.set_base(Hexadecimal).format(), expected_16[i]);
         }
     }
 
