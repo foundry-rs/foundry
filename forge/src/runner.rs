@@ -6,7 +6,7 @@ use ethers::{
     abi::{Abi, Function},
     types::{Address, Bytes, U256},
 };
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     TestFunctionExt,
@@ -467,11 +467,11 @@ impl<'a> ContractRunner<'a> {
                                 identified_contracts.clone(),
                                 &mut logs,
                                 &mut traces,
-                            );
+                            )?;
                         }
                     }
 
-                    TestResult {
+                    Ok(TestResult {
                         success: test_error.is_none(),
                         reason: test_error.as_ref().and_then(|err| {
                             (!err.revert_reason.is_empty()).then(|| err.revert_reason.clone())
@@ -482,9 +482,10 @@ impl<'a> ContractRunner<'a> {
                         coverage: None, // todo?
                         traces,
                         labeled_addresses: labeled_addresses.clone(),
-                    }
+                    })
                 })
-                .collect();
+                .collect::<Result<Vec<TestResult>>>()
+                .wrap_err("Failed to replay counter examples")?;
 
             Ok(results)
         } else {
@@ -504,13 +505,10 @@ impl<'a> ContractRunner<'a> {
 
         // Run fuzz test
         let start = Instant::now();
-        let mut result = FuzzedExecutor::new(
-            &self.executor,
-            runner,
-            self.sender,
-            Default::default(),
-        )
-        .fuzz(func, address, should_fail, self.errors);
+        let mut result =
+            FuzzedExecutor::new(&self.executor, runner, self.sender, Default::default())
+                .fuzz(func, address, should_fail, self.errors)
+                .wrap_err("Failed to run fuzz test")?;
 
         // Record logs, labels and traces
         logs.append(&mut result.logs);

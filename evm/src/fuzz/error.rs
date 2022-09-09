@@ -1,4 +1,5 @@
 //! errors related to fuzz tests
+use proptest::test_runner::Reason;
 
 /// Magic return code for the `assume` cheatcode
 pub const ASSUME_MAGIC_RETURN_CODE: &[u8] = b"FOUNDRY::ASSUME";
@@ -16,6 +17,14 @@ pub enum FuzzError {
     FailedContractCall,
     #[error("Empty state changeset")]
     EmptyChangeset,
+    #[error("`vm.assume` reject")]
+    AssumeReject,
     #[error("The `vm.assume` cheatcode rejected too many inputs ({0} allowed)")]
     TooManyRejects(u32),
+}
+
+impl From<FuzzError> for Reason {
+    fn from(error: FuzzError) -> Self {
+        error.to_string().into()
+    }
 }

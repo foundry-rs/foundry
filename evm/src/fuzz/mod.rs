@@ -9,6 +9,7 @@ use ethers::{
     abi::{Abi, Function, Token},
     types::{Address, Bytes, Log},
 };
+use eyre::Result;
 use foundry_common::{calc, contracts::ContractsByAddress};
 use foundry_config::FuzzConfig;
 pub use proptest::test_runner::Reason;
@@ -62,7 +63,7 @@ impl<'a> FuzzedExecutor<'a> {
         address: Address,
         should_fail: bool,
         errors: Option<&Abi>,
-    ) -> FuzzTestResult {
+    ) -> Result<FuzzTestResult> {
         // Stores the consumed gas and calldata of every successful fuzz call
         let cases: RefCell<Vec<FuzzCase>> = RefCell::default();
 
@@ -99,10 +100,11 @@ impl<'a> FuzzedExecutor<'a> {
             let call = self
                 .executor
                 .call_raw(self.sender, address, calldata.0.clone(), 0.into())
-                .map_err(|_| FuzzError::FailedContractCall)
-                .unwrap();
-            let state_changeset =
-                call.state_changeset.as_ref().ok_or(FuzzError::EmptyChangeset).unwrap();
+                .map_err(|_| TestCaseError::fail(FuzzError::FailedContractCall))?;
+            let state_changeset = call
+                .state_changeset
+                .as_ref()
+                .ok_or_else(|| TestCaseError::fail(FuzzError::EmptyChangeset))?;
 
             // Build fuzzer state
             collect_state_from_call(
@@ -115,7 +117,7 @@ impl<'a> FuzzedExecutor<'a> {
 
             // When assume cheat code is triggered return a special string "FOUNDRY::ASSUME"
             if call.result.as_ref() == ASSUME_MAGIC_RETURN_CODE {
-                return Err(TestCaseError::reject("ASSUME: Too many rejects"))
+                return Err(TestCaseError::reject(FuzzError::AssumeReject))
             }
 
             let success = self.executor.is_success(
@@ -195,8 +197,7 @@ impl<'a> FuzzedExecutor<'a> {
 
                 let args = func
                     .decode_input(&calldata.as_ref()[4..])
-                    .map_err(|_| FuzzError::FailedDecodeInput)
-                    .unwrap();
+                    .map_err(|_| FuzzError::FailedDecodeInput)?;
 
                 result.counterexample = Some(CounterExample::Single(BaseCounterExample {
                     sender: None,
@@ -211,7 +212,7 @@ impl<'a> FuzzedExecutor<'a> {
             _ => (),
         }
 
-        result
+        Ok(result)
     }
 }
 
@@ -249,22 +250,19 @@ impl BaseCounterExample {
         bytes: &Bytes,
         contracts: &ContractsByAddress,
         traces: Option<CallTraceArena>,
-    ) -> Self {
-        let (name, abi) = &contracts.get(&addr).ok_or(FuzzError::UnknownContract).unwrap();
+    ) -> Result<Self> {
+        let (name, abi) = &contracts.get(&addr).ok_or(FuzzError::UnknownContract)?;
 
         let func = abi
             .functions()
             .find(|f| f.short_signature() == bytes.0.as_ref()[0..4])
-            .ok_or(FuzzError::UnknownFunction)
-            .unwrap();
+            .ok_or(FuzzError::UnknownFunction)?;
 
         // skip the function selector when decoding
-        let args = func
-            .decode_input(&bytes.0.as_ref()[4..])
-            .map_err(|_| FuzzError::FailedDecodeInput)
-            .unwrap();
+        let args =
+            func.decode_input(&bytes.0.as_ref()[4..]).map_err(|_| FuzzError::FailedDecodeInput)?;
 
-        BaseCounterExample {
+        Ok(BaseCounterExample {
             sender: Some(sender),
             addr: Some(addr),
             calldata: bytes.clone(),
@@ -272,7 +270,7 @@ impl BaseCounterExample {
             contract_name: Some(name.clone()),
             traces,
             args,
-        }
+        })
     }
 }
 
