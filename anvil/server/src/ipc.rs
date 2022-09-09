@@ -6,11 +6,12 @@ use bytes::BytesMut;
 use futures::{ready, Sink, Stream, StreamExt};
 use parity_tokio_ipc::Endpoint;
 use std::{
+    future::Future,
     io,
     pin::Pin,
     task::{Context, Poll},
 };
-use tracing::{error, trace};
+use tracing::{error, trace, warn};
 
 /// An IPC connection for anvil
 ///
@@ -29,30 +30,44 @@ impl<Handler: PubSubRpcHandler> IpcEndpoint<Handler> {
         Self { handler, endpoint: Endpoint::new(endpoint.into()) }
     }
 
-    /// Start listening for incoming connections
+    /// Returns a stream of incoming connection handlers
     ///
-    /// Spawns a new connection task for each incoming connection
-    pub async fn listen(self) {
+    /// This establishes the ipc endpoint, converts the incoming connections into handled eth
+    /// connections, See [`PubSubConnection`] that should be spawned
+    pub fn incoming(self) -> io::Result<impl Stream<Item = impl Future<Output = ()> + Unpin>> {
         let IpcEndpoint { handler, endpoint } = self;
         trace!(target: "ipc",  endpoint=?endpoint.path(), "starting ipc server" );
 
-        let mut connections = match endpoint.incoming() {
+        if cfg!(unix) {
+            // ensure the file does not exist
+            if std::fs::remove_file(endpoint.path()).is_ok() {
+                warn!(target: "ipc", endpoint=?endpoint.path(), "removed existing file");
+            }
+        }
+
+        let connections = match endpoint.incoming() {
             Ok(connections) => connections,
             Err(err) => {
                 error!(target: "ipc",  ?err, "Failed to create ipc listener");
-                return
+                return Err(err)
             }
         };
 
-        while let Some(Ok(stream)) = connections.next().await {
-            trace!(target: "ipc", "successful incoming IPC connection");
+        trace!(target: "ipc", "established connection listener");
 
-            let framed = tokio_util::codec::Decoder::framed(JsonRpcCodec, stream);
-            let conn = PubSubConnection::new(IpcConn(framed), handler.clone());
-
-            // spawn the new connection
-            tokio::task::spawn(async move { conn.await });
-        }
+        let connections = connections.filter_map(move |stream| {
+            let handler = handler.clone();
+            Box::pin(async move {
+                if let Ok(stream) = stream {
+                    trace!(target: "ipc", "successful incoming IPC connection");
+                    let framed = tokio_util::codec::Decoder::framed(JsonRpcCodec, stream);
+                    Some(PubSubConnection::new(IpcConn(framed), handler))
+                } else {
+                    None
+                }
+            })
+        });
+        Ok(connections)
     }
 }
 

@@ -37,6 +37,7 @@ use tokio::{
     runtime::Handle,
     task::{JoinError, JoinHandle},
 };
+use tracing::trace;
 
 /// contains the background service that drives the node
 mod service;
@@ -267,6 +268,17 @@ impl NodeHandle {
         Provider::new(
             Ws::connect(self.ws_endpoint()).await.expect("Failed to connect to node's websocket"),
         )
+    }
+
+    /// Connects to the ipc endpoint of the node, if spawned
+    #[cfg(not(windows))]
+    pub async fn ipc_provider(&self) -> Option<Provider<ethers::providers::Ipc>> {
+        let ipc_path = self.config.get_ipc_path()?;
+        trace!(target = "ipc", ?ipc_path, "connecting ipc provider");
+        let provider = Provider::connect_ipc(&ipc_path).await.unwrap_or_else(|err| {
+            panic!("Failed to connect to node's ipc endpoint {}: {:?}", ipc_path, err)
+        });
+        Some(provider)
     }
 
     /// Signer accounts that can sign messages/transactions from the EVM node

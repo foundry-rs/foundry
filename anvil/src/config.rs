@@ -631,11 +631,11 @@ impl NodeConfig {
             Some(path) => path.clone().or_else(|| {
                 #[cfg(windows)]
                 {
-                    Some(r"\\.\pipe\anvil-ipc".to_string())
+                    Some(r"\\.\pipe\anvil.ipc".to_string())
                 }
                 #[cfg(not(windows))]
                 {
-                    Some("/tmp/anvil-ipc".to_string())
+                    Some("/tmp/anvil.ipc".to_string())
                 }
             }),
             None => None,
