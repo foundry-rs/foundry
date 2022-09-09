@@ -1,7 +1,7 @@
 //! Install command
 use crate::{
     cmd::{Cmd, LoadConfig},
-    opts::forge::Dependency,
+    opts::Dependency,
     utils::{p_println, CommandUtils},
 };
 use atty::{self, Stream};
