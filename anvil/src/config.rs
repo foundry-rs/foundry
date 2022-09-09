@@ -127,6 +127,8 @@ pub struct NodeConfig {
     pub fork_retry_backoff: Duration,
     /// available CUPS
     pub compute_units_per_second: u64,
+    /// Enable transaction/call steps tracing for debug calls returning geth-style traces
+    pub enable_steps_tracing: bool,
 }
 
 impl NodeConfig {
@@ -328,6 +330,7 @@ impl Default for NodeConfig {
             account_generator: None,
             base_fee: None,
             enable_tracing: true,
+            enable_steps_tracing: false,
             no_storage_caching: false,
             server_config: Default::default(),
             host: None,
@@ -581,6 +584,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets whether to enable steps tracing
+    #[must_use]
+    pub fn with_steps_tracing(mut self, enable_steps_tracing: bool) -> Self {
+        self.enable_steps_tracing = enable_steps_tracing;
+        self
+    }
+
     #[must_use]
     pub fn with_server_config(mut self, config: ServerConfig) -> Self {
         self.server_config = config;
@@ -804,7 +814,15 @@ impl NodeConfig {
         };
 
         // only memory based backend for now
-        mem::Backend::with_genesis(db, Arc::new(RwLock::new(env)), genesis, fees, fork).await
+        mem::Backend::with_genesis(
+            db,
+            Arc::new(RwLock::new(env)),
+            genesis,
+            fees,
+            fork,
+            self.enable_steps_tracing,
+        )
+        .await
     }
 }
 

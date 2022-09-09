@@ -84,7 +84,7 @@ fn broadcast_key(
         return Err("Private key cannot be 0.".to_string().encode().into())
     }
 
-    if private_key > U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()) {
+    if private_key >= U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()) {
         return Err("Private key must be less than 115792089237316195423570985008687907852837564279074904382605163141518161494337 (the secp256k1 curve order).".to_string().encode().into());
     }
 

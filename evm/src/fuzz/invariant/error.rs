@@ -7,6 +7,7 @@ use crate::{
     CALLER,
 };
 use ethers::{abi::Function, types::Address};
+use eyre::{Result, WrapErr};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use proptest::test_runner::TestError;
 use tracing::trace;
@@ -83,11 +84,11 @@ impl InvariantFuzzError {
         mut ided_contracts: ContractsByAddress,
         logs: &mut Vec<Log>,
         traces: &mut Vec<(TraceKind, CallTraceArena)>,
-    ) -> Option<CounterExample> {
+    ) -> Result<Option<CounterExample>> {
         let mut counterexample_sequence = vec![];
         let calls = match self.test_error {
             // Don't use at the moment.
-            TestError::Abort(_) => return None,
+            TestError::Abort(_) => return Ok(None),
             TestError::Fail(_, ref calls) => calls,
         };
 
@@ -113,13 +114,16 @@ impl InvariantFuzzError {
                 known_contracts,
             ));
 
-            counterexample_sequence.push(BaseCounterExample::create(
-                *sender,
-                *addr,
-                bytes,
-                &ided_contracts,
-                call_result.traces,
-            ));
+            counterexample_sequence.push(
+                BaseCounterExample::create(
+                    *sender,
+                    *addr,
+                    bytes,
+                    &ided_contracts,
+                    call_result.traces,
+                )
+                .wrap_err("Failed to create counter example")?,
+            );
 
             // Checks the invariant.
             if let Some(func) = &self.func {
@@ -135,8 +139,8 @@ impl InvariantFuzzError {
             }
         }
 
-        (!counterexample_sequence.is_empty())
-            .then_some(CounterExample::Sequence(counterexample_sequence))
+        Ok((!counterexample_sequence.is_empty())
+            .then_some(CounterExample::Sequence(counterexample_sequence)))
     }
 
     /// Tests that the modified sequence of calls successfully reverts on the error function.

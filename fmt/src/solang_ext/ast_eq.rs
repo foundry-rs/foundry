@@ -1,21 +1,21 @@
 use super::AttrSortKeyIteratorExt;
-use ethers_core::types::H160;
+use ethers_core::types::{H160, I256, U256};
 use solang_parser::pt::*;
 use std::str::FromStr;
 
 /// Helper to convert a string number into a comparable one
-fn to_num(string: &str) -> isize {
+fn to_num(string: &str) -> I256 {
     if string.is_empty() {
-        return 0
+        return I256::from(0)
     }
     string.replace('_', "").trim().parse().unwrap()
 }
 
 /// Helper to convert the fractional part of a number into a comparable one.
 /// This will reverse the number so that 0's can be ignored
-fn to_num_reversed(string: &str) -> usize {
+fn to_num_reversed(string: &str) -> U256 {
     if string.is_empty() {
-        return 0
+        return U256::from(0)
     }
     let mut string = dbg!(string.replace('_', ""));
     unsafe {
@@ -364,8 +364,8 @@ derive_ast_eq! { (0 A, 1 B, 2 C, 3 D, 4 E) }
 derive_ast_eq! { bool }
 derive_ast_eq! { u8 }
 derive_ast_eq! { u16 }
-derive_ast_eq! { isize }
-derive_ast_eq! { usize }
+derive_ast_eq! { I256 }
+derive_ast_eq! { U256 }
 derive_ast_eq! { struct Identifier { loc, name } }
 derive_ast_eq! { struct HexLiteral { loc, hex } }
 derive_ast_eq! { struct StringLiteral { loc, unicode, string } }
