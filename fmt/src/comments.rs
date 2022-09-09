@@ -113,7 +113,6 @@ impl CommentWithMetadata {
             .unwrap_or_default();
 
         let (position, has_newline_before) = {
-            // comment sits on a line without code
             if src_before[code_end..].contains('\n') {
                 // comment sits on a line without code
                 if let Some(last_line) = last_line {
@@ -137,7 +136,6 @@ impl CommentWithMetadata {
                                     indent_len,
                                     |indent, ch| if ch == '\n' { 0 } else { indent + 1 },
                                 );
-
                             if indent_len > next_indent_len {
                                 // the comment indent is bigger than the next code indent
                                 (CommentPosition::Postfix, false)
