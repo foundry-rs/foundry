@@ -651,7 +651,7 @@ impl NodeConfig {
             cfg: CfgEnv {
                 spec_id: self.get_hardfork().into(),
                 chain_id: self.get_chain_id().into(),
-                limit_contract_code_size: usize::MAX,
+                limit_contract_code_size: Some(usize::MAX),
                 ..Default::default()
             },
             block: BlockEnv {
