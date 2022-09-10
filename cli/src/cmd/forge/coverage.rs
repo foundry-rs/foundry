@@ -292,11 +292,12 @@ impl CoverageArgs {
                 artifact_id.version.clone(),
                 artifact_id.source.to_string_lossy().to_string(),
             ) {
+                let source_id = *source_id;
                 // TODO: Distinguish between creation/runtime in a smart way
                 report.add_hit_map(
                     &ContractId {
                         version: artifact_id.version.clone(),
-                        source_id: *source_id,
+                        source_id,
                         contract_name: artifact_id.name.clone(),
                     },
                     &hits,
