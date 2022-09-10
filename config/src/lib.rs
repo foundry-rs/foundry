@@ -1444,13 +1444,21 @@ impl From<Config> for Figment {
 
         // merge environment variables
         figment = figment
-            .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS", "LIBRARIES", "FFI"]).global())
-            .merge(Env::prefixed("DAPP_TEST_").ignore(&["CACHE", "FUZZ_RUNS", "DEPTH"]).global())
+            .merge(
+                Env::prefixed("DAPP_")
+                    .ignore(&["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
+                    .global(),
+            )
+            .merge(
+                Env::prefixed("DAPP_TEST_")
+                    .ignore(&["CACHE", "FUZZ_RUNS", "DEPTH", "FFI", "FS_PERMISSIONS"])
+                    .global(),
+            )
             .merge(DappEnvCompatProvider)
             .merge(Env::raw().only(&["ETHERSCAN_API_KEY"]))
             .merge(
                 Env::prefixed("FOUNDRY_")
-                    .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI"])
+                    .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
                     .map(|key| {
                         let key = key.as_str();
                         if Config::STANDALONE_SECTIONS.iter().any(|section| {
