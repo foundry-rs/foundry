@@ -245,13 +245,12 @@ contract DeployScript is Script {
         let run_log =
             std::fs::read_to_string("broadcast/DeployScript.sol/1/run-latest.json").unwrap();
         let run_object: Value = serde_json::from_str(&run_log).unwrap();
-        let contract_address = SimpleCast::checksum_address(
+        let contract_address = SimpleCast::to_checksum_address(
             &ethers::prelude::H160::from_str(
                 run_object["receipts"][0]["contractAddress"].as_str().unwrap(),
             )
             .unwrap(),
-        )
-        .unwrap();
+        );
 
         let run_code = r#"
 // SPDX-License-Identifier: UNLICENSED
