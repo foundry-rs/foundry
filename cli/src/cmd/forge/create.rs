@@ -227,14 +227,14 @@ impl CreateArgs {
         let address = deployed_contract.address();
         if self.json {
             let output = json!({
-                "deployer": SimpleCast::checksum_address(&deployer_address)?,
-                "deployedTo": SimpleCast::checksum_address(&address)?,
+                "deployer": SimpleCast::to_checksum_address(&deployer_address),
+                "deployedTo": SimpleCast::to_checksum_address(&address),
                 "transactionHash": receipt.transaction_hash
             });
             println!("{output}");
         } else {
-            println!("Deployer: {}", SimpleCast::checksum_address(&deployer_address)?);
-            println!("Deployed to: {}", SimpleCast::checksum_address(&address)?);
+            println!("Deployer: {}", SimpleCast::to_checksum_address(&deployer_address));
+            println!("Deployed to: {}", SimpleCast::to_checksum_address(&address));
             println!("Transaction hash: {:?}", receipt.transaction_hash);
         };
 
