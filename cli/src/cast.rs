@@ -63,10 +63,6 @@ async fn main() -> eyre::Result<()> {
             let val = unwrap_or_stdin(text)?;
             println!("{}", SimpleCast::from_utf8(&val));
         }
-        Subcommands::ToHex { decimal } => {
-            let val = unwrap_or_stdin(decimal)?;
-            println!("{}", SimpleCast::hex(U256::from_dec_str(&val)?));
-        }
         Subcommands::ConcatHex { data } => {
             println!("{}", SimpleCast::concat_hex(data))
         }
@@ -114,10 +110,6 @@ async fn main() -> eyre::Result<()> {
         Subcommands::ToBytes32 { bytes } => {
             let val = unwrap_or_stdin(bytes)?;
             println!("{}", SimpleCast::bytes32(&val)?);
-        }
-        Subcommands::ToDec { hexvalue } => {
-            let val = unwrap_or_stdin(hexvalue)?;
-            println!("{}", SimpleCast::to_dec(&val)?);
         }
         Subcommands::ToFix { decimals, value } => {
             let val = unwrap_or_stdin(value)?;

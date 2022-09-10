@@ -793,22 +793,6 @@ impl SimpleCast {
         Ok(parse_units(value, decimals).unwrap())
     }
 
-    /// Converts hex input to decimal
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    /// use ethers_core::types::U256;
-    ///
-    /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(U256::from_dec_str("424242")?, Cast::to_dec("0x67932")?);
-    ///     assert_eq!(U256::from_dec_str("1234")?, Cast::to_dec("0x4d2")?);
-    ///
-    ///     Ok(())
-    /// }
-    pub fn to_dec(hex: &str) -> Result<U256> {
-        Ok(U256::from_str(hex)?)
-    }
-
     /// Returns maximum I256 value
     ///
     /// ```
@@ -956,24 +940,6 @@ impl SimpleCast {
         let calldata = encode_args(&func, args)?.to_hex::<String>();
         let encoded = &calldata[8..];
         Ok(format!("0x{encoded}"))
-    }
-
-    /// Converts decimal input to hex
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    /// use ethers_core::types::U256;
-    ///
-    /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Cast::hex(U256::from_dec_str("424242")?), "0x67932");
-    ///     assert_eq!(Cast::hex(U256::from_dec_str("1234")?), "0x4d2");
-    ///     assert_eq!(Cast::hex(U256::from_dec_str("115792089237316195423570985008687907853269984665640564039457584007913129639935")?), "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    pub fn hex(u: U256) -> String {
-        format!("{:#x}", u)
     }
 
     /// Concatencates hex strings
