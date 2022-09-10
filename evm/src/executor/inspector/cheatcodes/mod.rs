@@ -273,8 +273,10 @@ where
         if let Some(storage_recorded_logs) = &mut self.recorded_logs {
             storage_recorded_logs
                 .entries
-                .push(RawLog { topics: topics.to_vec(), data: data.to_vec() });
-        }
+                .push(Log { 
+                    emitter: address, 
+                    inner: RawLog { topics: topics.to_vec(), data: data.to_vec() }});
+        };
     }
 
     fn call(

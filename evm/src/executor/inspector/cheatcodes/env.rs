@@ -148,7 +148,12 @@ fn accesses(state: &mut Cheatcodes, address: Address) -> Bytes {
 
 #[derive(Clone, Debug, Default)]
 pub struct RecordedLogs {
-    pub entries: Vec<RawLog>,
+    pub entries: Vec<Log>,
+}
+
+pub struct Log {
+    pub emitter: Address,
+    pub inner: RawLog,
 }
 
 fn start_record_logs(state: &mut Cheatcodes) {
@@ -163,8 +168,8 @@ fn get_recorded_logs(state: &mut Cheatcodes) -> Bytes {
                 .iter()
                 .map(|entry| {
                     Token::Tuple(vec![
-                        entry.topics.clone().into_token(),
-                        Token::Bytes(entry.data.clone()),
+                        entry.inner.topics.clone().into_token(),
+                        Token::Bytes(entry.inner.data.clone()),
                     ])
                 })
                 .collect::<Vec<Token>>()
