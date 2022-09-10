@@ -180,6 +180,9 @@ async fn main() -> eyre::Result<()> {
             let val = unwrap_or_stdin(value)?;
             println!("{}", SimpleCast::to_rlp(&val)?);
         }
+        Subcommands::ToBase { value, base_in, base_out } => {
+            println!("{}", SimpleCast::to_base(&value, base_in, &base_out)?);
+        }
         Subcommands::FromRlp { value } => {
             let val = unwrap_or_stdin(value)?;
             println!("{}", SimpleCast::from_rlp(val)?);

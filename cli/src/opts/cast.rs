@@ -231,6 +231,17 @@ Examples:
     #[clap(name = "--from-rlp")]
     #[clap(about = "Decodes RLP encoded data. Input must be hexadecimal.")]
     FromRlp { value: Option<String> },
+    #[clap(name = "--to-base")]
+    #[clap(visible_aliases = &["--to-radix", "to-radix", "to-base", "tr", "2r"])]
+    #[clap(about = "Converts a number of one base to another")]
+    ToBase {
+        #[clap(value_name = "VALUE")]
+        value: String,
+        #[clap(value_name = "BASE", help = "The output base")]
+        base_out: String,
+        #[clap(long = "--base-in", help = "The input base")]
+        base_in: Option<String>,
+    },
     #[clap(name = "access-list")]
     #[clap(visible_aliases = &["ac", "acl"])]
     #[clap(about = "Create an access list for a transaction.")]

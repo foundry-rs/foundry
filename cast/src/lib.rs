@@ -2,6 +2,7 @@
 //!
 //! Contains core function implementation for `cast`
 use crate::rlp_converter::Item;
+use base::{Base, NumberWithBase};
 use chrono::NaiveDateTime;
 use ethers_core::{
     abi::{
@@ -29,6 +30,7 @@ use std::{
 pub use tx::TxBuilder;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
 
+pub mod base;
 mod rlp_converter;
 mod tx;
 
@@ -62,7 +64,7 @@ where
     /// Makes a read-only call to the specified address
     ///
     /// ```no_run
-    /// 
+    ///
     /// use cast::{Cast, TxBuilder};
     /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
@@ -124,7 +126,7 @@ where
     /// Generates an access list for the specified transaction
     ///
     /// ```no_run
-    /// 
+    ///
     /// use cast::{Cast, TxBuilder};
     /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
@@ -1166,6 +1168,41 @@ impl SimpleCast {
         let val = serde_json::from_str(value).unwrap_or(serde_json::Value::String(value.parse()?));
         let item = Item::value_to_item(&val)?;
         Ok(format!("0x{}", hex::encode(rlp::encode(&item))))
+    }
+
+    /// Converts a number of one base to another
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    /// use ethers_core::types::{I256, U256};
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Cast::to_base("100", Some("10".to_string()), "16")?, "0x64");
+    ///     assert_eq!(Cast::to_base("100", Some("10".to_string()), "oct")?, "0o144");
+    ///     assert_eq!(Cast::to_base("100", Some("10".to_string()), "binary")?, "0b1100100");
+    ///
+    ///     assert_eq!(Cast::to_base("0xffffffffffffffff", None, "10")?, u64::MAX.to_string());
+    ///     assert_eq!(Cast::to_base("0xffffffffffffffffffffffffffffffff", None, "dec")?, u128::MAX.to_string());
+    ///     // U256::MAX overflows as internally it is being parsed as I256
+    ///     assert_eq!(Cast::to_base("0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", None, "decimal")?, I256::MAX.to_string());
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn to_base(value: &str, base_in: Option<String>, base_out: &str) -> Result<String> {
+        let base_in = Base::unwrap_or_detect(base_in, value)?;
+        let base_out: Base = base_out.parse()?;
+        if base_in == base_out {
+            return Ok(value.to_string())
+        }
+
+        let mut n = NumberWithBase::parse_int(value, Some(base_in.to_string()))?;
+        n.set_base(base_out);
+
+        // Use Debug fmt
+        Ok(format!("{:#?}", n))
     }
 
     /// Decodes rlp encoded list with hex data
