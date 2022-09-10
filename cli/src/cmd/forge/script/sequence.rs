@@ -471,6 +471,7 @@ mod wrapper {
         serializer.collect_seq(vec.iter().cloned().map(WrappedType::from))
     }
 
+    // copied from https://github.com/gakonst/ethers-rs
     #[derive(Serialize, Deserialize)]
     struct WrappedLog {
         /// H160. the contract that emitted the log
@@ -552,7 +553,8 @@ mod wrapper {
         serialize_vec_with_wrapped::<S, Log, WrappedLog>(logs, serializer)
     }
 
-    /// "Receipt" of an executed transaction: details of its execution.
+    // "Receipt" of an executed transaction: details of its execution.
+    // copied from https://github.com/gakonst/ethers-rs
     #[derive(Default, Clone, Serialize, Deserialize)]
     pub struct WrappedTransactionReceipt {
         /// Transaction hash.
