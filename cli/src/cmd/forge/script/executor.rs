@@ -1,8 +1,11 @@
-use super::{sequence::AdditionalContract, *};
+use super::*;
 use crate::{
     cmd::{
         ensure_clean_constructor,
-        forge::script::{runner::SimulationStage, sequence::TransactionWithMetadata},
+        forge::script::{
+            runner::SimulationStage,
+            transaction::{AdditionalContract, TransactionWithMetadata},
+        },
         needs_setup,
     },
     utils,

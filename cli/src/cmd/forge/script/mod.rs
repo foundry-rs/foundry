@@ -56,9 +56,11 @@ mod cmd;
 mod executor;
 mod receipts;
 mod sequence;
+mod transaction;
 mod verify;
+
 use crate::cmd::retry::RetryArgs;
-pub use sequence::TransactionWithMetadata;
+pub use transaction::TransactionWithMetadata;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(ScriptArgs, opts, evm_opts);
