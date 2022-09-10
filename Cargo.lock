@@ -120,7 +120,7 @@ dependencies = [
  "memory-db",
  "parking_lot 0.12.0",
  "pretty_assertions",
- "revm_precompiles 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "revm_precompiles",
  "serde",
  "serde_json",
  "tempfile",
@@ -4468,8 +4468,9 @@ dependencies = [
 
 [[package]]
 name = "revm"
-version = "1.9.0"
-source = "git+https://github.com/bluealloy/revm#da041d513db70661904e09c55cdc471168ec3df6"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cca8a6f68427a4a11f0652c1562484dcf9a153087441ad254e8e2b6398232f3d"
 dependencies = [
  "arrayref",
  "auto_impl 1.0.1",
@@ -4478,7 +4479,7 @@ dependencies = [
  "hex",
  "num_enum",
  "primitive-types",
- "revm_precompiles 1.1.0 (git+https://github.com/bluealloy/revm)",
+ "revm_precompiles",
  "rlp",
  "serde",
  "sha3",
@@ -4486,24 +4487,9 @@ dependencies = [
 
 [[package]]
 name = "revm_precompiles"
-version = "1.1.0"
+version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af88e7e9feb30cc4ed64645f09b966e84a1f6be56551ce5f1691105def45705d"
-dependencies = [
- "bytes",
- "num",
- "primitive-types",
- "ripemd",
- "secp256k1 0.23.4",
- "sha2 0.10.5",
- "sha3",
- "substrate-bn",
-]
-
-[[package]]
-name = "revm_precompiles"
-version = "1.1.0"
-source = "git+https://github.com/bluealloy/revm#da041d513db70661904e09c55cdc471168ec3df6"
+checksum = "00e68901326fe20437526cb6d64a2898d2976383b7d222329dfce1717902da50"
 dependencies = [
  "bytes",
  "hashbrown 0.12.0",
@@ -4512,7 +4498,7 @@ dependencies = [
  "once_cell",
  "primitive-types",
  "ripemd",
- "secp256k1 0.24.0",
+ "secp256k1",
  "sha2 0.10.5",
  "sha3",
  "substrate-bn",
@@ -4755,15 +4741,6 @@ dependencies = [
 
 [[package]]
 name = "secp256k1"
-version = "0.23.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ece73253dd9e1fb540ff324eae554113a31c25fb598d22fd13b088a6a03f90d"
-dependencies = [
- "secp256k1-sys",
-]
-
-[[package]]
-name = "secp256k1"
 version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b7649a0b3ffb32636e60c7ce0d70511eda9c52c658cd0634e194d5a19943aeff"
@@ -5000,9 +4977,9 @@ dependencies = [
 
 [[package]]
 name = "sha3"
-version = "0.10.1"
+version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "881bf8156c87b6301fc5ca6b27f11eeb2761224c7081e69b409d5a1951a70c86"
+checksum = "eaedf34ed289ea47c2b741bb72e5357a209512d67bcd4bda44359e5bf0470f56"
 dependencies = [
  "digest 0.10.3",
  "keccak",
