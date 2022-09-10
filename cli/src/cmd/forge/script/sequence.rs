@@ -3,6 +3,7 @@ use crate::cmd::forge::{init::get_commit_hash, script::verify::VerifyBundle};
 use cast::{executor::inspector::DEFAULT_CREATE2_DEPLOYER, CallKind};
 use ethers::{
     abi::{Abi, Address},
+    core::utils::to_checksum,
     prelude::{artifacts::Libraries, ArtifactId, NameOrAddress, TransactionReceipt, TxHash},
     types::transaction::eip2718::TypedTransaction,
 };
@@ -28,6 +29,7 @@ const DRY_RUN_DIR: &str = "dry-run";
 #[derive(Deserialize, Serialize, Clone)]
 pub struct ScriptSequence {
     pub transactions: VecDeque<TransactionWithMetadata>,
+    #[serde(serialize_with = "wrapper::serialize_receipts")]
     pub receipts: Vec<TransactionReceipt>,
     pub libraries: Vec<String>,
     pub pending: Vec<TxHash>,
@@ -254,12 +256,13 @@ impl Drop for ScriptSequence {
 pub struct AdditionalContract {
     #[serde(rename = "transactionType")]
     pub opcode: CallKind,
+    #[serde(serialize_with = "wrapper::serialize_addr")]
     pub address: Address,
     #[serde(with = "hex")]
     pub init_code: Vec<u8>,
 }
 
-#[derive(Deserialize, Serialize, Clone, Default)]
+#[derive(Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct TransactionWithMetadata {
     pub hash: Option<TxHash>,
@@ -267,7 +270,7 @@ pub struct TransactionWithMetadata {
     pub opcode: CallKind,
     #[serde(default = "default_string")]
     pub contract_name: Option<String>,
-    #[serde(default = "default_address")]
+    #[serde(default = "default_address", serialize_with = "wrapper::serialize_opt_addr")]
     pub contract_address: Option<Address>,
     #[serde(default = "default_string")]
     pub function: Option<String>,
@@ -439,6 +442,207 @@ fn sig_to_file_name(sig: &str) -> String {
 
     // return sig as is
     sig.to_string()
+}
+
+// wrapper for modifying ethers-rs type serialization
+mod wrapper {
+    use super::*;
+    use ethers::types::{Bloom, Bytes, Log, H256, U256, U64};
+
+    pub fn serialize_addr<S>(addr: &Address, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&to_checksum(addr, None))
+    }
+
+    pub fn serialize_opt_addr<S>(opt: &Option<Address>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match opt {
+            Some(addr) => serialize_addr(addr, serializer),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn serialize_vec_with_wrapped<S, T, WrappedType>(
+        vec: &[T],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+        T: Clone,
+        WrappedType: serde::Serialize + From<T>,
+    {
+        serializer.collect_seq(vec.iter().cloned().map(WrappedType::from))
+    }
+
+    // copied from https://github.com/gakonst/ethers-rs
+    #[derive(Serialize, Deserialize)]
+    struct WrappedLog {
+        /// H160. the contract that emitted the log
+        #[serde(serialize_with = "serialize_addr")]
+        pub address: Address,
+
+        /// topics: Array of 0 to 4 32 Bytes of indexed log arguments.
+        /// (In solidity: The first topic is the hash of the signature of the event
+        /// (e.g. `Deposit(address,bytes32,uint256)`), except you declared the event
+        /// with the anonymous specifier.)
+        pub topics: Vec<H256>,
+
+        /// Data
+        pub data: Bytes,
+
+        /// Block Hash
+        #[serde(rename = "blockHash")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub block_hash: Option<H256>,
+
+        /// Block Number
+        #[serde(rename = "blockNumber")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub block_number: Option<U64>,
+
+        /// Transaction Hash
+        #[serde(rename = "transactionHash")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub transaction_hash: Option<H256>,
+
+        /// Transaction Index
+        #[serde(rename = "transactionIndex")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub transaction_index: Option<U64>,
+
+        /// Integer of the log index position in the block. None if it's a pending log.
+        #[serde(rename = "logIndex")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub log_index: Option<U256>,
+
+        /// Integer of the transactions index position log was created from.
+        /// None when it's a pending log.
+        #[serde(rename = "transactionLogIndex")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub transaction_log_index: Option<U256>,
+
+        /// Log Type
+        #[serde(rename = "logType")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub log_type: Option<String>,
+
+        /// True when the log was removed, due to a chain reorganization.
+        /// false if it's a valid log.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub removed: Option<bool>,
+    }
+    impl From<Log> for WrappedLog {
+        fn from(log: Log) -> Self {
+            Self {
+                address: log.address,
+                topics: log.topics,
+                data: log.data,
+                block_hash: log.block_hash,
+                block_number: log.block_number,
+                transaction_hash: log.transaction_hash,
+                transaction_index: log.transaction_index,
+                log_index: log.log_index,
+                transaction_log_index: log.transaction_log_index,
+                log_type: log.log_type,
+                removed: log.removed,
+            }
+        }
+    }
+
+    fn serialize_logs<S: serde::Serializer>(
+        logs: &[Log],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serialize_vec_with_wrapped::<S, Log, WrappedLog>(logs, serializer)
+    }
+
+    // "Receipt" of an executed transaction: details of its execution.
+    // copied from https://github.com/gakonst/ethers-rs
+    #[derive(Default, Clone, Serialize, Deserialize)]
+    pub struct WrappedTransactionReceipt {
+        /// Transaction hash.
+        #[serde(rename = "transactionHash")]
+        pub transaction_hash: H256,
+        /// Index within the block.
+        #[serde(rename = "transactionIndex")]
+        pub transaction_index: U64,
+        /// Hash of the block this transaction was included within.
+        #[serde(rename = "blockHash")]
+        pub block_hash: Option<H256>,
+        /// Number of the block this transaction was included within.
+        #[serde(rename = "blockNumber")]
+        pub block_number: Option<U64>,
+        /// address of the sender.
+        #[serde(serialize_with = "serialize_addr")]
+        pub from: Address,
+        // address of the receiver. null when its a contract creation transaction.
+        #[serde(serialize_with = "serialize_opt_addr")]
+        pub to: Option<Address>,
+        /// Cumulative gas used within the block after this was executed.
+        #[serde(rename = "cumulativeGasUsed")]
+        pub cumulative_gas_used: U256,
+        /// Gas used by this transaction alone.
+        ///
+        /// Gas used is `None` if the the client is running in light client mode.
+        #[serde(rename = "gasUsed")]
+        pub gas_used: Option<U256>,
+        /// Contract address created, or `None` if not a deployment.
+        #[serde(rename = "contractAddress", serialize_with = "serialize_opt_addr")]
+        pub contract_address: Option<Address>,
+        /// Logs generated within this transaction.
+        #[serde(serialize_with = "serialize_logs")]
+        pub logs: Vec<Log>,
+        /// Status: either 1 (success) or 0 (failure). Only present after activation of [EIP-658](https://eips.ethereum.org/EIPS/eip-658)
+        pub status: Option<U64>,
+        /// State root. Only present before activation of [EIP-658](https://eips.ethereum.org/EIPS/eip-658)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub root: Option<H256>,
+        /// Logs bloom
+        #[serde(rename = "logsBloom")]
+        pub logs_bloom: Bloom,
+        /// Transaction type, Some(1) for AccessList transaction, None for Legacy
+        #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
+        pub transaction_type: Option<U64>,
+        /// The price paid post-execution by the transaction (i.e. base fee + priority fee).
+        /// Both fields in 1559-style transactions are *maximums* (max fee + max priority fee), the
+        /// amount that's actually paid by users can only be determined post-execution
+        #[serde(rename = "effectiveGasPrice", default, skip_serializing_if = "Option::is_none")]
+        pub effective_gas_price: Option<U256>,
+    }
+    impl From<TransactionReceipt> for WrappedTransactionReceipt {
+        fn from(receipt: TransactionReceipt) -> Self {
+            Self {
+                transaction_hash: receipt.transaction_hash,
+                transaction_index: receipt.transaction_index,
+                block_hash: receipt.block_hash,
+                block_number: receipt.block_number,
+                from: receipt.from,
+                to: receipt.to,
+                cumulative_gas_used: receipt.cumulative_gas_used,
+                gas_used: receipt.gas_used,
+                contract_address: receipt.contract_address,
+                logs: receipt.logs,
+                status: receipt.status,
+                root: receipt.root,
+                logs_bloom: receipt.logs_bloom,
+                transaction_type: receipt.transaction_type,
+                effective_gas_price: receipt.effective_gas_price,
+            }
+        }
+    }
+
+    pub fn serialize_receipts<S: serde::Serializer>(
+        receipts: &[TransactionReceipt],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serialize_vec_with_wrapped::<S, TransactionReceipt, wrapper::WrappedTransactionReceipt>(
+            receipts, serializer,
+        )
+    }
 }
 
 #[cfg(test)]
