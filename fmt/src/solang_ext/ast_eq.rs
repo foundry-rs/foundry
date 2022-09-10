@@ -24,6 +24,12 @@ fn to_num_reversed(string: &str) -> U256 {
     dbg!(dbg!(string).trim().parse().unwrap())
 }
 
+/// Helper to filter [ParameterList] to omit empty
+/// parameters
+fn filter_params(list: &ParameterList) -> ParameterList {
+    list.to_vec().into_iter().filter(|(_, param)| param.is_some()).collect::<Vec<_>>()
+}
+
 /// Check if two ParseTrees are equal ignoring location information or ordering if ordering does
 /// not matter
 pub trait AstEq {
@@ -63,15 +69,22 @@ impl AstEq for VariableDefinition {
 
 impl AstEq for FunctionDefinition {
     fn ast_eq(&self, other: &Self) -> bool {
+        // attributes
         let sort_attrs =
             |def: &Self| def.attributes.clone().into_iter().attr_sorted().collect::<Vec<_>>();
         let left_sorted_attrs = sort_attrs(self);
         let right_sorted_attrs = sort_attrs(other);
+
+        let left_params = filter_params(&self.params);
+        let right_params = filter_params(&other.params);
+        let left_returns = filter_params(&self.returns);
+        let right_returns = filter_params(&other.returns);
+
         self.ty.ast_eq(&other.ty) &&
             self.name.ast_eq(&other.name) &&
-            self.params.ast_eq(&other.params) &&
+            left_params.ast_eq(&right_params) &&
             self.return_not_returns.ast_eq(&other.return_not_returns) &&
-            self.returns.ast_eq(&other.returns) &&
+            left_returns.ast_eq(&right_returns) &&
             self.body.ast_eq(&other.body) &&
             left_sorted_attrs.ast_eq(&right_sorted_attrs)
     }
@@ -270,13 +283,21 @@ impl AstEq for Statement {
                     false
                 }
             }
+            Statement::Try(loc, expr, returns, catch) => {
+                let left_returns =
+                    returns.as_ref().map(|(params, stmt)| (filter_params(params), stmt));
+                let left = (loc, expr, left_returns, catch);
+                if let Statement::Try(loc, expr, returns, catch) = other {
+                    let right_returns =
+                        returns.as_ref().map(|(params, stmt)| (filter_params(params), stmt));
+                    let right = (loc, expr, right_returns, catch);
+                    left.ast_eq(&right)
+                } else {
+                    false
+                }
+            }
             _ => gen_ast_eq_enum!(self, other, Statement {
                 _
-                // provide overridden variants regardless
-                If(loc, expr, stmt1, stmt2),
-                While(loc, expr, stmt1),
-                DoWhile(loc, stmt1, expr),
-                For(loc, stmt1, expr, stmt2, stmt3),
                 Args(loc, args),
                 Expression(loc, expr),
                 VariableDefinition(loc, decl, expr),
@@ -286,6 +307,11 @@ impl AstEq for Statement {
                 Revert(loc, expr, expr2),
                 RevertNamedArgs(loc, expr, args),
                 Emit(loc, expr),
+                // provide overridden variants regardless
+                If(loc, expr, stmt1, stmt2),
+                While(loc, expr, stmt1),
+                DoWhile(loc, stmt1, expr),
+                For(loc, stmt1, expr, stmt2, stmt3),
                 Try(loc, expr, params, claus),
                 _
                 Block {

@@ -1930,9 +1930,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     |fmt, multiline| {
                         let params = fmt.items_to_chunks(
                             params_next_offset,
-                            func.params
-                                .iter_mut()
-                                .map(|(loc, param)| Ok((*loc, param.as_mut().unwrap()))),
+                            func.params.iter_mut().filter_map(|(loc, param)| {
+                                param.as_mut().map(|param| Ok((*loc, param)))
+                            }),
                         )?;
                         let after_params =
                             if !func.attributes.is_empty() || !func.returns.is_empty() {
@@ -1992,9 +1992,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     } else {
                         let returns = fmt.items_to_chunks(
                             returns_end,
-                            func.returns
-                                .iter_mut()
-                                .map(|(loc, param)| Ok((*loc, param.as_mut().unwrap()))),
+                            func.returns.iter_mut().filter_map(|(loc, param)| {
+                                param.as_mut().map(|param| Ok((*loc, param)))
+                            }),
                         )?;
                         fmt.write_postfix_comments_before(returns_loc.start())?;
                         fmt.write_whitespace_separator(multiline)?;
@@ -2772,6 +2772,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             write_chunk!(fmt, loc.start(), expr.loc().start(), "try")?;
             expr.visit(fmt)?;
             if let Some((params, stmt)) = returns {
+                let mut params =
+                    params.iter_mut().filter(|(_, param)| param.is_some()).collect::<Vec<_>>();
                 let byte_offset = params.first().map_or(stmt.loc().start(), |p| p.0.start());
                 fmt.surrounded(
                     SurroundingChunk::new("returns (", Some(byte_offset), None),
@@ -3302,4 +3304,5 @@ mod tests {
     test_directory! { InlineDisable }
     test_directory! { NumberLiteralUnderscore }
     test_directory! { FunctionCall }
+    test_directory! { TrailingComma }
 }
