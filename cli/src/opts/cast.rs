@@ -53,13 +53,6 @@ pub enum Subcommands {
         #[clap(value_name = "TEXT")]
         text: Option<String>,
     },
-    #[clap(name = "--to-hex")]
-    #[clap(visible_aliases = &["to-hex", "th", "2h"])]
-    #[clap(about = "Convert an integer to hex.")]
-    ToHex {
-        #[clap(value_name = "DECIMAL")]
-        decimal: Option<String>,
-    },
     #[clap(name = "--concat-hex")]
     #[clap(visible_aliases = &["concat-hex", "ch"])]
     #[clap(about = "Concatenate hex strings.")]
@@ -117,13 +110,6 @@ The input can be:
     ToBytes32 {
         #[clap(value_name = "BYTES")]
         bytes: Option<String>,
-    },
-    #[clap(name = "--to-dec")]
-    #[clap(visible_aliases = &["to-dec", "td", "2d"])]
-    #[clap(about = "Convert hex value into a decimal number.")]
-    ToDec {
-        #[clap(value_name = "HEXVALUE")]
-        hexvalue: Option<String>,
     },
     #[clap(name = "--to-fix")]
     #[clap(visible_aliases = &["to-fix", "tf", "2f"])]
@@ -232,6 +218,17 @@ Examples:
     #[clap(name = "--from-rlp")]
     #[clap(about = "Decodes RLP encoded data. Input must be hexadecimal.")]
     FromRlp { value: Option<String> },
+    #[clap(name = "--to-base")]
+    #[clap(visible_aliases = &["--to-radix", "to-radix", "to-base", "tr", "2r", "--to-hex", "to-hex", "th", "2h", "--to-dec", "to-dec", "td", "2d"])]
+    #[clap(about = "Converts a number of one base to another")]
+    ToBase {
+        #[clap(value_name = "VALUE")]
+        value: String,
+        #[clap(value_name = "BASE", help = "The output base")]
+        base_out: String,
+        #[clap(long = "--base-in", help = "The input base")]
+        base_in: Option<String>,
+    },
     #[clap(name = "access-list")]
     #[clap(visible_aliases = &["ac", "acl"])]
     #[clap(about = "Create an access list for a transaction.")]
