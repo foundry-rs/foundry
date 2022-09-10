@@ -10,7 +10,7 @@ use crate::{
 use clap::{Parser, Subcommand, ValueHint};
 use ethers::{
     abi::ethabi::ethereum_types::BigEndianHash,
-    types::{serde_helpers::Numeric, Address, BlockId, NameOrAddress, H256, U256},
+    types::{serde_helpers::Numeric, Address, BlockId, BlockNumber, NameOrAddress, H256, U256},
 };
 use std::{path::PathBuf, str::FromStr};
 
@@ -757,8 +757,11 @@ pub fn parse_name_or_address(s: &str) -> eyre::Result<NameOrAddress> {
 
 pub fn parse_block_id(s: &str) -> eyre::Result<BlockId> {
     Ok(match s {
+        "earliest" => BlockId::Number(BlockNumber::Earliest),
+        "latest" => BlockId::Number(BlockNumber::Latest),
+        "pending" => BlockId::Number(BlockNumber::Pending),
         s if s.starts_with("0x") => BlockId::Hash(s.parse()?),
-        s => BlockId::Number(s.parse().map_err(|e: String| eyre::eyre!(e))?),
+        s => BlockId::Number(BlockNumber::Number(s.parse::<u64>()?.into())),
     })
 }
 
