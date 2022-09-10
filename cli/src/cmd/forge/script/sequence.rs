@@ -446,7 +446,7 @@ mod wrapper {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&to_checksum(&addr, None))
+        serializer.serialize_str(&to_checksum(addr, None))
     }
 
     pub fn serialize_opt_addr<S>(opt: &Option<Address>, serializer: S) -> Result<S::Ok, S::Error>
@@ -460,7 +460,7 @@ mod wrapper {
     }
 
     pub fn serialize_vec_with_wrapped<S, T, WrappedType>(
-        vec: &Vec<T>,
+        vec: &[T],
         serializer: S,
     ) -> Result<S::Ok, S::Error>
     where
@@ -547,7 +547,7 @@ mod wrapper {
     }
 
     fn serialize_logs<S: serde::Serializer>(
-        logs: &Vec<Log>,
+        logs: &[Log],
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
         serialize_vec_with_wrapped::<S, Log, WrappedLog>(logs, serializer)
@@ -629,7 +629,7 @@ mod wrapper {
     }
 
     pub fn serialize_receipts<S: serde::Serializer>(
-        receipts: &Vec<TransactionReceipt>,
+        receipts: &[TransactionReceipt],
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
         serialize_vec_with_wrapped::<S, TransactionReceipt, wrapper::WrappedTransactionReceipt>(
