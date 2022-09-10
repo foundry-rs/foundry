@@ -71,8 +71,22 @@ impl ScriptArgs {
 
             verify.set_chain(&script_config.config, chain.into());
 
-            let mut deployment_sequence =
-                ScriptSequence::load(&script_config.config, &self.sig, &target, chain)?;
+            let broadcasted = self.broadcast || self.resume;
+            let mut deployment_sequence = match ScriptSequence::load(
+                &script_config.config,
+                &self.sig,
+                &target,
+                chain,
+                broadcasted,
+            ) {
+                Ok(seq) => seq,
+                // If the script was simulated, but there was no attempt to broadcast yet,
+                // try to read the script sequence from the `dry-run/` folder
+                Err(_) if broadcasted => {
+                    ScriptSequence::load(&script_config.config, &self.sig, &target, chain, false)?
+                }
+                Err(err) => eyre::bail!(err),
+            };
 
             receipts::wait_for_pending(provider, &mut deployment_sequence).await?;
 

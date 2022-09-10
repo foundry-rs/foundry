@@ -21,6 +21,8 @@ use std::{
 use tracing::trace;
 use yansi::Paint;
 
+const DRY_RUN_DIR: &str = "dry-run";
+
 /// Helper that saves the transactions sequence and its state on which transactions have been
 /// broadcasted
 #[derive(Deserialize, Serialize, Clone)]
@@ -43,8 +45,9 @@ impl ScriptSequence {
         target: &ArtifactId,
         config: &Config,
         chain_id: u64,
+        broadcasted: bool,
     ) -> eyre::Result<Self> {
-        let path = ScriptSequence::get_path(&config.broadcast, sig, target, chain_id)?;
+        let path = ScriptSequence::get_path(&config.broadcast, sig, target, chain_id, broadcasted)?;
         let commit = get_commit_hash(&config.__root.0);
 
         Ok(ScriptSequence {
@@ -68,8 +71,9 @@ impl ScriptSequence {
         sig: &str,
         target: &ArtifactId,
         chain_id: u64,
+        broadcasted: bool,
     ) -> eyre::Result<Self> {
-        let path = ScriptSequence::get_path(&config.broadcast, sig, target, chain_id)?;
+        let path = ScriptSequence::get_path(&config.broadcast, sig, target, chain_id, broadcasted)?;
         Ok(ethers::solc::utils::read_json_file(path)?)
     }
 
@@ -127,17 +131,20 @@ impl ScriptSequence {
     }
 
     /// Saves to ./broadcast/contract_filename/sig[-timestamp].json
-
     pub fn get_path(
         out: &Path,
         sig: &str,
         target: &ArtifactId,
         chain_id: u64,
+        broadcasted: bool,
     ) -> eyre::Result<PathBuf> {
         let mut out = out.to_path_buf();
         let target_fname = target.source.file_name().wrap_err("No filename.")?;
         out.push(target_fname);
         out.push(chain_id.to_string());
+        if !broadcasted {
+            out.push(DRY_RUN_DIR);
+        }
 
         fs::create_dir_all(&out)?;
 
