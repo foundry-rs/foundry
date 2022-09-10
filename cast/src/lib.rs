@@ -64,7 +64,7 @@ where
     /// Makes a read-only call to the specified address
     ///
     /// ```no_run
-    ///
+    /// 
     /// use cast::{Cast, TxBuilder};
     /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
@@ -126,7 +126,7 @@ where
     /// Generates an access list for the specified transaction
     ///
     /// ```no_run
-    ///
+    /// 
     /// use cast::{Cast, TxBuilder};
     /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
