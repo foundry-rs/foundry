@@ -791,6 +791,7 @@ impl NodeConfig {
                         retries: self.fork_request_retries,
                         backoff: self.fork_retry_backoff,
                         compute_units_per_second: self.compute_units_per_second,
+                        total_difficulty: block.total_difficulty.unwrap_or_default(),
                     },
                     Arc::clone(&db),
                 );
