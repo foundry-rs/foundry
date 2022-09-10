@@ -3966,4 +3966,29 @@ mod tests {
         chain_dir.close()?;
         Ok(())
     }
+
+    #[test]
+    fn test_parse_error_codes() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                ignored_error_codes = ["license", "unreachable", 1337]
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(
+                config.ignored_error_codes,
+                vec![
+                    SolidityErrorCode::SpdxLicenseNotProvided,
+                    SolidityErrorCode::Unreachable,
+                    SolidityErrorCode::Other(1337)
+                ]
+            );
+
+            Ok(())
+        });
+    }
 }
