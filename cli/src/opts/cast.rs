@@ -212,7 +212,7 @@ Examples:
     #[clap(visible_aliases = &["--to-radix", "to-radix", "to-base", "tr", "2r", "--to-hex", "to-hex", "th", "2h", "--to-dec", "to-dec", "td", "2d"])]
     #[clap(about = "Converts a number of one base to another")]
     ToBase {
-        #[clap(value_name = "VALUE")]
+        #[clap(allow_hyphen_values = true, value_name = "VALUE")]
         value: String,
         #[clap(value_name = "BASE", help = "The output base")]
         base_out: String,
