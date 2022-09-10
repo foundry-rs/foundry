@@ -1105,4 +1105,21 @@ mod tests {
         assert_eq!(parsed.params[2].name, "param2");
         assert_eq!(parsed.params[2].value, Token::Address(param2.into()));
     }
+
+    #[test]
+    fn test_format_token_addr() {
+        // copied from testcases in https://github.com/ethereum/EIPs/blob/master/EIPS/eip-55.md
+        let eip55 = "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed";
+        assert_eq!(
+            format_token(&Token::Address(Address::from_str(&eip55.to_lowercase()).unwrap())),
+            eip55.to_string()
+        );
+
+        // copied from testcases in https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1191.md
+        let eip1191 = "0xFb6916095cA1Df60bb79ce92cE3EA74c37c5d359";
+        assert_ne!(
+            format_token(&Token::Address(Address::from_str(&eip1191.to_lowercase()).unwrap())),
+            eip1191.to_string()
+        );
+    }
 }
