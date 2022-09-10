@@ -77,12 +77,14 @@ impl ClientFork {
         let block_hash = block.hash.ok_or(BlockchainError::BlockNotFound)?;
         let timestamp = block.timestamp.as_u64();
         let base_fee = block.base_fee_per_gas;
+        let total_difficulty = block.total_difficulty.unwrap_or_default();
 
         self.config.write().update_block(
             block.number.ok_or(BlockchainError::BlockNotFound)?.as_u64(),
             block_hash,
             timestamp,
             base_fee,
+            total_difficulty,
         );
 
         self.clear_cached_storage();
@@ -534,11 +536,13 @@ impl ClientForkConfig {
         block_hash: H256,
         timestamp: u64,
         base_fee: Option<U256>,
+        total_difficulty: U256,
     ) {
         self.block_number = block_number;
         self.block_hash = block_hash;
         self.timestamp = timestamp;
         self.base_fee = base_fee;
+        self.total_difficulty = total_difficulty;
         trace!(target: "fork", "Updated block number={} hash={:?}", block_number, block_hash);
     }
 }

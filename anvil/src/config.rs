@@ -715,7 +715,7 @@ impl NodeConfig {
                 env.block = BlockEnv {
                     number: fork_block_number.into(),
                     timestamp: block.timestamp,
-                    difficulty: Default::default(),
+                    difficulty: block.difficulty,
                     gas_limit: block.gas_limit,
                     // Keep previous `coinbase` and `basefee` value
                     coinbase: env.block.coinbase,

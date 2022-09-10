@@ -307,6 +307,9 @@ impl Backend {
 
                 self.time.reset(env.block.timestamp.as_u64());
                 self.fees.set_base_fee(env.block.basefee);
+
+                // also reset the total difficulty
+                self.blockchain.storage.write().total_difficulty = fork.total_difficulty();
             }
 
             // reset storage
@@ -730,6 +733,9 @@ impl Backend {
                 };
                 storage.transactions.insert(mined_tx.info.transaction_hash, mined_tx);
             }
+
+            // we intentionally set the difficulty to `0` for newer blocks
+            env.block.difficulty = U256::zero();
 
             // update env with new values
             *self.env.write() = env;

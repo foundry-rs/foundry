@@ -768,11 +768,22 @@ async fn can_impersonate_in_fork() {
 // <https://etherscan.io/block/14608400>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_total_difficulty_fork() {
-    let (_api, handle) = spawn(fork_config()).await;
+    let (api, handle) = spawn(fork_config()).await;
 
     let total_difficulty: U256 = 46_673_965_560_973_856_260_636u128.into();
+    let difficulty: U256 = 13_680_435_288_526_144u128.into();
 
     let provider = handle.http_provider();
     let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
-    assert_eq!(block.total_difficulty, Some(total_difficulty))
+    assert_eq!(block.total_difficulty, Some(total_difficulty));
+    assert_eq!(block.difficulty, difficulty);
+
+    api.mine_one().await;
+    api.mine_one().await;
+
+    let next_total_difficulty = total_difficulty + difficulty;
+
+    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+    assert_eq!(block.total_difficulty, Some(next_total_difficulty));
+    assert_eq!(block.difficulty, U256::zero());
 }
