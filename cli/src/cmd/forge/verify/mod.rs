@@ -194,7 +194,7 @@ impl VerifyCheckArgs {
     }
 }
 
-#[derive(clap::ArgEnum, Debug, Clone, PartialEq)]
+#[derive(clap::ArgEnum, Debug, Clone, PartialEq, Eq)]
 pub enum VerificationProviderType {
     Etherscan,
     Sourcify,

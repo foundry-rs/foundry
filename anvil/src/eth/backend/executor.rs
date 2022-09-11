@@ -48,8 +48,7 @@ impl ExecutedTransaction {
         let logs = self.logs.clone();
 
         // successful return see [Return]
-        let status_code: u8 =
-            if self.exit_reason as u8 <= Return::SelfDestruct as u8 { 1 } else { 0 };
+        let status_code = u8::from(self.exit_reason as u8 <= Return::SelfDestruct as u8);
         match &self.transaction.pending_transaction.transaction {
             TypedTransaction::Legacy(_) => TypedReceipt::Legacy(EIP658Receipt {
                 status_code,

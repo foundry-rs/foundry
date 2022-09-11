@@ -27,7 +27,7 @@ fn to_num_reversed(string: &str) -> U256 {
 /// Helper to filter [ParameterList] to omit empty
 /// parameters
 fn filter_params(list: &ParameterList) -> ParameterList {
-    list.to_vec().into_iter().filter(|(_, param)| param.is_some()).collect::<Vec<_>>()
+    list.iter().cloned().filter(|(_, param)| param.is_some()).collect::<Vec<_>>()
 }
 
 /// Check if two ParseTrees are equal ignoring location information or ordering if ordering does
@@ -228,6 +228,7 @@ impl AstEq for Statement {
     fn ast_eq(&self, other: &Self) -> bool {
         match self {
             Statement::If(loc, expr, stmt1, stmt2) => {
+                #[allow(clippy::borrowed_box)]
                 let wrap_if = |stmt1: &Box<Statement>, stmt2: &Option<Box<Statement>>| {
                     (
                         wrap_in_box!(stmt1, *loc),

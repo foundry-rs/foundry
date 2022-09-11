@@ -317,7 +317,7 @@ impl<'a> InvariantExecutor<'a> {
         for (contract, selectors) in targeted_abi {
             let identifier = self.validate_selected_contract(contract, &selectors)?;
 
-            self.artifact_filters.targeted.entry(identifier).or_insert(vec![]).extend(selectors);
+            self.artifact_filters.targeted.entry(identifier).or_default().extend(selectors);
         }
 
         // targetArtifacts -> string[]
