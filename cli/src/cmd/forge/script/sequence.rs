@@ -1,5 +1,7 @@
 use super::{NestedValue, ScriptResult};
-use crate::cmd::forge::{init::get_commit_hash, script::verify::VerifyBundle};
+use crate::cmd::forge::{
+    init::get_commit_hash, script::verify::VerifyBundle, verify::VerificationProviderType,
+};
 use cast::{executor::inspector::DEFAULT_CREATE2_DEPLOYER, CallKind};
 use ethers::{
     abi::{Abi, Address},
@@ -161,7 +163,9 @@ impl ScriptSequence {
     /// created contract on etherscan.
     pub async fn verify_contracts(&mut self, verify: VerifyBundle, chain: u64) -> eyre::Result<()> {
         trace!(?chain, "verifying {} contracts", verify.known_contracts.len());
-        if verify.etherscan_key.is_some() {
+        if verify.etherscan_key.is_some() ||
+            verify.verifier.verifier != VerificationProviderType::Etherscan
+        {
             let mut future_verifications = vec![];
             let mut unverifiable_contracts = vec![];
 

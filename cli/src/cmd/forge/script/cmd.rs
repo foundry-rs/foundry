@@ -41,6 +41,7 @@ impl ScriptArgs {
             &script_config.config,
             unwrap_contracts(&build_output.highlevel_known_contracts, false),
             self.retry.clone(),
+            self.verifier.clone(),
         );
 
         let BuildOutput {
