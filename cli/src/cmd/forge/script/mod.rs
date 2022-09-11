@@ -143,10 +143,12 @@ pub struct ScriptArgs {
 
     #[clap(
         long,
-        help = "If it finds a matching broadcast log, it tries to verify every contract found in the receipts.",
-        requires = "etherscan-api-key"
+        help = "If it finds a matching broadcast log, it tries to verify every contract found in the receipts."
     )]
     pub verify: bool,
+
+    #[clap(flatten)]
+    pub verifier: super::verify::VerifierArgs,
 
     #[clap(long, help = "Output results in JSON format.")]
     pub json: bool,
