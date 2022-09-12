@@ -353,25 +353,18 @@ impl From<&CallTraceStep> for StructLog {
             error: step.error.clone(),
             gas: step.gas,
             gas_cost: step.gas_cost,
-            memory: Some(step.memory.data().clone()),
+            memory: Some(convert_memory(step.memory.data())),
             op: step.op.to_string(),
-            pc: U256::from(step.pc),
+            pc: step.pc as u64,
             refund_counter: Some(step.gas_refund_counter),
             stack: Some(step.stack.data().clone()),
             storage: Some(
                 step.state
-                    .iter()
-                    .map(|(key, value)| {
-                        (
-                            *key,
-                            value
-                                .storage
-                                .iter()
-                                .map(|(key, value)| {
-                                    (H256::from_uint(key), H256::from_uint(&value.present_value()))
-                                })
-                                .collect(),
-                        )
+                    .values()
+                    .flat_map(|acc| {
+                        acc.storage.iter().map(|(key, value)| {
+                            (H256::from_uint(key), H256::from_uint(&value.present_value()))
+                        })
                     })
                     .collect(),
             ),
@@ -546,5 +539,38 @@ pub fn load_contracts(
             .collect()
     } else {
         BTreeMap::new()
+    }
+}
+
+/// creates the memory data in 32byte chunks
+/// see <https://github.com/ethereum/go-ethereum/blob/366d2169fbc0e0f803b68c042b77b6b480836dbc/eth/tracers/logger/logger.go#L450-L452>
+fn convert_memory(data: &[u8]) -> Vec<String> {
+    let mut memory = Vec::with_capacity((data.len() + 31) / 32);
+    for idx in (0..data.len()).step_by(32) {
+        let len = std::cmp::min(idx + 32, data.len());
+        memory.push(hex::encode(&data[idx..len]));
+    }
+    memory
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_convert_memory() {
+        let mut data = vec![0u8; 32];
+        assert_eq!(
+            convert_memory(&data),
+            vec!["0000000000000000000000000000000000000000000000000000000000000000".to_string()]
+        );
+        data.extend(data.clone());
+        assert_eq!(
+            convert_memory(&data),
+            vec![
+                "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+                "0000000000000000000000000000000000000000000000000000000000000000".to_string()
+            ]
+        );
     }
 }
