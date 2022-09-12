@@ -128,6 +128,8 @@ pub struct BlockchainStorage {
     /// Mapping from the transaction hash to a tuple containing the transaction as well as the
     /// transaction receipt
     pub transactions: HashMap<TxHash, MinedTransaction>,
+    /// The total difficulty of the chain until this block
+    pub total_difficulty: U256,
 }
 
 impl BlockchainStorage {
@@ -154,10 +156,11 @@ impl BlockchainStorage {
             best_number,
             genesis_hash,
             transactions: Default::default(),
+            total_difficulty: Default::default(),
         }
     }
 
-    pub fn forked(block_number: u64, block_hash: H256) -> Self {
+    pub fn forked(block_number: u64, block_hash: H256, total_difficulty: U256) -> Self {
         BlockchainStorage {
             blocks: Default::default(),
             hashes: HashMap::from([(block_number.into(), block_hash)]),
@@ -165,6 +168,7 @@ impl BlockchainStorage {
             best_number: block_number.into(),
             genesis_hash: Default::default(),
             transactions: Default::default(),
+            total_difficulty,
         }
     }
 
@@ -177,6 +181,7 @@ impl BlockchainStorage {
             best_number: Default::default(),
             genesis_hash: Default::default(),
             transactions: Default::default(),
+            total_difficulty: Default::default(),
         }
     }
 }
@@ -210,8 +215,14 @@ impl Blockchain {
         Self { storage: Arc::new(RwLock::new(BlockchainStorage::new(env, base_fee, timestamp))) }
     }
 
-    pub fn forked(block_number: u64, block_hash: H256) -> Self {
-        Self { storage: Arc::new(RwLock::new(BlockchainStorage::forked(block_number, block_hash))) }
+    pub fn forked(block_number: u64, block_hash: H256, total_difficulty: U256) -> Self {
+        Self {
+            storage: Arc::new(RwLock::new(BlockchainStorage::forked(
+                block_number,
+                block_hash,
+                total_difficulty,
+            ))),
+        }
     }
 
     /// returns the header hash of given block

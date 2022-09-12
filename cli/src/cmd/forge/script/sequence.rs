@@ -1,17 +1,20 @@
 use super::NestedValue;
-use crate::cmd::forge::{init::get_commit_hash, script::verify::VerifyBundle};
-
+use crate::cmd::forge::{
+    init::get_commit_hash,
+    script::{
+        transaction::{wrapper, AdditionalContract, TransactionWithMetadata},
+        verify::VerifyBundle,
+    },
+    verify::VerificationProviderType,
+};
 use ethers::{
     abi::Address,
     prelude::{artifacts::Libraries, ArtifactId, TransactionReceipt, TxHash},
     types::transaction::eip2718::TypedTransaction,
 };
 use eyre::ContextCompat;
-
 use foundry_common::{fs, SELECTOR_LEN};
 use foundry_config::Config;
-
-use crate::cmd::forge::script::transaction::{AdditionalContract, TransactionWithMetadata};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, VecDeque},
@@ -22,11 +25,14 @@ use std::{
 use tracing::trace;
 use yansi::Paint;
 
+const DRY_RUN_DIR: &str = "dry-run";
+
 /// Helper that saves the transactions sequence and its state on which transactions have been
 /// broadcasted
 #[derive(Deserialize, Serialize, Clone)]
 pub struct ScriptSequence {
     pub transactions: VecDeque<TransactionWithMetadata>,
+    #[serde(serialize_with = "wrapper::serialize_receipts")]
     pub receipts: Vec<TransactionReceipt>,
     pub libraries: Vec<String>,
     pub pending: Vec<TxHash>,
@@ -44,8 +50,9 @@ impl ScriptSequence {
         target: &ArtifactId,
         config: &Config,
         chain_id: u64,
+        broadcasted: bool,
     ) -> eyre::Result<Self> {
-        let path = ScriptSequence::get_path(&config.broadcast, sig, target, chain_id)?;
+        let path = ScriptSequence::get_path(&config.broadcast, sig, target, chain_id, broadcasted)?;
         let commit = get_commit_hash(&config.__root.0);
 
         Ok(ScriptSequence {
@@ -69,8 +76,9 @@ impl ScriptSequence {
         sig: &str,
         target: &ArtifactId,
         chain_id: u64,
+        broadcasted: bool,
     ) -> eyre::Result<Self> {
-        let path = ScriptSequence::get_path(&config.broadcast, sig, target, chain_id)?;
+        let path = ScriptSequence::get_path(&config.broadcast, sig, target, chain_id, broadcasted)?;
         Ok(ethers::solc::utils::read_json_file(path)?)
     }
 
@@ -128,17 +136,20 @@ impl ScriptSequence {
     }
 
     /// Saves to ./broadcast/contract_filename/sig[-timestamp].json
-
     pub fn get_path(
         out: &Path,
         sig: &str,
         target: &ArtifactId,
         chain_id: u64,
+        broadcasted: bool,
     ) -> eyre::Result<PathBuf> {
         let mut out = out.to_path_buf();
         let target_fname = target.source.file_name().wrap_err("No filename.")?;
         out.push(target_fname);
         out.push(chain_id.to_string());
+        if !broadcasted {
+            out.push(DRY_RUN_DIR);
+        }
 
         fs::create_dir_all(&out)?;
 
@@ -153,7 +164,9 @@ impl ScriptSequence {
     /// created contract on etherscan.
     pub async fn verify_contracts(&mut self, verify: VerifyBundle, chain: u64) -> eyre::Result<()> {
         trace!(?chain, "verifying {} contracts", verify.known_contracts.len());
-        if verify.etherscan_key.is_some() {
+        if verify.etherscan_key.is_some() ||
+            verify.verifier.verifier != VerificationProviderType::Etherscan
+        {
             let mut future_verifications = vec![];
             let mut unverifiable_contracts = vec![];
 

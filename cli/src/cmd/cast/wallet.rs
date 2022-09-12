@@ -109,7 +109,7 @@ impl WalletSubcommands {
                     };
 
                     let (key, uuid) = LocalWallet::new_keystore(&path, &mut rng, password, None)?;
-                    let address = SimpleCast::checksum_address(&key.address())?;
+                    let address = SimpleCast::to_checksum_address(&key.address());
                     let filepath = path.join(uuid);
 
                     println!(
@@ -121,7 +121,7 @@ impl WalletSubcommands {
                     let wallet = LocalWallet::new(&mut rng);
                     println!(
                         "Successfully created new keypair.\nAddress: {}\nPrivate Key: {}",
-                        SimpleCast::checksum_address(&wallet.address())?,
+                        SimpleCast::to_checksum_address(&wallet.address()),
                         hex::encode(wallet.signer().to_bytes()),
                     );
                 }
@@ -171,8 +171,8 @@ impl WalletSubcommands {
                     "Successfully found vanity address in {} seconds.{}{}\nAddress: {}\nPrivate Key: 0x{}",
                     timer.elapsed().as_secs(),
                     if match_contract {"\nContract address: "} else {""},
-                    if match_contract {SimpleCast::checksum_address(&get_contract_address(wallet.address(), nonce.unwrap()))?} else {"".to_string()},
-                    SimpleCast::checksum_address(&wallet.address())?,
+                    if match_contract {SimpleCast::to_checksum_address(&get_contract_address(wallet.address(), nonce.unwrap()))} else {"".to_string()},
+                    SimpleCast::to_checksum_address(&wallet.address()),
                     hex::encode(wallet.signer().to_bytes()),
                 );
             }
@@ -194,7 +194,7 @@ impl WalletSubcommands {
                     WalletType::Local(signer) => signer.address(),
                     WalletType::Trezor(signer) => signer.address(),
                 };
-                println!("Address: {}", SimpleCast::checksum_address(&addr)?);
+                println!("Address: {}", SimpleCast::to_checksum_address(&addr));
             }
             WalletSubcommands::Sign { message, wallet } => {
                 let wallet = EthereumOpts {

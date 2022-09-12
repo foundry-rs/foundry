@@ -14,6 +14,7 @@ use crate::{
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 use ethers::{
     abi::{ethereum_types::BigEndianHash, Address, RawLog},
+    core::utils::to_checksum,
     types::{GethDebugTracingOptions, GethTrace, StructLog, H256, U256},
 };
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
@@ -450,12 +451,11 @@ impl Default for CallTrace {
 
 impl fmt::Display for CallTrace {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let address =
-            if f.alternate() { format!("{:?}", self.address) } else { format!("{}", self.address) };
+        let address = to_checksum(&self.address, None);
         if self.created() {
             write!(
                 f,
-                "[{}] {}{} {}@{:?}",
+                "[{}] {}{} {}@{}",
                 self.gas_cost,
                 Paint::yellow(CALL),
                 Paint::yellow("new"),

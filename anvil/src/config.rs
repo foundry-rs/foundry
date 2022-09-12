@@ -651,7 +651,7 @@ impl NodeConfig {
             cfg: CfgEnv {
                 spec_id: self.get_hardfork().into(),
                 chain_id: self.get_chain_id().into(),
-                limit_contract_code_size: usize::MAX,
+                limit_contract_code_size: Some(usize::MAX),
                 ..Default::default()
             },
             block: BlockEnv {
@@ -791,6 +791,7 @@ impl NodeConfig {
                         retries: self.fork_request_retries,
                         backoff: self.fork_retry_backoff,
                         compute_units_per_second: self.compute_units_per_second,
+                        total_difficulty: block.total_difficulty.unwrap_or_default(),
                     },
                     Arc::clone(&db),
                 );
