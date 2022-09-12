@@ -56,7 +56,7 @@ pub struct Tui {
     current_step: usize,
     identified_contracts: HashMap<Address, String>,
     known_contracts: HashMap<String, ContractBytecodeSome>,
-    source_code: BTreeMap<u32, String>,
+    known_contracts_sources: HashMap<String, BTreeMap<u32, String>>,
     /// A mapping of source -> (PC -> IC map for deploy code, PC -> IC map for runtime code)
     pc_ic_maps: BTreeMap<String, (PCICMap, PCICMap)>,
 }
@@ -69,7 +69,7 @@ impl Tui {
         current_step: usize,
         identified_contracts: HashMap<Address, String>,
         known_contracts: HashMap<String, ContractBytecodeSome>,
-        source_code: BTreeMap<u32, String>,
+        known_contracts_sources: HashMap<String, BTreeMap<u32, String>>,
     ) -> Result<Self> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
@@ -108,7 +108,7 @@ impl Tui {
             current_step,
             identified_contracts,
             known_contracts,
-            source_code,
+            known_contracts_sources,
             pc_ic_maps,
         })
     }
@@ -134,7 +134,7 @@ impl Tui {
         identified_contracts: &HashMap<Address, String>,
         known_contracts: &HashMap<String, ContractBytecodeSome>,
         pc_ic_maps: &BTreeMap<String, (PCICMap, PCICMap)>,
-        source_code: &BTreeMap<u32, String>,
+        known_contracts_sources: &HashMap<String, BTreeMap<u32, String>>,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
         current_step: usize,
@@ -151,7 +151,7 @@ impl Tui {
                 identified_contracts,
                 known_contracts,
                 pc_ic_maps,
-                source_code,
+                known_contracts_sources,
                 debug_steps,
                 opcode_list,
                 current_step,
@@ -167,7 +167,7 @@ impl Tui {
                 identified_contracts,
                 known_contracts,
                 pc_ic_maps,
-                source_code,
+                known_contracts_sources,
                 debug_steps,
                 opcode_list,
                 current_step,
@@ -186,7 +186,7 @@ impl Tui {
         identified_contracts: &HashMap<Address, String>,
         known_contracts: &HashMap<String, ContractBytecodeSome>,
         pc_ic_maps: &BTreeMap<String, (PCICMap, PCICMap)>,
-        source_code: &BTreeMap<u32, String>,
+        known_contracts_sources: &HashMap<String, BTreeMap<u32, String>>,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
         current_step: usize,
@@ -221,7 +221,7 @@ impl Tui {
                     identified_contracts,
                     known_contracts,
                     pc_ic_maps,
-                    source_code,
+                    known_contracts_sources,
                     debug_steps[current_step].pc,
                     call_kind,
                     src_pane,
@@ -259,7 +259,7 @@ impl Tui {
         identified_contracts: &HashMap<Address, String>,
         known_contracts: &HashMap<String, ContractBytecodeSome>,
         pc_ic_maps: &BTreeMap<String, (PCICMap, PCICMap)>,
-        source_code: &BTreeMap<u32, String>,
+        known_contracts_sources: &HashMap<String, BTreeMap<u32, String>>,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
         current_step: usize,
@@ -300,7 +300,7 @@ impl Tui {
                             identified_contracts,
                             known_contracts,
                             pc_ic_maps,
-                            source_code,
+                            known_contracts_sources,
                             debug_steps[current_step].pc,
                             call_kind,
                             src_pane,
@@ -363,7 +363,7 @@ impl Tui {
         identified_contracts: &HashMap<Address, String>,
         known_contracts: &HashMap<String, ContractBytecodeSome>,
         pc_ic_maps: &BTreeMap<String, (PCICMap, PCICMap)>,
-        source_code: &BTreeMap<u32, String>,
+        known_contracts_sources: &HashMap<String, BTreeMap<u32, String>>,
         pc: usize,
         call_kind: CallKind,
         area: Rect,
@@ -381,7 +381,9 @@ impl Tui {
         let mut text_output: Text = Text::from("");
 
         if let Some(contract_name) = identified_contracts.get(&address) {
-            if let Some(known) = known_contracts.get(contract_name) {
+            if let (Some(known), Some(source_code)) =
+                (known_contracts.get(contract_name), known_contracts_sources.get(contract_name))
+            {
                 let pc_ic_map = pc_ic_maps.get(contract_name);
                 // grab either the creation source map or runtime sourcemap
                 if let Some((sourcemap, ic)) =
@@ -1225,7 +1227,7 @@ impl Ui for Tui {
                     &self.identified_contracts,
                     &self.known_contracts,
                     &self.pc_ic_maps,
-                    &self.source_code,
+                    &self.known_contracts_sources,
                     &debug_call[draw_memory.inner_call_index].1[..],
                     &opcode_list,
                     current_step,

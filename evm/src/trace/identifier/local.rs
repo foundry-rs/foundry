@@ -29,7 +29,7 @@ impl LocalTraceIdentifier {
 
 impl TraceIdentifier for LocalTraceIdentifier {
     fn identify_addresses(
-        &self,
+        &mut self,
         addresses: Vec<(&Address, Option<&Vec<u8>>)>,
     ) -> Vec<AddressIdentity> {
         addresses
