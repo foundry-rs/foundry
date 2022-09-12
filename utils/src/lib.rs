@@ -510,7 +510,7 @@ pub fn format_token(param: &Token) -> String {
         Token::Int(num) => format!("{}", I256::from_raw(*num)),
         Token::Uint(num) => num.to_string(),
         Token::Bool(b) => format!("{b}"),
-        Token::String(s) => format!("{:?}", s),
+        Token::String(s) => s.to_string(),
         Token::FixedArray(tokens) => {
             let string = tokens.iter().map(format_token).collect::<Vec<String>>().join(", ");
             format!("[{string}]")

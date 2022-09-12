@@ -632,6 +632,11 @@ pragma solidity ^0.8.15;
 
 import "forge-std/Script.sol";
 
+struct Point {
+    uint256 x;
+    uint256 y;
+}
+
 contract A {
     address a;
     uint b;
@@ -639,7 +644,7 @@ contract A {
     bytes32 d;
     bool e;
 
-  constructor(address _a, uint _b, int _c, bytes32 _d, bool _e) {
+  constructor(address _a, uint _b, int _c, bytes32 _d, bool _e, bytes memory _f, Point memory _g, string memory _h) {
     a = _a;
     b = _b;
     c = _c;
@@ -651,7 +656,8 @@ contract A {
 contract Script0 is Script {
   function run() external {
     vm.broadcast();
-    new A(msg.sender, 2 ** 32, -1 * (2 ** 32), keccak256(abi.encode(1)), true);
+
+    new A(msg.sender, 2 ** 32, -1 * (2 ** 32), keccak256(abi.encode(1)), true, "abcdef", Point(10, 99), "hello");
   }
 }
    "#,
@@ -696,6 +702,9 @@ contract Script0 is Script {
                 "-4294967296".to_string(),
                 "0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6".to_string(),
                 "true".to_string(),
+                "0x616263646566".to_string(),
+                "(10, 99)".to_string(),
+                "hello".to_string(),
             ]
         );
     }
