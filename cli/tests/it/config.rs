@@ -60,8 +60,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         path_pattern_inverse: None,
         fuzz: FuzzConfig {
             runs: 1000,
-            max_local_rejects: 2000,
-            max_global_rejects: 100203,
+            max_test_rejects: 100203,
             seed: Some(1000.into()),
             ..Default::default()
         },

@@ -1,4 +1,4 @@
-use crate::{Config, Warning};
+use crate::{Config, Warning, DEPRECATIONS};
 use figment::{
     value::{Dict, Map, Value},
     Error, Figment, Metadata, Profile, Provider,
@@ -6,7 +6,7 @@ use figment::{
 
 pub mod remappings;
 
-/// Generate warnings for unknown sections
+/// Generate warnings for unknown sections and deprecated keys
 pub struct WarningsProvider<P> {
     provider: P,
     profile: Profile,
@@ -40,6 +40,7 @@ impl<P> WarningsProvider<P> {
 impl<P: Provider> WarningsProvider<P> {
     pub fn collect_warnings(&self) -> Result<Vec<Warning>, Error> {
         let mut out = self.old_warnings.clone()?;
+        // add warning for unknown sections
         out.extend(
             self.provider
                 .data()
@@ -52,6 +53,21 @@ impl<P: Provider> WarningsProvider<P> {
                 .map(|unknown_section| {
                     let source = self.provider.metadata().source.map(|s| s.to_string());
                     Warning::UnknownSection { unknown_section: unknown_section.clone(), source }
+                }),
+        );
+        // add warning for deprecated keys
+        out.extend(
+            self.provider
+                .data()
+                .unwrap_or_default()
+                .iter()
+                .flat_map(|(profile, dict)| {
+                    dict.keys().map(move |key| format!("{}.{}", profile, key))
+                })
+                .filter(|k| DEPRECATIONS.contains_key(k))
+                .map(|deprecated_key| Warning::DeprecatedKey {
+                    old: deprecated_key.clone(),
+                    new: DEPRECATIONS.get(&deprecated_key).unwrap().to_string(),
                 }),
         );
         Ok(out)

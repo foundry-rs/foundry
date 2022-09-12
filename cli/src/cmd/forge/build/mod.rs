@@ -31,26 +31,29 @@ pub use self::core::CoreBuildArgs;
 mod paths;
 pub use self::paths::ProjectPathsArgs;
 
-// All `forge build` related arguments
-//
-// CLI arguments take the highest precedence in the Config/Figment hierarchy.
-// In order to override them in the foundry `Config` they need to be merged into an existing
-// `figment::Provider`, like `foundry_config::Config` is.
-//
-// # Example
-//
-// ```ignore
-// use foundry_config::Config;
-// # fn t(args: BuildArgs) {
-// let config = Config::from(&args);
-// # }
-// ```
-//
-// `BuildArgs` implements `figment::Provider` in which all config related fields are serialized and
-// then merged into an existing `Config`, effectively overwriting them.
-//
-// Some arguments are marked as `#[serde(skip)]` and require manual processing in
-// `figment::Provider` implementation
+foundry_config::merge_impl_figment_convert!(BuildArgs, args);
+
+/// All `forge build` related arguments
+///
+/// CLI arguments take the highest precedence in the Config/Figment hierarchy.
+/// In order to override them in the foundry `Config` they need to be merged into an existing
+/// `figment::Provider`, like `foundry_config::Config` is.
+///
+/// # Example
+///
+/// ```
+/// use foundry_cli::cmd::forge::build::BuildArgs;
+/// use foundry_config::Config;
+/// # fn t(args: BuildArgs) {
+/// let config = Config::from(&args);
+/// # }
+/// ```
+///
+/// `BuildArgs` implements `figment::Provider` in which all config related fields are serialized and
+/// then merged into an existing `Config`, effectively overwriting them.
+///
+/// Some arguments are marked as `#[serde(skip)]` and require manual processing in
+/// `figment::Provider` implementation
 #[derive(Debug, Clone, Parser, Serialize, Default)]
 pub struct BuildArgs {
     #[clap(flatten)]
@@ -161,5 +164,3 @@ impl Provider for BuildArgs {
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
-
-foundry_config::impl_figment_convert!(BuildArgs, args);

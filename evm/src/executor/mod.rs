@@ -130,6 +130,7 @@ impl Executor {
 
     /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
     pub fn deploy_create2_deployer(&mut self) -> eyre::Result<()> {
+        trace!("deploying create2 deployer");
         let create2_deployer_account = self
             .backend_mut()
             .basic(DEFAULT_CREATE2_DEPLOYER)?
@@ -144,12 +145,14 @@ impl Executor {
             let initial_balance = self.get_balance(creator)?;
 
             self.set_balance(creator, U256::MAX)?;
-            self.deploy(
+            let res = self.deploy(
                 creator,
-                hex::decode("604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("Could not decode create2 deployer init_code").into(),
+                hex::decode("604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("valid hex").into(),
                 U256::zero(),
                 None
             )?;
+            trace!(create2=?res.address, "deployed create2 deployer");
+
             self.set_balance(creator, initial_balance)?;
         }
         Ok(())
@@ -448,6 +451,10 @@ impl Executor {
         env: Env,
         abi: Option<&Abi>,
     ) -> Result<DeployResult, EvmError> {
+        debug_assert!(
+            matches!(env.tx.transact_to, TransactTo::Create(_)),
+            "Expect create transaction"
+        );
         trace!(sender=?env.tx.caller, "deploying contract");
 
         let mut inspector = self.inspector_config.stack();

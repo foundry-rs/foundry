@@ -155,7 +155,7 @@ impl Backend {
         // if this is a fork then adjust the blockchain storage
         let blockchain = if let Some(ref fork) = fork {
             trace!(target: "backend", "using forked blockchain at {}", fork.block_number());
-            Blockchain::forked(fork.block_number(), fork.block_hash())
+            Blockchain::forked(fork.block_number(), fork.block_hash(), fork.total_difficulty())
         } else {
             Blockchain::new(
                 &env.read(),
@@ -307,11 +307,17 @@ impl Backend {
 
                 self.time.reset(env.block.timestamp.as_u64());
                 self.fees.set_base_fee(env.block.basefee);
+
+                // also reset the total difficulty
+                self.blockchain.storage.write().total_difficulty = fork.total_difficulty();
             }
 
             // reset storage
-            *self.blockchain.storage.write() =
-                BlockchainStorage::forked(fork.block_number(), fork.block_hash());
+            *self.blockchain.storage.write() = BlockchainStorage::forked(
+                fork.block_number(),
+                fork.block_hash(),
+                fork.total_difficulty(),
+            );
             self.states.write().clear();
 
             // insert back all genesis accounts, by reusing cached `AccountInfo`s we don't need to
@@ -457,6 +463,14 @@ impl Backend {
 
     pub fn elasticity(&self) -> f64 {
         self.fees.elasticity()
+    }
+
+    /// Returns the total difficulty of the chain until this block
+    ///
+    /// Note: this will always be `0` in memory mode
+    /// In forking mode this will always be the total difficulty of the forked block
+    pub fn total_difficulty(&self) -> U256 {
+        self.blockchain.storage.read().total_difficulty
     }
 
     /// Creates a new `evm_snapshot` at the current height
@@ -676,6 +690,7 @@ impl Backend {
             // update block metadata
             storage.best_number = block_number;
             storage.best_hash = block_hash;
+            storage.total_difficulty = storage.total_difficulty.saturating_add(header.difficulty);
 
             storage.blocks.insert(block_hash, block);
             storage.hashes.insert(block_number, block_hash);
@@ -718,6 +733,9 @@ impl Backend {
                 };
                 storage.transactions.insert(mined_tx.info.transaction_hash, mined_tx);
             }
+
+            // we intentionally set the difficulty to `0` for newer blocks
+            env.block.difficulty = U256::zero();
 
             // update env with new values
             *self.env.write() = env;
@@ -1174,7 +1192,7 @@ impl Backend {
             logs_bloom: Some(logs_bloom),
             timestamp: timestamp.into(),
             difficulty,
-            total_difficulty: None,
+            total_difficulty: Some(self.total_difficulty()),
             seal_fields: { vec![mix_hash.as_bytes().to_vec().into(), nonce.0.to_vec().into()] },
             uncles: vec![],
             transactions: transactions.into_iter().map(|tx| tx.hash()).collect(),

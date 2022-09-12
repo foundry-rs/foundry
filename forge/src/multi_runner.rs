@@ -103,7 +103,7 @@ impl MultiContractRunner {
                 (source, name, tests)
             })
             .fold(BTreeMap::new(), |mut acc, (source, name, tests)| {
-                acc.entry(source).or_insert(BTreeMap::new()).insert(name, tests);
+                acc.entry(source).or_default().insert(name, tests);
                 acc
             })
     }

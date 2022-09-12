@@ -53,13 +53,6 @@ pub enum Subcommands {
         #[clap(value_name = "TEXT")]
         text: Option<String>,
     },
-    #[clap(name = "--to-hex")]
-    #[clap(visible_aliases = &["to-hex", "th", "2h"])]
-    #[clap(about = "Convert an integer to hex.")]
-    ToHex {
-        #[clap(value_name = "DECIMAL")]
-        decimal: Option<String>,
-    },
     #[clap(name = "--concat-hex")]
     #[clap(visible_aliases = &["concat-hex", "ch"])]
     #[clap(about = "Concatenate hex strings.")]
@@ -104,9 +97,9 @@ The input can be:
     #[clap(name = "--from-fix")]
     #[clap(visible_aliases = &["from-fix", "ff"])]
     #[clap(about = "Convert a fixed point number into an integer.")]
-    FromFix {
+    FromFixedPoint {
         #[clap(value_name = "DECIMALS")]
-        decimals: Option<u128>,
+        decimals: Option<String>,
         #[clap(allow_hyphen_values = true, value_name = "VALUE")]
         // negative values not yet supported internally
         value: Option<String>,
@@ -118,21 +111,13 @@ The input can be:
         #[clap(value_name = "BYTES")]
         bytes: Option<String>,
     },
-    #[clap(name = "--to-dec")]
-    #[clap(visible_aliases = &["to-dec", "td", "2d"])]
-    #[clap(about = "Convert hex value into a decimal number.")]
-    ToDec {
-        #[clap(value_name = "HEXVALUE")]
-        hexvalue: Option<String>,
-    },
     #[clap(name = "--to-fix")]
     #[clap(visible_aliases = &["to-fix", "tf", "2f"])]
     #[clap(about = "Convert an integer into a fixed point number.")]
-    ToFix {
+    ToFixedPoint {
         #[clap(value_name = "DECIMALS")]
-        decimals: Option<u128>,
+        decimals: Option<String>,
         #[clap(allow_hyphen_values = true, value_name = "VALUE")]
-        // negative values not yet supported internally
         value: Option<String>,
     },
     #[clap(name = "--to-uint256")]
@@ -158,12 +143,7 @@ The input can be:
         bits: String,
         #[clap(long = "--base-in", help = "The input base")]
         base_in: Option<String>,
-        #[clap(
-            long = "--base-out",
-            help = "The output base",
-            default_value = "16",
-            parse(try_from_str = parse_base)
-        )]
+        #[clap(long = "--base-out", help = "The output base", default_value = "16")]
         base_out: String,
     },
     #[clap(name = "shr")]
@@ -175,12 +155,7 @@ The input can be:
         bits: String,
         #[clap(long = "--base-in", help = "The input base")]
         base_in: Option<String>,
-        #[clap(
-            long = "--base-out",
-            help = "The output base",
-            default_value = "16",
-            parse(try_from_str = parse_base)
-        )]
+        #[clap(long = "--base-out", help = "The output base", default_value = "16")]
         base_out: String,
     },
     #[clap(name = "--to-unit")]
@@ -198,6 +173,7 @@ Examples:
     )]
     ToUnit {
         #[clap(value_name = "VALUE")]
+        // negative values not yet supported internally
         value: Option<String>,
         #[clap(
             help = "The unit to convert to (ether, gwei, wei).",
@@ -213,8 +189,8 @@ Examples:
         #[clap(allow_hyphen_values = true, value_name = "VALUE")]
         // negative values not yet supported internally
         value: Option<String>,
-        #[clap(value_name = "UNIT")]
-        unit: Option<String>,
+        #[clap(value_name = "UNIT", default_value = "eth")]
+        unit: String,
     },
     #[clap(name = "--from-wei")]
     #[clap(visible_aliases = &["from-wei", "fw"])]
@@ -223,8 +199,8 @@ Examples:
         #[clap(allow_hyphen_values = true, value_name = "VALUE")]
         // negative values not yet supported internally
         value: Option<String>,
-        #[clap(value_name = "UNIT")]
-        unit: Option<String>,
+        #[clap(value_name = "UNIT", default_value = "eth")]
+        unit: String,
     },
     #[clap(name = "--to-rlp")]
     #[clap(about = "RLP encodes hex data, or an array of hex data")]
@@ -232,6 +208,17 @@ Examples:
     #[clap(name = "--from-rlp")]
     #[clap(about = "Decodes RLP encoded data. Input must be hexadecimal.")]
     FromRlp { value: Option<String> },
+    #[clap(name = "--to-base")]
+    #[clap(visible_aliases = &["--to-radix", "to-radix", "to-base", "tr", "2r", "--to-hex", "to-hex", "th", "2h", "--to-dec", "to-dec", "td", "2d"])]
+    #[clap(about = "Converts a number of one base to another")]
+    ToBase {
+        #[clap(allow_hyphen_values = true, value_name = "VALUE")]
+        value: String,
+        #[clap(value_name = "BASE", help = "The output base")]
+        base_out: String,
+        #[clap(long = "--base-in", help = "The input base")]
+        base_in: Option<String>,
+    },
     #[clap(name = "access-list")]
     #[clap(visible_aliases = &["ac", "acl"])]
     #[clap(about = "Create an access list for a transaction.")]
@@ -291,9 +278,10 @@ Examples:
     #[clap(visible_alias = "c")]
     #[clap(about = "Perform a call on an account without publishing a transaction.")]
     Call(CallArgs),
+    #[clap(name = "calldata")]
     #[clap(visible_alias = "cd")]
     #[clap(about = "ABI-encode a function with arguments.")]
-    Calldata {
+    CalldataEncode {
         #[clap(
             help = "The function signature.",
             long_help = "The function signature in the form <name>(<types...>)",
@@ -761,7 +749,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
 
 pub fn parse_name_or_address(s: &str) -> eyre::Result<NameOrAddress> {
     Ok(if s.starts_with("0x") {
-        NameOrAddress::Address(s.parse::<Address>()?)
+        NameOrAddress::Address(s.parse()?)
     } else {
         NameOrAddress::Name(s.into())
     })
@@ -772,21 +760,13 @@ pub fn parse_block_id(s: &str) -> eyre::Result<BlockId> {
         "earliest" => BlockId::Number(BlockNumber::Earliest),
         "latest" => BlockId::Number(BlockNumber::Latest),
         "pending" => BlockId::Number(BlockNumber::Pending),
-        s if s.starts_with("0x") => BlockId::Hash(H256::from_str(s)?),
-        s => BlockId::Number(BlockNumber::Number(u64::from_str(s)?.into())),
+        s if s.starts_with("0x") => BlockId::Hash(s.parse()?),
+        s => BlockId::Number(BlockNumber::Number(s.parse::<u64>()?.into())),
     })
 }
 
 fn parse_slot(s: &str) -> eyre::Result<H256> {
-    Ok(H256::from_uint(&U256::from(
-        Numeric::from_str(s).map_err(|e| eyre::eyre!("Could not parse slot number: {e}"))?,
-    )))
-}
-
-fn parse_base(s: &str) -> eyre::Result<String> {
-    Ok(match s {
-        "10" | "dec" => "10".to_string(),
-        "16" | "hex" => "16".to_string(),
-        _ => eyre::bail!("Provided base is not a valid."),
-    })
+    Numeric::from_str(s)
+        .map_err(|e| eyre::eyre!("Could not parse slot number: {e}"))
+        .map(|n| H256::from_uint(&n.into()))
 }

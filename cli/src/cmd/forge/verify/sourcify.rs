@@ -88,7 +88,7 @@ metadata output can be enabled via `extra_output = ["metadata"]` in `foundry.tom
                     println!(
                         "\nSubmitting verification for [{}] {:?}.",
                         args.contract.name,
-                        SimpleCast::checksum_address(&args.address)?
+                        SimpleCast::to_checksum_address(&args.address)
                     );
                     let response = client
                         .post(args.verifier.verifier_url.as_deref().unwrap_or(SOURCIFY_URL))

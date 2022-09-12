@@ -105,7 +105,7 @@ impl EvmOpts {
                 chain_id: self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID).into(),
                 spec_id: SpecId::LONDON,
                 perf_all_precompiles_have_balance: false,
-                limit_contract_code_size: usize::MAX,
+                limit_contract_code_size: Some(usize::MAX),
                 memory_limit: self.memory_limit,
                 ..Default::default()
             },

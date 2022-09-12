@@ -204,7 +204,7 @@ impl ProjectCompiler {
                 println!("{size_report}");
 
                 // exit with error if any contract exceeds the size limit, excluding test contracts.
-                let exit_status = if size_report.exceeds_size_limit() { 1 } else { 0 };
+                let exit_status = size_report.exceeds_size_limit().into();
                 std::process::exit(exit_status);
             }
         }
