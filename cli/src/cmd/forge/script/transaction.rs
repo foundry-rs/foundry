@@ -7,8 +7,12 @@ use ethers::{
     types::transaction::eip2718::TypedTransaction,
 };
 use foundry_common::SELECTOR_LEN;
+use foundry_utils::format_token;
+use once_cell::sync::Lazy;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use tracing::error;
 
 #[derive(Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
@@ -136,10 +140,12 @@ impl TransactionWithMetadata {
                     .map(|functions| functions.first())
                 {
                     self.function = Some(function.signature());
-                    self.arguments =
-                        Some(function.decode_input(&data.0[SELECTOR_LEN..]).map(|tokens| {
-                            tokens.iter().map(|token| token.to_string()).collect()
-                        })?);
+                    self.arguments = Some(
+                        function
+                            .decode_input(&data.0[SELECTOR_LEN..])
+                            .map(|tokens| tokens.iter().map(format_token).collect())
+                            .map_err(|_| eyre::eyre!("Failed to decode CREATE2 call arguments"))?,
+                    );
                 }
             } else {
                 // This is a regular CREATE via the constructor, in which case we expect the
@@ -149,12 +155,20 @@ impl TransactionWithMetadata {
                     if let Some(constructor) = abi.constructor() {
                         let params =
                             constructor.inputs.iter().map(|p| p.kind.clone()).collect::<Vec<_>>();
-                        self.arguments = Some(
-                            abi::decode(&params, &data.0)?
-                                .into_iter()
-                                .map(|token| token.to_string())
-                                .collect(),
-                        );
+
+                        if let Some(constructor_args) = find_constructor_args(&data.0) {
+                            self.arguments = Some(
+                                abi::decode(&params, constructor_args)
+                                    .map_err(|_| {
+                                        eyre::eyre!("Failed to decode constructor arguments")
+                                    })?
+                                    .iter()
+                                    .map(format_token)
+                                    .collect(),
+                            );
+                        } else {
+                            error!("Failed to extract constructor args from CREATE data")
+                        }
                     }
                 }
             }
@@ -182,10 +196,11 @@ impl TransactionWithMetadata {
                         .find(|function| function.short_signature() == data.0[..SELECTOR_LEN])
                     {
                         self.function = Some(function.signature());
-                        self.arguments =
-                            Some(function.decode_input(&data.0[SELECTOR_LEN..]).map(|tokens| {
-                                tokens.iter().map(|token| token.to_string()).collect()
-                            })?);
+                        self.arguments = Some(
+                            function
+                                .decode_input(&data.0[SELECTOR_LEN..])
+                                .map(|tokens| tokens.iter().map(format_token).collect())?,
+                        );
                     }
                 } else {
                     // This CALL is made to an external contract. We can only decode it, if it has
@@ -199,10 +214,11 @@ impl TransactionWithMetadata {
                         self.contract_name = decoder.contracts.get(&target).cloned();
 
                         self.function = Some(function.signature());
-                        self.arguments =
-                            Some(function.decode_input(&data.0[SELECTOR_LEN..]).map(|tokens| {
-                                tokens.iter().map(|token| token.to_string()).collect()
-                            })?);
+                        self.arguments = Some(
+                            function
+                                .decode_input(&data.0[SELECTOR_LEN..])
+                                .map(|tokens| tokens.iter().map(format_token).collect())?,
+                        );
                     }
                 }
                 self.contract_address = Some(target);
@@ -234,6 +250,37 @@ impl TransactionWithMetadata {
     pub fn is_create2(&self) -> bool {
         self.opcode == CallKind::Create2
     }
+}
+
+/// Given the transaction data tries to identify the constructor arguments
+/// The constructor data is encoded as: Constructor Code + Contract Code +  Constructor arguments
+/// decoding the arguments here with only the transaction data is not trivial here, we try to find
+/// the beginning of the constructor arguments by finding the length of the code, which is PUSH op
+/// code which holds the code size and the code starts after the invalid op code (0xfe)
+///
+/// finding the `0xfe` (invalid opcode) in the data which should mark the beginning of constructor
+/// arguments
+fn find_constructor_args(data: &[u8]) -> Option<&[u8]> {
+    static CONSTRUCTOR_CODE_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?m)(?:5b)?(?:60([a-z0-9]{2})|61([a-z0-9_]{4})|62([a-z0-9_]{6}))80(?:60([a-z0-9]{2})|61([a-z0-9_]{4})|62([a-z0-9_]{6}))6000396000f3fe").unwrap()
+    });
+    let s = hex::encode(data);
+
+    let caps = CONSTRUCTOR_CODE_RE.captures(&s)?;
+    let contract_len = u64::from_str_radix(
+        caps.get(1).or_else(|| caps.get(2)).or_else(|| caps.get(2))?.as_str(),
+        16,
+    )
+    .unwrap();
+    let contract_offset = u64::from_str_radix(
+        caps.get(4).or_else(|| caps.get(5)).or_else(|| caps.get(6))?.as_str(),
+        16,
+    )
+    .unwrap();
+
+    let start = (contract_len + contract_offset) as usize;
+    let args = &data[start..];
+    Some(args)
 }
 
 // wrapper for modifying ethers-rs type serialization
@@ -438,5 +485,32 @@ pub mod wrapper {
         serialize_vec_with_wrapped::<S, TransactionReceipt, WrappedTransactionReceipt>(
             receipts, serializer,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethers::abi::ParamType;
+
+    // <https://github.com/foundry-rs/foundry/issues/3053>
+    #[test]
+    fn test_find_constructor_args() {
+        let code = "6080604052348015600f57600080fd5b50604051610121380380610121833981016040819052602c91606e565b600080546001600160a01b0319166001600160a01b0396909616959095179094556001929092556002556003556004805460ff191691151591909117905560d4565b600080600080600060a08688031215608557600080fd5b85516001600160a01b0381168114609b57600080fd5b809550506020860151935060408601519250606086015191506080860151801515811460c657600080fd5b809150509295509295909350565b603f806100e26000396000f3fe6080604052600080fdfea264697066735822122089f2c61beace50d105ec1b6a56a1204301b5595e850e7576f6f3aa8e76f12d0b64736f6c6343000810003300000000000000000000000000a329c0648769a73afac7f9381e08fb43dbea720000000000000000000000000000000000000000000000000000000100000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000000b10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf60000000000000000000000000000000000000000000000000000000000000001";
+
+        let code = hex::decode(code).unwrap();
+
+        let args = find_constructor_args(&code).unwrap();
+        println!("{}", hex::encode(args));
+
+        let params = vec![
+            ParamType::Address,
+            ParamType::Uint(256),
+            ParamType::Int(256),
+            ParamType::FixedBytes(32),
+            ParamType::Bool,
+        ];
+
+        let _decoded = abi::decode(&params, args).unwrap();
     }
 }

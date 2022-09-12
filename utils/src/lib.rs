@@ -445,6 +445,11 @@ pub fn encode_args(func: &Function, args: &[impl AsRef<str>]) -> Result<Vec<u8>>
     Ok(func.encode_input(&tokens)?)
 }
 
+/// Decodes the calldata of the function
+///
+/// # Panics
+///
+/// If the `sig` is an invalid function signature
 pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
     let func = IntoFunction::into(sig);
     let calldata = calldata.strip_prefix("0x").unwrap_or(calldata);

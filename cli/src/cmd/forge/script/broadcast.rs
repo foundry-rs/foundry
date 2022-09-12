@@ -222,10 +222,8 @@ impl ScriptArgs {
                         &verify.known_contracts,
                     )
                     .await
-                    .map_err(|_| {
-                        eyre::eyre!(
+                    .wrap_err_with(|| {
                             "Transaction failed when running the on-chain simulation. Check the trace above for more information."
-                        )
                     })?
                 };
 
