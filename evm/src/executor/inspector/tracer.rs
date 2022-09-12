@@ -12,6 +12,7 @@ use ethers::{
     abi::RawLog,
     types::{Address, H256, U256},
 };
+use hashbrown::HashMap;
 use revm::{
     return_ok, CallInputs, CallScheme, CreateInputs, Database, EVMData, Gas, Inspector,
     Interpreter, Return,
@@ -106,11 +107,75 @@ impl<DB> Inspector<DB> for Tracer
 where
     DB: Database,
 {
+    fn step(
+        &mut self,
+        interp: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        _is_static: bool,
+    ) -> Return {
+        if !self.record_steps {
+            return Return::Continue
+        }
+
+        let depth = data.journaled_state.depth();
+        let pc = interp.program_counter();
+        let op = OpCode(interp.contract.bytecode.bytecode()[pc]);
+        let stack = interp.stack.clone();
+        let memory = interp.memory.clone();
+        let contract = interp.contract.address;
+        let state = data
+            .journaled_state
+            .state
+            .get(&contract)
+            .map(|account| {
+                account
+                    .storage
+                    .iter()
+                    .filter(|(_, value)| value.is_changed())
+                    .map(|(key, value)| (*key, value.present_value()))
+                    .collect::<HashMap<_, _>>()
+            })
+            .unwrap_or_default();
+        let gas = interp.gas.remaining();
+        let gas_refund_counter = interp.gas.refunded() as u64;
+
+        self.start_step(CallTraceStep {
+            depth,
+            pc,
+            op,
+            stack,
+            memory,
+            state,
+            gas,
+            gas_refund_counter,
+            gas_cost: 0,
+            error: None,
+        });
+
+        Return::Continue
+    }
+
     fn log(&mut self, _: &mut EVMData<'_, DB>, _: &Address, topics: &[H256], data: &Bytes) {
         let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
         node.ordering.push(LogCallOrder::Log(node.logs.len()));
         node.logs
             .push(RawOrDecodedLog::Raw(RawLog { topics: topics.to_vec(), data: data.to_vec() }));
+    }
+
+    fn step_end(
+        &mut self,
+        interp: &mut Interpreter,
+        _data: &mut EVMData<'_, DB>,
+        _is_static: bool,
+        status: Return,
+    ) -> Return {
+        if !self.record_steps {
+            return Return::Continue
+        }
+
+        self.fill_step(interp.gas.remaining(), status);
+
+        status
     }
 
     fn call(
@@ -204,56 +269,5 @@ where
         );
 
         (status, address, gas, retdata)
-    }
-
-    fn step(
-        &mut self,
-        interp: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
-        _is_static: bool,
-    ) -> Return {
-        if !self.record_steps {
-            return Return::Continue
-        }
-
-        let depth = data.journaled_state.depth();
-        let pc = interp.program_counter();
-        let op = OpCode(interp.contract.bytecode.bytecode()[pc]);
-        let stack = interp.stack.clone();
-        let memory = interp.memory.clone();
-        let state = data.journaled_state.state.clone();
-        let gas = interp.gas.remaining();
-        let gas_refund_counter = interp.gas.refunded() as u64;
-
-        self.start_step(CallTraceStep {
-            depth,
-            pc,
-            op,
-            stack,
-            memory,
-            state,
-            gas,
-            gas_refund_counter,
-            gas_cost: 0,
-            error: None,
-        });
-
-        Return::Continue
-    }
-
-    fn step_end(
-        &mut self,
-        interp: &mut Interpreter,
-        _data: &mut EVMData<'_, DB>,
-        _is_static: bool,
-        status: Return,
-    ) -> Return {
-        if !self.record_steps {
-            return Return::Continue
-        }
-
-        self.fill_step(interp.gas.remaining(), status);
-
-        status
     }
 }

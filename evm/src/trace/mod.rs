@@ -9,7 +9,6 @@ mod utils;
 
 use crate::{
     abi::CHEATCODE_ADDRESS, debug::Instruction, trace::identifier::LocalTraceIdentifier, CallKind,
-    H160,
 };
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 use ethers::{
@@ -20,7 +19,7 @@ use ethers::{
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use hashbrown::HashMap;
 use node::CallTraceNode;
-use revm::{Account, CallContext, Memory, Return, Stack};
+use revm::{CallContext, Memory, Return, Stack};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
@@ -334,8 +333,8 @@ pub struct CallTraceStep {
     pub stack: Stack,
     /// Memory before step execution
     pub memory: Memory,
-    /// State before step execution
-    pub state: HashMap<H160, Account>,
+    /// The current state of the contract
+    pub state: HashMap<U256, U256>,
     /// Remaining gas before step execution
     pub gas: u64,
     /// Gas cost of step execution
@@ -360,12 +359,8 @@ impl From<&CallTraceStep> for StructLog {
             stack: Some(step.stack.data().clone()),
             storage: Some(
                 step.state
-                    .values()
-                    .flat_map(|acc| {
-                        acc.storage.iter().map(|(key, value)| {
-                            (H256::from_uint(key), H256::from_uint(&value.present_value()))
-                        })
-                    })
+                    .iter()
+                    .map(|(key, value)| (H256::from_uint(key), H256::from_uint(value)))
                     .collect(),
             ),
         }
