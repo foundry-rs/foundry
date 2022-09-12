@@ -342,7 +342,7 @@ pub struct CallTraceStep {
     pub gas_cost: u64,
     /// Gas refund counter before step execution
     pub gas_refund_counter: u64,
-    /// Error (if any) after after step execution
+    /// Error (if any) after step execution
     pub error: Option<String>,
 }
 

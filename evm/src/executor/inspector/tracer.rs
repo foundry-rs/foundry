@@ -220,7 +220,8 @@ where
         let pc = interp.program_counter();
         let op = OpCode(interp.contract.bytecode.bytecode()[pc]);
         let stack = interp.stack.clone();
-        let memory = interp.memory.clone();
+        let mut memory = interp.memory.clone();
+        memory.shrink_to_fit();
         let state = data.journaled_state.state.clone();
         let gas = interp.gas.remaining();
         let gas_refund_counter = interp.gas.refunded() as u64;

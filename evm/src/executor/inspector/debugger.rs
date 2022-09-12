@@ -110,10 +110,13 @@ where
             self.current_gas_block += opcode_info.get_gas() as u64;
         }
 
+        let mut memory = interpreter.memory.clone();
+        memory.shrink_to_fit();
+
         self.arena.arena[self.head].steps.push(DebugStep {
             pc,
             stack: interpreter.stack().data().clone(),
-            memory: interpreter.memory.clone(),
+            memory,
             instruction: Instruction::OpCode(op),
             push_bytes,
             total_gas_used: gas_used(data.env.cfg.spec_id, total_gas_spent, gas.refunded() as u64),
