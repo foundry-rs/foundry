@@ -1,5 +1,5 @@
 use crate::{
-    debug::Instruction::OpCode,
+    debug::{Instruction, Instruction::OpCode},
     executor::inspector::utils::{gas_used, get_create_address},
     trace::{
         CallTrace, CallTraceArena, CallTraceStep, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog,
@@ -14,7 +14,7 @@ use ethers::{
 };
 use hashbrown::HashMap;
 use revm::{
-    return_ok, CallInputs, CallScheme, CreateInputs, Database, EVMData, Gas, Inspector,
+    opcode, return_ok, CallInputs, CallScheme, CreateInputs, Database, EVMData, Gas, Inspector,
     Interpreter, Return,
 };
 
@@ -89,12 +89,38 @@ impl Tracer {
         trace.trace.steps.push(step);
     }
 
-    pub fn fill_step(&mut self, gas: u64, status: Return) {
+    pub fn fill_step<DB: Database>(
+        &mut self,
+        interp: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        status: Return,
+    ) {
         let (trace_idx, step_idx) =
             self.step_stack.pop().expect("can't fill step without starting a step first");
         let step = &mut self.traces.arena[trace_idx].trace.steps[step_idx];
 
-        step.gas_cost = step.gas - gas;
+        let pc = interp.program_counter() - 1;
+        let op = OpCode(interp.contract.bytecode.bytecode()[pc]);
+
+        if matches!(op, opcode::SLOAD | opcode::SSTORE) {
+            let contract = interp.contract.address;
+            let state = data
+                .journaled_state
+                .state
+                .get(&contract)
+                .map(|account| {
+                    account
+                        .storage
+                        .iter()
+                        .filter(|(_, value)| value.original_value() != value.present_value())
+                        .map(|(key, value)| (*key, value.present_value()))
+                        .collect::<HashMap<_, _>>()
+                })
+                .unwrap_or_default();
+            step.state = state
+        }
+
+        step.gas_cost = step.gas - interp.gas.remaining();
 
         // Error codes only
         if status as u8 > Return::OutOfGas as u8 {
@@ -122,20 +148,6 @@ where
         let op = OpCode(interp.contract.bytecode.bytecode()[pc]);
         let stack = interp.stack.clone();
         let memory = interp.memory.clone();
-        let contract = interp.contract.address;
-        let state = data
-            .journaled_state
-            .state
-            .get(&contract)
-            .map(|account| {
-                account
-                    .storage
-                    .iter()
-                    .filter(|(_, value)| value.is_changed())
-                    .map(|(key, value)| (*key, value.present_value()))
-                    .collect::<HashMap<_, _>>()
-            })
-            .unwrap_or_default();
         let gas = interp.gas.remaining();
         let gas_refund_counter = interp.gas.refunded() as u64;
 
@@ -145,7 +157,7 @@ where
             op,
             stack,
             memory,
-            state,
+            state: HashMap::default(),
             gas,
             gas_refund_counter,
             gas_cost: 0,
@@ -165,7 +177,7 @@ where
     fn step_end(
         &mut self,
         interp: &mut Interpreter,
-        _data: &mut EVMData<'_, DB>,
+        data: &mut EVMData<'_, DB>,
         _is_static: bool,
         status: Return,
     ) -> Return {
@@ -173,7 +185,7 @@ where
             return Return::Continue
         }
 
-        self.fill_step(interp.gas.remaining(), status);
+        self.fill_step(interp, data, status);
 
         status
     }
