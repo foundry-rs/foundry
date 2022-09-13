@@ -1004,9 +1004,12 @@ checksum = "245097e9a4535ee1e3e3931fcfcd55a796a44c643e8596ff6566d68f09b87bbc"
 
 [[package]]
 name = "convert_case"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb4a24b1aaf0fd0ce8b45161144d6f42cd91677fd5940fd431183eb023b3a2b8"
+checksum = "ec182b0ca2f35d8fc196cf3404988fd8b8c739a4d270ff118a398feb0cbec1ca"
+dependencies = [
+ "unicode-segmentation",
+]
 
 [[package]]
 name = "core-foundation"
@@ -1624,7 +1627,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#91d8c21b216b097d7acb624f566a4a0d43989acf"
+source = "git+https://github.com/gakonst/ethers-rs#5a18059b141c07789425c5d055210886721656c9"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1639,7 +1642,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#91d8c21b216b097d7acb624f566a4a0d43989acf"
+source = "git+https://github.com/gakonst/ethers-rs#5a18059b141c07789425c5d055210886721656c9"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1650,7 +1653,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#91d8c21b216b097d7acb624f566a4a0d43989acf"
+source = "git+https://github.com/gakonst/ethers-rs#5a18059b141c07789425c5d055210886721656c9"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1668,7 +1671,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#91d8c21b216b097d7acb624f566a4a0d43989acf"
+source = "git+https://github.com/gakonst/ethers-rs#5a18059b141c07789425c5d055210886721656c9"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -1691,7 +1694,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#91d8c21b216b097d7acb624f566a4a0d43989acf"
+source = "git+https://github.com/gakonst/ethers-rs#5a18059b141c07789425c5d055210886721656c9"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1705,7 +1708,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#91d8c21b216b097d7acb624f566a4a0d43989acf"
+source = "git+https://github.com/gakonst/ethers-rs#5a18059b141c07789425c5d055210886721656c9"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1736,7 +1739,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#91d8c21b216b097d7acb624f566a4a0d43989acf"
+source = "git+https://github.com/gakonst/ethers-rs#5a18059b141c07789425c5d055210886721656c9"
 dependencies = [
  "ethers-core",
  "getrandom 0.2.6",
@@ -1752,7 +1755,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#91d8c21b216b097d7acb624f566a4a0d43989acf"
+source = "git+https://github.com/gakonst/ethers-rs#5a18059b141c07789425c5d055210886721656c9"
 dependencies = [
  "async-trait",
  "auto_impl 0.5.0",
@@ -1777,7 +1780,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#91d8c21b216b097d7acb624f566a4a0d43989acf"
+source = "git+https://github.com/gakonst/ethers-rs#5a18059b141c07789425c5d055210886721656c9"
 dependencies = [
  "async-trait",
  "auto_impl 1.0.1",
@@ -1814,7 +1817,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#91d8c21b216b097d7acb624f566a4a0d43989acf"
+source = "git+https://github.com/gakonst/ethers-rs#5a18059b141c07789425c5d055210886721656c9"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1837,7 +1840,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#91d8c21b216b097d7acb624f566a4a0d43989acf"
+source = "git+https://github.com/gakonst/ethers-rs#5a18059b141c07789425c5d055210886721656c9"
 dependencies = [
  "cfg-if 1.0.0",
  "dunce",
@@ -2089,11 +2092,10 @@ dependencies = [
 
 [[package]]
 name = "form_urlencoded"
-version = "1.0.1"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fc25a87fa4fd2094bffb06925852034d90a17f0d1e05197d4956d3555752191"
+checksum = "a9c384f161156f5260c24a097c56119f9be8c798586aecc13afbcbe7b7e26bf8"
 dependencies = [
- "matches",
  "percent-encoding",
 ]
 
@@ -2813,11 +2815,10 @@ dependencies = [
 
 [[package]]
 name = "idna"
-version = "0.2.3"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "418a0a6fab821475f634efe3ccc45c013f742efe03d853e8d3355d5cb850ecf8"
+checksum = "e14ddfc70884202db2244c223200c204c2bda1bc6e0998d11b5e024d657209e6"
 dependencies = [
- "matches",
  "unicode-bidi",
  "unicode-normalization",
 ]
@@ -3847,9 +3848,9 @@ dependencies = [
 
 [[package]]
 name = "percent-encoding"
-version = "2.1.0"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4fd5641d01c8f18a23da7b6fe29298ff4b55afcccdf78973b24cf3175fee32e"
+checksum = "478c572c3d73181ff3c2539045f6eb99e5491218eae919370993b890cdbdd98e"
 
 [[package]]
 name = "pest"
@@ -5183,9 +5184,8 @@ checksum = "6bdef32e8150c2a081110b42772ffe7d7c9032b606bc226c8260fd97e0976601"
 
 [[package]]
 name = "svm-rs"
-version = "0.2.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9da7be4aa3d6b944579b66af0cfdca48f2682de7d5b85cf40449805e2e93db9"
+version = "0.2.17"
+source = "git+https://github.com/roynalnaruto/svm-rs#3d55c338c61939641a18b56ffe77095ab74d46cd"
 dependencies = [
  "anyhow",
  "cfg-if 1.0.0",
@@ -5872,9 +5872,9 @@ checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
 
 [[package]]
 name = "url"
-version = "2.3.0"
+version = "2.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22fe195a4f217c25b25cb5058ced57059824a678474874038dc88d211bf508d3"
+checksum = "0d68c799ae75762b8c3fe375feb6600ef5602c883c5d21eb51c09f22b83c4643"
 dependencies = [
  "form_urlencoded",
  "idna",
