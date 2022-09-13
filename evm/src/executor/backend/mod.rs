@@ -605,7 +605,7 @@ impl Backend {
     /// Executes the configured test call of the `env` without commiting state changes
     pub fn inspect_ref<INSP>(
         &mut self,
-        mut env: Env,
+        env: &mut Env,
         mut inspector: INSP,
     ) -> (ExecutionResult, Map<Address, Account>)
     where
@@ -616,7 +616,7 @@ impl Backend {
         if let TransactTo::Call(to) = env.tx.transact_to {
             self.set_test_contract(to);
         }
-        revm::evm_inner::<Self, true>(&mut env, self, &mut inspector).transact()
+        revm::evm_inner::<Self, true>(env, self, &mut inspector).transact()
     }
 
     /// Returns true if the address is a precompile
@@ -649,7 +649,6 @@ impl Backend {
             let mut journaled_state = self.fork_init_journaled_state.clone();
             for loaded_account in loaded_accounts.iter().copied() {
                 trace!(?loaded_account, "replacing account on init");
-                // TODO(mattsse) check
                 let fork_account = Database::basic(&mut fork.db, loaded_account)?
                     .ok_or(DatabaseError::MissingAccount(loaded_account))?;
                 let init_account =
@@ -831,6 +830,27 @@ impl DatabaseExt for Backend {
 
         // update the shared state and track
         let mut fork = self.inner.take_fork(idx);
+
+        // another edge case where a fork is created and selected during setup with not necessarily
+        // the same caller as for the test, however we must always ensure that fork's state contains
+        // the current sender
+        let caller = env.tx.caller;
+        if !fork.journaled_state.state.contains_key(&caller) {
+            let caller_account = journaled_state
+                .state
+                .get(&env.tx.caller)
+                .map(|acc| acc.info.clone())
+                .unwrap_or_default();
+
+            if !fork.db.accounts.contains_key(&caller) {
+                // update the caller account which is required by the evm
+                fork.db.insert_account_info(caller, caller_account.clone());
+                let _ =
+                    with_journaled_account(&mut fork.journaled_state, &mut fork.db, caller, |_| ());
+            }
+            fork.journaled_state.state.insert(caller, caller_account.into());
+        }
+
         self.update_fork_db(journaled_state, &mut fork);
         self.inner.set_fork(idx, fork);
 

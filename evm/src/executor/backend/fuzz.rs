@@ -50,13 +50,13 @@ impl<'a> FuzzBackendWrapper<'a> {
     /// Executes the configured transaction of the `env` without committing state changes
     pub fn inspect_ref<INSP>(
         &mut self,
-        mut env: Env,
+        env: &mut Env,
         mut inspector: INSP,
     ) -> (ExecutionResult, Map<Address, Account>)
     where
         INSP: Inspector<Self>,
     {
-        revm::evm_inner::<Self, true>(&mut env, self, &mut inspector).transact()
+        revm::evm_inner::<Self, true>(env, self, &mut inspector).transact()
     }
 }
 

@@ -1,5 +1,5 @@
 use crate::{
-    debug::{Instruction, Instruction::OpCode},
+    debug::Instruction::OpCode,
     executor::inspector::utils::{gas_used, get_create_address},
     trace::{
         CallTrace, CallTraceArena, CallTraceStep, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog,
@@ -100,7 +100,7 @@ impl Tracer {
         let step = &mut self.traces.arena[trace_idx].trace.steps[step_idx];
 
         let pc = interp.program_counter() - 1;
-        let op = OpCode(interp.contract.bytecode.bytecode()[pc]);
+        let op = interp.contract.bytecode.bytecode()[pc];
 
         if matches!(op, opcode::SLOAD | opcode::SSTORE) {
             let contract = interp.contract.address;
