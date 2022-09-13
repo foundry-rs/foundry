@@ -613,3 +613,188 @@ forgetest_async!(test_custom_sender_balance, |prj: TestProject, cmd: TestCommand
         .add_sig("TestInitialBalance", "runCustomSender()")
         .simulate(ScriptOutcome::OkSimulation);
 });
+
+#[derive(serde::Deserialize)]
+struct Transactions {
+    transactions: Vec<Transaction>,
+}
+
+#[derive(serde::Deserialize)]
+struct Transaction {
+    arguments: Vec<String>,
+}
+
+// test we output arguments <https://github.com/foundry-rs/foundry/issues/3053>
+forgetest_async!(
+    can_execute_script_with_arguments,
+    |prj: TestProject, mut cmd: TestCommand| async move {
+        cmd.args(["init", "--force"]).arg(prj.root());
+        cmd.assert_non_empty_stdout();
+        cmd.forge_fuse();
+
+        let (_api, handle) = spawn(NodeConfig::test()).await;
+        let script = prj
+            .inner()
+            .add_script(
+                "Counter.s.sol",
+                r#"
+pragma solidity ^0.8.15;
+
+import "forge-std/Script.sol";
+
+struct Point {
+    uint256 x;
+    uint256 y;
+}
+
+contract A {
+    address a;
+    uint b;
+    int c;
+    bytes32 d;
+    bool e;
+
+  constructor(address _a, uint _b, int _c, bytes32 _d, bool _e, bytes memory _f, Point memory _g, string memory _h) {
+    a = _a;
+    b = _b;
+    c = _c;
+    d = _d;
+    e = _e;
+  }
+}
+
+contract Script0 is Script {
+  function run() external {
+    vm.broadcast();
+
+    new A(msg.sender, 2 ** 32, -1 * (2 ** 32), keccak256(abi.encode(1)), true, "abcdef", Point(10, 99), "hello");
+  }
+}
+   "#,
+            )
+            .unwrap();
+
+        cmd.arg("script").arg(script).args([
+            "--tc",
+            "Script0",
+            "--rpc-url",
+            handle.http_endpoint().as_str(),
+        ]);
+
+        assert!(cmd.stdout_lossy().contains("SIMULATION COMPLETE"));
+
+        let run_latest = foundry_common::fs::json_files(prj.root().join("broadcast"))
+            .into_iter()
+            .filter(|file| file.ends_with("run-latest.json"))
+            .next()
+            .expect("No broadcast artifacts");
+
+        let content = foundry_common::fs::read_to_string(run_latest).unwrap();
+
+        let transactions: Transactions = serde_json::from_str(&content).unwrap();
+        let transactions = transactions.transactions;
+        assert_eq!(transactions.len(), 1);
+        assert_eq!(
+            transactions[0].arguments,
+            vec![
+                "0x00a329c0648769A73afAc7F9381E08FB43dBEA72".to_string(),
+                "4294967296".to_string(),
+                "-4294967296".to_string(),
+                "0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6".to_string(),
+                "true".to_string(),
+                "0x616263646566".to_string(),
+                "(10, 99)".to_string(),
+                "hello".to_string(),
+            ]
+        );
+    }
+);
+
+// test we output arguments <https://github.com/foundry-rs/foundry/issues/3053>
+forgetest_async!(
+    can_execute_script_with_arguments_nested_deploy,
+    |prj: TestProject, mut cmd: TestCommand| async move {
+        cmd.args(["init", "--force"]).arg(prj.root());
+        cmd.assert_non_empty_stdout();
+        cmd.forge_fuse();
+
+        let (_api, handle) = spawn(NodeConfig::test()).await;
+        let script = prj
+            .inner()
+            .add_script(
+                "Counter.s.sol",
+                r#"
+pragma solidity ^0.8.13;
+
+import "forge-std/Script.sol";
+
+contract A {
+  address a;
+  uint b;
+  int c;
+  bytes32 d;
+  bool e;
+  bytes f;
+  string g;
+
+  constructor(address _a, uint _b, int _c, bytes32 _d, bool _e, bytes memory _f, string memory _g) {
+    a = _a;
+    b = _b;
+    c = _c;
+    d = _d;
+    e = _e;
+    f = _f;
+    g = _g;
+  }
+}
+
+contract B {
+  constructor(address _a, uint _b, int _c, bytes32 _d, bool _e, bytes memory _f, string memory _g) {
+    new A(_a, _b, _c, _d, _e, _f, _g);
+  }
+}
+
+contract Script0 is Script {
+  function run() external {
+    vm.broadcast();
+    new B(msg.sender, 2 ** 32, -1 * (2 ** 32), keccak256(abi.encode(1)), true, "abcdef", "hello");
+  }
+}
+   "#,
+            )
+            .unwrap();
+
+        cmd.arg("script").arg(script).args([
+            "--tc",
+            "Script0",
+            "--rpc-url",
+            handle.http_endpoint().as_str(),
+        ]);
+
+        assert!(cmd.stdout_lossy().contains("SIMULATION COMPLETE"));
+
+        let run_latest = foundry_common::fs::json_files(prj.root().join("broadcast"))
+            .into_iter()
+            .filter(|file| file.ends_with("run-latest.json"))
+            .next()
+            .expect("No broadcast artifacts");
+
+        let content = foundry_common::fs::read_to_string(run_latest).unwrap();
+
+        let transactions: Transactions = serde_json::from_str(&content).unwrap();
+        let transactions = transactions.transactions;
+        assert_eq!(transactions.len(), 1);
+        assert_eq!(
+            transactions[0].arguments,
+            vec![
+                "0x00a329c0648769A73afAc7F9381E08FB43dBEA72".to_string(),
+                "4294967296".to_string(),
+                "-4294967296".to_string(),
+                "0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6".to_string(),
+                "true".to_string(),
+                "0x616263646566".to_string(),
+                "hello".to_string(),
+            ]
+        );
+    }
+);

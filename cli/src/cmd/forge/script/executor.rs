@@ -1,8 +1,11 @@
-use super::{sequence::AdditionalContract, *};
+use super::*;
 use crate::{
     cmd::{
         ensure_clean_constructor,
-        forge::script::{runner::SimulationStage, sequence::TransactionWithMetadata},
+        forge::script::{
+            runner::SimulationStage,
+            transaction::{AdditionalContract, TransactionWithMetadata},
+        },
         needs_setup,
     },
     utils,
@@ -100,7 +103,8 @@ impl ScriptArgs {
             .iter()
             .filter_map(|(addr, contract_id)| {
                 let contract_name = utils::get_contract_name(contract_id);
-                if let Ok(Some((_, (abi, _)))) = contracts.find_by_name_or_identifier(contract_name)
+                if let Ok(Some((_, (abi, _data)))) =
+                    contracts.find_by_name_or_identifier(contract_name)
                 {
                     return Some((*addr, (contract_name.to_string(), abi)))
                 }
