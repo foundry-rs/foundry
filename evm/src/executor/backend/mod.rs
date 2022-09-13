@@ -605,7 +605,7 @@ impl Backend {
     /// Executes the configured test call of the `env` without commiting state changes
     pub fn inspect_ref<INSP>(
         &mut self,
-        mut env: Env,
+        env: &mut Env,
         mut inspector: INSP,
     ) -> (ExecutionResult, Map<Address, Account>)
     where
@@ -616,7 +616,7 @@ impl Backend {
         if let TransactTo::Call(to) = env.tx.transact_to {
             self.set_test_contract(to);
         }
-        revm::evm_inner::<Self, true>(&mut env, self, &mut inspector).transact()
+        revm::evm_inner::<Self, true>(env, self, &mut inspector).transact()
     }
 
     /// Returns true if the address is a precompile
