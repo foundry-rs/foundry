@@ -564,13 +564,19 @@ impl Executor {
 
     /// Check if a call to a test contract was successful.
     ///
-    /// This function checks both the VM status of the call and DSTest's `failed`.
+    /// This function checks both the VM status of the call, DSTest's `failed` status and the
+    /// `globalFailed` flag which is stored in `failed` inside the `CHEATCODE_ADDRESS` contract.
     ///
     /// DSTest will not revert inside its `assertEq`-like functions which allows
     /// to test multiple assertions in 1 test function while also preserving logs.
     ///
-    /// Instead, it sets `failed` to `true` which we must check.
-    // TODO(mattsse): check if safe to replace with `Backend::is_failed()`
+    /// If an `assert` is violated, the contract's `failed` variable is set to true, and the
+    /// `globalFailure` flag inside the `CHEATCODE_ADDRESS` is also set to true, this way, failing
+    /// asserts from any contract are tracked as well.
+    ///
+    /// In order to check whether a test failed, we therefore need to evaluate the contract's
+    /// `failed` variable and the `globalFailure` flag, which happens by calling
+    /// `contract.failed()`.
     pub fn is_success(
         &self,
         address: Address,
@@ -592,9 +598,20 @@ impl Executor {
             // a failure occurred in a reverted snapshot, which is considered a failed test
             return Ok(should_fail)
         }
+
         // Construct a new VM with the state changeset
         let mut backend = self.backend().clone_empty();
-        backend.insert_account_info(address, self.backend().basic(address)?.unwrap_or_default());
+
+        // we only clone the test contract and cheatcode accounts, that's all we need to evaluate
+        // success
+        for addr in [address, CHEATCODE_ADDRESS] {
+            let acc = self.backend().basic(addr)?.unwrap_or_default();
+            backend.insert_account_info(addr, acc);
+        }
+
+        // If this test failed any asserts, then this changeset will contain changes `false -> true`
+        // for the contract's `failed` variable and the `globalFailure` flag in the state of the
+        // cheatcode address which are both read when call `"failed()(bool)"` in the next step
         backend.commit(state_changeset);
         let executor =
             Executor::new(backend, self.env.clone(), self.inspector_config.clone(), self.gas_limit);
