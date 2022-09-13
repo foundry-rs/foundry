@@ -149,10 +149,10 @@ where
             contract: interp.contract.address,
             stack: interp.stack.clone(),
             memory: interp.memory.clone(),
-            state_diff: None,
             gas: interp.gas.remaining(),
             gas_refund_counter: interp.gas.refunded() as u64,
             gas_cost: 0,
+            state_diff: None,
             error: None,
         });
 

@@ -329,6 +329,8 @@ impl fmt::Display for RawOrDecodedReturnData {
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct CallTraceStep {
+    // Fields filled in `step`
+    /// Call depth
     pub depth: u64,
     /// Program counter before step execution
     pub pc: usize,
@@ -340,14 +342,16 @@ pub struct CallTraceStep {
     pub stack: Stack,
     /// Memory before step execution
     pub memory: Memory,
-    /// State of the contract after step execution (effect of the SLOAD/SSTORE instructions)
-    pub state_diff: Option<(U256, U256)>,
     /// Remaining gas before step execution
     pub gas: u64,
-    /// Gas cost of step execution
-    pub gas_cost: u64,
     /// Gas refund counter before step execution
     pub gas_refund_counter: u64,
+
+    // Fields filled in `step_end`
+    /// Gas cost of step execution
+    pub gas_cost: u64,
+    /// Change of the contract state after step execution (effect of the SLOAD/SSTORE instructions)
+    pub state_diff: Option<(U256, U256)>,
     /// Error (if any) after after step execution
     pub error: Option<String>,
 }
@@ -364,6 +368,7 @@ impl From<&CallTraceStep> for StructLog {
             pc: step.pc as u64,
             refund_counter: Some(step.gas_refund_counter),
             stack: Some(step.stack.data().clone()),
+            // Filled in `CallTraceArena::geth_trace` as a result of compounding all slot changes
             storage: None,
         }
     }
