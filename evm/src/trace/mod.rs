@@ -90,6 +90,7 @@ impl CallTraceArena {
     }
 
     pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> GethTrace {
+        let mut storage = HashMap::<Address, BTreeMap<H256, H256>>::new();
         let mut trace = self.arena.iter().fold(GethTrace::default(), |mut acc, trace| {
             acc.failed |= !trace.trace.success;
             acc.gas += trace.trace.gas_cost;
@@ -97,8 +98,12 @@ impl CallTraceArena {
             acc.struct_logs.extend(trace.trace.steps.iter().map(|step| {
                 let mut log: StructLog = step.into();
 
-                if opts.disable_storage.unwrap_or_default() {
-                    log.storage = None;
+                if !opts.disable_storage.unwrap_or_default() {
+                    let contract_storage = storage.entry(step.contract).or_default();
+                    if let Some((key, value)) = step.state_diff {
+                        contract_storage.insert(H256::from_uint(&key), H256::from_uint(&value));
+                    }
+                    log.storage = Some(contract_storage.clone());
                 }
                 if opts.disable_stack.unwrap_or_default() {
                     log.stack = None;
@@ -329,12 +334,14 @@ pub struct CallTraceStep {
     pub pc: usize,
     /// Opcode to be executed
     pub op: Instruction,
+    /// Current contract address
+    pub contract: Address,
     /// Stack before step execution
     pub stack: Stack,
     /// Memory before step execution
     pub memory: Memory,
-    /// The current state of the contract
-    pub state: HashMap<U256, U256>,
+    /// State of the contract after step execution (effect of the SLOAD/SSTORE instructions)
+    pub state_diff: Option<(U256, U256)>,
     /// Remaining gas before step execution
     pub gas: u64,
     /// Gas cost of step execution
@@ -357,12 +364,7 @@ impl From<&CallTraceStep> for StructLog {
             pc: step.pc as u64,
             refund_counter: Some(step.gas_refund_counter),
             stack: Some(step.stack.data().clone()),
-            storage: Some(
-                step.state
-                    .iter()
-                    .map(|(key, value)| (H256::from_uint(key), H256::from_uint(value)))
-                    .collect(),
-            ),
+            storage: None,
         }
     }
 }

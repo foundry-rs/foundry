@@ -12,10 +12,9 @@ use ethers::{
     abi::RawLog,
     types::{Address, H256, U256},
 };
-use hashbrown::HashMap;
 use revm::{
     opcode, return_ok, CallInputs, CallScheme, CreateInputs, Database, EVMData, Gas, Inspector,
-    Interpreter, Return,
+    Interpreter, JournalEntry, Return,
 };
 
 /// An inspector that collects call traces.
@@ -102,23 +101,21 @@ impl Tracer {
         let pc = interp.program_counter() - 1;
         let op = interp.contract.bytecode.bytecode()[pc];
 
-        if matches!(op, opcode::SLOAD | opcode::SSTORE) {
-            let contract = interp.contract.address;
-            let state = data
-                .journaled_state
-                .state
-                .get(&contract)
-                .map(|account| {
-                    account
-                        .storage
-                        .iter()
-                        .filter(|(_, value)| value.original_value() != value.present_value())
-                        .map(|(key, value)| (*key, value.present_value()))
-                        .collect::<HashMap<_, _>>()
-                })
-                .unwrap_or_default();
-            step.state = state
-        }
+        let journal_entry = data
+            .journaled_state
+            .journal
+            .last()
+            .expect("not enough contract journal entries")
+            .last()
+            .expect("not enough call journal entries");
+
+        step.state_diff = match (op, journal_entry) {
+            (opcode::SLOAD | opcode::SSTORE, JournalEntry::StorageChage { address, key, .. }) => {
+                let value = data.journaled_state.state[address].storage[key].present_value();
+                Some((*key, value))
+            }
+            _ => None,
+        };
 
         step.gas_cost = step.gas - interp.gas.remaining();
 
@@ -143,23 +140,18 @@ where
             return Return::Continue
         }
 
-        let depth = data.journaled_state.depth();
         let pc = interp.program_counter();
-        let op = OpCode(interp.contract.bytecode.bytecode()[pc]);
-        let stack = interp.stack.clone();
-        let memory = interp.memory.clone();
-        let gas = interp.gas.remaining();
-        let gas_refund_counter = interp.gas.refunded() as u64;
 
         self.start_step(CallTraceStep {
-            depth,
+            depth: data.journaled_state.depth(),
             pc,
-            op,
-            stack,
-            memory,
-            state: HashMap::default(),
-            gas,
-            gas_refund_counter,
+            op: OpCode(interp.contract.bytecode.bytecode()[pc]),
+            contract: interp.contract.address,
+            stack: interp.stack.clone(),
+            memory: interp.memory.clone(),
+            state_diff: None,
+            gas: interp.gas.remaining(),
+            gas_refund_counter: interp.gas.refunded() as u64,
             gas_cost: 0,
             error: None,
         });
