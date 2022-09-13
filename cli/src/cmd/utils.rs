@@ -247,8 +247,14 @@ where
     }
     fn load_config_and_evm_opts(self) -> eyre::Result<(Config, EvmOpts)> {
         let figment: Figment = self.into();
-        let evm_opts = figment.extract::<EvmOpts>()?;
+        let mut evm_opts = figment.extract::<EvmOpts>()?;
         let config = Config::from_provider(figment).sanitized();
+
+        // update the fork url if it was an alias
+        if let Some(fork_url) = config.get_rpc_url() {
+            evm_opts.fork_url = Some(fork_url?.into_owned());
+        }
+
         Ok((config, evm_opts))
     }
     fn load_config_unsanitized(self) -> Config {
