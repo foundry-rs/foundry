@@ -366,7 +366,11 @@ impl From<&CallTraceStep> for StructLog {
             memory: Some(convert_memory(step.memory.data())),
             op: step.op.to_string(),
             pc: step.pc as u64,
-            refund_counter: Some(step.gas_refund_counter),
+            refund_counter: if step.gas_refund_counter > 0 {
+                Some(step.gas_refund_counter)
+            } else {
+                None
+            },
             stack: Some(step.stack.data().clone()),
             // Filled in `CallTraceArena::geth_trace` as a result of compounding all slot changes
             storage: None,
