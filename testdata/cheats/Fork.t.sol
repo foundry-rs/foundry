@@ -103,4 +103,13 @@ contract ForkTest is DSTest {
         assertEq(val, 99);
         assertEq(testValue, 300);
     }
+
+    // ensures forks use different ids
+    function testCanChangeChainId() public {
+        cheats.selectFork(forkA);
+        uint256 newChainId = 1337;
+        cheats.chainId(newChainId);
+        uint256 expected = block.chainid;
+        assertEq(newChainId, expected);
+    }
 }
