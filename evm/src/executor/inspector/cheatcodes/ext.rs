@@ -13,7 +13,6 @@ use ethers::{
     types::*,
 };
 use foundry_common::fs;
-
 use foundry_config::fs_permissions::FsAccessKind;
 use hex::FromHex;
 use jsonpath_rust::JsonPathFinder;
@@ -271,7 +270,7 @@ fn remove_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, 
 /// The function is designed to run recursively, so that in case of an object
 /// it will call itself to convert each of it's value and encode the whole as a
 /// Tuple
-fn value_to_token(value: &Value) -> Result<Token, Token> {
+fn value_to_token(value: &Value) -> eyre::Result<Token> {
     if let Some(boolean) = value.as_bool() {
         Ok(Token::Bool(boolean))
     } else if let Some(string) = value.as_str() {
@@ -287,7 +286,7 @@ fn value_to_token(value: &Value) -> Result<Token, Token> {
                     Token::Bytes(Vec::from_hex(val).unwrap())
                 })
             } else {
-                // If incornrect length, pad 0 at the beginning
+                // If incorrect length, pad 0 at the beginning
                 let arr = format!("0{}", val);
                 Ok(Token::Bytes(Vec::from_hex(arr).unwrap()))
             }
@@ -299,17 +298,14 @@ fn value_to_token(value: &Value) -> Result<Token, Token> {
     } else if let Some(number) = value.as_i64() {
         Ok(Token::Int(number.into()))
     } else if let Some(array) = value.as_array() {
-        Ok(Token::Array(
-            array.iter().map(|val| value_to_token(val).unwrap()).collect::<Vec<Token>>(),
-        ))
+        Ok(Token::Array(array.iter().map(value_to_token).collect::<eyre::Result<Vec<_>>>()?))
     } else if let Some(object) = value.as_object() {
-        let values =
-            object.values().map(|val| value_to_token(val).unwrap()).collect::<Vec<Token>>();
+        let values = object.values().map(value_to_token).collect::<eyre::Result<Vec<_>>>()?;
         Ok(Token::Tuple(values))
     } else if value.is_null() {
         Ok(Token::FixedBytes(vec![0; 32]))
     } else {
-        Err(Token::String("Could not decode field".to_string()))
+        eyre::bail!("Unexpected json value: {}", value)
     }
 }
 /// Parses a JSON and returns a single value, an array or an entire JSON object encoded as tuple.
@@ -325,7 +321,11 @@ fn parse_json(_state: &mut Cheatcodes, json: &str, key: &str) -> Result<Bytes, B
         .as_array()
         .ok_or_else(|| error::encode_error("JsonPath did not return an array"))?
         .iter()
-        .map(|inner| value_to_token(inner).map_err(error::encode_error))
+        .map(|inner| {
+            value_to_token(inner).map_err(|err| {
+                error::encode_error(err.wrap_err(format!("Failed to parse key {}", key)))
+            })
+        })
         .collect::<Result<Vec<Token>, Bytes>>();
     // encode the bytes as the 'bytes' solidity type
     let abi_encoded = abi::encode(&[Token::Bytes(abi::encode(&res?))]);
