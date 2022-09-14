@@ -495,6 +495,7 @@ impl ScriptArgs {
             unreachable!("Create data was not raw");
         }
 
+        let mut prompt_user = false;
         for (data, to) in result.transactions.iter().flat_map(|txes| {
             txes.iter().filter_map(|tx| {
                 tx.data().filter(|data| data.len() > CONTRACT_MAX_SIZE).map(|data| (data, tx.to()))
@@ -519,6 +520,7 @@ impl ScriptArgs {
                 let deployment_size = deployed_code.len();
 
                 if deployment_size > CONTRACT_MAX_SIZE {
+                    prompt_user = self.broadcast;
                     println!(
                         "{}",
                         Paint::red(format!(
@@ -526,17 +528,16 @@ impl ScriptArgs {
                             name, deployment_size, CONTRACT_MAX_SIZE
                         ))
                     );
-
-                    if self.broadcast &&
-                        !Confirm::new()
-                            .with_prompt("Do you wish to continue?".to_string())
-                            .interact()?
-                    {
-                        eyre::bail!("User canceled the script.");
-                    }
                 }
             }
         }
+
+        if prompt_user &&
+            !Confirm::new().with_prompt("Do you wish to continue?".to_string()).interact()?
+        {
+            eyre::bail!("User canceled the script.");
+        }
+
         Ok(())
     }
 }
