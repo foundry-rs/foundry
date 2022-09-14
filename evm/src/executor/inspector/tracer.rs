@@ -79,13 +79,31 @@ impl Tracer {
         }
     }
 
-    pub fn start_step(&mut self, step: CallTraceStep) {
+    pub fn start_step<DB: Database>(
+        &mut self,
+        interp: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+    ) {
         let trace_idx =
             *self.trace_stack.last().expect("can't start step without starting a trace first");
         let trace = &mut self.traces.arena[trace_idx];
 
         self.step_stack.push((trace_idx, trace.trace.steps.len()));
-        trace.trace.steps.push(step);
+
+        let pc = interp.program_counter();
+        trace.trace.steps.push(CallTraceStep {
+            depth: data.journaled_state.depth(),
+            pc,
+            op: OpCode(interp.contract.bytecode.bytecode()[pc]),
+            contract: interp.contract.address,
+            stack: interp.stack.clone(),
+            memory: interp.memory.clone(),
+            gas: interp.gas.remaining(),
+            gas_refund_counter: interp.gas.refunded() as u64,
+            gas_cost: 0,
+            state_diff: None,
+            error: None,
+        });
     }
 
     pub fn fill_step<DB: Database>(
@@ -141,21 +159,7 @@ where
             return Return::Continue
         }
 
-        let pc = interp.program_counter();
-
-        self.start_step(CallTraceStep {
-            depth: data.journaled_state.depth(),
-            pc,
-            op: OpCode(interp.contract.bytecode.bytecode()[pc]),
-            contract: interp.contract.address,
-            stack: interp.stack.clone(),
-            memory: interp.memory.clone(),
-            gas: interp.gas.remaining(),
-            gas_refund_counter: interp.gas.refunded() as u64,
-            gas_cost: 0,
-            state_diff: None,
-            error: None,
-        });
+        self.start_step(interp, data);
 
         Return::Continue
     }
