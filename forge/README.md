@@ -104,7 +104,7 @@ function testDoubleWithFuzzing(uint256 x) public {
 
 Foundry will show you a comprehensive gas report about your contracts. It returns the `min`, `average`, `median` and, `max` gas cost for every function. 
 
-It looks at **all** the tests that make a call to a given function and records the associated gas costs. For example, if something calls a function and it reverts, that's propably the `min` value. Another example is the `max` value that is generated usually during the first call of the function (as it has to initialise storage, variables, etc.)
+It looks at **all** the tests that make a call to a given function and records the associated gas costs. For example, if something calls a function and it reverts, that's probably the `min` value. Another example is the `max` value that is generated usually during the first call of the function (as it has to initialise storage, variables, etc.)
 
 Usually, the `median` value is what your users will probably end up paying. `max` and `min` concern edge cases that you might want to explicitly test against, but users will probably never encounter.
 
@@ -122,6 +122,8 @@ which implements the following methods:
 
 - `function warp(uint x) public` Sets the block timestamp to `x`.
 
+- `function difficulty(uint x) public` Sets the block difficulty to `x`.
+
 - `function roll(uint x) public` Sets the block number to `x`.
 
 - `function coinbase(address c) public` Sets the block coinbase to `c`.
@@ -138,7 +140,8 @@ which implements the following methods:
 
 - `function addr(uint sk) public returns (address addr)` Derives an ethereum
   address from the private key `sk`. Note that `hevm.addr(0)` will fail with
-  `BadCheatCode` as `0` is an invalid ECDSA private key.
+  `BadCheatCode` as `0` is an invalid ECDSA private key. `sk` values above the 
+  secp256k1 curve order, near the max uint256 value will also fail.
 
 - `function ffi(string[] calldata) external returns (bytes memory)` Executes the
   arguments as a command in the system shell and returns stdout. Note that this
@@ -305,11 +308,16 @@ interface Hevm {
     // pass a Solidity selector to the expected calldata, then the entire Solidity
     // function will be mocked.
     function mockCall(address,bytes calldata,bytes calldata) external;
+    // Mocks a call to an address with a specific msg.value, returning specified data.
+    // Calldata match takes precedence over msg.value in case of ambiguity.
+    function mockCall(address,uint256,bytes calldata,bytes calldata) external;
     // Clears all mocked calls
     function clearMockedCalls() external;
     // Expect a call to an address with the specified calldata.
     // Calldata can either be strict or a partial match
     function expectCall(address,bytes calldata) external;
+    // Expect a call to an address with the specified msg.value and calldata
+    function expectCall(address,uint256,bytes calldata) external;
     // Fetches the contract bytecode from its artifact file
     function getCode(string calldata) external returns (bytes memory);
     // Label an address in test traces

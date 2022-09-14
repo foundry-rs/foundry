@@ -4,11 +4,13 @@ use crate::{
     pubsub::filter_logs,
     StorageInfo,
 };
-use anvil_core::eth::{filter::FilteredParams, subscription::SubscriptionId};
+use anvil_core::eth::subscription::SubscriptionId;
 use anvil_rpc::response::ResponseResult;
-use ethers::prelude::{Log as EthersLog, H256 as TxHash};
+use ethers::{
+    prelude::{Log as EthersLog, H256 as TxHash},
+    types::{Filter, FilteredParams},
+};
 use futures::{channel::mpsc::Receiver, Stream, StreamExt};
-
 use std::{
     collections::HashMap,
     pin::Pin,
@@ -19,6 +21,7 @@ use std::{
 use tokio::sync::Mutex;
 use tracing::{trace, warn};
 
+/// Type alias for filters identified by their id and their expiration timestamp
 type FilterMap = Arc<Mutex<HashMap<String, (EthFilter, Instant)>>>;
 
 /// timeout after which to remove an active filter if it wasn't polled since then
@@ -41,19 +44,19 @@ impl Filters {
         let id = new_id();
         trace!(target: "node::filter", "Adding new filter id {}", id);
         let mut filters = self.active_filters.lock().await;
-        filters.insert(id.clone(), (filter, Instant::now()));
+        filters.insert(id.clone(), (filter, self.next_deadline()));
         id
     }
 
     pub async fn get_filter_changes(&self, id: &str) -> ResponseResult {
         {
             let mut filters = self.active_filters.lock().await;
-            if let Some((filter, timestamp)) = filters.get_mut(id) {
+            if let Some((filter, deadline)) = filters.get_mut(id) {
                 let resp = filter
                     .next()
                     .await
                     .unwrap_or_else(|| ResponseResult::success(Vec::<()>::new()));
-                *timestamp = Instant::now();
+                *deadline = self.next_deadline();
                 return resp
             }
         }
@@ -61,9 +64,13 @@ impl Filters {
         ResponseResult::success(Vec::<()>::new())
     }
 
-    /// Returns an array of all logs matching filter with given id.
-    pub async fn get_filter_logs(&self, id: &str) -> ResponseResult {
-        self.get_filter_changes(id).await
+    /// Returns the original `Filter` of an `eth_newFilter`
+    pub async fn get_log_filter(&self, id: &str) -> Option<Filter> {
+        let filters = self.active_filters.lock().await;
+        if let Some((EthFilter::Logs(ref log), _)) = filters.get(id) {
+            return log.filter.filter.clone()
+        }
+        None
     }
 
     /// Removes the filter identified with the `id`
@@ -77,11 +84,23 @@ impl Filters {
         self.keepalive
     }
 
+    /// Returns the timestamp after which a filter should expire
+    fn next_deadline(&self) -> Instant {
+        Instant::now() + self.keep_alive()
+    }
+
+    /// Evict all filters that weren't updated and reached there deadline
     pub async fn evict(&self) {
         trace!(target: "node::filter", "Evicting stale filters");
-        let deadline = Instant::now() - self.keepalive;
+        let now = Instant::now();
         let mut active_filters = self.active_filters.lock().await;
-        active_filters.retain(|_, (_, timestamp)| *timestamp > deadline);
+        active_filters.retain(|id, (_, deadline)| {
+            if now > *deadline {
+                trace!(target: "node::filter",?id, "Evicting stale filter");
+                return false
+            }
+            true
+        });
     }
 }
 
@@ -137,9 +156,16 @@ impl Stream for EthFilter {
 /// Listens for new blocks and matching logs emitted in that block
 #[derive(Debug)]
 pub struct LogsFilter {
+    /// listener for new blocks
     pub blocks: NewBlockNotifications,
+    /// accessor for block storage
     pub storage: StorageInfo,
+    /// matcher with all provided filter params
     pub filter: FilteredParams,
+    /// existing logs that matched the filter when the listener was installed
+    ///
+    /// They'll be returned on the first pill
+    pub historic: Option<Vec<EthersLog>>,
 }
 
 // === impl LogsFilter ===
@@ -147,7 +173,7 @@ pub struct LogsFilter {
 impl LogsFilter {
     /// Returns all the logs since the last time this filter was polled
     pub fn poll(&mut self, cx: &mut Context<'_>) -> Vec<EthersLog> {
-        let mut logs = Vec::new();
+        let mut logs = self.historic.take().unwrap_or_default();
         while let Poll::Ready(Some(block)) = self.blocks.poll_next_unpin(cx) {
             let b = self.storage.block(block.hash);
             let receipts = self.storage.receipts(block.hash);

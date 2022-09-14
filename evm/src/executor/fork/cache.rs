@@ -1,25 +1,16 @@
 //! Cache related abstraction
-use ethers::{
-    types::{Address, H256, U256},
-    utils::keccak256,
-};
+use ethers::types::{Address, H256, U256};
 use parking_lot::RwLock;
-use revm::{Account, AccountInfo, DatabaseCommit, Filth, KECCAK_EMPTY};
+use revm::{Account, AccountInfo, DatabaseCommit, KECCAK_EMPTY};
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fs,
-    io::BufWriter,
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{collections::BTreeSet, fs, io::BufWriter, path::PathBuf, sync::Arc};
 use tracing::{trace, trace_span, warn};
 use tracing_error::InstrumentResult;
 use url::Url;
 
 use crate::HashMap as Map;
 
-pub type StorageInfo = BTreeMap<U256, U256>;
+pub type StorageInfo = Map<U256, U256>;
 
 /// A shareable Block database
 #[derive(Clone, Debug)]
@@ -65,17 +56,17 @@ impl BlockchainDb {
     }
 
     /// Returns the map that holds the account related info
-    pub fn accounts(&self) -> &RwLock<BTreeMap<Address, AccountInfo>> {
+    pub fn accounts(&self) -> &RwLock<Map<Address, AccountInfo>> {
         &self.db.accounts
     }
 
     /// Returns the map that holds the storage related info
-    pub fn storage(&self) -> &RwLock<BTreeMap<Address, StorageInfo>> {
+    pub fn storage(&self) -> &RwLock<Map<Address, StorageInfo>> {
         &self.db.storage
     }
 
     /// Returns the map that holds all the block hashes
-    pub fn block_hashes(&self) -> &RwLock<BTreeMap<u64, H256>> {
+    pub fn block_hashes(&self) -> &RwLock<Map<U256, H256>> {
         &self.db.block_hashes
     }
 
@@ -167,11 +158,11 @@ impl<'de> Deserialize<'de> for BlockchainDbMeta {
 #[derive(Debug, Default)]
 pub struct MemDb {
     /// Account related data
-    pub accounts: RwLock<BTreeMap<Address, AccountInfo>>,
+    pub accounts: RwLock<Map<Address, AccountInfo>>,
     /// Storage related data
-    pub storage: RwLock<BTreeMap<Address, StorageInfo>>,
+    pub storage: RwLock<Map<Address, StorageInfo>>,
     /// All retrieved block hashes
-    pub block_hashes: RwLock<BTreeMap<u64, H256>>,
+    pub block_hashes: RwLock<Map<U256, H256>>,
 }
 
 impl MemDb {
@@ -192,17 +183,13 @@ impl MemDb {
         let mut storage = self.storage.write();
         let mut accounts = self.accounts.write();
         for (add, mut acc) in changes {
-            if acc.is_empty() || matches!(acc.filth, Filth::Destroyed) {
+            if acc.is_empty() || acc.is_destroyed {
                 accounts.remove(&add);
                 storage.remove(&add);
             } else {
                 // insert account
-                if let Some(code_hash) = acc
-                    .info
-                    .code
-                    .as_ref()
-                    .filter(|code| !code.is_empty())
-                    .map(|code| H256::from_slice(&keccak256(code)))
+                if let Some(code_hash) =
+                    acc.info.code.as_ref().filter(|code| !code.is_empty()).map(|code| code.hash())
                 {
                     acc.info.code_hash = code_hash;
                 } else if acc.info.code_hash.is_zero() {
@@ -211,14 +198,14 @@ impl MemDb {
                 accounts.insert(add, acc.info);
 
                 let acc_storage = storage.entry(add).or_default();
-                if acc.filth.abandon_old_storage() {
+                if acc.storage_cleared {
                     acc_storage.clear();
                 }
                 for (index, value) in acc.storage {
-                    if value.is_zero() {
+                    if value.present_value().is_zero() {
                         acc_storage.remove(&index);
                     } else {
-                        acc_storage.insert(index, value);
+                        acc_storage.insert(index, value.present_value());
                     }
                 }
                 if acc_storage.is_empty() {
@@ -273,7 +260,7 @@ impl JsonBlockCacheDB {
         trace!(target: "cache", "reading json cache path={:?}", path);
         let span = trace_span!("cache", "path={:?}", &path);
         let _enter = span.enter();
-        let file = std::fs::File::open(&path).in_current_span()?;
+        let file = fs::File::open(&path).in_current_span()?;
         let file = std::io::BufReader::new(file);
         let data = serde_json::from_reader(file).in_current_span()?;
         Ok(Self { cache_path: Some(path), data })
@@ -358,9 +345,9 @@ impl<'de> Deserialize<'de> for JsonBlockCacheData {
         #[derive(Deserialize)]
         struct Data {
             meta: BlockchainDbMeta,
-            accounts: BTreeMap<Address, AccountInfo>,
-            storage: BTreeMap<Address, StorageInfo>,
-            block_hashes: BTreeMap<u64, H256>,
+            accounts: Map<Address, AccountInfo>,
+            storage: Map<Address, StorageInfo>,
+            block_hashes: Map<u64, H256>,
         }
 
         let Data { meta, accounts, storage, block_hashes } = Data::deserialize(deserializer)?;
@@ -370,8 +357,25 @@ impl<'de> Deserialize<'de> for JsonBlockCacheData {
             data: Arc::new(MemDb {
                 accounts: RwLock::new(accounts),
                 storage: RwLock::new(storage),
-                block_hashes: RwLock::new(block_hashes),
+                block_hashes: RwLock::new(
+                    block_hashes.into_iter().map(|(k, v)| (k.into(), v)).collect(),
+                ),
             }),
         })
+    }
+}
+
+/// A type that flushes a `JsonBlockCacheDB` on drop
+///
+/// This type intentionally does not implement `Clone` since it's intended that there's only once
+/// instance that will flush the cache.
+#[derive(Debug)]
+pub struct FlushJsonBlockCacheDB(pub Arc<JsonBlockCacheDB>);
+
+impl Drop for FlushJsonBlockCacheDB {
+    fn drop(&mut self) {
+        trace!(target: "fork::cache", "flushing cache");
+        self.0.flush();
+        trace!(target: "fork::cache", "flushed cache");
     }
 }

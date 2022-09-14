@@ -24,7 +24,7 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
-use tracing::{error, trace, warn};
+use tracing::{error, trace};
 
 /// Handles incoming Websocket upgrade
 ///
@@ -70,14 +70,13 @@ impl<Handler: WsRpcHandler> WsContext<Handler> {
         id: Handler::SubscriptionId,
         subscription: Handler::Subscription,
     ) -> Option<Handler::Subscription> {
-        trace!(target: "rpc::ws", "adding subscription id {:?}", id);
         let mut subscriptions = self.subscriptions.lock();
         let mut removed = None;
         if let Some(idx) = subscriptions.iter().position(|(i, _)| id == *i) {
-            trace!(target: "rpc::ws", "removed subscription id {:?}", id);
+            trace!(target: "rpc::ws", ?id,  "removed subscription");
             removed = Some(subscriptions.swap_remove(idx).1);
         }
-        trace!(target: "rpc::ws", "added subscription id {:?}", id);
+        trace!(target: "rpc::ws", ?id,  "added subscription");
         subscriptions.push((id, subscription));
         removed
     }
@@ -89,7 +88,7 @@ impl<Handler: WsRpcHandler> WsContext<Handler> {
     ) -> Option<Handler::Subscription> {
         let mut subscriptions = self.subscriptions.lock();
         if let Some(idx) = subscriptions.iter().position(|(i, _)| id == i) {
-            trace!(target: "rpc::ws", "removed subscription id {:?}", id);
+            trace!(target: "rpc::ws", ?id,  "removed subscription");
             return Some(subscriptions.swap_remove(idx).1)
         }
         None
@@ -163,33 +162,36 @@ impl<Handler: WsRpcHandler> WsConnection<Handler> {
         ContextAwareHandler { handler: self.handler.clone(), context: self.context.clone() }
     }
 
+    fn process_request(&mut self, req: serde_json::Result<Request>) {
+        let handler = self.compat_helper();
+        self.processing.push(Box::pin(async move {
+            match req {
+                Ok(req) => handle_request(req, handler)
+                    .await
+                    .unwrap_or_else(|| Response::error(RpcError::invalid_request())),
+                Err(err) => {
+                    error!(target: "rpc::ws", ?err, "invalid request");
+                    Response::error(RpcError::invalid_request())
+                }
+            }
+        }));
+    }
+
     fn on_message(&mut self, msg: Message) -> bool {
         match msg {
             Message::Text(text) => {
-                trace!(target: "rpc::ws", "received: {:?}", text);
-                let handler = self.compat_helper();
-                self.processing.push(Box::pin(async move {
-                    match serde_json::from_str::<Request>(&text) {
-                        Ok(req) => handle_request(req, handler)
-                            .await
-                            .unwrap_or_else(|| Response::error(RpcError::invalid_request())),
-                        Err(err) => {
-                            warn!("invalid request={:?}", err);
-                            Response::error(RpcError::invalid_request())
-                        }
-                    }
-                }));
+                self.process_request(serde_json::from_str(&text));
             }
-            Message::Binary(_) => {
-                warn!(target: "rpc::ws","unexpected binary data");
-                return true
+            Message::Binary(data) => {
+                // the binary payload type is the request as-is but as bytes, if this is a valid
+                // `Request` then we can deserialize the Json from the data Vec
+                self.process_request(serde_json::from_slice(&data));
             }
             Message::Close(_) => {
                 trace!(target: "rpc::ws", "ws client disconnected");
                 return true
             }
             Message::Ping(ping) => {
-                trace!(target: "rpc::ws", "received ping");
                 self.pending.push_back(Message::Pong(ping));
             }
             _ => {}
@@ -208,9 +210,8 @@ impl<Handler: WsRpcHandler> Future for WsConnection<Handler> {
             while let Poll::Ready(Ok(())) = pin.socket.poll_ready_unpin(cx) {
                 // only start sending if socket is ready
                 if let Some(msg) = pin.pending.pop_front() {
-                    trace!(target: "rpc::ws", "sending ws message");
                     if let Err(err) = pin.socket.start_send_unpin(msg) {
-                        error!(target: "rpc::ws", "Failed to send message {:?}", err);
+                        error!(target: "rpc::ws", ?err, "Failed to send message");
                     }
                 } else {
                     break

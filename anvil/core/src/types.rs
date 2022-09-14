@@ -5,36 +5,52 @@ use serde::{
 };
 use std::fmt;
 
-/// Bindings for additional `debug_traceTransaction` options
-///
-/// See <https://geth.ethereum.org/docs/rpc/ns-debug#debug_tracetransaction>
-#[derive(Clone, Debug, PartialEq, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct GethDebugTracingOptions {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub disable_storage: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub disable_stack: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub enable_memory: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub enable_return_data: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tracer: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timeout: Option<String>,
-}
-
-/// Represents the params to set forking
-#[derive(Clone, Debug, PartialEq, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+/// Represents the params to set forking which can take various forms
+///  - untagged
+///  - tagged `forking`
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Forking {
     pub json_rpc_url: Option<String>,
     pub block_number: Option<u64>,
 }
 
+impl<'de> Deserialize<'de> for Forking {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct ForkOpts {
+            pub json_rpc_url: Option<String>,
+            pub block_number: Option<u64>,
+        }
+
+        #[derive(Deserialize)]
+        struct Tagged {
+            forking: ForkOpts,
+        }
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum ForkingVariants {
+            Tagged(Tagged),
+            Fork(ForkOpts),
+        }
+        let f = match ForkingVariants::deserialize(deserializer)? {
+            ForkingVariants::Fork(ForkOpts { json_rpc_url, block_number }) => {
+                Forking { json_rpc_url, block_number }
+            }
+            ForkingVariants::Tagged(f) => Forking {
+                json_rpc_url: f.forking.json_rpc_url,
+                block_number: f.forking.block_number,
+            },
+        };
+        Ok(f)
+    }
+}
+
 /// Additional `evm_mine` options
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(untagged)]
 pub enum EvmMineOptions {
     Options {
@@ -45,6 +61,12 @@ pub enum EvmMineOptions {
     },
     /// The timestamp the block should be mined with
     Timestamp(Option<u64>),
+}
+
+impl Default for EvmMineOptions {
+    fn default() -> Self {
+        EvmMineOptions::Options { timestamp: None, blocks: None }
+    }
 }
 
 /// Represents the result of `eth_getWork`

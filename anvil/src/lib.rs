@@ -1,4 +1,3 @@
-mod config;
 use crate::{
     eth::{
         backend::{info::StorageInfo, mem},
@@ -11,8 +10,9 @@ use crate::{
     filter::Filters,
     logging::{LoggingManager, NodeLogLayer},
     service::NodeService,
+    shutdown::Signal,
+    tasks::TaskManager,
 };
-pub use config::{AccountGenerator, NodeConfig, CHAIN_ID, VERSION_MESSAGE};
 use eth::backend::fork::ClientFork;
 use ethers::{
     core::k256::ecdsa::SigningKey,
@@ -32,21 +32,31 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use tokio::task::JoinError;
-
+use tokio::{runtime::Handle, task::JoinError};
 /// contains the background service that drives the node
 mod service;
+
+mod config;
+pub use config::{AccountGenerator, NodeConfig, CHAIN_ID, VERSION_MESSAGE};
+mod hardfork;
+pub use hardfork::Hardfork;
 
 /// ethereum related implementations
 pub mod eth;
 /// support for polling filters
 pub mod filter;
+/// support for handling `genesis.json` files
+pub mod genesis;
 /// commandline output
 pub mod logging;
 /// types for subscriptions
 pub mod pubsub;
 /// axum RPC server implementations
 pub mod server;
+/// Futures for shutdown signal
+mod shutdown;
+/// additional task management
+mod tasks;
 
 /// contains cli command
 #[cfg(feature = "cmd")]
@@ -78,13 +88,24 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
 
     let fork = backend.get_fork().cloned();
 
-    let NodeConfig { signer_accounts, block_time, port, max_transactions, server_config, .. } =
-        config.clone();
+    let NodeConfig {
+        signer_accounts,
+        block_time,
+        port,
+        max_transactions,
+        server_config,
+        no_mining,
+        transaction_order,
+        genesis,
+        ..
+    } = config.clone();
 
     let pool = Arc::new(Pool::default());
 
     let mode = if let Some(block_time) = block_time {
         MiningMode::interval(block_time)
+    } else if no_mining {
+        MiningMode::None
     } else {
         // get a listener for ready transactions
         let listener = pool.add_ready_listener();
@@ -93,6 +114,16 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
     let miner = Miner::new(mode);
 
     let dev_signer: Box<dyn EthSigner> = Box::new(DevSigner::new(signer_accounts));
+    let mut signers = vec![dev_signer];
+    if let Some(genesis) = genesis {
+        // include all signers from genesis.json if any
+        let genesis_signers = genesis.private_keys();
+        if !genesis_signers.is_empty() {
+            let genesis_signers: Box<dyn EthSigner> = Box::new(DevSigner::new(genesis_signers));
+            signers.push(genesis_signers);
+        }
+    }
+
     let fees = backend.fees().clone();
     let fee_history_cache = Arc::new(Mutex::new(Default::default()));
     let fee_history_service = FeeHistoryService::new(
@@ -108,12 +139,13 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
     let api = EthApi::new(
         Arc::clone(&pool),
         Arc::clone(&backend),
-        Arc::new(vec![dev_signer]),
+        Arc::new(signers),
         fee_history_cache,
         fee_history_service.fee_history_limit(),
         miner.clone(),
         logger,
         filters.clone(),
+        transaction_order,
     );
 
     // spawn the node service
@@ -121,13 +153,21 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
         tokio::task::spawn(NodeService::new(pool, backend, miner, fee_history_service, filters));
 
     let host = config.host.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
-    let socket = SocketAddr::new(host, port);
+    let mut addr = SocketAddr::new(host, port);
 
-    // launch the rpc server
-    let serve = tokio::task::spawn(server::serve(socket, api.clone(), server_config));
+    // configure the rpc server and use its actual local address
+    let server = server::serve(addr, api.clone(), server_config);
+    addr = server.local_addr();
+
+    // spawn the server on a new task
+    let serve = tokio::task::spawn(server);
 
     // select over both tasks
     let inner = futures::future::select(node_service, serve);
+
+    let tokio_handle = Handle::current();
+    let (signal, on_shutdown) = shutdown::signal();
+    let task_manager = TaskManager::new(tokio_handle, on_shutdown);
 
     let handle = NodeHandle {
         config,
@@ -135,7 +175,9 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
             // wait for the first task to finish
             inner.await.into_inner().0
         }),
-        address: socket,
+        address: addr,
+        _signal: Some(signal),
+        task_manager,
     };
 
     handle.print(fork.as_ref());
@@ -145,12 +187,19 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
 
 type NodeFuture = Pin<Box<dyn Future<Output = Result<hyper::Result<()>, JoinError>>>>;
 
-/// A handle to the spawned node and server
+/// A handle to the spawned node and server tasks
+///
+/// This future will resolve if either the node or server task resolve/fail.
 pub struct NodeHandle {
     config: NodeConfig,
+    /// the address of the running rpc server
     address: SocketAddr,
     /// the future that drives the rpc service and the node service
     inner: NodeFuture,
+    /// A signal that fires the shutdown, fired on drop.
+    _signal: Option<Signal>,
+    /// A task manager that can be used to spawn additional tasks
+    task_manager: TaskManager,
 }
 
 impl NodeHandle {
@@ -168,6 +217,9 @@ impl NodeHandle {
     }
 
     /// The address of the launched server
+    ///
+    /// **N.B.** this may not necessarily be the same `host + port` as configured in the
+    /// `NodeConfig`, if port was set to 0, then the OS auto picks an available port
     pub fn socket_address(&self) -> &SocketAddr {
         &self.address
     }
@@ -186,7 +238,7 @@ impl NodeHandle {
     pub fn http_provider(&self) -> Provider<Http> {
         Provider::<Http>::try_from(self.http_endpoint())
             .unwrap()
-            .interval(Duration::from_millis(2_0000))
+            .interval(Duration::from_millis(500))
     }
 
     /// Connects to the websocket Provider of the node
@@ -218,7 +270,38 @@ impl NodeHandle {
 
     /// Default gas price for all txs
     pub fn gas_price(&self) -> U256 {
-        self.config.gas_price
+        self.config.get_gas_price()
+    }
+
+    /// Returns the shutdown signal
+    pub fn shutdown_signal(&self) -> &Option<Signal> {
+        &self._signal
+    }
+
+    /// Returns mutable access to the shutdown signal
+    ///
+    /// This can be used to extract the Signal
+    pub fn shutdown_signal_mut(&mut self) -> &mut Option<Signal> {
+        &mut self._signal
+    }
+
+    /// Returns the task manager that can be used to spawn new tasks
+    ///
+    /// ```
+    /// use anvil::NodeHandle;
+    /// # fn t(handle: NodeHandle) {
+    /// let task_manager = handle.task_manager();
+    /// let on_shutdown = task_manager.on_shutdown();
+    ///
+    /// task_manager.spawn(async move {
+    ///     on_shutdown.await;
+    ///     // do something
+    /// });
+    ///
+    /// # }
+    /// ```
+    pub fn task_manager(&self) -> &TaskManager {
+        &self.task_manager
     }
 }
 

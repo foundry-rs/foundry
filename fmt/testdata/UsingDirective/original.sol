@@ -1,9 +1,9 @@
-//using UsingExampleLibrary for *; // "using" is not allowed on Source Unit level yet: https://github.com/hyperledger-labs/solang/issues/804
-
 contract UsingExampleContract {
  using  UsingExampleLibrary      for   *  ;
     using UsingExampleLibrary for uint;
-//    using Example.UsingExampleLibrary for uint; // "." in library is not supported yet: https://github.com/hyperledger-labs/solang/issues/801
-//    using {M.g, M.f} for uint; // "{ ... }" is not supported yet: https://github.com/hyperledger-labs/solang/issues/802
-//    using UsingExampleLibrary for uint global; // "global" is not supported yet: https://github.com/hyperledger-labs/solang/issues/803
+   using Example.UsingExampleLibrary  for  uint;
+        using { M.g, M.f} for uint;
+using UsingExampleLibrary for   uint  global;
+using { These, Are, MultipleLibraries, ThatNeedToBePut, OnSeparateLines } for uint;
+using { This.isareally.longmember.access.expression.that.needs.to.besplit.into.lines } for uint;
 }

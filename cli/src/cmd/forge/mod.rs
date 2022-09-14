@@ -6,16 +6,18 @@
 //! [`foundry_config::Config`].
 //!
 //! See [`BuildArgs`] for a reference implementation.
-//! And [`RunArgs`] for how to merge `Providers`.
+//! And [`DebugArgs`] for how to merge `Providers`.
 //!
 //! # Example
 //!
 //! create a `clap` subcommand into a `figment::Provider` and integrate it in the
 //! `foundry_config::Config`:
 //!
-//! ```rust
-//! use crate::{cmd::build::BuildArgs, foundry_common::evm::EvmArgs};
+//! ```
 //! use clap::Parser;
+//! use forge::executor::opts::EvmOpts;
+//! use foundry_cli::cmd::forge::build::BuildArgs;
+//! use foundry_common::evm::EvmArgs;
 //! use foundry_config::{figment::Figment, *};
 //!
 //! // A new clap subcommand that accepts both `EvmArgs` and `BuildArgs`
@@ -41,16 +43,22 @@ pub mod bind;
 pub mod build;
 pub mod cache;
 pub mod config;
+pub mod coverage;
 pub mod create;
+pub mod debug;
 pub mod flatten;
 pub mod fmt;
+pub mod fourbyte;
+pub mod geiger;
 pub mod init;
 pub mod inspect;
 pub mod install;
 pub mod remappings;
-pub mod run;
+pub mod remove;
+pub mod script;
 pub mod snapshot;
 pub mod test;
 pub mod tree;
+pub mod update;
 pub mod verify;
 pub mod watch;

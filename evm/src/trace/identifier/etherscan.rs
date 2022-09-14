@@ -3,45 +3,48 @@ use ethers::{
     abi::{Abi, Address},
     etherscan,
     prelude::{contract::ContractMetadata, errors::EtherscanError},
-    types::Chain,
+    solc::utils::RuntimeOrHandle,
 };
+use foundry_config::{Chain, Config};
 use futures::{
     future::Future,
     stream::{FuturesUnordered, Stream, StreamExt},
     task::{Context, Poll},
 };
-use std::{borrow::Cow, path::PathBuf, pin::Pin};
+use std::{
+    borrow::Cow,
+    pin::Pin,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 use tokio::time::{Duration, Interval};
 use tracing::{trace, warn};
 
 /// A trace identifier that tries to identify addresses using Etherscan.
+#[derive(Default)]
 pub struct EtherscanIdentifier {
     /// The Etherscan client
-    client: Option<etherscan::Client>,
+    client: Option<Arc<etherscan::Client>>,
+    /// Tracks whether the API key provides was marked as invalid
+    ///
+    /// After the first [EtherscanError::InvalidApiKey] this will get set to true, so we can
+    /// prevent any further attempts
+    invalid_api_key: Arc<AtomicBool>,
 }
 
 impl EtherscanIdentifier {
-    /// Creates a new Etherscan identifier.
-    ///
-    /// The identifier is a noop if either `chain` or `etherscan_api_key` are `None`.
-    pub fn new(
-        chain: Option<impl Into<Chain>>,
-        etherscan_api_key: Option<String>,
-        cache_path: Option<PathBuf>,
-        ttl: Duration,
-    ) -> Self {
-        if let Some(cache_path) = &cache_path {
-            if let Err(err) = std::fs::create_dir_all(cache_path.join("sources")) {
-                warn!(target: "etherscanidentifier", "could not create etherscan cache dir: {:?}", err);
-            }
-        }
-
-        Self {
-            client: chain.and_then(|chain| {
-                etherscan_api_key.and_then(|key| {
-                    etherscan::Client::new_cached(chain.into(), key, cache_path, ttl).ok()
-                })
-            }),
+    /// Creates a new Etherscan identifier with the given client
+    pub fn new(config: &Config, chain: Option<impl Into<Chain>>) -> eyre::Result<Self> {
+        if let Some(config) = config.get_etherscan_config_with_chain(chain)? {
+            trace!(target: "etherscanidentifier", chain=?config.chain, url=?config.api_url, "using etherscan identifier");
+            Ok(Self {
+                client: Some(Arc::new(config.into_client()?)),
+                invalid_api_key: Arc::new(Default::default()),
+            })
+        } else {
+            Ok(Default::default())
         }
     }
 }
@@ -51,8 +54,20 @@ impl TraceIdentifier for EtherscanIdentifier {
         &self,
         addresses: Vec<(&Address, Option<&Vec<u8>>)>,
     ) -> Vec<AddressIdentity> {
+        trace!(target: "etherscanidentifier", "identify {} addresses", addresses.len());
+
+        if self.invalid_api_key.load(Ordering::Relaxed) {
+            // api key was marked as invalid
+            return Vec::new()
+        }
+
         self.client.as_ref().map_or(Default::default(), |client| {
-            let mut fetcher = EtherscanFetcher::new(client.clone(), Duration::from_secs(1), 5);
+            let mut fetcher = EtherscanFetcher::new(
+                Arc::clone(client),
+                Duration::from_secs(1),
+                5,
+                Arc::clone(&self.invalid_api_key),
+            );
 
             for (addr, _) in addresses {
                 fetcher.push(*addr);
@@ -64,10 +79,11 @@ impl TraceIdentifier for EtherscanIdentifier {
                     label: Some(label.clone()),
                     contract: Some(label),
                     abi: Some(Cow::Owned(abi)),
+                    artifact_id: None,
                 })
                 .collect();
 
-            foundry_utils::RuntimeOrHandle::new().block_on(fut)
+            RuntimeOrHandle::new().block_on(fut)
         })
     }
 }
@@ -80,7 +96,7 @@ type EtherscanFuture =
 /// Fetches information about multiple addresses concurrently, while respecting rate limits.
 pub struct EtherscanFetcher {
     /// The Etherscan client
-    client: etherscan::Client,
+    client: Arc<etherscan::Client>,
     /// The time we wait if we hit the rate limit
     timeout: Duration,
     /// The interval we are currently waiting for before making a new request
@@ -91,10 +107,17 @@ pub struct EtherscanFetcher {
     queue: Vec<Address>,
     /// The in progress requests
     in_progress: FuturesUnordered<EtherscanFuture>,
+    /// tracks whether the API key provides was marked as invalid
+    invalid_api_key: Arc<AtomicBool>,
 }
 
 impl EtherscanFetcher {
-    pub fn new(client: etherscan::Client, timeout: Duration, concurrency: usize) -> Self {
+    pub fn new(
+        client: Arc<etherscan::Client>,
+        timeout: Duration,
+        concurrency: usize,
+        invalid_api_key: Arc<AtomicBool>,
+    ) -> Self {
         Self {
             client,
             timeout,
@@ -102,6 +125,7 @@ impl EtherscanFetcher {
             concurrency,
             queue: Vec::new(),
             in_progress: FuturesUnordered::new(),
+            invalid_api_key,
         }
     }
 
@@ -112,7 +136,7 @@ impl EtherscanFetcher {
     fn queue_next_reqs(&mut self) {
         while self.in_progress.len() < self.concurrency {
             if let Some(addr) = self.queue.pop() {
-                let client = self.client.clone();
+                let client = Arc::clone(&self.client);
                 trace!(target: "etherscanidentifier", "fetching info for {:?}", addr);
                 self.in_progress.push(Box::pin(async move {
                     let res = client.contract_source_code(addr).await;
@@ -155,10 +179,16 @@ impl Stream for EtherscanFetcher {
                                 }
                             }
                         }
-                        Err(etherscan::errors::EtherscanError::RateLimitExceeded) => {
+                        Err(EtherscanError::RateLimitExceeded) => {
                             warn!(target: "etherscanidentifier", "rate limit exceeded on attempt");
                             pin.backoff = Some(tokio::time::interval(pin.timeout));
                             pin.queue.push(addr);
+                        }
+                        Err(EtherscanError::InvalidApiKey) => {
+                            warn!(target: "etherscanidentifier", "invalid api key");
+                            // mark key as invalid
+                            pin.invalid_api_key.store(false, Ordering::Relaxed);
+                            return Poll::Ready(None)
                         }
                         Err(err) => {
                             warn!(target: "etherscanidentifier", "could not get etherscan info: {:?}", err);

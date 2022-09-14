@@ -5,13 +5,14 @@ use cast::Cast;
 use clap::Parser;
 use ethers::prelude::*;
 use eyre::Result;
+use foundry_common::get_http_provider;
 use futures::{future::BoxFuture, join};
 
 #[derive(Debug, Clone, Parser)]
 pub struct FindBlockArgs {
-    #[clap(help = "The UNIX timestamp to search for (in seconds)")]
+    #[clap(help = "The UNIX timestamp to search for (in seconds)", value_name = "TIMESTAMP")]
     timestamp: u64,
-    #[clap(long, env = "ETH_RPC_URL")]
+    #[clap(long, env = "ETH_RPC_URL", value_name = "URL")]
     rpc_url: Option<String>,
 }
 
@@ -29,7 +30,7 @@ impl FindBlockArgs {
         let ts_target = U256::from(timestamp);
         let rpc_url = consume_config_rpc_url(rpc_url);
 
-        let provider = Provider::try_from(rpc_url)?;
+        let provider = get_http_provider(rpc_url);
         let last_block_num = provider.get_block_number().await?;
         let cast_provider = Cast::new(provider);
 

@@ -5,7 +5,7 @@ import "ds-test/test.sol";
 import "../cheats/Cheats.sol";
 
 contract Payable {
-    function pay() payable public {}
+    function pay() public payable {}
 }
 
 contract PaymentFailureTest is DSTest {

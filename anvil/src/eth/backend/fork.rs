@@ -1,27 +1,24 @@
 //! Support for forking off another client
 
-use ethers::{
-    prelude::{Http, Provider},
-    types::H256,
-};
-use std::{collections::HashMap, sync::Arc};
-
-use crate::eth::error::BlockchainError;
-
-use crate::eth::backend::mem::fork_db::ForkedDatabase;
+use crate::eth::{backend::mem::fork_db::ForkedDatabase, error::BlockchainError};
+use anvil_core::eth::{proof::AccountProof, transaction::EthTransactionRequest};
 use ethers::{
     prelude::BlockNumber,
     providers::{Middleware, ProviderError},
     types::{
-        Address, Block, BlockId, Bytes, Filter, Log, Trace, Transaction, TransactionReceipt,
-        TxHash, U256,
+        transaction::eip2930::AccessListWithGasUsed, Address, Block, BlockId, Bytes, FeeHistory,
+        Filter, GethDebugTracingOptions, GethTrace, Log, Trace, Transaction, TransactionReceipt,
+        TxHash, H256, U256,
     },
 };
+use foundry_common::{ProviderBuilder, RetryProvider};
 use foundry_evm::utils::u256_to_h256_be;
 use parking_lot::{
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
     RawRwLock, RwLock,
 };
+use std::{collections::HashMap, sync::Arc, time::Duration};
+use tokio::sync::RwLock as AsyncRwLock;
 use tracing::trace;
 
 /// Represents a fork of a remote client
@@ -37,20 +34,59 @@ pub struct ClientFork {
     // endpoints
     pub config: Arc<RwLock<ClientForkConfig>>,
     /// This also holds a handle to the underlying database
-    pub database: Arc<RwLock<ForkedDatabase>>,
+    pub database: Arc<AsyncRwLock<ForkedDatabase>>,
 }
 
 // === impl ClientFork ===
 
 impl ClientFork {
+    /// Creates a new instance of the fork
+    pub fn new(config: ClientForkConfig, database: Arc<AsyncRwLock<ForkedDatabase>>) -> Self {
+        Self { storage: Default::default(), config: Arc::new(RwLock::new(config)), database }
+    }
+
     /// Reset the fork to a fresh forked state, and optionally update the fork config
-    pub fn reset(
+    pub async fn reset(
         &self,
         url: Option<String>,
-        block_number: Option<u64>,
+        block_number: impl Into<BlockId>,
     ) -> Result<(), BlockchainError> {
-        self.database.write().reset(url.clone(), block_number)?;
-        self.config.write().update(url, block_number)?;
+        let block_number = block_number.into();
+        {
+            self.database
+                .write()
+                .await
+                .reset(url.clone(), block_number)
+                .map_err(BlockchainError::Internal)?;
+        }
+
+        if let Some(url) = url {
+            self.config.write().update_url(url)?;
+            let override_chain_id = self.config.read().override_chain_id;
+            let chain_id = if let Some(chain_id) = override_chain_id {
+                chain_id.into()
+            } else {
+                self.provider().get_chainid().await?
+            };
+            self.config.write().chain_id = chain_id.as_u64();
+        }
+
+        let provider = self.provider();
+        let block =
+            provider.get_block(block_number).await?.ok_or(BlockchainError::BlockNotFound)?;
+        let block_hash = block.hash.ok_or(BlockchainError::BlockNotFound)?;
+        let timestamp = block.timestamp.as_u64();
+        let base_fee = block.base_fee_per_gas;
+        let total_difficulty = block.total_difficulty.unwrap_or_default();
+
+        self.config.write().update_block(
+            block.number.ok_or(BlockchainError::BlockNotFound)?.as_u64(),
+            block_hash,
+            timestamp,
+            base_fee,
+            total_difficulty,
+        );
+
         self.clear_cached_storage();
         Ok(())
     }
@@ -62,11 +98,28 @@ impl ClientFork {
 
     /// Returns true whether the block predates the fork
     pub fn predates_fork(&self, block: u64) -> bool {
+        block < self.block_number()
+    }
+
+    /// Returns true whether the block predates the fork _or_ is the same block as the fork
+    pub fn predates_fork_inclusive(&self, block: u64) -> bool {
         block <= self.block_number()
+    }
+
+    pub fn timestamp(&self) -> u64 {
+        self.config.read().timestamp
     }
 
     pub fn block_number(&self) -> u64 {
         self.config.read().block_number
+    }
+
+    pub fn total_difficulty(&self) -> U256 {
+        self.config.read().total_difficulty
+    }
+
+    pub fn base_fee(&self) -> Option<U256> {
+        self.config.read().base_fee
     }
 
     pub fn block_hash(&self) -> H256 {
@@ -81,7 +134,7 @@ impl ClientFork {
         self.config.read().chain_id
     }
 
-    fn provider(&self) -> Arc<Provider<Http>> {
+    fn provider(&self) -> Arc<RetryProvider> {
         self.config.read().provider.clone()
     }
 
@@ -91,6 +144,59 @@ impl ClientFork {
 
     fn storage_write(&self) -> RwLockWriteGuard<'_, RawRwLock, ForkedStorage> {
         self.storage.write()
+    }
+
+    /// Returns the fee history  `eth_feeHistory`
+    pub async fn fee_history(
+        &self,
+        block_count: U256,
+        newest_block: BlockNumber,
+        reward_percentiles: &[f64],
+    ) -> Result<FeeHistory, ProviderError> {
+        self.provider().fee_history(block_count, newest_block, reward_percentiles).await
+    }
+
+    /// Sends `eth_getProof`
+    pub async fn get_proof(
+        &self,
+        address: Address,
+        keys: Vec<H256>,
+        block_number: Option<BlockId>,
+    ) -> Result<AccountProof, ProviderError> {
+        self.provider().get_proof(address, keys, block_number).await
+    }
+
+    /// Sends `eth_call`
+    pub async fn call(
+        &self,
+        request: &EthTransactionRequest,
+        block: Option<BlockNumber>,
+    ) -> Result<Bytes, ProviderError> {
+        let tx = ethers::utils::serialize(request);
+        let block = ethers::utils::serialize(&block.unwrap_or(BlockNumber::Latest));
+        self.provider().request("eth_call", [tx, block]).await
+    }
+
+    /// Sends `eth_call`
+    pub async fn estimate_gas(
+        &self,
+        request: &EthTransactionRequest,
+        block: Option<BlockNumber>,
+    ) -> Result<U256, ProviderError> {
+        let tx = ethers::utils::serialize(request);
+        let block = ethers::utils::serialize(&block.unwrap_or(BlockNumber::Latest));
+        self.provider().request("eth_estimateGas", [tx, block]).await
+    }
+
+    /// Sends `eth_call`
+    pub async fn create_access_list(
+        &self,
+        request: &EthTransactionRequest,
+        block: Option<BlockNumber>,
+    ) -> Result<AccessListWithGasUsed, ProviderError> {
+        let tx = ethers::utils::serialize(request);
+        let block = ethers::utils::serialize(&block.unwrap_or(BlockNumber::Latest));
+        self.provider().request("eth_createAccessList", [tx, block]).await
     }
 
     pub async fn storage_at(
@@ -197,6 +303,22 @@ impl ClientFork {
         Ok(traces)
     }
 
+    pub async fn debug_trace_transaction(
+        &self,
+        hash: H256,
+        opts: GethDebugTracingOptions,
+    ) -> Result<GethTrace, ProviderError> {
+        if let Some(traces) = self.storage_read().geth_transaction_traces.get(&hash).cloned() {
+            return Ok(traces)
+        }
+
+        let trace = self.provider().debug_trace_transaction(hash, opts).await?;
+        let mut storage = self.storage_write();
+        storage.geth_transaction_traces.insert(hash, trace.clone());
+
+        Ok(trace)
+    }
+
     pub async fn trace_block(&self, number: u64) -> Result<Vec<Trace>, ProviderError> {
         if let Some(traces) = self.storage_read().block_traces.get(&number).cloned() {
             return Ok(traces)
@@ -297,6 +419,52 @@ impl ClientFork {
         Ok(None)
     }
 
+    pub async fn uncle_by_block_hash_and_index(
+        &self,
+        hash: H256,
+        index: usize,
+    ) -> Result<Option<Block<TxHash>>, ProviderError> {
+        if let Some(block) = self.block_by_hash(hash).await? {
+            return self.uncles_by_block_and_index(block, index).await
+        }
+        Ok(None)
+    }
+
+    pub async fn uncle_by_block_number_and_index(
+        &self,
+        number: u64,
+        index: usize,
+    ) -> Result<Option<Block<TxHash>>, ProviderError> {
+        if let Some(block) = self.block_by_number(number).await? {
+            return self.uncles_by_block_and_index(block, index).await
+        }
+        Ok(None)
+    }
+
+    async fn uncles_by_block_and_index(
+        &self,
+        block: Block<H256>,
+        index: usize,
+    ) -> Result<Option<Block<TxHash>>, ProviderError> {
+        let block_hash = block
+            .hash
+            .ok_or_else(|| ProviderError::CustomError("missing block-hash".to_string()))?;
+        if let Some(uncles) = self.storage_read().uncles.get(&block_hash) {
+            return Ok(uncles.get(index).cloned())
+        }
+
+        let mut uncles = Vec::with_capacity(block.uncles.len());
+        for (uncle_idx, _) in block.uncles.iter().enumerate() {
+            let uncle = match self.provider().get_uncle(block_hash, uncle_idx.into()).await? {
+                Some(u) => u,
+                None => return Ok(None),
+            };
+            uncles.push(uncle);
+        }
+        self.storage_write().uncles.insert(block_hash, uncles.clone());
+        Ok(uncles.get(index).cloned())
+    }
+
     /// Converts a block of hashes into a full block
     fn convert_to_full_block(&self, block: Block<TxHash>) -> Block<Transaction> {
         let storage = self.storage.read();
@@ -317,47 +485,78 @@ pub struct ClientForkConfig {
     pub block_number: u64,
     pub block_hash: H256,
     // TODO make provider agnostic
-    pub provider: Arc<Provider<Http>>,
+    pub provider: Arc<RetryProvider>,
     pub chain_id: u64,
+    pub override_chain_id: Option<u64>,
+    /// The timestamp for the forked block
+    pub timestamp: u64,
+    /// The basefee of the forked block
+    pub base_fee: Option<U256>,
+    /// request timeout
+    pub timeout: Duration,
+    /// request retries for spurious networks
+    pub retries: u32,
+    /// request retries for spurious networks
+    pub backoff: Duration,
+    /// available CUPS
+    pub compute_units_per_second: u64,
+    /// total difficulty of the chain until this block
+    pub total_difficulty: U256,
 }
 
 // === impl ClientForkConfig ===
 
 impl ClientForkConfig {
-    /// Updates the forking metadata
+    /// Updates the provider URL
     ///
     /// # Errors
     ///
     /// This will fail if no new provider could be established (erroneous URL)
-    pub fn update(
-        &mut self,
-        url: Option<String>,
-        block_number: Option<u64>,
-    ) -> Result<(), BlockchainError> {
-        if let Some(url) = url {
-            self.provider = Arc::new(
-                Provider::try_from(&url).map_err(|_| BlockchainError::InvalidUrl(url.clone()))?,
-            );
-            trace!(target: "fork", "Updated rpc url  {}", url);
-            self.eth_rpc_url = url;
-        }
-        if let Some(block_number) = block_number {
-            self.block_number = block_number;
-            trace!(target: "fork", "Updated block number {}", block_number);
-        }
-
+    fn update_url(&mut self, url: String) -> Result<(), BlockchainError> {
+        let interval = self.provider.get_interval();
+        self.provider = Arc::new(
+            ProviderBuilder::new(url.as_str())
+                .timeout(self.timeout)
+                .timeout_retry(self.retries)
+                .max_retry(10)
+                .initial_backoff(self.backoff.as_millis() as u64)
+                .compute_units_per_second(self.compute_units_per_second)
+                .build()
+                .map_err(|_| BlockchainError::InvalidUrl(url.clone()))?
+                .interval(interval),
+        );
+        trace!(target: "fork", "Updated rpc url  {}", url);
+        self.eth_rpc_url = url;
         Ok(())
+    }
+    /// Updates the block forked off `(block number, block hash, timestamp)`
+    pub fn update_block(
+        &mut self,
+        block_number: u64,
+        block_hash: H256,
+        timestamp: u64,
+        base_fee: Option<U256>,
+        total_difficulty: U256,
+    ) {
+        self.block_number = block_number;
+        self.block_hash = block_hash;
+        self.timestamp = timestamp;
+        self.base_fee = base_fee;
+        self.total_difficulty = total_difficulty;
+        trace!(target: "fork", "Updated block number={} hash={:?}", block_number, block_hash);
     }
 }
 
 /// Contains cached state fetched to serve EthApi requests
 #[derive(Debug, Clone, Default)]
 pub struct ForkedStorage {
+    pub uncles: HashMap<H256, Vec<Block<TxHash>>>,
     pub blocks: HashMap<H256, Block<TxHash>>,
     pub hashes: HashMap<u64, H256>,
     pub transactions: HashMap<H256, Transaction>,
     pub transaction_receipts: HashMap<H256, TransactionReceipt>,
     pub transaction_traces: HashMap<H256, Vec<Trace>>,
+    pub geth_transaction_traces: HashMap<H256, GethTrace>,
     pub block_traces: HashMap<u64, Vec<Trace>>,
     pub code_at: HashMap<(Address, u64), Bytes>,
 }

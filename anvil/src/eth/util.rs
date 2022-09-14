@@ -1,4 +1,11 @@
+use ethers::abi::Address;
+use forge::revm::SpecId;
+use foundry_evm::revm::precompiles::Precompiles;
 use std::fmt;
+
+pub fn get_precompiles_for(spec_id: SpecId) -> Vec<Address> {
+    Precompiles::new(spec_id.to_precompile_id()).addresses().into_iter().copied().collect()
+}
 
 /// wrapper type that displays byte as hex
 pub struct HexDisplay<'a>(&'a [u8]);

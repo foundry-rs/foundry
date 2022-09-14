@@ -1,0 +1,5 @@
+This file serves as the key for the github actions/cache
+
+Any change in this file will invalidate the cache in CI that stores RPC data.
+
+Last updated: 05-26-2022

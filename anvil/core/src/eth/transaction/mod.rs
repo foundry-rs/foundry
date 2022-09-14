@@ -1,9 +1,12 @@
 //! transaction related data
 
+use std::cmp::Ordering;
+
 use crate::eth::{
     receipt::Log,
     utils::{enveloped, to_access_list},
 };
+use bytes::Buf;
 use ethers_core::{
     types::{
         transaction::eip2930::{AccessList, AccessListItem},
@@ -14,9 +17,10 @@ use ethers_core::{
         rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream},
     },
 };
+use fastrlp::{length_of_length, Header, RlpDecodable, RlpEncodable};
 use foundry_evm::{
-    revm::{CreateScheme, TransactTo, TxEnv},
-    trace::node::CallTraceNode,
+    revm::{CreateScheme, Return, TransactTo, TxEnv},
+    trace::CallTraceArena,
 };
 use serde::{Deserialize, Serialize};
 
@@ -141,7 +145,7 @@ impl EthTransactionRequest {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TransactionKind {
     Call(Address),
     Create,
@@ -184,7 +188,38 @@ impl Decodable for TransactionKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl fastrlp::Encodable for TransactionKind {
+    fn length(&self) -> usize {
+        match self {
+            TransactionKind::Call(to) => to.length(),
+            TransactionKind::Create => ([]).length(),
+        }
+    }
+    fn encode(&self, out: &mut dyn fastrlp::BufMut) {
+        match self {
+            TransactionKind::Call(to) => to.encode(out),
+            TransactionKind::Create => ([]).encode(out),
+        }
+    }
+}
+
+impl fastrlp::Decodable for TransactionKind {
+    fn decode(buf: &mut &[u8]) -> Result<Self, fastrlp::DecodeError> {
+        if let Some(&first) = buf.first() {
+            if first == 0x80 {
+                buf.advance(1);
+                Ok(TransactionKind::Create)
+            } else {
+                let addr = <Address as fastrlp::Decodable>::decode(buf)?;
+                Ok(TransactionKind::Call(addr))
+            }
+        } else {
+            Err(fastrlp::DecodeError::InputTooShort)
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, RlpEncodable, RlpDecodable)]
 pub struct EIP2930TransactionRequest {
     pub chain_id: u64,
     pub nonce: U256,
@@ -294,7 +329,7 @@ impl Encodable for LegacyTransactionRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, RlpEncodable, RlpDecodable)]
 pub struct EIP1559TransactionRequest {
     pub chain_id: u64,
     pub nonce: U256,
@@ -350,7 +385,7 @@ impl Encodable for EIP1559TransactionRequest {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TypedTransaction {
     /// Legacy transaction type
     Legacy(LegacyTransaction),
@@ -384,6 +419,14 @@ impl TypedTransaction {
             TypedTransaction::Legacy(tx) => tx.value,
             TypedTransaction::EIP2930(tx) => tx.value,
             TypedTransaction::EIP1559(tx) => tx.value,
+        }
+    }
+
+    pub fn data(&self) -> &Bytes {
+        match self {
+            TypedTransaction::Legacy(tx) => &tx.input,
+            TypedTransaction::EIP2930(tx) => &tx.input,
+            TypedTransaction::EIP1559(tx) => &tx.input,
         }
     }
 
@@ -440,6 +483,31 @@ impl TypedTransaction {
             TypedTransaction::EIP2930(t) => t.nonce(),
             TypedTransaction::EIP1559(t) => t.nonce(),
         }
+    }
+
+    pub fn chain_id(&self) -> Option<u64> {
+        match self {
+            TypedTransaction::Legacy(t) => t.chain_id(),
+            TypedTransaction::EIP2930(t) => Some(t.chain_id),
+            TypedTransaction::EIP1559(t) => Some(t.chain_id),
+        }
+    }
+
+    pub fn as_legacy(&self) -> Option<&LegacyTransaction> {
+        match self {
+            TypedTransaction::Legacy(tx) => Some(tx),
+            _ => None,
+        }
+    }
+
+    /// Returns true whether this tx is a legacy transaction
+    pub fn is_legacy(&self) -> bool {
+        matches!(self, TypedTransaction::Legacy(_))
+    }
+
+    /// Returns true whether this tx is a EIP1559 transaction
+    pub fn is_eip1559(&self) -> bool {
+        matches!(self, TypedTransaction::EIP1559(_))
     }
 
     pub fn hash(&self) -> H256 {
@@ -506,7 +574,7 @@ impl Encodable for TypedTransaction {
 impl Decodable for TypedTransaction {
     fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
         let data = rlp.data()?;
-        let first = *data.get(0).ok_or(DecoderError::Custom("empty slice"))?;
+        let first = *data.first().ok_or(DecoderError::Custom("empty slice"))?;
         if rlp.is_list() {
             return Ok(TypedTransaction::Legacy(rlp.as_val()?))
         }
@@ -521,7 +589,100 @@ impl Decodable for TypedTransaction {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+impl fastrlp::Encodable for TypedTransaction {
+    fn length(&self) -> usize {
+        match self {
+            TypedTransaction::Legacy(tx) => tx.length(),
+            tx => {
+                let payload_len = match tx {
+                    TypedTransaction::EIP2930(tx) => tx.length() + 1,
+                    TypedTransaction::EIP1559(tx) => tx.length() + 1,
+                    _ => unreachable!("legacy tx length already matched"),
+                };
+                // we include a string header for signed types txs, so include the length here
+                payload_len + length_of_length(payload_len)
+            }
+        }
+    }
+    fn encode(&self, out: &mut dyn fastrlp::BufMut) {
+        match self {
+            TypedTransaction::Legacy(tx) => tx.encode(out),
+            tx => {
+                let payload_len = match tx {
+                    TypedTransaction::EIP2930(tx) => tx.length() + 1,
+                    TypedTransaction::EIP1559(tx) => tx.length() + 1,
+                    _ => unreachable!("legacy tx length already matched"),
+                };
+
+                match tx {
+                    TypedTransaction::EIP2930(tx) => {
+                        let tx_string_header = Header { list: false, payload_length: payload_len };
+
+                        tx_string_header.encode(out);
+                        out.put_u8(0x01);
+                        tx.encode(out);
+                    }
+                    TypedTransaction::EIP1559(tx) => {
+                        let tx_string_header = Header { list: false, payload_length: payload_len };
+
+                        tx_string_header.encode(out);
+                        out.put_u8(0x02);
+                        tx.encode(out);
+                    }
+                    _ => unreachable!("legacy tx encode already matched"),
+                }
+            }
+        }
+    }
+}
+
+impl fastrlp::Decodable for TypedTransaction {
+    fn decode(buf: &mut &[u8]) -> Result<Self, fastrlp::DecodeError> {
+        let first = *buf.first().ok_or(fastrlp::DecodeError::Custom("empty slice"))?;
+
+        // a signed transaction is either encoded as a string (non legacy) or a list (legacy).
+        // We should not consume the buffer if we are decoding a legacy transaction, so let's
+        // check if the first byte is between 0x80 and 0xbf.
+        match first.cmp(&fastrlp::EMPTY_LIST_CODE) {
+            Ordering::Less => {
+                // strip out the string header
+                // NOTE: typed transaction encodings either contain a "rlp header" which contains
+                // the type of the payload and its length, or they do not contain a header and
+                // start with the tx type byte.
+                //
+                // This line works for both types of encodings because byte slices starting with
+                // 0x01 and 0x02 return a Header { list: false, payload_length: 1 } when input to
+                // Header::decode.
+                // If the encoding includes a header, the header will be properly decoded and
+                // consumed.
+                // Otherwise, header decoding will succeed but nothing is consumed.
+                let _header = Header::decode(buf)?;
+                let tx_type = *buf.first().ok_or(fastrlp::DecodeError::Custom(
+                    "typed tx cannot be decoded from an empty slice",
+                ))?;
+                if tx_type == 0x01 {
+                    buf.advance(1);
+                    <EIP2930Transaction as fastrlp::Decodable>::decode(buf)
+                        .map(TypedTransaction::EIP2930)
+                } else if tx_type == 0x02 {
+                    buf.advance(1);
+                    <EIP1559Transaction as fastrlp::Decodable>::decode(buf)
+                        .map(TypedTransaction::EIP1559)
+                } else {
+                    Err(fastrlp::DecodeError::Custom("invalid tx type"))
+                }
+            }
+            Ordering::Equal => Err(fastrlp::DecodeError::Custom(
+                "an empty list is not a valid transaction encoding",
+            )),
+            Ordering::Greater => {
+                <LegacyTransaction as fastrlp::Decodable>::decode(buf).map(TypedTransaction::Legacy)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash, RlpEncodable, RlpDecodable)]
 pub struct LegacyTransaction {
     pub nonce: U256,
     pub gas_price: U256,
@@ -552,6 +713,16 @@ impl LegacyTransaction {
         } else {
             None
         }
+    }
+
+    /// See <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
+    /// > If you do, then the v of the signature MUST be set to {0,1} + CHAIN_ID * 2 + 35 where
+    /// > {0,1} is the parity of the y value of the curve point for which r is the x-value in the
+    /// > secp256k1 signing process.
+    pub fn meets_eip155(&self, chain_id: u64) -> bool {
+        let double_chain_id = chain_id.saturating_mul(2);
+        let v = self.signature.v;
+        v == double_chain_id + 35 || v == double_chain_id + 36
     }
 }
 
@@ -592,7 +763,7 @@ impl Decodable for LegacyTransaction {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash, RlpEncodable, RlpDecodable)]
 pub struct EIP2930Transaction {
     pub chain_id: u64,
     pub nonce: U256,
@@ -678,7 +849,7 @@ impl Decodable for EIP2930Transaction {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash, RlpEncodable, RlpDecodable)]
 pub struct EIP1559Transaction {
     pub chain_id: u64,
     pub nonce: U256,
@@ -902,7 +1073,7 @@ impl PendingTransaction {
 }
 
 /// Represents all relevant information of an executed transaction
-#[derive(Debug, PartialEq, Clone, Default)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct TransactionInfo {
     pub transaction_hash: H256,
     pub transaction_index: u32,
@@ -911,31 +1082,54 @@ pub struct TransactionInfo {
     pub contract_address: Option<Address>,
     pub logs: Vec<Log>,
     pub logs_bloom: Bloom,
-    pub traces: Vec<CallTraceNode>,
+    pub traces: CallTraceArena,
+    pub exit: Return,
+    pub out: Option<Bytes>,
 }
 
 // === impl TransactionInfo ===
 
 impl TransactionInfo {
-    /// Returns the callgraph of the trace
-    pub fn trace_call_graph(&self, idx: usize) -> Vec<usize> {
+    /// Returns the `traceAddress` of the node in the arena
+    ///
+    /// The `traceAddress` field of all returned traces, gives the exact location in the call trace
+    /// [index in root, index in first CALL, index in second CALL, …].
+    ///
+    /// # Panics
+    ///
+    /// if the `idx` does not belong to a node
+    pub fn trace_address(&self, idx: usize) -> Vec<usize> {
+        if idx == 0 {
+            // root call has empty traceAddress
+            return vec![]
+        }
         let mut graph = vec![];
-        let mut node = &self.traces[idx];
-
+        let mut node = &self.traces.arena[idx];
         while let Some(parent) = node.parent {
-            node = &self.traces[parent];
-            graph.push(node.trace.depth);
+            // the index of the child call in the arena
+            let child_idx = node.idx;
+            node = &self.traces.arena[parent];
+            // find the index of the child call in the parent node
+            let call_idx = node
+                .children
+                .iter()
+                .position(|child| *child == child_idx)
+                .expect("child exists in parent");
+            graph.push(call_idx);
         }
         graph.reverse();
-        graph.push(self.traces[idx].trace.depth);
         graph
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
+    use bytes::BytesMut;
     use ethers_core::utils::hex;
+    use fastrlp::{Decodable, Encodable};
 
     #[test]
     fn can_recover_sender() {
@@ -946,7 +1140,7 @@ mod tests {
             TypedTransaction::Legacy(tx) => tx,
             _ => panic!("Invalid typed transaction"),
         };
-        assert_eq!(tx.input, b"".into());
+        assert_eq!(tx.input, Bytes::from(b""));
         assert_eq!(tx.gas_price, U256::from(0x01u64));
         assert_eq!(tx.gas_limit, U256::from(0x5208u64));
         assert_eq!(tx.nonce, U256::from(0x00u64));
@@ -960,5 +1154,193 @@ mod tests {
             tx.recover().unwrap(),
             "0f65fe9276bc9a24ae7083ae28e2660ef72df99e".parse().unwrap()
         );
+    }
+
+    #[test]
+    fn test_decode_fastrlp_create() {
+        // tests that a contract creation tx encodes and decodes properly
+        let tx = TypedTransaction::EIP2930(EIP2930Transaction {
+            chain_id: 1u64,
+            nonce: U256::from(0),
+            gas_price: U256::from(1),
+            gas_limit: U256::from(2),
+            kind: TransactionKind::Create,
+            value: U256::from(3),
+            input: Bytes::from(vec![1, 2]),
+            odd_y_parity: true,
+            r: H256::default(),
+            s: H256::default(),
+            access_list: vec![].into(),
+        });
+
+        let mut encoded = BytesMut::new();
+        tx.encode(&mut encoded);
+
+        let decoded = TypedTransaction::decode(&mut &*encoded).unwrap();
+        assert_eq!(decoded, tx);
+    }
+
+    #[test]
+    fn test_decode_fastrlp_create_goerli() {
+        // test that an example create tx from goerli decodes properly
+        let tx_bytes =
+              hex::decode("02f901ee05228459682f008459682f11830209bf8080b90195608060405234801561001057600080fd5b50610175806100206000396000f3fe608060405234801561001057600080fd5b506004361061002b5760003560e01c80630c49c36c14610030575b600080fd5b61003861004e565b604051610045919061011d565b60405180910390f35b60606020600052600f6020527f68656c6c6f2073746174656d696e64000000000000000000000000000000000060405260406000f35b600081519050919050565b600082825260208201905092915050565b60005b838110156100be5780820151818401526020810190506100a3565b838111156100cd576000848401525b50505050565b6000601f19601f8301169050919050565b60006100ef82610084565b6100f9818561008f565b93506101098185602086016100a0565b610112816100d3565b840191505092915050565b6000602082019050818103600083015261013781846100e4565b90509291505056fea264697066735822122051449585839a4ea5ac23cae4552ef8a96b64ff59d0668f76bfac3796b2bdbb3664736f6c63430008090033c080a0136ebffaa8fc8b9fda9124de9ccb0b1f64e90fbd44251b4c4ac2501e60b104f9a07eb2999eec6d185ef57e91ed099afb0a926c5b536f0155dd67e537c7476e1471")
+                  .unwrap();
+        let _decoded = TypedTransaction::decode(&mut &tx_bytes[..]).unwrap();
+    }
+
+    #[test]
+    fn test_decode_fastrlp_call() {
+        let tx = TypedTransaction::EIP2930(EIP2930Transaction {
+            chain_id: 1u64,
+            nonce: U256::from(0),
+            gas_price: U256::from(1),
+            gas_limit: U256::from(2),
+            kind: TransactionKind::Call(Address::default()),
+            value: U256::from(3),
+            input: Bytes::from(vec![1, 2]),
+            odd_y_parity: true,
+            r: H256::default(),
+            s: H256::default(),
+            access_list: vec![].into(),
+        });
+
+        let mut encoded = BytesMut::new();
+        tx.encode(&mut encoded);
+
+        let decoded = TypedTransaction::decode(&mut &*encoded).unwrap();
+        assert_eq!(decoded, tx);
+    }
+
+    #[test]
+    fn decode_transaction_consumes_buffer() {
+        let bytes = &mut &hex::decode("b87502f872041a8459682f008459682f0d8252089461815774383099e24810ab832a5b2a5425c154d58829a2241af62c000080c001a059e6b67f48fb32e7e570dfb11e042b5ad2e55e3ce3ce9cd989c7e06e07feeafda0016b83f4f980694ed2eee4d10667242b1f40dc406901b34125b008d334d47469").unwrap()[..];
+        let _transaction_res = TypedTransaction::decode(bytes).unwrap();
+        assert_eq!(
+            bytes.len(),
+            0,
+            "did not consume all bytes in the buffer, {:?} remaining",
+            bytes.len()
+        );
+    }
+
+    #[test]
+    fn decode_multiple_network_txs() {
+        let bytes_first = &mut &hex::decode("f86b02843b9aca00830186a094d3e8763675e4c425df46cc3b5c0f6cbdac39604687038d7ea4c68000802ba00eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5aea03a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca18").unwrap()[..];
+        let expected = TypedTransaction::Legacy(LegacyTransaction {
+            nonce: 2u64.into(),
+            gas_price: 1000000000u64.into(),
+            gas_limit: 100000u64.into(),
+            kind: TransactionKind::Call(Address::from_slice(
+                &hex::decode("d3e8763675e4c425df46cc3b5c0f6cbdac396046").unwrap()[..],
+            )),
+            value: 1000000000000000u64.into(),
+            input: Bytes::default(),
+            signature: Signature {
+                v: 43,
+                r: U256::from_str(
+                    "eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5ae",
+                )
+                .unwrap(),
+                s: U256::from_str(
+                    "3a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca18",
+                )
+                .unwrap(),
+            },
+        });
+        assert_eq!(expected, TypedTransaction::decode(bytes_first).unwrap());
+
+        let bytes_second = &mut &hex::decode("f86b01843b9aca00830186a094d3e8763675e4c425df46cc3b5c0f6cbdac3960468702769bb01b2a00802ba0e24d8bd32ad906d6f8b8d7741e08d1959df021698b19ee232feba15361587d0aa05406ad177223213df262cb66ccbb2f46bfdccfdfbbb5ffdda9e2c02d977631da").unwrap()[..];
+        let expected = TypedTransaction::Legacy(LegacyTransaction {
+            nonce: 1u64.into(),
+            gas_price: 1000000000u64.into(),
+            gas_limit: 100000u64.into(),
+            kind: TransactionKind::Call(Address::from_slice(
+                &hex::decode("d3e8763675e4c425df46cc3b5c0f6cbdac396046").unwrap()[..],
+            )),
+            value: 693361000000000u64.into(),
+            input: Bytes::default(),
+            signature: Signature {
+                v: 43,
+                r: U256::from_str(
+                    "e24d8bd32ad906d6f8b8d7741e08d1959df021698b19ee232feba15361587d0a",
+                )
+                .unwrap(),
+                s: U256::from_str(
+                    "5406ad177223213df262cb66ccbb2f46bfdccfdfbbb5ffdda9e2c02d977631da",
+                )
+                .unwrap(),
+            },
+        });
+        assert_eq!(expected, TypedTransaction::decode(bytes_second).unwrap());
+
+        let bytes_third = &mut &hex::decode("f86b0384773594008398968094d3e8763675e4c425df46cc3b5c0f6cbdac39604687038d7ea4c68000802ba0ce6834447c0a4193c40382e6c57ae33b241379c5418caac9cdc18d786fd12071a03ca3ae86580e94550d7c071e3a02eadb5a77830947c9225165cf9100901bee88").unwrap()[..];
+        let expected = TypedTransaction::Legacy(LegacyTransaction {
+            nonce: 3u64.into(),
+            gas_price: 2000000000u64.into(),
+            gas_limit: 10000000u64.into(),
+            kind: TransactionKind::Call(Address::from_slice(
+                &hex::decode("d3e8763675e4c425df46cc3b5c0f6cbdac396046").unwrap()[..],
+            )),
+            value: 1000000000000000u64.into(),
+            input: Bytes::default(),
+            signature: Signature {
+                v: 43,
+                r: U256::from_str(
+                    "ce6834447c0a4193c40382e6c57ae33b241379c5418caac9cdc18d786fd12071",
+                )
+                .unwrap(),
+                s: U256::from_str(
+                    "3ca3ae86580e94550d7c071e3a02eadb5a77830947c9225165cf9100901bee88",
+                )
+                .unwrap(),
+            },
+        });
+        assert_eq!(expected, TypedTransaction::decode(bytes_third).unwrap());
+
+        let bytes_fourth = &mut &hex::decode("b87502f872041a8459682f008459682f0d8252089461815774383099e24810ab832a5b2a5425c154d58829a2241af62c000080c001a059e6b67f48fb32e7e570dfb11e042b5ad2e55e3ce3ce9cd989c7e06e07feeafda0016b83f4f980694ed2eee4d10667242b1f40dc406901b34125b008d334d47469").unwrap()[..];
+        let expected = TypedTransaction::EIP1559(EIP1559Transaction {
+            chain_id: 4,
+            nonce: 26u64.into(),
+            max_priority_fee_per_gas: 1500000000u64.into(),
+            max_fee_per_gas: 1500000013u64.into(),
+            gas_limit: 21000u64.into(),
+            kind: TransactionKind::Call(Address::from_slice(
+                &hex::decode("61815774383099e24810ab832a5b2a5425c154d5").unwrap()[..],
+            )),
+            value: 3000000000000000000u64.into(),
+            input: Bytes::default(),
+            access_list: AccessList::default(),
+            odd_y_parity: true,
+            r: H256::from_str("59e6b67f48fb32e7e570dfb11e042b5ad2e55e3ce3ce9cd989c7e06e07feeafd")
+                .unwrap(),
+            s: H256::from_str("016b83f4f980694ed2eee4d10667242b1f40dc406901b34125b008d334d47469")
+                .unwrap(),
+        });
+        assert_eq!(expected, TypedTransaction::decode(bytes_fourth).unwrap());
+
+        let bytes_fifth = &mut &hex::decode("f8650f84832156008287fb94cf7f9e66af820a19257a2108375b180b0ec491678204d2802ca035b7bfeb9ad9ece2cbafaaf8e202e706b4cfaeb233f46198f00b44d4a566a981a0612638fb29427ca33b9a3be2a0a561beecfe0269655be160d35e72d366a6a860").unwrap()[..];
+        let expected = TypedTransaction::Legacy(LegacyTransaction {
+            nonce: 15u64.into(),
+            gas_price: 2200000000u64.into(),
+            gas_limit: 34811u64.into(),
+            kind: TransactionKind::Call(Address::from_slice(
+                &hex::decode("cf7f9e66af820a19257a2108375b180b0ec49167").unwrap()[..],
+            )),
+            value: 1234u64.into(),
+            input: Bytes::default(),
+            signature: Signature {
+                v: 44,
+                r: U256::from_str(
+                    "35b7bfeb9ad9ece2cbafaaf8e202e706b4cfaeb233f46198f00b44d4a566a981",
+                )
+                .unwrap(),
+                s: U256::from_str(
+                    "612638fb29427ca33b9a3be2a0a561beecfe0269655be160d35e72d366a6a860",
+                )
+                .unwrap(),
+            },
+        });
+        assert_eq!(expected, TypedTransaction::decode(bytes_fifth).unwrap());
     }
 }

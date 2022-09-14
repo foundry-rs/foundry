@@ -1,9 +1,11 @@
-use ethers_core::types::ParseChainError;
+use crate::U256;
+use ethers_core::types::{ParseChainError, U64};
+use fastrlp::{Decodable, Encodable};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::{fmt, str::FromStr};
 
 /// Either a named or chain id or the actual id value
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(untagged)]
 pub enum Chain {
     /// Contains a known chain
@@ -19,6 +21,23 @@ impl Chain {
         match self {
             Chain::Named(chain) => *chain as u64,
             Chain::Id(id) => *id,
+        }
+    }
+
+    /// Helper function for checking if a chainid corresponds to a legacy chainid
+    /// without eip1559
+    pub fn is_legacy(&self) -> bool {
+        match self {
+            Chain::Named(c) => c.is_legacy(),
+            Chain::Id(_) => false,
+        }
+    }
+
+    /// Returns the corresponding etherscan URLs
+    pub fn etherscan_urls(&self) -> Option<(&'static str, &'static str)> {
+        match self {
+            Chain::Named(c) => c.etherscan_urls(),
+            Chain::Id(_) => None,
         }
     }
 }
@@ -46,7 +65,13 @@ impl From<ethers_core::types::Chain> for Chain {
 
 impl From<u64> for Chain {
     fn from(id: u64) -> Self {
-        Chain::Id(id)
+        ethers_core::types::Chain::try_from(id).map(Chain::Named).unwrap_or_else(|_| Chain::Id(id))
+    }
+}
+
+impl From<U256> for Chain {
+    fn from(id: U256) -> Self {
+        id.as_u64().into()
     }
 }
 
@@ -56,6 +81,18 @@ impl From<Chain> for u64 {
             Chain::Named(c) => c as u64,
             Chain::Id(id) => id,
         }
+    }
+}
+
+impl From<Chain> for U64 {
+    fn from(c: Chain) -> Self {
+        u64::from(c).into()
+    }
+}
+
+impl From<Chain> for U256 {
+    fn from(c: Chain) -> Self {
+        u64::from(c).into()
     }
 }
 
@@ -104,5 +141,32 @@ impl<'de> Deserialize<'de> for Chain {
                 .map(Chain::Named)
                 .unwrap_or_else(|_| Chain::Id(id))),
         }
+    }
+}
+
+impl Encodable for Chain {
+    fn length(&self) -> usize {
+        match self {
+            Self::Named(chain) => u64::from(*chain).length(),
+            Self::Id(id) => id.length(),
+        }
+    }
+    fn encode(&self, out: &mut dyn fastrlp::BufMut) {
+        match self {
+            Self::Named(chain) => u64::from(*chain).encode(out),
+            Self::Id(id) => id.encode(out),
+        }
+    }
+}
+
+impl Decodable for Chain {
+    fn decode(buf: &mut &[u8]) -> Result<Self, fastrlp::DecodeError> {
+        Ok(u64::decode(buf)?.into())
+    }
+}
+
+impl Default for Chain {
+    fn default() -> Self {
+        ethers_core::types::Chain::Mainnet.into()
     }
 }

@@ -8,7 +8,7 @@ use foundry_config::{
         value::{Dict, Map, Value},
         Metadata, Profile, Provider,
     },
-    Config,
+    Chain, Config,
 };
 use serde::Serialize;
 
@@ -33,21 +33,28 @@ use serde::Serialize;
 /// let opts = figment.extract::<EvmOpts>().unwrap();
 /// # }
 /// ```
-#[derive(Debug, Clone, Parser, Serialize)]
+#[derive(Debug, Clone, Default, Parser, Serialize)]
 pub struct EvmArgs {
     /// Fetch state over a remote endpoint instead of starting from an empty state.
     ///
     /// If you want to fetch state from a specific block number, see --fork-block-number.
-    #[clap(long, short, alias = "rpc-url")]
+    #[clap(long, short, visible_alias = "rpc-url", value_name = "URL")]
     #[serde(rename = "eth_rpc_url", skip_serializing_if = "Option::is_none")]
     pub fork_url: Option<String>,
 
     /// Fetch state from a specific block number over a remote endpoint.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork-url")]
+    #[clap(long, requires = "fork-url", value_name = "BLOCK")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_block_number: Option<u64>,
+
+    /// Initial retry backoff on encountering errors.
+    ///
+    /// See --fork-url.
+    #[clap(long, requires = "fork-url", value_name = "BACKOFF")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fork_retry_backoff: Option<u64>,
 
     /// Explicitly disables the use of RPC caching.
     ///
@@ -61,12 +68,12 @@ pub struct EvmArgs {
     pub no_storage_caching: bool,
 
     /// The initial balance of deployed test contracts.
-    #[clap(long)]
+    #[clap(long, value_name = "BALANCE")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub initial_balance: Option<U256>,
 
     /// The address which will be executing tests.
-    #[clap(long)]
+    #[clap(long, value_name = "ADDRESS")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sender: Option<Address>,
 
@@ -131,52 +138,73 @@ impl Provider for EvmArgs {
 #[clap(next_help_heading = "EXECUTOR ENVIRONMENT CONFIG")]
 pub struct EnvArgs {
     /// The block gas limit.
-    #[clap(long)]
+    #[clap(long, value_name = "GAS_LIMIT")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gas_limit: Option<u64>,
 
     /// The chain ID.
-    #[clap(long)]
+    #[clap(long, alias = "chain", value_name = "CHAIN_ID")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub chain_id: Option<u64>,
+    pub chain_id: Option<Chain>,
 
     /// The gas price.
-    #[clap(long)]
+    #[clap(long, value_name = "GAS_PRICE")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gas_price: Option<u64>,
 
     /// The base fee in a block.
-    #[clap(long)]
+    #[clap(long, visible_alias = "base-fee", value_name = "FEE")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_base_fee_per_gas: Option<u64>,
 
     /// The transaction origin.
-    #[clap(long)]
+    #[clap(long, value_name = "ADDRESS")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tx_origin: Option<Address>,
 
     /// The coinbase of the block.
-    #[clap(long)]
+    #[clap(long, value_name = "ADDRESS")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_coinbase: Option<Address>,
 
     /// The timestamp of the block.
-    #[clap(long)]
+    #[clap(long, value_name = "TIMESTAMP")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_timestamp: Option<u64>,
 
     /// The block number.
-    #[clap(long)]
+    #[clap(long, value_name = "BLOCK")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_number: Option<u64>,
 
     /// The block difficulty.
-    #[clap(long)]
+    #[clap(long, value_name = "DIFFICULTY")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_difficulty: Option<u64>,
 
     /// The block gas limit.
-    #[clap(long)]
+    #[clap(long, value_name = "GAS_LIMIT")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_gas_limit: Option<u64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_parse_chain_id() {
+        let args = EvmArgs {
+            env: EnvArgs {
+                chain_id: Some(ethers_core::types::Chain::Mainnet.into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let config = Config::from_provider(Config::figment().merge(args));
+        assert_eq!(config.chain_id, Some(ethers_core::types::Chain::Mainnet.into()));
+
+        let env = EnvArgs::parse_from(["foundry-common", "--chain-id", "goerli"]);
+        assert_eq!(env.chain_id, Some(ethers_core::types::Chain::Goerli.into()));
+    }
 }

@@ -1,4 +1,5 @@
 //! Contains various tests for checking forge commands related to config values
+use crate::forge_utils;
 use ethers::{
     prelude::artifacts::YulDetails,
     solc::artifacts::RevertStrings,
@@ -12,33 +13,32 @@ use foundry_cli_test_utils::{
 };
 use foundry_config::{
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
-    Config, OptimizerDetails, SolcReq,
+    Config, FuzzConfig, InvariantConfig, OptimizerDetails, SolcReq,
 };
+use path_slash::PathBufExt;
 use std::{fs, path::PathBuf, str::FromStr};
-
-// import forge utils as mod
-#[allow(unused)]
-#[path = "../../src/utils.rs"]
-mod forge_utils;
 
 // tests all config values that are in use
 forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
-    cmd.set_current_dir(prj.root());
     // explicitly set all values
     let input = Config {
         profile: Config::DEFAULT_PROFILE,
         __root: Default::default(),
         src: "test-src".into(),
         test: "test-test".into(),
+        script: "test-script".into(),
         out: "out-test".into(),
         libs: vec!["lib-test".into()],
         cache: true,
         cache_path: "test-cache".into(),
+        broadcast: "broadcast".into(),
         force: true,
         evm_version: EvmVersion::Byzantium,
         gas_reports: vec!["Contract".to_string()],
+        gas_reports_ignore: vec![],
         solc: Some(SolcReq::Local(PathBuf::from("custom-solc"))),
         auto_detect_solc: false,
+        auto_detect_remappings: true,
         offline: true,
         optimizer: false,
         optimizer_runs: 1000,
@@ -47,6 +47,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
             yul_details: Some(YulDetails { stack_allocation: Some(true), ..Default::default() }),
             ..Default::default()
         }),
+        model_checker: None,
         extra_output: Default::default(),
         extra_output_files: Default::default(),
         names: true,
@@ -57,9 +58,13 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         contract_pattern_inverse: None,
         path_pattern: None,
         path_pattern_inverse: None,
-        fuzz_runs: 1000,
-        fuzz_max_local_rejects: 2000,
-        fuzz_max_global_rejects: 100203,
+        fuzz: FuzzConfig {
+            runs: 1000,
+            max_test_rejects: 100203,
+            seed: Some(1000.into()),
+            ..Default::default()
+        },
+        invariant: InvariantConfig { runs: 256, ..Default::default() },
         ffi: true,
         sender: "00a329c0648769A73afAc7F9381D08FB43dBEA72".parse().unwrap(),
         tx_origin: "00a329c0648769A73afAc7F9F81E08FB43dBEA72".parse().unwrap(),
@@ -67,16 +72,17 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         block_number: 10,
         fork_block_number: Some(200),
         chain_id: Some(9999.into()),
-        gas_limit: 99_000_000.into(),
-        gas_price: 999,
+        gas_limit: 99_000_000u64.into(),
+        gas_price: Some(999),
         block_base_fee_per_gas: 10,
         block_coinbase: Address::random(),
         block_timestamp: 10,
         block_difficulty: 10,
-        block_gas_limit: Some(100.into()),
+        block_gas_limit: Some(100u64.into()),
         memory_limit: 2u64.pow(25),
         eth_rpc_url: Some("localhost".to_string()),
         etherscan_api_key: None,
+        etherscan: Default::default(),
         verbosity: 4,
         remappings: vec![Remapping::from_str("forge-std=lib/forge-std/").unwrap().into()],
         libraries: vec![
@@ -92,7 +98,15 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         bytecode_hash: Default::default(),
         revert_strings: Some(RevertStrings::Strip),
         sparse_mode: true,
+        allow_paths: vec![],
+        include_paths: vec![],
+        rpc_endpoints: Default::default(),
+        build_info: false,
+        build_info_path: None,
+        fmt: Default::default(),
+        fs_permissions: Default::default(),
         __non_exhaustive: (),
+        __warnings: vec![],
     };
     prj.write_config(input.clone());
     let config = cmd.config();
@@ -100,118 +114,132 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
 });
 
 // tests config gets printed to std out
-forgetest!(can_show_config, |prj: TestProject, mut cmd: TestCommand| {
-    cmd.arg("config");
-    cmd.set_current_dir(prj.root());
-    let expected = Config::load().to_string_pretty().unwrap().trim().to_string();
-    assert_eq!(expected, cmd.stdout().trim().to_string());
-});
+forgetest!(
+    #[serial_test::serial]
+    can_show_config,
+    |_prj: TestProject, mut cmd: TestCommand| {
+        cmd.arg("config");
+        let expected = Config::load().to_string_pretty().unwrap().trim().to_string();
+        assert_eq!(expected, cmd.stdout().trim().to_string());
+    }
+);
 
 // checks that config works
 // - foundry.toml is properly generated
 // - paths are resolved properly
 // - config supports overrides from env, and cli
-forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
-    cmd.set_current_dir(prj.root());
+forgetest_init!(
+    #[serial_test::serial]
+    can_override_config,
+    |prj: TestProject, mut cmd: TestCommand| {
+        cmd.set_current_dir(prj.root());
+        let foundry_toml = prj.root().join(Config::FILE_NAME);
+        assert!(foundry_toml.exists());
 
-    let foundry_toml = prj.root().join(Config::FILE_NAME);
-    assert!(foundry_toml.exists());
-    let file = Config::find_config_file().unwrap();
-    assert_eq!(foundry_toml, file);
+        let profile = Config::load_with_root(prj.root());
 
-    let config = forge_utils::load_config();
-    let profile = Config::load_with_root(prj.root());
-    assert_eq!(config, profile.clone().sanitized());
+        // ensure remappings contain test
+        assert_eq!(profile.remappings.len(), 2);
+        assert_eq!("ds-test/=lib/forge-std/lib/ds-test/src/", profile.remappings[0].to_string());
+        // the loaded config has resolved, absolute paths
+        assert_eq!(
+            "ds-test/=lib/forge-std/lib/ds-test/src/",
+            Remapping::from(profile.remappings[0].clone()).to_string()
+        );
 
-    // ensure remappings contain test
-    assert_eq!(profile.remappings.len(), 2);
-    assert_eq!(
-        "ds-test/=lib/forge-std/lib/ds-test/src/".to_string(),
-        profile.remappings[0].to_string()
-    );
-    // the loaded config has resolved, absolute paths
-    assert_eq!(
-        format!("ds-test/={}/", prj.root().join("lib/forge-std/lib/ds-test/src").display()),
-        Remapping::from(config.remappings[0].clone()).to_string()
-    );
+        cmd.arg("config");
+        let expected = profile.to_string_pretty().unwrap();
+        assert_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
 
-    cmd.arg("config");
-    let expected = profile.to_string_pretty().unwrap();
-    assert_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
+        // remappings work
+        let remappings_txt =
+            prj.create_file("remappings.txt", "ds-test/=lib/forge-std/lib/ds-test/from-file/");
+        let config = forge_utils::load_config_with_root(Some(prj.root().into()));
+        assert_eq!(
+            format!(
+                "ds-test/={}/",
+                prj.root().join("lib/forge-std/lib/ds-test/from-file").to_slash_lossy()
+            ),
+            Remapping::from(config.remappings[0].clone()).to_string()
+        );
 
-    // remappings work
-    let remappings_txt =
-        prj.create_file("remappings.txt", "ds-test/=lib/forge-std/lib/ds-test/from-file/");
-    let config = forge_utils::load_config();
-    assert_eq!(
-        format!("ds-test/={}/", prj.root().join("lib/forge-std/lib/ds-test/from-file").display()),
-        Remapping::from(config.remappings[0].clone()).to_string()
-    );
+        // env vars work
+        std::env::set_var("DAPP_REMAPPINGS", "ds-test/=lib/forge-std/lib/ds-test/from-env/");
+        let config = forge_utils::load_config_with_root(Some(prj.root().into()));
+        assert_eq!(
+            format!(
+                "ds-test/={}/",
+                prj.root().join("lib/forge-std/lib/ds-test/from-env").to_slash_lossy()
+            ),
+            Remapping::from(config.remappings[0].clone()).to_string()
+        );
 
-    // env vars work
-    std::env::set_var("DAPP_REMAPPINGS", "ds-test/=lib/forge-std/lib/ds-test/from-env/");
-    let config = forge_utils::load_config();
-    assert_eq!(
-        format!("ds-test/={}/", prj.root().join("lib/forge-std/lib/ds-test/from-env").display()),
-        Remapping::from(config.remappings[0].clone()).to_string()
-    );
+        let config =
+            prj.config_from_output(["--remappings", "ds-test/=lib/forge-std/lib/ds-test/from-cli"]);
+        assert_eq!(
+            format!(
+                "ds-test/={}/",
+                prj.root().join("lib/forge-std/lib/ds-test/from-cli").to_slash_lossy()
+            ),
+            Remapping::from(config.remappings[0].clone()).to_string()
+        );
 
-    let config =
-        prj.config_from_output(["--remappings", "ds-test/=lib/forge-std/lib/ds-test/from-cli"]);
-    assert_eq!(
-        format!("ds-test/={}/", prj.root().join("lib/forge-std/lib/ds-test/from-cli").display()),
-        Remapping::from(config.remappings[0].clone()).to_string()
-    );
+        let config = prj.config_from_output(["--remappings", "other-key/=lib/other/"]);
+        assert_eq!(config.remappings.len(), 3);
+        assert_eq!(
+            format!("other-key/={}/", prj.root().join("lib/other").to_slash_lossy()),
+            Remapping::from(config.remappings[2].clone()).to_string()
+        );
 
-    let config = prj.config_from_output(["--remappings", "other-key/=lib/other/"]);
-    assert_eq!(config.remappings.len(), 3);
-    assert_eq!(
-        format!("other-key/={}/", prj.root().join("lib/other").display()),
-        Remapping::from(config.remappings[2].clone()).to_string()
-    );
+        std::env::remove_var("DAPP_REMAPPINGS");
+        pretty_err(&remappings_txt, fs::remove_file(&remappings_txt));
 
-    std::env::remove_var("DAPP_REMAPPINGS");
-    pretty_err(&remappings_txt, fs::remove_file(&remappings_txt));
+        cmd.set_cmd(prj.forge_bin()).args(["config", "--basic"]);
+        let expected = profile.into_basic().to_string_pretty().unwrap();
+        pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
+    }
+);
 
-    cmd.set_cmd(prj.forge_bin()).args(["config", "--basic"]);
-    let expected = profile.into_basic().to_string_pretty().unwrap();
-    pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
-});
+forgetest_init!(
+    #[serial_test::serial]
+    can_detect_config_vals,
+    |prj: TestProject, _cmd: TestCommand| {
+        let url = "http://127.0.0.1:8545";
+        let config = prj.config_from_output(["--no-auto-detect", "--rpc-url", url]);
+        assert!(!config.auto_detect_solc);
+        assert_eq!(config.eth_rpc_url, Some(url.to_string()));
 
-forgetest_init!(can_detect_config_vals, |prj: TestProject, mut cmd: TestCommand| {
-    cmd.set_current_dir(prj.root());
-    let url = "http://127.0.0.1:8545";
-    let config = prj.config_from_output(["--no-auto-detect", "--rpc-url", url]);
-    assert!(!config.auto_detect_solc);
-    assert_eq!(config.eth_rpc_url, Some(url.to_string()));
-
-    let mut config = Config::load_with_root(prj.root());
-    config.eth_rpc_url = Some("http://127.0.0.1:8545".to_string());
-    config.auto_detect_solc = false;
-    // write to `foundry.toml`
-    prj.create_file(
-        Config::FILE_NAME,
-        &config.to_string_pretty().unwrap().replace("eth_rpc_url", "eth-rpc-url"),
-    );
-    let config = prj.config_from_output(["--force"]);
-    assert!(!config.auto_detect_solc);
-    assert_eq!(config.eth_rpc_url, Some(url.to_string()));
-});
+        let mut config = Config::load_with_root(prj.root());
+        config.eth_rpc_url = Some("http://127.0.0.1:8545".to_string());
+        config.auto_detect_solc = false;
+        // write to `foundry.toml`
+        prj.create_file(
+            Config::FILE_NAME,
+            &config.to_string_pretty().unwrap().replace("eth_rpc_url", "eth-rpc-url"),
+        );
+        let config = prj.config_from_output(["--force"]);
+        assert!(!config.auto_detect_solc);
+        assert_eq!(config.eth_rpc_url, Some(url.to_string()));
+    }
+);
 
 // checks that `clean` removes dapptools style paths
-forgetest_init!(can_get_evm_opts, |prj: TestProject, mut cmd: TestCommand| {
-    cmd.set_current_dir(prj.root());
-    let url = "http://127.0.0.1:8545";
-    let config = prj.config_from_output(["--rpc-url", url, "--ffi"]);
-    assert_eq!(config.eth_rpc_url, Some(url.to_string()));
-    assert!(config.ffi);
+forgetest_init!(
+    #[serial_test::serial]
+    can_get_evm_opts,
+    |prj: TestProject, _cmd: TestCommand| {
+        let url = "http://127.0.0.1:8545";
+        let config = prj.config_from_output(["--rpc-url", url, "--ffi"]);
+        assert_eq!(config.eth_rpc_url, Some(url.to_string()));
+        assert!(config.ffi);
 
-    std::env::set_var("FOUNDRY_ETH_RPC_URL", url);
-    let figment = Config::figment_with_root(prj.root()).merge(("debug", false));
-    let evm_opts: EvmOpts = figment.extract().unwrap();
-    assert_eq!(evm_opts.fork_url, Some(url.to_string()));
-    std::env::remove_var("FOUNDRY_ETH_RPC_URL");
-});
+        std::env::set_var("FOUNDRY_ETH_RPC_URL", url);
+        let figment = Config::figment_with_root(prj.root()).merge(("debug", false));
+        let evm_opts: EvmOpts = figment.extract().unwrap();
+        assert_eq!(evm_opts.fork_url, Some(url.to_string()));
+        std::env::remove_var("FOUNDRY_ETH_RPC_URL");
+    }
+);
 
 // checks that we can set various config values
 forgetest_init!(can_set_config_values, |prj: TestProject, _cmd: TestCommand| {
@@ -221,7 +249,6 @@ forgetest_init!(can_set_config_values, |prj: TestProject, _cmd: TestCommand| {
 
 // tests that solc can be explicitly set
 forgetest!(can_set_solc_explicitly, |prj: TestProject, mut cmd: TestCommand| {
-    cmd.set_current_dir(prj.root());
     prj.inner()
         .add_source(
             "Foo",
@@ -248,7 +275,6 @@ Compiler run successful
 
 // tests that `--use <solc>` works
 forgetest!(can_use_solc, |prj: TestProject, mut cmd: TestCommand| {
-    cmd.set_current_dir(prj.root());
     prj.inner()
         .add_source(
             "Foo",
@@ -283,7 +309,6 @@ contract Foo {}
 
 // test to ensure yul optimizer can be set as intended
 forgetest!(can_set_yul_optimizer, |prj: TestProject, mut cmd: TestCommand| {
-    cmd.set_current_dir(prj.root());
     prj.inner()
         .add_source(
             "Foo",
@@ -322,8 +347,7 @@ Compiler run successful
 });
 
 // tests that the lib triple can be parsed
-forgetest_init!(can_parse_dapp_libraries, |prj: TestProject, mut cmd: TestCommand| {
-    cmd.set_current_dir(prj.root());
+forgetest_init!(can_parse_dapp_libraries, |_prj: TestProject, mut cmd: TestCommand| {
     cmd.set_env(
         "DAPP_LIBRARIES",
         "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6",
@@ -337,8 +361,6 @@ forgetest_init!(can_parse_dapp_libraries, |prj: TestProject, mut cmd: TestComman
 
 // test that optimizer runs works
 forgetest!(can_set_optimizer_runs, |prj: TestProject, mut cmd: TestCommand| {
-    cmd.set_current_dir(prj.root());
-
     // explicitly set optimizer runs
     let config = Config { optimizer_runs: 1337, ..Default::default() };
     prj.write_config(config);
@@ -352,33 +374,30 @@ forgetest!(can_set_optimizer_runs, |prj: TestProject, mut cmd: TestCommand| {
 
 // test that gas_price can be set
 forgetest!(can_set_gas_price, |prj: TestProject, mut cmd: TestCommand| {
-    cmd.set_current_dir(prj.root());
-
     // explicitly set gas_price
-    let config = Config { gas_price: 1337, ..Default::default() };
+    let config = Config { gas_price: Some(1337), ..Default::default() };
     prj.write_config(config);
 
     let config = cmd.config();
-    assert_eq!(config.gas_price, 1337);
+    assert_eq!(config.gas_price, Some(1337));
 
     let config = prj.config_from_output(["--gas-price", "300"]);
-    assert_eq!(config.gas_price, 300);
+    assert_eq!(config.gas_price, Some(300));
 });
 
 // test that optimizer runs works
 forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCommand| {
     let config = cmd.config();
-    let remappings = config.get_all_remappings();
+    let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
     pretty_assertions::assert_eq!(
         remappings,
         vec![
             "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
-            "src/=src/".parse().unwrap(),
         ]
     );
     // create a new lib directly in the `lib` folder
-    let mut config = config.clone();
+    let mut config = config;
     config.remappings = vec![Remapping::from_str("nested/=lib/nested").unwrap().into()];
     let nested = prj.paths().libraries[0].join("nested-lib");
     pretty_err(&nested, fs::create_dir_all(&nested));
@@ -386,7 +405,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
     pretty_err(&toml_file, fs::write(&toml_file, config.to_string_pretty().unwrap()));
 
     let config = cmd.config();
-    let remappings = config.get_all_remappings();
+    let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
     pretty_assertions::assert_eq!(
         remappings,
         vec![
@@ -394,12 +413,11 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
             "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
-            "src/=src/".parse().unwrap(),
         ]
     );
 
     // nest another lib under the already nested lib
-    let mut config = config.clone();
+    let mut config = config;
     config.remappings = vec![Remapping::from_str("nested-twice/=lib/nested-twice").unwrap().into()];
     let nested = nested.join("lib/another-lib");
     pretty_err(&nested, fs::create_dir_all(&nested));
@@ -407,7 +425,8 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
     pretty_err(&toml_file, fs::write(&toml_file, config.to_string_pretty().unwrap()));
 
     let another_config = cmd.config();
-    let remappings = another_config.get_all_remappings();
+    let remappings =
+        another_config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
     pretty_assertions::assert_eq!(
         remappings,
         vec![
@@ -417,14 +436,13 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
             "nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/".parse().unwrap(),
             "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
-            "src/=src/".parse().unwrap(),
         ]
     );
 
     config.src = "custom-source-dir".into();
     pretty_err(&toml_file, fs::write(&toml_file, config.to_string_pretty().unwrap()));
     let config = cmd.config();
-    let remappings = config.get_all_remappings();
+    let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
     pretty_assertions::assert_eq!(
         remappings,
         vec![
@@ -434,47 +452,49 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
             "nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/".parse().unwrap(),
             "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
-            "src/=src/".parse().unwrap(),
         ]
     );
 });
 
 // test remappings with closer paths are prioritised
 // so that `dep/=lib/a/src` will take precedent over  `dep/=lib/a/lib/b/src`
-forgetest_init!(can_prioritise_closer_lib_remappings, |prj: TestProject, mut cmd: TestCommand| {
-    let config = cmd.config();
+forgetest_init!(
+    #[serial_test::serial]
+    can_prioritise_closer_lib_remappings,
+    |prj: TestProject, mut cmd: TestCommand| {
+        let config = cmd.config();
 
-    // create a new lib directly in the `lib` folder with conflicting remapping `forge-std/`
-    let mut config = config.clone();
-    config.remappings = vec![Remapping::from_str("forge-std/=lib/forge-std/src/").unwrap().into()];
-    let nested = prj.paths().libraries[0].join("dep1");
-    pretty_err(&nested, fs::create_dir_all(&nested));
-    let toml_file = nested.join("foundry.toml");
-    pretty_err(&toml_file, fs::write(&toml_file, config.to_string_pretty().unwrap()));
+        // create a new lib directly in the `lib` folder with conflicting remapping `forge-std/`
+        let mut config = config;
+        config.remappings =
+            vec![Remapping::from_str("forge-std/=lib/forge-std/src/").unwrap().into()];
+        let nested = prj.paths().libraries[0].join("dep1");
+        pretty_err(&nested, fs::create_dir_all(&nested));
+        let toml_file = nested.join("foundry.toml");
+        pretty_err(&toml_file, fs::write(&toml_file, config.to_string_pretty().unwrap()));
 
-    let config = cmd.config();
-    let remappings = config.get_all_remappings();
-    pretty_assertions::assert_eq!(
-        remappings,
-        vec![
-            "dep1/=lib/dep1/src/".parse().unwrap(),
-            "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
-            "forge-std/=lib/forge-std/src/".parse().unwrap(),
-            "src/=src/".parse().unwrap(),
-        ]
-    );
-});
+        let config = cmd.config();
+        let remappings = config.get_all_remappings();
+        pretty_assertions::assert_eq!(
+            remappings,
+            vec![
+                "dep1/=lib/dep1/src/".parse().unwrap(),
+                "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
+                "forge-std/=lib/forge-std/src/".parse().unwrap()
+            ]
+        );
+    }
+);
 
 // test to check that foundry.toml libs section updates on install
 forgetest!(can_update_libs_section, |prj: TestProject, mut cmd: TestCommand| {
-    cmd.set_current_dir(prj.root());
     cmd.git_init();
 
     // explicitly set gas_price
     let init = Config { libs: vec!["node_modules".into()], ..Default::default() };
-    prj.write_config(init.clone());
+    prj.write_config(init);
 
-    cmd.args(["install", "foundry-rs/forge-std"]);
+    cmd.args(["install", "foundry-rs/forge-std", "--no-commit"]);
     cmd.assert_non_empty_stdout();
 
     let config = cmd.forge_fuse().config();
@@ -483,9 +503,53 @@ forgetest!(can_update_libs_section, |prj: TestProject, mut cmd: TestCommand| {
     assert_eq!(config.libs, expected);
 
     // additional install don't edit `libs`
-    cmd.forge_fuse().args(["install", "dapphub/ds-test"]);
+    cmd.forge_fuse().args(["install", "dapphub/ds-test", "--no-commit"]);
     cmd.assert_non_empty_stdout();
 
     let config = cmd.forge_fuse().config();
     assert_eq!(config.libs, expected);
+});
+
+// test to check that loading the config emits warnings on the root foundry.toml and
+// is silent for any libs
+forgetest!(config_emit_warnings, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.git_init();
+
+    cmd.args(["install", "foundry-rs/forge-std", "--no-commit"]);
+    cmd.assert_non_empty_stdout();
+
+    let faulty_toml = r#"[default]
+    src = 'src'
+    out = 'out'
+    libs = ['lib']"#;
+
+    fs::write(prj.root().join("foundry.toml"), faulty_toml).unwrap();
+    fs::write(prj.root().join("lib").join("forge-std").join("foundry.toml"), faulty_toml).unwrap();
+
+    cmd.forge_fuse().args(["config"]);
+    let output = cmd.execute();
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .filter(|line| { line.contains("Unknown section [default]") })
+            .count(),
+        1
+    )
+});
+
+forgetest_init!(can_skip_remappings_auto_detection, |prj: TestProject, mut cmd: TestCommand| {
+    // explicitly set remapping and libraries
+    let config = Config {
+        remappings: vec![Remapping::from_str("remapping/=lib/remapping/").unwrap().into()],
+        auto_detect_remappings: false,
+        ..Default::default()
+    };
+    prj.write_config(config);
+
+    let config = cmd.config();
+
+    // only loads remappings from foundry.toml
+    assert_eq!(config.remappings.len(), 1);
+    assert_eq!("remapping/=lib/remapping/", config.remappings[0].to_string());
 });

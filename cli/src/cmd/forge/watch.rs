@@ -5,15 +5,14 @@ use crate::{
     utils::{self, FoundryPathExt},
 };
 use clap::Parser;
-
 use foundry_config::Config;
 use std::{collections::HashSet, convert::Infallible, path::PathBuf, sync::Arc};
 use tracing::trace;
 use watchexec::{
     action::{Action, Outcome, PreSpawn},
-    command::Shell,
+    command::Command,
     config::{InitConfig, RuntimeConfig},
-    event::{Event, ProcessEnd},
+    event::{Event, Priority, ProcessEnd},
     handler::SyncFnHandler,
     paths::summarise_events_to_env,
     signal::source::MainSignal,
@@ -35,8 +34,8 @@ pub struct WatchArgs {
     ///
     /// When using --poll mode, you'll want a larger duration, or risk
     /// overloading disk I/O.
-    #[clap(short = 'd', long = "delay", forbid_empty_values = true)]
-    pub delay: Option<String>,
+    #[clap(long = "watch-delay", forbid_empty_values = true, value_name = "DELAY")]
+    pub watch_delay: Option<String>,
 
     #[clap(long = "no-restart", help = "Do not restart the command while it's still running.")]
     pub no_restart: bool,
@@ -57,7 +56,7 @@ pub struct WatchArgs {
         min_values = 0,
         multiple_values = true,
         multiple_occurrences = false,
-        help = "Watches the given files or folders for changes. If no paths are specified, the source directory of the project is watched."
+        help = "Watches the given files or directories for changes. If no paths are provided, the source and test directories of the project are watched."
     )]
     pub watch: Option<Vec<PathBuf>>,
 }
@@ -78,8 +77,8 @@ impl WatchArgs {
         let has_paths = self.watch.as_ref().map(|paths| !paths.is_empty()).unwrap_or_default();
 
         if !has_paths {
-            // use alternative pathset
-            runtime.pathset(f());
+            // use alternative pathset, but only those that exists
+            runtime.pathset(f().into_iter().filter(|p| p.exists()));
         }
         Ok((init, runtime))
     }
@@ -92,13 +91,13 @@ pub async fn watch_build(args: BuildArgs) -> eyre::Result<()> {
     let cmd = cmd_args(args.watch.watch.as_ref().map(|paths| paths.len()).unwrap_or_default());
 
     trace!("watch build cmd={:?}", cmd);
-    runtime.command(cmd.clone());
+    runtime.command(watch_command(cmd.clone()));
 
     let wx = Watchexec::new(init, runtime.clone())?;
     on_action(args.watch, runtime, Arc::clone(&wx), cmd, (), |_| {});
 
     // start executing the command immediately
-    wx.send_event(Event::default()).await?;
+    wx.send_event(Event::default(), Priority::default()).await?;
     wx.main().await??;
 
     Ok(())
@@ -111,13 +110,13 @@ pub async fn watch_snapshot(args: SnapshotArgs) -> eyre::Result<()> {
     let cmd = cmd_args(args.test.watch.watch.as_ref().map(|paths| paths.len()).unwrap_or_default());
 
     trace!("watch snapshot cmd={:?}", cmd);
-    runtime.command(cmd.clone());
+    runtime.command(watch_command(cmd.clone()));
     let wx = Watchexec::new(init, runtime.clone())?;
 
     on_action(args.test.watch.clone(), runtime, Arc::clone(&wx), cmd, (), |_| {});
 
     // start executing the command immediately
-    wx.send_event(Event::default()).await?;
+    wx.send_event(Event::default(), Priority::default()).await?;
     wx.main().await??;
 
     Ok(())
@@ -129,10 +128,13 @@ pub async fn watch_test(args: TestArgs) -> eyre::Result<()> {
     let (init, mut runtime) = args.watchexec_config()?;
     let cmd = cmd_args(args.watch.watch.as_ref().map(|paths| paths.len()).unwrap_or_default());
     trace!("watch test cmd={:?}", cmd);
-    runtime.command(cmd.clone());
+    runtime.command(watch_command(cmd.clone()));
     let wx = Watchexec::new(init, runtime.clone())?;
 
-    let filter = args.filter();
+    let config: Config = args.build_args().into();
+
+    let filter = args.filter(&config);
+
     // marker to check whether to override the command
     let no_reconfigure = filter.pattern.is_some() ||
         filter.test_pattern.is_some() ||
@@ -140,7 +142,6 @@ pub async fn watch_test(args: TestArgs) -> eyre::Result<()> {
         filter.contract_pattern.is_some() ||
         args.watch.run_all;
 
-    let config: Config = args.build_args().into();
     let state = WatchTestState {
         project_root: config.__root.0,
         no_reconfigure,
@@ -149,7 +150,7 @@ pub async fn watch_test(args: TestArgs) -> eyre::Result<()> {
     on_action(args.watch.clone(), runtime, Arc::clone(&wx), cmd, state, on_test);
 
     // start executing the command immediately
-    wx.send_event(Event::default()).await?;
+    wx.send_event(Event::default(), Priority::default()).await?;
     wx.main().await??;
 
     Ok(())
@@ -201,7 +202,7 @@ fn on_test(action: OnActionState<WatchTestState>) {
         // run, or if no test files were changed and no previous test files were modified in which
         // case we simply run all
         let mut config = runtime.clone();
-        config.command(cmd.clone());
+        config.command(watch_command(cmd.clone()));
         // re-register the action
         on_action(
             args.clone(),
@@ -240,7 +241,7 @@ fn on_test(action: OnActionState<WatchTestState>) {
 
     // reconfigure the executor with a new runtime
     let mut config = runtime.clone();
-    config.command(new_cmd);
+    config.command(watch_command(new_cmd));
 
     // re-register the action
     on_action(
@@ -253,6 +254,18 @@ fn on_test(action: OnActionState<WatchTestState>) {
     );
 }
 
+/// Converts a list of arguments to a `watchexec::Command`
+///
+/// The first index in `args`, is expected to be the path to the executable, See `cmd_args`
+///
+/// # Panics
+/// if `args` is empty
+fn watch_command(mut args: Vec<String>) -> Command {
+    debug_assert!(!args.is_empty());
+    let prog = args.remove(0);
+    Command::Exec { prog, args }
+}
+
 /// Returns the env args without the `--watch` flag from the args for the Watchexec command
 fn cmd_args(num: usize) -> Vec<String> {
     // all the forge arguments including path to forge bin
@@ -260,6 +273,7 @@ fn cmd_args(num: usize) -> Vec<String> {
     if let Some(pos) = cmd_args.iter().position(|arg| arg == "--watch" || arg == "-w") {
         cmd_args.drain(pos..=(pos + num));
     }
+
     cmd_args
 }
 
@@ -267,7 +281,7 @@ fn cmd_args(num: usize) -> Vec<String> {
 pub fn init() -> eyre::Result<InitConfig> {
     let mut config = InitConfig::default();
     config.on_error(SyncFnHandler::from(|data| -> std::result::Result<(), Infallible> {
-        tracing::trace!("[[{:?}]]", data);
+        trace!("[[{:?}]]", data);
         Ok(())
     }));
 
@@ -387,11 +401,9 @@ pub fn runtime(args: &WatchArgs) -> eyre::Result<RuntimeConfig> {
 
     config.pathset(args.watch.clone().unwrap_or_default());
 
-    if let Some(delay) = &args.delay {
+    if let Some(delay) = &args.watch_delay {
         config.action_throttle(utils::parse_delay(delay)?);
     }
-
-    config.command_shell(default_shell());
 
     config.on_pre_spawn(move |prespawn: PreSpawn| async move {
         let envs = summarise_events_to_env(prespawn.events.iter());
@@ -405,14 +417,4 @@ pub fn runtime(args: &WatchArgs) -> eyre::Result<RuntimeConfig> {
     });
 
     Ok(config)
-}
-
-#[cfg(windows)]
-fn default_shell() -> Shell {
-    Shell::Powershell
-}
-
-#[cfg(not(windows))]
-fn default_shell() -> Shell {
-    Shell::default()
 }

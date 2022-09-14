@@ -13,17 +13,17 @@ contract RollTest is DSTest {
     }
 
     function testRollFuzzed(uint128 jump) public {
-        uint pre = block.number;
+        uint256 pre = block.number;
         cheats.roll(block.number + jump);
         assertEq(block.number, pre + jump, "roll failed");
     }
 
     function testRollHash() public {
-        assertEq(blockhash(block.number), keccak256(abi.encodePacked(block.number)), "initial block hash is incorrect");
+        assertEq(blockhash(block.number), 0x0, "initial block hash is incorrect");
 
         cheats.roll(5);
         bytes32 hash = blockhash(5);
-        assertTrue(blockhash(5) != 0x0, "new block hash is incorrect");
+        assertTrue(blockhash(4) != 0x0, "new block hash is incorrect");
 
         cheats.roll(10);
         assertTrue(blockhash(5) != blockhash(10), "block hash collision");

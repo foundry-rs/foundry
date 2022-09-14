@@ -1,15 +1,18 @@
 use super::{
-    identifier::TraceIdentifier, CallTraceArena, RawOrDecodedCall, RawOrDecodedLog,
-    RawOrDecodedReturnData,
+    identifier::{SingleSignaturesIdentifier, TraceIdentifier},
+    CallTraceArena, RawOrDecodedCall, RawOrDecodedLog, RawOrDecodedReturnData,
 };
 use crate::{
     abi::{CHEATCODE_ADDRESS, CONSOLE_ABI, HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS, HEVM_ABI},
+    decode,
+    executor::inspector::DEFAULT_CREATE2_DEPLOYER,
     trace::{node::CallTraceNode, utils},
 };
 use ethers::{
     abi::{Abi, Address, Event, Function, Param, ParamType, Token},
     types::H256,
 };
+use foundry_utils::get_indexed_event;
 use std::collections::{BTreeMap, HashMap};
 
 /// Build a new [CallTraceDecoder].
@@ -71,6 +74,8 @@ pub struct CallTraceDecoder {
     pub events: BTreeMap<(H256, usize), Vec<Event>>,
     /// All known errors
     pub errors: Abi,
+    /// A signature identifier for events and functions.
+    pub signature_identifier: Option<SingleSignaturesIdentifier>,
 }
 
 impl CallTraceDecoder {
@@ -162,6 +167,7 @@ impl CallTraceDecoder {
             labels: [
                 (CHEATCODE_ADDRESS, "VM".to_string()),
                 (HARDHAT_CONSOLE_ADDRESS, "console".to_string()),
+                (DEFAULT_CREATE2_DEPLOYER, "Create2Deployer".to_string()),
             ]
             .into(),
             functions,
@@ -170,7 +176,12 @@ impl CallTraceDecoder {
                 .map(|event| ((event.signature(), indexed_inputs(event)), vec![event.clone()]))
                 .collect::<BTreeMap<(H256, usize), Vec<Event>>>(),
             errors: Abi::default(),
+            signature_identifier: None,
         }
+    }
+
+    pub fn add_signature_identifier(&mut self, identifier: SingleSignaturesIdentifier) {
+        self.signature_identifier = Some(identifier);
     }
 
     /// Identify unknown addresses in the specified call trace using the specified identifier.
@@ -222,7 +233,7 @@ impl CallTraceDecoder {
         });
     }
 
-    pub fn decode(&self, traces: &mut CallTraceArena) {
+    pub async fn decode(&self, traces: &mut CallTraceArena) {
         for node in traces.arena.iter_mut() {
             // Set contract name
             if let Some(contract) = self.contracts.get(&node.trace.address).cloned() {
@@ -241,15 +252,30 @@ impl CallTraceDecoder {
                 if bytes.len() >= 4 {
                     if let Some(funcs) = self.functions.get(&bytes[0..4]) {
                         node.decode_function(funcs, &self.labels, &self.errors);
+                    } else if node.trace.address == DEFAULT_CREATE2_DEPLOYER {
+                        node.trace.data =
+                            RawOrDecodedCall::Decoded("create2".to_string(), String::new(), vec![]);
+                    } else if let Some(identifier) = &self.signature_identifier {
+                        if let Some(function) =
+                            identifier.write().await.identify_function(&bytes[0..4]).await
+                        {
+                            node.decode_function(&[function], &self.labels, &self.errors);
+                        }
                     }
                 } else {
-                    node.trace.data = RawOrDecodedCall::Decoded("fallback".to_string(), Vec::new());
+                    node.trace.data = RawOrDecodedCall::Decoded(
+                        "fallback".to_string(),
+                        String::new(),
+                        Vec::new(),
+                    );
 
                     if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
                         if !node.trace.success {
-                            if let Ok(decoded_error) =
-                                foundry_utils::decode_revert(&bytes[..], Some(&self.errors))
-                            {
+                            if let Ok(decoded_error) = decode::decode_revert(
+                                &bytes[..],
+                                Some(&self.errors),
+                                Some(node.trace.status),
+                            ) {
                                 node.trace.output = RawOrDecodedReturnData::Decoded(format!(
                                     r#""{}""#,
                                     decoded_error
@@ -261,31 +287,45 @@ impl CallTraceDecoder {
             }
 
             // Decode events
-            self.decode_events(node);
+            self.decode_events(node).await;
         }
     }
 
-    fn decode_events(&self, node: &mut CallTraceNode) {
-        node.logs.iter_mut().for_each(|log| {
-            self.decode_event(log);
-        });
+    async fn decode_events(&self, node: &mut CallTraceNode) {
+        for log in node.logs.iter_mut() {
+            self.decode_event(log).await;
+        }
     }
 
-    fn decode_event(&self, log: &mut RawOrDecodedLog) {
+    async fn decode_event(&self, log: &mut RawOrDecodedLog) {
         if let RawOrDecodedLog::Raw(raw_log) = log {
-            if let Some(events) = self.events.get(&(raw_log.topics[0], raw_log.topics.len() - 1)) {
-                for event in events {
-                    if let Ok(decoded) = event.parse_log(raw_log.clone()) {
-                        *log = RawOrDecodedLog::Decoded(
-                            event.name.clone(),
-                            decoded
-                                .params
-                                .into_iter()
-                                .map(|param| (param.name, self.apply_label(&param.value)))
-                                .collect(),
-                        );
-                        break
-                    }
+            // do not attempt decoding if no topics
+            if raw_log.topics.is_empty() {
+                return
+            }
+
+            let mut events = vec![];
+            if let Some(evs) = self.events.get(&(raw_log.topics[0], raw_log.topics.len() - 1)) {
+                events = evs.clone();
+            } else if let Some(identifier) = &self.signature_identifier {
+                if let Some(event) =
+                    identifier.write().await.identify_event(&raw_log.topics[0].0).await
+                {
+                    events.push(get_indexed_event(event, raw_log));
+                }
+            }
+
+            for event in events {
+                if let Ok(decoded) = event.parse_log(raw_log.clone()) {
+                    *log = RawOrDecodedLog::Decoded(
+                        event.name,
+                        decoded
+                            .params
+                            .into_iter()
+                            .map(|param| (param.name, self.apply_label(&param.value)))
+                            .collect(),
+                    );
+                    break
                 }
             }
         }

@@ -4,12 +4,14 @@ use crate::{
 };
 use anvil_core::eth::{
     block::Block,
-    filter::FilteredParams,
     receipt::{EIP658Receipt, Log, TypedReceipt},
     subscription::{SubscriptionId, SubscriptionResult},
 };
 use anvil_rpc::{request::Version, response::ResponseResult};
-use ethers::prelude::{Log as EthersLog, H256, H256 as TxHash, U64};
+use ethers::{
+    prelude::{Log as EthersLog, H256, H256 as TxHash, U64},
+    types::FilteredParams,
+};
 use futures::{channel::mpsc::Receiver, ready, Stream, StreamExt};
 use serde::Serialize;
 use std::{
@@ -45,7 +47,14 @@ impl LogsSubscription {
                 let b = self.storage.block(block.hash);
                 let receipts = self.storage.receipts(block.hash);
                 if let (Some(receipts), Some(block)) = (receipts, b) {
-                    self.queued.extend(filter_logs(block, receipts, &self.filter))
+                    let logs = filter_logs(block, receipts, &self.filter);
+                    if logs.is_empty() {
+                        // this ensures we poll the receiver until it is pending, in which case the
+                        // underlying `UnboundedReceiver` will register the new waker, see
+                        // [`futures::channel::mpsc::UnboundedReceiver::poll_next()`]
+                        continue
+                    }
+                    self.queued.extend(logs)
                 }
             } else {
                 return Poll::Ready(None)
@@ -58,7 +67,7 @@ impl LogsSubscription {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Serialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
 pub struct EthSubscriptionResponse {
     jsonrpc: Version,
     method: &'static str,
@@ -74,7 +83,7 @@ impl EthSubscriptionResponse {
 }
 
 /// Represents the `params` field of an `eth_subscription` event
-#[derive(Debug, PartialEq, Clone, Serialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
 pub struct EthSubscriptionParams {
     subscription: SubscriptionId,
     #[serde(flatten)]
@@ -96,18 +105,21 @@ impl EthSubscription {
         match self {
             EthSubscription::Logs(listener) => listener.poll(cx),
             EthSubscription::Header(blocks, storage, id) => {
-                if let Some(block) = ready!(blocks.poll_next_unpin(cx)) {
-                    if let Some(block) = storage.eth_block(block.hash) {
-                        let params = EthSubscriptionParams {
-                            subscription: id.clone(),
-                            result: to_rpc_result(block),
-                        };
-                        Poll::Ready(Some(EthSubscriptionResponse::new(params)))
+                // this loop ensures we poll the receiver until it is pending, in which case the
+                // underlying `UnboundedReceiver` will register the new waker, see
+                // [`futures::channel::mpsc::UnboundedReceiver::poll_next()`]
+                loop {
+                    if let Some(block) = ready!(blocks.poll_next_unpin(cx)) {
+                        if let Some(block) = storage.eth_block(block.hash) {
+                            let params = EthSubscriptionParams {
+                                subscription: id.clone(),
+                                result: to_rpc_result(block),
+                            };
+                            return Poll::Ready(Some(EthSubscriptionResponse::new(params)))
+                        }
                     } else {
-                        Poll::Pending
+                        return Poll::Ready(None)
                     }
-                } else {
-                    Poll::Ready(None)
                 }
             }
             EthSubscription::PendingTransactions(tx, id) => {

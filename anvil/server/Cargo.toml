@@ -16,7 +16,7 @@ hyper = "0.14"
 tower-http = { version = "0.3", features = ["trace", "cors"] }
 
 # tracing
-tracing = "0.1.32"
+tracing = "0.1"
 
 # async
 parking_lot = "0.12"

@@ -1,7 +1,8 @@
 use crate::{
+    debug::Instruction::OpCode,
     executor::inspector::utils::{gas_used, get_create_address},
     trace::{
-        CallTrace, CallTraceArena, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog,
+        CallTrace, CallTraceArena, CallTraceStep, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog,
         RawOrDecodedReturnData,
     },
     CallKind,
@@ -11,16 +12,28 @@ use ethers::{
     abi::RawLog,
     types::{Address, H256, U256},
 };
-use revm::{return_ok, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Return};
+use revm::{
+    return_ok, CallInputs, CallScheme, CreateInputs, Database, EVMData, Gas, Inspector,
+    Interpreter, Return,
+};
 
 /// An inspector that collects call traces.
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct Tracer {
+    pub record_steps: bool,
+
     pub trace_stack: Vec<usize>,
     pub traces: CallTraceArena,
+    pub step_stack: Vec<(usize, usize)>, // (trace_idx, step_idx)
 }
 
 impl Tracer {
+    pub fn with_steps_recording(mut self) -> Self {
+        self.record_steps = true;
+
+        self
+    }
+
     pub fn start_trace(
         &mut self,
         depth: usize,
@@ -65,35 +78,64 @@ impl Tracer {
             trace.address = address;
         }
     }
+
+    pub fn start_step(&mut self, step: CallTraceStep) {
+        let trace_idx =
+            *self.trace_stack.last().expect("can't start step without starting a trace first");
+        let trace = &mut self.traces.arena[trace_idx];
+
+        self.step_stack.push((trace_idx, trace.trace.steps.len()));
+        trace.trace.steps.push(step);
+    }
+
+    pub fn fill_step(&mut self, gas: u64, status: Return) {
+        let (trace_idx, step_idx) =
+            self.step_stack.pop().expect("can't fill step without starting a step first");
+        let step = &mut self.traces.arena[trace_idx].trace.steps[step_idx];
+
+        step.gas_cost = step.gas - gas;
+
+        // Error codes only
+        if status as u8 > Return::OutOfGas as u8 {
+            step.error = Some(format!("{:?}", status));
+        }
+    }
 }
 
 impl<DB> Inspector<DB> for Tracer
 where
     DB: Database,
 {
+    fn log(&mut self, _: &mut EVMData<'_, DB>, _: &Address, topics: &[H256], data: &Bytes) {
+        let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
+        node.ordering.push(LogCallOrder::Log(node.logs.len()));
+        node.logs
+            .push(RawOrDecodedLog::Raw(RawLog { topics: topics.to_vec(), data: data.to_vec() }));
+    }
+
     fn call(
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
         _: bool,
     ) -> (Return, Gas, Bytes) {
+        let (from, to) = match call.context.scheme {
+            CallScheme::DelegateCall | CallScheme::CallCode => {
+                (call.context.address, call.context.code_address)
+            }
+            _ => (call.context.caller, call.context.address),
+        };
+
         self.start_trace(
-            data.subroutine.depth() as usize,
-            call.context.code_address,
+            data.journaled_state.depth() as usize,
+            to,
             call.input.to_vec(),
             call.transfer.value,
             call.context.scheme.into(),
-            call.context.caller,
+            from,
         );
 
         (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
-    }
-
-    fn log(&mut self, _: &mut EVMData<'_, DB>, _: &Address, topics: &[H256], data: &Bytes) {
-        let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
-        node.ordering.push(LogCallOrder::Log(node.logs.len()));
-        node.logs
-            .push(RawOrDecodedLog::Raw(RawLog { topics: topics.to_vec(), data: data.to_vec() }));
     }
 
     fn call_end(
@@ -121,14 +163,14 @@ where
         call: &mut CreateInputs,
     ) -> (Return, Option<Address>, Gas, Bytes) {
         // TODO: Does this increase gas cost?
-        data.subroutine.load_account(call.caller, data.db);
-        let nonce = data.subroutine.account(call.caller).info.nonce;
+        let _ = data.journaled_state.load_account(call.caller, data.db);
+        let nonce = data.journaled_state.account(call.caller).info.nonce;
         self.start_trace(
-            data.subroutine.depth() as usize,
+            data.journaled_state.depth() as usize,
             get_create_address(call, nonce),
             call.init_code.to_vec(),
             call.value,
-            CallKind::Create,
+            call.scheme.into(),
             call.caller,
         );
 
@@ -146,12 +188,12 @@ where
     ) -> (Return, Option<Address>, Gas, Bytes) {
         let code = match address {
             Some(address) => data
-                .subroutine
+                .journaled_state
                 .account(address)
                 .info
                 .code
                 .as_ref()
-                .map_or(vec![], |code| code.to_vec()),
+                .map_or(vec![], |code| code.bytes()[..code.len()].to_vec()),
             None => vec![],
         };
         self.fill_trace(
@@ -162,5 +204,56 @@ where
         );
 
         (status, address, gas, retdata)
+    }
+
+    fn step(
+        &mut self,
+        interp: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        _is_static: bool,
+    ) -> Return {
+        if !self.record_steps {
+            return Return::Continue
+        }
+
+        let depth = data.journaled_state.depth();
+        let pc = interp.program_counter();
+        let op = OpCode(interp.contract.bytecode.bytecode()[pc]);
+        let stack = interp.stack.clone();
+        let memory = interp.memory.clone();
+        let state = data.journaled_state.state.clone();
+        let gas = interp.gas.remaining();
+        let gas_refund_counter = interp.gas.refunded() as u64;
+
+        self.start_step(CallTraceStep {
+            depth,
+            pc,
+            op,
+            stack,
+            memory,
+            state,
+            gas,
+            gas_refund_counter,
+            gas_cost: 0,
+            error: None,
+        });
+
+        Return::Continue
+    }
+
+    fn step_end(
+        &mut self,
+        interp: &mut Interpreter,
+        _data: &mut EVMData<'_, DB>,
+        _is_static: bool,
+        status: Return,
+    ) -> Return {
+        if !self.record_steps {
+            return Return::Continue
+        }
+
+        self.fill_step(interp.gas.remaining(), status);
+
+        status
     }
 }

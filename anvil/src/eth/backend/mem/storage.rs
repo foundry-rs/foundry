@@ -1,15 +1,116 @@
 //! In-memory blockchain storage
-use crate::eth::backend::time::duration_since_unix_epoch;
+use crate::eth::{
+    backend::{
+        db::{MaybeHashDatabase, StateDb},
+        mem::cache::DiskStateCache,
+    },
+    pool::transactions::PoolTransaction,
+};
 use anvil_core::eth::{
     block::{Block, PartialHeader},
     receipt::TypedReceipt,
     transaction::TransactionInfo,
 };
-use ethers::prelude::{BlockId, BlockNumber, Trace, H256, H256 as TxHash, U64};
-
-use crate::eth::pool::transactions::PoolTransaction;
+use ethers::{
+    prelude::{BlockId, BlockNumber, GethTrace, Trace, H256, H256 as TxHash, U64},
+    types::{ActionType, GethDebugTracingOptions, U256},
+};
+use forge::revm::{Env, Return};
 use parking_lot::RwLock;
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    fmt,
+    sync::Arc,
+};
+
+// === impl DiskStateCache ===
+
+/// Represents the complete state of single block
+pub struct InMemoryBlockStates {
+    /// The states at a certain block
+    states: HashMap<H256, StateDb>,
+    /// states which data is moved to disk
+    on_disk_states: HashMap<H256, StateDb>,
+    /// How many states to store at most
+    limit: usize,
+    /// all states present, used to enforce `limit`
+    present: VecDeque<H256>,
+    /// Stores old states on disk
+    disk_cache: DiskStateCache,
+}
+
+// === impl InMemoryBlockStates ===
+
+impl InMemoryBlockStates {
+    /// Creates a new instance with limited slots
+    pub fn new(limit: usize) -> Self {
+        Self {
+            states: Default::default(),
+            on_disk_states: Default::default(),
+            limit,
+            present: Default::default(),
+            disk_cache: Default::default(),
+        }
+    }
+
+    /// Inserts a new (hash -> state) pair
+    ///
+    /// When the configured limit for the number of states that can be stored in memory is reached,
+    /// the oldest state is removed.
+    pub fn insert(&mut self, hash: H256, state: StateDb) {
+        if self.present.len() >= self.limit {
+            // evict the oldest block
+            if let Some((hash, mut state)) = self
+                .present
+                .pop_front()
+                .and_then(|hash| self.states.remove(&hash).map(|state| (hash, state)))
+            {
+                let snapshot = state.0.clear_into_snapshot();
+                self.disk_cache.write(hash, &snapshot);
+                self.on_disk_states.insert(hash, state);
+            }
+        }
+        self.states.insert(hash, state);
+        self.present.push_back(hash);
+    }
+
+    /// Returns the state for the given `hash` if present
+    pub fn get(&mut self, hash: &H256) -> Option<&StateDb> {
+        self.states.get(hash).or_else(|| {
+            if let Some(state) = self.on_disk_states.get_mut(hash) {
+                if let Some(cached) = self.disk_cache.read(*hash) {
+                    state.init_from_snapshot(cached);
+                    return Some(state)
+                }
+            }
+            None
+        })
+    }
+
+    /// Clears all entries
+    pub fn clear(&mut self) {
+        self.states.clear();
+        self.on_disk_states.clear();
+        self.present.clear();
+    }
+}
+
+impl fmt::Debug for InMemoryBlockStates {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("InMemoryBlockStates")
+            .field("limit", &self.limit)
+            .field("present", &self.present)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Default for InMemoryBlockStates {
+    fn default() -> Self {
+        // enough in memory to store 1_000 blocks in memory, this is ~30min of up-time with 1s
+        // interval mining mode
+        Self::new(1_000)
+    }
+}
 
 /// Stores the blockchain data (blocks, transactions)
 #[derive(Clone)]
@@ -27,27 +128,20 @@ pub struct BlockchainStorage {
     /// Mapping from the transaction hash to a tuple containing the transaction as well as the
     /// transaction receipt
     pub transactions: HashMap<TxHash, MinedTransaction>,
+    /// The total difficulty of the chain until this block
+    pub total_difficulty: U256,
 }
 
 impl BlockchainStorage {
-    #[allow(unused)]
-    pub fn empty() -> Self {
-        Self {
-            blocks: Default::default(),
-            hashes: Default::default(),
-            best_hash: Default::default(),
-            best_number: Default::default(),
-            genesis_hash: Default::default(),
-            transactions: Default::default(),
-        }
-    }
-}
-
-impl Default for BlockchainStorage {
-    fn default() -> Self {
+    /// Creates a new storage with a genesis block
+    pub fn new(env: &Env, base_fee: Option<U256>, timestamp: u64) -> Self {
         // create a dummy genesis block
         let partial_header = PartialHeader {
-            timestamp: duration_since_unix_epoch().as_secs(),
+            timestamp,
+            base_fee,
+            gas_limit: env.block.gas_limit,
+            beneficiary: env.block.coinbase,
+            difficulty: env.block.difficulty,
             ..Default::default()
         };
         let block = Block::new(partial_header, vec![], vec![]);
@@ -62,6 +156,32 @@ impl Default for BlockchainStorage {
             best_number,
             genesis_hash,
             transactions: Default::default(),
+            total_difficulty: Default::default(),
+        }
+    }
+
+    pub fn forked(block_number: u64, block_hash: H256, total_difficulty: U256) -> Self {
+        BlockchainStorage {
+            blocks: Default::default(),
+            hashes: HashMap::from([(block_number.into(), block_hash)]),
+            best_hash: block_hash,
+            best_number: block_number.into(),
+            genesis_hash: Default::default(),
+            transactions: Default::default(),
+            total_difficulty,
+        }
+    }
+
+    #[allow(unused)]
+    pub fn empty() -> Self {
+        Self {
+            blocks: Default::default(),
+            hashes: Default::default(),
+            best_hash: Default::default(),
+            best_number: Default::default(),
+            genesis_hash: Default::default(),
+            transactions: Default::default(),
+            total_difficulty: Default::default(),
         }
     }
 }
@@ -81,7 +201,7 @@ impl BlockchainStorage {
 }
 
 /// A simple in-memory blockchain
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Blockchain {
     /// underlying storage that supports concurrent reads
     pub storage: Arc<RwLock<BlockchainStorage>>,
@@ -90,16 +210,19 @@ pub struct Blockchain {
 // === impl BlockchainStorage ===
 
 impl Blockchain {
-    pub fn forked(block_number: u64, block_hash: H256) -> Self {
-        let storage = BlockchainStorage {
-            blocks: Default::default(),
-            hashes: HashMap::from([(block_number.into(), block_hash)]),
-            best_hash: block_hash,
-            best_number: block_number.into(),
-            genesis_hash: Default::default(),
-            transactions: Default::default(),
-        };
-        Self { storage: Arc::new(RwLock::new(storage)) }
+    /// Creates a new storage with a genesis block
+    pub fn new(env: &Env, base_fee: Option<U256>, timestamp: u64) -> Self {
+        Self { storage: Arc::new(RwLock::new(BlockchainStorage::new(env, base_fee, timestamp))) }
+    }
+
+    pub fn forked(block_number: u64, block_hash: H256, total_difficulty: U256) -> Self {
+        Self {
+            storage: Arc::new(RwLock::new(BlockchainStorage::forked(
+                block_number,
+                block_hash,
+                total_difficulty,
+            ))),
+        }
     }
 
     /// returns the header hash of given block
@@ -142,25 +265,67 @@ pub struct MinedTransaction {
 impl MinedTransaction {
     /// Returns the traces of the transaction for `trace_transaction`
     pub fn parity_traces(&self) -> Vec<Trace> {
-        let mut traces = Vec::with_capacity(self.info.traces.len());
-        for (idx, node) in self.info.traces.iter().cloned().enumerate() {
+        let mut traces = Vec::with_capacity(self.info.traces.arena.len());
+        for (idx, node) in self.info.traces.arena.iter().cloned().enumerate() {
             let action = node.parity_action();
             let result = node.parity_result();
+
+            let action_type = if node.status() == Return::SelfDestruct {
+                ActionType::Suicide
+            } else {
+                node.kind().into()
+            };
+
             let trace = Trace {
                 action,
                 result: Some(result),
-                trace_address: self.info.trace_call_graph(idx),
+                trace_address: self.info.trace_address(idx),
                 subtraces: node.children.len(),
                 transaction_position: Some(self.info.transaction_index as usize),
                 transaction_hash: Some(self.info.transaction_hash),
                 block_number: self.block_number,
                 block_hash: self.block_hash,
-                action_type: node.kind().into(),
+                action_type,
                 error: None,
             };
             traces.push(trace)
         }
 
         traces
+    }
+
+    pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> GethTrace {
+        self.info.traces.geth_trace(opts)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::eth::backend::db::Db;
+    use ethers::{abi::ethereum_types::BigEndianHash, types::Address};
+    use forge::revm::{db::DatabaseRef, AccountInfo};
+    use foundry_evm::executor::backend::MemDb;
+
+    #[test]
+    fn can_read_write_cached_state() {
+        let mut storage = InMemoryBlockStates::new(1);
+        let one = H256::from_uint(&U256::from(1));
+        let two = H256::from_uint(&U256::from(2));
+
+        let mut state = MemDb::default();
+        let addr = Address::random();
+        let info = AccountInfo::from_balance(1337.into());
+        state.insert_account(addr, info);
+        storage.insert(one, StateDb::new(state));
+        storage.insert(two, StateDb::new(MemDb::default()));
+
+        assert_eq!(storage.on_disk_states.len(), 1);
+        assert!(storage.on_disk_states.get(&one).is_some());
+
+        let loaded = storage.get(&one).unwrap();
+
+        let acc = loaded.basic(addr).unwrap().unwrap();
+        assert_eq!(acc.balance, 1337u64.into());
     }
 }
