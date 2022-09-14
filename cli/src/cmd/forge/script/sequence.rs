@@ -5,7 +5,7 @@ use crate::cmd::forge::{
         transaction::{wrapper, AdditionalContract, TransactionWithMetadata},
         verify::VerifyBundle,
     },
-    verify::VerificationProviderType,
+    verify::provider::VerificationProviderType,
 };
 use ethers::{
     abi::Address,
@@ -167,7 +167,7 @@ impl ScriptSequence {
         if verify.etherscan_key.is_some() ||
             verify.verifier.verifier != VerificationProviderType::Etherscan
         {
-            let mut future_verifications = vec![];
+            let mut future_verifications = Vec::with_capacity(self.receipts.len());
             let mut unverifiable_contracts = vec![];
 
             // Make sure the receipts have the right order first.
