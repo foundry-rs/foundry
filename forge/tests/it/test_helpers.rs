@@ -105,12 +105,24 @@ pub mod filter {
     impl Filter {
         pub fn new(test_pattern: &str, contract_pattern: &str, path_pattern: &str) -> Self {
             Filter {
-                test_regex: Regex::new(test_pattern).unwrap(),
-                contract_regex: Regex::new(contract_pattern).unwrap(),
-                path_regex: Regex::new(path_pattern).unwrap(),
+                test_regex: Regex::new(test_pattern)
+                    .unwrap_or_else(|_| panic!("Failed to parse test pattern: `{}`", test_pattern)),
+                contract_regex: Regex::new(contract_pattern).unwrap_or_else(|_| {
+                    panic!("Failed to parse contract pattern: `{}`", contract_pattern)
+                }),
+                path_regex: Regex::new(path_pattern)
+                    .unwrap_or_else(|_| panic!("Failed to parse path pattern: `{}`", path_pattern)),
                 exclude_tests: None,
                 exclude_paths: None,
             }
+        }
+
+        pub fn contract(contract_pattern: &str) -> Self {
+            Self::new(".*", contract_pattern, ".*")
+        }
+
+        pub fn path(path_pattern: &str) -> Self {
+            Self::new(".*", ".*", path_pattern)
         }
 
         /// All tests to also exclude

@@ -1,6 +1,8 @@
 //! Test setup
 
-use crate::test_helpers::{COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT};
+use crate::test_helpers::{
+    filter::Filter, COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT,
+};
 use forge::{result::SuiteResult, MultiContractRunner, MultiContractRunnerBuilder, TestOptions};
 use foundry_config::{
     fs_permissions::PathPermission, Config, FsPermissions, FuzzConfig, InvariantConfig,
@@ -11,6 +13,80 @@ use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
 };
+
+/// How to execute a a test run
+pub struct TestConfig {
+    pub runner: MultiContractRunner,
+    pub should_fail: bool,
+    pub filter: Filter,
+    pub opts: TestOptions,
+}
+
+// === impl TestConfig ===
+
+impl TestConfig {
+    pub fn new(runner: MultiContractRunner) -> Self {
+        Self::with_filter(runner, Filter::matches_all())
+    }
+
+    pub fn with_filter(runner: MultiContractRunner, filter: Filter) -> Self {
+        Self { runner, should_fail: false, filter, opts: TEST_OPTS }
+    }
+
+    pub fn filter(filter: Filter) -> Self {
+        Self { filter, ..Default::default() }
+    }
+
+    pub fn should_fail(self) -> Self {
+        self.set_should_fail(true)
+    }
+
+    pub fn set_should_fail(mut self, should_fail: bool) -> Self {
+        self.should_fail = should_fail;
+        self
+    }
+
+    #[track_caller]
+    pub fn run(&mut self) {
+        self.try_run().unwrap()
+    }
+
+    /// Executes the test case
+    ///
+    /// Returns an error if
+    ///    * filter matched 0 test cases
+    ///    * a test results deviates from the configured `should_fail` setting
+    pub fn try_run(&mut self) -> eyre::Result<()> {
+        let suite_result = self.runner.test(&self.filter, None, self.opts).unwrap();
+        if suite_result.is_empty() {
+            eyre::bail!("empty test result");
+        }
+        for (_, SuiteResult { test_results, .. }) in suite_result {
+            for (test_name, result) in test_results {
+                if self.should_fail != !result.success {
+                    let logs = decode_console_logs(&result.logs);
+                    let outcome = if self.should_fail { "fail" } else { "pass" };
+
+                    eyre::bail!(
+                        "Test {} did not {} as expected.\nReason: {:?}\nLogs:\n{}",
+                        test_name,
+                        outcome,
+                        result.reason,
+                        logs.join("\n")
+                    )
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl Default for TestConfig {
+    fn default() -> Self {
+        TestConfig::new(runner())
+    }
+}
 
 pub static TEST_OPTS: TestOptions = TestOptions {
     fuzz: FuzzConfig {
