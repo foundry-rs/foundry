@@ -492,7 +492,7 @@ impl ScriptArgs {
                 }
             }
             // Both should be raw and not decoded since it's just bytecode
-            unreachable!("Create data was not raw");
+            eyre::bail!("Create node returned decoded data: {:?}", node);
         }
 
         let mut prompt_user = false;
