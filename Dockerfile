@@ -23,5 +23,5 @@ RUN wget -q -O ${GLIBC_KEY_FILE} ${GLIBC_KEY} \
 COPY --from=build-environment /opt/foundry/target/release/forge /usr/local/bin/forge
 COPY --from=build-environment /opt/foundry/target/release/cast /usr/local/bin/cast
 COPY --from=build-environment /opt/foundry/target/release/anvil /usr/local/bin/anvil
-RUN useradd -ms /bin/bash foundry
+RUN useradd -ms /bin/ash foundry
 ENTRYPOINT ["/bin/sh", "-c"]
