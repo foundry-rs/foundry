@@ -103,7 +103,10 @@ impl CallTraceArena {
                     if let Some((key, value)) = step.state_diff {
                         contract_storage.insert(H256::from_uint(&key), H256::from_uint(&value));
                     }
-                    log.storage = Some(contract_storage.clone());
+
+                    if !contract_storage.is_empty() {
+                        log.storage = Some(contract_storage.clone());
+                    }
                 }
                 if opts.disable_stack.unwrap_or_default() {
                     log.stack = None;

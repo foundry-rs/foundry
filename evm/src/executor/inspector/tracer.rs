@@ -117,6 +117,7 @@ impl Tracer {
             _ => None,
         };
 
+        // TODO: calculate spent gas as in `Debugger::step`
         step.gas_cost = step.gas - interp.gas.remaining();
 
         // Error codes only
