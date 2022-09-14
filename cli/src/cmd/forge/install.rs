@@ -6,6 +6,7 @@ use crate::{
 };
 use atty::{self, Stream};
 use clap::{Parser, ValueHint};
+use ethers::solc::Project;
 use foundry_common::fs;
 use foundry_config::{impl_figment_convert_basic, Config};
 use once_cell::sync::Lazy;
@@ -78,7 +79,38 @@ pub struct DependencyInstallOpts {
     pub quiet: bool,
 }
 
+/// Auto installs missing dependencies
+///
+/// Note: Since the install-process requires `git` this is only executed if an existing installation
+/// of `git` could be found
+///
+/// See also [`install`]
+///
+/// Returns whether missing dependencies where installed
+pub fn install_missing_dependencies(config: &mut Config, project: &Project, quiet: bool) -> bool {
+    // try to auto install missing submodules in the default install dir but only if git is
+    // installed
+    if which::which("git").is_ok() &&
+        has_missing_dependencies(project.root(), &config.install_lib_dir())
+    {
+        // The extra newline is needed, otherwise the compiler output will overwrite the
+        // message
+        p_println!(!quiet => "Missing dependencies found. Installing now...\n");
+        let opts = DependencyInstallOpts { quiet, no_commit: true, ..Default::default() };
+        if install(config, Vec::new(), opts).is_err() && !quiet {
+            eprintln!(
+                "{}",
+                Paint::yellow("Your project has missing dependencies that could not be installed.")
+            )
+        }
+        return true
+    }
+
+    false
+}
+
 /// Installs all dependencies
+#[tracing::instrument(name = "install dependencies", skip_all, fields(dependencies, opts))]
 pub(crate) fn install(
     config: &mut Config,
     dependencies: Vec<Dependency>,
@@ -90,15 +122,16 @@ pub(crate) fn install(
     let libs = root.join(&install_lib_dir);
 
     if dependencies.is_empty() {
-        Command::new("git")
-            .args([
-                "submodule",
-                "update",
-                "--init",
-                "--recursive",
-                libs.display().to_string().as_str(),
-            ])
-            .exec()?;
+        let mut cmd = Command::new("git");
+        cmd.args([
+            "submodule",
+            "update",
+            "--init",
+            "--recursive",
+            libs.display().to_string().as_str(),
+        ]);
+        trace!(?cmd, "updating submodules");
+        cmd.exec()?;
     }
     fs::create_dir_all(&libs)?;
 
@@ -120,15 +153,16 @@ pub(crate) fn install(
             // Pin branch to submodule if branch is used
             if let Some(branch) = tag {
                 if !(branch.is_empty()) {
-                    Command::new("git")
-                        .args([
-                            "submodule",
-                            "set-branch",
-                            "-b",
-                            &branch,
-                            install_lib_dir.join(target_dir).to_str().unwrap(),
-                        ])
-                        .exec()?;
+                    let mut cmd = Command::new("git");
+                    cmd.args([
+                        "submodule",
+                        "set-branch",
+                        "-b",
+                        &branch,
+                        install_lib_dir.join(target_dir).to_str().unwrap(),
+                    ]);
+                    trace!(?cmd, "submodule set branch");
+                    cmd.exec()?;
                 }
             }
         }
