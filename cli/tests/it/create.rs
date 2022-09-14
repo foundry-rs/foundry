@@ -148,7 +148,7 @@ forgetest_async!(
         let (_api, handle) = spawn(NodeConfig::test()).await;
         let rpc = handle.http_endpoint();
         let wallet = handle.dev_wallets().next().unwrap();
-        let pk = hex::encode(&wallet.signer().to_bytes());
+        let pk = hex::encode(wallet.signer().to_bytes());
         cmd.args(["init", "--force"]);
         cmd.assert_non_empty_stdout();
 

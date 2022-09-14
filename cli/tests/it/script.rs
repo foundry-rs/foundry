@@ -685,8 +685,7 @@ contract Script0 is Script {
 
         let run_latest = foundry_common::fs::json_files(prj.root().join("broadcast"))
             .into_iter()
-            .filter(|file| file.ends_with("run-latest.json"))
-            .next()
+            .find(|file| file.ends_with("run-latest.json"))
             .expect("No broadcast artifacts");
 
         let content = foundry_common::fs::read_to_string(run_latest).unwrap();
@@ -775,8 +774,7 @@ contract Script0 is Script {
 
         let run_latest = foundry_common::fs::json_files(prj.root().join("broadcast"))
             .into_iter()
-            .filter(|file| file.ends_with("run-latest.json"))
-            .next()
+            .find(|file| file.ends_with("run-latest.json"))
             .expect("No broadcast artifacts");
 
         let content = foundry_common::fs::read_to_string(run_latest).unwrap();
