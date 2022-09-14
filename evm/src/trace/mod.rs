@@ -102,9 +102,6 @@ impl CallTraceArena {
                     let contract_storage = storage.entry(step.contract).or_default();
                     if let Some((key, value)) = step.state_diff {
                         contract_storage.insert(H256::from_uint(&key), H256::from_uint(&value));
-                    }
-
-                    if !contract_storage.is_empty() {
                         log.storage = Some(contract_storage.clone());
                     }
                 }
