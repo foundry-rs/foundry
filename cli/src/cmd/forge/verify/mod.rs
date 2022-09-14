@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use clap::{Parser, ValueHint};
 use ethers::{abi::Address, solc::info::ContractInfo};
 use etherscan::EtherscanVerificationProvider;
-use foundry_config::{impl_figment_convert_basic, Chain};
+use foundry_config::{figment, impl_figment_convert, Chain, Config};
 use sourcify::SourcifyVerificationProvider;
 use std::{
     fmt::{Display, Formatter},
@@ -144,7 +144,29 @@ pub struct VerifyArgs {
     pub verifier: VerifierArgs,
 }
 
-impl_figment_convert_basic!(VerifyArgs);
+impl_figment_convert!(VerifyArgs);
+
+impl figment::Provider for VerifyArgs {
+    fn metadata(&self) -> figment::Metadata {
+        figment::Metadata::named(stringify!($name))
+    }
+    fn data(
+        &self,
+    ) -> Result<figment::value::Map<figment::Profile, figment::value::Dict>, figment::Error> {
+        let mut dict = figment::value::Dict::new();
+        if let Some(root) = self.root.as_ref() {
+            dict.insert("root".to_string(), figment::value::Value::serialize(root)?);
+        }
+        if let Some(optimizer_runs) = self.num_of_optimizations {
+            dict.insert("optimizer".to_string(), figment::value::Value::serialize(true)?);
+            dict.insert(
+                "optimizer_runs".to_string(),
+                figment::value::Value::serialize(optimizer_runs)?,
+            );
+        }
+        Ok(figment::value::Map::from([(Config::selected_profile(), dict)]))
+    }
+}
 
 impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
