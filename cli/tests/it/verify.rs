@@ -11,7 +11,7 @@ use foundry_config::Config;
 use foundry_utils::Retry;
 use std::{fs, path::PathBuf};
 
-const VERIFICATION_PROVIDERS: &'static [&'static str] = &["etherscan", "sourcify"];
+const VERIFICATION_PROVIDERS: &[&str] = &["etherscan", "sourcify"];
 
 /// Adds a `Unique` contract to the source directory of the project that can be imported as
 /// `import {Unique} from "./unique.sol";`
@@ -366,7 +366,7 @@ forgetest_async!(
         assert!(stdout.contains("Sending transactions [0 - 4]"), "{}", err);
 
         // ensure all transactions are successful
-        assert_eq!(5, stdout.matches("✅").count(), "{}", err);
+        assert_eq!(5, stdout.matches('✅').count(), "{}", err);
 
         // ensure verified all deployments
         // Note: the 5th tx creates contracts internally, which are little flaky at times because

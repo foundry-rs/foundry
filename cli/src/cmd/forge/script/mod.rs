@@ -466,24 +466,24 @@ impl ScriptArgs {
             // Ignore abstract contracts
             if let Some(ref deployed_code) = bytecode.deployed_bytecode.bytecode {
                 let deployed_code = deployed_code.object.as_bytes().expect(MSG);
-                bytecodes.push((artifact.name.clone(), &init_code, &deployed_code));
+                bytecodes.push((artifact.name.clone(), init_code, deployed_code));
             }
         });
 
         // From traces, only push if it was not present already
         let create_nodes = result.traces.iter().flat_map(|(_, traces)| {
-            traces.arena.iter().filter_map(|node| match node.kind() {
-                CallKind::Create | CallKind::Create2 => Some(node),
-                _ => None,
-            })
+            traces
+                .arena
+                .iter()
+                .filter(|node| matches!(node.kind(), CallKind::Create | CallKind::Create2))
         });
 
         let mut i = 0usize;
         for node in create_nodes {
             if let RawOrDecodedCall::Raw(ref init_code) = node.trace.data {
                 if let RawOrDecodedReturnData::Raw(ref deployed_code) = node.trace.output {
-                    if bytecodes.iter().find(|(_, b, _)| b == init_code).is_none() {
-                        bytecodes.push((format!("Unknown{}", i), &init_code, &deployed_code));
+                    if !bytecodes.iter().any(|(_, b, _)| b == init_code) {
+                        bytecodes.push((format!("Unknown{}", i), init_code, deployed_code));
                         i += 1;
                     }
                     continue
