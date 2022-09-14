@@ -456,7 +456,7 @@ impl ScriptArgs {
         result: &ScriptResult,
         known_contracts: &BTreeMap<ArtifactId, ContractBytecodeSome>,
     ) -> eyre::Result<()> {
-        // (name, init, deployed)[]
+        // (name, &init, &deployed)[]
         let mut bytecodes: Vec<(String, &[u8], &[u8])> = vec![];
 
         // From artifacts
@@ -470,26 +470,28 @@ impl ScriptArgs {
             }
         });
 
-        // From traces, only push if it was not present already
+        // From traces
         let create_nodes = result.traces.iter().flat_map(|(_, traces)| {
             traces
                 .arena
                 .iter()
                 .filter(|node| matches!(node.kind(), CallKind::Create | CallKind::Create2))
         });
-
-        let mut i = 0usize;
+        let mut unknown_c = 0usize;
         for node in create_nodes {
+            // Calldata == init code
             if let RawOrDecodedCall::Raw(ref init_code) = node.trace.data {
+                // Output is the runtime code
                 if let RawOrDecodedReturnData::Raw(ref deployed_code) = node.trace.output {
+                    // Only push if it was not present already
                     if !bytecodes.iter().any(|(_, b, _)| b == init_code) {
-                        bytecodes.push((format!("Unknown{}", i), init_code, deployed_code));
-                        i += 1;
+                        bytecodes.push((format!("Unknown{}", unknown_c), init_code, deployed_code));
+                        unknown_c += 1;
                     }
                     continue
                 }
             }
-
+            // Both should be raw and not decoded since it's just bytecode
             unreachable!("Create data was not raw");
         }
 
@@ -511,10 +513,10 @@ impl ScriptArgs {
             }
 
             // Find artifact with a deployment code same as the data.
-            if let Some((name, _, deploy_code)) =
+            if let Some((name, _, deployed_code)) =
                 bytecodes.iter().find(|(_, init_code, _)| *init_code == &data[offset..])
             {
-                let deployment_size = deploy_code.len();
+                let deployment_size = deployed_code.len();
 
                 if deployment_size > CONTRACT_MAX_SIZE {
                     println!(
