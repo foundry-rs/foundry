@@ -153,6 +153,18 @@ impl TransactionWithMetadata {
                 if let Some((_, abi)) = contracts.get(&address) {
                     // set constructor arguments
                     if let Some(constructor) = abi.constructor() {
+                        let on_err = || {
+                            let inputs = constructor
+                                .inputs
+                                .iter()
+                                .map(|p| p.kind.to_string())
+                                .collect::<Vec<_>>()
+                                .join(",");
+                            let signature = format!("constructor({})", inputs);
+                            let bytecode = hex::encode(&data.0);
+                            (signature, bytecode)
+                        };
+
                         let params =
                             constructor.inputs.iter().map(|p| p.kind.clone()).collect::<Vec<_>>();
 
@@ -160,14 +172,16 @@ impl TransactionWithMetadata {
                             self.arguments = Some(
                                 abi::decode(&params, constructor_args)
                                     .map_err(|_| {
-                                        eyre::eyre!("Failed to decode constructor arguments")
+                                        let(signature, bytecode) = on_err();
+                                        eyre::eyre!("Failed to decode constructor arguments for contract {:?}: {}\n\tbytecode=\"{}\"", self.contract_name, signature,bytecode)
                                     })?
                                     .iter()
                                     .map(format_token)
                                     .collect(),
                             );
                         } else {
-                            error!("Failed to extract constructor args from CREATE data")
+                            let (signature, bytecode) = on_err();
+                            error!(constructor=?signature, contract=?self.contract_name, bytecode, "Failed to extract constructor args from CREATE data")
                         }
                     }
                 }
