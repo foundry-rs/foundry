@@ -1,19 +1,14 @@
 //! Verify contract source
 
 use crate::cmd::retry::RetryArgs;
-use async_trait::async_trait;
 use clap::{Parser, ValueHint};
 use ethers::{abi::Address, solc::info::ContractInfo};
-use etherscan::EtherscanVerificationProvider;
 use foundry_config::{figment, impl_figment_convert, Chain, Config};
-use sourcify::SourcifyVerificationProvider;
-use std::{
-    fmt::{Display, Formatter},
-    path::PathBuf,
-    str::FromStr,
-};
+use provider::VerificationProviderType;
+use std::path::PathBuf;
 
 mod etherscan;
+pub mod provider;
 mod sourcify;
 
 /// Verification provider arguments
@@ -213,63 +208,5 @@ impl VerifyCheckArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(self) -> eyre::Result<()> {
         self.verifier.verifier.client(&self.etherscan_key)?.check(self).await
-    }
-}
-
-#[derive(clap::ArgEnum, Debug, Clone, PartialEq, Eq)]
-pub enum VerificationProviderType {
-    Etherscan,
-    Sourcify,
-    Blockscout,
-}
-
-impl VerificationProviderType {
-    fn client(&self, key: &Option<String>) -> eyre::Result<Box<dyn VerificationProvider>> {
-        match self {
-            VerificationProviderType::Etherscan => {
-                if key.as_ref().map_or(true, |key| key.is_empty()) {
-                    eyre::bail!("ETHERSCAN_API_KEY must be set")
-                }
-                Ok(Box::new(EtherscanVerificationProvider))
-            }
-            VerificationProviderType::Sourcify => Ok(Box::new(SourcifyVerificationProvider)),
-            VerificationProviderType::Blockscout => Ok(Box::new(EtherscanVerificationProvider)),
-        }
-    }
-}
-
-#[async_trait]
-pub trait VerificationProvider {
-    async fn verify(&self, args: VerifyArgs) -> eyre::Result<()>;
-    async fn check(&self, args: VerifyCheckArgs) -> eyre::Result<()>;
-}
-
-impl FromStr for VerificationProviderType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "e" | "etherscan" => Ok(VerificationProviderType::Etherscan),
-            "s" | "sourcify" => Ok(VerificationProviderType::Sourcify),
-            "b" | "blockscout" => Ok(VerificationProviderType::Blockscout),
-            _ => Err(format!("Unknown field: {s}")),
-        }
-    }
-}
-
-impl Display for VerificationProviderType {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            VerificationProviderType::Etherscan => {
-                write!(f, "etherscan")?;
-            }
-            VerificationProviderType::Sourcify => {
-                write!(f, "sourcify")?;
-            }
-            VerificationProviderType::Blockscout => {
-                write!(f, "blockscout")?;
-            }
-        };
-        Ok(())
     }
 }

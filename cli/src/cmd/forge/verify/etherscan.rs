@@ -1,4 +1,7 @@
-use crate::cmd::{read_constructor_args_file, retry::RETRY_CHECK_ON_VERIFY, LoadConfig};
+use crate::cmd::{
+    forge::verify::provider::VerificationProvider, read_constructor_args_file,
+    retry::RETRY_CHECK_ON_VERIFY, LoadConfig,
+};
 use async_trait::async_trait;
 use cast::SimpleCast;
 use ethers::{
@@ -29,7 +32,7 @@ use std::{
 };
 use tracing::{trace, warn};
 
-use super::{VerificationProvider, VerifyArgs, VerifyCheckArgs};
+use super::{VerifyArgs, VerifyCheckArgs};
 
 pub static RE_BUILD_COMMIT: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?P<commit>commit\.[0-9,a-f]{8})"#).unwrap());
@@ -52,7 +55,11 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 let resp = etherscan
                     .submit_contract_verification(&verify_args)
                     .await
-                    .wrap_err("Failed to submit contract verification")?;
+                    .wrap_err_with(|| {
+                        // valid json
+                        let args = serde_json::to_string(&verify_args).unwrap();
+                        format!("Failed to submit contract verification, payload:\n{}", args)
+                    })?;
 
                 if resp.status == "0" {
                     if resp.result == "Contract source code already verified" {
