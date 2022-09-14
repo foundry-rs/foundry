@@ -26,8 +26,10 @@ use forge::{
     executor::{opts::EvmOpts, Backend},
     trace::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
-        CallTraceArena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
+        CallTraceArena, CallTraceDecoder, CallTraceDecoderBuilder, RawOrDecodedCall,
+        RawOrDecodedReturnData, TraceKind,
     },
+    CallKind,
 };
 use foundry_common::{evm::EvmArgs, ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN};
 use foundry_config::{figment, Config};
@@ -451,10 +453,47 @@ impl ScriptArgs {
     /// the user.
     fn check_contract_sizes(
         &self,
-        transactions: Option<&VecDeque<TypedTransaction>>,
+        result: &ScriptResult,
         known_contracts: &BTreeMap<ArtifactId, ContractBytecodeSome>,
     ) -> eyre::Result<()> {
-        for (data, to) in transactions.iter().flat_map(|txes| {
+        // (name, init, deployed)[]
+        let mut bytecodes: Vec<(String, &[u8], &[u8])> = vec![];
+
+        // From artifacts
+        known_contracts.iter().for_each(|(artifact, bytecode)| {
+            const MSG: &str = "Code should have been linked before.";
+            let init_code = bytecode.bytecode.object.as_bytes().expect(MSG);
+            // Ignore abstract contracts
+            if let Some(ref deployed_code) = bytecode.deployed_bytecode.bytecode {
+                let deployed_code = deployed_code.object.as_bytes().expect(MSG);
+                bytecodes.push((artifact.name.clone(), &init_code, &deployed_code));
+            }
+        });
+
+        // From traces, only push if it was not present already
+        let create_nodes = result.traces.iter().flat_map(|(_, traces)| {
+            traces.arena.iter().filter_map(|node| match node.kind() {
+                CallKind::Create | CallKind::Create2 => Some(node),
+                _ => None,
+            })
+        });
+
+        let mut i = 0usize;
+        for node in create_nodes {
+            if let RawOrDecodedCall::Raw(ref init_code) = node.trace.data {
+                if let RawOrDecodedReturnData::Raw(ref deployed_code) = node.trace.output {
+                    if bytecodes.iter().find(|(_, b, _)| b == init_code).is_none() {
+                        bytecodes.push((format!("Unknown{}", i), &init_code, &deployed_code));
+                        i += 1;
+                    }
+                    continue
+                }
+            }
+
+            unreachable!("Create data was not raw");
+        }
+
+        for (data, to) in result.transactions.iter().flat_map(|txes| {
             txes.iter().filter_map(|tx| {
                 tx.data().filter(|data| data.len() > CONTRACT_MAX_SIZE).map(|data| (data, tx.to()))
             })
@@ -472,36 +511,26 @@ impl ScriptArgs {
             }
 
             // Find artifact with a deployment code same as the data.
-            if let Some((artifact, bytecode)) =
-                known_contracts.iter().find(|(_, bytecode)| {
-                    bytecode
-                        .bytecode
-                        .object
-                        .as_bytes()
-                        .expect("Code should have been linked before.") ==
-                        &data[offset..]
-                })
+            if let Some((name, _, deploy_code)) =
+                bytecodes.iter().find(|(_, init_code, _)| *init_code == &data[offset..])
             {
-                // Find the deployed code size of the artifact.
-                if let Some(deployed_bytecode) = &bytecode.deployed_bytecode.bytecode {
-                    let deployment_size = deployed_bytecode.object.bytes_len();
+                let deployment_size = deploy_code.len();
 
-                    if deployment_size > CONTRACT_MAX_SIZE {
-                        println!(
-                            "{}",
-                            Paint::red(format!(
-                                "`{}` is above the contract size limit ({} vs {}).",
-                                artifact.name, deployment_size, CONTRACT_MAX_SIZE
-                            ))
-                        );
+                if deployment_size > CONTRACT_MAX_SIZE {
+                    println!(
+                        "{}",
+                        Paint::red(format!(
+                            "`{}` is above the EIP-170 contract size limit ({} > {}).",
+                            name, deployment_size, CONTRACT_MAX_SIZE
+                        ))
+                    );
 
-                        if self.broadcast &&
-                            !Confirm::new()
-                                .with_prompt("Do you wish to continue?".to_string())
-                                .interact()?
-                        {
-                            eyre::bail!("User canceled the script.");
-                        }
+                    if self.broadcast &&
+                        !Confirm::new()
+                            .with_prompt("Do you wish to continue?".to_string())
+                            .interact()?
+                    {
+                        eyre::bail!("User canceled the script.");
                     }
                 }
             }
