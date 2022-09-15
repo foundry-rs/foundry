@@ -15,7 +15,6 @@ contract Issue3220Test is DSTest {
         fork1 = vm.createFork("rpcAlias", 7475589);
         vm.selectFork(fork1);
         fork2 = vm.createFork("rpcAlias", 12880747);
-
     }
 
     function testForkRevert() public {
@@ -38,6 +37,6 @@ contract Issue3220Test is DSTest {
     }
 
     function mockCount() public {
-        counter+=1;
+        counter += 1;
     }
 }
