@@ -11,14 +11,8 @@ contract Issue3221Test is DSTest {
     uint256 fork2;
 
     function setUp() public {
-        fork1 = vm.createFork(
-            "https://goerli.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161",
-            7475589
-        );
-        fork2 = vm.createFork(
-            "https://api.avax-test.network/ext/bc/C/rpc",
-            12880747
-        );
+        fork1 = vm.createFork("https://goerli.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161", 7475589);
+        fork2 = vm.createFork("https://api.avax-test.network/ext/bc/C/rpc", 12880747);
     }
 
     function testForkNonce() public {
