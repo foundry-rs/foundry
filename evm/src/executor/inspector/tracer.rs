@@ -149,37 +149,38 @@ impl Tracer {
             self.step_stack.pop().expect("can't fill step without starting a step first");
         let step = &mut self.traces.arena[trace_idx].trace.steps[step_idx];
 
-        let pc = interp.program_counter() - 1;
-        let op = interp.contract.bytecode.bytecode()[pc];
+        if let Some(pc) = interp.program_counter().checked_sub(1) {
+            let op = interp.contract.bytecode.bytecode()[pc];
 
-        let journal_entry = data
-            .journaled_state
-            .journal
-            .last()
-            // This should always work because revm initializes it as `vec![vec![]]`
-            .unwrap()
-            .last();
+            let journal_entry = data
+                .journaled_state
+                .journal
+                .last()
+                // This should always work because revm initializes it as `vec![vec![]]`
+                .unwrap()
+                .last();
 
-        step.state_diff = match (op, journal_entry) {
-            (
-                opcode::SLOAD | opcode::SSTORE,
-                Some(JournalEntry::StorageChage { address, key, .. }),
-            ) => {
-                let value = data.journaled_state.state[address].storage[key].present_value();
-                Some((*key, value))
+            step.state_diff = match (op, journal_entry) {
+                (
+                    opcode::SLOAD | opcode::SSTORE,
+                    Some(JournalEntry::StorageChage { address, key, .. }),
+                ) => {
+                    let value = data.journaled_state.state[address].storage[key].present_value();
+                    Some((*key, value))
+                }
+                _ => None,
+            };
+
+            if let Some(was_pc) = self.was_jumpi {
+                if was_pc == pc {
+                    self.reduced_gas_block = 0;
+                    self.full_gas_block = interp.contract.gas_block(was_pc);
+                }
+                self.was_jumpi = None;
+            } else if self.was_return {
+                self.full_gas_block = interp.contract.gas_block(pc);
+                self.was_return = false;
             }
-            _ => None,
-        };
-
-        if let Some(was_pc) = self.was_jumpi {
-            if was_pc == pc {
-                self.reduced_gas_block = 0;
-                self.full_gas_block = interp.contract.gas_block(was_pc);
-            }
-            self.was_jumpi = None;
-        } else if self.was_return {
-            self.full_gas_block = interp.contract.gas_block(pc);
-            self.was_return = false;
         }
 
         // Error codes only
