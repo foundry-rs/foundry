@@ -445,6 +445,11 @@ pub fn encode_args(func: &Function, args: &[impl AsRef<str>]) -> Result<Vec<u8>>
     Ok(func.encode_input(&tokens)?)
 }
 
+/// Decodes the calldata of the function
+///
+/// # Panics
+///
+/// If the `sig` is an invalid function signature
 pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
     let func = IntoFunction::into(sig);
     let calldata = calldata.strip_prefix("0x").unwrap_or(calldata);
@@ -505,7 +510,7 @@ pub fn format_token(param: &Token) -> String {
         Token::Int(num) => format!("{}", I256::from_raw(*num)),
         Token::Uint(num) => num.to_string(),
         Token::Bool(b) => format!("{b}"),
-        Token::String(s) => format!("{:?}", s),
+        Token::String(s) => s.to_string(),
         Token::FixedArray(tokens) => {
             let string = tokens.iter().map(format_token).collect::<Vec<String>>().join(", ");
             format!("[{string}]")

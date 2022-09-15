@@ -127,6 +127,8 @@ pub struct NodeConfig {
     pub fork_retry_backoff: Duration,
     /// available CUPS
     pub compute_units_per_second: u64,
+    /// The ipc path
+    pub ipc_path: Option<Option<String>>,
     /// Enable transaction/call steps tracing for debug calls returning geth-style traces
     pub enable_steps_tracing: bool,
 }
@@ -342,6 +344,7 @@ impl Default for NodeConfig {
             fork_retry_backoff: Duration::from_millis(1_000),
             // alchemy max cpus <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
             compute_units_per_second: ALCHEMY_FREE_TIER_CUPS,
+            ipc_path: None,
         }
     }
 }
@@ -506,6 +509,18 @@ impl NodeConfig {
         self
     }
 
+    /// Sets the ipc path to use
+    ///
+    /// Note: this is a double Option for
+    ///     - `None` -> no ipc
+    ///     - `Some(None)` -> use default path
+    ///     - `Some(Some(path))` -> use custom path
+    #[must_use]
+    pub fn with_ipc(mut self, ipc_path: Option<Option<String>>) -> Self {
+        self.ipc_path = ipc_path;
+        self
+    }
+
     /// Sets the file path to write the Anvil node's config info to.
     #[must_use]
     pub fn set_config_out(mut self, config_out: Option<String>) -> Self {
@@ -608,6 +623,23 @@ impl NodeConfig {
     pub fn with_transaction_order(mut self, transaction_order: TransactionOrder) -> Self {
         self.transaction_order = transaction_order;
         self
+    }
+
+    /// Returns the ipc path for the ipc endpoint if any
+    pub fn get_ipc_path(&self) -> Option<String> {
+        match self.ipc_path.as_ref() {
+            Some(path) => path.clone().or_else(|| {
+                #[cfg(windows)]
+                {
+                    Some(r"\\.\pipe\anvil.ipc".to_string())
+                }
+                #[cfg(not(windows))]
+                {
+                    Some("/tmp/anvil.ipc".to_string())
+                }
+            }),
+            None => None,
+        }
     }
 
     /// Prints the config info

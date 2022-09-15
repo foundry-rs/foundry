@@ -20,10 +20,16 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{error, trace};
 
 mod config;
+
+mod error;
 /// handlers for axum server
 mod handler;
+#[cfg(feature = "ipc")]
+pub mod ipc;
+mod pubsub;
 mod ws;
-pub use crate::ws::{WsContext, WsRpcHandler};
+
+pub use crate::pubsub::{PubSubContext, PubSubRpcHandler};
 pub use config::ServerConfig;
 
 /// Type alias for the configured axum server
@@ -39,7 +45,7 @@ pub fn serve_http_ws<Http, Ws>(
 ) -> AnvilServer
 where
     Http: RpcHandler,
-    Ws: WsRpcHandler,
+    Ws: PubSubRpcHandler,
 {
     let ServerConfig { allow_origin, no_cors } = config;
 

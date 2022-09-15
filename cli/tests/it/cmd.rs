@@ -10,7 +10,7 @@ use ethers::{
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
     forgetest, forgetest_init,
-    util::{read_string, OutputExt, TestCommand, TestProject},
+    util::{pretty_err, read_string, OutputExt, TestCommand, TestProject},
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
 use std::{env, fs, path::PathBuf, str::FromStr};
@@ -1314,4 +1314,30 @@ forgetest_init!(can_use_absolute_imports, |prj: TestProject, mut cmd: TestComman
 forgetest_init!(can_bind, |_prj: TestProject, mut cmd: TestCommand| {
     cmd.arg("bind");
     cmd.assert_non_empty_stdout();
+});
+
+// checks missing dependencies are auto installed
+forgetest_init!(can_install_missing_deps_test, |prj: TestProject, mut cmd: TestCommand| {
+    // wipe forge-std
+    let forge_std_dir = prj.root().join("lib/forge-std");
+    pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
+
+    cmd.arg("test");
+
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("Missing dependencies found. Installing now"), "{}", output);
+    assert!(output.contains("[PASS]"), "{}", output);
+});
+
+// checks missing dependencies are auto installed
+forgetest_init!(can_install_missing_deps_build, |prj: TestProject, mut cmd: TestCommand| {
+    // wipe forge-std
+    let forge_std_dir = prj.root().join("lib/forge-std");
+    pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
+
+    cmd.arg("build");
+
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("Missing dependencies found. Installing now"), "{}", output);
+    assert!(output.contains("Compiler run successful"), "{}", output);
 });

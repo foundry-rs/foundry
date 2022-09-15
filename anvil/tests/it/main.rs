@@ -7,6 +7,8 @@ mod ganache;
 mod gas;
 mod genesis;
 mod geth;
+#[cfg(not(windows))]
+mod ipc;
 mod logs;
 mod proof;
 mod pubsub;
