@@ -204,10 +204,12 @@ pub fn apply<DB: DatabaseExt>(
             Bytes::new()
         }
         HEVMCalls::Store(inner) => {
-            // TODO: Does this increase gas usage?
             data.journaled_state
                 .load_account(inner.0, data.db)
                 .map_err(|err| err.encode_string())?;
+            // ensure the account is touched
+            data.journaled_state.touch(&inner.0);
+
             data.journaled_state
                 .sstore(inner.0, inner.1.into(), inner.2.into(), data.db)
                 .map_err(|err| err.encode_string())?;

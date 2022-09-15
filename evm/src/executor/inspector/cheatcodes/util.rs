@@ -205,6 +205,12 @@ where
     }
 }
 
+/// Parses string values into the corresponding `ParamType` and returns it abi-encoded
+///
+/// If the value is a hex number then it tries to parse
+///     1. as hex if `0x` prefix
+///     2. as decimal string
+///     3. as hex if 2. failed
 pub fn value_to_abi(
     val: Vec<impl AsRef<str>>,
     r#type: ParamType,
@@ -213,19 +219,36 @@ pub fn value_to_abi(
     let parse_bool = |v: &str| v.to_lowercase().parse::<bool>();
     let parse_uint = |v: &str| {
         if v.starts_with("0x") {
-            let v = Vec::from_hex(v.strip_prefix("0x").unwrap()).map_err(|e| e.to_string())?;
-            Ok(U256::from_big_endian(&v))
+            v.parse::<U256>().map_err(|err| err.to_string())
         } else {
-            U256::from_dec_str(v).map_err(|e| e.to_string())
+            match U256::from_dec_str(v) {
+                Ok(val) => Ok(val),
+                Err(dec_err) => v.parse::<U256>().map_err(|hex_err| {
+                    format!(
+                        "Failed to parse uint value `{}` from hex and as decimal string {}, {}",
+                        v, hex_err, dec_err
+                    )
+                }),
+            }
         }
     };
     let parse_int = |v: &str| {
-        // hex string may start with "0x", "+0x", or "-0x"
+        // hex string may start with "0x", "+0x", or "-0x" which needs to be stripped for
+        // `I256::from_hex_str`
         if v.starts_with("0x") || v.starts_with("+0x") || v.starts_with("-0x") {
-            I256::from_hex_str(&v.replacen("0x", "", 1)).map(|v| v.into_raw())
+            v.replacen("0x", "", 1).parse::<I256>().map_err(|err| err.to_string())
         } else {
-            I256::from_dec_str(v).map(|v| v.into_raw())
+            match I256::from_dec_str(v) {
+                Ok(val) => Ok(val),
+                Err(dec_err) => v.parse::<I256>().map_err(|hex_err| {
+                    format!(
+                        "Failed to parse int value `{}` from hex and as decimal string {}, {}",
+                        v, hex_err, dec_err
+                    )
+                }),
+            }
         }
+        .map(|v| v.into_raw())
     };
     let parse_address = |v: &str| Address::from_str(v);
     let parse_string = |v: &str| -> Result<String, ()> { Ok(v.to_string()) };
@@ -236,7 +259,7 @@ pub fn value_to_abi(
         .map(|v| match r#type {
             ParamType::Bool => parse_bool(v).map(Token::Bool).map_err(|e| e.to_string()),
             ParamType::Uint(256) => parse_uint(v).map(Token::Uint),
-            ParamType::Int(256) => parse_int(v).map(Token::Int).map_err(|e| e.to_string()),
+            ParamType::Int(256) => parse_int(v).map(Token::Int),
             ParamType::Address => parse_address(v).map(Token::Address).map_err(|e| e.to_string()),
             ParamType::FixedBytes(32) => {
                 parse_bytes(v).map(Token::FixedBytes).map_err(|e| e.to_string())
@@ -268,4 +291,42 @@ pub fn parse_private_key(private_key: U256) -> Result<SigningKey, Bytes> {
     private_key.to_big_endian(&mut bytes);
 
     SigningKey::from_bytes(&bytes).map_err(|err| err.to_string().encode().into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethers::abi::AbiDecode;
+
+    #[test]
+    fn test_uint_env() {
+        let pk = "0x10532cc9d0d992825c3f709c62c969748e317a549634fb2a9fa949326022e81f";
+        let val: U256 = pk.parse().unwrap();
+        let parsed = value_to_abi(vec![pk], ParamType::Uint(256), false).unwrap();
+        let decoded = U256::decode(&parsed).unwrap();
+        assert_eq!(val, decoded);
+
+        let parsed =
+            value_to_abi(vec![pk.strip_prefix("0x").unwrap()], ParamType::Uint(256), false)
+                .unwrap();
+        let decoded = U256::decode(&parsed).unwrap();
+        assert_eq!(val, decoded);
+
+        let parsed = value_to_abi(vec!["1337"], ParamType::Uint(256), false).unwrap();
+        let decoded = U256::decode(&parsed).unwrap();
+        assert_eq!(U256::from(1337u64), decoded);
+    }
+
+    #[test]
+    fn test_int_env() {
+        let val = U256::from(100u64);
+        let parsed =
+            value_to_abi(vec![format!("0x{:x}", val)], ParamType::Int(256), false).unwrap();
+        let decoded = I256::decode(parsed).unwrap();
+        assert_eq!(val, decoded.try_into().unwrap());
+
+        let parsed = value_to_abi(vec!["100"], ParamType::Int(256), false).unwrap();
+        let decoded = I256::decode(parsed).unwrap();
+        assert_eq!(U256::from(100u64), decoded.try_into().unwrap());
+    }
 }

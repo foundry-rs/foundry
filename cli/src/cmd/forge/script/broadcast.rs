@@ -1,10 +1,9 @@
-use super::{
-    sequence::{ScriptSequence, TransactionWithMetadata},
-    *,
-};
+use super::{sequence::ScriptSequence, *};
 use crate::{
     cmd::{
-        forge::script::{receipts::wait_for_receipts, verify::VerifyBundle},
+        forge::script::{
+            receipts::wait_for_receipts, transaction::TransactionWithMetadata, verify::VerifyBundle,
+        },
         has_batch_support, has_different_gas_calc,
     },
     init_progress,
@@ -223,10 +222,8 @@ impl ScriptArgs {
                         &verify.known_contracts,
                     )
                     .await
-                    .map_err(|_| {
-                        eyre::eyre!(
+                    .wrap_err_with(|| {
                             "Transaction failed when running the on-chain simulation. Check the trace above for more information."
-                        )
                     })?
                 };
 

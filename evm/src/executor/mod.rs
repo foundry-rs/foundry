@@ -199,16 +199,27 @@ impl Executor {
 
     /// Calls the `setUp()` function on a contract.
     ///
-    /// This will commit any state changes to the underlying database
+    /// This will commit any state changes to the underlying database.
+    ///
+    /// Ayn changes made during the setup call to env's block environment are persistent, for
+    /// example `vm.chainId()` will change the `block.chainId` for all subsequent test calls.
     pub fn setup(
         &mut self,
         from: Option<Address>,
         to: Address,
     ) -> Result<CallResult<()>, EvmError> {
         trace!(?from, ?to, "setting up contract");
+
         let from = from.unwrap_or(CALLER);
         self.backend_mut().set_test_contract(to).set_caller(from);
-        self.call_committing::<(), _, _>(from, to, "setUp()", (), 0.into(), None)
+        let res = self.call_committing::<(), _, _>(from, to, "setUp()", (), 0.into(), None)?;
+
+        // record any changes made to the block's environment during setup
+        self.env.block = res.env.block.clone();
+        // and also the chainid, which can be set manually
+        self.env.cfg.chain_id = res.env.cfg.chain_id;
+
+        Ok(res)
     }
 
     /// Performs a call to an account on the current state of the VM.
@@ -240,6 +251,7 @@ impl Executor {
             transactions,
             state_changeset,
             script_wallets,
+            env,
         } = self.call_raw_committing(from, to, calldata, value)?;
         match exit_reason {
             return_ok!() => {
@@ -258,6 +270,7 @@ impl Executor {
                     transactions,
                     state_changeset,
                     script_wallets,
+                    env,
                 })
             }
             _ => {
@@ -302,8 +315,9 @@ impl Executor {
         let InspectorData { logs, labels, traces, coverage, debug, mut cheatcodes, script_wallets } =
             inspector.collect_inspector_states();
 
+        let env = evm.env;
         // Persist the changed block environment
-        self.inspector_config.block = evm.env.block.clone();
+        self.inspector_config.block = env.block.clone();
 
         let transactions = if let Some(ref mut cheatcodes) = cheatcodes {
             if !cheatcodes.broadcastable_transactions.is_empty() {
@@ -339,6 +353,7 @@ impl Executor {
             transactions,
             state_changeset: None,
             script_wallets,
+            env,
         })
     }
 
@@ -372,9 +387,9 @@ impl Executor {
         // execute the call
         let mut inspector = self.inspector_config.stack();
         let stipend = calc_stipend(&calldata, self.env.cfg.spec_id);
-        let env = self.build_test_env(from, TransactTo::Call(test_contract), calldata, value);
+        let mut env = self.build_test_env(from, TransactTo::Call(test_contract), calldata, value);
         let (ExecutionResult { exit_reason, out, gas_used, gas_refunded, logs }, state_changeset) =
-            self.backend_mut().inspect_ref(env, &mut inspector);
+            self.backend_mut().inspect_ref(&mut env, &mut inspector);
 
         // if there are multiple forks we need to merge them
         let logs = self.backend.merged_logs(logs);
@@ -387,6 +402,7 @@ impl Executor {
             state_changeset,
             logs,
             stipend,
+            env,
         };
         let call_result = convert_executed_call(inspector, executed_call)?;
 
@@ -426,10 +442,10 @@ impl Executor {
         let mut inspector = self.inspector_config.stack();
         let stipend = calc_stipend(&calldata, self.env.cfg.spec_id);
         // Build VM
-        let env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
+        let mut env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
         let mut db = FuzzBackendWrapper::new(self.backend());
         let (ExecutionResult { exit_reason, out, gas_used, gas_refunded, logs }, state_changeset) =
-            db.inspect_ref(env, &mut inspector);
+            db.inspect_ref(&mut env, &mut inspector);
         let logs = db.backend.merged_logs(logs);
 
         let executed_call = ExecutedCall {
@@ -440,6 +456,7 @@ impl Executor {
             state_changeset,
             logs,
             stipend,
+            env,
         };
         convert_executed_call(inspector, executed_call)
     }
@@ -520,14 +537,14 @@ impl Executor {
         self.backend.add_persistent_account(address);
 
         // Persist the changed block environment
-        self.inspector_config.block = env.block;
+        self.inspector_config.block = env.block.clone();
 
         // Persist cheatcode state
         self.inspector_config.cheatcodes = cheatcodes;
 
         trace!(address=?address, "deployed contract");
 
-        Ok(DeployResult { address, gas_used, gas_refunded, logs, traces, debug })
+        Ok(DeployResult { address, gas_used, gas_refunded, logs, traces, debug, env })
     }
 
     /// Deploys a contract and commits the new state to the underlying database.
@@ -547,13 +564,19 @@ impl Executor {
 
     /// Check if a call to a test contract was successful.
     ///
-    /// This function checks both the VM status of the call and DSTest's `failed`.
+    /// This function checks both the VM status of the call, DSTest's `failed` status and the
+    /// `globalFailed` flag which is stored in `failed` inside the `CHEATCODE_ADDRESS` contract.
     ///
     /// DSTest will not revert inside its `assertEq`-like functions which allows
     /// to test multiple assertions in 1 test function while also preserving logs.
     ///
-    /// Instead, it sets `failed` to `true` which we must check.
-    // TODO(mattsse): check if safe to replace with `Backend::is_failed()`
+    /// If an `assert` is violated, the contract's `failed` variable is set to true, and the
+    /// `globalFailure` flag inside the `CHEATCODE_ADDRESS` is also set to true, this way, failing
+    /// asserts from any contract are tracked as well.
+    ///
+    /// In order to check whether a test failed, we therefore need to evaluate the contract's
+    /// `failed` variable and the `globalFailure` flag, which happens by calling
+    /// `contract.failed()`.
     pub fn is_success(
         &self,
         address: Address,
@@ -575,9 +598,20 @@ impl Executor {
             // a failure occurred in a reverted snapshot, which is considered a failed test
             return Ok(should_fail)
         }
+
         // Construct a new VM with the state changeset
         let mut backend = self.backend().clone_empty();
-        backend.insert_account_info(address, self.backend().basic(address)?.unwrap_or_default());
+
+        // we only clone the test contract and cheatcode accounts, that's all we need to evaluate
+        // success
+        for addr in [address, CHEATCODE_ADDRESS] {
+            let acc = self.backend().basic(addr)?.unwrap_or_default();
+            backend.insert_account_info(addr, acc);
+        }
+
+        // If this test failed any asserts, then this changeset will contain changes `false -> true`
+        // for the contract's `failed` variable and the `globalFailure` flag in the state of the
+        // cheatcode address which are both read when call `"failed()(bool)"` in the next step
         backend.commit(state_changeset);
         let executor =
             Executor::new(backend, self.env.clone(), self.inspector_config.clone(), self.gas_limit);
@@ -674,6 +708,8 @@ pub struct DeployResult {
     pub traces: Option<CallTraceArena>,
     /// The debug nodes of the call
     pub debug: Option<DebugArena>,
+    /// The `revm::Env` after deployment
+    pub env: Env,
 }
 
 /// The result of a call.
@@ -708,6 +744,8 @@ pub struct CallResult<D: Detokenize> {
     pub state_changeset: Option<StateChangeset>,
     /// The wallets added during the call using the `rememberKey` cheatcode
     pub script_wallets: Vec<LocalWallet>,
+    /// The `revm::Env` after the call
+    pub env: Env,
 }
 
 /// The result of a raw call.
@@ -744,6 +782,8 @@ pub struct RawCallResult {
     pub state_changeset: Option<StateChangeset>,
     /// The wallets added during the call using the `rememberKey` cheatcode
     pub script_wallets: Vec<LocalWallet>,
+    /// The `revm::Env` after the call
+    pub env: Env,
 }
 
 impl Default for RawCallResult {
@@ -763,6 +803,7 @@ impl Default for RawCallResult {
             transactions: None,
             state_changeset: None,
             script_wallets: Vec::new(),
+            env: Default::default(),
         }
     }
 }
@@ -777,6 +818,7 @@ struct ExecutedCall {
     #[allow(unused)]
     logs: Vec<revm::Log>,
     stipend: u64,
+    env: Env,
 }
 
 /// Calculates the initial gas stipend for a transaction
@@ -790,8 +832,16 @@ fn convert_executed_call(
     inspector: InspectorStack,
     call: ExecutedCall,
 ) -> eyre::Result<RawCallResult> {
-    let ExecutedCall { exit_reason, out, gas_used, gas_refunded, state_changeset, stipend, .. } =
-        call;
+    let ExecutedCall {
+        exit_reason,
+        out,
+        gas_used,
+        gas_refunded,
+        state_changeset,
+        stipend,
+        env,
+        ..
+    } = call;
 
     let result = match out {
         TransactOut::Call(data) => data,
@@ -826,6 +876,7 @@ fn convert_executed_call(
         transactions,
         state_changeset: Some(state_changeset),
         script_wallets,
+        env,
     })
 }
 
@@ -849,6 +900,7 @@ fn convert_call_result<D: Detokenize>(
         transactions,
         state_changeset,
         script_wallets,
+        env,
     } = call_result;
 
     match status {
@@ -868,6 +920,7 @@ fn convert_call_result<D: Detokenize>(
                 transactions,
                 state_changeset,
                 script_wallets,
+                env,
             })
         }
         _ => {

@@ -1,7 +1,7 @@
 //! Test command
 use crate::{
     cmd::{
-        forge::{build::CoreBuildArgs, debug::DebugArgs, watch::WatchArgs},
+        forge::{build::CoreBuildArgs, debug::DebugArgs, install, watch::WatchArgs},
         Cmd, LoadConfig,
     },
     compile,
@@ -111,6 +111,126 @@ impl TestArgs {
         &self.opts
     }
 
+    /// Executes all the tests in the project
+    ///
+    /// This will trigger the build process first. On success all test contracts that match the
+    /// configured filter will be executed
+    ///
+    /// Returns the test results for all matching tests.
+    pub fn execute_tests(self) -> eyre::Result<TestOutcome> {
+        // Merge all configs
+        let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
+
+        let test_options = TestOptions { fuzz: config.fuzz, invariant: config.invariant };
+
+        let mut filter = self.filter(&config);
+
+        trace!(target: "forge::test", ?filter, "using filter");
+
+        // Set up the project
+        let mut project = config.project()?;
+
+        // install missing dependencies
+        if install::install_missing_dependencies(&mut config, &project, self.build_args().silent) &&
+            config.auto_detect_remappings
+        {
+            // need to re-configure here to also catch additional remappings
+            config = self.load_config();
+            project = config.project()?;
+        }
+
+        let compiler = ProjectCompiler::default();
+        let output = if config.sparse_mode {
+            compiler.compile_sparse(&project, filter.clone())
+        } else if self.opts.silent {
+            compile::suppress_compile(&project)
+        } else {
+            compiler.compile(&project)
+        }?;
+
+        // Determine print verbosity and executor verbosity
+        let verbosity = evm_opts.verbosity;
+        if self.gas_report && evm_opts.verbosity < 3 {
+            evm_opts.verbosity = 3;
+        }
+
+        let env = evm_opts.evm_env_blocking()?;
+
+        // Prepare the test builder
+        let evm_spec = utils::evm_spec(&config.evm_version);
+
+        let mut runner = MultiContractRunnerBuilder::default()
+            .initial_balance(evm_opts.initial_balance)
+            .evm_spec(evm_spec)
+            .sender(evm_opts.sender)
+            .with_fork(evm_opts.get_fork(&config, env.clone()))
+            .with_cheats_config(CheatsConfig::new(&config, &evm_opts))
+            .with_test_options(test_options)
+            .build(project.paths.root, output, env, evm_opts)?;
+
+        if self.debug.is_some() {
+            filter.test_pattern = self.debug;
+
+            match runner.count_filtered_tests(&filter) {
+                1 => {
+                    // Run the test
+                    let results = runner.test(&filter, None, test_options)?;
+
+                    // Get the result of the single test
+                    let (id, sig, test_kind, counterexample) = results.iter().map(|(id, SuiteResult{ test_results, .. })| {
+                        let (sig, result) = test_results.iter().next().unwrap();
+
+                        (id.clone(), sig.clone(), result.kind.clone(), result.counterexample.clone())
+                    }).next().unwrap();
+
+                    // Build debugger args if this is a fuzz test
+                    let sig = match test_kind {
+                        TestKind::Fuzz(cases) => {
+                            if let Some(CounterExample::Single(counterexample)) = counterexample {
+                                counterexample.calldata.to_string()
+                            } else {
+                                cases.cases().first().expect("no fuzz cases run").calldata.to_string()
+                            }
+                        },
+                        _ => sig,
+                    };
+
+                    // Run the debugger
+                    let debugger = DebugArgs {
+                        path: PathBuf::from(runner.source_paths.get(&id).unwrap()),
+                        target_contract: Some(utils::get_contract_name(&id).to_string()),
+                        sig,
+                        args: Vec::new(),
+                        debug: true,
+                        opts: self.opts,
+                        evm_opts: self.evm_opts,
+                    };
+                    utils::block_on(debugger.debug())?;
+
+                    Ok(TestOutcome::new(results, self.allow_failure))
+                }
+                n =>
+                    Err(
+                        eyre::eyre!("{n} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n
+                        \n
+                        Use --match-contract and --match-path to further limit the search."))
+            }
+        } else if self.list {
+            list(runner, filter, self.json)
+        } else {
+            test(
+                config,
+                runner,
+                verbosity,
+                filter,
+                self.json,
+                self.allow_failure,
+                test_options,
+                self.gas_report,
+            )
+        }
+    }
+
     /// Returns the flattened [`Filter`] arguments merged with [`Config`]
     pub fn filter(&self, config: &Config) -> Filter {
         self.filter.with_merged_config(config)
@@ -159,7 +279,7 @@ impl Cmd for TestArgs {
     fn run(self) -> eyre::Result<Self::Output> {
         trace!(target: "forge::test", "executing test command");
         shell::set_shell(shell::Shell::from_args(self.opts.silent, self.json))?;
-        custom_run(self)
+        self.execute_tests()
     }
 }
 
@@ -315,110 +435,6 @@ fn short_test_result(name: &str, result: &TestResult) {
     };
 
     println!("{} {} {}", status, name, result.kind.report());
-}
-
-pub fn custom_run(args: TestArgs) -> eyre::Result<TestOutcome> {
-    // Merge all configs
-    let (config, mut evm_opts) = args.load_config_and_evm_opts_emit_warnings()?;
-
-    let test_options = TestOptions { fuzz: config.fuzz, invariant: config.invariant };
-
-    let mut filter = args.filter(&config);
-
-    trace!(target: "forge::test", ?filter, "using filter");
-
-    // Set up the project
-    let project = config.project()?;
-    let compiler = ProjectCompiler::default();
-    let output = if config.sparse_mode {
-        compiler.compile_sparse(&project, filter.clone())
-    } else if args.opts.silent {
-        compile::suppress_compile(&project)
-    } else {
-        compiler.compile(&project)
-    }?;
-
-    // Determine print verbosity and executor verbosity
-    let verbosity = evm_opts.verbosity;
-    if args.gas_report && evm_opts.verbosity < 3 {
-        evm_opts.verbosity = 3;
-    }
-
-    let env = evm_opts.evm_env_blocking()?;
-
-    // Prepare the test builder
-    let evm_spec = utils::evm_spec(&config.evm_version);
-
-    let mut runner = MultiContractRunnerBuilder::default()
-        .initial_balance(evm_opts.initial_balance)
-        .evm_spec(evm_spec)
-        .sender(evm_opts.sender)
-        .with_fork(evm_opts.get_fork(&config, env.clone()))
-        .with_cheats_config(CheatsConfig::new(&config, &evm_opts))
-        .with_test_options(test_options)
-        .build(project.paths.root, output, env, evm_opts)?;
-
-    if args.debug.is_some() {
-        filter.test_pattern = args.debug;
-
-        match runner.count_filtered_tests(&filter) {
-                1 => {
-                    // Run the test
-                    let results = runner.test(&filter, None, test_options)?;
-
-                    // Get the result of the single test
-                    let (id, sig, test_kind, counterexample) = results.iter().map(|(id, SuiteResult{ test_results, .. })| {
-                        let (sig, result) = test_results.iter().next().unwrap();
-
-                        (id.clone(), sig.clone(), result.kind.clone(), result.counterexample.clone())
-                    }).next().unwrap();
-
-                    // Build debugger args if this is a fuzz test
-                    let sig = match test_kind {
-                        TestKind::Fuzz(cases) => {
-                            if let Some(CounterExample::Single(counterexample)) = counterexample {
-                                counterexample.calldata.to_string()
-                            } else {
-                                cases.cases().first().expect("no fuzz cases run").calldata.to_string()
-                            }
-                        },
-                        _ => sig,
-                    };
-
-                    // Run the debugger
-                    let debugger = DebugArgs {
-                        path: PathBuf::from(runner.source_paths.get(&id).unwrap()),
-                        target_contract: Some(utils::get_contract_name(&id).to_string()),
-                        sig,
-                        args: Vec::new(),
-                        debug: true,
-                        opts: args.opts,
-                        evm_opts: args.evm_opts,
-                    };
-                    utils::block_on(debugger.debug())?;
-
-                    Ok(TestOutcome::new(results, args.allow_failure))
-                }
-                n =>
-                    Err(
-                    eyre::eyre!("{n} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n
-                        \n
-                        Use --match-contract and --match-path to further limit the search."))
-            }
-    } else if args.list {
-        list(runner, filter, args.json)
-    } else {
-        test(
-            config,
-            runner,
-            verbosity,
-            filter,
-            args.json,
-            args.allow_failure,
-            test_options,
-            args.gas_report,
-        )
-    }
 }
 
 /// Lists all matching tests

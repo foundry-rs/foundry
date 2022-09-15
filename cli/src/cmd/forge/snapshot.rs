@@ -4,7 +4,7 @@ use crate::{
         forge::{
             build::CoreBuildArgs,
             test,
-            test::{custom_run, Test, TestOutcome},
+            test::{Test, TestOutcome},
         },
         u32_validator, Cmd,
     },
@@ -114,7 +114,7 @@ impl Cmd for SnapshotArgs {
         // Set fuzz seed so gas snapshots are deterministic
         self.test.fuzz_seed = Some(U256::from_big_endian(&STATIC_FUZZ_SEED));
 
-        let outcome = custom_run(self.test)?;
+        let outcome = self.test.execute_tests()?;
         outcome.ensure_ok()?;
         let tests = self.config.apply(outcome);
 
