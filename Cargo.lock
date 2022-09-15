@@ -120,6 +120,7 @@ dependencies = [
  "memory-db",
  "parking_lot 0.12.0",
  "pretty_assertions",
+ "revm_precompiles 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
  "serde_json",
  "tempfile",
@@ -4487,8 +4488,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cca8a6f68427a4a11f0652c1562484dcf9a153087441ad254e8e2b6398232f3d"
+source = "git+https://github.com/bluealloy/revm#1e25c99b544863d15610e9af8e623dd173397b48"
 dependencies = [
  "arrayref",
  "auto_impl 1.0.1",
@@ -4497,7 +4497,7 @@ dependencies = [
  "hex",
  "num_enum",
  "primitive-types",
- "revm_precompiles",
+ "revm_precompiles 1.1.1 (git+https://github.com/bluealloy/revm)",
  "rlp",
  "serde",
  "sha3",
@@ -4508,6 +4508,23 @@ name = "revm_precompiles"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00e68901326fe20437526cb6d64a2898d2976383b7d222329dfce1717902da50"
+dependencies = [
+ "bytes",
+ "hashbrown 0.12.0",
+ "num",
+ "once_cell",
+ "primitive-types",
+ "ripemd",
+ "secp256k1",
+ "sha2 0.10.5",
+ "sha3",
+ "substrate-bn",
+]
+
+[[package]]
+name = "revm_precompiles"
+version = "1.1.1"
+source = "git+https://github.com/bluealloy/revm#1e25c99b544863d15610e9af8e623dd173397b48"
 dependencies = [
  "bytes",
  "hashbrown 0.12.0",

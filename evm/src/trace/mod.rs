@@ -9,7 +9,6 @@ mod utils;
 
 use crate::{
     abi::CHEATCODE_ADDRESS, debug::Instruction, trace::identifier::LocalTraceIdentifier, CallKind,
-    H160,
 };
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 use ethers::{
@@ -20,7 +19,7 @@ use ethers::{
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use hashbrown::HashMap;
 use node::CallTraceNode;
-use revm::{Account, CallContext, Memory, Return, Stack};
+use revm::{CallContext, Memory, Return, Stack};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
@@ -91,6 +90,7 @@ impl CallTraceArena {
     }
 
     pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> GethTrace {
+        let mut storage = HashMap::<Address, BTreeMap<H256, H256>>::new();
         let mut trace = self.arena.iter().fold(GethTrace::default(), |mut acc, trace| {
             acc.failed |= !trace.trace.success;
             acc.gas += trace.trace.gas_cost;
@@ -98,8 +98,12 @@ impl CallTraceArena {
             acc.struct_logs.extend(trace.trace.steps.iter().map(|step| {
                 let mut log: StructLog = step.into();
 
-                if opts.disable_storage.unwrap_or_default() {
-                    log.storage = None;
+                if !opts.disable_storage.unwrap_or_default() {
+                    let contract_storage = storage.entry(step.contract).or_default();
+                    if let Some((key, value)) = step.state_diff {
+                        contract_storage.insert(H256::from_uint(&key), H256::from_uint(&value));
+                        log.storage = Some(contract_storage.clone());
+                    }
                 }
                 if opts.disable_stack.unwrap_or_default() {
                     log.stack = None;
@@ -325,23 +329,29 @@ impl fmt::Display for RawOrDecodedReturnData {
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct CallTraceStep {
+    // Fields filled in `step`
+    /// Call depth
     pub depth: u64,
     /// Program counter before step execution
     pub pc: usize,
     /// Opcode to be executed
     pub op: Instruction,
+    /// Current contract address
+    pub contract: Address,
     /// Stack before step execution
     pub stack: Stack,
     /// Memory before step execution
     pub memory: Memory,
-    /// State before step execution
-    pub state: HashMap<H160, Account>,
     /// Remaining gas before step execution
     pub gas: u64,
-    /// Gas cost of step execution
-    pub gas_cost: u64,
     /// Gas refund counter before step execution
     pub gas_refund_counter: u64,
+
+    // Fields filled in `step_end`
+    /// Gas cost of step execution
+    pub gas_cost: u64,
+    /// Change of the contract state after step execution (effect of the SLOAD/SSTORE instructions)
+    pub state_diff: Option<(U256, U256)>,
     /// Error (if any) after after step execution
     pub error: Option<String>,
 }
@@ -356,18 +366,14 @@ impl From<&CallTraceStep> for StructLog {
             memory: Some(convert_memory(step.memory.data())),
             op: step.op.to_string(),
             pc: step.pc as u64,
-            refund_counter: Some(step.gas_refund_counter),
+            refund_counter: if step.gas_refund_counter > 0 {
+                Some(step.gas_refund_counter)
+            } else {
+                None
+            },
             stack: Some(step.stack.data().clone()),
-            storage: Some(
-                step.state
-                    .values()
-                    .flat_map(|acc| {
-                        acc.storage.iter().map(|(key, value)| {
-                            (H256::from_uint(key), H256::from_uint(&value.present_value()))
-                        })
-                    })
-                    .collect(),
-            ),
+            // Filled in `CallTraceArena::geth_trace` as a result of compounding all slot changes
+            storage: None,
         }
     }
 }

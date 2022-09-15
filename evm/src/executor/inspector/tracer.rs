@@ -13,8 +13,8 @@ use ethers::{
     types::{Address, H256, U256},
 };
 use revm::{
-    return_ok, CallInputs, CallScheme, CreateInputs, Database, EVMData, Gas, Inspector,
-    Interpreter, Return,
+    opcode, return_ok, CallInputs, CallScheme, CreateInputs, Database, EVMData, Gas, Inspector,
+    Interpreter, JournalEntry, Return,
 };
 
 /// An inspector that collects call traces.
@@ -79,21 +79,67 @@ impl Tracer {
         }
     }
 
-    pub fn start_step(&mut self, step: CallTraceStep) {
+    pub fn start_step<DB: Database>(
+        &mut self,
+        interp: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+    ) {
         let trace_idx =
             *self.trace_stack.last().expect("can't start step without starting a trace first");
         let trace = &mut self.traces.arena[trace_idx];
 
         self.step_stack.push((trace_idx, trace.trace.steps.len()));
-        trace.trace.steps.push(step);
+
+        let pc = interp.program_counter();
+        trace.trace.steps.push(CallTraceStep {
+            depth: data.journaled_state.depth(),
+            pc,
+            op: OpCode(interp.contract.bytecode.bytecode()[pc]),
+            contract: interp.contract.address,
+            stack: interp.stack.clone(),
+            memory: interp.memory.clone(),
+            gas: interp.gas.remaining(),
+            gas_refund_counter: interp.gas.refunded() as u64,
+            gas_cost: 0,
+            state_diff: None,
+            error: None,
+        });
     }
 
-    pub fn fill_step(&mut self, gas: u64, status: Return) {
+    pub fn fill_step<DB: Database>(
+        &mut self,
+        interp: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        status: Return,
+    ) {
         let (trace_idx, step_idx) =
             self.step_stack.pop().expect("can't fill step without starting a step first");
         let step = &mut self.traces.arena[trace_idx].trace.steps[step_idx];
 
-        step.gas_cost = step.gas - gas;
+        let pc = interp.program_counter() - 1;
+        let op = interp.contract.bytecode.bytecode()[pc];
+
+        let journal_entry = data
+            .journaled_state
+            .journal
+            .last()
+            // This should always work because revm initializes it as `vec![vec![]]`
+            .unwrap()
+            .last();
+
+        step.state_diff = match (op, journal_entry) {
+            (
+                opcode::SLOAD | opcode::SSTORE,
+                Some(JournalEntry::StorageChage { address, key, .. }),
+            ) => {
+                let value = data.journaled_state.state[address].storage[key].present_value();
+                Some((*key, value))
+            }
+            _ => None,
+        };
+
+        // TODO: calculate spent gas as in `Debugger::step`
+        step.gas_cost = step.gas - interp.gas.remaining();
 
         // Error codes only
         if status as u8 > Return::OutOfGas as u8 {
@@ -106,11 +152,42 @@ impl<DB> Inspector<DB> for Tracer
 where
     DB: Database,
 {
+    fn step(
+        &mut self,
+        interp: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        _is_static: bool,
+    ) -> Return {
+        if !self.record_steps {
+            return Return::Continue
+        }
+
+        self.start_step(interp, data);
+
+        Return::Continue
+    }
+
     fn log(&mut self, _: &mut EVMData<'_, DB>, _: &Address, topics: &[H256], data: &Bytes) {
         let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
         node.ordering.push(LogCallOrder::Log(node.logs.len()));
         node.logs
             .push(RawOrDecodedLog::Raw(RawLog { topics: topics.to_vec(), data: data.to_vec() }));
+    }
+
+    fn step_end(
+        &mut self,
+        interp: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        _is_static: bool,
+        status: Return,
+    ) -> Return {
+        if !self.record_steps {
+            return Return::Continue
+        }
+
+        self.fill_step(interp, data, status);
+
+        status
     }
 
     fn call(
@@ -204,56 +281,5 @@ where
         );
 
         (status, address, gas, retdata)
-    }
-
-    fn step(
-        &mut self,
-        interp: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
-        _is_static: bool,
-    ) -> Return {
-        if !self.record_steps {
-            return Return::Continue
-        }
-
-        let depth = data.journaled_state.depth();
-        let pc = interp.program_counter();
-        let op = OpCode(interp.contract.bytecode.bytecode()[pc]);
-        let stack = interp.stack.clone();
-        let memory = interp.memory.clone();
-        let state = data.journaled_state.state.clone();
-        let gas = interp.gas.remaining();
-        let gas_refund_counter = interp.gas.refunded() as u64;
-
-        self.start_step(CallTraceStep {
-            depth,
-            pc,
-            op,
-            stack,
-            memory,
-            state,
-            gas,
-            gas_refund_counter,
-            gas_cost: 0,
-            error: None,
-        });
-
-        Return::Continue
-    }
-
-    fn step_end(
-        &mut self,
-        interp: &mut Interpreter,
-        _data: &mut EVMData<'_, DB>,
-        _is_static: bool,
-        status: Return,
-    ) -> Return {
-        if !self.record_steps {
-            return Return::Continue
-        }
-
-        self.fill_step(interp.gas.remaining(), status);
-
-        status
     }
 }
