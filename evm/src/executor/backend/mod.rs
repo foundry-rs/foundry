@@ -638,9 +638,7 @@ impl Backend {
             .fork_init_journaled_state
             .state
             .iter()
-            .filter(|(addr, acc)| {
-                !self.is_existing_precompile(addr) && acc.is_touched && !self.is_persistent(addr)
-            })
+            .filter(|(addr, _)| !self.is_existing_precompile(addr) && !self.is_persistent(addr))
             .map(|(addr, _)| addr)
             .copied()
             .collect::<Vec<_>>();
