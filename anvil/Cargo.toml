@@ -38,7 +38,6 @@ ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["ws"] }
 trie-db = { version = "0.23" }
 hash-db = { version = "0.15" }
 memory-db = { version = "0.29" }
-revm_precompiles = "1.1.0"
 
 # axum related
 axum = { version = "0.5", features = ["ws"] }
@@ -76,6 +75,12 @@ ctrlc = { version = "3", optional = true }
 fdlimit = { version = "0.2.1", optional = true }
 clap_complete_fig = "3.2.4"
 ethereum-forkid = "0.10.0"
+
+# ethers
+[target.'cfg(not(windows))'.dependencies]
+ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["ws", "ipc"] }
+[target.'cfg(windows)'.dependencies]
+ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["ws"] }
 
 [dev-dependencies]
 ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["abigen"] }

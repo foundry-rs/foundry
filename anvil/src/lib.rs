@@ -22,23 +22,33 @@ use ethers::{
     types::{Address, U256},
 };
 use foundry_evm::revm;
-use futures::FutureExt;
+use futures::{FutureExt, TryFutureExt};
 use parking_lot::Mutex;
 use std::{
     future::Future,
+    io,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
-use tokio::{runtime::Handle, task::JoinError};
+use tokio::{
+    runtime::Handle,
+    task::{JoinError, JoinHandle},
+};
+use tracing::trace;
+
 /// contains the background service that drives the node
 mod service;
 
 mod config;
 pub use config::{AccountGenerator, NodeConfig, CHAIN_ID, VERSION_MESSAGE};
 mod hardfork;
+use crate::server::{
+    error::{NodeError, NodeResult},
+    spawn_ipc,
+};
 pub use hardfork::Hardfork;
 
 /// ethereum related implementations
@@ -160,7 +170,7 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
     addr = server.local_addr();
 
     // spawn the server on a new task
-    let serve = tokio::task::spawn(server);
+    let serve = tokio::task::spawn(server.map_err(NodeError::from));
 
     // select over both tasks
     let inner = futures::future::select(node_service, serve);
@@ -169,12 +179,15 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
     let (signal, on_shutdown) = shutdown::signal();
     let task_manager = TaskManager::new(tokio_handle, on_shutdown);
 
+    let ipc_task = config.get_ipc_path().map(|path| spawn_ipc(api.clone(), path));
+
     let handle = NodeHandle {
         config,
         inner: Box::pin(async move {
             // wait for the first task to finish
             inner.await.into_inner().0
         }),
+        ipc_task,
         address: addr,
         _signal: Some(signal),
         task_manager,
@@ -185,17 +198,21 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
     (api, handle)
 }
 
-type NodeFuture = Pin<Box<dyn Future<Output = Result<hyper::Result<()>, JoinError>>>>;
+type NodeFuture = Pin<Box<dyn Future<Output = Result<NodeResult<()>, JoinError>>>>;
+
+type IpcTask = JoinHandle<io::Result<()>>;
 
 /// A handle to the spawned node and server tasks
 ///
 /// This future will resolve if either the node or server task resolve/fail.
 pub struct NodeHandle {
     config: NodeConfig,
-    /// the address of the running rpc server
+    /// The address of the running rpc server
     address: SocketAddr,
-    /// the future that drives the rpc service and the node service
+    /// The future that joins the rpc service and the node service
     inner: NodeFuture,
+    // The future that joins the ipc server, if any
+    ipc_task: Option<IpcTask>,
     /// A signal that fires the shutdown, fired on drop.
     _signal: Option<Signal>,
     /// A task manager that can be used to spawn additional tasks
@@ -234,6 +251,11 @@ impl NodeHandle {
         format!("ws://{}", self.socket_address())
     }
 
+    /// Returns the path of the launched ipc server, if any
+    pub fn ipc_path(&self) -> Option<String> {
+        self.config.get_ipc_path()
+    }
+
     /// Returns a Provider for the http endpoint
     pub fn http_provider(&self) -> Provider<Http> {
         Provider::<Http>::try_from(self.http_endpoint())
@@ -246,6 +268,17 @@ impl NodeHandle {
         Provider::new(
             Ws::connect(self.ws_endpoint()).await.expect("Failed to connect to node's websocket"),
         )
+    }
+
+    /// Connects to the ipc endpoint of the node, if spawned
+    #[cfg(not(windows))]
+    pub async fn ipc_provider(&self) -> Option<Provider<ethers::providers::Ipc>> {
+        let ipc_path = self.config.get_ipc_path()?;
+        trace!(target = "ipc", ?ipc_path, "connecting ipc provider");
+        let provider = Provider::connect_ipc(&ipc_path).await.unwrap_or_else(|err| {
+            panic!("Failed to connect to node's ipc endpoint {}: {:?}", ipc_path, err)
+        });
+        Some(provider)
     }
 
     /// Signer accounts that can sign messages/transactions from the EVM node
@@ -306,10 +339,21 @@ impl NodeHandle {
 }
 
 impl Future for NodeHandle {
-    type Output = Result<hyper::Result<()>, JoinError>;
+    type Output = Result<NodeResult<()>, JoinError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let pin = self.get_mut();
+
+        // poll the ipc task
+        if let Some(mut ipc) = pin.ipc_task.take() {
+            if let Poll::Ready(res) = ipc.poll_unpin(cx) {
+                return Poll::Ready(res.map(|res| res.map_err(NodeError::from)))
+            } else {
+                pin.ipc_task = Some(ipc);
+            }
+        }
+
+        // poll the http/ws server task
         pin.inner.poll_unpin(cx)
     }
 }
