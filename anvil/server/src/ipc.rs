@@ -21,7 +21,6 @@ pub struct IpcEndpoint<Handler> {
     handler: Handler,
     /// The endpoint we listen for incoming transactions
     endpoint: Endpoint,
-    // TODO add shutdown
 }
 
 impl<Handler: PubSubRpcHandler> IpcEndpoint<Handler> {
@@ -34,32 +33,33 @@ impl<Handler: PubSubRpcHandler> IpcEndpoint<Handler> {
     ///
     /// This establishes the ipc endpoint, converts the incoming connections into handled eth
     /// connections, See [`PubSubConnection`] that should be spawned
+    #[tracing::instrument(target = "ipc", skip_all)]
     pub fn incoming(self) -> io::Result<impl Stream<Item = impl Future<Output = ()> + Unpin>> {
         let IpcEndpoint { handler, endpoint } = self;
-        trace!(target: "ipc",  endpoint=?endpoint.path(), "starting ipc server" );
+        trace!( endpoint=?endpoint.path(), "starting ipc server" );
 
         if cfg!(unix) {
             // ensure the file does not exist
             if std::fs::remove_file(endpoint.path()).is_ok() {
-                warn!(target: "ipc", endpoint=?endpoint.path(), "removed existing file");
+                warn!( endpoint=?endpoint.path(), "removed existing file");
             }
         }
 
         let connections = match endpoint.incoming() {
             Ok(connections) => connections,
             Err(err) => {
-                error!(target: "ipc",  ?err, "Failed to create ipc listener");
+                error!(?err, "Failed to create ipc listener");
                 return Err(err)
             }
         };
 
-        trace!(target: "ipc", "established connection listener");
+        trace!("established connection listener");
 
         let connections = connections.filter_map(move |stream| {
             let handler = handler.clone();
             Box::pin(async move {
                 if let Ok(stream) = stream {
-                    trace!(target: "ipc", "successful incoming IPC connection");
+                    trace!("successful incoming IPC connection");
                     let framed = tokio_util::codec::Decoder::framed(JsonRpcCodec, stream);
                     Some(PubSubConnection::new(IpcConn(framed), handler))
                 } else {

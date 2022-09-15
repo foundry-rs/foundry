@@ -512,7 +512,7 @@ impl NodeConfig {
     /// Sets the ipc path to use
     ///
     /// Note: this is a double Option for
-    ///     - `None` -> no opc
+    ///     - `None` -> no ipc
     ///     - `Some(None)` -> use default path
     ///     - `Some(Some(path))` -> use custom path
     #[must_use]
