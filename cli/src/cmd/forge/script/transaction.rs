@@ -169,16 +169,12 @@ impl TransactionWithMetadata {
                             constructor.inputs.iter().map(|p| p.kind.clone()).collect::<Vec<_>>();
 
                         if let Some(constructor_args) = find_constructor_args(&data.0) {
-                            self.arguments = Some(
-                                abi::decode(&params, constructor_args)
-                                    .map_err(|_| {
-                                        let(signature, bytecode) = on_err();
-                                        eyre::eyre!("Failed to decode constructor arguments for contract {:?}: {}\n\tbytecode=\"{}\"", self.contract_name, signature,bytecode)
-                                    })?
-                                    .iter()
-                                    .map(format_token)
-                                    .collect(),
-                            );
+                            if let Ok(arguments) = abi::decode(&params, constructor_args) {
+                                self.arguments = Some(arguments.iter().map(format_token).collect());
+                            } else {
+                                let (signature, bytecode) = on_err();
+                                error!(constructor=?signature, contract=?self.contract_name, bytecode, "Failed to decode constructor arguments")
+                            };
                         } else {
                             let (signature, bytecode) = on_err();
                             error!(constructor=?signature, contract=?self.contract_name, bytecode, "Failed to extract constructor args from CREATE data")
