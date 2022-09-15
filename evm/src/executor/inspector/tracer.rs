@@ -13,8 +13,8 @@ use ethers::{
     types::{Address, H256, U256},
 };
 use revm::{
-    opcode, return_ok, CallInputs, CallScheme, CreateInputs, Database, EVMData, Gas, Inspector,
-    Interpreter, JournalEntry, Return,
+    opcode, return_ok, spec_opcode_gas, CallInputs, CallScheme, CreateInputs, Database, EVMData,
+    Gas, Inspector, Interpreter, JournalEntry, Return,
 };
 
 /// An inspector that collects call traces.
@@ -25,6 +25,15 @@ pub struct Tracer {
     pub trace_stack: Vec<usize>,
     pub traces: CallTraceArena,
     pub step_stack: Vec<(usize, usize)>, // (trace_idx, step_idx)
+
+    // Cumulative gas counter starting with `Gas::limit` and decreasing after each step execution
+    pub gas_left: u64,
+
+    reduced_gas_block: u64,
+    full_gas_block: u64,
+    was_return: bool,
+    was_jumpi: Option<usize>,
+    previous_gas_remaining: u64,
 }
 
 impl Tracer {
@@ -91,6 +100,30 @@ impl Tracer {
         self.step_stack.push((trace_idx, trace.trace.steps.len()));
 
         let pc = interp.program_counter();
+        let op = interp.contract.bytecode.bytecode()[pc];
+
+        // Get opcode information
+        let opcode_infos = spec_opcode_gas(data.env.cfg.spec_id);
+        let opcode_info = &opcode_infos[op as usize];
+
+        let gas_remaining = interp.gas.remaining() + self.full_gas_block - self.reduced_gas_block;
+
+        if let Some(step) = trace.trace.steps.last_mut() {
+            step.gas_cost = self.previous_gas_remaining - gas_remaining;
+            self.gas_left -= step.gas_cost;
+        }
+
+        self.previous_gas_remaining = gas_remaining;
+
+        if op == opcode::JUMPI {
+            self.was_jumpi = Some(pc);
+        } else if opcode_info.is_gas_block_end() {
+            self.reduced_gas_block = 0;
+            self.full_gas_block = interp.contract.gas_block(pc);
+        } else {
+            self.reduced_gas_block += opcode_info.get_gas() as u64;
+        }
+
         trace.trace.steps.push(CallTraceStep {
             depth: data.journaled_state.depth(),
             pc,
@@ -98,7 +131,7 @@ impl Tracer {
             contract: interp.contract.address,
             stack: interp.stack.clone(),
             memory: interp.memory.clone(),
-            gas: interp.gas.remaining(),
+            gas: self.gas_left,
             gas_refund_counter: interp.gas.refunded() as u64,
             gas_cost: 0,
             state_diff: None,
@@ -138,8 +171,16 @@ impl Tracer {
             _ => None,
         };
 
-        // TODO: calculate spent gas as in `Debugger::step`
-        step.gas_cost = step.gas - interp.gas.remaining();
+        if let Some(was_pc) = self.was_jumpi {
+            if was_pc == pc {
+                self.reduced_gas_block = 0;
+                self.full_gas_block = interp.contract.gas_block(was_pc);
+            }
+            self.was_jumpi = None;
+        } else if self.was_return {
+            self.full_gas_block = interp.contract.gas_block(pc);
+            self.was_return = false;
+        }
 
         // Error codes only
         if status as u8 > Return::OutOfGas as u8 {
@@ -152,6 +193,17 @@ impl<DB> Inspector<DB> for Tracer
 where
     DB: Database,
 {
+    fn initialize_interp(
+        &mut self,
+        interp: &mut Interpreter,
+        _data: &mut EVMData<'_, DB>,
+        _is_static: bool,
+    ) -> Return {
+        self.gas_left = interp.gas.limit();
+        self.full_gas_block = interp.contract.first_gas_block();
+        Return::Continue
+    }
+
     fn step(
         &mut self,
         interp: &mut Interpreter,
@@ -230,6 +282,7 @@ where
             retdata.to_vec(),
             None,
         );
+        self.was_return = true;
 
         (status, gas, retdata)
     }
@@ -279,6 +332,7 @@ where
             code,
             address,
         );
+        self.was_return = true;
 
         (status, address, gas, retdata)
     }

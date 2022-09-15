@@ -50,6 +50,18 @@ impl Inspector {
 }
 
 impl<DB: Database> revm::Inspector<DB> for Inspector {
+    fn initialize_interp(
+        &mut self,
+        interp: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        is_static: bool,
+    ) -> Return {
+        if let Some(tracer) = self.tracer.as_mut() {
+            tracer.initialize_interp(interp, data, is_static);
+        }
+        Return::Continue
+    }
+
     fn step(
         &mut self,
         interp: &mut Interpreter,

@@ -89,11 +89,10 @@ impl CallTraceArena {
             .collect()
     }
 
-    pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> GethTrace {
+    pub fn geth_trace(&self, receipt_gas_used: U256, opts: GethDebugTracingOptions) -> GethTrace {
         let mut storage = HashMap::<Address, BTreeMap<H256, H256>>::new();
         let mut trace = self.arena.iter().fold(GethTrace::default(), |mut acc, trace| {
             acc.failed |= !trace.trace.success;
-            acc.gas += trace.trace.gas_cost;
 
             acc.struct_logs.extend(trace.trace.steps.iter().map(|step| {
                 let mut log: StructLog = step.into();
@@ -118,6 +117,7 @@ impl CallTraceArena {
             acc
         });
 
+        trace.gas = receipt_gas_used.as_u64();
         if let Some(last_trace) = self.arena.first() {
             trace.return_value = last_trace.trace.output.to_raw().into();
         }
