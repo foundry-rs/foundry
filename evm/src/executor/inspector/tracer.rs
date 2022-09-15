@@ -123,12 +123,15 @@ impl Tracer {
             .journaled_state
             .journal
             .last()
-            .expect("not enough contract journal entries")
-            .last()
-            .expect("not enough call journal entries");
+            // This should always work because revm initializes it as `vec![vec![]]`
+            .unwrap()
+            .last();
 
         step.state_diff = match (op, journal_entry) {
-            (opcode::SLOAD | opcode::SSTORE, JournalEntry::StorageChage { address, key, .. }) => {
+            (
+                opcode::SLOAD | opcode::SSTORE,
+                Some(JournalEntry::StorageChage { address, key, .. }),
+            ) => {
                 let value = data.journaled_state.state[address].storage[key].present_value();
                 Some((*key, value))
             }
