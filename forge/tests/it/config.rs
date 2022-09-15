@@ -138,6 +138,7 @@ pub fn runner_with_config(mut config: Config) -> MultiContractRunner {
 
     base_runner()
         .with_cheats_config(CheatsConfig::new(&config, &EVM_OPTS))
+        .sender(config.sender)
         .build(
             &PROJECT.paths.root,
             (*COMPILED).clone(),

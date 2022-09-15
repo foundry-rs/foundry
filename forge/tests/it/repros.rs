@@ -1,23 +1,39 @@
 //! Tests for reproducing issues
 
 use crate::{config::*, test_helpers::filter::Filter};
+use ethers::abi::Address;
+use foundry_config::Config;
+use std::str::FromStr;
 
 /// A macro that tests a single pattern (".*/repros/<issue>")
 macro_rules! test_repro {
     ($issue:expr) => {
-        test_repro!($issue, false)
+        test_repro!($issue, false, None)
     };
-    ($issue:expr, $should_fail:expr) => {
+    ($issue:expr, $should_fail:expr, $sender:expr) => {
         let pattern = concat!(".*repros/", $issue);
         let filter = Filter::path(pattern);
-        let mut config = TestConfig::filter(filter).set_should_fail($should_fail);
+
+        let mut config = Config::default();
+        if let Some(sender) = $sender {
+            config.sender = sender;
+        }
+
+        let mut config = TestConfig::with_filter(runner_with_config(config), filter)
+            .set_should_fail($should_fail);
         config.run();
     };
 }
 
 macro_rules! test_repro_fail {
     ($issue:expr) => {
-        test_repro!($issue, true)
+        test_repro!($issue, true, None)
+    };
+}
+
+macro_rules! test_repro_with_sender {
+    ($issue:expr, $sender:expr) => {
+        test_repro!($issue, false, Some($sender))
     };
 }
 
@@ -102,4 +118,13 @@ fn test_issue_3190() {
 #[test]
 fn test_issue_3221() {
     test_repro!("Issue3221");
+}
+
+// <https://github.com/foundry-rs/foundry/issues/3221>
+#[test]
+fn test_issue_3223() {
+    test_repro_with_sender!(
+        "Issue3223",
+        Address::from_str("0xF0959944122fb1ed4CfaBA645eA06EED30427BAA").unwrap()
+    );
 }
