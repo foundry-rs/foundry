@@ -27,13 +27,12 @@ mod fuzz;
 pub mod snapshot;
 pub use fuzz::FuzzBackendWrapper;
 mod diagnostic;
-use crate::executor::inspector::cheatcodes::util::with_journaled_account;
+
 pub use diagnostic::RevertDiagnostic;
 
 pub mod error;
 use crate::executor::backend::{error::NoCheatcodeAccessError, in_memory_db::FoundryEvmInMemoryDB};
 pub use error::{DatabaseError, DatabaseResult};
-use foundry_config::Config;
 
 mod in_memory_db;
 
@@ -718,12 +717,6 @@ impl DatabaseExt for Backend {
                         if !fork.db.accounts.contains_key(&caller) {
                             // update the caller account which is required by the evm
                             fork.db.insert_account_info(caller, caller_account.clone());
-                            // let _ = with_journaled_account(
-                            //     &mut fork.journaled_state,
-                            //     &mut fork.db,
-                            //     caller,
-                            //     |_| (),
-                            // );
                         }
                         journaled_state.state.insert(caller, caller_account.into());
                     }
@@ -810,14 +803,10 @@ impl DatabaseExt for Backend {
 
                     // we also need to initialize and touch the caller
                     if let Some(acc) = caller_account {
-                        target_fork.db.insert_account_info(caller, acc.clone());
+                        if !target_fork.db.accounts.contains_key(&caller) {
+                            target_fork.db.insert_account_info(caller, acc.clone());
+                        }
                         target_fork.journaled_state.state.insert(caller, acc.into());
-                        // let _ = with_journaled_account(
-                        //     &mut target_fork.journaled_state,
-                        //     &mut target_fork.db,
-                        //     caller,
-                        //     |_| (),
-                        // );
                     }
                 }
             }
@@ -849,12 +838,6 @@ impl DatabaseExt for Backend {
             if !fork.db.accounts.contains_key(&caller) {
                 // update the caller account which is required by the evm
                 fork.db.insert_account_info(caller, caller_account.clone());
-                // let _ = with_journaled_account(
-                //     &mut fork.journaled_state,
-                //     &mut fork.db,
-                //     caller,
-                //     |_| (),
-                // );
             }
             fork.journaled_state.state.insert(caller, caller_account.into());
         }
@@ -1429,7 +1412,7 @@ fn merge_db_account_data<ExtDB: DatabaseRef>(
     active: &CacheDB<ExtDB>,
     fork_db: &mut ForkDB,
 ) {
-    trace!(?addr, "cloning database data");
+    trace!(?addr, "merging database data");
     let mut acc = active.accounts.get(&addr).cloned().unwrap_or_default();
     if let Some(code) = active.contracts.get(&acc.info.code_hash).cloned() {
         fork_db.contracts.insert(acc.info.code_hash, code);
