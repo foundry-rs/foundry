@@ -79,7 +79,7 @@ impl MultiChainSequence {
         //../Contract-[timestamp]/run.json
         let file = PathBuf::from(&path.replace("-latest", &format!("-{}", self.timestamp)));
 
-        fs::create_dir_all(&file.parent().expect("to have a file."))?;
+        fs::create_dir_all(file.parent().expect("to have a file."))?;
 
         serde_json::to_writer_pretty(BufWriter::new(fs::create_file(file)?), &self)?;
 
@@ -105,7 +105,15 @@ impl ScriptArgs {
             .deployments
             .iter_mut()
             .map(|sequence| async {
-                match self.send_transactions(sequence).await {
+                match self
+                    .send_transactions(
+                        sequence,
+                        &sequence.typed_transactions().first().unwrap().0.clone(),
+                        // TODO: script_wallets?
+                        vec![],
+                    )
+                    .await
+                {
                     Ok(_) => {
                         if self.verify {
                             return sequence.verify_contracts(config, verify.clone()).await

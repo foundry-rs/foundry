@@ -32,6 +32,7 @@ use foundry_common::{evm::EvmArgs, fs};
 use foundry_config::Config;
 use semver::Version;
 use std::{collections::HashMap, sync::mpsc::channel, thread};
+use tracing::trace;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(CoverageArgs, opts, evm_opts);
@@ -108,6 +109,7 @@ impl CoverageArgs {
     }
 
     /// Builds the coverage report.
+    #[tracing::instrument(name = "prepare coverage", skip_all)]
     fn prepare(
         &self,
         config: &Config,
@@ -133,9 +135,13 @@ impl CoverageArgs {
                     .entry(version.clone())
                     .or_default()
                     .insert(source_file.id as usize, ast);
+
+                let file = project_paths.root.join(&path);
+                trace!(root=?project_paths.root, ?file, "reading source file");
+
                 versioned_sources.entry(version.clone()).or_default().insert(
                     source_file.id as usize,
-                    fs::read_to_string(&path)
+                    fs::read_to_string(&file)
                         .wrap_err("Could not read source code for analysis")?,
                 );
                 report.add_source(version, source_file.id as usize, path);
@@ -253,7 +259,7 @@ impl CoverageArgs {
 
         // Build the contract runner
         let evm_spec = utils::evm_spec(&config.evm_version);
-        let env = evm_opts.evm_env_blocking();
+        let env = evm_opts.evm_env_blocking()?;
         let mut runner = MultiContractRunnerBuilder::default()
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(evm_spec)
@@ -286,11 +292,12 @@ impl CoverageArgs {
                 artifact_id.version.clone(),
                 artifact_id.source.to_string_lossy().to_string(),
             ) {
+                let source_id = *source_id;
                 // TODO: Distinguish between creation/runtime in a smart way
                 report.add_hit_map(
                     &ContractId {
                         version: artifact_id.version.clone(),
-                        source_id: *source_id,
+                        source_id,
                         contract_name: artifact_id.name.clone(),
                     },
                     &hits,
@@ -325,7 +332,7 @@ pub enum CoverageReportKind {
 ///
 /// This is needed in order to analyze the bytecode for contracts that use libraries.
 fn dummy_link_bytecode(mut obj: CompactBytecode) -> Option<Bytes> {
-    let link_references = std::mem::take(&mut obj.link_references);
+    let link_references = obj.link_references.clone();
     for (file, libraries) in link_references {
         for library in libraries.keys() {
             obj.link(&file, library, Address::zero());

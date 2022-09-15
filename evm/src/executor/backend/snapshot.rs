@@ -2,13 +2,12 @@ use ethers::types::{Address, H256, U256};
 use hashbrown::HashMap as Map;
 use revm::{AccountInfo, Env, JournaledState};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 /// A minimal abstraction of a state at a certain point in time
 #[derive(Default, Debug, Serialize, Deserialize)]
 pub struct StateSnapshot {
-    pub accounts: BTreeMap<Address, AccountInfo>,
-    pub storage: BTreeMap<Address, BTreeMap<U256, U256>>,
+    pub accounts: Map<Address, AccountInfo>,
+    pub storage: Map<Address, Map<U256, U256>>,
     pub block_hashes: Map<U256, H256>,
 }
 

@@ -7,7 +7,8 @@ use ethers::{
     providers::{Middleware, ProviderError},
     types::{
         transaction::eip2930::AccessListWithGasUsed, Address, Block, BlockId, Bytes, FeeHistory,
-        Filter, Log, Trace, Transaction, TransactionReceipt, TxHash, H256, U256,
+        Filter, GethDebugTracingOptions, GethTrace, Log, Trace, Transaction, TransactionReceipt,
+        TxHash, H256, U256,
     },
 };
 use foundry_common::{ProviderBuilder, RetryProvider};
@@ -76,12 +77,14 @@ impl ClientFork {
         let block_hash = block.hash.ok_or(BlockchainError::BlockNotFound)?;
         let timestamp = block.timestamp.as_u64();
         let base_fee = block.base_fee_per_gas;
+        let total_difficulty = block.total_difficulty.unwrap_or_default();
 
         self.config.write().update_block(
             block.number.ok_or(BlockchainError::BlockNotFound)?.as_u64(),
             block_hash,
             timestamp,
             base_fee,
+            total_difficulty,
         );
 
         self.clear_cached_storage();
@@ -109,6 +112,10 @@ impl ClientFork {
 
     pub fn block_number(&self) -> u64 {
         self.config.read().block_number
+    }
+
+    pub fn total_difficulty(&self) -> U256 {
+        self.config.read().total_difficulty
     }
 
     pub fn base_fee(&self) -> Option<U256> {
@@ -296,6 +303,22 @@ impl ClientFork {
         Ok(traces)
     }
 
+    pub async fn debug_trace_transaction(
+        &self,
+        hash: H256,
+        opts: GethDebugTracingOptions,
+    ) -> Result<GethTrace, ProviderError> {
+        if let Some(traces) = self.storage_read().geth_transaction_traces.get(&hash).cloned() {
+            return Ok(traces)
+        }
+
+        let trace = self.provider().debug_trace_transaction(hash, opts).await?;
+        let mut storage = self.storage_write();
+        storage.geth_transaction_traces.insert(hash, trace.clone());
+
+        Ok(trace)
+    }
+
     pub async fn trace_block(&self, number: u64) -> Result<Vec<Trace>, ProviderError> {
         if let Some(traces) = self.storage_read().block_traces.get(&number).cloned() {
             return Ok(traces)
@@ -473,6 +496,12 @@ pub struct ClientForkConfig {
     pub timeout: Duration,
     /// request retries for spurious networks
     pub retries: u32,
+    /// request retries for spurious networks
+    pub backoff: Duration,
+    /// available CUPS
+    pub compute_units_per_second: u64,
+    /// total difficulty of the chain until this block
+    pub total_difficulty: U256,
 }
 
 // === impl ClientForkConfig ===
@@ -490,7 +519,8 @@ impl ClientForkConfig {
                 .timeout(self.timeout)
                 .timeout_retry(self.retries)
                 .max_retry(10)
-                .initial_backoff(1000)
+                .initial_backoff(self.backoff.as_millis() as u64)
+                .compute_units_per_second(self.compute_units_per_second)
                 .build()
                 .map_err(|_| BlockchainError::InvalidUrl(url.clone()))?
                 .interval(interval),
@@ -506,11 +536,13 @@ impl ClientForkConfig {
         block_hash: H256,
         timestamp: u64,
         base_fee: Option<U256>,
+        total_difficulty: U256,
     ) {
         self.block_number = block_number;
         self.block_hash = block_hash;
         self.timestamp = timestamp;
         self.base_fee = base_fee;
+        self.total_difficulty = total_difficulty;
         trace!(target: "fork", "Updated block number={} hash={:?}", block_number, block_hash);
     }
 }
@@ -524,6 +556,7 @@ pub struct ForkedStorage {
     pub transactions: HashMap<H256, Transaction>,
     pub transaction_receipts: HashMap<H256, TransactionReceipt>,
     pub transaction_traces: HashMap<H256, Vec<Trace>>,
+    pub geth_transaction_traces: HashMap<H256, GethTrace>,
     pub block_traces: HashMap<u64, Vec<Trace>>,
     pub code_at: HashMap<(Address, u64), Bytes>,
 }

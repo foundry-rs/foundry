@@ -1,17 +1,19 @@
 use super::Cheatcodes;
-use crate::abi::HEVMCalls;
+use crate::{
+    abi::HEVMCalls,
+    executor::backend::error::{DatabaseError, DatabaseResult},
+};
 use bytes::{BufMut, Bytes, BytesMut};
 use ethers::{
     abi::{AbiEncode, Address, ParamType, Token},
     core::k256::elliptic_curve::Curve,
     prelude::{
         k256::{ecdsa::SigningKey, elliptic_curve::bigint::Encoding, Secp256k1},
-        Lazy, LocalWallet, Signer, H160, *,
+        LocalWallet, Signer, H160, *,
     },
     signers::{coins_bip39::English, MnemonicBuilder},
     types::{NameOrAddress, H256, U256},
     utils,
-    utils::keccak256,
 };
 use foundry_common::fmt::*;
 use hex::FromHex;
@@ -20,15 +22,10 @@ use std::str::FromStr;
 
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 
+/// Address of the default CREATE2 deployer 0x4e59b44847b379578588920ca78fbf26c0b4956c
 pub const DEFAULT_CREATE2_DEPLOYER: H160 = H160([
     78, 89, 180, 72, 71, 179, 121, 87, 133, 136, 146, 12, 167, 143, 191, 38, 192, 180, 149, 108,
 ]);
-pub const MISSING_CREATE2_DEPLOYER: &str =
-    "CREATE2 Deployer not present on this chain. [0x4e59b44847b379578588920ca78fbf26c0b4956c]";
-
-// keccak(Error(string))
-pub static REVERT_PREFIX: [u8; 4] = [8, 195, 121, 160];
-pub static ERROR_PREFIX: Lazy<[u8; 32]> = Lazy::new(|| keccak256("CheatCodeError"));
 
 /// Applies the given function `f` to the `revm::Account` belonging to the `addr`
 ///
@@ -38,46 +35,24 @@ pub fn with_journaled_account<F, R, DB: Database>(
     db: &mut DB,
     addr: Address,
     mut f: F,
-) -> R
+) -> Result<R, DB::Error>
 where
     F: FnMut(&mut Account) -> R,
 {
-    journaled_state.load_account(addr, db);
+    journaled_state.load_account(addr, db)?;
     journaled_state.touch(&addr);
     let account = journaled_state.state.get_mut(&addr).expect("account loaded;");
-    f(account)
+    Ok(f(account))
 }
 
 fn addr(private_key: U256) -> Result<Bytes, Bytes> {
-    if private_key.is_zero() {
-        return Err("Private key cannot be 0.".to_string().encode().into())
-    }
-
-    if private_key > U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()) {
-        return Err("Private key must be less than 115792089237316195423570985008687907852837564279074904382605163141518161494337 (the secp256k1 curve order).".to_string().encode().into());
-    }
-
-    let mut bytes: [u8; 32] = [0; 32];
-    private_key.to_big_endian(&mut bytes);
-
-    let key = SigningKey::from_bytes(&bytes).map_err(|err| err.to_string().encode())?;
+    let key = parse_private_key(private_key)?;
     let addr = utils::secret_key_to_address(&key);
     Ok(addr.encode().into())
 }
 
 fn sign(private_key: U256, digest: H256, chain_id: U256) -> Result<Bytes, Bytes> {
-    if private_key.is_zero() {
-        return Err("Private key cannot be 0.".to_string().encode().into())
-    }
-
-    if private_key > U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()) {
-        return Err("Private key must be less than 115792089237316195423570985008687907852837564279074904382605163141518161494337 (the secp256k1 curve order).".to_string().encode().into());
-    }
-
-    let mut bytes: [u8; 32] = [0; 32];
-    private_key.to_big_endian(&mut bytes);
-
-    let key = SigningKey::from_bytes(&bytes).map_err(|err| err.to_string().encode())?;
+    let key = parse_private_key(private_key)?;
     let wallet = LocalWallet::from(key).with_chain_id(chain_id.as_u64());
 
     // The `ecrecover` precompile does not use EIP-155
@@ -95,7 +70,11 @@ fn sign(private_key: U256, digest: H256, chain_id: U256) -> Result<Bytes, Bytes>
 }
 
 fn derive_key(mnemonic: &str, path: &str, index: u32) -> Result<Bytes, Bytes> {
-    let derivation_path = format!("{}{}", path, index);
+    let derivation_path = if path.ends_with('/') {
+        format!("{}{}", path, index)
+    } else {
+        format!("{}/{}", path, index)
+    };
 
     let wallet = MnemonicBuilder::<English>::default()
         .phrase(mnemonic)
@@ -107,6 +86,24 @@ fn derive_key(mnemonic: &str, path: &str, index: u32) -> Result<Bytes, Bytes> {
     let private_key = U256::from_big_endian(wallet.signer().to_bytes().as_slice());
 
     Ok(private_key.encode().into())
+}
+
+fn remember_key(state: &mut Cheatcodes, private_key: U256, chain_id: U256) -> Result<Bytes, Bytes> {
+    let key = parse_private_key(private_key)?;
+    let wallet = LocalWallet::from(key).with_chain_id(chain_id.as_u64());
+
+    state.script_wallets.push(wallet.clone());
+
+    Ok(wallet.address().encode().into())
+}
+
+fn parse(
+    val: Vec<impl AsRef<str> + Clone>,
+    r#type: ParamType,
+    is_array: bool,
+) -> Result<Bytes, Bytes> {
+    let msg = format!("Failed to parse `{}` as type `{}`", &val[0].as_ref(), &r#type);
+    value_to_abi(val, r#type, is_array).map_err(|e| format!("{}: {}", msg, e).encode().into())
 }
 
 pub fn apply<DB: Database>(
@@ -121,6 +118,7 @@ pub fn apply<DB: Database>(
             derive_key(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1)
         }
         HEVMCalls::DeriveKey1(inner) => derive_key(&inner.0, &inner.1, inner.2),
+        HEVMCalls::RememberKey(inner) => remember_key(state, inner.0, data.env.cfg.chain_id),
         HEVMCalls::Label(inner) => {
             state.labels.insert(inner.0, inner.1.clone());
             Ok(Bytes::new())
@@ -143,45 +141,46 @@ pub fn apply<DB: Database>(
         HEVMCalls::ToString5(inner) => {
             Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
         }
-        HEVMCalls::ParseBytes(inner) => value_to_abi(vec![&inner.0], ParamType::Bytes, false),
-        HEVMCalls::ParseAddress(inner) => value_to_abi(vec![&inner.0], ParamType::Address, false),
-        HEVMCalls::ParseUint256(inner) => value_to_abi(vec![&inner.0], ParamType::Uint(256), false),
-        HEVMCalls::ParseInt256(inner) => value_to_abi(vec![&inner.0], ParamType::Int(256), false),
-        HEVMCalls::ParseBytes32(inner) => {
-            value_to_abi(vec![&inner.0], ParamType::FixedBytes(32), false)
-        }
-        HEVMCalls::ParseBool(inner) => value_to_abi(vec![&inner.0], ParamType::Bool, false),
+        HEVMCalls::ParseBytes(inner) => parse(vec![&inner.0], ParamType::Bytes, false),
+        HEVMCalls::ParseAddress(inner) => parse(vec![&inner.0], ParamType::Address, false),
+        HEVMCalls::ParseUint(inner) => parse(vec![&inner.0], ParamType::Uint(256), false),
+        HEVMCalls::ParseInt(inner) => parse(vec![&inner.0], ParamType::Int(256), false),
+        HEVMCalls::ParseBytes32(inner) => parse(vec![&inner.0], ParamType::FixedBytes(32), false),
+        HEVMCalls::ParseBool(inner) => parse(vec![&inner.0], ParamType::Bool, false),
         _ => return None,
     })
 }
 
-pub fn process_create<DB: Database>(
+pub fn process_create<DB>(
     broadcast_sender: Address,
     bytecode: Bytes,
     data: &mut EVMData<'_, DB>,
     call: &mut CreateInputs,
-) -> (Bytes, Option<NameOrAddress>, u64) {
+) -> DatabaseResult<(Bytes, Option<NameOrAddress>, u64)>
+where
+    DB: Database<Error = DatabaseError>,
+{
     match call.scheme {
         revm::CreateScheme::Create => {
             call.caller = broadcast_sender;
 
-            (bytecode, None, data.journaled_state.account(broadcast_sender).info.nonce)
+            Ok((bytecode, None, data.journaled_state.account(broadcast_sender).info.nonce))
         }
         revm::CreateScheme::Create2 { salt } => {
             // Sanity checks for our CREATE2 deployer
-            data.journaled_state.load_account(DEFAULT_CREATE2_DEPLOYER, data.db);
+            data.journaled_state.load_account(DEFAULT_CREATE2_DEPLOYER, data.db)?;
 
             let info = &data.journaled_state.account(DEFAULT_CREATE2_DEPLOYER).info;
             match &info.code {
                 Some(code) => {
                     if code.is_empty() {
-                        panic!("{MISSING_CREATE2_DEPLOYER}")
+                        return Err(DatabaseError::MissingCreate2Deployer)
                     }
                 }
                 None => {
-                    // SharedBacked
-                    if data.db.code_by_hash(info.code_hash).is_empty() {
-                        panic!("{MISSING_CREATE2_DEPLOYER}")
+                    // forked db
+                    if data.db.code_by_hash(info.code_hash)?.is_empty() {
+                        return Err(DatabaseError::MissingCreate2Deployer)
                     }
                 }
             }
@@ -201,36 +200,55 @@ pub fn process_create<DB: Database>(
             calldata.put_slice(&salt_bytes);
             calldata.put(bytecode);
 
-            (calldata.freeze(), Some(NameOrAddress::Address(DEFAULT_CREATE2_DEPLOYER)), nonce)
+            Ok((calldata.freeze(), Some(NameOrAddress::Address(DEFAULT_CREATE2_DEPLOYER)), nonce))
         }
     }
 }
 
-pub fn encode_error(reason: impl ToString) -> Bytes {
-    [ERROR_PREFIX.as_slice(), reason.to_string().encode().as_slice()].concat().into()
-}
-
+/// Parses string values into the corresponding `ParamType` and returns it abi-encoded
+///
+/// If the value is a hex number then it tries to parse
+///     1. as hex if `0x` prefix
+///     2. as decimal string
+///     3. as hex if 2. failed
 pub fn value_to_abi(
     val: Vec<impl AsRef<str>>,
     r#type: ParamType,
     is_array: bool,
-) -> Result<Bytes, Bytes> {
+) -> Result<Bytes, String> {
     let parse_bool = |v: &str| v.to_lowercase().parse::<bool>();
     let parse_uint = |v: &str| {
         if v.starts_with("0x") {
-            let v = Vec::from_hex(v.strip_prefix("0x").unwrap()).map_err(|e| e.to_string())?;
-            Ok(U256::from_little_endian(&v))
+            v.parse::<U256>().map_err(|err| err.to_string())
         } else {
-            U256::from_dec_str(v).map_err(|e| e.to_string())
+            match U256::from_dec_str(v) {
+                Ok(val) => Ok(val),
+                Err(dec_err) => v.parse::<U256>().map_err(|hex_err| {
+                    format!(
+                        "Failed to parse uint value `{}` from hex and as decimal string {}, {}",
+                        v, hex_err, dec_err
+                    )
+                }),
+            }
         }
     };
     let parse_int = |v: &str| {
-        // hex string may start with "0x", "+0x", or "-0x"
+        // hex string may start with "0x", "+0x", or "-0x" which needs to be stripped for
+        // `I256::from_hex_str`
         if v.starts_with("0x") || v.starts_with("+0x") || v.starts_with("-0x") {
-            I256::from_hex_str(&v.replacen("0x", "", 1)).map(|v| v.into_raw())
+            v.replacen("0x", "", 1).parse::<I256>().map_err(|err| err.to_string())
         } else {
-            I256::from_dec_str(v).map(|v| v.into_raw())
+            match I256::from_dec_str(v) {
+                Ok(val) => Ok(val),
+                Err(dec_err) => v.parse::<I256>().map_err(|hex_err| {
+                    format!(
+                        "Failed to parse int value `{}` from hex and as decimal string {}, {}",
+                        v, hex_err, dec_err
+                    )
+                }),
+            }
         }
+        .map(|v| v.into_raw())
     };
     let parse_address = |v: &str| Address::from_str(v);
     let parse_string = |v: &str| -> Result<String, ()> { Ok(v.to_string()) };
@@ -241,7 +259,7 @@ pub fn value_to_abi(
         .map(|v| match r#type {
             ParamType::Bool => parse_bool(v).map(Token::Bool).map_err(|e| e.to_string()),
             ParamType::Uint(256) => parse_uint(v).map(Token::Uint),
-            ParamType::Int(256) => parse_int(v).map(Token::Int).map_err(|e| e.to_string()),
+            ParamType::Int(256) => parse_int(v).map(Token::Int),
             ParamType::Address => parse_address(v).map(Token::Address).map_err(|e| e.to_string()),
             ParamType::FixedBytes(32) => {
                 parse_bytes(v).map(Token::FixedBytes).map_err(|e| e.to_string())
@@ -258,5 +276,57 @@ pub fn value_to_abi(
                 abi::encode(&[tokens.remove(0)]).into()
             }
         })
-        .map_err(|e| e.into())
+}
+
+pub fn parse_private_key(private_key: U256) -> Result<SigningKey, Bytes> {
+    if private_key.is_zero() {
+        return Err("Private key cannot be 0.".to_string().encode().into())
+    }
+
+    if private_key >= U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()) {
+        return Err("Private key must be less than 115792089237316195423570985008687907852837564279074904382605163141518161494337 (the secp256k1 curve order).".to_string().encode().into());
+    }
+
+    let mut bytes: [u8; 32] = [0; 32];
+    private_key.to_big_endian(&mut bytes);
+
+    SigningKey::from_bytes(&bytes).map_err(|err| err.to_string().encode().into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethers::abi::AbiDecode;
+
+    #[test]
+    fn test_uint_env() {
+        let pk = "0x10532cc9d0d992825c3f709c62c969748e317a549634fb2a9fa949326022e81f";
+        let val: U256 = pk.parse().unwrap();
+        let parsed = value_to_abi(vec![pk], ParamType::Uint(256), false).unwrap();
+        let decoded = U256::decode(&parsed).unwrap();
+        assert_eq!(val, decoded);
+
+        let parsed =
+            value_to_abi(vec![pk.strip_prefix("0x").unwrap()], ParamType::Uint(256), false)
+                .unwrap();
+        let decoded = U256::decode(&parsed).unwrap();
+        assert_eq!(val, decoded);
+
+        let parsed = value_to_abi(vec!["1337"], ParamType::Uint(256), false).unwrap();
+        let decoded = U256::decode(&parsed).unwrap();
+        assert_eq!(U256::from(1337u64), decoded);
+    }
+
+    #[test]
+    fn test_int_env() {
+        let val = U256::from(100u64);
+        let parsed =
+            value_to_abi(vec![format!("0x{:x}", val)], ParamType::Int(256), false).unwrap();
+        let decoded = I256::decode(parsed).unwrap();
+        assert_eq!(val, decoded.try_into().unwrap());
+
+        let parsed = value_to_abi(vec!["100"], ParamType::Int(256), false).unwrap();
+        let decoded = I256::decode(parsed).unwrap();
+        assert_eq!(U256::from(100u64), decoded.try_into().unwrap());
+    }
 }

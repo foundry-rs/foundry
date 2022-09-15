@@ -1,15 +1,97 @@
 //! Test setup
 
-use crate::test_helpers::{COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT};
+use crate::test_helpers::{
+    filter::Filter, COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT,
+};
 use forge::{result::SuiteResult, MultiContractRunner, MultiContractRunnerBuilder, TestOptions};
-use foundry_config::{Config, FuzzConfig, InvariantConfig, RpcEndpoint, RpcEndpoints};
+use foundry_config::{
+    fs_permissions::PathPermission, Config, FsPermissions, FuzzConfig, InvariantConfig,
+    RpcEndpoint, RpcEndpoints,
+};
 use foundry_evm::{decode::decode_console_logs, executor::inspector::CheatsConfig};
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
+
+/// How to execute a a test run
+pub struct TestConfig {
+    pub runner: MultiContractRunner,
+    pub should_fail: bool,
+    pub filter: Filter,
+    pub opts: TestOptions,
+}
+
+// === impl TestConfig ===
+
+impl TestConfig {
+    pub fn new(runner: MultiContractRunner) -> Self {
+        Self::with_filter(runner, Filter::matches_all())
+    }
+
+    pub fn with_filter(runner: MultiContractRunner, filter: Filter) -> Self {
+        Self { runner, should_fail: false, filter, opts: TEST_OPTS }
+    }
+
+    pub fn filter(filter: Filter) -> Self {
+        Self { filter, ..Default::default() }
+    }
+
+    pub fn should_fail(self) -> Self {
+        self.set_should_fail(true)
+    }
+
+    pub fn set_should_fail(mut self, should_fail: bool) -> Self {
+        self.should_fail = should_fail;
+        self
+    }
+
+    #[track_caller]
+    pub fn run(&mut self) {
+        self.try_run().unwrap()
+    }
+
+    /// Executes the test case
+    ///
+    /// Returns an error if
+    ///    * filter matched 0 test cases
+    ///    * a test results deviates from the configured `should_fail` setting
+    pub fn try_run(&mut self) -> eyre::Result<()> {
+        let suite_result = self.runner.test(&self.filter, None, self.opts).unwrap();
+        if suite_result.is_empty() {
+            eyre::bail!("empty test result");
+        }
+        for (_, SuiteResult { test_results, .. }) in suite_result {
+            for (test_name, result) in test_results {
+                if self.should_fail != !result.success {
+                    let logs = decode_console_logs(&result.logs);
+                    let outcome = if self.should_fail { "fail" } else { "pass" };
+
+                    eyre::bail!(
+                        "Test {} did not {} as expected.\nReason: {:?}\nLogs:\n{}",
+                        test_name,
+                        outcome,
+                        result.reason,
+                        logs.join("\n")
+                    )
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl Default for TestConfig {
+    fn default() -> Self {
+        TestConfig::new(runner())
+    }
+}
 
 pub static TEST_OPTS: TestOptions = TestOptions {
     fuzz: FuzzConfig {
         runs: 256,
-        max_local_rejects: 1024,
+        max_test_rejects: 65536,
         max_global_rejects: 65536,
         seed: None,
         include_storage: true,
@@ -27,6 +109,16 @@ pub static TEST_OPTS: TestOptions = TestOptions {
     },
 };
 
+pub fn manifest_root() -> PathBuf {
+    let mut root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    // need to check here where we're executing the test from, if in `forge` we need to also allow
+    // `testdata`
+    if root.ends_with("forge") {
+        root = root.parent().unwrap();
+    }
+    root.to_path_buf()
+}
+
 /// Builds a base runner
 pub fn base_runner() -> MultiContractRunnerBuilder {
     MultiContractRunnerBuilder::default().sender(EVM_OPTS.sender)
@@ -35,23 +127,21 @@ pub fn base_runner() -> MultiContractRunnerBuilder {
 /// Builds a non-tracing runner
 pub fn runner() -> MultiContractRunner {
     let mut config = Config::with_root(PROJECT.root());
+    config.fs_permissions = FsPermissions::new(vec![PathPermission::read_write(manifest_root())]);
+    runner_with_config(config)
+}
+
+/// Builds a non-tracing runner
+pub fn runner_with_config(mut config: Config) -> MultiContractRunner {
     config.rpc_endpoints = rpc_endpoints();
-
-    let mut root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    // need to check here where we're executing the test from, if in `forge` we need to also allow
-    // `testdata`
-    if root.ends_with("forge") {
-        root = root.parent().unwrap();
-    }
-
-    config.allow_paths.push(root.into());
+    config.allow_paths.push(manifest_root());
 
     base_runner()
         .with_cheats_config(CheatsConfig::new(&config, &EVM_OPTS))
         .build(
             &PROJECT.paths.root,
             (*COMPILED).clone(),
-            EVM_OPTS.evm_env_blocking(),
+            EVM_OPTS.evm_env_blocking().unwrap(),
             EVM_OPTS.clone(),
         )
         .unwrap()
@@ -62,7 +152,7 @@ pub fn tracing_runner() -> MultiContractRunner {
     let mut opts = EVM_OPTS.clone();
     opts.verbosity = 5;
     base_runner()
-        .build(&PROJECT.paths.root, (*COMPILED).clone(), EVM_OPTS.evm_env_blocking(), opts)
+        .build(&PROJECT.paths.root, (*COMPILED).clone(), EVM_OPTS.evm_env_blocking().unwrap(), opts)
         .unwrap()
 }
 
@@ -73,7 +163,7 @@ pub fn forked_runner(rpc: &str) -> MultiContractRunner {
     opts.env.chain_id = None; // clear chain id so the correct one gets fetched from the RPC
     opts.fork_url = Some(rpc.to_string());
 
-    let env = opts.evm_env_blocking();
+    let env = opts.evm_env_blocking().unwrap();
     let fork = opts.get_fork(&Default::default(), env.clone());
 
     base_runner()
@@ -96,6 +186,7 @@ pub fn rpc_endpoints() -> RpcEndpoints {
 }
 
 /// A helper to assert the outcome of multiple tests with helpful assert messages
+#[track_caller]
 pub fn assert_multiple(
     actuals: &BTreeMap<String, SuiteResult>,
     expecteds: BTreeMap<

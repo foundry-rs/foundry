@@ -12,8 +12,8 @@ use anvil_core::eth::{
     transaction::TransactionInfo,
 };
 use ethers::{
-    prelude::{BlockId, BlockNumber, Trace, H256, H256 as TxHash, U64},
-    types::{ActionType, U256},
+    prelude::{BlockId, BlockNumber, GethTrace, Trace, H256, H256 as TxHash, U64},
+    types::{ActionType, GethDebugTracingOptions, U256},
 };
 use forge::revm::{Env, Return};
 use parking_lot::RwLock;
@@ -128,6 +128,8 @@ pub struct BlockchainStorage {
     /// Mapping from the transaction hash to a tuple containing the transaction as well as the
     /// transaction receipt
     pub transactions: HashMap<TxHash, MinedTransaction>,
+    /// The total difficulty of the chain until this block
+    pub total_difficulty: U256,
 }
 
 impl BlockchainStorage {
@@ -154,10 +156,11 @@ impl BlockchainStorage {
             best_number,
             genesis_hash,
             transactions: Default::default(),
+            total_difficulty: Default::default(),
         }
     }
 
-    pub fn forked(block_number: u64, block_hash: H256) -> Self {
+    pub fn forked(block_number: u64, block_hash: H256, total_difficulty: U256) -> Self {
         BlockchainStorage {
             blocks: Default::default(),
             hashes: HashMap::from([(block_number.into(), block_hash)]),
@@ -165,6 +168,7 @@ impl BlockchainStorage {
             best_number: block_number.into(),
             genesis_hash: Default::default(),
             transactions: Default::default(),
+            total_difficulty,
         }
     }
 
@@ -177,6 +181,7 @@ impl BlockchainStorage {
             best_number: Default::default(),
             genesis_hash: Default::default(),
             transactions: Default::default(),
+            total_difficulty: Default::default(),
         }
     }
 }
@@ -210,8 +215,14 @@ impl Blockchain {
         Self { storage: Arc::new(RwLock::new(BlockchainStorage::new(env, base_fee, timestamp))) }
     }
 
-    pub fn forked(block_number: u64, block_hash: H256) -> Self {
-        Self { storage: Arc::new(RwLock::new(BlockchainStorage::forked(block_number, block_hash))) }
+    pub fn forked(block_number: u64, block_hash: H256, total_difficulty: U256) -> Self {
+        Self {
+            storage: Arc::new(RwLock::new(BlockchainStorage::forked(
+                block_number,
+                block_hash,
+                total_difficulty,
+            ))),
+        }
     }
 
     /// returns the header hash of given block
@@ -254,8 +265,8 @@ pub struct MinedTransaction {
 impl MinedTransaction {
     /// Returns the traces of the transaction for `trace_transaction`
     pub fn parity_traces(&self) -> Vec<Trace> {
-        let mut traces = Vec::with_capacity(self.info.traces.len());
-        for (idx, node) in self.info.traces.iter().cloned().enumerate() {
+        let mut traces = Vec::with_capacity(self.info.traces.arena.len());
+        for (idx, node) in self.info.traces.arena.iter().cloned().enumerate() {
             let action = node.parity_action();
             let result = node.parity_result();
 
@@ -281,6 +292,10 @@ impl MinedTransaction {
         }
 
         traces
+    }
+
+    pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> GethTrace {
+        self.info.traces.geth_trace(opts)
     }
 }
 
@@ -310,7 +325,7 @@ mod tests {
 
         let loaded = storage.get(&one).unwrap();
 
-        let acc = loaded.basic(addr);
+        let acc = loaded.basic(addr).unwrap().unwrap();
         assert_eq!(acc.balance, 1337u64.into());
     }
 }

@@ -84,6 +84,8 @@ impl MultiFork {
     ///
     /// Also returns the `JoinHandle` of the spawned thread.
     pub fn spawn() -> Self {
+        trace!(target: "fork::multi", "spawning multifork");
+
         let (fork, mut handler) = Self::new();
         // spawn a light-weight thread with a thread-local async runtime just for
         // sending and receiving data from the remote client(s)

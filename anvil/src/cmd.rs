@@ -1,8 +1,6 @@
 use crate::{
-    config::{Hardfork, DEFAULT_MNEMONIC},
-    eth::pool::transactions::TransactionOrder,
-    genesis::Genesis,
-    AccountGenerator, NodeConfig, CHAIN_ID,
+    config::DEFAULT_MNEMONIC, eth::pool::transactions::TransactionOrder, genesis::Genesis,
+    AccountGenerator, Hardfork, NodeConfig, CHAIN_ID,
 };
 use anvil_server::ServerConfig;
 use clap::Parser;
@@ -150,6 +148,8 @@ impl NodeArgs {
             )
             .fork_request_timeout(self.evm_opts.fork_request_timeout.map(Duration::from_millis))
             .fork_request_retries(self.evm_opts.fork_request_retries)
+            .fork_retry_backoff(self.evm_opts.fork_retry_backoff.map(Duration::from_millis))
+            .fork_compute_units_per_second(self.evm_opts.compute_units_per_second)
             .with_eth_rpc_url(self.evm_opts.fork_url.map(|fork| fork.url))
             .with_base_fee(self.evm_opts.block_base_fee_per_gas)
             .with_storage_caching(self.evm_opts.no_storage_caching)
@@ -160,6 +160,7 @@ impl NodeArgs {
             .with_chain_id(self.evm_opts.chain_id)
             .with_transaction_order(self.order)
             .with_genesis(self.init)
+            .with_steps_tracing(self.evm_opts.steps_tracing)
     }
 
     fn account_generator(&self) -> AccountGenerator {
@@ -267,6 +268,21 @@ pub struct AnvilEvmArgs {
     #[clap(long, requires = "fork-url", value_name = "BACKOFF", help_heading = "FORK CONFIG")]
     pub fork_retry_backoff: Option<u64>,
 
+    /// Sets the number of assumed available compute units per second for this provider
+    ///
+    /// default value: 330
+    ///
+    /// See --fork-url.
+    /// See also, https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups
+    #[clap(
+        long,
+        requires = "fork-url",
+        alias = "cups",
+        value_name = "CUPS",
+        help_heading = "FORK CONFIG"
+    )]
+    pub compute_units_per_second: Option<u64>,
+
     /// Explicitly disables the use of RPC caching.
     ///
     /// All storage slots are read entirely from the endpoint.
@@ -297,6 +313,9 @@ pub struct AnvilEvmArgs {
     /// The chain ID.
     #[clap(long, alias = "chain", value_name = "CHAIN_ID", help_heading = "ENVIRONMENT CONFIG")]
     pub chain_id: Option<Chain>,
+
+    #[clap(long, help = "Enable steps tracing used for debug calls returning geth-style traces")]
+    pub steps_tracing: bool,
 }
 
 /// Represents the input URL for a fork with an optional trailing block number:

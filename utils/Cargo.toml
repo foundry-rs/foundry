@@ -8,6 +8,7 @@ repository = "https://github.com/foundry-rs/foundry"
 
 [dependencies]
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-contract = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["abigen"] }
 ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-providers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }

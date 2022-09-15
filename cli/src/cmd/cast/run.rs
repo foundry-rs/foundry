@@ -24,6 +24,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     str::FromStr,
 };
+use tracing::trace;
 use ui::{TUIExitReason, Tui, Ui};
 use yansi::Paint;
 
@@ -53,6 +54,11 @@ pub struct RunArgs {
 
 impl Cmd for RunArgs {
     type Output = ();
+    /// Executes the transaction by replaying it
+    ///
+    /// This replays the entire block the transaction was mined in unless `quick` is set to true
+    ///
+    /// Note: This executes the transaction(s) as is: Cheatcodes are disabled
     fn run(self) -> eyre::Result<Self::Output> {
         RuntimeOrHandle::new().block_on(self.run_tx())
     }
@@ -85,6 +91,8 @@ impl RunArgs {
             let env = evm_opts.evm_env().await;
             let db = Backend::spawn(evm_opts.get_fork(&config, env.clone()));
 
+            // configures a bare version of the evm executor: no cheatcode inspector is enabled,
+            // tracing will be enabled only for the targeted transaction
             let builder = ExecutorBuilder::default()
                 .with_config(env)
                 .with_spec(crate::utils::evm_spec(&config.evm_version));
@@ -115,13 +123,14 @@ impl RunArgs {
                         if tx.hash().eq(&tx_hash) {
                             break
                         }
-                        // executor.set_gas_limit(past_tx.gas);
+
                         configure_tx_env(&mut env, &tx);
 
                         if let Some(to) = tx.to {
-                            env.tx.transact_to = TransactTo::Call(to);
+                            trace!(tx=?tx.hash,?to, "executing previous call transaction");
                             executor.commit_tx_with_env(env.clone()).unwrap();
                         } else {
+                            trace!(tx=?tx.hash, "executing previous create transaction");
                             executor.deploy_with_env(env.clone(), None).unwrap();
                         }
 
@@ -137,7 +146,7 @@ impl RunArgs {
                 configure_tx_env(&mut env, &tx);
 
                 if let Some(to) = tx.to {
-                    env.tx.transact_to = TransactTo::Call(to);
+                    trace!(tx=?tx.hash,to=?to, "executing call transaction");
                     let RawCallResult {
                         reverted,
                         gas_used: gas,
@@ -154,6 +163,7 @@ impl RunArgs {
                         gas_used: gas,
                     }
                 } else {
+                    trace!(tx=?tx.hash, "executing create transaction");
                     let DeployResult { gas_used, traces, debug: run_debug, .. }: DeployResult =
                         executor.deploy_with_env(env, None).unwrap();
 
@@ -220,6 +230,7 @@ fn configure_tx_env(env: &mut forge::revm::Env, tx: &Transaction) {
         .collect();
     env.tx.value = tx.value;
     env.tx.data = tx.input.0.clone();
+    env.tx.transact_to = tx.to.map(TransactTo::Call).unwrap_or_else(TransactTo::create)
 }
 
 fn run_debugger(result: RunResult, decoder: CallTraceDecoder) -> eyre::Result<()> {

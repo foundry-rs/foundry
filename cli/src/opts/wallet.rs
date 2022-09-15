@@ -1,4 +1,4 @@
-use std::{str::FromStr, sync::Arc};
+use std::{path::Path, str::FromStr, sync::Arc};
 
 use clap::Parser;
 use ethers::{
@@ -81,15 +81,34 @@ pub struct Wallet {
     pub private_key: Option<String>,
 
     #[clap(
-        long = "mnemonic-path",
+        long = "mnemonic",
+        alias = "mnemonic-path",
         help_heading = "WALLET OPTIONS - RAW",
-        help = "Use the mnemonic file at the specified path.",
+        help = "Use the mnemonic phrase of mnemonic file at the specified path.",
         value_name = "PATH"
     )]
-    pub mnemonic_path: Option<String>,
+    pub mnemonic: Option<String>,
+
+    #[clap(
+        long = "mnemonic-passphrase",
+        help_heading = "WALLET OPTIONS - RAW",
+        help = "Use a BIP39 passphrase for the mnemonic.",
+        value_name = "PASSPHRASE"
+    )]
+    pub mnemonic_passphrase: Option<String>,
+
+    #[clap(
+        long = "mnemonic-derivation-path",
+        alias = "hd-path",
+        help_heading = "WALLET OPTIONS - RAW",
+        help = "The wallet derivation path. Works with both --mnemonic-path and hardware wallets.",
+        value_name = "PATH"
+    )]
+    pub hd_path: Option<String>,
 
     #[clap(
         long = "mnemonic-index",
+        conflicts_with = "hd-path",
         help_heading = "WALLET OPTIONS - RAW",
         help = "Use the private key from the given mnemonic index. Used with --mnemonic-path.",
         default_value = "0",
@@ -132,14 +151,6 @@ pub struct Wallet {
     pub trezor: bool,
 
     #[clap(
-        long = "hd-path",
-        help_heading = "WALLET OPTIONS - HARDWARE WALLET",
-        help = "The derivation path to use with hardware wallets.",
-        value_name = "PATH"
-    )]
-    pub hd_path: Option<String>,
-
-    #[clap(
         env = "ETH_FROM",
         short,
         long = "from",
@@ -168,8 +179,13 @@ impl Wallet {
     }
 
     pub fn mnemonic(&self) -> Result<Option<LocalWallet>> {
-        Ok(if let Some(ref path) = self.mnemonic_path {
-            Some(self.get_from_mnemonic(path, self.mnemonic_index)?)
+        Ok(if let Some(ref mnemonic) = self.mnemonic {
+            Some(self.get_from_mnemonic(
+                mnemonic,
+                self.mnemonic_passphrase.as_ref(),
+                self.hd_path.as_ref(),
+                self.mnemonic_index,
+            )?)
         } else {
             None
         })
@@ -180,8 +196,7 @@ impl WalletTrait for Wallet {}
 
 pub trait WalletTrait {
     fn get_from_interactive(&self) -> Result<LocalWallet> {
-        println!("Insert private key:");
-        let private_key = rpassword::read_password()?;
+        let private_key = rpassword::prompt_password("Enter private key: ")?;
         let private_key = private_key.strip_prefix("0x").unwrap_or(&private_key);
         Ok(LocalWallet::from_str(private_key)?)
     }
@@ -192,9 +207,30 @@ pub trait WalletTrait {
             .map_err(|x| eyre!("Failed to create wallet from private key: {x}"))
     }
 
-    fn get_from_mnemonic(&self, path: &str, index: u32) -> Result<LocalWallet> {
-        let mnemonic = fs::read_to_string(path)?.replace('\n', "");
-        Ok(MnemonicBuilder::<English>::default().phrase(mnemonic.as_str()).index(index)?.build()?)
+    fn get_from_mnemonic(
+        &self,
+        mnemonic: &String,
+        passphrase: Option<&String>,
+        derivation_path: Option<&String>,
+        index: u32,
+    ) -> Result<LocalWallet> {
+        let mnemonic = if Path::new(mnemonic).is_file() {
+            fs::read_to_string(mnemonic)?.replace('\n', "")
+        } else {
+            mnemonic.to_owned()
+        };
+        let builder = MnemonicBuilder::<English>::default().phrase(mnemonic.as_str());
+        let builder = if let Some(passphrase) = passphrase {
+            builder.password(passphrase.as_str())
+        } else {
+            builder
+        };
+        let builder = if let Some(hd_path) = derivation_path {
+            builder.derivation_path(hd_path.as_str())?
+        } else {
+            builder.index(index)?
+        };
+        Ok(builder.build()?)
     }
 
     fn get_from_keystore(
@@ -205,8 +241,7 @@ pub trait WalletTrait {
         Ok(match (keystore_path, keystore_password) {
             (Some(path), Some(password)) => Some(LocalWallet::decrypt_keystore(path, password)?),
             (Some(path), None) => {
-                println!("Insert keystore password:");
-                let password = rpassword::read_password().unwrap();
+                let password = rpassword::prompt_password("Enter keystore password:")?;
                 Some(LocalWallet::decrypt_keystore(path, password)?)
             }
             (None, _) => None,
@@ -226,7 +261,8 @@ mod tests {
             private_key: Some("123".to_string()),
             keystore_path: None,
             keystore_password: None,
-            mnemonic_path: None,
+            mnemonic: None,
+            mnemonic_passphrase: None,
             ledger: false,
             trezor: false,
             hd_path: None,

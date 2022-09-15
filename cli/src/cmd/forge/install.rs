@@ -1,11 +1,12 @@
 //! Install command
 use crate::{
     cmd::{Cmd, LoadConfig},
-    opts::forge::Dependency,
+    opts::Dependency,
     utils::{p_println, CommandUtils},
 };
 use atty::{self, Stream};
 use clap::{Parser, ValueHint};
+use ethers::solc::Project;
 use foundry_common::fs;
 use foundry_config::{impl_figment_convert_basic, Config};
 use once_cell::sync::Lazy;
@@ -78,7 +79,38 @@ pub struct DependencyInstallOpts {
     pub quiet: bool,
 }
 
+/// Auto installs missing dependencies
+///
+/// Note: Since the install-process requires `git` this is only executed if an existing installation
+/// of `git` could be found
+///
+/// See also [`install`]
+///
+/// Returns whether missing dependencies where installed
+pub fn install_missing_dependencies(config: &mut Config, project: &Project, quiet: bool) -> bool {
+    // try to auto install missing submodules in the default install dir but only if git is
+    // installed
+    if which::which("git").is_ok() &&
+        has_missing_dependencies(project.root(), &config.install_lib_dir())
+    {
+        // The extra newline is needed, otherwise the compiler output will overwrite the
+        // message
+        p_println!(!quiet => "Missing dependencies found. Installing now...\n");
+        let opts = DependencyInstallOpts { quiet, no_commit: true, ..Default::default() };
+        if install(config, Vec::new(), opts).is_err() && !quiet {
+            eprintln!(
+                "{}",
+                Paint::yellow("Your project has missing dependencies that could not be installed.")
+            )
+        }
+        return true
+    }
+
+    false
+}
+
 /// Installs all dependencies
+#[tracing::instrument(name = "install dependencies", skip_all, fields(dependencies, opts))]
 pub(crate) fn install(
     config: &mut Config,
     dependencies: Vec<Dependency>,
@@ -90,15 +122,16 @@ pub(crate) fn install(
     let libs = root.join(&install_lib_dir);
 
     if dependencies.is_empty() {
-        Command::new("git")
-            .args(&[
-                "submodule",
-                "update",
-                "--init",
-                "--recursive",
-                libs.display().to_string().as_str(),
-            ])
-            .exec()?;
+        let mut cmd = Command::new("git");
+        cmd.args([
+            "submodule",
+            "update",
+            "--init",
+            "--recursive",
+            libs.display().to_string().as_str(),
+        ]);
+        trace!(?cmd, "updating submodules");
+        cmd.exec()?;
     }
     fs::create_dir_all(&libs)?;
 
@@ -108,7 +141,7 @@ pub(crate) fn install(
         }
         let target_dir = if let Some(alias) = &dep.alias { alias } else { &dep.name };
         let DependencyInstallOpts { no_git, no_commit, quiet } = opts;
-        p_println!(!quiet => "Installing {} in {:?} (url: {:?}, tag: {:?})", dep.name, &libs.join(&target_dir), dep.url, dep.tag);
+        p_println!(!quiet => "Installing {} in {:?} (url: {:?}, tag: {:?})", dep.name, &libs.join(target_dir), dep.url, dep.tag);
         if no_git {
             install_as_folder(&dep, &libs, target_dir)?;
         } else {
@@ -120,15 +153,16 @@ pub(crate) fn install(
             // Pin branch to submodule if branch is used
             if let Some(branch) = tag {
                 if !(branch.is_empty()) {
-                    Command::new("git")
-                        .args(&[
-                            "submodule",
-                            "set-branch",
-                            "-b",
-                            &branch,
-                            install_lib_dir.join(&target_dir).to_str().unwrap(),
-                        ])
-                        .exec()?;
+                    let mut cmd = Command::new("git");
+                    cmd.args([
+                        "submodule",
+                        "set-branch",
+                        "-b",
+                        &branch,
+                        install_lib_dir.join(target_dir).to_str().unwrap(),
+                    ]);
+                    trace!(?cmd, "submodule set branch");
+                    cmd.exec()?;
                 }
             }
         }
@@ -150,7 +184,7 @@ pub(crate) fn install(
 /// line starts with `-` then it has not been initialized yet.
 pub fn has_missing_dependencies(root: impl AsRef<Path>, lib_dir: impl AsRef<Path>) -> bool {
     Command::new("git")
-        .args(&["submodule", "status"])
+        .args(["submodule", "status"])
         .arg(lib_dir.as_ref())
         .current_dir(root)
         .output()
@@ -169,7 +203,7 @@ fn install_as_folder(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::R
     git_checkout(dep, libs, target_dir, false)?;
 
     // remove git artifacts
-    fs::remove_dir_all(libs.join(&target_dir).join(".git"))?;
+    fs::remove_dir_all(libs.join(target_dir).join(".git"))?;
 
     Ok(())
 }
@@ -190,7 +224,7 @@ fn install_as_submodule(
     } else {
         let tag = git_checkout(dep, libs, target_dir, true)?;
         if !no_commit {
-            Command::new("git").args(&["add", &libs.display().to_string()]).exec()?;
+            Command::new("git").args(["add", &libs.display().to_string()]).exec()?;
         }
         Some(tag)
     };
@@ -203,7 +237,7 @@ fn install_as_submodule(
             format!("forge install: {target_dir}")
         };
 
-        Command::new("git").args(&["commit", "-m", &message]).current_dir(&libs).exec()?;
+        Command::new("git").args(["commit", "-m", &message]).current_dir(libs).exec()?;
     }
 
     Ok(tag)
@@ -219,7 +253,7 @@ pub fn ensure_git_status_clean(root: impl AsRef<Path>) -> eyre::Result<()> {
 // check that there are no modification in git working/staging area
 fn git_status_clean(root: impl AsRef<Path>) -> eyre::Result<bool> {
     let stdout =
-        Command::new("git").args(&["status", "--short"]).current_dir(root).get_stdout_lossy()?;
+        Command::new("git").args(["status", "--short"]).current_dir(root).get_stdout_lossy()?;
     Ok(stdout.is_empty())
 }
 
@@ -227,8 +261,8 @@ fn git_clone(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Result<()
     let url = dep.url.as_ref().unwrap();
 
     let output = Command::new("git")
-        .args(&["clone", "--recursive", url, target_dir])
-        .current_dir(&libs)
+        .args(["clone", "--recursive", url, target_dir])
+        .current_dir(libs)
         .output()?;
     let stderr = String::from_utf8_lossy(&output.stderr);
     if stderr.contains("remote: Repository not found") {
@@ -250,8 +284,8 @@ fn git_submodule(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Resul
     trace!("installing git submodule {:?} in {} from `{}`", dep, target_dir, url);
 
     let output = Command::new("git")
-        .args(&["submodule", "add", "--force", url, target_dir])
-        .current_dir(&libs)
+        .args(["submodule", "add", "--force", url, target_dir])
+        .current_dir(libs)
         .output()?;
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -277,8 +311,8 @@ fn git_submodule(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Resul
     trace!(?dep, "successfully installed");
 
     let output = Command::new("git")
-        .args(&["submodule", "update", "--init", "--recursive", target_dir])
-        .current_dir(&libs)
+        .args(["submodule", "update", "--init", "--recursive", target_dir])
+        .current_dir(libs)
         .output()?;
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -319,7 +353,7 @@ fn git_checkout(
             vec!["checkout", tag]
         };
         trace!(?tag, ?recurse, "git checkout");
-        Command::new("git").args(args).current_dir(&libs.join(&target_dir)).output()
+        Command::new("git").args(args).current_dir(&libs.join(target_dir)).output()
     };
 
     let output = checkout(&tag)?;
@@ -329,7 +363,7 @@ fn git_checkout(
 
     if !&output.status.success() {
         // remove dependency on failed checkout
-        fs::remove_dir_all(libs.join(&target_dir))?;
+        fs::remove_dir_all(libs.join(target_dir))?;
 
         if stderr.contains(
             format!("error: pathspec '{tag}' did not match any file(s) known to git").as_str(),
@@ -358,10 +392,8 @@ fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String
     // the user-provided tag (ignoring the starting 'v'), for example, if the user specifies 1.5,
     // then v1.5.2 is a valid candidate, but v3.1.5 is not
     let trimmed_tag = tag.trim_start_matches('v').to_string();
-    let output = Command::new("git")
-        .args(&["tag"])
-        .current_dir(&libs.join(&target_dir))
-        .get_stdout_lossy()?;
+    let output =
+        Command::new("git").args(["tag"]).current_dir(&libs.join(target_dir)).get_stdout_lossy()?;
     let mut candidates: Vec<String> = output
         .trim()
         .split('\n')
@@ -434,8 +466,8 @@ fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String
 fn match_branch(tag: &str, libs: &Path, target_dir: &str) -> eyre::Result<Option<String>> {
     // fetch remote branches and check for tag
     let output = Command::new("git")
-        .args(&["branch", "-r"])
-        .current_dir(&libs.join(&target_dir))
+        .args(["branch", "-r"])
+        .current_dir(&libs.join(target_dir))
         .get_stdout_lossy()?;
 
     let mut candidates = output

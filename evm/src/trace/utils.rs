@@ -1,7 +1,10 @@
 //! utilities used within tracing
 
 use crate::decode;
-use ethers::abi::{Abi, Address, Function, Token};
+use ethers::{
+    abi::{Abi, Address, Function, Token},
+    core::utils::to_checksum,
+};
 use foundry_utils::format_token;
 use std::collections::HashMap;
 
@@ -13,7 +16,7 @@ pub fn label(token: &Token, labels: &HashMap<Address, String>) -> String {
     match token {
         Token::Address(addr) => {
             if let Some(label) = labels.get(addr) {
-                format!("{}: [{:?}]", label, addr)
+                format!("{}: [{}]", label, to_checksum(addr, None))
             } else {
                 format_token(token)
             }

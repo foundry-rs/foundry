@@ -106,6 +106,7 @@ pub fn find_anchor_branch(
     // is the gas cost.
     let opcode_infos = spec_opcode_gas(SpecId::LATEST);
 
+    let mut anchors: Option<(ItemAnchor, ItemAnchor)> = None;
     let mut pc = 0;
     let mut cumulative_push_size = 0;
     while pc < bytecode.0.len() {
@@ -145,20 +146,20 @@ pub fn find_anchor_branch(
                     pc_bytes[8 - push_size + i] = *push_byte;
                 }
 
-                return Ok((
+                anchors = Some((
                     ItemAnchor {
                         item_id,
                         // The first branch is the opcode directly after JUMPI
                         instruction: pc + 2,
                     },
                     ItemAnchor { item_id, instruction: usize::from_be_bytes(pc_bytes) },
-                ))
+                ));
             }
         }
         pc += 1;
     }
 
-    eyre::bail!("Could not detect branches in source: {}", loc)
+    anchors.ok_or_else(|| eyre::eyre!("Could not detect branches in source: {}", loc))
 }
 
 /// Calculates whether `element` is within the range of the target `location`.

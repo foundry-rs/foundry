@@ -1,13 +1,13 @@
 use super::{
     multi::MultiChainSequence,
-    providers::ProviderInfo,
-    sequence::{ScriptSequence, TransactionWithMetadata},
+    providers::{ProviderInfo, ProvidersManager},
+    sequence::ScriptSequence,
     *,
 };
 use crate::{
     cmd::{
         forge::script::{
-            providers::ProvidersManager, receipts::wait_for_receipts, verify::VerifyBundle,
+            receipts::wait_for_receipts, transaction::TransactionWithMetadata, verify::VerifyBundle,
         },
         has_batch_support, has_different_gas_calc,
     },
@@ -37,10 +37,11 @@ impl ScriptArgs {
     pub async fn send_transactions(
         &self,
         deployment_sequence: &mut ScriptSequence,
+        fork_url: &str,
+        script_wallets: Vec<LocalWallet>,
     ) -> eyre::Result<()> {
         // TODO(joshie)
-        let fork_url = deployment_sequence.typed_transactions().first().unwrap().0.clone();
-        let provider = Arc::new(get_http_provider(&fork_url));
+        let provider = Arc::new(get_http_provider(fork_url));
         let already_broadcasted = deployment_sequence.receipts.len();
 
         if already_broadcasted < deployment_sequence.transactions.len() {
@@ -51,7 +52,8 @@ impl ScriptArgs {
                 .map(|(_, tx)| *tx.from().expect("No sender for onchain transaction!"))
                 .collect();
 
-            let local_wallets = self.wallets.find_all(provider.clone(), required_addresses).await?;
+            let local_wallets =
+                self.wallets.find_all(provider.clone(), required_addresses, script_wallets).await?;
             let chain = local_wallets.values().last().wrap_err("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")?.chain_id();
 
             // We only wait for a transaction receipt before sending the next transaction, if there
@@ -124,8 +126,7 @@ impl ScriptArgs {
                     batch_number * batch_size + min(batch_size, batch.len()) - 1
                 );
                 for (tx, signer) in batch.into_iter() {
-                    let tx_hash =
-                        self.send_transaction(tx, signer, sequential_broadcast, &fork_url);
+                    let tx_hash = self.send_transaction(tx, signer, sequential_broadcast, fork_url);
 
                     if sequential_broadcast {
                         let tx_hash = tx_hash.await?;
@@ -260,7 +261,7 @@ impl ScriptArgs {
                     if deployments.len() == 1 {
                         let deployment_sequence = deployments.first_mut().unwrap();
 
-                        deployment_sequence.add_libraries(libraries);
+                        let _returns = self.get_returns(&script_config, &result.returned)?;
 
                         if self.verify {
                             deployment_sequence
@@ -405,8 +406,9 @@ impl ScriptArgs {
 
             if self.broadcast {
                 provider_info.wallets.extend(
+                    // todo script_wallets
                     self.wallets
-                        .find_all(provider_info.provider.clone(), addresses.clone())
+                        .find_all(provider_info.provider.clone(), addresses.clone(), vec![])
                         .await?,
                 );
                 provider_info.sequential &= provider_info.wallets.len() != 1;
@@ -420,6 +422,7 @@ impl ScriptArgs {
                 target,
                 config,
                 provider_info.chain,
+                self.broadcast || self.resume, // ??
             )?;
 
             sequence.set_multi(is_multi_deployment);

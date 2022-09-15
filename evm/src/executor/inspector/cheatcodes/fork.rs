@@ -1,6 +1,7 @@
-use super::{util, Cheatcodes};
+use super::Cheatcodes;
 use crate::{
     abi::HEVMCalls,
+    error,
     executor::{backend::DatabaseExt, fork::CreateFork},
 };
 use bytes::Bytes;
@@ -61,20 +62,20 @@ pub fn apply<DB: DatabaseExt>(
             .db
             .active_fork_id()
             .map(|id| id.encode().into())
-            .ok_or_else(|| util::encode_error("No active fork")),
+            .ok_or_else(|| error::encode_error("No active fork")),
         HEVMCalls::RollFork0(fork) => {
             let block_number = fork.0;
             data.db
                 .roll_fork(None, block_number, data.env, &mut data.journaled_state)
                 .map(|_| Default::default())
-                .map_err(util::encode_error)
+                .map_err(error::encode_error)
         }
         HEVMCalls::RollFork1(fork) => {
             let block_number = fork.1;
             data.db
                 .roll_fork(Some(fork.0), block_number, data.env, &mut data.journaled_state)
                 .map(|_| Default::default())
-                .map_err(util::encode_error)
+                .map_err(error::encode_error)
         }
         HEVMCalls::RpcUrl(rpc) => state.config.get_rpc_url(&rpc.0).map(|url| url.encode().into()),
         HEVMCalls::RpcUrls(_) => {
@@ -89,6 +90,10 @@ pub fn apply<DB: DatabaseExt>(
             }
             Ok(urls.encode().into())
         }
+        HEVMCalls::AllowCheatcodes(addr) => {
+            data.db.allow_cheatcode_access(addr.0);
+            Ok(Default::default())
+        }
         _ => return None,
     };
 
@@ -102,13 +107,15 @@ fn select_fork<DB: DatabaseExt>(
     fork_id: U256,
 ) -> Result<Bytes, Bytes> {
     if state.broadcast.is_some() {
-        return Err(util::encode_error("You need to stop broadcasting before you can select forks."))
+        return Err(error::encode_error(
+            "You need to stop broadcasting before you can select forks.",
+        ))
     }
 
     data.db
         .select_fork(fork_id, data.env, &mut data.journaled_state)
         .map(|_| Default::default())
-        .map_err(util::encode_error)
+        .map_err(error::encode_error)
 }
 
 /// Creates and then also selects the new fork
@@ -119,13 +126,15 @@ fn create_select_fork<DB: DatabaseExt>(
     block: Option<u64>,
 ) -> Result<U256, Bytes> {
     if state.broadcast.is_some() {
-        return Err(util::encode_error("You need to stop broadcasting before you can select forks."))
+        return Err(error::encode_error(
+            "You need to stop broadcasting before you can select forks.",
+        ))
     }
 
     let fork = create_fork_request(state, url_or_alias, block, data)?;
     data.db
         .create_select_fork(fork, data.env, &mut data.journaled_state)
-        .map_err(util::encode_error)
+        .map_err(error::encode_error)
 }
 
 /// Creates a new fork
@@ -136,7 +145,7 @@ fn create_fork<DB: DatabaseExt>(
     block: Option<u64>,
 ) -> Result<U256, Bytes> {
     let fork = create_fork_request(state, url_or_alias, block, data)?;
-    data.db.create_fork(fork, &data.journaled_state).map_err(util::encode_error)
+    data.db.create_fork(fork, &data.journaled_state).map_err(error::encode_error)
 }
 
 /// Creates the request object for a new fork request

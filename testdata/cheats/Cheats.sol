@@ -30,6 +30,8 @@ interface Cheats {
     function deriveKey(string calldata, uint32) external returns (uint256);
     // Derive a private key from a provided mnemonic string (or mnemonic file path) at the derivation path {path}{index}
     function deriveKey(string calldata, string calldata, uint32) external returns (uint256);
+    // Adds a private key to the local forge wallet and returns the address
+    function rememberKey(uint256) external returns (address);
     // Performs a foreign function call via terminal, (stringInputs) => (result)
     function ffi(string[] calldata) external returns (bytes memory);
     // Set environment variables, (name, value)
@@ -113,10 +115,14 @@ interface Cheats {
     function broadcast() external;
     // Has the next call (at this call depth only) create a transaction with the address provided as the sender that can later be signed and sent onchain
     function broadcast(address) external;
+    // Has the next call (at this call depth only) create a transaction with the private key provided as the sender that can later be signed and sent onchain
+    function broadcast(uint256) external;
     // Using the address that calls the test contract, has the all subsequent calls (at this call depth only) create transactions that can later be signed and sent onchain
     function startBroadcast() external;
-    // Has the all subsequent calls (at this call depth only) create transactions that can later be signed and sent onchain
+    // Has all subsequent calls (at this call depth only) create transactions with the address provided that can later be signed and sent onchain
     function startBroadcast(address) external;
+    // Has all subsequent calls (at this call depth only) create transactions with the private key provided that can later be signed and sent onchain
+    function startBroadcast(uint256) external;
     // Stops collecting onchain transactions
     function stopBroadcast() external;
     // Reads the entire content of file to string. Path is relative to the project root. (path) => (data)
@@ -150,8 +156,8 @@ interface Cheats {
 
     function parseBytes(string memory) external returns (bytes memory);
     function parseAddress(string memory) external returns (address);
-    function parseUint256(string memory) external returns (uint256);
-    function parseInt256(string memory) external returns (int256);
+    function parseUint(string memory) external returns (uint256);
+    function parseInt(string memory) external returns (int256);
     function parseBytes32(string memory) external returns (bytes32);
     function parseBool(string memory) external returns (bool);
 

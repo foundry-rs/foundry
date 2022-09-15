@@ -43,6 +43,7 @@ ethers::contract::abigen!(
             sign(uint256,bytes32)(uint8,bytes32,bytes32)
             deriveKey(string,uint32)(uint256)
             deriveKey(string,string,uint32)(uint256)
+            rememberKey(uint256)(address)
             prank(address)
             startPrank(address)
             prank(address,address)
@@ -72,8 +73,10 @@ ethers::contract::abigen!(
             chainId(uint256)
             broadcast()
             broadcast(address)
+            broadcast(uint256)
             startBroadcast()
             startBroadcast(address)
+            startBroadcast(uint256)
             stopBroadcast()
             projectRoot()(string)
             readFile(string)(string)
@@ -91,8 +94,8 @@ ethers::contract::abigen!(
             toString(bool)
             parseBytes(string)(bytes)
             parseAddress(string)(address)
-            parseUint256(string)(uint256)
-            parseInt256(string)(int256)
+            parseUint(string)(uint256)
+            parseInt(string)(int256)
             parseBytes32(string)(bytes32)
             parseBool(string)(bool)
             snapshot()(uint256)
@@ -116,6 +119,7 @@ ethers::contract::abigen!(
             rpcUrls()(string[2][])
             parseJson(string, string)(bytes)
             parseJson(string)(bytes)
+            allowCheatcodes(address)
     ]"#,
 );
 pub use hevm::{HEVMCalls, HEVM_ABI};

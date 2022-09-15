@@ -183,7 +183,7 @@ impl ProjectCompiler {
                 for (_, contracts) in compiled_contracts.into_iter() {
                     for (name, contract) in contracts {
                         let size = contract
-                            .get_bytecode_bytes()
+                            .get_deployed_bytecode_bytes()
                             .map(|bytes| bytes.0.len())
                             .unwrap_or_default();
 
@@ -204,7 +204,7 @@ impl ProjectCompiler {
                 println!("{size_report}");
 
                 // exit with error if any contract exceeds the size limit, excluding test contracts.
-                let exit_status = if size_report.exceeds_size_limit() { 1 } else { 0 };
+                let exit_status = size_report.exceeds_size_limit().into();
                 std::process::exit(exit_status);
             }
         }

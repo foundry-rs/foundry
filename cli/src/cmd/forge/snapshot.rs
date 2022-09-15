@@ -4,9 +4,9 @@ use crate::{
         forge::{
             build::CoreBuildArgs,
             test,
-            test::{custom_run, Test, TestOutcome},
+            test::{Test, TestOutcome},
         },
-        Cmd,
+        u32_validator, Cmd,
     },
     utils::STATIC_FUZZ_SEED,
 };
@@ -31,7 +31,7 @@ use yansi::Paint;
 /// A regex that matches a basic snapshot entry like
 /// `Test:testDeposit() (gas: 58804)`
 pub static RE_BASIC_SNAPSHOT_ENTRY: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?P<file>(.*?)):(?P<sig>(\w+)\s*\((.*?)\))\s*\(((gas:)?\s*(?P<gas>\d+)|(runs:\s*(?P<runs>\d+),\s*μ:\s*(?P<avg>\d+),\s*~:\s*(?P<med>\d+)))\)").unwrap()
+    Regex::new(r"(?P<file>(.*?)):(?P<sig>(\w+)\s*\((.*?)\))\s*\(((gas:)?\s*(?P<gas>\d+)|(runs:\s*(?P<runs>\d+),\s*μ:\s*(?P<avg>\d+),\s*~:\s*(?P<med>\d+))|(runs:\s*(?P<invruns>\d+),\s*calls:\s*(?P<calls>\d+),\s*reverts:\s*(?P<reverts>\d+)))\)").unwrap()
 });
 
 #[derive(Debug, Clone, Parser)]
@@ -46,7 +46,7 @@ pub struct SnapshotArgs {
 
     /// Output a diff against a pre-existing snapshot.
     ///
-    /// By default the comparison is done with .gas-snapshot.
+    /// By default, the comparison is done with .gas-snapshot.
     #[clap(
         conflicts_with = "snap",
         long,
@@ -59,7 +59,7 @@ pub struct SnapshotArgs {
     ///
     /// Outputs a diff if the snapshots do not match.
     ///
-    /// By default the comparison is done with .gas-snapshot.
+    /// By default, the comparison is done with .gas-snapshot.
     #[clap(
         conflicts_with = "diff",
         long,
@@ -79,6 +79,14 @@ pub struct SnapshotArgs {
         value_name = "SNAPSHOT_FILE"
     )]
     snap: PathBuf,
+
+    #[clap(
+        help = "Tolerates gas deviations up to the specified percentage.",
+        long,
+        validator = u32_validator(0, 100),
+        value_name = "SNAPSHOT_THRESHOLD"
+    )]
+    tolerance: Option<u32>,
 }
 
 impl SnapshotArgs {
@@ -106,7 +114,7 @@ impl Cmd for SnapshotArgs {
         // Set fuzz seed so gas snapshots are deterministic
         self.test.fuzz_seed = Some(U256::from_big_endian(&STATIC_FUZZ_SEED));
 
-        let outcome = custom_run(self.test)?;
+        let outcome = self.test.execute_tests()?;
         outcome.ensure_ok()?;
         let tests = self.config.apply(outcome);
 
@@ -117,7 +125,7 @@ impl Cmd for SnapshotArgs {
         } else if let Some(path) = self.check {
             let snap = path.as_ref().unwrap_or(&self.snap);
             let snaps = read_snapshot(snap)?;
-            if check(tests, snaps) {
+            if check(tests, snaps, self.tolerance) {
                 std::process::exit(0)
             } else {
                 std::process::exit(1)
@@ -200,7 +208,10 @@ impl SnapshotConfig {
 
 /// A general entry in a snapshot file
 ///
-/// Has the form `<signature>(gas:? 40181)`
+/// Has the form:
+///   `<signature>(gas:? 40181)` for normal tests
+///   `<signature>(runs: 256, μ: 40181, ~: 40181)` for fuzz tests
+///   `<signature>(runs: 256, calls: 40181, reverts: 40181)` for invariant tests
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct SnapshotEntry {
     pub contract_name: String,
@@ -225,12 +236,9 @@ impl FromStr for SnapshotEntry {
                                     gas: gas.as_str().parse().unwrap(),
                                 },
                             })
-                        } else {
-                            cap.name("runs")
-                                .and_then(|runs| {
-                                    cap.name("avg")
-                                        .and_then(|avg| cap.name("med").map(|med| (runs, avg, med)))
-                                })
+                        } else if let Some(runs) = cap.name("runs") {
+                            cap.name("avg")
+                                .and_then(|avg| cap.name("med").map(|med| (runs, avg, med)))
                                 .map(|(runs, avg, med)| SnapshotEntry {
                                     contract_name: file.as_str().to_string(),
                                     signature: sig.as_str().to_string(),
@@ -238,6 +246,22 @@ impl FromStr for SnapshotEntry {
                                         runs: runs.as_str().parse().unwrap(),
                                         median_gas: med.as_str().parse().unwrap(),
                                         mean_gas: avg.as_str().parse().unwrap(),
+                                    },
+                                })
+                        } else {
+                            cap.name("invruns")
+                                .and_then(|runs| {
+                                    cap.name("calls").and_then(|avg| {
+                                        cap.name("reverts").map(|med| (runs, avg, med))
+                                    })
+                                })
+                                .map(|(runs, calls, reverts)| SnapshotEntry {
+                                    contract_name: file.as_str().to_string(),
+                                    signature: sig.as_str().to_string(),
+                                    gas_used: TestKindReport::Invariant {
+                                        runs: runs.as_str().parse().unwrap(),
+                                        calls: calls.as_str().parse().unwrap(),
+                                        reverts: reverts.as_str().parse().unwrap(),
                                     },
                                 })
                         }
@@ -302,7 +326,7 @@ impl SnapshotDiff {
 /// Compares the set of tests with an existing snapshot
 ///
 /// Returns true all tests match
-fn check(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> bool {
+fn check(tests: Vec<Test>, snaps: Vec<SnapshotEntry>, tolerance: Option<u32>) -> bool {
     let snaps = snaps
         .into_iter()
         .map(|s| ((s.contract_name, s.signature), s.gas_used))
@@ -313,7 +337,7 @@ fn check(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> bool {
             snaps.get(&(test.contract_name().to_string(), test.signature.clone())).cloned()
         {
             let source_gas = test.result.kind.report();
-            if source_gas.gas() != target_gas.gas() {
+            if !within_tolerance(source_gas.gas(), target_gas.gas(), tolerance) {
                 eprintln!(
                     "Diff in \"{}::{}\": consumed \"{}\" gas, expected \"{}\" gas ",
                     test.contract_name(),
@@ -408,9 +432,35 @@ fn fmt_change(change: i128) -> String {
     }
 }
 
+/// Returns true of the difference between the gas values exceeds the tolerance
+///
+/// If `tolerance` is `None`, then this returns `true` if both gas values are equal
+fn within_tolerance(source_gas: u64, target_gas: u64, tolerance_pct: Option<u32>) -> bool {
+    if let Some(tolerance) = tolerance_pct {
+        let (hi, lo) = if source_gas > target_gas {
+            (source_gas, target_gas)
+        } else {
+            (target_gas, source_gas)
+        };
+        let diff = (1. - (lo as f64 / hi as f64)) * 100.;
+        diff < tolerance as f64
+    } else {
+        source_gas == target_gas
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_tolerance() {
+        assert!(within_tolerance(100, 105, Some(5)));
+        assert!(within_tolerance(105, 100, Some(5)));
+        assert!(!within_tolerance(100, 106, Some(5)));
+        assert!(!within_tolerance(106, 100, Some(5)));
+        assert!(within_tolerance(100, 100, None));
+    }
 
     #[test]
     fn can_parse_basic_snapshot_entry() {
@@ -436,6 +486,34 @@ mod tests {
                 contract_name: "Test".to_string(),
                 signature: "deposit()".to_string(),
                 gas_used: TestKindReport::Fuzz { runs: 256, median_gas: 200, mean_gas: 100 }
+            }
+        );
+    }
+
+    #[test]
+    fn can_parse_invariant_snapshot_entry() {
+        let s = "Test:deposit() (runs: 256, calls: 100, reverts: 200)";
+        let entry = SnapshotEntry::from_str(s).unwrap();
+        assert_eq!(
+            entry,
+            SnapshotEntry {
+                contract_name: "Test".to_string(),
+                signature: "deposit()".to_string(),
+                gas_used: TestKindReport::Invariant { runs: 256, calls: 100, reverts: 200 }
+            }
+        );
+    }
+
+    #[test]
+    fn can_parse_invariant_snapshot_entry2() {
+        let s = "ERC20Invariants:invariantBalanceSum() (runs: 256, calls: 3840, reverts: 2388)";
+        let entry = SnapshotEntry::from_str(s).unwrap();
+        assert_eq!(
+            entry,
+            SnapshotEntry {
+                contract_name: "ERC20Invariants".to_string(),
+                signature: "invariantBalanceSum()".to_string(),
+                gas_used: TestKindReport::Invariant { runs: 256, calls: 3840, reverts: 2388 }
             }
         );
     }

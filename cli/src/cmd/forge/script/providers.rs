@@ -1,4 +1,4 @@
-use super::sequence::TransactionWithMetadata;
+use super::transaction::TransactionWithMetadata;
 use crate::{cmd::has_batch_support, opts::WalletType};
 use ethers::{
     abi::Address,

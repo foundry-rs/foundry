@@ -41,7 +41,24 @@ impl ScriptArgs {
             &script_config.config,
             unwrap_contracts(&build_output.highlevel_known_contracts, false),
             self.retry.clone(),
+            self.verifier.clone(),
         );
+
+        let BuildOutput {
+            project,
+            target,
+            contract,
+            mut highlevel_known_contracts,
+            predeploy_libraries,
+            known_contracts: default_known_contracts,
+            sources,
+            mut libraries,
+        } = build_output;
+
+        // Execute once with default sender.
+        let sender = script_config.evm_opts.sender;
+        let mut result =
+            self.execute(&mut script_config, contract, sender, &predeploy_libraries).await?;
 
         if self.resume || (self.verify && !self.broadcast) {
             let fork_url = self
@@ -55,17 +72,28 @@ impl ScriptArgs {
 
             verify.set_chain(&script_config.config, chain.into());
 
-            let mut deployment_sequence = ScriptSequence::load(
+            let broadcasted = self.broadcast || self.resume;
+            let mut deployment_sequence = match ScriptSequence::load(
                 &script_config.config,
                 &self.sig,
-                &build_output.target,
+                &target,
                 chain,
-            )?;
+                broadcasted,
+            ) {
+                Ok(seq) => seq,
+                // If the script was simulated, but there was no attempt to broadcast yet,
+                // try to read the script sequence from the `dry-run/` folder
+                Err(_) if broadcasted => {
+                    ScriptSequence::load(&script_config.config, &self.sig, &target, chain, false)?
+                }
+                Err(err) => eyre::bail!(err),
+            };
 
             receipts::wait_for_pending(provider, &mut deployment_sequence).await?;
 
             if self.resume {
-                // self.send_transactions(&mut deployment_sequence).await?;
+                // self.send_transactions(&mut deployment_sequence, &fork_url,
+                // result.script_wallets)     .await?;
             }
 
             if self.verify {
@@ -73,8 +101,8 @@ impl ScriptArgs {
                 // the contracts with them, since their mapping is not included in the solc cache
                 // files.
                 let BuildOutput { highlevel_known_contracts, .. } = self.link(
-                    build_output.project,
-                    build_output.known_contracts,
+                    project,
+                    default_known_contracts,
                     Libraries::parse(&deployment_sequence.libraries)?,
                     script_config.config.sender, // irrelevant, since we're not creating any
                     U256::zero(),                // irrelevant, since we're not creating any
@@ -85,23 +113,7 @@ impl ScriptArgs {
                 deployment_sequence.verify_contracts(&script_config.config, verify).await?;
             }
         } else {
-            let BuildOutput {
-                project,
-                target,
-                contract,
-                mut highlevel_known_contracts,
-                predeploy_libraries,
-                known_contracts: default_known_contracts,
-                sources,
-                mut libraries,
-            } = build_output;
-
             let known_contracts = unwrap_contracts(&highlevel_known_contracts, true);
-
-            // Execute once with default sender.
-            let sender = script_config.evm_opts.sender;
-            let mut result =
-                self.execute(&mut script_config, contract, sender, &predeploy_libraries).await?;
 
             let mut decoder = self.decode_traces(&script_config, &mut result, &known_contracts)?;
 
@@ -159,10 +171,7 @@ impl ScriptArgs {
 
                 verify.known_contracts = unwrap_contracts(&highlevel_known_contracts, false);
 
-                self.check_contract_sizes(
-                    result.transactions.as_ref(),
-                    &highlevel_known_contracts,
-                )?;
+                self.check_contract_sizes(&result, &highlevel_known_contracts)?;
 
                 self.handle_broadcastable_transactions(
                     &target,

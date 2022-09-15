@@ -7,15 +7,20 @@ mod decoder;
 pub mod node;
 mod utils;
 
-use crate::{abi::CHEATCODE_ADDRESS, trace::identifier::LocalTraceIdentifier, CallKind};
+use crate::{
+    abi::CHEATCODE_ADDRESS, debug::Instruction, trace::identifier::LocalTraceIdentifier, CallKind,
+    H160,
+};
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 use ethers::{
-    abi::{Address, RawLog},
-    types::U256,
+    abi::{ethereum_types::BigEndianHash, Address, RawLog},
+    core::utils::to_checksum,
+    types::{GethDebugTracingOptions, GethTrace, StructLog, H256, U256},
 };
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
+use hashbrown::HashMap;
 use node::CallTraceNode;
-use revm::{CallContext, Return};
+use revm::{Account, CallContext, Memory, Return, Stack};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
@@ -24,7 +29,7 @@ use std::{
 use yansi::{Color, Paint};
 
 /// An arena of [CallTraceNode]s
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CallTraceArena {
     /// The arena of nodes
     pub arena: Vec<CallTraceNode>,
@@ -83,6 +88,37 @@ impl CallTraceArena {
                 (&node.trace.address, None)
             })
             .collect()
+    }
+
+    pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> GethTrace {
+        let mut trace = self.arena.iter().fold(GethTrace::default(), |mut acc, trace| {
+            acc.failed |= !trace.trace.success;
+            acc.gas += trace.trace.gas_cost;
+
+            acc.struct_logs.extend(trace.trace.steps.iter().map(|step| {
+                let mut log: StructLog = step.into();
+
+                if opts.disable_storage.unwrap_or_default() {
+                    log.storage = None;
+                }
+                if opts.disable_stack.unwrap_or_default() {
+                    log.stack = None;
+                }
+                if !opts.enable_memory.unwrap_or_default() {
+                    log.memory = None;
+                }
+
+                log
+            }));
+
+            acc
+        });
+
+        if let Some(last_trace) = self.arena.first() {
+            trace.return_value = last_trace.trace.output.to_raw().into();
+        }
+
+        trace
     }
 }
 
@@ -185,7 +221,7 @@ impl fmt::Display for RawOrDecodedLog {
                         f,
                         "{:>13}: {}",
                         if i == 0 { "emit topic 0".to_string() } else { format!("topic {i}") },
-                        Paint::cyan(format!("0x{}", hex::encode(&topic)))
+                        Paint::cyan(format!("0x{}", hex::encode(topic)))
                     )?;
                 }
 
@@ -279,10 +315,59 @@ impl fmt::Display for RawOrDecodedReturnData {
                 if bytes.is_empty() {
                     write!(f, "()")
                 } else {
-                    write!(f, "0x{}", hex::encode(&bytes))
+                    write!(f, "0x{}", hex::encode(bytes))
                 }
             }
             RawOrDecodedReturnData::Decoded(decoded) => write!(f, "{}", decoded.clone()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct CallTraceStep {
+    pub depth: u64,
+    /// Program counter before step execution
+    pub pc: usize,
+    /// Opcode to be executed
+    pub op: Instruction,
+    /// Stack before step execution
+    pub stack: Stack,
+    /// Memory before step execution
+    pub memory: Memory,
+    /// State before step execution
+    pub state: HashMap<H160, Account>,
+    /// Remaining gas before step execution
+    pub gas: u64,
+    /// Gas cost of step execution
+    pub gas_cost: u64,
+    /// Gas refund counter before step execution
+    pub gas_refund_counter: u64,
+    /// Error (if any) after after step execution
+    pub error: Option<String>,
+}
+
+impl From<&CallTraceStep> for StructLog {
+    fn from(step: &CallTraceStep) -> Self {
+        StructLog {
+            depth: step.depth,
+            error: step.error.clone(),
+            gas: step.gas,
+            gas_cost: step.gas_cost,
+            memory: Some(convert_memory(step.memory.data())),
+            op: step.op.to_string(),
+            pc: step.pc as u64,
+            refund_counter: Some(step.gas_refund_counter),
+            stack: Some(step.stack.data().clone()),
+            storage: Some(
+                step.state
+                    .values()
+                    .flat_map(|acc| {
+                        acc.storage.iter().map(|(key, value)| {
+                            (H256::from_uint(key), H256::from_uint(&value.present_value()))
+                        })
+                    })
+                    .collect(),
+            ),
         }
     }
 }
@@ -323,6 +408,8 @@ pub struct CallTrace {
     pub status: Return,
     /// call context of the runtime
     pub call_context: Option<CallContext>,
+    /// Opcode-level execution steps
+    pub steps: Vec<CallTraceStep>,
 }
 
 // === impl CallTrace ===
@@ -350,18 +437,18 @@ impl Default for CallTrace {
             gas_cost: Default::default(),
             status: Return::Continue,
             call_context: Default::default(),
+            steps: Default::default(),
         }
     }
 }
 
 impl fmt::Display for CallTrace {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let address =
-            if f.alternate() { format!("{:?}", self.address) } else { format!("{}", self.address) };
+        let address = to_checksum(&self.address, None);
         if self.created() {
             write!(
                 f,
-                "[{}] {}{} {}@{:?}",
+                "[{}] {}{} {}@{}",
                 self.gas_cost,
                 Paint::yellow(CALL),
                 Paint::yellow("new"),
@@ -452,5 +539,38 @@ pub fn load_contracts(
             .collect()
     } else {
         BTreeMap::new()
+    }
+}
+
+/// creates the memory data in 32byte chunks
+/// see <https://github.com/ethereum/go-ethereum/blob/366d2169fbc0e0f803b68c042b77b6b480836dbc/eth/tracers/logger/logger.go#L450-L452>
+fn convert_memory(data: &[u8]) -> Vec<String> {
+    let mut memory = Vec::with_capacity((data.len() + 31) / 32);
+    for idx in (0..data.len()).step_by(32) {
+        let len = std::cmp::min(idx + 32, data.len());
+        memory.push(hex::encode(&data[idx..len]));
+    }
+    memory
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_convert_memory() {
+        let mut data = vec![0u8; 32];
+        assert_eq!(
+            convert_memory(&data),
+            vec!["0000000000000000000000000000000000000000000000000000000000000000".to_string()]
+        );
+        data.extend(data.clone());
+        assert_eq!(
+            convert_memory(&data),
+            vec![
+                "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+                "0000000000000000000000000000000000000000000000000000000000000000".to_string()
+            ]
+        );
     }
 }

@@ -16,6 +16,7 @@ pub enum RevertDiagnostic {
     ContractDoesNotExist {
         contract: Address,
         active: LocalForkId,
+        persistent: bool,
     },
 }
 
@@ -36,9 +37,13 @@ impl RevertDiagnostic {
                     contract_label, active, available_on
                 )
             }
-            RevertDiagnostic::ContractDoesNotExist { contract, .. } => {
+            RevertDiagnostic::ContractDoesNotExist { contract, persistent, .. } => {
                 let contract_label = get_label(contract);
-                format!("Contract {} does not exist", contract_label)
+                if *persistent {
+                    format!("Contract {} does not exist", contract_label)
+                } else {
+                    format!("Contract {} does not exist and is not marked as persistent, see `vm.makePersistent()`", contract_label)
+                }
             }
         }
     }

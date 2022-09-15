@@ -1,7 +1,10 @@
 //! Verify support
 
 use crate::cmd::{
-    forge::{build::ProjectPathsArgs, verify, verify::VerifyArgs},
+    forge::{
+        build::ProjectPathsArgs,
+        verify::{VerifierArgs, VerifyArgs},
+    },
     retry::RetryArgs,
 };
 use ethers::{
@@ -21,6 +24,7 @@ pub struct VerifyBundle {
     pub chain: Chain,
     pub project_paths: ProjectPathsArgs,
     pub retry: RetryArgs,
+    pub verifier: VerifierArgs,
 }
 
 impl VerifyBundle {
@@ -29,6 +33,7 @@ impl VerifyBundle {
         config: &Config,
         known_contracts: ContractsByArtifact,
         retry: RetryArgs,
+        verifier: VerifierArgs,
     ) -> Self {
         let num_of_optimizations =
             if config.optimizer { Some(config.optimizer_runs) } else { None };
@@ -53,6 +58,7 @@ impl VerifyBundle {
             chain: Default::default(),
             project_paths,
             retry,
+            verifier,
         }
     }
 
@@ -93,11 +99,12 @@ impl VerifyBundle {
                     artifact.version.patch,
                 );
 
-                let verify = verify::VerifyArgs {
+                let verify = VerifyArgs {
                     address: contract_address,
                     contract,
                     compiler_version: Some(version.to_string()),
                     constructor_args: Some(hex::encode(&constructor_args)),
+                    constructor_args_path: None,
                     num_of_optimizations: self.num_of_optimizations,
                     chain: self.chain,
                     etherscan_key: self.etherscan_key.clone(),
@@ -107,7 +114,7 @@ impl VerifyBundle {
                     retry: self.retry.clone(),
                     libraries: libraries.to_vec(),
                     root: None,
-                    verifier: Default::default(),
+                    verifier: self.verifier.clone(),
                 };
 
                 return Some(verify)

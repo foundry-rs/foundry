@@ -1,7 +1,7 @@
 //! Various utilities to decode test results
 use crate::{
     abi::ConsoleEvents::{self, *},
-    executor::inspector::cheatcodes::util::ERROR_PREFIX,
+    error::ERROR_PREFIX,
 };
 use ethers::{
     abi::{AbiDecode, Contract as Abi, RawLog},

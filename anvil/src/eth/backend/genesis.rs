@@ -6,7 +6,7 @@ use ethers::{
     types::{Address, U256},
 };
 use forge::revm::KECCAK_EMPTY;
-use foundry_evm::revm::AccountInfo;
+use foundry_evm::{executor::backend::DatabaseResult, revm::AccountInfo};
 use parking_lot::Mutex;
 use std::sync::Arc;
 use tokio::sync::RwLockWriteGuard;
@@ -47,7 +47,10 @@ impl GenesisConfig {
     }
 
     /// If an initial `genesis.json` was provided, this applies the account alloc to the db
-    pub fn apply_genesis_json_alloc(&self, mut db: RwLockWriteGuard<'_, dyn Db>) {
+    pub fn apply_genesis_json_alloc(
+        &self,
+        mut db: RwLockWriteGuard<'_, dyn Db>,
+    ) -> DatabaseResult<()> {
         if let Some(ref genesis) = self.genesis_init {
             for (addr, mut acc) in genesis.alloc.accounts.clone() {
                 let storage = std::mem::take(&mut acc.storage);
@@ -55,9 +58,10 @@ impl GenesisConfig {
                 db.insert_account(addr, acc.into());
                 // insert all storage values
                 for (k, v) in storage.iter() {
-                    db.set_storage_at(addr, k.into_uint(), v.into_uint());
+                    db.set_storage_at(addr, k.into_uint(), v.into_uint())?;
                 }
             }
         }
+        Ok(())
     }
 }
