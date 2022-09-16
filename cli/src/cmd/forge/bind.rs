@@ -1,9 +1,9 @@
 use crate::cmd::utils::{Cmd, LoadConfig};
 
-use crate::{cmd::forge::build::CoreBuildArgs, compile};
+use crate::cmd::forge::build::CoreBuildArgs;
 use clap::{Parser, ValueHint};
 use ethers::contract::{Abigen, ContractFilter, ExcludeContracts, MultiAbigen, SelectContracts};
-use foundry_common::fs::json_files;
+use foundry_common::{compile, fs::json_files};
 use foundry_config::{
     figment::{
         self,

@@ -2202,7 +2202,10 @@ dependencies = [
 name = "foundry-common"
 version = "0.1.0"
 dependencies = [
+ "atty",
  "clap 3.2.16",
+ "comfy-table",
+ "dunce",
  "ethers-core",
  "ethers-providers",
  "ethers-solc",
@@ -2210,10 +2213,14 @@ dependencies = [
  "foundry-config",
  "once_cell",
  "reqwest",
+ "semver",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
+ "tracing",
  "walkdir",
+ "yansi",
 ]
 
 [[package]]

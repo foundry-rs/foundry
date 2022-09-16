@@ -5,7 +5,6 @@ use crate::{
         forge::build::CoreBuildArgs, read_constructor_args_file, remove_contract,
         retry::RETRY_VERIFY_ON_CREATE, LoadConfig,
     },
-    compile,
     opts::{EthereumOpts, TransactionOpts, WalletType},
 };
 use cast::SimpleCast;
@@ -17,7 +16,7 @@ use ethers::{
     types::{transaction::eip2718::TypedTransaction, Chain},
 };
 use eyre::Context;
-use foundry_common::get_http_provider;
+use foundry_common::{compile, get_http_provider};
 use foundry_utils::parse_tokens;
 use rustc_hex::ToHex;
 use serde_json::json;

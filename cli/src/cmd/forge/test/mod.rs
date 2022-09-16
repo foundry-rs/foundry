@@ -4,8 +4,6 @@ use crate::{
         forge::{build::CoreBuildArgs, debug::DebugArgs, install, watch::WatchArgs},
         Cmd, LoadConfig,
     },
-    compile,
-    compile::ProjectCompiler,
     suggestions, utils,
 };
 use cast::fuzz::CounterExample;
@@ -22,7 +20,10 @@ use forge::{
     },
     MultiContractRunner, MultiContractRunnerBuilder, TestOptions,
 };
-use foundry_common::evm::EvmArgs;
+use foundry_common::{
+    compile::{self, ProjectCompiler},
+    evm::EvmArgs,
+};
 use foundry_config::{figment, Config};
 use regex::Regex;
 use std::{collections::BTreeMap, path::PathBuf, sync::mpsc::channel, thread, time::Duration};

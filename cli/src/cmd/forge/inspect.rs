@@ -3,7 +3,6 @@ use crate::{
         forge::build::{self, CoreBuildArgs},
         Cmd,
     },
-    compile,
     opts::forge::CompilerArgs,
 };
 use clap::Parser;
@@ -18,6 +17,7 @@ use ethers::{
     },
     solc::utils::canonicalize,
 };
+use foundry_common::compile;
 
 use serde_json::{to_value, Value};
 use std::{fmt, str::FromStr};
