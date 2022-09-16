@@ -34,7 +34,7 @@ impl<Handler: PubSubRpcHandler> IpcEndpoint<Handler> {
     /// This establishes the ipc endpoint, converts the incoming connections into handled eth
     /// connections, See [`PubSubConnection`] that should be spawned
     #[tracing::instrument(target = "ipc", skip_all)]
-    pub fn incoming(self) -> io::Result<impl Stream<Item = impl Future<Output = ()> + Unpin>> {
+    pub fn incoming(self) -> io::Result<impl Stream<Item = impl Future<Output = ()>>> {
         let IpcEndpoint { handler, endpoint } = self;
         trace!( endpoint=?endpoint.path(), "starting ipc server" );
 
