@@ -2278,7 +2278,6 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
- "tracing-error",
  "tracing-subscriber",
  "url",
  "yansi",
