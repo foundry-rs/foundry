@@ -30,7 +30,6 @@ pub struct Tracer {
 impl Tracer {
     pub fn with_steps_recording(mut self) -> Self {
         self.record_steps = true;
-
         self
     }
 

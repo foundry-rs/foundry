@@ -794,13 +794,9 @@ impl DatabaseExt for Backend {
                 let caller_account =
                     active.journaled_state.state.get(&env.tx.caller).map(|acc| acc.info.clone());
                 let target_fork = self.inner.get_fork_mut(idx);
-                if target_fork.journaled_state.depth == 0 {
-                    // depth 0 will be the default value when the fork was created and since we
-                    // launched in forking mode there never is a `depth` that can be set for the
-                    // `fork_init_journaled_state` instead we need to manually bump the depth to the
-                    // current depth of the call _once_
-                    target_fork.journaled_state.depth = active_journaled_state.depth;
 
+                // depth 0 will be the default value when the fork was created
+                if target_fork.journaled_state.depth == 0 {
                     // we also need to initialize and touch the caller
                     if let Some(acc) = caller_account {
                         if !target_fork.db.accounts.contains_key(&caller) {
@@ -821,29 +817,39 @@ impl DatabaseExt for Backend {
             self.prepare_init_journal_state()?;
         }
 
-        // update the shared state and track
-        let mut fork = self.inner.take_fork(idx);
+        {
+            // update the shared state and track
+            let mut fork = self.inner.take_fork(idx);
 
-        // another edge case where a fork is created and selected during setup with not necessarily
-        // the same caller as for the test, however we must always ensure that fork's state contains
-        // the current sender
-        let caller = env.tx.caller;
-        if !fork.journaled_state.state.contains_key(&caller) {
-            let caller_account = active_journaled_state
-                .state
-                .get(&env.tx.caller)
-                .map(|acc| acc.info.clone())
-                .unwrap_or_default();
+            // since all forks handle their state separately, the depth can drift
+            // this is a handover where the target fork starts at the same depth where it was
+            // selected. This ensures that there are no gaps in depth which would
+            // otherwise cause issues with the tracer
+            fork.journaled_state.depth = active_journaled_state.depth;
 
-            if !fork.db.accounts.contains_key(&caller) {
-                // update the caller account which is required by the evm
-                fork.db.insert_account_info(caller, caller_account.clone());
+            // another edge case where a fork is created and selected during setup with not
+            // necessarily the same caller as for the test, however we must always
+            // ensure that fork's state contains the current sender
+            let caller = env.tx.caller;
+            if !fork.journaled_state.state.contains_key(&caller) {
+                let caller_account = active_journaled_state
+                    .state
+                    .get(&env.tx.caller)
+                    .map(|acc| acc.info.clone())
+                    .unwrap_or_default();
+
+                if !fork.db.accounts.contains_key(&caller) {
+                    // update the caller account which is required by the evm
+                    fork.db.insert_account_info(caller, caller_account.clone());
+                }
+                fork.journaled_state.state.insert(caller, caller_account.into());
             }
-            fork.journaled_state.state.insert(caller, caller_account.into());
-        }
 
-        self.update_fork_db(active_journaled_state, &mut fork);
-        self.inner.set_fork(idx, fork);
+            self.update_fork_db(active_journaled_state, &mut fork);
+
+            // insert the fork back
+            self.inner.set_fork(idx, fork);
+        }
 
         self.active_fork_ids = Some((id, idx));
         // update the environment accordingly
