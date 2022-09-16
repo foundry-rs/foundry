@@ -27,7 +27,7 @@ mod fuzz;
 pub mod snapshot;
 pub use fuzz::FuzzBackendWrapper;
 mod diagnostic;
-use crate::executor::inspector::cheatcodes::util::with_journaled_account;
+
 pub use diagnostic::RevertDiagnostic;
 
 pub mod error;
@@ -504,8 +504,12 @@ impl Backend {
         self.storage(CHEATCODE_ADDRESS, index).map(|value| value == U256::one()).unwrap_or_default()
     }
 
-    /// when creating or switching forks, we update the AccountInfo of the contract
-    pub(crate) fn update_fork_db(&self, journaled_state: &mut JournaledState, fork: &mut Fork) {
+    /// When creating or switching forks, we update the AccountInfo of the contract
+    pub(crate) fn update_fork_db(
+        &self,
+        active_journaled_state: &mut JournaledState,
+        target_fork: &mut Fork,
+    ) {
         debug_assert!(
             self.inner.test_contract_address.is_some(),
             "Test contract address must be set"
@@ -513,23 +517,23 @@ impl Backend {
 
         self.update_fork_db_contracts(
             self.inner.persistent_accounts.iter().copied(),
-            journaled_state,
-            fork,
+            active_journaled_state,
+            target_fork,
         )
     }
 
-    /// Copies the state of all `accounts` from the currently active db into the given `fork`
+    /// Merges the state of all `accounts` from the currently active db into the given `fork`
     pub(crate) fn update_fork_db_contracts(
         &self,
         accounts: impl IntoIterator<Item = Address>,
-        journaled_state: &mut JournaledState,
-        fork: &mut Fork,
+        active_journaled_state: &mut JournaledState,
+        target_fork: &mut Fork,
     ) {
         if let Some((_, fork_idx)) = self.active_fork_ids.as_ref() {
             let active = self.inner.get_fork(*fork_idx);
-            clone_data(accounts, &active.db, journaled_state, fork)
+            merge_account_data(accounts, &active.db, active_journaled_state, target_fork)
         } else {
-            clone_data(accounts, &self.mem_db, journaled_state, fork)
+            merge_account_data(accounts, &self.mem_db, active_journaled_state, target_fork)
         }
     }
 
@@ -713,12 +717,6 @@ impl DatabaseExt for Backend {
                         if !fork.db.accounts.contains_key(&caller) {
                             // update the caller account which is required by the evm
                             fork.db.insert_account_info(caller, caller_account.clone());
-                            let _ = with_journaled_account(
-                                &mut fork.journaled_state,
-                                &mut fork.db,
-                                caller,
-                                |_| (),
-                            );
                         }
                         journaled_state.state.insert(caller, caller_account.into());
                     }
@@ -767,7 +765,7 @@ impl DatabaseExt for Backend {
         &mut self,
         id: LocalForkId,
         env: &mut Env,
-        journaled_state: &mut JournaledState,
+        active_journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
         trace!(?id, "select fork");
         if self.is_active_fork(id) {
@@ -787,7 +785,7 @@ impl DatabaseExt for Backend {
         // If we're currently in forking mode we need to update the journaled_state to this point,
         // this ensures the changes performed while the fork was active are recorded
         if let Some(active) = self.active_fork_mut() {
-            active.journaled_state = journaled_state.clone();
+            active.journaled_state = active_journaled_state.clone();
 
             // if the Backend was launched in forking mode, then we also need to adjust the depth of
             // the `JournalState` at this point
@@ -801,17 +799,14 @@ impl DatabaseExt for Backend {
                     // launched in forking mode there never is a `depth` that can be set for the
                     // `fork_init_journaled_state` instead we need to manually bump the depth to the
                     // current depth of the call _once_
-                    target_fork.journaled_state.depth = journaled_state.depth;
+                    target_fork.journaled_state.depth = active_journaled_state.depth;
 
                     // we also need to initialize and touch the caller
                     if let Some(acc) = caller_account {
-                        target_fork.db.insert_account_info(caller, acc);
-                        let _ = with_journaled_account(
-                            &mut target_fork.journaled_state,
-                            &mut target_fork.db,
-                            caller,
-                            |_| (),
-                        );
+                        if !target_fork.db.accounts.contains_key(&caller) {
+                            target_fork.db.insert_account_info(caller, acc.clone());
+                        }
+                        target_fork.journaled_state.state.insert(caller, acc.into());
                     }
                 }
             }
@@ -822,7 +817,7 @@ impl DatabaseExt for Backend {
             // first fork is selected, we need to update it for all forks and use it as init state
             // for all future forks
             trace!("recording fork init journaled_state");
-            self.fork_init_journaled_state = journaled_state.clone();
+            self.fork_init_journaled_state = active_journaled_state.clone();
             self.prepare_init_journal_state()?;
         }
 
@@ -834,7 +829,7 @@ impl DatabaseExt for Backend {
         // the current sender
         let caller = env.tx.caller;
         if !fork.journaled_state.state.contains_key(&caller) {
-            let caller_account = journaled_state
+            let caller_account = active_journaled_state
                 .state
                 .get(&env.tx.caller)
                 .map(|acc| acc.info.clone())
@@ -843,18 +838,17 @@ impl DatabaseExt for Backend {
             if !fork.db.accounts.contains_key(&caller) {
                 // update the caller account which is required by the evm
                 fork.db.insert_account_info(caller, caller_account.clone());
-                let _ =
-                    with_journaled_account(&mut fork.journaled_state, &mut fork.db, caller, |_| ());
             }
             fork.journaled_state.state.insert(caller, caller_account.into());
         }
 
-        self.update_fork_db(journaled_state, &mut fork);
+        self.update_fork_db(active_journaled_state, &mut fork);
         self.inner.set_fork(idx, fork);
 
         self.active_fork_ids = Some((id, idx));
         // update the environment accordingly
         update_current_env_with_fork_env(env, fork_env);
+
         Ok(())
     }
 
@@ -892,7 +886,7 @@ impl DatabaseExt for Backend {
                 active.journaled_state = self.fork_init_journaled_state.clone();
                 active.journaled_state.depth = journaled_state.depth;
                 for addr in persistent_addrs {
-                    clone_journaled_state_data(addr, journaled_state, &mut active.journaled_state);
+                    merge_journaled_state_data(addr, journaled_state, &mut active.journaled_state);
                 }
                 *journaled_state = active.journaled_state.clone();
             }
@@ -1287,7 +1281,7 @@ impl BackendInner {
             // we initialize a _new_ `ForkDB` but keep the state of persistent accounts
             let mut new_db = ForkDB::new(backend);
             for addr in self.persistent_accounts.iter().copied() {
-                clone_db_account_data(addr, &active.db, &mut new_db);
+                merge_db_account_data(addr, &active.db, &mut new_db);
             }
             active.db = new_db;
         }
@@ -1373,44 +1367,64 @@ pub(crate) fn update_current_env_with_fork_env(current: &mut Env, fork: Env) {
 }
 
 /// Clones the data of the given `accounts` from the `active` database into the `fork_db`
-/// This includes the data held in storage (`CacheDB`) and kept in the `JournaledState`
-pub(crate) fn clone_data<ExtDB: DatabaseRef>(
+/// This includes the data held in storage (`CacheDB`) and kept in the `JournaledState`.
+pub(crate) fn merge_account_data<ExtDB: DatabaseRef>(
     accounts: impl IntoIterator<Item = Address>,
     active: &CacheDB<ExtDB>,
     active_journaled_state: &mut JournaledState,
-    fork: &mut Fork,
+    target_fork: &mut Fork,
 ) {
     for addr in accounts.into_iter() {
-        clone_db_account_data(addr, active, &mut fork.db);
-        clone_journaled_state_data(addr, active_journaled_state, &mut fork.journaled_state);
+        merge_db_account_data(addr, active, &mut target_fork.db);
+        merge_journaled_state_data(addr, active_journaled_state, &mut target_fork.journaled_state);
     }
 
-    *active_journaled_state = fork.journaled_state.clone();
+    // need to mock empty journal entries in case the current checkpoint is higher than the existing
+    // journal entries
+    while active_journaled_state.journal.len() > target_fork.journaled_state.journal.len() {
+        target_fork.journaled_state.journal.push(Default::default());
+    }
+
+    *active_journaled_state = target_fork.journaled_state.clone();
 }
 
 /// Clones the account data from the `active_journaled_state`  into the `fork_journaled_state`
-fn clone_journaled_state_data(
+fn merge_journaled_state_data(
     addr: Address,
     active_journaled_state: &JournaledState,
     fork_journaled_state: &mut JournaledState,
 ) {
-    if let Some(acc) = active_journaled_state.state.get(&addr).cloned() {
+    if let Some(mut acc) = active_journaled_state.state.get(&addr).cloned() {
         trace!(?addr, "updating journaled_state account data");
+        if let Some(fork_account) = fork_journaled_state.state.get_mut(&addr) {
+            // This will merge the fork's tracked storage with active storage and update values
+            fork_account.storage.extend(std::mem::take(&mut acc.storage));
+            // swap them so we can insert the account as whole in the next step
+            std::mem::swap(&mut fork_account.storage, &mut acc.storage);
+        }
         fork_journaled_state.state.insert(addr, acc);
     }
 }
 
 /// Clones the account data from the `active` db into the `ForkDB`
-fn clone_db_account_data<ExtDB: DatabaseRef>(
+fn merge_db_account_data<ExtDB: DatabaseRef>(
     addr: Address,
     active: &CacheDB<ExtDB>,
     fork_db: &mut ForkDB,
 ) {
-    trace!(?addr, "cloning database data");
-    let acc = active.accounts.get(&addr).cloned().unwrap_or_default();
+    trace!(?addr, "merging database data");
+    let mut acc = active.accounts.get(&addr).cloned().unwrap_or_default();
     if let Some(code) = active.contracts.get(&acc.info.code_hash).cloned() {
         fork_db.contracts.insert(acc.info.code_hash, code);
     }
+
+    if let Some(fork_account) = fork_db.accounts.get_mut(&addr) {
+        // This will merge the fork's tracked storage with active storage and update values
+        fork_account.storage.extend(std::mem::take(&mut acc.storage));
+        // swap them so we can insert the account as whole in the next step
+        std::mem::swap(&mut fork_account.storage, &mut acc.storage);
+    }
+
     fork_db.accounts.insert(addr, acc);
 }
 
