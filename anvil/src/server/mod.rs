@@ -35,9 +35,10 @@ pub fn try_spawn_ipc(
     let path = path.into();
     let handler = PubSubEthRpcHandler::new(api);
     let ipc = IpcEndpoint::new(handler, path);
-    let mut incoming = ipc.incoming()?;
+    let incoming = ipc.incoming()?;
 
     let task = tokio::task::spawn(async move {
+        tokio::pin!(incoming);
         while let Some(stream) = incoming.next().await {
             trace!(target: "ipc", "new ipc connection");
             tokio::task::spawn(stream);
