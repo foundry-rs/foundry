@@ -4487,7 +4487,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "2.0.0"
-source = "git+https://github.com/shekhirin/revm?branch=gas-inspector#1eee730379d6c9b2f8a1c12364aa20875868def1"
+source = "git+https://github.com/shekhirin/revm?branch=gas-inspector#808fc89ab66b7d5ac484f01655fa5c5a9a09f9ee"
 dependencies = [
  "arrayref",
  "auto_impl 1.0.1",
@@ -4505,7 +4505,7 @@ dependencies = [
 [[package]]
 name = "revm_precompiles"
 version = "1.1.1"
-source = "git+https://github.com/shekhirin/revm?branch=gas-inspector#1eee730379d6c9b2f8a1c12364aa20875868def1"
+source = "git+https://github.com/shekhirin/revm?branch=gas-inspector#808fc89ab66b7d5ac484f01655fa5c5a9a09f9ee"
 dependencies = [
  "bytes",
  "hashbrown 0.12.0",
