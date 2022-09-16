@@ -7,15 +7,19 @@ use crate::{
 use bytes::Bytes;
 use ethers::types::{Address, Log, H256};
 use foundry_evm::{
+    call_inspectors,
     decode::decode_console_logs,
     executor::inspector::{LogCollector, Tracer},
     revm,
-    revm::{CallInputs, EVMData, Gas, Return},
+    revm::{CallInputs, EVMData, Gas, GasInspector, Return},
 };
+use parking_lot::RwLock;
+use std::sync::Arc;
 
 /// The [`revm::Inspector`] used when transacting in the evm
 #[derive(Debug, Clone, Default)]
 pub struct Inspector {
+    pub gas: Option<Arc<RwLock<GasInspector>>>,
     pub tracer: Option<Tracer>,
     /// collects all `console.sol` logs
     pub logs: LogCollector,
@@ -33,7 +37,9 @@ impl Inspector {
 
     /// Configures the `Tracer` [`revm::Inspector`]
     pub fn with_tracing(mut self) -> Self {
-        self.tracer = Some(Default::default());
+        let gas_inspector = Arc::new(RwLock::new(GasInspector::default()));
+        self.gas = Some(gas_inspector.clone());
+        self.tracer = Some(Tracer::new(gas_inspector));
         self
     }
 
@@ -56,9 +62,11 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         data: &mut EVMData<'_, DB>,
         is_static: bool,
     ) -> Return {
-        if let Some(tracer) = self.tracer.as_mut() {
-            tracer.initialize_interp(interp, data, is_static);
-        }
+        call_inspectors!(
+            inspector,
+            [&mut self.gas.as_ref().map(|gas| gas.write()), &mut self.tracer],
+            { inspector.initialize_interp(interp, data, is_static) }
+        );
         Return::Continue
     }
 
@@ -68,9 +76,13 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         data: &mut EVMData<'_, DB>,
         is_static: bool,
     ) -> Return {
-        if let Some(tracer) = self.tracer.as_mut() {
-            tracer.step(interp, data, is_static);
-        }
+        call_inspectors!(
+            inspector,
+            [&mut self.gas.as_ref().map(|gas| gas.write()), &mut self.tracer],
+            {
+                inspector.step(interp, data, is_static);
+            }
+        );
         Return::Continue
     }
 
@@ -81,10 +93,13 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         topics: &[H256],
         data: &Bytes,
     ) {
-        if let Some(tracer) = self.tracer.as_mut() {
-            tracer.log(evm_data, address, topics, data);
-        }
-        self.logs.log(evm_data, address, topics, data);
+        call_inspectors!(
+            inspector,
+            [&mut self.gas.as_ref().map(|gas| gas.write()), &mut self.tracer, Some(&mut self.logs)],
+            {
+                inspector.log(evm_data, address, topics, data);
+            }
+        );
     }
 
     fn step_end(
@@ -94,9 +109,13 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         is_static: bool,
         eval: Return,
     ) -> Return {
-        if let Some(tracer) = self.tracer.as_mut() {
-            tracer.step_end(interp, data, is_static, eval);
-        }
+        call_inspectors!(
+            inspector,
+            [&mut self.gas.as_ref().map(|gas| gas.write()), &mut self.tracer],
+            {
+                inspector.step_end(interp, data, is_static, eval);
+            }
+        );
         eval
     }
 
@@ -106,10 +125,13 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         call: &mut CallInputs,
         is_static: bool,
     ) -> (Return, Gas, Bytes) {
-        if let Some(tracer) = self.tracer.as_mut() {
-            tracer.call(data, call, is_static);
-        }
-        self.logs.call(data, call, is_static);
+        call_inspectors!(
+            inspector,
+            [&mut self.gas.as_ref().map(|gas| gas.write()), &mut self.tracer, Some(&mut self.logs)],
+            {
+                inspector.call(data, call, is_static);
+            }
+        );
 
         (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
     }
@@ -123,9 +145,13 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         out: Bytes,
         is_static: bool,
     ) -> (Return, Gas, Bytes) {
-        if let Some(tracer) = self.tracer.as_mut() {
-            tracer.call_end(data, inputs, remaining_gas, ret, out.clone(), is_static);
-        }
+        call_inspectors!(
+            inspector,
+            [&mut self.gas.as_ref().map(|gas| gas.write()), &mut self.tracer],
+            {
+                inspector.call_end(data, inputs, remaining_gas, ret, out.clone(), is_static);
+            }
+        );
         (ret, remaining_gas, out)
     }
 
@@ -134,9 +160,13 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         data: &mut EVMData<'_, DB>,
         call: &mut CreateInputs,
     ) -> (Return, Option<Address>, Gas, Bytes) {
-        if let Some(tracer) = self.tracer.as_mut() {
-            tracer.create(data, call);
-        }
+        call_inspectors!(
+            inspector,
+            [&mut self.gas.as_ref().map(|gas| gas.write()), &mut self.tracer],
+            {
+                inspector.create(data, call);
+            }
+        );
 
         (Return::Continue, None, Gas::new(call.gas_limit), Bytes::new())
     }
@@ -150,9 +180,13 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         gas: Gas,
         retdata: Bytes,
     ) -> (Return, Option<Address>, Gas, Bytes) {
-        if let Some(tracer) = self.tracer.as_mut() {
-            tracer.create_end(data, inputs, status, address, gas, retdata.clone());
-        }
+        call_inspectors!(
+            inspector,
+            [&mut self.gas.as_ref().map(|gas| gas.write()), &mut self.tracer],
+            {
+                inspector.create_end(data, inputs, status, address, gas, retdata.clone());
+            }
+        );
         (status, address, gas, retdata)
     }
 }

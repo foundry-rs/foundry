@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 
 /// Helper macro to call the same method on multiple inspectors without resorting to dynamic
 /// dispatch
+#[macro_export]
 macro_rules! call_inspectors {
     ($id:ident, [ $($inspector:expr),+ ], $call:block) => {
         $({
