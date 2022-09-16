@@ -187,7 +187,13 @@ impl Stream for EtherscanFetcher {
                         Err(EtherscanError::InvalidApiKey) => {
                             warn!(target: "etherscanidentifier", "invalid api key");
                             // mark key as invalid
-                            pin.invalid_api_key.store(false, Ordering::Relaxed);
+                            pin.invalid_api_key.store(true, Ordering::Relaxed);
+                            return Poll::Ready(None)
+                        }
+                        Err(EtherscanError::BlockedByCloudflare) => {
+                            warn!(target: "etherscanidentifier", "blocked by cloudflare");
+                            // mark key as invalid
+                            pin.invalid_api_key.store(true, Ordering::Relaxed);
                             return Poll::Ready(None)
                         }
                         Err(err) => {
