@@ -13,7 +13,7 @@ use ethers::{
 use foundry_common::compile;
 use foundry_config::{Chain, Config};
 use futures::{
-    future::Future,
+    future::{join_all, Future},
     stream::{FuturesUnordered, Stream, StreamExt},
     task::{Context, Poll},
 };
@@ -59,6 +59,8 @@ impl EtherscanIdentifier {
         }
     }
 
+    /// Goes over the list of contracts we have pulled from the traces, clones their source from
+    /// Etherscan and compiles them locally, for usage in the debugger.
     pub async fn get_compiled_contracts(
         &self,
     ) -> eyre::Result<(BTreeMap<ArtifactId, String>, BTreeMap<ArtifactId, ContractBytecodeSome>)>
@@ -66,21 +68,44 @@ impl EtherscanIdentifier {
         let mut compiled_contracts = BTreeMap::new();
         let mut sources = BTreeMap::new();
 
-        for (label, (name, source_code, optimization, runs, version)) in &self.contracts {
-            if source_code.starts_with("{{") || version.starts_with("vyper") {
-                continue
-            }
-            println!("Compiling {label}");
-            let compiled = compile::compile_from_source(
-                name.to_string(),
-                source_code.clone(),
-                *optimization,
-                *runs,
-                version.to_string(),
-            )
-            .await?;
+        // TODO: Add caching so we dont double-fetch contracts.
+        let contracts_iter = self
+            .contracts
+            .iter()
+            // filter out vyper files and invalid source
+            .filter(|(_, (_, source_code, _, _, version))| {
+                !source_code.starts_with("{{") && !version.starts_with("vyper")
+            });
 
-            compiled_contracts.insert(compiled.0.clone(), compiled.1.to_owned());
+        let outputs_fut = contracts_iter
+            .map(|(label, (name, source_code, optimization, runs, version))| {
+                println!("Compiling: {name} {:?}", label);
+                compile::compile_from_source(
+                    name.to_string(),
+                    source_code.clone(),
+                    *optimization,
+                    *runs,
+                    version.to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        // poll all the futures concurrently
+        let artifacts = join_all(outputs_fut).await;
+
+        // construct the map
+        let contracts_iter = self
+            .contracts
+            .iter()
+            // filter out vyper files and invalid source
+            .filter(|(_, (_, source_code, _, _, version))| {
+                !source_code.starts_with("{{") && !version.starts_with("vyper")
+            });
+        for (compiled, (_, (_, source_code, _, _, _))) in artifacts.into_iter().zip(contracts_iter)
+        {
+            // get the inner type
+            let compiled = compiled?;
+            compiled_contracts.insert(compiled.0.clone(), compiled.1.clone());
             sources.insert(compiled.0.to_owned(), source_code.to_owned());
         }
 
