@@ -120,7 +120,6 @@ dependencies = [
  "memory-db",
  "parking_lot 0.12.0",
  "pretty_assertions",
- "revm_precompiles 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
  "serde_json",
  "tempfile",
@@ -1628,7 +1627,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#6b4007f6193ffa8a685a802eec7ff7be9431d112"
+source = "git+https://github.com/gakonst/ethers-rs#9773a76dd422ed8c625ac994f0ffbb5f7c20fc1c"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1643,7 +1642,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#6b4007f6193ffa8a685a802eec7ff7be9431d112"
+source = "git+https://github.com/gakonst/ethers-rs#9773a76dd422ed8c625ac994f0ffbb5f7c20fc1c"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1654,7 +1653,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#6b4007f6193ffa8a685a802eec7ff7be9431d112"
+source = "git+https://github.com/gakonst/ethers-rs#9773a76dd422ed8c625ac994f0ffbb5f7c20fc1c"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1672,7 +1671,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#6b4007f6193ffa8a685a802eec7ff7be9431d112"
+source = "git+https://github.com/gakonst/ethers-rs#9773a76dd422ed8c625ac994f0ffbb5f7c20fc1c"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -1695,7 +1694,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#6b4007f6193ffa8a685a802eec7ff7be9431d112"
+source = "git+https://github.com/gakonst/ethers-rs#9773a76dd422ed8c625ac994f0ffbb5f7c20fc1c"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1709,7 +1708,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#6b4007f6193ffa8a685a802eec7ff7be9431d112"
+source = "git+https://github.com/gakonst/ethers-rs#9773a76dd422ed8c625ac994f0ffbb5f7c20fc1c"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1740,7 +1739,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#6b4007f6193ffa8a685a802eec7ff7be9431d112"
+source = "git+https://github.com/gakonst/ethers-rs#9773a76dd422ed8c625ac994f0ffbb5f7c20fc1c"
 dependencies = [
  "ethers-core",
  "getrandom 0.2.6",
@@ -1756,7 +1755,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#6b4007f6193ffa8a685a802eec7ff7be9431d112"
+source = "git+https://github.com/gakonst/ethers-rs#9773a76dd422ed8c625ac994f0ffbb5f7c20fc1c"
 dependencies = [
  "async-trait",
  "auto_impl 0.5.0",
@@ -1781,7 +1780,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#6b4007f6193ffa8a685a802eec7ff7be9431d112"
+source = "git+https://github.com/gakonst/ethers-rs#9773a76dd422ed8c625ac994f0ffbb5f7c20fc1c"
 dependencies = [
  "async-trait",
  "auto_impl 1.0.1",
@@ -1818,7 +1817,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#6b4007f6193ffa8a685a802eec7ff7be9431d112"
+source = "git+https://github.com/gakonst/ethers-rs#9773a76dd422ed8c625ac994f0ffbb5f7c20fc1c"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1841,7 +1840,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#6b4007f6193ffa8a685a802eec7ff7be9431d112"
+source = "git+https://github.com/gakonst/ethers-rs#9773a76dd422ed8c625ac994f0ffbb5f7c20fc1c"
 dependencies = [
  "cfg-if 1.0.0",
  "dunce",
@@ -4497,28 +4496,10 @@ dependencies = [
  "hex",
  "num_enum",
  "primitive-types",
- "revm_precompiles 1.1.1 (git+https://github.com/bluealloy/revm)",
+ "revm_precompiles",
  "rlp",
  "serde",
  "sha3",
-]
-
-[[package]]
-name = "revm_precompiles"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00e68901326fe20437526cb6d64a2898d2976383b7d222329dfce1717902da50"
-dependencies = [
- "bytes",
- "hashbrown 0.12.0",
- "num",
- "once_cell",
- "primitive-types",
- "ripemd",
- "secp256k1",
- "sha2 0.10.5",
- "sha3",
- "substrate-bn",
 ]
 
 [[package]]
