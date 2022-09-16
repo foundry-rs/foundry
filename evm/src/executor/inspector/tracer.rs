@@ -12,12 +12,11 @@ use ethers::{
     abi::RawLog,
     types::{Address, H256, U256},
 };
-use parking_lot::RwLock;
 use revm::{
     opcode, return_ok, CallInputs, CallScheme, CreateInputs, Database, EVMData, Gas, GasInspector,
     Inspector, Interpreter, JournalEntry, Return,
 };
-use std::sync::Arc;
+use std::{cell::RefCell, rc::Rc};
 
 /// An inspector that collects call traces.
 #[derive(Default, Debug, Clone)]
@@ -28,16 +27,17 @@ pub struct Tracer {
     trace_stack: Vec<usize>,
     step_stack: Vec<(usize, usize)>, // (trace_idx, step_idx)
 
-    gas_inspector: Arc<RwLock<GasInspector>>,
+    gas_inspector: Rc<RefCell<GasInspector>>,
 }
 
 impl Tracer {
-    pub fn new(gas_inspector: Arc<RwLock<GasInspector>>) -> Self {
-        Self { gas_inspector, ..Default::default() }
-    }
-
-    pub fn with_steps_recording(mut self) -> Self {
+    /// Enables step recording and uses [revm::GasInspector] to report gas costs for each step.
+    ///
+    /// Gas Inspector should be called externally **before** [Tracer], this is why we need it as
+    /// `Rc<RefCell<_>>` here.
+    pub fn with_steps_recording(mut self, gas_inspector: Rc<RefCell<GasInspector>>) -> Self {
         self.record_steps = true;
+        self.gas_inspector = gas_inspector;
 
         self
     }
@@ -97,7 +97,7 @@ impl Tracer {
             contract: interp.contract.address,
             stack: interp.stack.clone(),
             memory: interp.memory.clone(),
-            gas: self.gas_inspector.read().gas_remaining(),
+            gas: self.gas_inspector.borrow().gas_remaining(),
             gas_refund_counter: interp.gas.refunded() as u64,
             gas_cost: 0,
             state_diff: None,
@@ -137,7 +137,7 @@ impl Tracer {
                 _ => None,
             };
 
-            step.gas_cost = step.gas - self.gas_inspector.read().gas_remaining();
+            step.gas_cost = step.gas - self.gas_inspector.borrow().gas_remaining();
         }
 
         // Error codes only
