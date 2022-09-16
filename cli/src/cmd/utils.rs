@@ -1,4 +1,4 @@
-use crate::{suggestions, term::cli_warn};
+use crate::suggestions;
 use ethers::{
     abi::Abi,
     core::types::Chain,
@@ -13,7 +13,7 @@ use ethers::{
 };
 use eyre::WrapErr;
 use forge::executor::opts::EvmOpts;
-use foundry_common::{fs, ContractsByArtifact, TestFunctionExt};
+use foundry_common::{cli_warn, fs, ContractsByArtifact, TestFunctionExt};
 use foundry_config::{figment::Figment, Chain as ConfigChain, Config};
 use std::{collections::BTreeMap, path::PathBuf};
 use yansi::Paint;
