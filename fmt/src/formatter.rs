@@ -275,6 +275,26 @@ impl<'a, W: Write> Formatter<'a, W> {
             .map(|p| byte_offset + p)
     }
 
+    /// Find the start of the next instance of a slice in source
+    fn find_next_str_in_src(&self, byte_offset: usize, needle: &str) -> Option<usize> {
+        let subset = &self.source[byte_offset..];
+        needle
+            .chars()
+            .next()
+            .map(|first_char| {
+                subset
+                    .comment_state_char_indices()
+                    .position(|(state, idx, ch)| {
+                        first_char == ch &&
+                            state == CommentState::None &&
+                            idx + needle.len() <= subset.len() &&
+                            subset[idx..idx + needle.len()].eq(needle)
+                    })
+                    .map(|p| byte_offset + p)
+            })
+            .flatten()
+    }
+
     /// Extends the location to the next instance of a character. Returns true if the loc was
     /// extended
     fn extend_loc_until(&self, loc: &mut Loc, needle: char) -> bool {
@@ -1517,7 +1537,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 }
                 Type::Mapping(loc, from, to) => {
                     write_chunk!(self, loc.start(), "mapping(")?;
-                    let arrow_loc = self.find_next_in_src(loc.start(), '='); // TODO: =>
+                    let arrow_loc = self.find_next_str_in_src(loc.start(), "=>");
                     let key_chunk = self.visit_to_chunk(from.loc().start(), arrow_loc, from)?;
                     self.write_chunk(&key_chunk)?;
                     write!(self.buf(), " => ")?;
