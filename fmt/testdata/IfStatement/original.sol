@@ -85,5 +85,9 @@ contract IfStatement {
         if (condition) {}
 
         if (condition) executeWithMultipleParameters(condition, anotherLongCondition); else if (anotherLongCondition) execute();
+
+        if (condition && ((condition || anotherLongCondition)
+        )
+        ) execute();
     }
 }

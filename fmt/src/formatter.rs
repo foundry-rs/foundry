@@ -268,12 +268,17 @@ impl<'a, W: Write> Formatter<'a, W> {
         None
     }
 
-    /// Find the next instance of the character in source
+    /// Find the next instance of the character in source excluding comments
     fn find_next_in_src(&self, byte_offset: usize, needle: char) -> Option<usize> {
         self.source[byte_offset..]
             .non_comment_chars()
             .position(|ch| needle == ch)
             .map(|p| byte_offset + p)
+    }
+
+    /// Find the next instance of the character in source
+    fn find_next_in_src_exact(&self, byte_offset: usize, needle: char) -> Option<usize> {
+        self.source[byte_offset..].chars().position(|ch| needle == ch).map(|p| byte_offset + p)
     }
 
     /// Extends the location to the next instance of a character. Returns true if the loc was
@@ -291,11 +296,24 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// to write the block on a single line.
     /// If the block style is configured to [SingleLineBlockStyle::Preserve],
     /// lookup whether there was a newline introduced in `[start_from, end_at]` range
-    fn should_attempt_block_single_line(&self, start_from: usize, end_at: usize) -> bool {
+    /// where `end_at` is the start of the block.
+    fn should_attempt_block_single_line(
+        &mut self,
+        block: &mut Statement,
+        start_from: usize,
+    ) -> bool {
         match self.config.single_line_statement_blocks {
             SingleLineBlockStyle::Single => true,
             SingleLineBlockStyle::Multi => false,
             SingleLineBlockStyle::Preserve => {
+                let end_at = match block {
+                    Statement::Block { statements, .. } if !statements.is_empty() => {
+                        statements.first().as_ref().unwrap().loc().start()
+                    }
+                    Statement::Expression(loc, _) => loc.start(),
+                    _ => block.loc().start(),
+                };
+
                 self.find_next_line(start_from).map_or(false, |loc| loc >= end_at)
             }
         }
@@ -2607,9 +2625,16 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         self.surrounded(
             SurroundingChunk::new("while (", Some(loc.start()), None),
             SurroundingChunk::new(")", None, Some(cond.loc().end())),
-            |fmt, _| cond.visit(fmt),
+            |fmt, _| {
+                cond.visit(fmt)?;
+                fmt.write_postfix_comments_before(body.loc().start())
+            },
         )?;
-        self.visit_stmt_as_block(body, false) // TODO:
+
+        let cond_close_paren_loc =
+            self.find_next_in_src_exact(cond.loc().end(), ')').unwrap_or_else(|| cond.loc().end());
+        let attempt_single_line = self.should_attempt_block_single_line(body, cond_close_paren_loc);
+        self.visit_stmt_as_block(body, attempt_single_line)
     }
 
     fn visit_do_while(
@@ -2637,6 +2662,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         cond: &mut Expression,
         if_branch: &mut Box<Statement>,
         else_branch: &mut Option<Box<Statement>>,
+        is_first_stmt: bool,
     ) -> Result<(), Self::Error> {
         return_source_if_disabled!(self, loc);
 
@@ -2652,16 +2678,17 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         });
 
         let cond_close_paren_loc =
-            self.find_next_in_src(cond.loc().end(), ')').unwrap_or(cond.loc().end());
-        let attempt_single_line_if_branch = else_branch.is_none() &&
-            self.should_attempt_block_single_line(cond_close_paren_loc, if_branch.loc().end());
-        self.visit_stmt_as_block(if_branch, attempt_single_line_if_branch)?;
+            self.find_next_in_src_exact(cond.loc().end(), ')').unwrap_or_else(|| cond.loc().end());
+        let attempt_single_line = is_first_stmt &&
+            else_branch.is_none() &&
+            self.should_attempt_block_single_line(if_branch.as_mut(), cond_close_paren_loc);
+        self.visit_stmt_as_block(if_branch, attempt_single_line)?;
 
         if let Some(else_branch) = else_branch {
             self.write_postfix_comments_before(else_branch.loc().start())?;
             write_chunk!(self, else_branch.loc().start(), "else")?;
-            if matches!(**else_branch, Statement::If(..)) {
-                else_branch.visit(self)?;
+            if let Statement::If(loc, cond, if_branch, else_branch) = else_branch.as_mut() {
+                self.visit_if(*loc, cond, if_branch, else_branch, false)?;
             } else {
                 self.visit_stmt_as_block(else_branch, false)?;
             }
@@ -3301,44 +3328,44 @@ mod tests {
         };
     }
 
-    // test_directory! { ConstructorDefinition }
-    // test_directory! { ContractDefinition }
-    // test_directory! { DocComments }
-    // test_directory! { EnumDefinition }
-    // test_directory! { ErrorDefinition }
-    // test_directory! { EventDefinition }
-    // test_directory! { FunctionDefinition }
-    // test_directory! { FunctionType }
-    // test_directory! { ImportDirective }
-    // test_directory! { ModifierDefinition }
-    // test_directory! { StatementBlock }
-    // test_directory! { StructDefinition }
-    // test_directory! { TypeDefinition }
-    // test_directory! { UsingDirective }
-    // test_directory! { VariableDefinition }
-    // test_directory! { OperatorExpressions }
-    // test_directory! { WhileStatement }
-    // test_directory! { DoWhileStatement }
-    // test_directory! { ForStatement }
+    test_directory! { ConstructorDefinition }
+    test_directory! { ContractDefinition }
+    test_directory! { DocComments }
+    test_directory! { EnumDefinition }
+    test_directory! { ErrorDefinition }
+    test_directory! { EventDefinition }
+    test_directory! { FunctionDefinition }
+    test_directory! { FunctionType }
+    test_directory! { ImportDirective }
+    test_directory! { ModifierDefinition }
+    test_directory! { StatementBlock }
+    test_directory! { StructDefinition }
+    test_directory! { TypeDefinition }
+    test_directory! { UsingDirective }
+    test_directory! { VariableDefinition }
+    test_directory! { OperatorExpressions }
+    test_directory! { WhileStatement }
+    test_directory! { DoWhileStatement }
+    test_directory! { ForStatement }
     test_directory! { IfStatement }
-    // test_directory! { VariableAssignment }
-    // test_directory! { FunctionCallArgsStatement }
-    // test_directory! { RevertStatement }
-    // test_directory! { RevertNamedArgsStatement }
-    // test_directory! { ReturnStatement }
-    // test_directory! { TryStatement }
-    // test_directory! { TernaryExpression }
-    // test_directory! { NamedFunctionCallExpression }
-    // test_directory! { ArrayExpressions }
-    // test_directory! { UnitExpression }
-    // test_directory! { ThisExpression }
-    // test_directory! { SimpleComments }
-    // test_directory! { LiteralExpression }
-    // test_directory! { Yul }
-    // test_directory! { YulStrings }
-    // test_directory! { IntTypes }
-    // test_directory! { InlineDisable }
-    // test_directory! { NumberLiteralUnderscore }
-    // test_directory! { FunctionCall }
-    // test_directory! { TrailingComma }
+    test_directory! { VariableAssignment }
+    test_directory! { FunctionCallArgsStatement }
+    test_directory! { RevertStatement }
+    test_directory! { RevertNamedArgsStatement }
+    test_directory! { ReturnStatement }
+    test_directory! { TryStatement }
+    test_directory! { TernaryExpression }
+    test_directory! { NamedFunctionCallExpression }
+    test_directory! { ArrayExpressions }
+    test_directory! { UnitExpression }
+    test_directory! { ThisExpression }
+    test_directory! { SimpleComments }
+    test_directory! { LiteralExpression }
+    test_directory! { Yul }
+    test_directory! { YulStrings }
+    test_directory! { IntTypes }
+    test_directory! { InlineDisable }
+    test_directory! { NumberLiteralUnderscore }
+    test_directory! { FunctionCall }
+    test_directory! { TrailingComma }
 }

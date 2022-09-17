@@ -27,7 +27,9 @@ contract IfStatement {
         // comment
         if (condition) {
             execute();
-        } else if (anotherLongCondition) execute(); // differently
+        } else if (anotherLongCondition) {
+            execute(); // differently
+        }
 
         /* comment1 */
         if ( /* comment2 */ /* comment3 */
@@ -90,6 +92,12 @@ contract IfStatement {
 
         if (condition) {}
 
-        if (condition) executeWithMultipleParameters(condition, anotherLongCondition); else if (anotherLongCondition) execute();
+        if (condition) {
+            executeWithMultipleParameters(condition, anotherLongCondition);
+        } else if (anotherLongCondition) {
+            execute();
+        }
+
+        if (condition && ((condition || anotherLongCondition))) execute();
     }
 }
