@@ -65,7 +65,7 @@ interface FunctionInterfaces {
 
     function manyParamsSomeModifiers(uint x1, uint x2, uint x3, uint x4, uint x5, uint x6, uint x7, uint x8, uint x9, uint x10) modifier1 modifier2 modifier3;
 
-    function manyParamssomeReturns(uint x1, uint x2, uint x3, uint x4, uint x5, uint x6, uint x7, uint x8, uint x9, uint x10) returns(uint y1, uint y2, uint y3);
+    function manyParamsSomeReturns(uint x1, uint x2, uint x3, uint x4, uint x5, uint x6, uint x7, uint x8, uint x9, uint x10) returns(uint y1, uint y2, uint y3);
 
     function manyParamsManyModifiers(uint x1, uint x2, uint x3, uint x4, uint x5, uint x6, uint x7, uint x8, uint x9, uint x10) modifier1 modifier2 modifier3 modifier4 modifier5 modifier6 modifier7 modifier8 modifier9 modifier10;
 
@@ -154,7 +154,7 @@ contract FunctionDefinitions {
         a = 1;
     }
 
-    function manyParamssomeReturns(uint x1, uint x2, uint x3, uint x4, uint x5, uint x6, uint x7, uint x8, uint x9, uint x10) returns(uint y1, uint y2, uint y3) {
+    function manyParamsSomeReturns(uint x1, uint x2, uint x3, uint x4, uint x5, uint x6, uint x7, uint x8, uint x9, uint x10) returns(uint y1, uint y2, uint y3) {
         a = 1;
     }
 
