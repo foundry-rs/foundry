@@ -179,20 +179,20 @@ impl ScriptArgs {
         result: &mut ScriptResult,
         known_contracts: &ContractsByArtifact,
     ) -> eyre::Result<CallTraceDecoder> {
-        let etherscan_identifier = EtherscanIdentifier::new(
+        let mut etherscan_identifier = EtherscanIdentifier::new(
             &script_config.config,
             script_config.evm_opts.get_remote_chain_id(),
         )?;
 
-        let local_identifier = LocalTraceIdentifier::new(known_contracts);
+        let mut local_identifier = LocalTraceIdentifier::new(known_contracts);
         let mut decoder =
             CallTraceDecoderBuilder::new().with_labels(result.labeled_addresses.clone()).build();
 
         decoder.add_signature_identifier(SignaturesIdentifier::new(Config::foundry_cache_dir())?);
 
         for (_, trace) in &mut result.traces {
-            decoder.identify(trace, &local_identifier);
-            decoder.identify(trace, &etherscan_identifier);
+            decoder.identify(trace, &mut local_identifier);
+            decoder.identify(trace, &mut etherscan_identifier);
         }
         Ok(decoder)
     }
@@ -392,8 +392,12 @@ impl ScriptArgs {
         project: Project,
         highlevel_known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
     ) -> eyre::Result<()> {
-        let (sources, artifacts) =
-            filter_sources_and_artifacts(&self.path, sources, highlevel_known_contracts, project)?;
+        let (sources, artifacts) = filter_sources_and_artifacts(
+            &self.path,
+            sources,
+            highlevel_known_contracts.clone(),
+            project,
+        )?;
         let flattened = result
             .debug
             .and_then(|arena| arena.last().map(|arena| arena.flatten(0)))
@@ -404,7 +408,16 @@ impl ScriptArgs {
             .map(|(addr, identifier)| (*addr, get_contract_name(identifier).to_string()))
             .collect();
 
-        let tui = Tui::new(flattened, 0, identified_contracts, artifacts, sources)?;
+        let tui = Tui::new(
+            flattened,
+            0,
+            identified_contracts,
+            artifacts,
+            highlevel_known_contracts
+                .into_iter()
+                .map(|(id, _)| (id.name, sources.clone()))
+                .collect(),
+        )?;
         match tui.start().expect("Failed to start tui") {
             TUIExitReason::CharExit => Ok(()),
         }

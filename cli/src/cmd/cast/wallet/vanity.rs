@@ -277,7 +277,7 @@ mod tests {
         let wallet = args.run().unwrap();
         let addr = wallet.address();
         let addr = format!("{addr:x}");
-        assert!(addr.starts_with("9"));
+        assert!(addr.starts_with('9'));
     }
 
     #[test]

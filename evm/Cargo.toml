@@ -26,7 +26,6 @@ thiserror = "1.0.29"
 # Logging
 tracing = "0.1"
 tracing-subscriber = "0.3"
-tracing-error = "0.2.0"
 
 # Threading/futures
 tokio = { version = "1", features = ["time", "macros"] }

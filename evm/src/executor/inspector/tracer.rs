@@ -38,7 +38,6 @@ impl Tracer {
     pub fn with_steps_recording(mut self, gas_inspector: Rc<RefCell<GasInspector>>) -> Self {
         self.record_steps = true;
         self.gas_inspector = gas_inspector;
-
         self
     }
 

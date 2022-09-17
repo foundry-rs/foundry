@@ -527,10 +527,10 @@ pub fn load_contracts(
     known_contracts: Option<&ContractsByArtifact>,
 ) -> ContractsByAddress {
     if let Some(contracts) = known_contracts {
-        let local_identifier = LocalTraceIdentifier::new(contracts);
+        let mut local_identifier = LocalTraceIdentifier::new(contracts);
         let mut decoder = CallTraceDecoderBuilder::new().build();
         for (_, trace) in &traces {
-            decoder.identify(trace, &local_identifier);
+            decoder.identify(trace, &mut local_identifier);
         }
 
         decoder
