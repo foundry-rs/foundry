@@ -1,12 +1,5 @@
 //! A Solidity formatter
 
-use std::{fmt::Write, str::FromStr};
-
-use ethers_core::{types::H160, utils::to_checksum};
-use itertools::{Either, Itertools};
-use solang_parser::pt::*;
-use thiserror::Error;
-
 use crate::{
     buffer::*,
     chunk::*,
@@ -17,6 +10,13 @@ use crate::{
     visit::{Visitable, Visitor},
     FormatterConfig, InlineConfig, IntTypes, NumberUnderscore,
 };
+use ethers_core::{types::H160, utils::to_checksum};
+use itertools::{Either, Itertools};
+use solang_parser::pt::*;
+use std::{fmt::Write, str::FromStr};
+use thiserror::Error;
+
+type Result<T, E = FormatterError> = std::result::Result<T, E>;
 
 /// A custom Error thrown by the Formatter
 #[derive(Error, Debug)]
@@ -63,8 +63,6 @@ macro_rules! bail {
         return Err($crate::formatter::format_err!($fmt, $(arg)*))
     };
 }
-
-type Result<T, E = FormatterError> = std::result::Result<T, E>;
 
 // TODO: store context entities as references without copying
 /// Current context of the Formatter (e.g. inside Contract or Function definition)
@@ -278,21 +276,17 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// Find the start of the next instance of a slice in source
     fn find_next_str_in_src(&self, byte_offset: usize, needle: &str) -> Option<usize> {
         let subset = &self.source[byte_offset..];
-        needle
-            .chars()
-            .next()
-            .map(|first_char| {
-                subset
-                    .comment_state_char_indices()
-                    .position(|(state, idx, ch)| {
-                        first_char == ch &&
-                            state == CommentState::None &&
-                            idx + needle.len() <= subset.len() &&
-                            subset[idx..idx + needle.len()].eq(needle)
-                    })
-                    .map(|p| byte_offset + p)
-            })
-            .flatten()
+        needle.chars().next().and_then(|first_char| {
+            subset
+                .comment_state_char_indices()
+                .position(|(state, idx, ch)| {
+                    first_char == ch &&
+                        state == CommentState::None &&
+                        idx + needle.len() <= subset.len() &&
+                        subset[idx..idx + needle.len()].eq(needle)
+                })
+                .map(|p| byte_offset + p)
+        })
     }
 
     /// Extends the location to the next instance of a character. Returns true if the loc was
