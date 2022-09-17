@@ -13,10 +13,6 @@ pub struct FormatterConfig {
     pub bracket_spacing: bool,
     /// Style of uint/int256 types
     pub int_types: IntTypes,
-    // TODO: remove
-    /// If function parameters are multiline then always put the function attributes on separate
-    /// lines
-    pub func_attrs_with_params_multiline: bool,
     /// Style of multiline function header in case it doesn't fit
     pub multiline_func_header: MultilineFuncHeaderStyle,
     /// Style of quotation marks
@@ -93,7 +89,6 @@ impl Default for FormatterConfig {
             tab_width: 4,
             bracket_spacing: false,
             int_types: IntTypes::Long,
-            func_attrs_with_params_multiline: true,
             multiline_func_header: MultilineFuncHeaderStyle::AttributesFirst,
             quote_style: QuoteStyle::Double,
             number_underscore: NumberUnderscore::Preserve,

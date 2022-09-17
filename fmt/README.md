@@ -111,6 +111,7 @@ Formatter supports multiple configuration options defined in `FormatterConfig`.
 | func_attrs_with_params_multiline  | true     | If function parameters are multiline then always put the function attributes on separate lines
 | quote_style                       | double   | Style of quotation marks. Available options: `double`, `single`, `preserve`
 | number_underscore                 | preserve | Style of underscores in number literals. Available options: `remove`, `thousands`, `preserve`
+TODO: update ^
 
 ### Testing
 
