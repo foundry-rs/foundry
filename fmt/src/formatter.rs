@@ -10,7 +10,7 @@ use thiserror::Error;
 use crate::{
     buffer::*,
     chunk::*,
-    comments::{CommentStringExt, CommentWithMetadata, Comments},
+    comments::{CommentState, CommentStringExt, CommentWithMetadata, Comments},
     macros::*,
     solang_ext::*,
     string::{QuoteState, QuotedStringExt},
@@ -270,8 +270,8 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// Find the next instance of the character in source
     fn find_next_in_src(&self, byte_offset: usize, needle: char) -> Option<usize> {
         self.source[byte_offset..]
-            .non_comment_chars()
-            .position(|ch| needle == ch)
+            .comment_state_char_indices()
+            .position(|(state, _, ch)| needle == ch && state == CommentState::None)
             .map(|p| byte_offset + p)
     }
 
@@ -1517,9 +1517,13 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 }
                 Type::Mapping(loc, from, to) => {
                     write_chunk!(self, loc.start(), "mapping(")?;
-                    from.visit(self)?;
+                    let arrow_loc = self.find_next_in_src(loc.start(), '='); // TODO: =>
+                    let key_chunk = self.visit_to_chunk(from.loc().start(), arrow_loc, from)?;
+                    self.write_chunk(&key_chunk)?;
                     write!(self.buf(), " => ")?;
-                    to.visit(self)?;
+                    let close_paren_loc = self.find_next_in_src(to.loc().end(), ')');
+                    let value_chunk = self.visit_to_chunk(to.loc().start(), close_paren_loc, to)?;
+                    self.write_chunk(&value_chunk)?;
                     write!(self.buf(), ")")?;
                 }
                 Type::Function { .. } => self.visit_source(*loc)?,
