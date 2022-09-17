@@ -744,11 +744,16 @@ impl NodeConfig {
                     panic!("Failed to get block for block number: {}", fork_block_number)
                 };
 
+                // we only use the gas limit value of the block if it is non-zero, since there are networks where this is not used and is always `0x0` which would inevitably result in `OutOfGas` errors as soon as the evm is about to record gas, See also <https://github.com/foundry-rs/foundry/issues/3247>
+
+                let gas_limit =
+                    if block.gas_limit.is_zero() { env.block.gas_limit } else { block.gas_limit };
+
                 env.block = BlockEnv {
                     number: fork_block_number.into(),
                     timestamp: block.timestamp,
                     difficulty: block.difficulty,
-                    gas_limit: block.gas_limit,
+                    gas_limit,
                     // Keep previous `coinbase` and `basefee` value
                     coinbase: env.block.coinbase,
                     basefee: env.block.basefee,
