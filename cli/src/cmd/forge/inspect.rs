@@ -18,7 +18,6 @@ use ethers::{
     solc::utils::canonicalize,
 };
 use foundry_common::compile;
-
 use serde_json::{to_value, Value};
 use std::{fmt, str::FromStr};
 

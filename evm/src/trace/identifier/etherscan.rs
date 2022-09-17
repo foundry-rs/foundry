@@ -1,18 +1,25 @@
 use super::{AddressIdentity, TraceIdentifier};
+
 use ethers::{
     abi::{Abi, Address},
     etherscan,
-    prelude::{contract::ContractMetadata, errors::EtherscanError},
+    prelude::{
+        artifacts::ContractBytecodeSome, contract::ContractMetadata, errors::EtherscanError,
+        ArtifactId,
+    },
     solc::utils::RuntimeOrHandle,
+    types::H160,
 };
+use foundry_common::compile;
 use foundry_config::{Chain, Config};
 use futures::{
-    future::Future,
+    future::{join_all, Future},
     stream::{FuturesUnordered, Stream, StreamExt},
     task::{Context, Poll},
 };
 use std::{
     borrow::Cow,
+    collections::BTreeMap,
     pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -32,6 +39,8 @@ pub struct EtherscanIdentifier {
     /// After the first [EtherscanError::InvalidApiKey] this will get set to true, so we can
     /// prevent any further attempts
     invalid_api_key: Arc<AtomicBool>,
+    pub contracts: BTreeMap<H160, (String, String, bool, u32, String)>,
+    pub sources: BTreeMap<u32, String>,
 }
 
 impl EtherscanIdentifier {
@@ -42,16 +51,71 @@ impl EtherscanIdentifier {
             Ok(Self {
                 client: Some(Arc::new(config.into_client()?)),
                 invalid_api_key: Arc::new(Default::default()),
+                contracts: BTreeMap::new(),
+                sources: BTreeMap::new(),
             })
         } else {
             Ok(Default::default())
         }
     }
+
+    /// Goes over the list of contracts we have pulled from the traces, clones their source from
+    /// Etherscan and compiles them locally, for usage in the debugger.
+    pub async fn get_compiled_contracts(
+        &self,
+    ) -> eyre::Result<(BTreeMap<ArtifactId, String>, BTreeMap<ArtifactId, ContractBytecodeSome>)>
+    {
+        let mut compiled_contracts = BTreeMap::new();
+        let mut sources = BTreeMap::new();
+
+        // TODO: Add caching so we dont double-fetch contracts.
+        let contracts_iter = self
+            .contracts
+            .iter()
+            // filter out vyper files and invalid source
+            .filter(|(_, (_, source_code, _, _, version))| {
+                !source_code.starts_with("{{") && !version.starts_with("vyper")
+            });
+
+        let outputs_fut = contracts_iter
+            .map(|(label, (name, source_code, optimization, runs, version))| {
+                println!("Compiling: {name} {:?}", label);
+                compile::compile_from_source(
+                    name.to_string(),
+                    source_code.clone(),
+                    *optimization,
+                    *runs,
+                    version.to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        // poll all the futures concurrently
+        let artifacts = join_all(outputs_fut).await;
+
+        // construct the map
+        let contracts_iter = self
+            .contracts
+            .iter()
+            // filter out vyper files and invalid source
+            .filter(|(_, (_, source_code, _, _, version))| {
+                !source_code.starts_with("{{") && !version.starts_with("vyper")
+            });
+        for (compiled, (_, (_, source_code, _, _, _))) in artifacts.into_iter().zip(contracts_iter)
+        {
+            // get the inner type
+            let compiled = compiled?;
+            compiled_contracts.insert(compiled.0.clone(), compiled.1.clone());
+            sources.insert(compiled.0.to_owned(), source_code.to_owned());
+        }
+
+        Ok((sources, compiled_contracts))
+    }
 }
 
 impl TraceIdentifier for EtherscanIdentifier {
     fn identify_addresses(
-        &self,
+        &mut self,
         addresses: Vec<(&Address, Option<&Vec<u8>>)>,
     ) -> Vec<AddressIdentity> {
         trace!(target: "etherscanidentifier", "identify {} addresses", addresses.len());
@@ -70,16 +134,25 @@ impl TraceIdentifier for EtherscanIdentifier {
             );
 
             for (addr, _) in addresses {
-                fetcher.push(*addr);
+                if !self.contracts.contains_key(addr) {
+                    fetcher.push(*addr);
+                }
             }
 
             let fut = fetcher
-                .map(|(address, label, abi)| AddressIdentity {
-                    address,
-                    label: Some(label.clone()),
-                    contract: Some(label),
-                    abi: Some(Cow::Owned(abi)),
-                    artifact_id: None,
+                .map(|(address, label, abi, source_code, optimization, runs, version)| {
+                    self.contracts.insert(
+                        address,
+                        (label.to_string(), source_code, optimization, runs, version),
+                    );
+
+                    AddressIdentity {
+                        address,
+                        label: Some(label.clone()),
+                        contract: Some(label),
+                        abi: Some(Cow::Owned(abi)),
+                        artifact_id: None,
+                    }
                 })
                 .collect();
 
@@ -150,7 +223,7 @@ impl EtherscanFetcher {
 }
 
 impl Stream for EtherscanFetcher {
-    type Item = (Address, String, Abi);
+    type Item = (Address, String, Abi, String, bool, u32, String);
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let pin = self.get_mut();
@@ -175,7 +248,15 @@ impl Stream for EtherscanFetcher {
                         Ok(mut metadata) => {
                             if let Some(item) = metadata.items.pop() {
                                 if let Ok(abi) = serde_json::from_str(&item.abi) {
-                                    return Poll::Ready(Some((addr, item.contract_name, abi)))
+                                    return Poll::Ready(Some((
+                                        addr,
+                                        item.contract_name,
+                                        abi,
+                                        item.source_code,
+                                        item.optimization_used.eq("1"),
+                                        item.runs.parse::<u32>().expect("runs parse error"),
+                                        item.compiler_version,
+                                    )))
                                 }
                             }
                         }

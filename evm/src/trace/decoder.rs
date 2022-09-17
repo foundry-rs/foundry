@@ -187,7 +187,7 @@ impl CallTraceDecoder {
     /// Identify unknown addresses in the specified call trace using the specified identifier.
     ///
     /// Unknown contracts are contracts that either lack a label or an ABI.
-    pub fn identify(&mut self, trace: &CallTraceArena, identifier: &impl TraceIdentifier) {
+    pub fn identify(&mut self, trace: &CallTraceArena, identifier: &mut impl TraceIdentifier) {
         let unidentified_addresses = trace
             .addresses()
             .into_iter()
