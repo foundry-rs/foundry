@@ -1,4 +1,6 @@
 contract SimpleComments {
+    mapping(address /* asset */ => address /* router */) public router;
+
     constructor() {
         // TODO: do this and that
 
