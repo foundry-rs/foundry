@@ -1,22 +1,22 @@
 //! A Solidity formatter
 
-use std::{fmt::Write, str::FromStr};
-
-use ethers_core::{types::H160, utils::to_checksum};
-use itertools::{Either, Itertools};
-use solang_parser::pt::*;
-use thiserror::Error;
-
 use crate::{
     buffer::*,
     chunk::*,
-    comments::{CommentStringExt, CommentWithMetadata, Comments},
+    comments::{CommentState, CommentStringExt, CommentWithMetadata, Comments},
     macros::*,
     solang_ext::*,
     string::{QuoteState, QuotedStringExt},
     visit::{Visitable, Visitor},
     FormatterConfig, InlineConfig, IntTypes, NumberUnderscore,
 };
+use ethers_core::{types::H160, utils::to_checksum};
+use itertools::{Either, Itertools};
+use solang_parser::pt::*;
+use std::{fmt::Write, str::FromStr};
+use thiserror::Error;
+
+type Result<T, E = FormatterError> = std::result::Result<T, E>;
 
 /// A custom Error thrown by the Formatter
 #[derive(Error, Debug)]
@@ -63,8 +63,6 @@ macro_rules! bail {
         return Err($crate::formatter::format_err!($fmt, $(arg)*))
     };
 }
-
-type Result<T, E = FormatterError> = std::result::Result<T, E>;
 
 // TODO: store context entities as references without copying
 /// Current context of the Formatter (e.g. inside Contract or Function definition)
@@ -270,9 +268,25 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// Find the next instance of the character in source
     fn find_next_in_src(&self, byte_offset: usize, needle: char) -> Option<usize> {
         self.source[byte_offset..]
-            .non_comment_chars()
-            .position(|ch| needle == ch)
+            .comment_state_char_indices()
+            .position(|(state, _, ch)| needle == ch && state == CommentState::None)
             .map(|p| byte_offset + p)
+    }
+
+    /// Find the start of the next instance of a slice in source
+    fn find_next_str_in_src(&self, byte_offset: usize, needle: &str) -> Option<usize> {
+        let subset = &self.source[byte_offset..];
+        needle.chars().next().and_then(|first_char| {
+            subset
+                .comment_state_char_indices()
+                .position(|(state, idx, ch)| {
+                    first_char == ch &&
+                        state == CommentState::None &&
+                        idx + needle.len() <= subset.len() &&
+                        subset[idx..idx + needle.len()].eq(needle)
+                })
+                .map(|p| byte_offset + p)
+        })
     }
 
     /// Extends the location to the next instance of a character. Returns true if the loc was
@@ -1517,9 +1531,13 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 }
                 Type::Mapping(loc, from, to) => {
                     write_chunk!(self, loc.start(), "mapping(")?;
-                    from.visit(self)?;
+                    let arrow_loc = self.find_next_str_in_src(loc.start(), "=>");
+                    let key_chunk = self.visit_to_chunk(from.loc().start(), arrow_loc, from)?;
+                    self.write_chunk(&key_chunk)?;
                     write!(self.buf(), " => ")?;
-                    to.visit(self)?;
+                    let close_paren_loc = self.find_next_in_src(to.loc().end(), ')');
+                    let value_chunk = self.visit_to_chunk(to.loc().start(), close_paren_loc, to)?;
+                    self.write_chunk(&value_chunk)?;
                     write!(self.buf(), ")")?;
                 }
                 Type::Function { .. } => self.visit_source(*loc)?,
