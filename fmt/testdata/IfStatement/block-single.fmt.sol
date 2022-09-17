@@ -1,3 +1,4 @@
+// config: single_line_statement_blocks = "single"
 function execute() returns (bool) {
     if (true) {
         // always returns true
@@ -14,18 +15,14 @@ function executeWithVeryVeryVeryLongNameAndSomeParameter(bool parameter) {}
 
 contract IfStatement {
     function test() external {
-        if (true) {
-            execute();
-        }
+        if (true) execute();
 
         bool condition;
         bool anotherLongCondition;
         bool andAnotherVeryVeryLongCondition;
         if (
             condition && anotherLongCondition || andAnotherVeryVeryLongCondition
-        ) {
-            execute();
-        }
+        ) execute();
 
         // comment
         if (condition) {
@@ -59,9 +56,7 @@ contract IfStatement {
         if (
             // comment16
             condition /* comment17 */
-        ) {
-            execute();
-        }
+        ) execute();
 
         if (condition) {
             execute();
@@ -69,11 +64,7 @@ contract IfStatement {
             executeElse();
         }
 
-        if (condition) {
-            if (anotherLongCondition) {
-                execute();
-            }
-        }
+        if (condition) if (anotherLongCondition) execute();
 
         if (condition) execute();
 
@@ -107,8 +98,6 @@ contract IfStatement {
             execute();
         }
 
-        if (condition && ((condition || anotherLongCondition))) {
-            execute();
-        }
+        if (condition && ((condition || anotherLongCondition))) execute();
     }
 }
