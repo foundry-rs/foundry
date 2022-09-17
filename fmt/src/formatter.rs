@@ -418,11 +418,12 @@ impl<'a, W: Write> Formatter<'a, W> {
                     .strip_suffix("*/")
                     .unwrap()
                     .trim();
-                let lines = content.lines().map(|line| line.trim_start());
+                let lines = content.lines();
                 writeln!(self.buf(), "/**")?;
                 for line in lines {
-                    let line = line.trim().trim_start_matches('*').trim_start();
-                    writeln!(self.buf(), "{}", format!(" * {line}").trim_end())?;
+                    let line = line.trim().trim_start_matches('*');
+                    let needs_space = line.chars().next().map_or(false, |ch| !ch.is_whitespace());
+                    writeln!(self.buf(), " *{}{}", if needs_space { " " } else { "" }, line)?;
                 }
                 write!(self.buf(), " */")?;
             } else {

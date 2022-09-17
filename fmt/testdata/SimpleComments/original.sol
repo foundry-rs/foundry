@@ -33,3 +33,12 @@ contract SimpleComments {
         // line comment
     }
 }
+
+/*
+ * @notice Here is my comment
+ *       - item 1
+ *       - item 2
+ * Some equations:
+ *     y = mx + b
+ */
+function test() {}
