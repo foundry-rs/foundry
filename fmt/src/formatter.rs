@@ -11,7 +11,7 @@ use thiserror::Error;
 use crate::{
     buffer::*,
     chunk::*,
-    comments::{CommentStringExt, CommentWithMetadata, Comments},
+    comments::{CommentState, CommentStringExt, CommentWithMetadata, Comments},
     macros::*,
     solang_ext::*,
     string::{QuoteState, QuotedStringExt},
@@ -271,14 +271,9 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// Find the next instance of the character in source excluding comments
     fn find_next_in_src(&self, byte_offset: usize, needle: char) -> Option<usize> {
         self.source[byte_offset..]
-            .non_comment_chars()
-            .position(|ch| needle == ch)
+            .comment_state_char_indices()
+            .position(|(state, _, ch)| needle == ch && state == CommentState::None)
             .map(|p| byte_offset + p)
-    }
-
-    /// Find the next instance of the character in source
-    fn find_next_in_src_exact(&self, byte_offset: usize, needle: char) -> Option<usize> {
-        self.source[byte_offset..].chars().position(|ch| needle == ch).map(|p| byte_offset + p)
     }
 
     /// Extends the location to the next instance of a character. Returns true if the loc was
@@ -2632,7 +2627,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         )?;
 
         let cond_close_paren_loc =
-            self.find_next_in_src_exact(cond.loc().end(), ')').unwrap_or_else(|| cond.loc().end());
+            self.find_next_in_src(cond.loc().end(), ')').unwrap_or_else(|| cond.loc().end());
         let attempt_single_line = self.should_attempt_block_single_line(body, cond_close_paren_loc);
         self.visit_stmt_as_block(body, attempt_single_line)
     }
@@ -2678,7 +2673,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         });
 
         let cond_close_paren_loc =
-            self.find_next_in_src_exact(cond.loc().end(), ')').unwrap_or_else(|| cond.loc().end());
+            self.find_next_in_src(cond.loc().end(), ')').unwrap_or_else(|| cond.loc().end());
         let attempt_single_line = is_first_stmt &&
             else_branch.is_none() &&
             self.should_attempt_block_single_line(if_branch.as_mut(), cond_close_paren_loc);
