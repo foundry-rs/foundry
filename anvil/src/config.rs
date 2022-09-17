@@ -711,20 +711,33 @@ impl NodeConfig {
                         .expect("Failed to establish provider to fork url"),
                 );
 
-                let fork_block_number = if let Some(fork_block_number) = self.fork_block_number {
+                let (fork_block_number, fork_chain_id) = if let Some(fork_block_number) =
+                    self.fork_block_number
+                {
                     // auto adjust hardfork if not specified
-                    if self.hardfork.is_none() {
-                        let hardfork: Hardfork = fork_block_number.into();
-                        env.cfg.spec_id = hardfork.into();
-                        self.hardfork = Some(hardfork);
-                    }
+                    let chain_id = if self.hardfork.is_none() {
+                        // but only if we're forking mainnet
+                        let chain_id =
+                            provider.get_chainid().await.expect("Failed to fetch network chain id");
+                        if chain_id == ethers::types::Chain::Mainnet.into() {
+                            let hardfork: Hardfork = fork_block_number.into();
+                            env.cfg.spec_id = hardfork.into();
+                            self.hardfork = Some(hardfork);
+                        }
+                        Some(chain_id)
+                    } else {
+                        None
+                    };
 
-                    fork_block_number
+                    (fork_block_number, chain_id)
                 } else {
                     // pick the last block number but also ensure it's not pending anymore
-                    find_latest_fork_block(&provider)
-                        .await
-                        .expect("Failed to get fork block number")
+                    (
+                        find_latest_fork_block(&provider)
+                            .await
+                            .expect("Failed to get fork block number"),
+                        None,
+                    )
                 };
 
                 let block = provider
@@ -789,7 +802,13 @@ impl NodeConfig {
                 let chain_id = if let Some(chain_id) = self.chain_id {
                     chain_id
                 } else {
-                    let chain_id = provider.get_chainid().await.unwrap().as_u64();
+                    let chain_id = if let Some(fork_chain_id) = fork_chain_id {
+                        fork_chain_id
+                    } else {
+                        provider.get_chainid().await.unwrap()
+                    }
+                    .as_u64();
+
                     // need to update the dev signers and env with the chain id
                     self.set_chain_id(Some(chain_id));
                     env.cfg.chain_id = chain_id.into();
