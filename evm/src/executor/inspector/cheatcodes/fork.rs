@@ -29,7 +29,7 @@ pub fn apply<DB: DatabaseExt>(
             create_select_fork(state, data, fork.0.clone(), Some(fork.1.as_u64()))
                 .map(|id| id.encode().into())
         }
-        HEVMCalls::SelectFork(fork_id) => select_fork(data, fork_id.0),
+        HEVMCalls::SelectFork(fork_id) => select_fork(state, data, fork_id.0),
         HEVMCalls::MakePersistent0(acc) => {
             data.db.add_persistent_account(acc.0);
             Ok(Default::default())
@@ -101,7 +101,14 @@ pub fn apply<DB: DatabaseExt>(
 }
 
 /// Selects the given fork id
-fn select_fork<DB: DatabaseExt>(data: &mut EVMData<DB>, fork_id: U256) -> Result<Bytes, Bytes> {
+fn select_fork<DB: DatabaseExt>(
+    state: &mut Cheatcodes,
+    data: &mut EVMData<DB>,
+    fork_id: U256,
+) -> Result<Bytes, Bytes> {
+    // No need to correct since the sender's nonce does not get incremented when selecting a fork.
+    state.corrected_nonce = true;
+
     data.db
         .select_fork(fork_id, data.env, &mut data.journaled_state)
         .map(|_| Default::default())
@@ -115,6 +122,9 @@ fn create_select_fork<DB: DatabaseExt>(
     url_or_alias: String,
     block: Option<u64>,
 ) -> Result<U256, Bytes> {
+    // No need to correct since the sender's nonce does not get incremented when selecting a fork.
+    state.corrected_nonce = true;
+
     let fork = create_fork_request(state, url_or_alias, block, data)?;
     data.db
         .create_select_fork(fork, data.env, &mut data.journaled_state)

@@ -8,6 +8,7 @@ use crate::{
     },
     filter::Filters,
     mem::{storage::MinedBlockOutcome, Backend},
+    NodeResult,
 };
 use futures::{FutureExt, Stream, StreamExt};
 use std::{
@@ -63,8 +64,7 @@ impl NodeService {
 }
 
 impl Future for NodeService {
-    // Note: this is out of convenience as this gets joined with the server
-    type Output = hyper::Result<()>;
+    type Output = NodeResult<()>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let pin = self.get_mut();

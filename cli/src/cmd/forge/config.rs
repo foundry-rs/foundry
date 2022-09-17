@@ -1,11 +1,8 @@
 //! config command
 
-use crate::{
-    cmd::{forge::build::BuildArgs, utils::Cmd, LoadConfig},
-    term::cli_warn,
-};
+use crate::cmd::{forge::build::BuildArgs, utils::Cmd, LoadConfig};
 use clap::Parser;
-use foundry_common::evm::EvmArgs;
+use foundry_common::{evm::EvmArgs, term::cli_warn};
 use foundry_config::fix::fix_tomls;
 
 foundry_config::impl_figment_convert!(ConfigArgs, opts, evm_opts);

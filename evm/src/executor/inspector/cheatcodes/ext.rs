@@ -13,7 +13,6 @@ use ethers::{
     types::*,
 };
 use foundry_common::fs;
-
 use foundry_config::fs_permissions::FsAccessKind;
 use hex::FromHex;
 use jsonpath_rust::JsonPathFinder;
@@ -75,7 +74,7 @@ enum ArtifactBytecode {
 }
 
 impl ArtifactBytecode {
-    fn into_inner(self) -> Option<ethers::types::Bytes> {
+    fn into_bytecode(self) -> Option<ethers::types::Bytes> {
         match self {
             ArtifactBytecode::Hardhat(inner) => Some(inner.bytecode),
             ArtifactBytecode::Forge(inner) => {
@@ -83,16 +82,49 @@ impl ArtifactBytecode {
             }
         }
     }
+
+    fn into_deployed_bytecode(self) -> Option<ethers::types::Bytes> {
+        match self {
+            ArtifactBytecode::Hardhat(inner) => Some(inner.deployed_bytecode),
+            ArtifactBytecode::Forge(inner) => inner.deployed_bytecode.and_then(|bytecode| {
+                bytecode.bytecode.and_then(|bytecode| bytecode.object.into_bytes())
+            }),
+        }
+    }
 }
 
 /// A thin wrapper around a Hardhat-style artifact that only extracts the bytecode.
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct HardhatArtifact {
     #[serde(deserialize_with = "ethers::solc::artifacts::deserialize_bytes")]
     bytecode: ethers::types::Bytes,
+    #[serde(deserialize_with = "ethers::solc::artifacts::deserialize_bytes")]
+    deployed_bytecode: ethers::types::Bytes,
 }
 
+/// Returns the _deployed_ bytecode (`bytecode`) of the matching artifact
 fn get_code(state: &Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
+    let bytecode = read_bytecode(state, path)?;
+    if let Some(bin) = bytecode.into_bytecode() {
+        Ok(abi::encode(&[Token::Bytes(bin.to_vec())]).into())
+    } else {
+        Err("No bytecode for contract. Is it abstract or unlinked?".to_string().encode().into())
+    }
+}
+
+/// Returns the _deployed_ bytecode (`bytecode`) of the matching artifact
+fn get_deployed_code(state: &Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
+    let bytecode = read_bytecode(state, path)?;
+    if let Some(bin) = bytecode.into_deployed_bytecode() {
+        Ok(abi::encode(&[Token::Bytes(bin.to_vec())]).into())
+    } else {
+        Err("No bytecode for contract. Is it abstract or unlinked?".to_string().encode().into())
+    }
+}
+
+/// Reads the bytecode object(s) from the matching artifact
+fn read_bytecode(state: &Cheatcodes, path: &str) -> Result<ArtifactBytecode, Bytes> {
     let path = if path.ends_with(".json") {
         PathBuf::from(path)
     } else {
@@ -107,13 +139,7 @@ fn get_code(state: &Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
         state.config.ensure_path_allowed(&path, FsAccessKind::Read).map_err(error::encode_error)?;
 
     let data = fs::read_to_string(path).map_err(error::encode_error)?;
-    let bytecode = serde_json::from_str::<ArtifactBytecode>(&data).map_err(error::encode_error)?;
-
-    if let Some(bin) = bytecode.into_inner() {
-        Ok(abi::encode(&[Token::Bytes(bin.to_vec())]).into())
-    } else {
-        Err("No bytecode for contract. Is it abstract or unlinked?".to_string().encode().into())
-    }
+    serde_json::from_str::<ArtifactBytecode>(&data).map_err(error::encode_error)
 }
 
 fn set_env(key: &str, val: &str) -> Result<Bytes, Bytes> {
@@ -271,7 +297,7 @@ fn remove_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, 
 /// The function is designed to run recursively, so that in case of an object
 /// it will call itself to convert each of it's value and encode the whole as a
 /// Tuple
-fn value_to_token(value: &Value) -> Result<Token, Token> {
+fn value_to_token(value: &Value) -> eyre::Result<Token> {
     if let Some(boolean) = value.as_bool() {
         Ok(Token::Bool(boolean))
     } else if let Some(string) = value.as_str() {
@@ -287,7 +313,7 @@ fn value_to_token(value: &Value) -> Result<Token, Token> {
                     Token::Bytes(Vec::from_hex(val).unwrap())
                 })
             } else {
-                // If incornrect length, pad 0 at the beginning
+                // If incorrect length, pad 0 at the beginning
                 let arr = format!("0{}", val);
                 Ok(Token::Bytes(Vec::from_hex(arr).unwrap()))
             }
@@ -299,17 +325,14 @@ fn value_to_token(value: &Value) -> Result<Token, Token> {
     } else if let Some(number) = value.as_i64() {
         Ok(Token::Int(number.into()))
     } else if let Some(array) = value.as_array() {
-        Ok(Token::Array(
-            array.iter().map(|val| value_to_token(val).unwrap()).collect::<Vec<Token>>(),
-        ))
+        Ok(Token::Array(array.iter().map(value_to_token).collect::<eyre::Result<Vec<_>>>()?))
     } else if let Some(object) = value.as_object() {
-        let values =
-            object.values().map(|val| value_to_token(val).unwrap()).collect::<Vec<Token>>();
+        let values = object.values().map(value_to_token).collect::<eyre::Result<Vec<_>>>()?;
         Ok(Token::Tuple(values))
     } else if value.is_null() {
         Ok(Token::FixedBytes(vec![0; 32]))
     } else {
-        Err(Token::String("Could not decode field".to_string()))
+        eyre::bail!("Unexpected json value: {}", value)
     }
 }
 /// Parses a JSON and returns a single value, an array or an entire JSON object encoded as tuple.
@@ -325,7 +348,11 @@ fn parse_json(_state: &mut Cheatcodes, json: &str, key: &str) -> Result<Bytes, B
         .as_array()
         .ok_or_else(|| error::encode_error("JsonPath did not return an array"))?
         .iter()
-        .map(|inner| value_to_token(inner).map_err(error::encode_error))
+        .map(|inner| {
+            value_to_token(inner).map_err(|err| {
+                error::encode_error(err.wrap_err(format!("Failed to parse key {}", key)))
+            })
+        })
         .collect::<Result<Vec<Token>, Bytes>>();
     // encode the bytes as the 'bytes' solidity type
     let abi_encoded = abi::encode(&[Token::Bytes(abi::encode(&res?))]);
@@ -346,6 +373,7 @@ pub fn apply(
             }
         }
         HEVMCalls::GetCode(inner) => get_code(state, &inner.0),
+        HEVMCalls::GetDeployedCode(inner) => get_deployed_code(state, &inner.0),
         HEVMCalls::SetEnv(inner) => set_env(&inner.0, &inner.1),
         HEVMCalls::EnvBool0(inner) => get_env(&inner.0, ParamType::Bool, None),
         HEVMCalls::EnvUint0(inner) => get_env(&inner.0, ParamType::Uint(256), None),

@@ -228,7 +228,7 @@ pub fn apply<DB: DatabaseExt>(
         }
         HEVMCalls::Etch(inner) => {
             let code = inner.1.clone();
-
+            trace!(address=?inner.0, code=?hex::encode(&code.0), "etch cheatcode");
             // TODO: Does this increase gas usage?
             data.journaled_state
                 .load_account(inner.0, data.db)

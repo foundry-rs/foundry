@@ -1,16 +1,14 @@
 //! Build command
-use crate::{
-    cmd::{
-        forge::{
-            install::{self},
-            watch::WatchArgs,
-        },
-        Cmd, LoadConfig,
+use crate::cmd::{
+    forge::{
+        install::{self},
+        watch::WatchArgs,
     },
-    compile,
+    Cmd, LoadConfig,
 };
 use clap::Parser;
 use ethers::solc::{Project, ProjectCompileOutput};
+use foundry_common::compile;
 use foundry_config::{
     figment::{
         self,
