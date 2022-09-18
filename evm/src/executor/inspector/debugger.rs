@@ -84,28 +84,20 @@ where
             }
         };
 
+        let total_gas_used = gas_used(
+            data.env.cfg.spec_id,
+            interpreter.gas.limit() - self.gas_inspector.borrow().gas_remaining(),
+            interpreter.gas.refunded() as u64,
+        );
+
         self.arena.arena[self.head].steps.push(DebugStep {
             pc,
             stack: interpreter.stack().data().clone(),
             memory: interpreter.memory.clone(),
             instruction: Instruction::OpCode(op),
             push_bytes,
-            total_gas_used: 0,
+            total_gas_used,
         });
-
-        Return::Continue
-    }
-
-    fn step_end(
-        &mut self,
-        interp: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
-        _is_static: bool,
-        _eval: Return,
-    ) -> Return {
-        let total_gas_spent = interp.gas.limit() - self.gas_inspector.borrow().gas_remaining();
-        self.arena.arena[self.head].steps.last_mut().unwrap().total_gas_used =
-            gas_used(data.env.cfg.spec_id, total_gas_spent, interp.gas.refunded() as u64);
 
         Return::Continue
     }
