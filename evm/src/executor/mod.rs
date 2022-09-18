@@ -230,16 +230,16 @@ impl Executor {
                     Err(EvmError::Execution {
                         reverted: res.reverted,
                         reason: "execution error".to_owned(),
-                        traces: res.traces.clone(),
+                        traces: res.traces,
                         gas_used: res.gas_used,
                         gas_refunded: res.gas_refunded,
                         stipend: res.stipend,
-                        logs: res.logs.clone(),
-                        debug: res.debug.clone(),
-                        labels: res.labels.clone(),
+                        logs: res.logs,
+                        debug: res.debug,
+                        labels: res.labels,
                         state_changeset: None,
                         transactions: None,
-                        script_wallets: res.script_wallets.clone(),
+                        script_wallets: res.script_wallets,
                     })
                 }
             }
@@ -298,9 +298,6 @@ impl Executor {
         let env = self.build_test_env(from, TransactTo::Call(test_contract), calldata, value);
         let call_result = self.call_raw_with_env(env)?;
 
-        // if there are multiple forks we need to merge them
-        // TODO: not used let logs = self.backend.merged_logs(logs);
-
         convert_call_result(abi, &func, call_result)
     }
 
@@ -338,7 +335,6 @@ impl Executor {
         let mut env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
         let mut db = FuzzBackendWrapper::new(self.backend());
         let result = db.inspect_ref(&mut env, &mut inspector);
-        // TODO: let logs = db.backend.merged_logs(logs);
 
         convert_executed_result(env, inspector, result)
     }
