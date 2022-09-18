@@ -2122,10 +2122,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
             let body_loc = func.body.as_ref().map(LineOfCode::loc);
             let mut attrs_multiline = false;
-            if !fmt.try_on_single_line(|fmt| {
+            let fits_on_single = fmt.try_on_single_line(|fmt| {
                 fmt.write_function_header(func, body_loc, false)?;
                 Ok(())
-            })? {
+            })?;
+            if !fits_on_single {
                 attrs_multiline = fmt.write_function_header(func, body_loc, true)?;
             }
 
