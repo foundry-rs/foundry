@@ -177,9 +177,11 @@ impl<'a> Database for FuzzBackendWrapper<'a> {
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         DatabaseRef::basic(self, address)
     }
+
     fn code_by_hash(&mut self, code_hash: H256) -> Result<Bytecode, Self::Error> {
         DatabaseRef::code_by_hash(self, code_hash)
     }
+
     fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
         DatabaseRef::storage(self, address, index)
     }
