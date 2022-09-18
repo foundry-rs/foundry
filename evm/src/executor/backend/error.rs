@@ -34,6 +34,10 @@ pub enum DatabaseError {
     GetFullBlock(BlockId, Arc<eyre::Error>),
     #[error("Block {0:?} does not exist")]
     BlockNotFound(BlockId),
+    #[error("Failed to get transaction {0:?}: {1:?}")]
+    GetTransaction(H256, Arc<eyre::Error>),
+    #[error("Transaction {0:?} not found")]
+    TransactionNotFound(H256),
     #[error(
         "CREATE2 Deployer not present on this chain. [0x4e59b44847b379578588920ca78fbf26c0b4956c]"
     )]

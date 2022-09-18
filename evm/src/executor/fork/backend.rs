@@ -38,11 +38,15 @@ type FullBlockFuture<Err> = Pin<
             + Send,
     >,
 >;
+type TransactionFuture<Err> = Pin<
+    Box<dyn Future<Output = (TransactionSender, Result<Option<Transaction>, Err>, H256)> + Send>,
+>;
 
 type AccountInfoSender = OneshotSender<DatabaseResult<AccountInfo>>;
 type StorageSender = OneshotSender<DatabaseResult<U256>>;
 type BlockHashSender = OneshotSender<DatabaseResult<H256>>;
 type FullBlockSender = OneshotSender<DatabaseResult<Block<Transaction>>>;
+type TransactionSender = OneshotSender<DatabaseResult<Transaction>>;
 
 /// Request variants that are executed by the provider
 enum ProviderRequest<Err> {
@@ -50,6 +54,7 @@ enum ProviderRequest<Err> {
     Storage(StorageFuture<Err>),
     BlockHash(BlockHashFuture<Err>),
     FullBlock(FullBlockFuture<Err>),
+    Transaction(TransactionFuture<Err>),
 }
 
 /// The Request type the Backend listens for
@@ -63,6 +68,8 @@ enum BackendRequest {
     BlockHash(u64, BlockHashSender),
     /// Fetch an entire block with transactions
     FullBlock(BlockId, FullBlockSender),
+    /// Fetch a transaction
+    Transaction(H256, TransactionSender),
     /// Sets the pinned block to fetch data from
     SetPinnedBlock(BlockId),
 }
@@ -144,6 +151,9 @@ where
             BackendRequest::FullBlock(number, sender) => {
                 self.request_full_block(number, sender);
             }
+            BackendRequest::Transaction(tx, sender) => {
+                self.request_transaction(tx, sender);
+            }
             BackendRequest::Storage(addr, idx, sender) => {
                 // account is already stored in the cache
                 let value =
@@ -221,6 +231,17 @@ where
         });
 
         self.pending_requests.push(ProviderRequest::FullBlock(fut));
+    }
+
+    /// process a request for a transactions
+    fn request_transaction(&mut self, tx: H256, sender: TransactionSender) {
+        let provider = self.provider.clone();
+        let fut = Box::pin(async move {
+            let block = provider.get_transaction(tx).await;
+            (sender, block, tx)
+        });
+
+        self.pending_requests.push(ProviderRequest::Transaction(fut));
     }
 
     /// process a request for a block hash
@@ -414,6 +435,20 @@ where
                             continue
                         }
                     }
+                    ProviderRequest::Transaction(fut) => {
+                        if let Poll::Ready((sender, tx, tx_hash)) = fut.poll_unpin(cx) {
+                            let msg = match tx {
+                                Ok(Some(tx)) => Ok(tx),
+                                Ok(None) => Err(DatabaseError::TransactionNotFound(tx_hash)),
+                                Err(err) => {
+                                    let err = Arc::new(eyre::Error::new(err));
+                                    Err(DatabaseError::GetTransaction(tx_hash, err))
+                                }
+                            };
+                            let _ = sender.send(msg);
+                            continue
+                        }
+                    }
                 }
                 // not ready, insert and poll again
                 pin.pending_requests.push(request);
@@ -544,6 +579,16 @@ impl SharedBackend {
         tokio::task::block_in_place(|| {
             let (sender, rx) = oneshot_channel();
             let req = BackendRequest::FullBlock(block.into(), sender);
+            self.backend.clone().try_send(req)?;
+            Ok(rx.recv()??)
+        })
+    }
+
+    /// Returns the transaction for the hash
+    pub fn get_transaction(&self, tx: H256) -> DatabaseResult<Transaction> {
+        tokio::task::block_in_place(|| {
+            let (sender, rx) = oneshot_channel();
+            let req = BackendRequest::Transaction(tx, sender);
             self.backend.clone().try_send(req)?;
             Ok(rx.recv()??)
         })
