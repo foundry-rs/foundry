@@ -11,7 +11,7 @@ use crate::{
     FormatterConfig, InlineConfig, IntTypes, NumberUnderscore,
 };
 use ethers_core::{types::H160, utils::to_checksum};
-use foundry_config::fmt::SingleLineBlockStyle;
+use foundry_config::fmt::{MultilineFuncHeaderStyle, SingleLineBlockStyle};
 use itertools::{Either, Itertools};
 use solang_parser::pt::*;
 use std::{fmt::Write, str::FromStr};
@@ -1232,6 +1232,167 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         write_chunk!(self, loc.start(), loc.end(), "{out}")
     }
+
+    /// Write the function header
+    fn write_function_header(
+        &mut self,
+        func: &mut FunctionDefinition,
+        body_loc: Option<Loc>,
+        header_multiline: bool,
+    ) -> Result<bool> {
+        let func_name = if let Some(ident) = &func.name {
+            format!("{} {}", func.ty, ident.name)
+        } else {
+            func.ty.to_string()
+        };
+
+        // calculate locations of chunk groups
+        let attrs_loc = func.attributes.first().map(|attr| attr.loc());
+        let returns_loc = func.returns.first().map(|param| param.0);
+
+        let params_next_offset = attrs_loc
+            .as_ref()
+            .or(returns_loc.as_ref())
+            .or(body_loc.as_ref())
+            .map(|loc| loc.start());
+        let attrs_end = returns_loc.as_ref().or(body_loc.as_ref()).map(|loc| loc.start());
+        let returns_end = body_loc.as_ref().map(|loc| loc.start());
+
+        let mut params_multiline = false;
+
+        let params_loc = {
+            let mut loc = func.loc.with_end(func.loc.start());
+            self.extend_loc_until(&mut loc, ')');
+            loc
+        };
+        if self.inline_config.is_disabled(params_loc) {
+            let chunk = self.chunked(func.loc.start(), None, |fmt| fmt.visit_source(params_loc))?;
+            params_multiline = chunk.content.contains('\n');
+            self.write_chunk(&chunk)?;
+        } else {
+            let first_surrounding = SurroundingChunk::new(
+                format!("{func_name}("),
+                Some(func.loc.start()),
+                Some(
+                    func.params
+                        .first()
+                        .map(|param| param.0.start())
+                        .unwrap_or_else(|| params_loc.end()),
+                ),
+            );
+            self.surrounded(
+                first_surrounding,
+                SurroundingChunk::new(")", None, params_next_offset),
+                |fmt, multiline| {
+                    let params = fmt.items_to_chunks(
+                        params_next_offset,
+                        func.params.iter_mut().filter_map(|(loc, param)| {
+                            param.as_mut().map(|param| Ok((*loc, param)))
+                        }),
+                    )?;
+                    let after_params = if !func.attributes.is_empty() || !func.returns.is_empty() {
+                        ""
+                    } else if func.body.is_some() {
+                        " {"
+                    } else {
+                        ";"
+                    };
+                    let should_multiline = header_multiline &&
+                        matches!(
+                            fmt.config.multiline_func_header,
+                            MultilineFuncHeaderStyle::ParamsFirst | MultilineFuncHeaderStyle::All
+                        );
+                    params_multiline = should_multiline ||
+                        multiline ||
+                        fmt.are_chunks_separated_multiline(
+                            &format!("{{}}){after_params}"),
+                            &params,
+                            ",",
+                        )?;
+                    fmt.write_chunks_separated(&params, ",", params_multiline)?;
+                    Ok(())
+                },
+            )?;
+        }
+
+        let mut write_attributes = |fmt: &mut Self, multiline: bool| -> Result<()> {
+            // write attributes
+            if !func.attributes.is_empty() {
+                let attrs_loc = func
+                    .attributes
+                    .first()
+                    .unwrap()
+                    .loc()
+                    .with_end_from(&func.attributes.last().unwrap().loc());
+                if fmt.inline_config.is_disabled(attrs_loc) {
+                    fmt.indented(1, |fmt| fmt.visit_source(attrs_loc))?;
+                } else {
+                    fmt.write_postfix_comments_before(attrs_loc.start())?;
+                    fmt.write_whitespace_separator(multiline)?;
+                    let attributes = fmt.items_to_chunks_sorted(
+                        attrs_end,
+                        func.attributes.iter_mut().map(|attr| Ok((attr.loc(), attr))),
+                    )?;
+                    fmt.indented(1, |fmt| {
+                        fmt.write_chunks_separated(&attributes, "", multiline)?;
+                        Ok(())
+                    })?;
+                }
+            }
+
+            // write returns
+            if !func.returns.is_empty() {
+                let returns_start_loc = func.returns.first().unwrap().0;
+                let returns_loc = returns_start_loc.with_end_from(&func.returns.last().unwrap().0);
+                if fmt.inline_config.is_disabled(returns_loc) {
+                    fmt.indented(1, |fmt| fmt.visit_source(returns_loc))?;
+                } else {
+                    let returns = fmt.items_to_chunks(
+                        returns_end,
+                        func.returns.iter_mut().filter_map(|(loc, param)| {
+                            param.as_mut().map(|param| Ok((*loc, param)))
+                        }),
+                    )?;
+                    fmt.write_postfix_comments_before(returns_loc.start())?;
+                    fmt.write_whitespace_separator(multiline)?;
+                    fmt.indented(1, |fmt| {
+                        fmt.surrounded(
+                            SurroundingChunk::new("returns (", Some(returns_loc.start()), None),
+                            SurroundingChunk::new(")", None, returns_end),
+                            |fmt, multiline_hint| {
+                                fmt.write_chunks_separated(&returns, ",", multiline_hint)?;
+                                Ok(())
+                            },
+                        )?;
+                        Ok(())
+                    })?;
+                }
+            }
+            Ok(())
+        };
+
+        let should_multiline = header_multiline &&
+            if params_multiline {
+                matches!(self.config.multiline_func_header, MultilineFuncHeaderStyle::All)
+            } else {
+                matches!(
+                    self.config.multiline_func_header,
+                    MultilineFuncHeaderStyle::AttributesFirst
+                )
+            };
+        let attrs_multiline = should_multiline ||
+            !self.try_on_single_line(|fmt| {
+                write_attributes(fmt, false)?;
+                if !fmt.will_it_fit(if func.body.is_some() { " {" } else { ";" }) {
+                    bail!(FormatterError::fmt())
+                }
+                Ok(())
+            })?;
+        if attrs_multiline {
+            write_attributes(self, true)?;
+        }
+        Ok(attrs_multiline)
+    }
 }
 
 // Traverse the Solidity Parse Tree and write to the code formatter
@@ -1959,148 +2120,14 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             fmt.write_postfix_comments_before(func.loc.start())?;
             fmt.write_prefix_comments_before(func.loc.start())?;
 
-            let func_name = if let Some(ident) = &func.name {
-                format!("{} {}", func.ty, ident.name)
-            } else {
-                func.ty.to_string()
-            };
-
-            // calculate locations of chunk groups
-            let attrs_loc = func.attributes.first().map(|attr| attr.loc());
-            let returns_loc = func.returns.first().map(|param| param.0);
             let body_loc = func.body.as_ref().map(LineOfCode::loc);
-
-            let params_next_offset = attrs_loc
-                .as_ref()
-                .or(returns_loc.as_ref())
-                .or(body_loc.as_ref())
-                .map(|loc| loc.start());
-            let attrs_end = returns_loc.as_ref().or(body_loc.as_ref()).map(|loc| loc.start());
-            let returns_end = body_loc.as_ref().map(|loc| loc.start());
-
-            let mut params_multiline = false;
-
-            let params_loc = {
-                let mut loc = func.loc.with_end(func.loc.start());
-                fmt.extend_loc_until(&mut loc, ')');
-                loc
-            };
-            if fmt.inline_config.is_disabled(params_loc) {
-                let chunk =
-                    fmt.chunked(func.loc.start(), None, |fmt| fmt.visit_source(params_loc))?;
-                params_multiline = chunk.content.contains('\n');
-                fmt.write_chunk(&chunk)?;
-            } else {
-                let first_surrounding = SurroundingChunk::new(
-                    format!("{func_name}("),
-                    Some(func.loc.start()),
-                    Some(
-                        func.params
-                            .first()
-                            .map(|param| param.0.start())
-                            .unwrap_or_else(|| params_loc.end()),
-                    ),
-                );
-                fmt.surrounded(
-                    first_surrounding,
-                    SurroundingChunk::new(")", None, params_next_offset),
-                    |fmt, multiline| {
-                        let params = fmt.items_to_chunks(
-                            params_next_offset,
-                            func.params.iter_mut().filter_map(|(loc, param)| {
-                                param.as_mut().map(|param| Ok((*loc, param)))
-                            }),
-                        )?;
-                        let after_params =
-                            if !func.attributes.is_empty() || !func.returns.is_empty() {
-                                ""
-                            } else if func.body.is_some() {
-                                " {"
-                            } else {
-                                ";"
-                            };
-                        params_multiline = multiline ||
-                            fmt.are_chunks_separated_multiline(
-                                &format!("{{}}){after_params}"),
-                                &params,
-                                ",",
-                            )?;
-                        fmt.write_chunks_separated(&params, ",", params_multiline)?;
-                        Ok(())
-                    },
-                )?;
-            }
-
-            let mut write_attributes = |fmt: &mut Self, multiline: bool| -> Result<()> {
-                // write attributes
-                if !func.attributes.is_empty() {
-                    let attrs_loc = func
-                        .attributes
-                        .first()
-                        .unwrap()
-                        .loc()
-                        .with_end_from(&func.attributes.last().unwrap().loc());
-                    if fmt.inline_config.is_disabled(attrs_loc) {
-                        fmt.indented(1, |fmt| fmt.visit_source(attrs_loc))?;
-                    } else {
-                        fmt.write_postfix_comments_before(attrs_loc.start())?;
-                        fmt.write_whitespace_separator(multiline)?;
-                        let attributes = fmt.items_to_chunks_sorted(
-                            attrs_end,
-                            func.attributes.iter_mut().map(|attr| Ok((attr.loc(), attr))),
-                        )?;
-                        fmt.indented(1, |fmt| {
-                            fmt.write_chunks_separated(&attributes, "", multiline)?;
-                            Ok(())
-                        })?;
-                    }
-                }
-
-                // write returns
-                if !func.returns.is_empty() {
-                    let returns_loc = func
-                        .returns
-                        .first()
-                        .unwrap()
-                        .0
-                        .with_end_from(&func.returns.last().unwrap().0);
-                    if fmt.inline_config.is_disabled(returns_loc) {
-                        fmt.indented(1, |fmt| fmt.visit_source(returns_loc))?;
-                    } else {
-                        let returns = fmt.items_to_chunks(
-                            returns_end,
-                            func.returns.iter_mut().filter_map(|(loc, param)| {
-                                param.as_mut().map(|param| Ok((*loc, param)))
-                            }),
-                        )?;
-                        fmt.write_postfix_comments_before(returns_loc.start())?;
-                        fmt.write_whitespace_separator(multiline)?;
-                        fmt.indented(1, |fmt| {
-                            fmt.surrounded(
-                                SurroundingChunk::new("returns (", Some(returns_loc.start()), None),
-                                SurroundingChunk::new(")", None, returns_end),
-                                |fmt, multiline_hint| {
-                                    fmt.write_chunks_separated(&returns, ",", multiline_hint)?;
-                                    Ok(())
-                                },
-                            )?;
-                            Ok(())
-                        })?;
-                    }
-                }
+            let mut attrs_multiline = false;
+            let fits_on_single = fmt.try_on_single_line(|fmt| {
+                fmt.write_function_header(func, body_loc, false)?;
                 Ok(())
-            };
-
-            let attrs_multiline = fmt.config.func_attrs_with_params_multiline && params_multiline ||
-                !fmt.try_on_single_line(|fmt| {
-                    write_attributes(fmt, false)?;
-                    if !fmt.will_it_fit(if func.body.is_some() { " {" } else { ";" }) {
-                        bail!(FormatterError::fmt())
-                    }
-                    Ok(())
-                })?;
-            if attrs_multiline {
-                write_attributes(fmt, true)?;
+            })?;
+            if !fits_on_single {
+                attrs_multiline = fmt.write_function_header(func, body_loc, true)?;
             }
 
             // write function body
