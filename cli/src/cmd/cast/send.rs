@@ -251,15 +251,28 @@ where
 
     let cast = Cast::new(provider);
 
-    let pending_tx = cast.send(builder_output).await?;
-    let tx_hash = *pending_tx;
+    let result = cast.send(builder_output.clone()).await;
+    match result {
+        Err(err) => {
+            let (transaction, function_sig) = builder_output;
+            println!("{}", serde_json::to_string_pretty(&transaction)?);
+            if let Some(function_sig) = function_sig {
+                println!("{}", serde_json::to_string_pretty(&function_sig)?);
+            }
+            Err(err)
+        }
+        Ok(pending_tx) => {
+            let tx_hash = *pending_tx;
 
-    if cast_async {
-        println!("{:#x}", tx_hash);
-    } else {
-        let receipt = cast.receipt(format!("{:#x}", tx_hash), None, confs, false, to_json).await?;
-        println!("{receipt}");
+            if cast_async {
+                println!("{:#x}", tx_hash);
+            } else {
+                let receipt =
+                    cast.receipt(format!("{:#x}", tx_hash), None, confs, false, to_json).await?;
+                println!("{receipt}");
+            }
+
+            Ok(())
+        }
     }
-
-    Ok(())
 }
