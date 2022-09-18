@@ -99,8 +99,10 @@ interface Cheats {
     function expectCall(address, bytes calldata) external;
     // Expect a call to an address with the specified msg.value and calldata
     function expectCall(address, uint256, bytes calldata) external;
-    // Gets the code from an artifact file. Takes in the relative path to the json file
+    // Gets the bytecode from an artifact file. Takes in the relative path to the json file
     function getCode(string calldata) external returns (bytes memory);
+    // Gets the _deployed_ bytecode from an artifact file. Takes in the relative path to the json file
+    function getDeployedCode(string calldata) external returns (bytes memory);
     // Labels an address in call traces
     function label(address, string calldata) external;
     // If the condition is false, discard this run's fuzz inputs and generate new ones

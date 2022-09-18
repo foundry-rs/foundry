@@ -23,9 +23,7 @@ contract ReturnStatement {
                 0x00;
         }
 
-        if (val == 1) {
-            return 1;
-        }
+        if (val == 1) return 1;
 
         if (val == 2) {
             return 3 - 1;

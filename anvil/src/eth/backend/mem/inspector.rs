@@ -7,15 +7,18 @@ use crate::{
 use bytes::Bytes;
 use ethers::types::{Address, Log, H256};
 use foundry_evm::{
+    call_inspectors,
     decode::decode_console_logs,
     executor::inspector::{LogCollector, Tracer},
     revm,
-    revm::{CallInputs, EVMData, Gas, Return},
+    revm::{CallInputs, EVMData, Gas, GasInspector, Return},
 };
+use std::{cell::RefCell, rc::Rc};
 
 /// The [`revm::Inspector`] used when transacting in the evm
 #[derive(Debug, Clone, Default)]
 pub struct Inspector {
+    pub gas: Option<Rc<RefCell<GasInspector>>>,
     pub tracer: Option<Tracer>,
     /// collects all `console.sol` logs
     pub logs: LogCollector,
@@ -37,28 +40,48 @@ impl Inspector {
         self
     }
 
-    /// Enables steps recording for `Tracer`
+    /// Enables steps recording for `Tracer` and attaches `GasInspector` to it
     /// If `Tracer` wasn't configured before, configures it automatically
     pub fn with_steps_tracing(mut self) -> Self {
         if self.tracer.is_none() {
             self = self.with_tracing()
         }
-        self.tracer = self.tracer.map(|tracer| tracer.with_steps_recording());
+        let gas_inspector = Rc::new(RefCell::new(GasInspector::default()));
+        self.gas = Some(gas_inspector.clone());
+        self.tracer = self.tracer.map(|tracer| tracer.with_steps_recording(gas_inspector));
 
         self
     }
 }
 
 impl<DB: Database> revm::Inspector<DB> for Inspector {
+    fn initialize_interp(
+        &mut self,
+        interp: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        is_static: bool,
+    ) -> Return {
+        call_inspectors!(
+            inspector,
+            [&mut self.gas.as_deref().map(|gas| gas.borrow_mut()), &mut self.tracer],
+            { inspector.initialize_interp(interp, data, is_static) }
+        );
+        Return::Continue
+    }
+
     fn step(
         &mut self,
         interp: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
         is_static: bool,
     ) -> Return {
-        if let Some(tracer) = self.tracer.as_mut() {
-            tracer.step(interp, data, is_static);
-        }
+        call_inspectors!(
+            inspector,
+            [&mut self.gas.as_deref().map(|gas| gas.borrow_mut()), &mut self.tracer],
+            {
+                inspector.step(interp, data, is_static);
+            }
+        );
         Return::Continue
     }
 
@@ -69,10 +92,17 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         topics: &[H256],
         data: &Bytes,
     ) {
-        if let Some(tracer) = self.tracer.as_mut() {
-            tracer.log(evm_data, address, topics, data);
-        }
-        self.logs.log(evm_data, address, topics, data);
+        call_inspectors!(
+            inspector,
+            [
+                &mut self.gas.as_deref().map(|gas| gas.borrow_mut()),
+                &mut self.tracer,
+                Some(&mut self.logs)
+            ],
+            {
+                inspector.log(evm_data, address, topics, data);
+            }
+        );
     }
 
     fn step_end(
@@ -82,9 +112,13 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         is_static: bool,
         eval: Return,
     ) -> Return {
-        if let Some(tracer) = self.tracer.as_mut() {
-            tracer.step_end(interp, data, is_static, eval);
-        }
+        call_inspectors!(
+            inspector,
+            [&mut self.gas.as_deref().map(|gas| gas.borrow_mut()), &mut self.tracer],
+            {
+                inspector.step_end(interp, data, is_static, eval);
+            }
+        );
         eval
     }
 
@@ -94,10 +128,17 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         call: &mut CallInputs,
         is_static: bool,
     ) -> (Return, Gas, Bytes) {
-        if let Some(tracer) = self.tracer.as_mut() {
-            tracer.call(data, call, is_static);
-        }
-        self.logs.call(data, call, is_static);
+        call_inspectors!(
+            inspector,
+            [
+                &mut self.gas.as_deref().map(|gas| gas.borrow_mut()),
+                &mut self.tracer,
+                Some(&mut self.logs)
+            ],
+            {
+                inspector.call(data, call, is_static);
+            }
+        );
 
         (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
     }
@@ -111,9 +152,13 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         out: Bytes,
         is_static: bool,
     ) -> (Return, Gas, Bytes) {
-        if let Some(tracer) = self.tracer.as_mut() {
-            tracer.call_end(data, inputs, remaining_gas, ret, out.clone(), is_static);
-        }
+        call_inspectors!(
+            inspector,
+            [&mut self.gas.as_deref().map(|gas| gas.borrow_mut()), &mut self.tracer],
+            {
+                inspector.call_end(data, inputs, remaining_gas, ret, out.clone(), is_static);
+            }
+        );
         (ret, remaining_gas, out)
     }
 
@@ -122,9 +167,13 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         data: &mut EVMData<'_, DB>,
         call: &mut CreateInputs,
     ) -> (Return, Option<Address>, Gas, Bytes) {
-        if let Some(tracer) = self.tracer.as_mut() {
-            tracer.create(data, call);
-        }
+        call_inspectors!(
+            inspector,
+            [&mut self.gas.as_deref().map(|gas| gas.borrow_mut()), &mut self.tracer],
+            {
+                inspector.create(data, call);
+            }
+        );
 
         (Return::Continue, None, Gas::new(call.gas_limit), Bytes::new())
     }
@@ -138,9 +187,13 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         gas: Gas,
         retdata: Bytes,
     ) -> (Return, Option<Address>, Gas, Bytes) {
-        if let Some(tracer) = self.tracer.as_mut() {
-            tracer.create_end(data, inputs, status, address, gas, retdata.clone());
-        }
+        call_inspectors!(
+            inspector,
+            [&mut self.gas.as_deref().map(|gas| gas.borrow_mut()), &mut self.tracer],
+            {
+                inspector.create_end(data, inputs, status, address, gas, retdata.clone());
+            }
+        );
         (status, address, gas, retdata)
     }
 }

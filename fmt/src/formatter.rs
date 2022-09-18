@@ -1,23 +1,23 @@
 //! A Solidity formatter
 
-use std::{fmt::Write, str::FromStr};
-
-use ethers_core::{types::H160, utils::to_checksum};
-use foundry_config::fmt::MultilineFuncHeaderStyle;
-use itertools::{Either, Itertools};
-use solang_parser::pt::*;
-use thiserror::Error;
-
 use crate::{
     buffer::*,
     chunk::*,
-    comments::{CommentStringExt, CommentWithMetadata, Comments},
+    comments::{CommentState, CommentStringExt, CommentWithMetadata, Comments},
     macros::*,
     solang_ext::*,
     string::{QuoteState, QuotedStringExt},
     visit::{Visitable, Visitor},
     FormatterConfig, InlineConfig, IntTypes, NumberUnderscore,
 };
+use ethers_core::{types::H160, utils::to_checksum};
+use foundry_config::fmt::{MultilineFuncHeaderStyle, SingleLineBlockStyle};
+use itertools::{Either, Itertools};
+use solang_parser::pt::*;
+use std::{fmt::Write, str::FromStr};
+use thiserror::Error;
+
+type Result<T, E = FormatterError> = std::result::Result<T, E>;
 
 /// A custom Error thrown by the Formatter
 #[derive(Error, Debug)]
@@ -64,8 +64,6 @@ macro_rules! bail {
         return Err($crate::formatter::format_err!($fmt, $(arg)*))
     };
 }
-
-type Result<T, E = FormatterError> = std::result::Result<T, E>;
 
 // TODO: store context entities as references without copying
 /// Current context of the Formatter (e.g. inside Contract or Function definition)
@@ -268,12 +266,28 @@ impl<'a, W: Write> Formatter<'a, W> {
         None
     }
 
-    /// Find the next instance of the character in source
+    /// Find the next instance of the character in source excluding comments
     fn find_next_in_src(&self, byte_offset: usize, needle: char) -> Option<usize> {
         self.source[byte_offset..]
-            .non_comment_chars()
-            .position(|ch| needle == ch)
+            .comment_state_char_indices()
+            .position(|(state, _, ch)| needle == ch && state == CommentState::None)
             .map(|p| byte_offset + p)
+    }
+
+    /// Find the start of the next instance of a slice in source
+    fn find_next_str_in_src(&self, byte_offset: usize, needle: &str) -> Option<usize> {
+        let subset = &self.source[byte_offset..];
+        needle.chars().next().and_then(|first_char| {
+            subset
+                .comment_state_char_indices()
+                .position(|(state, idx, ch)| {
+                    first_char == ch &&
+                        state == CommentState::None &&
+                        idx + needle.len() <= subset.len() &&
+                        subset[idx..idx + needle.len()].eq(needle)
+                })
+                .map(|p| byte_offset + p)
+        })
     }
 
     /// Extends the location to the next instance of a character. Returns true if the loc was
@@ -284,6 +298,33 @@ impl<'a, W: Write> Formatter<'a, W> {
             true
         } else {
             false
+        }
+    }
+
+    /// Return the flag whether the attempt should be made
+    /// to write the block on a single line.
+    /// If the block style is configured to [SingleLineBlockStyle::Preserve],
+    /// lookup whether there was a newline introduced in `[start_from, end_at]` range
+    /// where `end_at` is the start of the block.
+    fn should_attempt_block_single_line(
+        &mut self,
+        block: &mut Statement,
+        start_from: usize,
+    ) -> bool {
+        match self.config.single_line_statement_blocks {
+            SingleLineBlockStyle::Single => true,
+            SingleLineBlockStyle::Multi => false,
+            SingleLineBlockStyle::Preserve => {
+                let end_at = match block {
+                    Statement::Block { statements, .. } if !statements.is_empty() => {
+                        statements.first().as_ref().unwrap().loc().start()
+                    }
+                    Statement::Expression(loc, _) => loc.start(),
+                    _ => block.loc().start(),
+                };
+
+                self.find_next_line(start_from).map_or(false, |loc| loc >= end_at)
+            }
         }
     }
 
@@ -405,11 +446,12 @@ impl<'a, W: Write> Formatter<'a, W> {
                     .strip_suffix("*/")
                     .unwrap()
                     .trim();
-                let lines = content.lines().map(|line| line.trim_start());
+                let lines = content.lines();
                 writeln!(self.buf(), "/**")?;
                 for line in lines {
-                    let line = line.trim().trim_start_matches('*').trim_start();
-                    writeln!(self.buf(), "{}", format!(" * {line}").trim_end())?;
+                    let line = line.trim().trim_start_matches('*');
+                    let needs_space = line.chars().next().map_or(false, |ch| !ch.is_whitespace());
+                    writeln!(self.buf(), " *{}{}", if needs_space { " " } else { "" }, line)?;
                 }
                 write!(self.buf(), " */")?;
             } else {
@@ -965,12 +1007,36 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
-    /// Visit the block item surrounded by curly braces
-    /// where each line is indented.
-    fn visit_block<T>(&mut self, loc: Loc, statements: &mut Vec<T>) -> Result<()>
+    /// Visit the block item. Attempt to write it on the single
+    /// line if requested. Surround by curly braces and indent
+    /// each line otherwise.
+    fn visit_block<T>(
+        &mut self,
+        loc: Loc,
+        statements: &mut Vec<T>,
+        attempt_single_line: bool,
+        attempt_omit_braces: bool,
+    ) -> Result<()>
     where
         T: Visitable + LineOfCode,
     {
+        if attempt_single_line && statements.len() == 1 {
+            let fits_on_single = self.try_on_single_line(|fmt| {
+                if !attempt_omit_braces {
+                    write!(fmt.buf(), "{{ ")?;
+                }
+                statements.first_mut().unwrap().visit(fmt)?;
+                if !attempt_omit_braces {
+                    write!(fmt.buf(), " }}")?;
+                }
+                Ok(())
+            })?;
+
+            if fits_on_single {
+                return Ok(())
+            }
+        }
+
         write_chunk!(self, "{{")?;
 
         if let Some(statement) = statements.first() {
@@ -992,10 +1058,16 @@ impl<'a, W: Write> Formatter<'a, W> {
     }
 
     /// Visit statement as `Statement::Block`.
-    fn visit_stmt_as_block(&mut self, stmt: &mut Statement) -> Result<()> {
+    fn visit_stmt_as_block(
+        &mut self,
+        stmt: &mut Statement,
+        attempt_single_line: bool,
+    ) -> Result<()> {
         match stmt {
-            Statement::Block { .. } => stmt.visit(self),
-            _ => self.visit_block(stmt.loc(), &mut vec![stmt]),
+            Statement::Block { loc, statements, .. } => {
+                self.visit_block(*loc, statements, attempt_single_line, true)
+            }
+            _ => self.visit_block(stmt.loc(), &mut vec![stmt], attempt_single_line, true),
         }
     }
 
@@ -1679,9 +1751,13 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 }
                 Type::Mapping(loc, from, to) => {
                     write_chunk!(self, loc.start(), "mapping(")?;
-                    from.visit(self)?;
+                    let arrow_loc = self.find_next_str_in_src(loc.start(), "=>");
+                    let key_chunk = self.visit_to_chunk(from.loc().start(), arrow_loc, from)?;
+                    self.write_chunk(&key_chunk)?;
                     write!(self.buf(), " => ")?;
-                    to.visit(self)?;
+                    let close_paren_loc = self.find_next_in_src(to.loc().end(), ')');
+                    let value_chunk = self.visit_to_chunk(to.loc().start(), close_paren_loc, to)?;
+                    self.write_chunk(&value_chunk)?;
                     write!(self.buf(), ")")?;
                 }
                 Type::Function { .. } => self.visit_source(*loc)?,
@@ -2236,7 +2312,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             write_chunk!(self, loc.start(), "unchecked ")?;
         }
 
-        self.visit_block(loc, statements)
+        self.visit_block(loc, statements, false, false)
     }
 
     fn visit_opening_paren(&mut self) -> Result<()> {
@@ -2574,7 +2650,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             },
         )?;
         match body {
-            Some(body) => self.visit_stmt_as_block(body),
+            Some(body) => self.visit_stmt_as_block(body, false), // TODO:
             None => self.write_empty_brackets(),
         }
     }
@@ -2589,9 +2665,16 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         self.surrounded(
             SurroundingChunk::new("while (", Some(loc.start()), None),
             SurroundingChunk::new(")", None, Some(cond.loc().end())),
-            |fmt, _| cond.visit(fmt),
+            |fmt, _| {
+                cond.visit(fmt)?;
+                fmt.write_postfix_comments_before(body.loc().start())
+            },
         )?;
-        self.visit_stmt_as_block(body)
+
+        let cond_close_paren_loc =
+            self.find_next_in_src(cond.loc().end(), ')').unwrap_or_else(|| cond.loc().end());
+        let attempt_single_line = self.should_attempt_block_single_line(body, cond_close_paren_loc);
+        self.visit_stmt_as_block(body, attempt_single_line)
     }
 
     fn visit_do_while(
@@ -2602,7 +2685,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     ) -> Result<(), Self::Error> {
         return_source_if_disabled!(self, loc, ';');
         write_chunk!(self, loc.start(), "do ")?;
-        self.visit_stmt_as_block(body)?;
+        self.visit_stmt_as_block(body, false)?;
         visit_source_if_disabled_else!(self, loc.with_start(body.loc().end()), {
             self.surrounded(
                 SurroundingChunk::new("while (", Some(cond.loc().start()), None),
@@ -2619,6 +2702,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         cond: &mut Expression,
         if_branch: &mut Box<Statement>,
         else_branch: &mut Option<Box<Statement>>,
+        is_first_stmt: bool,
     ) -> Result<(), Self::Error> {
         return_source_if_disabled!(self, loc);
 
@@ -2632,14 +2716,21 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 },
             )?;
         });
-        self.visit_stmt_as_block(if_branch)?;
+
+        let cond_close_paren_loc =
+            self.find_next_in_src(cond.loc().end(), ')').unwrap_or_else(|| cond.loc().end());
+        let attempt_single_line = is_first_stmt &&
+            else_branch.is_none() &&
+            self.should_attempt_block_single_line(if_branch.as_mut(), cond_close_paren_loc);
+        self.visit_stmt_as_block(if_branch, attempt_single_line)?;
+
         if let Some(else_branch) = else_branch {
             self.write_postfix_comments_before(else_branch.loc().start())?;
             write_chunk!(self, else_branch.loc().start(), "else")?;
-            if matches!(**else_branch, Statement::If(..)) {
-                else_branch.visit(self)?;
+            if let Statement::If(loc, cond, if_branch, else_branch) = else_branch.as_mut() {
+                self.visit_if(*loc, cond, if_branch, else_branch, false)?;
             } else {
-                self.visit_stmt_as_block(else_branch)?;
+                self.visit_stmt_as_block(else_branch, false)?;
             }
         }
         Ok(())
@@ -2942,21 +3033,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         attempt_single_line: bool,
     ) -> Result<(), Self::Error> {
         return_source_if_disabled!(self, loc);
-
-        if attempt_single_line && statements.len() == 1 {
-            let fits_on_single = self.try_on_single_line(|fmt| {
-                write!(fmt.buf(), "{{ ")?;
-                statements.first_mut().unwrap().visit(fmt)?;
-                write!(fmt.buf(), " }}")?;
-                Ok(())
-            })?;
-
-            if fits_on_single {
-                return Ok(())
-            }
-        }
-
-        self.visit_block(loc, statements)
+        self.visit_block(loc, statements, attempt_single_line, false)
     }
 
     fn visit_yul_assignment<T>(

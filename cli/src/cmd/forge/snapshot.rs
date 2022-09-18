@@ -367,21 +367,15 @@ fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> eyre::Result<()> {
         .collect::<HashMap<_, _>>();
     let mut diffs = Vec::with_capacity(tests.len());
     for test in tests.into_iter() {
-        let target_gas_used = snaps
-            .get(&(test.contract_name().to_string(), test.signature.clone()))
-            .cloned()
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "No matching snapshot entry found for \"{}\" in snapshot file",
-                    test.signature
-                )
-            })?;
-
-        diffs.push(SnapshotDiff {
-            source_gas_used: test.result.kind.report(),
-            signature: test.signature,
-            target_gas_used,
-        });
+        if let Some(target_gas_used) =
+            snaps.get(&(test.contract_name().to_string(), test.signature.clone())).cloned()
+        {
+            diffs.push(SnapshotDiff {
+                source_gas_used: test.result.kind.report(),
+                signature: test.signature,
+                target_gas_used,
+            });
+        }
     }
     let mut overall_gas_change = 0i128;
     let mut overall_gas_diff = 0f64;

@@ -19,6 +19,8 @@ pub struct FormatterConfig {
     pub quote_style: QuoteStyle,
     /// Style of underscores in number literals
     pub number_underscore: NumberUnderscore,
+    /// Style of single line blocks in statements
+    pub single_line_statement_blocks: SingleLineBlockStyle,
 }
 
 /// Style of uint/int256 types
@@ -69,6 +71,18 @@ impl QuoteStyle {
     }
 }
 
+/// Style of single line blocks in statements
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SingleLineBlockStyle {
+    /// Prefer single line block when possible
+    Single,
+    /// Always use multiline block
+    Multi,
+    /// Preserve the original style
+    Preserve,
+}
+
 /// Style of function header in case it doesn't fit
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -92,6 +106,7 @@ impl Default for FormatterConfig {
             multiline_func_header: MultilineFuncHeaderStyle::AttributesFirst,
             quote_style: QuoteStyle::Double,
             number_underscore: NumberUnderscore::Preserve,
+            single_line_statement_blocks: SingleLineBlockStyle::Preserve,
         }
     }
 }
