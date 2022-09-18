@@ -1,4 +1,4 @@
-use self::inspector::{InspectorData, InspectorStackConfig};
+use self::inspector::{Cheatcodes, InspectorData, InspectorStackConfig};
 use crate::{debug::DebugArena, decode, trace::CallTraceArena, CALLER};
 pub use abi::{
     format_hardhat_call, patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS,
@@ -16,7 +16,7 @@ use foundry_utils::IntoFunction;
 use hashbrown::HashMap;
 use revm::{
     db::DatabaseCommit, return_ok, Account, BlockEnv, Bytecode, CreateScheme, ExecutionResult,
-    Return, TransactOut, TransactTo, TxEnv, EVM,
+    Return, TransactOut, TransactTo, TxEnv,
 };
 /// Reexport commonly used revm types
 pub use revm::{db::DatabaseRef, Env, SpecId};
@@ -58,7 +58,7 @@ pub type StateChangeset = HashMap<Address, Account>;
 /// The executor can be configured with various `revm::Inspector`s, like `Cheatcodes`.
 ///
 /// There are two ways of executing calls:
-///   - `committing`: any state changes made during the call are recorded and are persisting
+///  - `committing`: any state changes made during the call are recorded and are persisting
 ///  - `raw`: state changes only exist for the duration of the call and are discarded afterwards, in
 ///    other words: the state of the underlying database remains unchanged.
 #[derive(Debug, Clone)]
@@ -219,7 +219,32 @@ impl Executor {
         // and also the chainid, which can be set manually
         self.env.cfg.chain_id = res.env.cfg.chain_id;
 
-        Ok(res)
+        match res.state_changeset.as_ref() {
+            Some(changeset) => {
+                let success = self
+                    .ensure_success(to, res.reverted, changeset.clone(), false)
+                    .map_err(|err| EvmError::Eyre(eyre::eyre!(err.to_string())))?;
+                if success {
+                    Ok(res)
+                } else {
+                    Err(EvmError::Execution {
+                        reverted: res.reverted,
+                        reason: "execution error".to_owned(),
+                        traces: res.traces,
+                        gas_used: res.gas_used,
+                        gas_refunded: res.gas_refunded,
+                        stipend: res.stipend,
+                        logs: res.logs,
+                        debug: res.debug,
+                        labels: res.labels,
+                        state_changeset: None,
+                        transactions: None,
+                        script_wallets: res.script_wallets,
+                    })
+                }
+            }
+            None => Ok(res),
+        }
     }
 
     /// Performs a call to an account on the current state of the VM.
@@ -236,125 +261,8 @@ impl Executor {
     ) -> Result<CallResult<D>, EvmError> {
         let func = func.into();
         let calldata = Bytes::from(encode_function_data(&func, args)?.to_vec());
-        let RawCallResult {
-            result,
-            exit_reason,
-            reverted,
-            gas_used,
-            gas_refunded,
-            stipend,
-            logs,
-            labels,
-            traces,
-            coverage,
-            debug,
-            transactions,
-            state_changeset,
-            script_wallets,
-            env,
-        } = self.call_raw_committing(from, to, calldata, value)?;
-        match exit_reason {
-            return_ok!() => {
-                let result = decode_function_data(&func, result, false)?;
-                Ok(CallResult {
-                    reverted,
-                    result,
-                    gas_used,
-                    gas_refunded,
-                    stipend,
-                    logs,
-                    labels,
-                    traces,
-                    coverage,
-                    debug,
-                    transactions,
-                    state_changeset,
-                    script_wallets,
-                    env,
-                })
-            }
-            _ => {
-                let reason = decode::decode_revert(result.as_ref(), abi, Some(exit_reason))
-                    .unwrap_or_else(|_| format!("{:?}", exit_reason));
-                Err(EvmError::Execution {
-                    reverted,
-                    reason,
-                    gas_used,
-                    gas_refunded,
-                    stipend,
-                    logs,
-                    traces,
-                    debug,
-                    labels,
-                    transactions,
-                    state_changeset,
-                    script_wallets,
-                })
-            }
-        }
-    }
-
-    /// Execute the transaction configured in `env.tx` and commit the state to the database
-    pub fn commit_tx_with_env(&mut self, env: Env) -> eyre::Result<RawCallResult> {
-        let stipend = calc_stipend(&env.tx.data, env.cfg.spec_id);
-
-        // Build VM
-        let mut evm = EVM::new();
-        evm.env = env;
-        let mut inspector = self.inspector_config.stack();
-        evm.database(self.backend_mut());
-
-        // Run the call
-        let ExecutionResult { exit_reason, out, gas_used, gas_refunded, .. } =
-            evm.inspect_commit(&mut inspector);
-        let result = match out {
-            TransactOut::Call(data) => data,
-            _ => Bytes::default(),
-        };
-
-        let InspectorData { logs, labels, traces, coverage, debug, mut cheatcodes, script_wallets } =
-            inspector.collect_inspector_states();
-
-        let env = evm.env;
-        // Persist the changed block environment
-        self.inspector_config.block = env.block.clone();
-
-        let transactions = if let Some(ref mut cheatcodes) = cheatcodes {
-            if !cheatcodes.broadcastable_transactions.is_empty() {
-                let transactions = Some(cheatcodes.broadcastable_transactions.clone());
-
-                // Clear broadcast state from cheatcode state
-                cheatcodes.broadcastable_transactions.clear();
-                cheatcodes.corrected_nonce = false;
-
-                transactions
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        // Persist cheatcode state
-        self.inspector_config.cheatcodes = cheatcodes;
-
-        Ok(RawCallResult {
-            exit_reason,
-            reverted: !matches!(exit_reason, return_ok!()),
-            result,
-            gas_used,
-            gas_refunded,
-            stipend,
-            logs,
-            labels,
-            coverage,
-            traces,
-            debug,
-            transactions,
-            state_changeset: None,
-            script_wallets,
-            env,
-        })
+        let result = self.call_raw_committing(from, to, calldata, value)?;
+        convert_call_result(abi, &func, result)
     }
 
     /// Performs a raw call to an account on the current state of the VM.
@@ -368,7 +276,9 @@ impl Executor {
         value: U256,
     ) -> eyre::Result<RawCallResult> {
         let env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
-        self.commit_tx_with_env(env)
+        let mut result = self.call_raw_with_env(env)?;
+        self.commit(&mut result);
+        Ok(result)
     }
 
     /// Executes the test function call
@@ -385,26 +295,8 @@ impl Executor {
         let calldata = Bytes::from(encode_function_data(&func, args)?.to_vec());
 
         // execute the call
-        let mut inspector = self.inspector_config.stack();
-        let stipend = calc_stipend(&calldata, self.env.cfg.spec_id);
-        let mut env = self.build_test_env(from, TransactTo::Call(test_contract), calldata, value);
-        let (ExecutionResult { exit_reason, out, gas_used, gas_refunded, logs }, state_changeset) =
-            self.backend_mut().inspect_ref(&mut env, &mut inspector);
-
-        // if there are multiple forks we need to merge them
-        let logs = self.backend.merged_logs(logs);
-
-        let executed_call = ExecutedCall {
-            exit_reason,
-            out,
-            gas_used,
-            gas_refunded,
-            state_changeset,
-            logs,
-            stipend,
-            env,
-        };
-        let call_result = convert_executed_call(inspector, executed_call)?;
+        let env = self.build_test_env(from, TransactTo::Call(test_contract), calldata, value);
+        let call_result = self.call_raw_with_env(env)?;
 
         convert_call_result(abi, &func, call_result)
     }
@@ -424,7 +316,6 @@ impl Executor {
         let func = func.into();
         let calldata = Bytes::from(encode_function_data(&func, args)?.to_vec());
         let call_result = self.call_raw(from, to, calldata, value)?;
-
         convert_call_result(abi, &func, call_result)
     }
 
@@ -440,25 +331,48 @@ impl Executor {
     ) -> eyre::Result<RawCallResult> {
         // execute the call
         let mut inspector = self.inspector_config.stack();
-        let stipend = calc_stipend(&calldata, self.env.cfg.spec_id);
         // Build VM
         let mut env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
         let mut db = FuzzBackendWrapper::new(self.backend());
-        let (ExecutionResult { exit_reason, out, gas_used, gas_refunded, logs }, state_changeset) =
-            db.inspect_ref(&mut env, &mut inspector);
-        let logs = db.backend.merged_logs(logs);
+        let result = db.inspect_ref(&mut env, &mut inspector);
 
-        let executed_call = ExecutedCall {
-            exit_reason,
-            out,
-            gas_used,
-            gas_refunded,
-            state_changeset,
-            logs,
-            stipend,
-            env,
-        };
-        convert_executed_call(inspector, executed_call)
+        convert_executed_result(env, inspector, result)
+    }
+
+    /// Execute the transaction configured in `env.tx` and commit the changes
+    pub fn commit_tx_with_env(&mut self, env: Env) -> eyre::Result<RawCallResult> {
+        let mut result = self.call_raw_with_env(env)?;
+        self.commit(&mut result);
+        Ok(result)
+    }
+
+    /// Execute the transaction configured in `env.tx`
+    pub fn call_raw_with_env(&mut self, mut env: Env) -> eyre::Result<RawCallResult> {
+        // execute the call
+        let mut inspector = self.inspector_config.stack();
+        let result = self.backend_mut().inspect_ref(&mut env, &mut inspector);
+        convert_executed_result(env, inspector, result)
+    }
+
+    /// Commit the changeset to the database and adjust `self.inspector_config`
+    /// values according to the executed call result
+    fn commit(&mut self, result: &mut RawCallResult) {
+        // persist changes to db
+        if let Some(changes) = result.state_changeset.as_ref() {
+            self.backend_mut().commit(changes.clone());
+        }
+        // Persist the changed block environment
+        self.inspector_config.block = result.env.block.clone();
+        // Persist cheatcode state
+        let mut cheatcodes = result.cheatcodes.take();
+        if let Some(cheats) = cheatcodes.as_mut() {
+            if !cheats.broadcastable_transactions.is_empty() {
+                // Clear broadcast state from cheatcode state
+                cheats.broadcastable_transactions.clear();
+                cheats.corrected_nonce = false;
+            }
+        }
+        self.inspector_config.cheatcodes = cheatcodes;
     }
 
     /// Deploys a contract using the given `env` and commits the new state to the underlying
@@ -474,17 +388,22 @@ impl Executor {
         );
         trace!(sender=?env.tx.caller, "deploying contract");
 
-        let mut inspector = self.inspector_config.stack();
-        let (ExecutionResult { exit_reason, out, gas_used, gas_refunded, .. }, env) = {
-            let mut evm = EVM::new();
-            evm.env = env;
-            evm.database(self.backend_mut());
-            let res = evm.inspect_commit(&mut inspector);
-            (res, evm.env)
-        };
+        let mut result = self.call_raw_with_env(env)?;
+        self.commit(&mut result);
 
-        let InspectorData { logs, labels, traces, debug, cheatcodes, script_wallets, .. } =
-            inspector.collect_inspector_states();
+        let RawCallResult {
+            exit_reason,
+            out,
+            gas_used,
+            gas_refunded,
+            logs,
+            labels,
+            traces,
+            debug,
+            script_wallets,
+            env,
+            ..
+        } = result;
 
         let result = match out {
             TransactOut::Create(ref data, _) => data.to_owned(),
@@ -535,12 +454,6 @@ impl Executor {
         // also mark this library as persistent, this will ensure that the state of the library is
         // persistent across fork swaps in forking mode
         self.backend.add_persistent_account(address);
-
-        // Persist the changed block environment
-        self.inspector_config.block = env.block.clone();
-
-        // Persist cheatcode state
-        self.inspector_config.cheatcodes = cheatcodes;
 
         trace!(address=?address, "deployed contract");
 
@@ -784,6 +697,10 @@ pub struct RawCallResult {
     pub script_wallets: Vec<LocalWallet>,
     /// The `revm::Env` after the call
     pub env: Env,
+    /// The cheatcode states after execution
+    pub cheatcodes: Option<Cheatcodes>,
+    /// The raw output of the execution
+    pub out: TransactOut,
 }
 
 impl Default for RawCallResult {
@@ -804,21 +721,10 @@ impl Default for RawCallResult {
             state_changeset: None,
             script_wallets: Vec::new(),
             env: Default::default(),
+            cheatcodes: Default::default(),
+            out: TransactOut::None,
         }
     }
-}
-
-/// Helper type to bundle all call related items
-struct ExecutedCall {
-    exit_reason: Return,
-    out: TransactOut,
-    gas_used: u64,
-    gas_refunded: u64,
-    state_changeset: HashMap<Address, Account>,
-    #[allow(unused)]
-    logs: Vec<revm::Log>,
-    stipend: u64,
-    env: Env,
 }
 
 /// Calculates the initial gas stipend for a transaction
@@ -828,37 +734,29 @@ fn calc_stipend(calldata: &[u8], spec: SpecId) -> u64 {
 }
 
 /// Converts the data aggregated in the `inspector` and `call` to a `RawCallResult`
-fn convert_executed_call(
+fn convert_executed_result(
+    env: Env,
     inspector: InspectorStack,
-    call: ExecutedCall,
+    result: (ExecutionResult, StateChangeset),
 ) -> eyre::Result<RawCallResult> {
-    let ExecutedCall {
-        exit_reason,
-        out,
-        gas_used,
-        gas_refunded,
-        state_changeset,
-        stipend,
-        env,
-        ..
-    } = call;
+    let (exec_result, state_changeset) = result;
+    let ExecutionResult { exit_reason, gas_refunded, gas_used, out, .. } = exec_result;
+
+    let stipend = calc_stipend(&env.tx.data, env.cfg.spec_id);
 
     let result = match out {
-        TransactOut::Call(data) => data,
+        TransactOut::Call(ref data) => data.to_owned(),
         _ => Bytes::default(),
     };
 
     let InspectorData { logs, labels, traces, coverage, debug, cheatcodes, script_wallets } =
         inspector.collect_inspector_states();
 
-    let transactions = if let Some(cheats) = cheatcodes {
-        if !cheats.broadcastable_transactions.is_empty() {
-            Some(cheats.broadcastable_transactions)
-        } else {
-            None
+    let transactions = match cheatcodes.as_ref() {
+        Some(cheats) if !cheats.broadcastable_transactions.is_empty() => {
+            Some(cheats.broadcastable_transactions.clone())
         }
-    } else {
-        None
+        _ => None,
     };
 
     Ok(RawCallResult {
@@ -877,6 +775,8 @@ fn convert_executed_call(
         state_changeset: Some(state_changeset),
         script_wallets,
         env,
+        cheatcodes,
+        out,
     })
 }
 
@@ -901,6 +801,7 @@ fn convert_call_result<D: Detokenize>(
         state_changeset,
         script_wallets,
         env,
+        ..
     } = call_result;
 
     match status {

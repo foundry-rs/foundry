@@ -23,7 +23,7 @@ use tracing::trace;
 /// a clone-on-write `Backend`, where cloning is only necessary if cheatcodes will modify the
 /// `Backend`
 ///
-/// Entire purpose of this type is for fuzzing. A test function fuzzer will repeatedly execute  the
+/// Entire purpose of this type is for fuzzing. A test function fuzzer will repeatedly execute the
 /// function via immutable raw (no state changes) calls.
 ///
 /// **N.B.**: we're assuming cheatcodes that alter the state (like multi fork swapping) are niche.
@@ -177,9 +177,11 @@ impl<'a> Database for FuzzBackendWrapper<'a> {
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         DatabaseRef::basic(self, address)
     }
+
     fn code_by_hash(&mut self, code_hash: H256) -> Result<Bytecode, Self::Error> {
         DatabaseRef::code_by_hash(self, code_hash)
     }
+
     fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
         DatabaseRef::storage(self, address, index)
     }
