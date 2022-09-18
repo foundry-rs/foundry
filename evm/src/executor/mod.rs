@@ -358,11 +358,12 @@ impl Executor {
         convert_executed_result(env, inspector, result)
     }
 
-    /// TODO:
+    /// Commit the changeset to the database and adjust `self.inspector_config`
+    /// values according to the executed call result
     fn commit(&mut self, result: &mut RawCallResult) {
         // persist changes to db
-        if let Some(changes) = result.state_changeset.clone() {
-            self.backend.commit(changes);
+        if let Some(changes) = result.state_changeset.as_ref() {
+            self.backend_mut().commit(changes.clone());
         }
         // Persist the changed block environment
         self.inspector_config.block = result.env.block.clone();
@@ -370,7 +371,6 @@ impl Executor {
         let mut cheatcodes = result.cheatcodes.take();
         if let Some(cheats) = cheatcodes.as_mut() {
             if !cheats.broadcastable_transactions.is_empty() {
-                // TODO: validate
                 // Clear broadcast state from cheatcode state
                 cheats.broadcastable_transactions.clear();
                 cheats.corrected_nonce = false;
@@ -701,9 +701,9 @@ pub struct RawCallResult {
     pub script_wallets: Vec<LocalWallet>,
     /// The `revm::Env` after the call
     pub env: Env,
-    /// TODO:
+    /// The cheatcode states after execution
     pub cheatcodes: Option<Cheatcodes>,
-    /// TODO:
+    /// The raw output of the execution
     pub out: TransactOut,
 }
 
