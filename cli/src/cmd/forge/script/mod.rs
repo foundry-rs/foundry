@@ -43,6 +43,7 @@ use yansi::Paint;
 
 mod build;
 use build::{filter_sources_and_artifacts, BuildOutput};
+use foundry_common::errors::UnlinkedByteCode;
 use foundry_config::figment::{
     value::{Dict, Map},
     Metadata, Profile, Provider,
@@ -473,15 +474,20 @@ impl ScriptArgs {
         let mut bytecodes: Vec<(String, &[u8], &[u8])> = vec![];
 
         // From artifacts
-        known_contracts.iter().for_each(|(artifact, bytecode)| {
-            const MSG: &str = "Code should have been linked before.";
-            let init_code = bytecode.bytecode.object.as_bytes().expect(MSG);
+        for (artifact, bytecode) in known_contracts.iter() {
+            if bytecode.bytecode.object.is_unlinked() {
+                return Err(UnlinkedByteCode::Bytecode(artifact.identifier()).into())
+            }
+            let init_code = bytecode.bytecode.object.as_bytes().unwrap();
             // Ignore abstract contracts
             if let Some(ref deployed_code) = bytecode.deployed_bytecode.bytecode {
-                let deployed_code = deployed_code.object.as_bytes().expect(MSG);
+                if deployed_code.object.is_unlinked() {
+                    return Err(UnlinkedByteCode::DeployedBytecode(artifact.identifier()).into())
+                }
+                let deployed_code = deployed_code.object.as_bytes().unwrap();
                 bytecodes.push((artifact.name.clone(), init_code, deployed_code));
             }
-        });
+        }
 
         // From traces
         let create_nodes = result.traces.iter().flat_map(|(_, traces)| {

@@ -1,5 +1,3 @@
-//! Commonly used errors
-
 use std::{
     io,
     path::{Path, PathBuf},
@@ -31,8 +29,10 @@ pub enum FsPathError {
     /// Provides additional path context for `std::fs::open`.
     #[error("failed to open file {path:?}: {source}")]
     Open { source: io::Error, path: PathBuf },
+    /// Provides additional path context for the file whose contents should be parsed as json
     #[error("failed to parse json file: {path:?}: {source}")]
     ReadJson { source: serde_json::Error, path: PathBuf },
+    /// Provides additional path context for the new json file
     #[error("failed to write to json file: {path:?}: {source}")]
     WriteJson { source: serde_json::Error, path: PathBuf },
 }

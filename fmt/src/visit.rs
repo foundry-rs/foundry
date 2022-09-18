@@ -195,6 +195,7 @@ pub trait Visitor {
         _cond: &mut Expression,
         _if_branch: &mut Box<Statement>,
         _else_branch: &mut Option<Box<Statement>>,
+        _is_first_stmt: bool,
     ) -> Result<(), Self::Error> {
         self.visit_source(loc)
     }
@@ -521,7 +522,7 @@ impl Visitable for Statement {
             }
             Statement::Args(loc, args) => v.visit_args(*loc, args),
             Statement::If(loc, cond, if_branch, else_branch) => {
-                v.visit_if(*loc, cond, if_branch, else_branch)
+                v.visit_if(*loc, cond, if_branch, else_branch, true)
             }
             Statement::While(loc, cond, body) => v.visit_while(*loc, cond, body),
             Statement::Expression(loc, expr) => {

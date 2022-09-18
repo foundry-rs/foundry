@@ -1,3 +1,4 @@
+// config: single_line_statement_blocks = "multi"
 function execute() returns (bool) {
     if (true) {
         // always returns true
@@ -75,15 +76,25 @@ contract IfStatement {
             }
         }
 
-        if (condition) execute();
+        if (condition) {
+            execute();
+        }
 
         if (
             condition && anotherLongCondition || andAnotherVeryVeryLongCondition
-        ) execute();
+        ) {
+            execute();
+        }
 
-        if (condition) if (anotherLongCondition) execute();
+        if (condition) {
+            if (anotherLongCondition) {
+                execute();
+            }
+        }
 
-        if (condition) execute(); // comment18
+        if (condition) {
+            execute();
+        } // comment18
 
         if (condition) {
             executeWithMultipleParameters(condition, anotherLongCondition);

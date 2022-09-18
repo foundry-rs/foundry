@@ -45,4 +45,13 @@ contract HelloWorld {
         s = w * h;
         p = 2 * (w + h);
     }
+
+    /**
+     * @notice Here is my comment
+     *       - item 1
+     *       - item 2
+     * Some equations:
+     *     y = mx + b
+     */
+    function anotherExample() external {}
 }
