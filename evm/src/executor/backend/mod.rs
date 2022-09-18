@@ -129,6 +129,24 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()>;
 
+    /// Updates the fork to given transaction hash
+    ///
+    /// This will essentially create a new fork at the block this transaction was mined and replays
+    /// all transactions up until the given transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if not matching fork was found.
+    fn roll_fork_to_transaction(
+        &mut self,
+        id: Option<LocalForkId>,
+        tx_hash: H256,
+        env: &mut Env,
+        journaled_state: &mut JournaledState,
+    ) -> eyre::Result<()> {
+        todo!()
+    }
+
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
     fn active_fork_id(&self) -> Option<LocalForkId>;
 

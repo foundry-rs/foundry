@@ -6,10 +6,9 @@ use crate::executor::{
 use ethers::{
     core::abi::ethereum_types::BigEndianHash,
     providers::Middleware,
-    types::{Address, BlockId, Bytes, H160, H256, U256},
+    types::{Address, Block, BlockId, Bytes, Transaction, H160, H256, U256},
     utils::keccak256,
 };
-
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
     stream::Stream,
@@ -27,20 +26,30 @@ use std::{
 };
 use tracing::{error, trace, warn};
 
+// Various future/request type aliases
+
 type AccountFuture<Err> =
     Pin<Box<dyn Future<Output = (Result<(U256, U256, Bytes), Err>, Address)> + Send>>;
 type StorageFuture<Err> = Pin<Box<dyn Future<Output = (Result<U256, Err>, Address, U256)> + Send>>;
 type BlockHashFuture<Err> = Pin<Box<dyn Future<Output = (Result<H256, Err>, u64)> + Send>>;
+type FullBlockFuture<Err> = Pin<
+    Box<
+        dyn Future<Output = (FullBlockSender, Result<Option<Block<Transaction>>, Err>, BlockId)>
+            + Send,
+    >,
+>;
 
 type AccountInfoSender = OneshotSender<DatabaseResult<AccountInfo>>;
 type StorageSender = OneshotSender<DatabaseResult<U256>>;
 type BlockHashSender = OneshotSender<DatabaseResult<H256>>;
+type FullBlockSender = OneshotSender<DatabaseResult<Block<Transaction>>>;
 
 /// Request variants that are executed by the provider
 enum ProviderRequest<Err> {
     Account(AccountFuture<Err>),
     Storage(StorageFuture<Err>),
     BlockHash(BlockHashFuture<Err>),
+    FullBlock(FullBlockFuture<Err>),
 }
 
 /// The Request type the Backend listens for
@@ -52,6 +61,8 @@ enum BackendRequest {
     Storage(Address, U256, StorageSender),
     /// Fetch a block hash
     BlockHash(u64, BlockHashSender),
+    /// Fetch an entire block with transactions
+    FullBlock(BlockId, FullBlockSender),
     /// Sets the pinned block to fetch data from
     SetPinnedBlock(BlockId),
 }
@@ -130,6 +141,9 @@ where
                     self.request_hash(number, sender);
                 }
             }
+            BackendRequest::FullBlock(number, sender) => {
+                self.request_full_block(number, sender);
+            }
             BackendRequest::Storage(addr, idx, sender) => {
                 // account is already stored in the cache
                 let value =
@@ -196,6 +210,17 @@ where
                 self.pending_requests.push(self.get_account_req(address));
             }
         }
+    }
+
+    /// process a request for an entire block
+    fn request_full_block(&mut self, number: BlockId, sender: FullBlockSender) {
+        let provider = self.provider.clone();
+        let fut = Box::pin(async move {
+            let block = provider.get_block_with_txs(number).await;
+            (sender, block, number)
+        });
+
+        self.pending_requests.push(ProviderRequest::FullBlock(fut));
     }
 
     /// process a request for a block hash
@@ -375,6 +400,20 @@ where
                             continue
                         }
                     }
+                    ProviderRequest::FullBlock(fut) => {
+                        if let Poll::Ready((sender, resp, number)) = fut.poll_unpin(cx) {
+                            let msg = match resp {
+                                Ok(Some(block)) => Ok(block),
+                                Ok(None) => Err(DatabaseError::BlockNotFound(number)),
+                                Err(err) => {
+                                    let err = Arc::new(eyre::Error::new(err));
+                                    Err(DatabaseError::GetFullBlock(number, err))
+                                }
+                            };
+                            let _ = sender.send(msg);
+                            continue
+                        }
+                    }
                 }
                 // not ready, insert and poll again
                 pin.pending_requests.push(request);
@@ -497,6 +536,16 @@ impl SharedBackend {
         tokio::task::block_in_place(|| {
             let req = BackendRequest::SetPinnedBlock(block.into());
             self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))
+        })
+    }
+
+    /// Returns the full block for the given block identifier
+    pub fn get_full_block(&self, block: impl Into<BlockId>) -> DatabaseResult<Block<Transaction>> {
+        tokio::task::block_in_place(|| {
+            let (sender, rx) = oneshot_channel();
+            let req = BackendRequest::FullBlock(block.into(), sender);
+            self.backend.clone().try_send(req)?;
+            Ok(rx.recv()??)
         })
     }
 
