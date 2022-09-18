@@ -77,18 +77,14 @@ interface test {
         address _validatorAddress,
         uint128 _minAutoshipAmount,
         address _validatorPayableAddress
-    )
-        external;
+    ) external;
     function endAuction() external returns (bool);
     function fast_lane_fee() external view returns (uint24);
     function findFinalizedAuctionWinnerAtAuction(
         uint128 auction_index,
         address validatorAddress,
         address opportunityAddress
-    )
-        external
-        view
-        returns (bool, address, uint128);
+    ) external view returns (bool, address, uint128);
     function findLastFinalizedAuctionWinner(address validatorAddress, address opportunityAddress)
         external
         view
