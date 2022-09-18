@@ -13,27 +13,35 @@ use ethers::{
     types::{Address, H256, U256},
 };
 use revm::{
-    opcode, return_ok, CallInputs, CallScheme, CreateInputs, Database, EVMData, Gas, Inspector,
-    Interpreter, JournalEntry, Return,
+    opcode, return_ok, CallInputs, CallScheme, CreateInputs, Database, EVMData, Gas, GasInspector,
+    Inspector, Interpreter, JournalEntry, Return,
 };
+use std::{cell::RefCell, rc::Rc};
 
 /// An inspector that collects call traces.
 #[derive(Default, Debug, Clone)]
 pub struct Tracer {
-    pub record_steps: bool,
+    record_steps: bool,
 
-    pub trace_stack: Vec<usize>,
     pub traces: CallTraceArena,
-    pub step_stack: Vec<(usize, usize)>, // (trace_idx, step_idx)
+    trace_stack: Vec<usize>,
+    step_stack: Vec<(usize, usize)>, // (trace_idx, step_idx)
+
+    gas_inspector: Rc<RefCell<GasInspector>>,
 }
 
 impl Tracer {
-    pub fn with_steps_recording(mut self) -> Self {
+    /// Enables step recording and uses [revm::GasInspector] to report gas costs for each step.
+    ///
+    /// Gas Inspector should be called externally **before** [Tracer], this is why we need it as
+    /// `Rc<RefCell<_>>` here.
+    pub fn with_steps_recording(mut self, gas_inspector: Rc<RefCell<GasInspector>>) -> Self {
         self.record_steps = true;
+        self.gas_inspector = gas_inspector;
         self
     }
 
-    pub fn start_trace(
+    fn start_trace(
         &mut self,
         depth: usize,
         address: Address,
@@ -57,13 +65,7 @@ impl Tracer {
         ));
     }
 
-    pub fn fill_trace(
-        &mut self,
-        status: Return,
-        cost: u64,
-        output: Vec<u8>,
-        address: Option<Address>,
-    ) {
+    fn fill_trace(&mut self, status: Return, cost: u64, output: Vec<u8>, address: Option<Address>) {
         let success = matches!(status, return_ok!());
         let trace = &mut self.traces.arena
             [self.trace_stack.pop().expect("more traces were filled than started")]
@@ -78,11 +80,7 @@ impl Tracer {
         }
     }
 
-    pub fn start_step<DB: Database>(
-        &mut self,
-        interp: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
-    ) {
+    fn start_step<DB: Database>(&mut self, interp: &mut Interpreter, data: &mut EVMData<'_, DB>) {
         let trace_idx =
             *self.trace_stack.last().expect("can't start step without starting a trace first");
         let trace = &mut self.traces.arena[trace_idx];
@@ -90,6 +88,7 @@ impl Tracer {
         self.step_stack.push((trace_idx, trace.trace.steps.len()));
 
         let pc = interp.program_counter();
+
         trace.trace.steps.push(CallTraceStep {
             depth: data.journaled_state.depth(),
             pc,
@@ -97,7 +96,7 @@ impl Tracer {
             contract: interp.contract.address,
             stack: interp.stack.clone(),
             memory: interp.memory.clone(),
-            gas: interp.gas.remaining(),
+            gas: self.gas_inspector.borrow().gas_remaining(),
             gas_refund_counter: interp.gas.refunded() as u64,
             gas_cost: 0,
             state_diff: None,
@@ -105,7 +104,7 @@ impl Tracer {
         });
     }
 
-    pub fn fill_step<DB: Database>(
+    fn fill_step<DB: Database>(
         &mut self,
         interp: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
@@ -115,30 +114,30 @@ impl Tracer {
             self.step_stack.pop().expect("can't fill step without starting a step first");
         let step = &mut self.traces.arena[trace_idx].trace.steps[step_idx];
 
-        let pc = interp.program_counter() - 1;
-        let op = interp.contract.bytecode.bytecode()[pc];
+        if let Some(pc) = interp.program_counter().checked_sub(1) {
+            let op = interp.contract.bytecode.bytecode()[pc];
 
-        let journal_entry = data
-            .journaled_state
-            .journal
-            .last()
-            // This should always work because revm initializes it as `vec![vec![]]`
-            .unwrap()
-            .last();
+            let journal_entry = data
+                .journaled_state
+                .journal
+                .last()
+                // This should always work because revm initializes it as `vec![vec![]]`
+                .unwrap()
+                .last();
 
-        step.state_diff = match (op, journal_entry) {
-            (
-                opcode::SLOAD | opcode::SSTORE,
-                Some(JournalEntry::StorageChage { address, key, .. }),
-            ) => {
-                let value = data.journaled_state.state[address].storage[key].present_value();
-                Some((*key, value))
-            }
-            _ => None,
-        };
+            step.state_diff = match (op, journal_entry) {
+                (
+                    opcode::SLOAD | opcode::SSTORE,
+                    Some(JournalEntry::StorageChage { address, key, .. }),
+                ) => {
+                    let value = data.journaled_state.state[address].storage[key].present_value();
+                    Some((*key, value))
+                }
+                _ => None,
+            };
 
-        // TODO: calculate spent gas as in `Debugger::step`
-        step.gas_cost = step.gas - interp.gas.remaining();
+            step.gas_cost = step.gas - self.gas_inspector.borrow().gas_remaining();
+        }
 
         // Error codes only
         if status as u8 > Return::OutOfGas as u8 {
@@ -192,36 +191,36 @@ where
     fn call(
         &mut self,
         data: &mut EVMData<'_, DB>,
-        call: &mut CallInputs,
-        _: bool,
+        inputs: &mut CallInputs,
+        _is_static: bool,
     ) -> (Return, Gas, Bytes) {
-        let (from, to) = match call.context.scheme {
+        let (from, to) = match inputs.context.scheme {
             CallScheme::DelegateCall | CallScheme::CallCode => {
-                (call.context.address, call.context.code_address)
+                (inputs.context.address, inputs.context.code_address)
             }
-            _ => (call.context.caller, call.context.address),
+            _ => (inputs.context.caller, inputs.context.address),
         };
 
         self.start_trace(
             data.journaled_state.depth() as usize,
             to,
-            call.input.to_vec(),
-            call.transfer.value,
-            call.context.scheme.into(),
+            inputs.input.to_vec(),
+            inputs.transfer.value,
+            inputs.context.scheme.into(),
             from,
         );
 
-        (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
+        (Return::Continue, Gas::new(inputs.gas_limit), Bytes::new())
     }
 
     fn call_end(
         &mut self,
         data: &mut EVMData<'_, DB>,
-        _call: &CallInputs,
+        _inputs: &CallInputs,
         gas: Gas,
         status: Return,
         retdata: Bytes,
-        _: bool,
+        _is_static: bool,
     ) -> (Return, Gas, Bytes) {
         self.fill_trace(
             status,
@@ -236,27 +235,27 @@ where
     fn create(
         &mut self,
         data: &mut EVMData<'_, DB>,
-        call: &mut CreateInputs,
+        inputs: &mut CreateInputs,
     ) -> (Return, Option<Address>, Gas, Bytes) {
         // TODO: Does this increase gas cost?
-        let _ = data.journaled_state.load_account(call.caller, data.db);
-        let nonce = data.journaled_state.account(call.caller).info.nonce;
+        let _ = data.journaled_state.load_account(inputs.caller, data.db);
+        let nonce = data.journaled_state.account(inputs.caller).info.nonce;
         self.start_trace(
             data.journaled_state.depth() as usize,
-            get_create_address(call, nonce),
-            call.init_code.to_vec(),
-            call.value,
-            call.scheme.into(),
-            call.caller,
+            get_create_address(inputs, nonce),
+            inputs.init_code.to_vec(),
+            inputs.value,
+            inputs.scheme.into(),
+            inputs.caller,
         );
 
-        (Return::Continue, None, Gas::new(call.gas_limit), Bytes::new())
+        (Return::Continue, None, Gas::new(inputs.gas_limit), Bytes::new())
     }
 
     fn create_end(
         &mut self,
         data: &mut EVMData<'_, DB>,
-        _: &CreateInputs,
+        _inputs: &CreateInputs,
         status: Return,
         address: Option<Address>,
         gas: Gas,
