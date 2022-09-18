@@ -91,11 +91,34 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
         Ok(id)
     }
 
+    /// Creates and also selects a new fork
+    ///
+    /// This is basically `create_fork` + `select_fork`
+    fn create_select_fork_at_transaction(
+        &mut self,
+        fork: CreateFork,
+        env: &mut Env,
+        journaled_state: &mut JournaledState,
+        transaction: H256,
+    ) -> eyre::Result<LocalForkId> {
+        let id = self.create_fork(fork, journaled_state)?;
+        self.select_fork(id, env, journaled_state)?;
+        Ok(id)
+    }
+
     /// Creates a new fork but does _not_ select it
     fn create_fork(
         &mut self,
         fork: CreateFork,
         journaled_state: &JournaledState,
+    ) -> eyre::Result<LocalForkId>;
+
+    /// Creates a new fork but does _not_ select it
+    fn create_fork_at_transaction(
+        &mut self,
+        fork: CreateFork,
+        journaled_state: &JournaledState,
+        transaction: H256,
     ) -> eyre::Result<LocalForkId>;
 
     /// Selects the fork's state
@@ -140,12 +163,10 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     fn roll_fork_to_transaction(
         &mut self,
         id: Option<LocalForkId>,
-        tx_hash: H256,
+        transaction: H256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
-    ) -> eyre::Result<()> {
-        todo!()
-    }
+    ) -> eyre::Result<()>;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
     fn active_fork_id(&self) -> Option<LocalForkId>;
@@ -778,6 +799,16 @@ impl DatabaseExt for Backend {
         Ok(id)
     }
 
+    fn create_fork_at_transaction(
+        &mut self,
+        fork: CreateFork,
+        journaled_state: &JournaledState,
+        transaction: H256,
+    ) -> eyre::Result<LocalForkId> {
+        trace!(?transaction, "create fork at transaction");
+        todo!()
+    }
+
     /// When switching forks we copy the shared state
     fn select_fork(
         &mut self,
@@ -916,6 +947,17 @@ impl DatabaseExt for Backend {
             }
         }
         Ok(())
+    }
+
+    fn roll_fork_to_transaction(
+        &mut self,
+        id: Option<LocalForkId>,
+        transaction: H256,
+        env: &mut Env,
+        journaled_state: &mut JournaledState,
+    ) -> eyre::Result<()> {
+        trace!(?id, ?transaction, "roll fork to transaction");
+        todo!()
     }
 
     fn active_fork_id(&self) -> Option<LocalForkId> {
