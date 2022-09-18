@@ -580,7 +580,7 @@ impl SharedBackend {
             let (sender, rx) = oneshot_channel();
             let req = BackendRequest::FullBlock(block.into(), sender);
             self.backend.clone().try_send(req)?;
-            Ok(rx.recv()??)
+            rx.recv()?
         })
     }
 
@@ -590,7 +590,7 @@ impl SharedBackend {
             let (sender, rx) = oneshot_channel();
             let req = BackendRequest::Transaction(tx, sender);
             self.backend.clone().try_send(req)?;
-            Ok(rx.recv()??)
+            rx.recv()?
         })
     }
 

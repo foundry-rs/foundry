@@ -2,6 +2,7 @@ use super::Cheatcodes;
 use crate::{
     abi::HEVMCalls,
     executor::backend::error::{DatabaseError, DatabaseResult},
+    utils::h256_to_u256_be,
 };
 use bytes::{BufMut, Bytes, BytesMut};
 use ethers::{
@@ -17,7 +18,7 @@ use ethers::{
 };
 use foundry_common::fmt::*;
 use hex::FromHex;
-use revm::{Account, CreateInputs, Database, EVMData, JournaledState};
+use revm::{Account, CreateInputs, Database, EVMData, JournaledState, TransactTo};
 use std::str::FromStr;
 
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
@@ -26,6 +27,26 @@ const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 pub const DEFAULT_CREATE2_DEPLOYER: H160 = H160([
     78, 89, 180, 72, 71, 179, 121, 87, 133, 136, 146, 12, 167, 143, 191, 38, 192, 180, 149, 108,
 ]);
+
+/// Configures the env for the transaction
+pub fn configure_tx_env(env: &mut revm::Env, tx: &Transaction) {
+    env.tx.caller = tx.from;
+    env.tx.gas_limit = tx.gas.as_u64();
+    env.tx.gas_price = tx.gas_price.unwrap_or_default();
+    env.tx.gas_priority_fee = tx.max_priority_fee_per_gas;
+    env.tx.nonce = Some(tx.nonce.as_u64());
+    env.tx.access_list = tx
+        .access_list
+        .clone()
+        .unwrap_or_default()
+        .0
+        .into_iter()
+        .map(|item| (item.address, item.storage_keys.into_iter().map(h256_to_u256_be).collect()))
+        .collect();
+    env.tx.value = tx.value;
+    env.tx.data = tx.input.0.clone();
+    env.tx.transact_to = tx.to.map(TransactTo::Call).unwrap_or_else(TransactTo::create)
+}
 
 /// Applies the given function `f` to the `revm::Account` belonging to the `addr`
 ///
