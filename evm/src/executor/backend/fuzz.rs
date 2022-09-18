@@ -23,7 +23,7 @@ use tracing::trace;
 /// a clone-on-write `Backend`, where cloning is only necessary if cheatcodes will modify the
 /// `Backend`
 ///
-/// Entire purpose of this type is for fuzzing. A test function fuzzer will repeatedly execute  the
+/// Entire purpose of this type is for fuzzing. A test function fuzzer will repeatedly execute the
 /// function via immutable raw (no state changes) calls.
 ///
 /// **N.B.**: we're assuming cheatcodes that alter the state (like multi fork swapping) are niche.
