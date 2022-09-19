@@ -150,7 +150,6 @@ impl ScriptArgs {
                     );
 
                     if let Some(txs) = &mut result.transactions {
-                        // TODO(joshie): how to handle lib linking to different forks?
                         for tx in txs.iter() {
                             lib_deploy.push_back(BroadcastableTransaction {
                                 rpc: tx.rpc.clone(),

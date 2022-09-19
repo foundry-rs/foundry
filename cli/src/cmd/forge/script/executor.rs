@@ -267,7 +267,6 @@ impl ScriptArgs {
         let env = script_config.evm_opts.evm_env().await;
         let url = script_config.evm_opts.fork_url.clone().unwrap_or_default();
 
-        // TODO(joshie): somehow get fork backend from the local simulation run
         // The db backend that serves all the data.
         let db = match script_config.backend.get(&url) {
             Some(db) => db.clone(),

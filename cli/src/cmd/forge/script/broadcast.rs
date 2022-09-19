@@ -256,26 +256,16 @@ impl ScriptArgs {
                     )
                     .await?;
 
-                if self.broadcast {
-                    if deployments.len() == 1 {
-                        let deployment_sequence = deployments.first_mut().unwrap();
+                if deployments.len() > 1 {
+                    let multi = MultiChainSequence::new(
+                        deployments.clone(),
+                        &self.sig,
+                        target,
+                        &script_config.config.broadcast,
+                        self.broadcast,
+                    )?;
 
-                        let _returns = self.get_returns(&script_config, &result.returned)?;
-
-                        if self.verify {
-                            deployment_sequence
-                                .verify_contracts(&script_config.config, verify)
-                                .await?;
-                        }
-                    } else {
-                        let mut multi = MultiChainSequence::new(
-                            deployments.clone(),
-                            &self.sig,
-                            target,
-                            &script_config.config.broadcast,
-                        )?;
-                        multi.save()?;
-
+                    if self.broadcast {
                         self.multi_chain_deployment(
                             multi,
                             libraries,
@@ -284,7 +274,28 @@ impl ScriptArgs {
                         )
                         .await?;
                     }
-                } else {
+                } else if self.broadcast {
+                    let mut deployment_sequence = deployments.first_mut().expect("to be set.");
+                    let rpc = deployment_sequence
+                        .transactions
+                        .front()
+                        .as_ref()
+                        .expect("to be set")
+                        .rpc
+                        .clone()
+                        .expect("to be set.");
+
+                    deployment_sequence.add_libraries(libraries);
+
+                    self.send_transactions(&mut deployment_sequence, &rpc, result.script_wallets)
+                        .await?;
+
+                    if self.verify {
+                        deployment_sequence.verify_contracts(&script_config.config, verify).await?;
+                    }
+                }
+
+                if !self.broadcast {
                     println!("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.");
                 }
             } else {
@@ -341,13 +352,16 @@ impl ScriptArgs {
         let last_rpc = &transactions.back().expect("exists; qed").rpc;
         let is_multi_deployment = transactions.iter().any(|tx| &tx.rpc != last_rpc);
 
-        // TODO(joshie): make it accessible outside for broadcasting stage.
-        let mut addresses = HashSet::new();
-        let mut new_txes = VecDeque::new();
         let mut total_gas_per_rpc: HashMap<String, (U256, bool)> = HashMap::new();
-        let mut txes_iter = transactions.into_iter().peekable();
+
+        // Required to find user provided wallets.
+        let mut addresses = HashSet::new();
+        // Batches sequences from different rpcs.
+        let mut new_txes = VecDeque::new();
         let mut manager = ProvidersManager::default();
         let mut deployments = vec![];
+
+        let mut txes_iter = transactions.into_iter().peekable();
 
         while let Some(mut tx) = txes_iter.next() {
             let tx_rpc = tx.rpc.unwrap_or_else(|| arg_url.clone());
@@ -374,16 +388,14 @@ impl ScriptArgs {
             tx.change_type(is_legacy);
 
             if !self.skip_simulation {
-                let rpc = tx.rpc.clone().expect("rpc is set");
                 let typed_tx = tx.typed_tx_mut();
 
                 if has_different_gas_calc(provider_info.chain) {
                     self.estimate_gas(typed_tx, &provider_info.provider).await?;
                 }
 
-                let (total_gas, _) = total_gas_per_rpc
-                    .entry(rpc)
-                    .or_insert((U256::zero(), matches!(typed_tx, TypedTransaction::Eip1559(..))));
+                let (total_gas, _) =
+                    total_gas_per_rpc.entry(tx_rpc.clone()).or_insert((U256::zero(), !is_legacy));
 
                 *total_gas += *typed_tx.gas().expect("gas is set");
             }
@@ -412,18 +424,17 @@ impl ScriptArgs {
             }
 
             addresses.clear();
-            let mut sequence = ScriptSequence::new(
+            let sequence = ScriptSequence::new(
                 new_txes,
                 returns.clone(),
                 &self.sig,
                 target,
                 config,
                 provider_info.chain,
-                self.broadcast || self.resume, // todo joshie ??
+                self.broadcast,
+                is_multi_deployment,
             )?;
 
-            sequence.set_multi(is_multi_deployment);
-            sequence.save()?;
             deployments.push(sequence);
 
             new_txes = VecDeque::new();

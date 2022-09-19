@@ -25,7 +25,7 @@ use std::{
 use tracing::trace;
 use yansi::Paint;
 
-const DRY_RUN_DIR: &str = "dry-run";
+pub const DRY_RUN_DIR: &str = "dry-run";
 
 /// Helper that saves the transactions sequence and its state on which transactions have been
 /// broadcasted
@@ -54,8 +54,15 @@ impl ScriptSequence {
         config: &Config,
         chain_id: u64,
         broadcasted: bool,
+        is_multi: bool,
     ) -> eyre::Result<Self> {
-        let path = ScriptSequence::get_path(&config.broadcast, sig, target, chain_id, broadcasted)?;
+        let path = ScriptSequence::get_path(
+            &config.broadcast,
+            sig,
+            target,
+            chain_id,
+            broadcasted && !is_multi,
+        )?;
         let commit = get_commit_hash(&config.__root.0);
 
         Ok(ScriptSequence {
@@ -70,7 +77,7 @@ impl ScriptSequence {
                 .as_secs(),
             libraries: vec![],
             chain: chain_id,
-            multi: false,
+            multi: is_multi,
             commit,
         })
     }
@@ -261,10 +268,6 @@ impl ScriptSequence {
                 (tx.rpc.clone().expect("to have been filled with a proper rpc"), tx.typed_tx())
             })
             .collect()
-    }
-
-    pub fn set_multi(&mut self, is_multi: bool) {
-        self.multi = is_multi;
     }
 }
 

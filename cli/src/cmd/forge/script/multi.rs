@@ -1,4 +1,8 @@
-use super::{sequence::ScriptSequence, verify::VerifyBundle, ScriptArgs};
+use super::{
+    sequence::{ScriptSequence, DRY_RUN_DIR},
+    verify::VerifyBundle,
+    ScriptArgs,
+};
 use ethers::prelude::{artifacts::Libraries, ArtifactId};
 use eyre::ContextCompat;
 use foundry_common::fs;
@@ -34,8 +38,10 @@ impl MultiChainSequence {
         sig: &str,
         target: &ArtifactId,
         log_folder: &Path,
+        broadcasted: bool,
     ) -> eyre::Result<Self> {
-        let path = MultiChainSequence::get_path(&log_folder.join("multi"), sig, target)?;
+        let path =
+            MultiChainSequence::get_path(&log_folder.join("multi"), sig, target, broadcasted)?;
 
         Ok(MultiChainSequence {
             deployments,
@@ -48,8 +54,17 @@ impl MultiChainSequence {
     }
 
     /// Saves to ./broadcast/multi/contract_filename[-timestamp]/sig.json
-    pub fn get_path(out: &Path, sig: &str, target: &ArtifactId) -> eyre::Result<PathBuf> {
+    pub fn get_path(
+        out: &Path,
+        sig: &str,
+        target: &ArtifactId,
+        broadcasted: bool,
+    ) -> eyre::Result<PathBuf> {
         let mut out = out.to_path_buf();
+
+        if !broadcasted {
+            out.push(DRY_RUN_DIR);
+        }
 
         let target_fname = target.source.file_name().wrap_err("No filename.")?.to_string_lossy();
         out.push(format!("{target_fname}-latest"));
@@ -64,7 +79,7 @@ impl MultiChainSequence {
 
     /// Loads the sequences for the multi chain deployment.
     pub fn load(log_folder: &Path, sig: &str, target: &ArtifactId) -> eyre::Result<Self> {
-        let path = MultiChainSequence::get_path(log_folder, sig, target)?;
+        let path = MultiChainSequence::get_path(log_folder, sig, target, true)?;
         Ok(ethers::solc::utils::read_json_file(path)?)
     }
 
