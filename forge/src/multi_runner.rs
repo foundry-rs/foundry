@@ -240,7 +240,7 @@ impl MultiContractRunnerBuilder {
         // This is just the contracts compiled, but we need to merge this with the read cached
         // artifacts
         let contracts = output
-            .with_stripped_file_prefixes(root)
+            .with_stripped_file_prefixes(&root)
             .into_artifacts()
             .map(|(i, c)| (i, c.into_contract_bytecode()))
             .collect::<Vec<(ArtifactId, CompactContractBytecode)>>();
@@ -248,7 +248,7 @@ impl MultiContractRunnerBuilder {
         let mut known_contracts = ContractsByArtifact::default();
         let source_paths = contracts
             .iter()
-            .map(|(i, _)| (i.identifier(), i.source.to_string_lossy().into()))
+            .map(|(i, _)| (i.identifier(), root.as_ref().join(&i.source).to_string_lossy().into()))
             .collect::<BTreeMap<String, String>>();
 
         // create a mapping of name => (abi, deployment code, Vec<library deployment code>)
