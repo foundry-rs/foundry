@@ -2195,6 +2195,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     self.write_chunk(&base_or_modifier)?;
                 }
             }
+            // substrate compatibility
+            FunctionAttribute::NameValue(loc, ident, expr) => {
+                let expr = self.simulate_to_string(|fmt| expr.visit(fmt))?;
+                write_chunk!(self, loc.start(), loc.end(), "{}={}", ident.name, expr)?;
+            }
         };
 
         Ok(())
@@ -3415,4 +3420,5 @@ mod tests {
     test_directory! { NumberLiteralUnderscore }
     test_directory! { FunctionCall }
     test_directory! { TrailingComma }
+    test_directory! { SelectorOverride }
 }
