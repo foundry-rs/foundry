@@ -289,6 +289,7 @@ impl Visitor for CheatcodeVisitor {
         cond: &mut Expression,
         if_branch: &mut Box<Statement>,
         else_branch: &mut Option<Box<Statement>>,
+        _is_frst_stmt: bool,
     ) -> Result<(), Self::Error> {
         cond.visit(self)?;
         if_branch.visit(self)?;

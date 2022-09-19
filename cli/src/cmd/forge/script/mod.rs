@@ -46,6 +46,7 @@ use yansi::Paint;
 
 mod build;
 use build::{filter_sources_and_artifacts, BuildOutput};
+use foundry_common::errors::UnlinkedByteCode;
 use foundry_config::figment::{
     value::{Dict, Map},
     Metadata, Profile, Provider,
@@ -184,20 +185,20 @@ impl ScriptArgs {
         result: &mut ScriptResult,
         known_contracts: &ContractsByArtifact,
     ) -> eyre::Result<CallTraceDecoder> {
-        let etherscan_identifier = EtherscanIdentifier::new(
+        let mut etherscan_identifier = EtherscanIdentifier::new(
             &script_config.config,
             script_config.evm_opts.get_remote_chain_id(),
         )?;
 
-        let local_identifier = LocalTraceIdentifier::new(known_contracts);
+        let mut local_identifier = LocalTraceIdentifier::new(known_contracts);
         let mut decoder =
             CallTraceDecoderBuilder::new().with_labels(result.labeled_addresses.clone()).build();
 
         decoder.add_signature_identifier(SignaturesIdentifier::new(Config::foundry_cache_dir())?);
 
         for (_, trace) in &mut result.traces {
-            decoder.identify(trace, &local_identifier);
-            decoder.identify(trace, &etherscan_identifier);
+            decoder.identify(trace, &mut local_identifier);
+            decoder.identify(trace, &mut etherscan_identifier);
         }
         Ok(decoder)
     }
@@ -399,8 +400,12 @@ impl ScriptArgs {
         project: Project,
         highlevel_known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
     ) -> eyre::Result<()> {
-        let (sources, artifacts) =
-            filter_sources_and_artifacts(&self.path, sources, highlevel_known_contracts, project)?;
+        let (sources, artifacts) = filter_sources_and_artifacts(
+            &self.path,
+            sources,
+            highlevel_known_contracts.clone(),
+            project,
+        )?;
         let flattened = result
             .debug
             .and_then(|arena| arena.last().map(|arena| arena.flatten(0)))
@@ -411,7 +416,16 @@ impl ScriptArgs {
             .map(|(addr, identifier)| (*addr, get_contract_name(identifier).to_string()))
             .collect();
 
-        let tui = Tui::new(flattened, 0, identified_contracts, artifacts, sources)?;
+        let tui = Tui::new(
+            flattened,
+            0,
+            identified_contracts,
+            artifacts,
+            highlevel_known_contracts
+                .into_iter()
+                .map(|(id, _)| (id.name, sources.clone()))
+                .collect(),
+        )?;
         match tui.start().expect("Failed to start tui") {
             TUIExitReason::CharExit => Ok(()),
         }
@@ -467,15 +481,20 @@ impl ScriptArgs {
         let mut bytecodes: Vec<(String, &[u8], &[u8])> = vec![];
 
         // From artifacts
-        known_contracts.iter().for_each(|(artifact, bytecode)| {
-            const MSG: &str = "Code should have been linked before.";
-            let init_code = bytecode.bytecode.object.as_bytes().expect(MSG);
+        for (artifact, bytecode) in known_contracts.iter() {
+            if bytecode.bytecode.object.is_unlinked() {
+                return Err(UnlinkedByteCode::Bytecode(artifact.identifier()).into())
+            }
+            let init_code = bytecode.bytecode.object.as_bytes().unwrap();
             // Ignore abstract contracts
             if let Some(ref deployed_code) = bytecode.deployed_bytecode.bytecode {
-                let deployed_code = deployed_code.object.as_bytes().expect(MSG);
+                if deployed_code.object.is_unlinked() {
+                    return Err(UnlinkedByteCode::DeployedBytecode(artifact.identifier()).into())
+                }
+                let deployed_code = deployed_code.object.as_bytes().unwrap();
                 bytecodes.push((artifact.name.clone(), init_code, deployed_code));
             }
-        });
+        }
 
         // From traces
         let create_nodes = result.traces.iter().flat_map(|(_, traces)| {

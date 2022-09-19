@@ -1,5 +1,5 @@
 // config: line_length = 60
-// config: func_attrs_with_params_multiline = false
+// config: multiline_func_header = "params_first"
 interface FunctionInterfaces {
     function noParamsNoModifiersNoReturns();
 
@@ -160,7 +160,7 @@ interface FunctionInterfaces {
         uint256 x10
     ) modifier1 modifier2 modifier3;
 
-    function manyParamssomeReturns(
+    function manyParamsSomeReturns(
         uint256 x1,
         uint256 x2,
         uint256 x3,
@@ -487,7 +487,7 @@ contract FunctionDefinitions {
         a = 1;
     }
 
-    function manyParamssomeReturns(
+    function manyParamsSomeReturns(
         uint256 x1,
         uint256 x2,
         uint256 x3,

@@ -295,7 +295,7 @@ impl MinedTransaction {
     }
 
     pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> GethTrace {
-        self.info.traces.geth_trace(opts)
+        self.info.traces.geth_trace(self.receipt.gas_used(), opts)
     }
 }
 

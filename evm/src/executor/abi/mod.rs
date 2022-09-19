@@ -66,6 +66,7 @@ ethers::contract::abigen!(
             expectCall(address,bytes)
             expectCall(address,uint256,bytes)
             getCode(string)
+            getDeployedCode(string)
             label(address,string)
             assume(bool)
             setNonce(address,uint64)

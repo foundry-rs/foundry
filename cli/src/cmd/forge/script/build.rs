@@ -1,5 +1,5 @@
 use super::*;
-use crate::{cmd::get_cached_entry_by_name, compile};
+use crate::cmd::get_cached_entry_by_name;
 use ethers::{
     prelude::{
         artifacts::Libraries, cache::SolFilesCache, ArtifactId, Graph, Project,
@@ -12,6 +12,7 @@ use ethers::{
     types::{Address, U256},
 };
 use eyre::{Context, ContextCompat};
+use foundry_common::compile;
 use foundry_utils::PostLinkInput;
 use std::{collections::BTreeMap, fs, str::FromStr};
 use tracing::warn;

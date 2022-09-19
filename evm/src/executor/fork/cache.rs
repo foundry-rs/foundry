@@ -1,14 +1,12 @@
 //! Cache related abstraction
+use crate::{executor::backend::snapshot::StateSnapshot, HashMap as Map};
 use ethers::types::{Address, H256, U256};
 use parking_lot::RwLock;
 use revm::{Account, AccountInfo, DatabaseCommit, KECCAK_EMPTY};
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
 use std::{collections::BTreeSet, fs, io::BufWriter, path::PathBuf, sync::Arc};
-use tracing::{trace, trace_span, warn};
-use tracing_error::InstrumentResult;
+use tracing::{trace, warn};
 use url::Url;
-
-use crate::HashMap as Map;
 
 pub type StorageInfo = Map<U256, U256>;
 
@@ -35,6 +33,7 @@ impl BlockchainDb {
     ///   - the file contains malformed data, or if it couldn't be read
     ///   - the provided `meta` differs from [BlockchainDbMeta] that's stored on disk
     pub fn new(meta: BlockchainDbMeta, cache_path: Option<PathBuf>) -> Self {
+        trace!(target = "cache", cache=?cache_path, "initialising blockchain db");
         // read cache and check if metadata matches
         let cache = cache_path
             .as_ref()
@@ -43,7 +42,7 @@ impl BlockchainDb {
                     let mut existing = cache.meta().write();
                     existing.hosts.extend(meta.hosts.clone());
                     if meta != *existing {
-                        warn!(target:"cache", "non-matching block metadata");
+                        warn!(target : "cache", "non-matching block metadata");
                         false
                     } else {
                         true
@@ -257,12 +256,16 @@ impl JsonBlockCacheDB {
     ///   - the format does not match [JsonBlockCacheData]
     pub fn load(path: impl Into<PathBuf>) -> eyre::Result<Self> {
         let path = path.into();
-        trace!(target: "cache", "reading json cache path={:?}", path);
-        let span = trace_span!("cache", "path={:?}", &path);
-        let _enter = span.enter();
-        let file = fs::File::open(&path).in_current_span()?;
+        trace!(target : "cache", ?path, "reading json cache");
+        let file = fs::File::open(&path).map_err(|err| {
+            warn!(?err, ?path, "Failed to read cache file");
+            err
+        })?;
         let file = std::io::BufReader::new(file);
-        let data = serde_json::from_reader(file).in_current_span()?;
+        let data = serde_json::from_reader(file).map_err(|err| {
+            warn!(target : "cache", ?err, ?path, "Failed to deserialize cache data");
+            err
+        })?;
         Ok(Self { cache_path: Some(path), data })
     }
 
@@ -345,21 +348,19 @@ impl<'de> Deserialize<'de> for JsonBlockCacheData {
         #[derive(Deserialize)]
         struct Data {
             meta: BlockchainDbMeta,
-            accounts: Map<Address, AccountInfo>,
-            storage: Map<Address, StorageInfo>,
-            block_hashes: Map<u64, H256>,
+            #[serde(flatten)]
+            data: StateSnapshot,
         }
 
-        let Data { meta, accounts, storage, block_hashes } = Data::deserialize(deserializer)?;
+        let Data { meta, data: StateSnapshot { accounts, storage, block_hashes } } =
+            Data::deserialize(deserializer)?;
 
         Ok(JsonBlockCacheData {
             meta: Arc::new(RwLock::new(meta)),
             data: Arc::new(MemDb {
                 accounts: RwLock::new(accounts),
                 storage: RwLock::new(storage),
-                block_hashes: RwLock::new(
-                    block_hashes.into_iter().map(|(k, v)| (k.into(), v)).collect(),
-                ),
+                block_hashes: RwLock::new(block_hashes),
             }),
         })
     }
@@ -377,5 +378,79 @@ impl Drop for FlushJsonBlockCacheDB {
         trace!(target: "fork::cache", "flushing cache");
         self.0.flush();
         trace!(target: "fork::cache", "flushed cache");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_deserialize_cache() {
+        let s = r#"{
+    "meta": {
+        "cfg_env": {
+            "chain_id": "0x539",
+            "spec_id": "LATEST",
+            "perf_all_precompiles_have_balance": false,
+            "perf_analyse_created_bytecodes": "Analyse",
+            "limit_contract_code_size": 18446744073709551615,
+            "memory_limit": 4294967295
+        },
+        "block_env": {
+            "number": "0xed3ddf",
+            "coinbase": "0x0000000000000000000000000000000000000000",
+            "timestamp": "0x6324bc3f",
+            "difficulty": "0x0",
+            "basefee": "0x2e5fda223",
+            "gas_limit": "0x1c9c380"
+        },
+        "hosts": [
+            "eth-mainnet.alchemyapi.io"
+        ]
+    },
+    "accounts": {
+        "0xb8ffc3cd6e7cf5a098a1c92f48009765b24088dc": {
+            "balance": "0x0",
+            "nonce": 10,
+            "code_hash": "0x3ac64c95eedf82e5d821696a12daac0e1b22c8ee18a9fd688b00cfaf14550aad",
+            "code": {
+                "bytecode": "0x60806040526004361061006c5763ffffffff7c01000000000000000000000000000000000000000000000000000000006000350416634555d5c9811461012b5780634558850c1461015257806348a0c8dd146101965780635c60da1b146101bf57806386070cfe146101d4575b6127107f665fd576fbbe6f247aff98f5c94a561e3f71ec2d3c988d56f12d342396c50cea6000825a10156100e15760003411361583541616156100dc576040513381523460208201527f15eeaa57c7bd188c1388020bcadc2c436ec60d647d36ef5b9eb3c742217ddee1604082a1005b600080fd5b6100e96101e9565b9050610126816000368080601f0160208091040260200160405190810160405280939291908181526020018383808284375061026c945050505050565b505050005b34801561013757600080fd5b506101406102ad565b60408051918252519081900360200190f35b34801561015e57600080fd5b5061016d6004356024356102b2565b6040805173ffffffffffffffffffffffffffffffffffffffff9092168252519081900360200190f35b3480156101a257600080fd5b506101ab6102e2565b604080519115158252519081900360200190f35b3480156101cb57600080fd5b5061016d6101e9565b3480156101e057600080fd5b50610140610312565b7f3b4bf6bf3ad5000ecf0f989d5befde585c6860fea3e574a4fab4c49d1c177d9c6000527fc67454ed56db7ff90a4bb32fc9a8de1ab3174b221e5fecea22b7503a3111791f6020527f8e2ed18767e9c33b25344c240cdf92034fae56be99e2c07f3d9946d949ffede45473ffffffffffffffffffffffffffffffffffffffff1690565b600061027783610318565b151561028257600080fd5b612710905060008083516020850186855a03f43d604051816000823e8280156102a9578282f35b8282fd5b600290565b600060208181529281526040808220909352908152205473ffffffffffffffffffffffffffffffffffffffff1681565b600061030d7f665fd576fbbe6f247aff98f5c94a561e3f71ec2d3c988d56f12d342396c50cea610352565b905090565b60015481565b60008073ffffffffffffffffffffffffffffffffffffffff83161515610341576000915061034c565b823b90506000811191505b50919050565b54905600a165627a7a72305820968d404e148c1ec7bb58c8df6cbdcaad4978b93a804e00a1f0e97a5e789eacd40029000000000000000000000000000000000000000000000000000000000000000000",
+                "hash": "0x3ac64c95eedf82e5d821696a12daac0e1b22c8ee18a9fd688b00cfaf14550aad",
+                "state": {
+                    "Checked": {
+                        "len": 898
+                    }
+                }
+            }
+        }
+    },
+    "storage": {
+        "0xa354f35829ae975e850e23e9615b11da1b3dc4de": {
+            "0x290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e564": "0x5553444320795661756c74000000000000000000000000000000000000000000",
+            "0x10": "0x37fd60ff8346",
+            "0x290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563": "0xb",
+            "0x6": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+            "0x5": "0x36ff5b93162e",
+            "0x14": "0x29d635a8e000",
+            "0x11": "0x63224c73",
+            "0x2": "0x6"
+        }
+    },
+    "block_hashes": {
+        "0xed3deb": "0xbf7be3174b261ea3c377b6aba4a1e05d5fae7eee7aab5691087c20cf353e9877",
+        "0xed3de9": "0xba1c3648e0aee193e7d00dffe4e9a5e420016b4880455641085a4731c1d32eef",
+        "0xed3de8": "0x61d1491c03a9295fb13395cca18b17b4fa5c64c6b8e56ee9cc0a70c3f6cf9855",
+        "0xed3de7": "0xb54560b5baeccd18350d56a3bee4035432294dc9d2b7e02f157813e1dee3a0be",
+        "0xed3dea": "0x816f124480b9661e1631c6ec9ee39350bda79f0cbfc911f925838d88e3d02e4b"
+    }
+}"#;
+
+        let cache: JsonBlockCacheData = serde_json::from_str(s).unwrap();
+        assert_eq!(cache.data.accounts.read().len(), 1);
+        assert_eq!(cache.data.storage.read().len(), 1);
+        assert_eq!(cache.data.block_hashes.read().len(), 5);
+
+        let _s = serde_json::to_string(&cache).unwrap();
     }
 }

@@ -1,17 +1,20 @@
 //! Support for compiling [ethers::solc::Project]
-
-use crate::term;
+use crate::{term, TestFunctionExt};
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, *};
-use ethers::{
-    prelude::Graph,
-    solc::{report::NoReporter, Artifact, FileFilter, Project, ProjectCompileOutput},
+use ethers_solc::{
+    artifacts::{ContractBytecodeSome, Source, Sources},
+    report::NoReporter,
+    Artifact, ArtifactId, FileFilter, Graph, Project, ProjectCompileOutput, Solc,
 };
-use foundry_common::TestFunctionExt;
+use foundry_config::Config;
+use semver::Version;
 use std::{
     collections::BTreeMap,
     fmt::Display,
+    io::Write,
     path::{Path, PathBuf},
 };
+use tempfile::NamedTempFile;
 
 /// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
 /// compilation was successful or if there was a cache hit.
@@ -26,13 +29,17 @@ pub fn compile(
 // https://eips.ethereum.org/EIPS/eip-170
 const CONTRACT_SIZE_LIMIT: usize = 24576;
 
+/// Contracts with info about their size
 pub struct SizeReport {
+    /// `<contract name>:info>`
     pub contracts: BTreeMap<String, ContractInfo>,
 }
 
+/// How big the contract is and whether it is a dev contract where size limits can be neglected
 pub struct ContractInfo {
+    /// size of the contract in bytes
     pub size: usize,
-    // A development contract is either a Script or a Test contract.
+    /// A development contract is either a Script or a Test contract.
     pub is_dev_contract: bool,
 }
 
@@ -126,11 +133,12 @@ impl ProjectCompiler {
     /// # Example
     ///
     /// ```no_run
-    /// use foundry_cli::compile::ProjectCompiler;
+    /// use foundry_common::compile::ProjectCompiler;
     /// let config = foundry_config::Config::load();
     /// ProjectCompiler::default()
-    ///     .compile_with(&config.project().unwrap(), |prj| Ok(prj.compile()?));
+    ///     .compile_with(&config.project().unwrap(), |prj| Ok(prj.compile()?)).unwrap();
     /// ```
+    #[tracing::instrument(target = "forge::compile", skip_all)]
     pub fn compile_with<F>(self, project: &Project, f: F) -> eyre::Result<ProjectCompileOutput>
     where
         F: FnOnce(&Project) -> eyre::Result<ProjectCompileOutput>,
@@ -144,15 +152,15 @@ impl ProjectCompiler {
         }
 
         let now = std::time::Instant::now();
-        tracing::trace!(target : "forge::compile", "start compiling project");
+        tracing::trace!("start compiling project");
 
         let output = term::with_spinner_reporter(|| f(project))?;
 
         let elapsed = now.elapsed();
-        tracing::trace!(target : "forge::compile", "finished compiling after {:?}", elapsed);
+        tracing::trace!(?elapsed, "finished compiling");
 
         if output.has_compiler_errors() {
-            tracing::warn!(target: "forge::compile", "compiled with errors");
+            tracing::warn!("compiled with errors");
             eyre::bail!(output.to_string())
         } else if output.is_unchanged() {
             println!("No files changed, compilation skipped");
@@ -217,8 +225,8 @@ impl ProjectCompiler {
 /// compilation was successful or if there was a cache hit.
 /// Doesn't print anything to stdout, thus is "suppressed".
 pub fn suppress_compile(project: &Project) -> eyre::Result<ProjectCompileOutput> {
-    let output = ethers::solc::report::with_scoped(
-        &ethers::solc::report::Report::new(NoReporter::default()),
+    let output = ethers_solc::report::with_scoped(
+        &ethers_solc::report::Report::new(NoReporter::default()),
         || project.compile(),
     )?;
 
@@ -238,8 +246,8 @@ pub fn compile_files(
     silent: bool,
 ) -> eyre::Result<ProjectCompileOutput> {
     let output = if silent {
-        ethers::solc::report::with_scoped(
-            &ethers::solc::report::Report::new(NoReporter::default()),
+        ethers_solc::report::with_scoped(
+            &ethers_solc::report::Report::new(NoReporter::default()),
             || project.compile_files(files),
         )
     } else {
@@ -284,4 +292,64 @@ pub fn compile_target(
     } else {
         compile(project, false, false)
     }
+}
+
+/// Compile from etherscan bytecode.
+pub async fn compile_from_source(
+    contract_name: String,
+    source: String,
+    // has the contract been optimized before submission to etherscan
+    optimization: bool,
+    runs: u32,
+    version: String,
+) -> eyre::Result<(ArtifactId, ContractBytecodeSome)> {
+    let mut file = NamedTempFile::new()?;
+    writeln!(file, "{}", source.clone())?;
+
+    let target_contract = dunce::canonicalize(file.path())?;
+    let mut project = Config::default().ephemeral_no_artifacts_project()?;
+
+    if optimization {
+        project.solc_config.settings.optimizer.enable();
+        project.solc_config.settings.optimizer.runs(runs as usize);
+    } else {
+        project.solc_config.settings.optimizer.disable();
+    }
+
+    project.solc = if let Some(solc) = Solc::find_svm_installed_version(&version)? {
+        solc
+    } else {
+        let v: Version = version.trim_start_matches('v').parse()?;
+        Solc::install(&Version::new(v.major, v.minor, v.patch)).await?
+    };
+
+    let mut sources = Sources::new();
+    sources.insert(target_contract, Source { content: source });
+
+    let project_output = project.compile_with_version(&project.solc, sources)?;
+
+    if project_output.has_compiler_errors() {
+        eyre::bail!(project_output.to_string())
+    }
+
+    let (artifact_id, bytecode) = project_output
+        .into_contract_bytecodes()
+        .filter_map(|(artifact_id, contract)| {
+            if artifact_id.name != contract_name {
+                None
+            } else {
+                Some((
+                    artifact_id,
+                    ContractBytecodeSome {
+                        abi: contract.abi.unwrap(),
+                        bytecode: contract.bytecode.unwrap().into(),
+                        deployed_bytecode: contract.deployed_bytecode.unwrap().into(),
+                    },
+                ))
+            }
+        })
+        .into_iter()
+        .next()
+        .expect("there should be a contract with bytecode");
+    Ok((artifact_id, bytecode))
 }

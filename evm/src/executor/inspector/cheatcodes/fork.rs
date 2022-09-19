@@ -112,6 +112,9 @@ fn select_fork<DB: DatabaseExt>(
         ))
     }
 
+    // No need to correct since the sender's nonce does not get incremented when selecting a fork.
+    state.corrected_nonce = true;
+
     data.db
         .select_fork(fork_id, data.env, &mut data.journaled_state)
         .map(|_| Default::default())
@@ -130,6 +133,9 @@ fn create_select_fork<DB: DatabaseExt>(
             "You need to stop broadcasting before you can select forks.",
         ))
     }
+
+    // No need to correct since the sender's nonce does not get incremented when selecting a fork.
+    state.corrected_nonce = true;
 
     let fork = create_fork_request(state, url_or_alias, block, data)?;
     data.db

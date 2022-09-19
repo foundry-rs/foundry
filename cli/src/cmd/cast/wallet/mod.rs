@@ -1,17 +1,18 @@
 //! cast wallet subcommand
 
-use crate::opts::{EthereumOpts, Wallet, WalletType};
+use crate::{
+    cmd::{cast::wallet::vanity::VanityArgs, Cmd},
+    opts::{EthereumOpts, Wallet, WalletType},
+};
 use cast::SimpleCast;
 use clap::Parser;
 use ethers::{
     core::rand::thread_rng,
     signers::{LocalWallet, Signer},
     types::{Address, Chain, Signature},
-    utils::get_contract_address,
 };
-use rayon::prelude::*;
-use regex::RegexSet;
-use std::{str::FromStr, time::Instant};
+use std::str::FromStr;
+mod vanity;
 
 #[derive(Debug, Parser)]
 pub enum WalletSubcommands {
@@ -41,23 +42,7 @@ pub enum WalletSubcommands {
         unsafe_password: Option<String>,
     },
     #[clap(name = "vanity", visible_alias = "va", about = "Generate a vanity address.")]
-    Vanity {
-        #[clap(
-            long,
-            help = "Prefix for the vanity address.",
-            required_unless_present = "ends-with",
-            value_name = "HEX"
-        )]
-        starts_with: Option<String>,
-        #[clap(long, help = "Suffix for the vanity address.", value_name = "HEX")]
-        ends_with: Option<String>,
-        #[clap(
-            long,
-            help = "Generate a vanity contract address created by the generated keypair with the specified nonce.",
-            value_name = "NONCE"
-        )]
-        nonce: Option<u64>, /* 2^64-1 is max possible nonce per https://eips.ethereum.org/EIPS/eip-2681 */
-    },
+    Vanity(VanityArgs),
     #[clap(name = "address", visible_aliases = &["a", "addr"], about = "Convert a private key to an address.")]
     Address {
         #[clap(
@@ -126,55 +111,8 @@ impl WalletSubcommands {
                     );
                 }
             }
-            WalletSubcommands::Vanity { starts_with, ends_with, nonce } => {
-                let mut regexs = vec![];
-                if let Some(prefix) = starts_with {
-                    let pad_width = prefix.len() + prefix.len() % 2;
-                    hex::decode(format!("{:0>width$}", prefix, width = pad_width))
-                        .expect("invalid prefix hex provided");
-                    regexs.push(format!(r"^{}", prefix));
-                }
-                if let Some(suffix) = ends_with {
-                    let pad_width = suffix.len() + suffix.len() % 2;
-                    hex::decode(format!("{:0>width$}", suffix, width = pad_width))
-                        .expect("invalid suffix hex provided");
-                    regexs.push(format!(r"{}$", suffix));
-                }
-
-                assert!(
-                    regexs.iter().map(|p| p.len() - 1).sum::<usize>() <= 40,
-                    "vanity patterns length exceeded. cannot be more than 40 characters",
-                );
-
-                let regex = RegexSet::new(regexs)?;
-                let match_contract = nonce.is_some();
-
-                println!("Starting to generate vanity address...");
-                let timer = Instant::now();
-                let wallet = std::iter::repeat_with(move || LocalWallet::new(&mut thread_rng()))
-                    .par_bridge()
-                    .find_any(|wallet| {
-                        let addr = if match_contract {
-                            // looking for contract address created by wallet with CREATE + nonce
-                            let contract_addr =
-                                get_contract_address(wallet.address(), nonce.unwrap());
-                            hex::encode(contract_addr.to_fixed_bytes())
-                        } else {
-                            // looking for wallet address
-                            hex::encode(wallet.address().to_fixed_bytes())
-                        };
-                        regex.matches(&addr).into_iter().count() == regex.patterns().len()
-                    })
-                    .expect("failed to generate vanity wallet");
-
-                println!(
-                    "Successfully found vanity address in {} seconds.{}{}\nAddress: {}\nPrivate Key: 0x{}",
-                    timer.elapsed().as_secs(),
-                    if match_contract {"\nContract address: "} else {""},
-                    if match_contract {SimpleCast::to_checksum_address(&get_contract_address(wallet.address(), nonce.unwrap()))} else {"".to_string()},
-                    SimpleCast::to_checksum_address(&wallet.address()),
-                    hex::encode(wallet.signer().to_bytes()),
-                );
+            WalletSubcommands::Vanity(cmd) => {
+                cmd.run()?;
             }
             WalletSubcommands::Address { wallet, private_key_override } => {
                 let wallet = EthereumOpts {

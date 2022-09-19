@@ -8,6 +8,10 @@ function execute() returns (bool) {
 
 function executeElse() {}
 
+function executeWithMultipleParameters(bool parameter1, bool parameter2) {}
+
+function executeWithVeryVeryVeryLongNameAndSomeParameter(bool parameter) {}
+
 contract IfStatement {
 
     function test() external {
@@ -62,5 +66,28 @@ contract IfStatement {
         if (condition)
             if (anotherLongCondition)
                 execute();
+
+        if (condition) execute();
+
+        if (condition && anotherLongCondition ||
+    andAnotherVeryVeryLongCondition ) execute();
+
+        if (condition) if (anotherLongCondition) execute();
+
+        if (condition) execute(); // comment18
+
+        if (condition) executeWithMultipleParameters(condition, anotherLongCondition);
+
+        if (condition) executeWithVeryVeryVeryLongNameAndSomeParameter(condition);
+
+        if (condition) execute(); else execute();
+
+        if (condition) {}
+
+        if (condition) executeWithMultipleParameters(condition, anotherLongCondition); else if (anotherLongCondition) execute();
+
+        if (condition && ((condition || anotherLongCondition)
+        )
+        ) execute();
     }
 }

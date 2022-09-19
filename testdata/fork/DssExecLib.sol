@@ -152,9 +152,7 @@ interface LerpFactoryLike {
         uint256 start_,
         uint256 end_,
         uint256 duration_
-    )
-        external
-        returns (address);
+    ) external returns (address);
     function newIlkLerp(
         bytes32 name_,
         address target_,
@@ -164,9 +162,7 @@ interface LerpFactoryLike {
         uint256 start_,
         uint256 end_,
         uint256 duration_
-    )
-        external
-        returns (address);
+    ) external returns (address);
 }
 
 interface LerpLike {
@@ -1332,10 +1328,7 @@ library DssExecLib {
         uint256 _start,
         uint256 _end,
         uint256 _duration
-    )
-        public
-        returns (address)
-    {
+    ) public returns (address) {
         address lerp = LerpFactoryLike(lerpFab()).newLerp(_name, _target, _what, _startTime, _start, _end, _duration);
         Authorizable(_target).rely(lerp);
         LerpLike(lerp).tick();
@@ -1362,10 +1355,7 @@ library DssExecLib {
         uint256 _start,
         uint256 _end,
         uint256 _duration
-    )
-        public
-        returns (address)
-    {
+    ) public returns (address) {
         address lerp =
             LerpFactoryLike(lerpFab()).newIlkLerp(_name, _target, _ilk, _what, _startTime, _start, _end, _duration);
         Authorizable(_target).rely(lerp);

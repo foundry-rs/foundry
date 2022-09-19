@@ -127,6 +127,8 @@ pub struct NodeConfig {
     pub fork_retry_backoff: Duration,
     /// available CUPS
     pub compute_units_per_second: u64,
+    /// The ipc path
+    pub ipc_path: Option<Option<String>>,
     /// Enable transaction/call steps tracing for debug calls returning geth-style traces
     pub enable_steps_tracing: bool,
 }
@@ -342,6 +344,7 @@ impl Default for NodeConfig {
             fork_retry_backoff: Duration::from_millis(1_000),
             // alchemy max cpus <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
             compute_units_per_second: ALCHEMY_FREE_TIER_CUPS,
+            ipc_path: None,
         }
     }
 }
@@ -506,6 +509,18 @@ impl NodeConfig {
         self
     }
 
+    /// Sets the ipc path to use
+    ///
+    /// Note: this is a double Option for
+    ///     - `None` -> no ipc
+    ///     - `Some(None)` -> use default path
+    ///     - `Some(Some(path))` -> use custom path
+    #[must_use]
+    pub fn with_ipc(mut self, ipc_path: Option<Option<String>>) -> Self {
+        self.ipc_path = ipc_path;
+        self
+    }
+
     /// Sets the file path to write the Anvil node's config info to.
     #[must_use]
     pub fn set_config_out(mut self, config_out: Option<String>) -> Self {
@@ -610,6 +625,23 @@ impl NodeConfig {
         self
     }
 
+    /// Returns the ipc path for the ipc endpoint if any
+    pub fn get_ipc_path(&self) -> Option<String> {
+        match self.ipc_path.as_ref() {
+            Some(path) => path.clone().or_else(|| {
+                #[cfg(windows)]
+                {
+                    Some(r"\\.\pipe\anvil.ipc".to_string())
+                }
+                #[cfg(not(windows))]
+                {
+                    Some("/tmp/anvil.ipc".to_string())
+                }
+            }),
+            None => None,
+        }
+    }
+
     /// Prints the config info
     pub fn print(&self, fork: Option<&ClientFork>) {
         if self.config_out.is_some() {
@@ -679,20 +711,33 @@ impl NodeConfig {
                         .expect("Failed to establish provider to fork url"),
                 );
 
-                let fork_block_number = if let Some(fork_block_number) = self.fork_block_number {
+                let (fork_block_number, fork_chain_id) = if let Some(fork_block_number) =
+                    self.fork_block_number
+                {
                     // auto adjust hardfork if not specified
-                    if self.hardfork.is_none() {
-                        let hardfork: Hardfork = fork_block_number.into();
-                        env.cfg.spec_id = hardfork.into();
-                        self.hardfork = Some(hardfork);
-                    }
+                    let chain_id = if self.hardfork.is_none() {
+                        // but only if we're forking mainnet
+                        let chain_id =
+                            provider.get_chainid().await.expect("Failed to fetch network chain id");
+                        if chain_id == ethers::types::Chain::Mainnet.into() {
+                            let hardfork: Hardfork = fork_block_number.into();
+                            env.cfg.spec_id = hardfork.into();
+                            self.hardfork = Some(hardfork);
+                        }
+                        Some(chain_id)
+                    } else {
+                        None
+                    };
 
-                    fork_block_number
+                    (fork_block_number, chain_id)
                 } else {
                     // pick the last block number but also ensure it's not pending anymore
-                    find_latest_fork_block(&provider)
-                        .await
-                        .expect("Failed to get fork block number")
+                    (
+                        find_latest_fork_block(&provider)
+                            .await
+                            .expect("Failed to get fork block number"),
+                        None,
+                    )
                 };
 
                 let block = provider
@@ -712,11 +757,16 @@ impl NodeConfig {
                     panic!("Failed to get block for block number: {}", fork_block_number)
                 };
 
+                // we only use the gas limit value of the block if it is non-zero, since there are networks where this is not used and is always `0x0` which would inevitably result in `OutOfGas` errors as soon as the evm is about to record gas, See also <https://github.com/foundry-rs/foundry/issues/3247>
+
+                let gas_limit =
+                    if block.gas_limit.is_zero() { env.block.gas_limit } else { block.gas_limit };
+
                 env.block = BlockEnv {
                     number: fork_block_number.into(),
                     timestamp: block.timestamp,
                     difficulty: block.difficulty,
-                    gas_limit: block.gas_limit,
+                    gas_limit,
                     // Keep previous `coinbase` and `basefee` value
                     coinbase: env.block.coinbase,
                     basefee: env.block.basefee,
@@ -752,7 +802,13 @@ impl NodeConfig {
                 let chain_id = if let Some(chain_id) = self.chain_id {
                     chain_id
                 } else {
-                    let chain_id = provider.get_chainid().await.unwrap().as_u64();
+                    let chain_id = if let Some(fork_chain_id) = fork_chain_id {
+                        fork_chain_id
+                    } else {
+                        provider.get_chainid().await.unwrap()
+                    }
+                    .as_u64();
+
                     // need to update the dev signers and env with the chain id
                     self.set_chain_id(Some(chain_id));
                     env.cfg.chain_id = chain_id.into();

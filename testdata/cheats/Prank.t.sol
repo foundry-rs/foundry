@@ -10,10 +10,7 @@ contract Victim {
         string memory senderMessage,
         address expectedOrigin,
         string memory originMessage
-    )
-        public
-        view
-    {
+    ) public view {
         require(msg.sender == expectedSender, senderMessage);
         require(tx.origin == expectedOrigin, originMessage);
     }
@@ -43,10 +40,7 @@ contract NestedVictim {
         string memory senderMessage,
         address expectedOrigin,
         string memory originMessage
-    )
-        public
-        view
-    {
+    ) public view {
         require(msg.sender == expectedSender, senderMessage);
         require(tx.origin == expectedOrigin, originMessage);
         innerVictim.assertCallerAndOrigin(
