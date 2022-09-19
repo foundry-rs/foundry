@@ -92,41 +92,6 @@ pub fn evm_spec(evm: &EvmVersion) -> SpecId {
     }
 }
 
-/// Artifact/Contract identifier can take the following form:
-/// `<artifact file name>:<contract name>`, the `artifact file name` is the name of the json file of
-/// the contract's artifact and the contract name is the name of the solidity contract, like
-/// `SafeTransferLibTest.json:SafeTransferLibTest`
-///
-/// This returns the `contract name` part
-///
-/// # Example
-///
-/// ```
-/// use foundry_cli::utils;
-/// assert_eq!(
-///     "SafeTransferLibTest",
-///     utils::get_contract_name("SafeTransferLibTest.json:SafeTransferLibTest")
-/// );
-/// ```
-pub fn get_contract_name(id: &str) -> &str {
-    id.rsplit(':').next().unwrap_or(id)
-}
-
-/// This returns the `file name` part, See [`get_contract_name`]
-///
-/// # Example
-///
-/// ```
-/// use foundry_cli::utils;
-/// assert_eq!(
-///     "SafeTransferLibTest.json",
-///     utils::get_file_name("SafeTransferLibTest.json:SafeTransferLibTest")
-/// );
-/// ```
-pub fn get_file_name(id: &str) -> &str {
-    id.split(':').next().unwrap_or(id)
-}
-
 /// parse a hex str or decimal str as U256
 pub fn parse_u256(s: &str) -> eyre::Result<U256> {
     Ok(if s.starts_with("0x") { U256::from_str(s)? } else { U256::from_dec_str(s)? })

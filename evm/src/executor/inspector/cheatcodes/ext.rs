@@ -12,7 +12,7 @@ use ethers::{
     prelude::artifacts::CompactContractBytecode,
     types::*,
 };
-use foundry_common::fs;
+use foundry_common::{fs, get_artifact_path};
 use foundry_config::fs_permissions::FsAccessKind;
 use hex::FromHex;
 use jsonpath_rust::JsonPathFinder;
@@ -21,7 +21,7 @@ use serde_json::Value;
 use std::{
     env,
     io::{BufRead, BufReader, Write},
-    path::{Path, PathBuf},
+    path::Path,
     process::Command,
     str::FromStr,
 };
@@ -125,16 +125,7 @@ fn get_deployed_code(state: &Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
 
 /// Reads the bytecode object(s) from the matching artifact
 fn read_bytecode(state: &Cheatcodes, path: &str) -> Result<ArtifactBytecode, Bytes> {
-    let path = if path.ends_with(".json") {
-        PathBuf::from(path)
-    } else {
-        let parts: Vec<&str> = path.split(':').collect();
-        let file = parts[0];
-        let contract_name =
-            if parts.len() == 1 { parts[0].replace(".sol", "") } else { parts[1].to_string() };
-        state.config.paths.artifacts.join(format!("{file}/{contract_name}.json"))
-    };
-
+    let path = get_artifact_path(&state.config.paths, path);
     let path =
         state.config.ensure_path_allowed(&path, FsAccessKind::Read).map_err(error::encode_error)?;
 
@@ -411,7 +402,7 @@ mod tests {
     use super::*;
     use crate::executor::inspector::CheatsConfig;
     use ethers::core::abi::AbiDecode;
-    use std::sync::Arc;
+    use std::{path::PathBuf, sync::Arc};
 
     fn cheats() -> Cheatcodes {
         let config =

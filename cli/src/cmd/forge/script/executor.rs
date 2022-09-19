@@ -3,6 +3,7 @@ use crate::{
     cmd::{
         ensure_clean_constructor,
         forge::script::{
+            artifacts::ArtifactInfo,
             runner::SimulationStage,
             transaction::{AdditionalContract, TransactionWithMetadata},
         },
@@ -98,15 +99,21 @@ impl ScriptArgs {
             println!("Simulated On-chain Traces:\n");
         }
 
-        let address_to_abi: BTreeMap<Address, (String, &Abi)> = decoder
+        let address_to_abi: BTreeMap<Address, ArtifactInfo> = decoder
             .contracts
             .iter()
             .filter_map(|(addr, contract_id)| {
-                let contract_name = utils::get_contract_name(contract_id);
-                if let Ok(Some((_, (abi, _data)))) =
+                let contract_name = get_contract_name(contract_id);
+                if let Ok(Some((_, (abi, code)))) =
                     contracts.find_by_name_or_identifier(contract_name)
                 {
-                    return Some((*addr, (contract_name.to_string(), abi)))
+                    let info = ArtifactInfo {
+                        contract_name: contract_name.to_string(),
+                        contract_id: contract_id.to_string(),
+                        abi,
+                        code,
+                    };
+                    return Some((*addr, info))
                 }
                 None
             })
