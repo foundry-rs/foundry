@@ -109,7 +109,6 @@ impl ScriptArgs {
                     .send_transactions(
                         sequence,
                         &sequence.typed_transactions().first().unwrap().0.clone(),
-                        // TODO: script_wallets?
                         vec![],
                     )
                     .await

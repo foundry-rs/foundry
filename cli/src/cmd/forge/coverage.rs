@@ -27,7 +27,7 @@ use forge::{
     utils::{build_ic_pc_map, ICPCMap},
     MultiContractRunnerBuilder, TestOptions,
 };
-use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, ContractsByArtifact};
+use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs};
 use foundry_config::Config;
 use semver::Version;
 use std::{collections::HashMap, sync::mpsc::channel, thread};

@@ -19,6 +19,7 @@ use ethers::{
     prelude::{Provider, Signer, SignerMiddleware, TxHash},
     providers::{JsonRpcClient, Middleware},
     types::transaction::eip2718::TypedTransaction,
+    utils::format_units,
 };
 use eyre::{ContextCompat, WrapErr};
 use foundry_common::get_http_provider;
@@ -40,7 +41,6 @@ impl ScriptArgs {
         fork_url: &str,
         script_wallets: Vec<LocalWallet>,
     ) -> eyre::Result<()> {
-        // TODO(joshie)
         let provider = Arc::new(get_http_provider(fork_url));
         let already_broadcasted = deployment_sequence.receipts.len();
 
@@ -220,7 +220,6 @@ impl ScriptArgs {
         verify: VerifyBundle,
     ) -> eyre::Result<()> {
         if let Some(txs) = result.transactions {
-            // TODO(joshie): validate rpc.
             let num_fork_rpcs = txs.iter().filter(|tx| tx.rpc.is_some()).count();
             let total_rpcs = num_fork_rpcs + script_config.evm_opts.fork_url.is_some() as usize;
 
@@ -339,14 +338,13 @@ impl ScriptArgs {
     ) -> eyre::Result<Vec<ScriptSequence>> {
         let arg_url = self.evm_opts.fork_url.clone().unwrap_or_default();
 
-        // TODO(joshie)
-        let last_rpc = transactions.back().unwrap().rpc.clone();
-        let is_multi_deployment = transactions.iter().any(|tx| tx.rpc != last_rpc);
+        let last_rpc = &transactions.back().expect("exists; qed").rpc;
+        let is_multi_deployment = transactions.iter().any(|tx| &tx.rpc != last_rpc);
 
         // TODO(joshie): make it accessible outside for broadcasting stage.
         let mut addresses = HashSet::new();
         let mut new_txes = VecDeque::new();
-        let mut total_gas = U256::zero();
+        let mut total_gas_per_rpc: HashMap<String, (U256, bool)> = HashMap::new();
         let mut txes_iter = transactions.into_iter().peekable();
         let mut manager = ProvidersManager::default();
         let mut deployments = vec![];
@@ -355,11 +353,9 @@ impl ScriptArgs {
             let tx_rpc = tx.rpc.unwrap_or_else(|| arg_url.clone());
 
             if tx_rpc.is_empty() {
-                // TODO(joshie): improve error
-                eyre::bail!("Transaction needs a RPC url.");
+                eyre::bail!("Transaction needs an associated RPC if it is to be broadcasted.");
             }
 
-            // TODO(joshie): Fill it for when its empty?
             tx.rpc = Some(tx_rpc.clone());
 
             let provider_info = match manager.inner.entry(tx_rpc.clone()) {
@@ -378,17 +374,18 @@ impl ScriptArgs {
             tx.change_type(is_legacy);
 
             if !self.skip_simulation {
+                let rpc = tx.rpc.clone().expect("rpc is set");
                 let typed_tx = tx.typed_tx_mut();
-
-                // if has_different_gas_calc(provider_info.chain) {
-                //     typed_tx.set_gas(provider_info.provider.estimate_gas(typed_tx).await?);
-                // }
 
                 if has_different_gas_calc(provider_info.chain) {
                     self.estimate_gas(typed_tx, &provider_info.provider).await?;
                 }
 
-                total_gas += *typed_tx.gas().expect("gas is set");
+                let (total_gas, _) = total_gas_per_rpc
+                    .entry(rpc)
+                    .or_insert((U256::zero(), matches!(typed_tx, TypedTransaction::Eip1559(..))));
+
+                *total_gas += *typed_tx.gas().expect("gas is set");
             }
 
             let from = tx.typed_tx().from().expect("No sender for onchain transaction.");
@@ -402,11 +399,11 @@ impl ScriptArgs {
                     continue
                 }
             }
+
             new_txes.push_back(tx);
 
             if self.broadcast {
                 provider_info.wallets.extend(
-                    // todo script_wallets
                     self.wallets
                         .find_all(provider_info.provider.clone(), addresses.clone(), vec![])
                         .await?,
@@ -422,7 +419,7 @@ impl ScriptArgs {
                 target,
                 config,
                 provider_info.chain,
-                self.broadcast || self.resume, // ??
+                self.broadcast || self.resume, // todo joshie ??
             )?;
 
             sequence.set_multi(is_multi_deployment);
@@ -432,33 +429,32 @@ impl ScriptArgs {
             new_txes = VecDeque::new();
         }
 
-        // TODO(joshie) per chain
-        // if !self.skip_simulation {
-        //     // We don't store it in the transactions, since we want the most updated value.
-        //     // Right before broadcasting.
-        //     let per_gas = if let Some(gas_price) = self.with_gas_price {
-        //         gas_price
-        //     } else {
-        //         match new_txes.front().unwrap().typed_tx() {
-        //             TypedTransaction::Legacy(_) | TypedTransaction::Eip2930(_) => {
-        //                 provider_info.provider.get_gas_price().await?
-        //             }
-        //             TypedTransaction::Eip1559(_) => {
-        //                 provider_info.provider.estimate_eip1559_fees(None).await?.0
-        //             }
-        //         }
-        //     };
+        if !self.skip_simulation {
+            for (rpc, (total_gas, is_eip1559)) in total_gas_per_rpc {
+                let provider_info = manager.inner.get(&rpc).expect("to be set.");
 
-        //     println!("\n==========================");
-        //     println!("\nEstimated total gas used for script: {}", total_gas);
-        //     println!(
-        //         "\nEstimated amount required: {} ETH",
-        //         format_units(total_gas.saturating_mul(per_gas), 18)
-        //             .unwrap_or_else(|_| "[Could not calculate]".to_string())
-        //             .trim_end_matches('0')
-        //     );
-        //     println!("\n==========================");
-        // }
+                // We don't store it in the transactions, since we want the most updated value.
+                // Right before broadcasting.
+                let per_gas = if let Some(gas_price) = self.with_gas_price {
+                    gas_price
+                } else if is_eip1559 {
+                    provider_info.provider.estimate_eip1559_fees(None).await?.0
+                } else {
+                    provider_info.provider.get_gas_price().await?
+                };
+
+                println!("\n==========================");
+                println!("\nChain {}", provider_info.chain);
+                println!("\nEstimated total gas used for script: {}", total_gas);
+                println!(
+                    "\nEstimated amount required: {} ETH",
+                    format_units(total_gas.saturating_mul(per_gas), 18)
+                        .unwrap_or_else(|_| "[Could not calculate]".to_string())
+                        .trim_end_matches('0')
+                );
+                println!("\n==========================");
+            }
+        }
         Ok(deployments)
     }
 
