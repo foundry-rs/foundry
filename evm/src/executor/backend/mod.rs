@@ -10,7 +10,7 @@ use crate::{
 };
 use ethers::{
     prelude::{H160, H256, U256},
-    types::Address,
+    types::{Address, BlockNumber, Transaction, U64},
 };
 use hashbrown::HashMap as Map;
 pub use in_memory_db::MemDb;
@@ -18,7 +18,7 @@ use revm::{
     db::{CacheDB, DatabaseRef},
     precompiles::Precompiles,
     Account, AccountInfo, Bytecode, Database, DatabaseCommit, Env, ExecutionResult, Inspector,
-    JournaledState, Log, SpecId, TransactTo, KECCAK_EMPTY,
+    JournaledState, Log, SpecId, TransactTo, EVM, KECCAK_EMPTY,
 };
 use std::collections::{HashMap, HashSet};
 use tracing::{trace, warn};
@@ -31,7 +31,10 @@ mod diagnostic;
 pub use diagnostic::RevertDiagnostic;
 
 pub mod error;
-use crate::executor::backend::{error::NoCheatcodeAccessError, in_memory_db::FoundryEvmInMemoryDB};
+use crate::executor::{
+    backend::{error::NoCheatcodeAccessError, in_memory_db::FoundryEvmInMemoryDB},
+    inspector::cheatcodes::util::configure_tx_env,
+};
 pub use error::{DatabaseError, DatabaseResult};
 
 mod in_memory_db;
@@ -91,11 +94,34 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
         Ok(id)
     }
 
+    /// Creates and also selects a new fork
+    ///
+    /// This is basically `create_fork` + `select_fork`
+    fn create_select_fork_at_transaction(
+        &mut self,
+        fork: CreateFork,
+        env: &mut Env,
+        journaled_state: &mut JournaledState,
+        transaction: H256,
+    ) -> eyre::Result<LocalForkId> {
+        let id = self.create_fork_at_transaction(fork, journaled_state, transaction)?;
+        self.select_fork(id, env, journaled_state)?;
+        Ok(id)
+    }
+
     /// Creates a new fork but does _not_ select it
     fn create_fork(
         &mut self,
         fork: CreateFork,
         journaled_state: &JournaledState,
+    ) -> eyre::Result<LocalForkId>;
+
+    /// Creates a new fork but does _not_ select it
+    fn create_fork_at_transaction(
+        &mut self,
+        fork: CreateFork,
+        journaled_state: &JournaledState,
+        transaction: H256,
     ) -> eyre::Result<LocalForkId>;
 
     /// Selects the fork's state
@@ -125,6 +151,22 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
         &mut self,
         id: Option<LocalForkId>,
         block_number: U256,
+        env: &mut Env,
+        journaled_state: &mut JournaledState,
+    ) -> eyre::Result<()>;
+
+    /// Updates the fork to given transaction hash
+    ///
+    /// This will essentially create a new fork at the block this transaction was mined and replays
+    /// all transactions up until the given transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if not matching fork was found.
+    fn roll_fork_to_transaction(
+        &mut self,
+        id: Option<LocalForkId>,
+        transaction: H256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()>;
@@ -661,6 +703,62 @@ impl Backend {
         }
         Ok(())
     }
+
+    /// Returns the block numbers required for replaying a transaction
+    fn get_block_numbers_for_transaction(
+        &self,
+        id: LocalForkId,
+        transaction: H256,
+    ) -> eyre::Result<(U64, U64)> {
+        let fork = self.inner.get_fork_by_id(id)?;
+        let tx = fork.db.db.get_transaction(transaction)?;
+
+        // get the block number we need to fork
+        if let Some(tx_block) = tx.block_number {
+            // we need to subtract 1 here because we want the state before the transaction
+            // was mined
+            let fork_block = tx_block - 1;
+            Ok((fork_block, tx_block))
+        } else {
+            let block = fork
+                .db
+                .db
+                .get_full_block(BlockNumber::Latest)?
+                .number
+                .ok_or_else(|| DatabaseError::BlockNotFound(BlockNumber::Latest.into()))?;
+            Ok((block, block))
+        }
+    }
+
+    /// Replays all the transactions at the forks current block that were mined before the `tx`
+    ///
+    /// Returns the _unmined_ transaction that corresponds to the given `tx_hash`
+    pub fn replay_until(
+        &mut self,
+        id: LocalForkId,
+        mut env: Env,
+        tx_hash: H256,
+    ) -> eyre::Result<Option<Transaction>> {
+        let fork = self.inner.get_fork_by_id_mut(id)?;
+        let full_block =
+            fork.db.db.get_full_block(BlockNumber::Number(env.block.number.as_u64().into()))?;
+
+        for tx in full_block.transactions.into_iter() {
+            if tx.hash().eq(&tx_hash) {
+                // found the target transaction
+                return Ok(Some(tx))
+            }
+
+            configure_tx_env(&mut env, &tx);
+
+            let mut evm = EVM::new();
+            evm.env = env.clone();
+            evm.database(&mut fork.db);
+            evm.transact_commit();
+        }
+
+        Ok(None)
+    }
 }
 
 // === impl a bunch of `revm::Database` adjacent implementations ===
@@ -757,6 +855,31 @@ impl DatabaseExt for Backend {
 
         let (id, _) =
             self.inner.insert_new_fork(fork_id, fork_db, self.fork_init_journaled_state.clone());
+        Ok(id)
+    }
+
+    fn create_fork_at_transaction(
+        &mut self,
+        fork: CreateFork,
+        journaled_state: &JournaledState,
+        transaction: H256,
+    ) -> eyre::Result<LocalForkId> {
+        trace!(?transaction, "create fork at transaction");
+        let id = self.create_fork(fork, journaled_state)?;
+        let fork_id = self.ensure_fork_id(id).cloned()?;
+        let mut env = self
+            .forks
+            .get_env(fork_id)?
+            .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exit", id))?;
+
+        // we still need to roll to the transaction, but we only need an empty dummy state since we
+        // don't need to update the active journaled state yet
+        self.roll_fork_to_transaction(
+            Some(id),
+            transaction,
+            &mut env,
+            &mut self.inner.new_journaled_state(),
+        )?;
         Ok(id)
     }
 
@@ -897,6 +1020,29 @@ impl DatabaseExt for Backend {
                 *journaled_state = active.journaled_state.clone();
             }
         }
+        Ok(())
+    }
+
+    fn roll_fork_to_transaction(
+        &mut self,
+        id: Option<LocalForkId>,
+        transaction: H256,
+        env: &mut Env,
+        journaled_state: &mut JournaledState,
+    ) -> eyre::Result<()> {
+        trace!(?id, ?transaction, "roll fork to transaction");
+        let id = self.ensure_fork(id)?;
+
+        let (fork_block, tx_block) = self.get_block_numbers_for_transaction(id, transaction)?;
+
+        // roll the fork to the transaction's block or latest if it's pending
+        self.roll_fork(Some(id), fork_block.as_u64().into(), env, journaled_state)?;
+
+        // replay all transactions that came before
+        let mut env = env.clone();
+        env.block.number = tx_block.as_u64().into();
+        self.replay_until(id, env, transaction)?;
+
         Ok(())
     }
 
@@ -1208,18 +1354,36 @@ impl BackendInner {
             .ok_or_else(|| eyre::eyre!("No matching fork found for {}", id))
     }
 
-    /// Returns the underlying
+    pub fn ensure_fork_index_by_local_id(&self, id: LocalForkId) -> eyre::Result<ForkLookupIndex> {
+        self.ensure_fork_index(self.ensure_fork_id(id)?)
+    }
+
+    /// Returns the underlying fork mapped to the index
     #[track_caller]
     fn get_fork(&self, idx: ForkLookupIndex) -> &Fork {
         debug_assert!(idx < self.forks.len(), "fork lookup index must exist");
         self.forks[idx].as_ref().unwrap()
     }
 
-    /// Returns the underlying
+    /// Returns the underlying fork mapped to the index
     #[track_caller]
     fn get_fork_mut(&mut self, idx: ForkLookupIndex) -> &mut Fork {
         debug_assert!(idx < self.forks.len(), "fork lookup index must exist");
         self.forks[idx].as_mut().unwrap()
+    }
+
+    /// Returns the underlying fork corresponding to the id
+    #[track_caller]
+    fn get_fork_by_id_mut(&mut self, id: LocalForkId) -> eyre::Result<&mut Fork> {
+        let idx = self.ensure_fork_index_by_local_id(id)?;
+        Ok(self.get_fork_mut(idx))
+    }
+
+    /// Returns the underlying fork corresponding to the id
+    #[track_caller]
+    fn get_fork_by_id(&self, id: LocalForkId) -> eyre::Result<&Fork> {
+        let idx = self.ensure_fork_index_by_local_id(id)?;
+        Ok(self.get_fork(idx))
     }
 
     /// Removes the fork

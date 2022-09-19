@@ -1,21 +1,20 @@
 use crate::{cmd::Cmd, init_progress, update_progress, utils::consume_config_rpc_url};
-use cast::{
-    revm::TransactTo,
-    trace::{identifier::SignaturesIdentifier, CallTraceDecoder},
-};
+use cast::trace::{identifier::SignaturesIdentifier, CallTraceDecoder};
 use clap::Parser;
 use ethers::{
     abi::Address,
     prelude::{artifacts::ContractBytecodeSome, ArtifactId, Middleware},
     solc::utils::RuntimeOrHandle,
-    types::{Transaction, H256},
+    types::H256,
 };
 use eyre::WrapErr;
 use forge::{
     debug::DebugArena,
-    executor::{opts::EvmOpts, Backend, DeployResult, ExecutorBuilder, RawCallResult},
+    executor::{
+        inspector::cheatcodes::util::configure_tx_env, opts::EvmOpts, Backend, DeployResult,
+        ExecutorBuilder, RawCallResult,
+    },
     trace::{identifier::EtherscanIdentifier, CallTraceArena, CallTraceDecoderBuilder, TraceKind},
-    utils::h256_to_u256_be,
 };
 use foundry_common::get_http_provider;
 use foundry_config::{find_project_root_path, Config};
@@ -209,26 +208,6 @@ impl RunArgs {
         }
         Ok(())
     }
-}
-
-/// Configures the env for the transaction
-fn configure_tx_env(env: &mut forge::revm::Env, tx: &Transaction) {
-    env.tx.caller = tx.from;
-    env.tx.gas_limit = tx.gas.as_u64();
-    env.tx.gas_price = tx.gas_price.unwrap_or_default();
-    env.tx.gas_priority_fee = tx.max_priority_fee_per_gas;
-    env.tx.nonce = Some(tx.nonce.as_u64());
-    env.tx.access_list = tx
-        .access_list
-        .clone()
-        .unwrap_or_default()
-        .0
-        .into_iter()
-        .map(|item| (item.address, item.storage_keys.into_iter().map(h256_to_u256_be).collect()))
-        .collect();
-    env.tx.value = tx.value;
-    env.tx.data = tx.input.0.clone();
-    env.tx.transact_to = tx.to.map(TransactTo::Call).unwrap_or_else(TransactTo::create)
 }
 
 fn run_debugger(
