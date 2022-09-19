@@ -9,9 +9,15 @@ use ethers::{
     utils::{get_contract_address, secret_key_to_address},
 };
 
-use rayon::iter::{ParallelBridge, ParallelIterator};
+use rayon::{
+    iter::{ParallelBridge, ParallelIterator},
+    prelude::IntoParallelIterator,
+};
 use regex::Regex;
-use std::time::Instant;
+use std::{
+    sync::atomic::{AtomicU64, Ordering},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
 
 #[derive(Debug, Clone, Parser)]
 pub struct VanityArgs {
@@ -23,12 +29,11 @@ pub struct VanityArgs {
         value_name = "HEX"
     )]
     pub starts_with: Option<String>,
-    #[clap(long, help = "Suffix for the vanity address.", value_name = "HEX")]
+    #[clap(long, help = "Suffix for the vanity address.", validator = hex_address_validator(), value_name = "HEX")]
     pub ends_with: Option<String>,
     #[clap(
         long,
         help = "Generate a vanity contract address created by the generated keypair with the specified nonce.",
-        validator = hex_address_validator(),
         value_name = "NONCE"
     )]
     pub nonce: Option<u64>, /* 2^64-1 is max possible nonce per https://eips.ethereum.org/EIPS/eip-2681 */
@@ -131,29 +136,62 @@ impl Cmd for VanityArgs {
 }
 
 fn find_vanity_address<T: VanityMatcher>(matcher: T) -> Option<LocalWallet> {
-    std::iter::repeat_with(move || {
-        let signer = SigningKey::random(&mut thread_rng());
-        let address = secret_key_to_address(&signer);
-        (signer, address)
-    })
-    .par_bridge()
-    .find_any(|(_, addr)| matcher.is_match(addr))
-    .map(|(key, _)| key.into())
+    repeater()
+        .find_any(|(_, addr)| {
+            let m = matcher.is_match(addr);
+            check();
+            m
+        })
+        .map(|(key, _)| key.into())
 }
 
 fn find_vanity_address_with_nonce<T: VanityMatcher>(matcher: T, nonce: u64) -> Option<LocalWallet> {
     let nonce: U256 = nonce.into();
-    std::iter::repeat_with(move || {
+    repeater()
+        .find_any(|(_, addr)| {
+            let contract_addr = get_contract_address(*addr, nonce);
+            let m = matcher.is_match(&contract_addr);
+            check();
+            m
+        })
+        .map(|(key, _)| key.into())
+}
+
+fn repeater() -> impl ParallelIterator<Item = (SigningKey, H160)> {
+    // let rng = thread_rng();
+    let start = now().as_millis() as u64;
+    PREVIOUS.store(start, Ordering::Release);
+    // std::iter::repeat_with(move || {
+    //     let signer = SigningKey::random(&mut thread_rng());
+    //     let address = secret_key_to_address(&signer);
+    //     (signer, address)
+    // })
+    // .par_bridge()
+    (0..u128::MAX).into_par_iter().map(|_| {
         let signer = SigningKey::random(&mut thread_rng());
         let address = secret_key_to_address(&signer);
         (signer, address)
     })
-    .par_bridge()
-    .find_any(|(_, addr)| {
-        let contract_addr = get_contract_address(*addr, nonce);
-        matcher.is_match(&contract_addr)
-    })
-    .map(|(key, _)| key.into())
+}
+
+// TODO: remove
+const N: u64 = 10000;
+static PREVIOUS: AtomicU64 = AtomicU64::new(0);
+static I: AtomicU64 = AtomicU64::new(0);
+
+fn check() {
+    let i = I.fetch_add(1, Ordering::AcqRel);
+    if i % N == 0 {
+        let now = now().as_millis() as u64;
+        let previous =
+            PREVIOUS.fetch_update(Ordering::Release, Ordering::Acquire, |_| Some(now)).unwrap();
+        println!("{} in {} ms", N, now - previous);
+    };
+}
+
+#[inline]
+fn now() -> Duration {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap()
 }
 
 /// A trait to match vanity addresses
