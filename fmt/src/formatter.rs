@@ -910,6 +910,12 @@ impl<'a, W: Write> Formatter<'a, W> {
             }
         }
 
+        // write manually to avoid eof comment being detected as first
+        let comments = self.comments.remove_prefixes_before(loc.end());
+        for comment in comments {
+            self.write_comment(&comment, false)?;
+        }
+
         let (unwritten_src_loc, mut unwritten_whitespace) =
             unwritten_whitespace(last_byte_written, loc.end());
         if self.inline_config.is_disabled(unwritten_src_loc) {
@@ -2189,6 +2195,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     self.write_chunk(&base_or_modifier)?;
                 }
             }
+            // substrate compatibility
+            FunctionAttribute::NameValue(loc, ident, expr) => {
+                let expr = self.simulate_to_string(|fmt| expr.visit(fmt))?;
+                write_chunk!(self, loc.start(), loc.end(), "{}={}", ident.name, expr)?;
+            }
         };
 
         Ok(())
@@ -3409,4 +3420,5 @@ mod tests {
     test_directory! { NumberLiteralUnderscore }
     test_directory! { FunctionCall }
     test_directory! { TrailingComma }
+    test_directory! { SelectorOverride }
 }
