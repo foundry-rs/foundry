@@ -1,10 +1,4 @@
-use itertools::izip;
-use std::{
-    collections::{HashMap, HashSet},
-    iter::repeat,
-    sync::Arc,
-};
-
+use super::{WalletTrait, WalletType};
 use clap::Parser;
 use ethers::{
     middleware::SignerMiddleware,
@@ -13,12 +7,15 @@ use ethers::{
     types::Address,
 };
 use eyre::{Context, Result};
-
 use foundry_common::RetryProvider;
 use foundry_config::Config;
+use itertools::izip;
 use serde::Serialize;
-
-use super::{wallet::WalletTrait, WalletType};
+use std::{
+    collections::{HashMap, HashSet},
+    iter::repeat,
+    sync::Arc,
+};
 
 macro_rules! get_wallets {
     ($id:ident, [ $($wallets:expr),+ ], $call:expr) => {
