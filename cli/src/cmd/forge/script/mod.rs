@@ -139,6 +139,12 @@ pub struct ScriptArgs {
     #[clap(long)]
     pub resume: bool,
 
+    #[clap(
+        long,
+        help = "If present, --resume or --verify will be assumed to be a multi chain deployment."
+    )]
+    pub multi: bool,
+
     #[clap(long, help = "Open the script in the debugger. Takes precedence over broadcast.")]
     pub debug: bool,
 

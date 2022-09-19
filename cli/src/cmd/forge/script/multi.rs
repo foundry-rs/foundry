@@ -1,17 +1,19 @@
 use super::{
+    receipts,
     sequence::{ScriptSequence, DRY_RUN_DIR},
     verify::VerifyBundle,
     ScriptArgs,
 };
 use ethers::prelude::{artifacts::Libraries, ArtifactId};
 use eyre::ContextCompat;
-use foundry_common::fs;
+use foundry_common::{fs, get_http_provider};
 use foundry_config::Config;
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use std::{
     io::BufWriter,
     path::{Path, PathBuf},
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -79,7 +81,7 @@ impl MultiChainSequence {
 
     /// Loads the sequences for the multi chain deployment.
     pub fn load(log_folder: &Path, sig: &str, target: &ArtifactId) -> eyre::Result<Self> {
-        let path = MultiChainSequence::get_path(log_folder, sig, target, true)?;
+        let path = MultiChainSequence::get_path(&log_folder.join("multi"), sig, target, true)?;
         Ok(ethers::solc::utils::read_json_file(path)?)
     }
 
@@ -114,6 +116,26 @@ impl ScriptArgs {
     ) -> eyre::Result<()> {
         if !libraries.is_empty() {
             eyre::bail!("Libraries are currently not supported on multi deployment setups.");
+        }
+
+        if self.resume {
+            let futs = deployments
+                .deployments
+                .iter_mut()
+                .map(|mut sequence| async move {
+                    let provider = Arc::new(get_http_provider(
+                        &sequence.typed_transactions().first().unwrap().0.clone(),
+                    ));
+                    receipts::wait_for_pending(provider, &mut sequence).await
+                })
+                .collect::<Vec<_>>();
+
+            let errors =
+                join_all(futs).await.into_iter().filter(|res| res.is_err()).collect::<Vec<_>>();
+
+            if !errors.is_empty() {
+                return Err(eyre::eyre!("{errors:?}"))
+            }
         }
 
         let futs = deployments

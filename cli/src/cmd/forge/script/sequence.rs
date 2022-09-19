@@ -40,7 +40,6 @@ pub struct ScriptSequence {
     pub returns: HashMap<String, NestedValue>,
     pub timestamp: u64,
     pub chain: u64,
-    #[serde(skip)]
     pub multi: bool,
     pub commit: Option<String>,
 }

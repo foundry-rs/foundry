@@ -172,9 +172,6 @@ impl ScriptArgs {
 
         println!("\n\n==========================");
         println!("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.");
-        if !deployment_sequence.multi {
-            print!(" Transaction receipts written to {:?}", deployment_sequence.path)
-        }
         Ok(())
     }
 
