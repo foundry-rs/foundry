@@ -21,7 +21,7 @@ use foundry_common::{get_http_provider, RetryProvider};
 use foundry_config::Chain;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::{cmp::min, fmt, sync::Arc};
+use std::{cmp::min, fmt, ops::Mul, sync::Arc};
 
 impl ScriptArgs {
     /// Sends the transactions which haven't been broadcasted yet.
@@ -164,6 +164,24 @@ impl ScriptArgs {
         println!(
             "\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL. Transaction receipts written to {:?}",
             deployment_sequence.path
+        );
+
+        let (total_gas, total_gas_price, total_paid) = deployment_sequence.receipts.iter().fold(
+            (U256::zero(), U256::zero(), U256::zero()),
+            |acc, receipt| {
+                let gas_used = receipt.gas_used.unwrap_or_default();
+                let gas_price = receipt.effective_gas_price.unwrap_or_default();
+                (acc.0 + gas_used, acc.1 + gas_price, acc.2 + gas_used.mul(gas_price))
+            },
+        );
+        let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".into());
+        let avg_gas_price = format_units(total_gas_price / deployment_sequence.receipts.len(), 9)
+            .unwrap_or_else(|_| "N/A".into());
+        println!(
+            "Total Paid: {} ETH ({} gas * avg {} gwei)",
+            paid.trim_end_matches('0'),
+            total_gas,
+            avg_gas_price.trim_end_matches('0').trim_end_matches('.')
         );
         Ok(())
     }
