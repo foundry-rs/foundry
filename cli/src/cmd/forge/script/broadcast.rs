@@ -217,11 +217,15 @@ impl ScriptArgs {
         verify: VerifyBundle,
     ) -> eyre::Result<()> {
         if let Some(txs) = result.transactions {
-            let num_fork_rpcs = txs.iter().filter(|tx| tx.rpc.is_some()).count();
-            let total_rpcs = num_fork_rpcs + script_config.evm_opts.fork_url.is_some() as usize;
+            let mut total_rpcs: HashSet<String> =
+                txs.iter().filter_map(|tx| tx.rpc.as_ref().cloned()).collect();
 
-            if total_rpcs > 0 {
-                self.check_multi_chain_constraints(total_rpcs, &libraries)?;
+            if let Some(rpc) = &script_config.evm_opts.fork_url {
+                total_rpcs.insert(rpc.clone());
+            }
+
+            if !total_rpcs.is_empty() {
+                self.check_multi_chain_constraints(total_rpcs.len(), &libraries)?;
 
                 let gas_filled_txs = if self.skip_simulation {
                     println!("\nSKIPPING ON CHAIN SIMULATION.");

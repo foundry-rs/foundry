@@ -165,6 +165,7 @@ impl ScriptArgs {
                         script_config.evm_opts.sender,
                         script_config.sender_nonce,
                         &predeploy_libraries,
+                        &script_config.evm_opts.fork_url,
                     );
 
                     if let Some(txs) = &mut result.transactions {
@@ -238,7 +239,12 @@ impl ScriptArgs {
             nonce,
         )?;
 
-        let mut txs = self.create_deploy_transactions(new_sender, nonce, &predeploy_libraries);
+        let mut txs = self.create_deploy_transactions(
+            new_sender,
+            nonce,
+            &predeploy_libraries,
+            &script_config.evm_opts.fork_url,
+        );
 
         let result =
             self.execute(script_config, contract, new_sender, &predeploy_libraries).await?;

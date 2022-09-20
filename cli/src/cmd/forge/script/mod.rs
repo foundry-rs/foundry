@@ -381,11 +381,12 @@ impl ScriptArgs {
         from: Address,
         nonce: U256,
         data: &[Bytes],
+        fork_url: &Option<String>,
     ) -> VecDeque<BroadcastableTransaction> {
         data.iter()
             .enumerate()
             .map(|(i, bytes)| BroadcastableTransaction {
-                rpc: None,
+                rpc: fork_url.clone(),
                 transaction: TypedTransaction::Legacy(TransactionRequest {
                     from: Some(from),
                     data: Some(bytes.clone()),
