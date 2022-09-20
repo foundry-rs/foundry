@@ -12,6 +12,9 @@ use rayon::prelude::*;
 use regex::Regex;
 use std::time::Instant;
 
+/// Type alias for the result of [generate_wallet].
+pub type GeneratedWallet = (SigningKey, H160);
+
 #[derive(Debug, Clone, Parser)]
 pub struct VanityArgs {
     #[clap(
@@ -128,40 +131,48 @@ impl Cmd for VanityArgs {
     }
 }
 
-type _Wallet = (SigningKey, H160);
-
-pub fn find_vanity_address<T: VanityMatcher>(m: T) -> Option<LocalWallet> {
-    wallet_generator().find_any(matcher(m)).map(|(key, _)| key.into())
+/// Uses [wallet_generator] to find a match by using `matcher`, returning the Wallet.
+pub fn find_vanity_address<T: VanityMatcher>(matcher: T) -> Option<LocalWallet> {
+    wallet_generator().find_any(create_matcher(matcher)).map(|(key, _)| key.into())
 }
 
-pub fn find_vanity_address_with_nonce<T: VanityMatcher>(m: T, nonce: u64) -> Option<LocalWallet> {
+/// Generates random wallets until a match is found by using `matcher`, returning the Wallet.
+pub fn find_vanity_address_with_nonce<T: VanityMatcher>(
+    matcher: T,
+    nonce: u64,
+) -> Option<LocalWallet> {
     let nonce: U256 = nonce.into();
-    wallet_generator().find_any(nonce_matcher(m, nonce)).map(|(key, _)| key.into())
+    wallet_generator().find_any(create_nonce_matcher(matcher, nonce)).map(|(key, _)| key.into())
 }
 
-/// Creates a matcher function.
+/// Creates a nonce matcher function, which takes a [GeneratedWallet] and returns whether it found a
+/// match or not by using `matcher`.
 #[inline]
-pub fn matcher<T: VanityMatcher>(m: T) -> impl Fn(&_Wallet) -> bool {
-    move |(_, addr)| m.is_match(addr)
+pub fn create_matcher<T: VanityMatcher>(matcher: T) -> impl Fn(&GeneratedWallet) -> bool {
+    move |(_, addr)| matcher.is_match(addr)
 }
 
-/// Creates a nonce matcher function.
+/// Creates a nonce matcher function, which takes a [GeneratedWallet] and a nonce and returns
+/// whether it found a match or not by using `matcher`.
 #[inline]
-pub fn nonce_matcher<T: VanityMatcher>(m: T, nonce: U256) -> impl Fn(&_Wallet) -> bool {
+pub fn create_nonce_matcher<T: VanityMatcher>(
+    matcher: T,
+    nonce: U256,
+) -> impl Fn(&GeneratedWallet) -> bool {
     move |(_, addr)| {
         let contract_addr = get_contract_address(*addr, nonce);
-        m.is_match(&contract_addr)
+        matcher.is_match(&contract_addr)
     }
 }
 
 /// Returns an infinite iterator that calls [generate_wallet].
 #[inline]
-pub fn wallet_generator() -> impl ParallelIterator<Item = _Wallet> {
-    std::iter::repeat(0u8).par_bridge().map(|_| generate_wallet())
+pub fn wallet_generator() -> impl ParallelIterator<Item = GeneratedWallet> {
+    std::iter::repeat(()).par_bridge().map(|_| generate_wallet())
 }
 
 /// Creates a Wallet and derives its Ethereum address using [thread_rng].
-pub fn generate_wallet() -> _Wallet {
+pub fn generate_wallet() -> GeneratedWallet {
     let key = SigningKey::random(&mut thread_rng());
     let address = secret_key_to_address(&key);
     (key, address)

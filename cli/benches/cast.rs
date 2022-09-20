@@ -24,7 +24,7 @@ fn vanity(c: &mut Criterion) {
 
     g.bench_function("match 1", |b| {
         let m = LeftHexMatcher { left: v(0, 1) };
-        let matcher = matcher(m);
+        let matcher = create_matcher(m);
         b.iter(|| wallet_generator().find_any(|x| black_box(matcher(x))))
     });
 
@@ -36,7 +36,7 @@ fn vanity(c: &mut Criterion) {
 
     g.bench_function("match 2", |b| {
         let m = LeftHexMatcher { left: v(0, 2) };
-        let matcher = matcher(m);
+        let matcher = create_matcher(m);
         b.iter(|| wallet_generator().find_any(|x| black_box(matcher(x))))
     });
 
