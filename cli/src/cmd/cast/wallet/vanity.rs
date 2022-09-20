@@ -1,4 +1,5 @@
-//! vanity subcommand
+//! Vanity address generation
+
 use crate::cmd::Cmd;
 use cast::SimpleCast;
 use clap::Parser;
@@ -165,25 +166,25 @@ pub fn create_nonce_matcher<T: VanityMatcher>(
     }
 }
 
-/// Returns an infinite iterator that calls [generate_wallet].
+/// Returns an infinite parallel iterator which yields a [GeneratedWallet].
 #[inline]
 pub fn wallet_generator() -> impl ParallelIterator<Item = GeneratedWallet> {
     std::iter::repeat(()).par_bridge().map(|_| generate_wallet())
 }
 
-/// Creates a Wallet and derives its Ethereum address using [thread_rng].
+/// Generates a random private key and derives its Ethereum address using [thread_rng].
 pub fn generate_wallet() -> GeneratedWallet {
     let key = SigningKey::random(&mut thread_rng());
     let address = secret_key_to_address(&key);
     (key, address)
 }
 
-/// A trait to match vanity addresses
+/// A trait to match vanity addresses.
 pub trait VanityMatcher: Send + Sync {
     fn is_match(&self, addr: &H160) -> bool;
 }
 
-/// A matcher that checks for if an address starts or ends with certain hex
+/// Matches start and end hex.
 pub struct HexMatcher {
     pub left: Vec<u8>,
     pub right: Vec<u8>,
@@ -197,6 +198,7 @@ impl VanityMatcher for HexMatcher {
     }
 }
 
+/// Matches only start hex.
 pub struct LeftHexMatcher {
     pub left: Vec<u8>,
 }
@@ -209,6 +211,7 @@ impl VanityMatcher for LeftHexMatcher {
     }
 }
 
+/// Matches only end hex.
 pub struct RightHexMatcher {
     pub right: Vec<u8>,
 }
@@ -221,6 +224,7 @@ impl VanityMatcher for RightHexMatcher {
     }
 }
 
+/// Matches start hex and end regex.
 pub struct LeftExactRightRegexMatcher {
     pub left: Vec<u8>,
     pub right: Regex,
@@ -234,6 +238,7 @@ impl VanityMatcher for LeftExactRightRegexMatcher {
     }
 }
 
+/// Matches start regex and end hex.
 pub struct LeftRegexRightExactMatcher {
     pub left: Regex,
     pub right: Vec<u8>,
@@ -247,7 +252,7 @@ impl VanityMatcher for LeftRegexRightExactMatcher {
     }
 }
 
-/// Matches a single regex
+/// Matches a single regex.
 pub struct SingleRegexMatcher {
     pub re: Regex,
 }
@@ -260,7 +265,7 @@ impl VanityMatcher for SingleRegexMatcher {
     }
 }
 
-/// Matches left and right regex
+/// Matches start and end regex.
 pub struct RegexMatcher {
     pub left: Regex,
     pub right: Regex,
@@ -274,6 +279,7 @@ impl VanityMatcher for RegexMatcher {
     }
 }
 
+/// Validates an address from cli args.
 pub fn hex_address_validator() -> impl FnMut(&str) -> eyre::Result<()> {
     move |v: &str| -> eyre::Result<()> {
         if v.len() > 40 {
