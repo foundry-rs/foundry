@@ -87,7 +87,7 @@ impl Cmd for FmtArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let config = self.load_config_emit_warnings();
+        let config = self.try_load_config_emit_warnings()?;
         let inputs = self.inputs(&config);
 
         if inputs.is_empty() {

@@ -48,7 +48,7 @@ impl Cmd for FlattenArgs {
             build_info_path: None,
         };
 
-        let config = build_args.load_config_emit_warnings();
+        let config = build_args.try_load_config_emit_warnings()?;
 
         let paths = config.project_paths();
         let target_path = dunce::canonicalize(target_path)?;

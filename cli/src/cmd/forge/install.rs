@@ -63,7 +63,7 @@ impl Cmd for InstallArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let mut config = self.load_config_emit_warnings();
+        let mut config = self.try_load_config_emit_warnings()?;
         install(&mut config, self.dependencies, self.opts)?;
         Ok(())
     }
