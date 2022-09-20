@@ -71,6 +71,7 @@ macro_rules! bail {
 struct Context {
     contract: Option<ContractDefinition>,
     function: Option<FunctionDefinition>,
+    if_stmt_single_line: Option<bool>,
 }
 
 /// A Solidity formatter
@@ -308,19 +309,19 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// where `end_at` is the start of the block.
     fn should_attempt_block_single_line(
         &mut self,
-        block: &mut Statement,
+        stmt: &mut Statement,
         start_from: usize,
     ) -> bool {
         match self.config.single_line_statement_blocks {
             SingleLineBlockStyle::Single => true,
             SingleLineBlockStyle::Multi => false,
             SingleLineBlockStyle::Preserve => {
-                let end_at = match block {
+                let end_at = match stmt {
                     Statement::Block { statements, .. } if !statements.is_empty() => {
                         statements.first().as_ref().unwrap().loc().start()
                     }
                     Statement::Expression(loc, _) => loc.start(),
-                    _ => block.loc().start(),
+                    _ => stmt.loc().start(),
                 };
 
                 self.find_next_line(start_from).map_or(false, |loc| loc >= end_at)
@@ -2726,33 +2727,72 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     ) -> Result<(), Self::Error> {
         return_source_if_disabled!(self, loc);
 
-        visit_source_if_disabled_else!(self, loc.with_end(if_branch.loc().start()), {
-            self.surrounded(
-                SurroundingChunk::new("if (", Some(loc.start()), Some(cond.loc().start())),
-                SurroundingChunk::new(")", None, Some(if_branch.loc().start())),
-                |fmt, _| {
-                    cond.visit(fmt)?;
-                    fmt.write_postfix_comments_before(if_branch.loc().start())
-                },
-            )?;
-        });
+        let mut write_if_stmt = |fmt: &mut Self| -> Result<(), FormatterError> {
+            let single_line_stmt_wide = fmt.context.if_stmt_single_line.unwrap_or_default();
 
-        let cond_close_paren_loc =
-            self.find_next_in_src(cond.loc().end(), ')').unwrap_or_else(|| cond.loc().end());
-        let attempt_single_line = is_first_stmt &&
-            else_branch.is_none() &&
-            self.should_attempt_block_single_line(if_branch.as_mut(), cond_close_paren_loc);
-        self.visit_stmt_as_block(if_branch, attempt_single_line)?;
+            visit_source_if_disabled_else!(fmt, loc.with_end(if_branch.loc().start()), {
+                fmt.surrounded(
+                    SurroundingChunk::new("if (", Some(loc.start()), Some(cond.loc().start())),
+                    SurroundingChunk::new(")", None, Some(if_branch.loc().start())),
+                    |fmt, _| {
+                        cond.visit(fmt)?;
+                        fmt.write_postfix_comments_before(if_branch.loc().start())
+                    },
+                )?;
+            });
 
-        if let Some(else_branch) = else_branch {
-            self.write_postfix_comments_before(else_branch.loc().start())?;
-            write_chunk!(self, else_branch.loc().start(), "else")?;
-            if let Statement::If(loc, cond, if_branch, else_branch) = else_branch.as_mut() {
-                self.visit_if(*loc, cond, if_branch, else_branch, false)?;
-            } else {
-                self.visit_stmt_as_block(else_branch, false)?;
+            let cond_close_paren_loc =
+                fmt.find_next_in_src(cond.loc().end(), ')').unwrap_or_else(|| cond.loc().end());
+            let attempt_single_line = single_line_stmt_wide &&
+                fmt.should_attempt_block_single_line(if_branch.as_mut(), cond_close_paren_loc);
+            let if_branch_is_single_line =
+                fmt.visit_stmt_as_block(if_branch, attempt_single_line)?;
+            if single_line_stmt_wide && !if_branch_is_single_line {
+                bail!(FormatterError::fmt())
             }
+
+            if let Some(else_branch) = else_branch {
+                fmt.write_postfix_comments_before(else_branch.loc().start())?;
+                if if_branch_is_single_line {
+                    writeln!(fmt.buf())?;
+                }
+                write_chunk!(fmt, else_branch.loc().start(), "else")?;
+                if let Statement::If(loc, cond, if_branch, else_branch) = else_branch.as_mut() {
+                    fmt.visit_if(*loc, cond, if_branch, else_branch, false)?;
+                } else {
+                    let else_branch_is_single_line =
+                        fmt.visit_stmt_as_block(else_branch, if_branch_is_single_line)?;
+                    if single_line_stmt_wide && !else_branch_is_single_line {
+                        bail!(FormatterError::fmt())
+                    }
+                }
+            }
+            Ok(())
+        };
+
+        if !is_first_stmt {
+            write_if_stmt(self)?;
+            return Ok(())
         }
+
+        self.context.if_stmt_single_line = Some(true);
+        let mut stmt_fits_on_single = false;
+        let tx = self.transact(|fmt| {
+            stmt_fits_on_single = match write_if_stmt(fmt) {
+                Ok(()) => true,
+                Err(FormatterError::Fmt(_)) => false,
+                Err(err) => bail!(err),
+            };
+            Ok(())
+        })?;
+        if stmt_fits_on_single {
+            tx.commit()?;
+        } else {
+            self.context.if_stmt_single_line = Some(false);
+            write_if_stmt(self)?;
+        }
+        self.context.if_stmt_single_line = None;
+
         Ok(())
     }
 

@@ -93,11 +93,8 @@ contract IfStatement {
             executeWithVeryVeryVeryLongNameAndSomeParameter(condition);
         }
 
-        if (condition) {
-            execute();
-        } else {
-            execute();
-        }
+        if (condition) execute();
+        else execute();
 
         if (condition) {}
 
@@ -109,6 +106,42 @@ contract IfStatement {
 
         if (condition && ((condition || anotherLongCondition))) {
             execute();
+        }
+
+        // if statement
+        if (condition) execute();
+        // else statement
+        else execute();
+
+        // if statement
+        if (condition) {
+            execute();
+        }
+        // else statement
+        else {
+            executeWithMultipleParameters(
+                anotherLongCondition, andAnotherVeryVeryLongCondition
+            );
+        }
+
+        if (condition) execute();
+        else if (condition) execute();
+        else if (condition) execute();
+        else if (condition) execute();
+        else if (condition) execute();
+
+        if (condition) {
+            execute();
+        } else if (condition) {
+            execute();
+        } else if (condition) {
+            execute();
+        } else if (condition) {
+            execute();
+        } else if (condition) {
+            execute();
+        } else {
+            executeElse();
         }
     }
 }
