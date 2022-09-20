@@ -8,12 +8,9 @@ use ethers::{
     types::{H160, U256},
     utils::{get_contract_address, secret_key_to_address},
 };
-use rayon::{iter::ParallelIterator, prelude::IntoParallelIterator};
+use rayon::prelude::*;
 use regex::Regex;
-use std::{
-    sync::atomic::{AtomicU64, Ordering},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
-};
+use std::time::Instant;
 
 #[derive(Debug, Clone, Parser)]
 pub struct VanityArgs {
@@ -132,12 +129,12 @@ impl Cmd for VanityArgs {
 }
 
 fn find_vanity_address<T: VanityMatcher>(matcher: T) -> Option<LocalWallet> {
-    repeater().find_any(|(_, addr)| matcher.is_match(addr)).map(|(key, _)| key.into())
+    keygen().find_any(|(_, addr)| matcher.is_match(addr)).map(|(key, _)| key.into())
 }
 
 fn find_vanity_address_with_nonce<T: VanityMatcher>(matcher: T, nonce: u64) -> Option<LocalWallet> {
     let nonce: U256 = nonce.into();
-    repeater()
+    keygen()
         .find_any(|(_, addr)| {
             let contract_addr = get_contract_address(*addr, nonce);
             matcher.is_match(&contract_addr)
@@ -145,43 +142,12 @@ fn find_vanity_address_with_nonce<T: VanityMatcher>(matcher: T, nonce: u64) -> O
         .map(|(key, _)| key.into())
 }
 
-fn repeater() -> impl ParallelIterator<Item = (SigningKey, H160)> {
-    setup();
-
-    (0..u128::MAX).into_par_iter().map(move |_| {
-        bench();
-
+fn keygen() -> impl ParallelIterator<Item = (SigningKey, H160)> {
+    std::iter::repeat(0u8).par_bridge().map(|_| {
         let key = SigningKey::random(&mut thread_rng());
         let address = secret_key_to_address(&key);
         (key, address)
     })
-}
-
-// TODO: remove
-const N: u64 = 100_000;
-static PREVIOUS: AtomicU64 = AtomicU64::new(0);
-static I: AtomicU64 = AtomicU64::new(0);
-
-#[inline]
-fn setup() {
-    let start = now().as_millis() as u64;
-    PREVIOUS.store(start, Ordering::Release);
-}
-
-#[inline]
-fn bench() {
-    let i = I.fetch_add(1, Ordering::AcqRel);
-    if i % N == 0 {
-        let now = now().as_millis() as u64;
-        let previous =
-            PREVIOUS.fetch_update(Ordering::Release, Ordering::Acquire, |_| Some(now)).unwrap();
-        println!("{} in {} ms", N, now - previous);
-    };
-}
-
-#[inline]
-fn now() -> Duration {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap()
 }
 
 /// A trait to match vanity addresses
