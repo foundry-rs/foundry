@@ -807,17 +807,29 @@ impl Config {
     pub fn get_etherscan_config(
         &self,
     ) -> Option<Result<ResolvedEtherscanConfig, EtherscanConfigError>> {
-        let maybe_alias = self.etherscan_api_key.as_ref()?;
-        if self.etherscan.contains_key(maybe_alias) {
-            // etherscan points to an alias in the `etherscan` table, so we try to resolve
-            // that
-            let mut resolved = self.etherscan.clone().resolved();
-            return resolved.remove(maybe_alias)
+        if let Some(maybe_alias) = self.etherscan_api_key.as_ref() {
+            if self.etherscan.contains_key(maybe_alias) {
+                // etherscan points to an alias in the `etherscan` table, so we try to resolve
+                // that
+                let mut resolved = self.etherscan.clone().resolved();
+                return resolved.remove(maybe_alias)
+            }
         }
+
         // we treat the `etherscan_api_key` as actual API key
-        // if no chain provided, we assume mainnet
         let chain = self.chain_id.unwrap_or_else(|| Mainnet.into());
-        ResolvedEtherscanConfig::create(maybe_alias, chain).map(Ok)
+
+        let resolved = self.etherscan.clone().resolved();
+        for (_, config) in resolved.iter() {
+            if let Ok(config) = config {
+                if config.chain == Some(chain) {
+                    return Some(Ok(config.clone()))
+                }
+            }
+        }
+
+        // if no chain provided, we assume mainnet
+        ResolvedEtherscanConfig::create("mainnet", chain).map(Ok)
     }
 
     /// Same as [`Self::get_etherscan_config()`] but optionally updates the config with the given

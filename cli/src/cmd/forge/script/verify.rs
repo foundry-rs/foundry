@@ -64,6 +64,10 @@ impl VerifyBundle {
 
     /// Configures the chain and sets the etherscan key, if available
     pub fn set_chain(&mut self, config: &Config, chain: Chain) {
+        // If dealing with multiple chains, we need to be able to change inbetween the config
+        // chain_id.
+        let mut config = config.clone();
+        config.chain_id = Some(chain);
         self.etherscan_key = config.get_etherscan_api_key(Some(chain));
         self.chain = chain;
     }

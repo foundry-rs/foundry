@@ -179,10 +179,11 @@ impl ScriptSequence {
         mut verify: VerifyBundle,
     ) -> eyre::Result<()> {
         trace!(?self.chain, "verifying {} contracts", verify.known_contracts.len());
+        verify.set_chain(config, self.chain.into());
+
         if verify.etherscan_key.is_some() ||
             verify.verifier.verifier != VerificationProviderType::Etherscan
         {
-            verify.set_chain(config, self.chain.into());
             let mut future_verifications = Vec::with_capacity(self.receipts.len());
             let mut unverifiable_contracts = vec![];
 
