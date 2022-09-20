@@ -6322,8 +6322,3 @@ dependencies = [
  "cc",
  "libc",
 ]
-
-[[patch.unused]]
-name = "svm-rs"
-version = "0.2.17"
-source = "git+https://github.com/roynalnaruto/svm-rs#3d55c338c61939641a18b56ffe77095ab74d46cd"
