@@ -19,5 +19,19 @@ contract TernaryExpression {
             // comment6
             // comment7
             : 0; // comment8
+
+        uint256 amount = msg.value > 0
+            ? msg.value
+            : parseAmount(IERC20(asset).balanceOf(msg.sender), msg.data);
+
+        uint256 amount = msg.value > 0
+            ? msg.value
+            // comment9
+            : parseAmount(IERC20(asset).balanceOf(msg.sender), msg.data);
+
+        uint256 amount = msg.value > 0
+            // comment10
+            ? msg.value
+            : parseAmount(IERC20(asset).balanceOf(msg.sender), msg.data);
     }
 }

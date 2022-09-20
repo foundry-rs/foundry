@@ -944,9 +944,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         self.write_postfix_comments_before(expr.loc().start())?;
         self.write_prefix_comments_before(expr.loc().start())?;
 
-        let fits_on_single_line =
-            self.try_on_single_line(|fmt| fmt.indented(1, |fmt| expr.visit(fmt)))?;
-        if self.is_beginning_of_line() && fits_on_single_line {
+        if self.try_on_single_line(|fmt| fmt.indented(1, |fmt| expr.visit(fmt)))? {
             return Ok(())
         }
 
@@ -2005,26 +2003,23 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 self.visit_assignment(right)?;
             }
             Expression::Ternary(loc, cond, first_expr, second_expr) => {
-                let mut chunks = vec![];
+                cond.visit(self)?;
 
-                chunks.push(
-                    self.chunked(loc.start(), Some(first_expr.loc().start()), |fmt| {
-                        cond.visit(fmt)
-                    })?,
-                );
-                chunks.push(self.chunked(
+                let first_expr = self.chunked(
                     first_expr.loc().start(),
                     Some(second_expr.loc().start()),
                     |fmt| {
                         write_chunk!(fmt, "?")?;
                         first_expr.visit(fmt)
                     },
-                )?);
-                chunks.push(self.chunked(second_expr.loc().start(), Some(loc.end()), |fmt| {
-                    write_chunk!(fmt, ":")?;
-                    second_expr.visit(fmt)
-                })?);
+                )?;
+                let second_expr =
+                    self.chunked(second_expr.loc().start(), Some(loc.end()), |fmt| {
+                        write_chunk!(fmt, ":")?;
+                        second_expr.visit(fmt)
+                    })?;
 
+                let chunks = vec![first_expr, second_expr];
                 if !self.try_on_single_line(|fmt| fmt.write_chunks_separated(&chunks, "", false))? {
                     self.grouped(|fmt| fmt.write_chunks_separated(&chunks, "", true))?;
                 }
