@@ -7,7 +7,8 @@ use ethers::{
     providers::{Middleware, ProviderError},
     types::{
         transaction::eip2930::AccessListWithGasUsed, Address, Block, BlockId, Bytes, FeeHistory,
-        Filter, Log, Trace, Transaction, TransactionReceipt, TxHash, H256, U256,
+        Filter, GethDebugTracingOptions, GethTrace, Log, Trace, Transaction, TransactionReceipt,
+        TxHash, H256, U256,
     },
 };
 use foundry_common::{ProviderBuilder, RetryProvider};
@@ -16,7 +17,7 @@ use parking_lot::{
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
     RawRwLock, RwLock,
 };
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::RwLock as AsyncRwLock;
 use tracing::trace;
 
@@ -76,12 +77,14 @@ impl ClientFork {
         let block_hash = block.hash.ok_or(BlockchainError::BlockNotFound)?;
         let timestamp = block.timestamp.as_u64();
         let base_fee = block.base_fee_per_gas;
+        let total_difficulty = block.total_difficulty.unwrap_or_default();
 
         self.config.write().update_block(
             block.number.ok_or(BlockchainError::BlockNotFound)?.as_u64(),
             block_hash,
             timestamp,
             base_fee,
+            total_difficulty,
         );
 
         self.clear_cached_storage();
@@ -109,6 +112,10 @@ impl ClientFork {
 
     pub fn block_number(&self) -> u64 {
         self.config.read().block_number
+    }
+
+    pub fn total_difficulty(&self) -> U256 {
+        self.config.read().total_difficulty
     }
 
     pub fn base_fee(&self) -> Option<U256> {
@@ -296,6 +303,22 @@ impl ClientFork {
         Ok(traces)
     }
 
+    pub async fn debug_trace_transaction(
+        &self,
+        hash: H256,
+        opts: GethDebugTracingOptions,
+    ) -> Result<GethTrace, ProviderError> {
+        if let Some(traces) = self.storage_read().geth_transaction_traces.get(&hash).cloned() {
+            return Ok(traces)
+        }
+
+        let trace = self.provider().debug_trace_transaction(hash, opts).await?;
+        let mut storage = self.storage_write();
+        storage.geth_transaction_traces.insert(hash, trace.clone());
+
+        Ok(trace)
+    }
+
     pub async fn trace_block(&self, number: u64) -> Result<Vec<Trace>, ProviderError> {
         if let Some(traces) = self.storage_read().block_traces.get(&number).cloned() {
             return Ok(traces)
@@ -396,6 +419,52 @@ impl ClientFork {
         Ok(None)
     }
 
+    pub async fn uncle_by_block_hash_and_index(
+        &self,
+        hash: H256,
+        index: usize,
+    ) -> Result<Option<Block<TxHash>>, ProviderError> {
+        if let Some(block) = self.block_by_hash(hash).await? {
+            return self.uncles_by_block_and_index(block, index).await
+        }
+        Ok(None)
+    }
+
+    pub async fn uncle_by_block_number_and_index(
+        &self,
+        number: u64,
+        index: usize,
+    ) -> Result<Option<Block<TxHash>>, ProviderError> {
+        if let Some(block) = self.block_by_number(number).await? {
+            return self.uncles_by_block_and_index(block, index).await
+        }
+        Ok(None)
+    }
+
+    async fn uncles_by_block_and_index(
+        &self,
+        block: Block<H256>,
+        index: usize,
+    ) -> Result<Option<Block<TxHash>>, ProviderError> {
+        let block_hash = block
+            .hash
+            .ok_or_else(|| ProviderError::CustomError("missing block-hash".to_string()))?;
+        if let Some(uncles) = self.storage_read().uncles.get(&block_hash) {
+            return Ok(uncles.get(index).cloned())
+        }
+
+        let mut uncles = Vec::with_capacity(block.uncles.len());
+        for (uncle_idx, _) in block.uncles.iter().enumerate() {
+            let uncle = match self.provider().get_uncle(block_hash, uncle_idx.into()).await? {
+                Some(u) => u,
+                None => return Ok(None),
+            };
+            uncles.push(uncle);
+        }
+        self.storage_write().uncles.insert(block_hash, uncles.clone());
+        Ok(uncles.get(index).cloned())
+    }
+
     /// Converts a block of hashes into a full block
     fn convert_to_full_block(&self, block: Block<TxHash>) -> Block<Transaction> {
         let storage = self.storage.read();
@@ -423,6 +492,16 @@ pub struct ClientForkConfig {
     pub timestamp: u64,
     /// The basefee of the forked block
     pub base_fee: Option<U256>,
+    /// request timeout
+    pub timeout: Duration,
+    /// request retries for spurious networks
+    pub retries: u32,
+    /// request retries for spurious networks
+    pub backoff: Duration,
+    /// available CUPS
+    pub compute_units_per_second: u64,
+    /// total difficulty of the chain until this block
+    pub total_difficulty: U256,
 }
 
 // === impl ClientForkConfig ===
@@ -437,8 +516,11 @@ impl ClientForkConfig {
         let interval = self.provider.get_interval();
         self.provider = Arc::new(
             ProviderBuilder::new(url.as_str())
+                .timeout(self.timeout)
+                .timeout_retry(self.retries)
                 .max_retry(10)
-                .initial_backoff(1000)
+                .initial_backoff(self.backoff.as_millis() as u64)
+                .compute_units_per_second(self.compute_units_per_second)
                 .build()
                 .map_err(|_| BlockchainError::InvalidUrl(url.clone()))?
                 .interval(interval),
@@ -454,11 +536,13 @@ impl ClientForkConfig {
         block_hash: H256,
         timestamp: u64,
         base_fee: Option<U256>,
+        total_difficulty: U256,
     ) {
         self.block_number = block_number;
         self.block_hash = block_hash;
         self.timestamp = timestamp;
         self.base_fee = base_fee;
+        self.total_difficulty = total_difficulty;
         trace!(target: "fork", "Updated block number={} hash={:?}", block_number, block_hash);
     }
 }
@@ -466,11 +550,13 @@ impl ClientForkConfig {
 /// Contains cached state fetched to serve EthApi requests
 #[derive(Debug, Clone, Default)]
 pub struct ForkedStorage {
+    pub uncles: HashMap<H256, Vec<Block<TxHash>>>,
     pub blocks: HashMap<H256, Block<TxHash>>,
     pub hashes: HashMap<u64, H256>,
     pub transactions: HashMap<H256, Transaction>,
     pub transaction_receipts: HashMap<H256, TransactionReceipt>,
     pub transaction_traces: HashMap<H256, Vec<Trace>>,
+    pub geth_transaction_traces: HashMap<H256, GethTrace>,
     pub block_traces: HashMap<u64, Vec<Trace>>,
     pub code_at: HashMap<(Address, u64), Bytes>,
 }

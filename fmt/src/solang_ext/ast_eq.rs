@@ -1,27 +1,33 @@
 use super::AttrSortKeyIteratorExt;
-use ethers_core::types::H160;
+use ethers_core::types::{H160, I256, U256};
 use solang_parser::pt::*;
 use std::str::FromStr;
 
 /// Helper to convert a string number into a comparable one
-fn to_num(string: &str) -> isize {
+fn to_num(string: &str) -> I256 {
     if string.is_empty() {
-        return 0
+        return I256::from(0)
     }
     string.replace('_', "").trim().parse().unwrap()
 }
 
 /// Helper to convert the fractional part of a number into a comparable one.
 /// This will reverse the number so that 0's can be ignored
-fn to_num_reversed(string: &str) -> usize {
+fn to_num_reversed(string: &str) -> U256 {
     if string.is_empty() {
-        return 0
+        return U256::from(0)
     }
     let mut string = dbg!(string.replace('_', ""));
     unsafe {
         string.as_mut_vec().reverse();
     }
     dbg!(dbg!(string).trim().parse().unwrap())
+}
+
+/// Helper to filter [ParameterList] to omit empty
+/// parameters
+fn filter_params(list: &ParameterList) -> ParameterList {
+    list.iter().cloned().filter(|(_, param)| param.is_some()).collect::<Vec<_>>()
 }
 
 /// Check if two ParseTrees are equal ignoring location information or ordering if ordering does
@@ -63,15 +69,22 @@ impl AstEq for VariableDefinition {
 
 impl AstEq for FunctionDefinition {
     fn ast_eq(&self, other: &Self) -> bool {
+        // attributes
         let sort_attrs =
             |def: &Self| def.attributes.clone().into_iter().attr_sorted().collect::<Vec<_>>();
         let left_sorted_attrs = sort_attrs(self);
         let right_sorted_attrs = sort_attrs(other);
+
+        let left_params = filter_params(&self.params);
+        let right_params = filter_params(&other.params);
+        let left_returns = filter_params(&self.returns);
+        let right_returns = filter_params(&other.returns);
+
         self.ty.ast_eq(&other.ty) &&
             self.name.ast_eq(&other.name) &&
-            self.params.ast_eq(&other.params) &&
+            left_params.ast_eq(&right_params) &&
             self.return_not_returns.ast_eq(&other.return_not_returns) &&
-            self.returns.ast_eq(&other.returns) &&
+            left_returns.ast_eq(&right_returns) &&
             self.body.ast_eq(&other.body) &&
             left_sorted_attrs.ast_eq(&right_sorted_attrs)
     }
@@ -215,6 +228,7 @@ impl AstEq for Statement {
     fn ast_eq(&self, other: &Self) -> bool {
         match self {
             Statement::If(loc, expr, stmt1, stmt2) => {
+                #[allow(clippy::borrowed_box)]
                 let wrap_if = |stmt1: &Box<Statement>, stmt2: &Option<Box<Statement>>| {
                     (
                         wrap_in_box!(stmt1, *loc),
@@ -270,13 +284,21 @@ impl AstEq for Statement {
                     false
                 }
             }
+            Statement::Try(loc, expr, returns, catch) => {
+                let left_returns =
+                    returns.as_ref().map(|(params, stmt)| (filter_params(params), stmt));
+                let left = (loc, expr, left_returns, catch);
+                if let Statement::Try(loc, expr, returns, catch) = other {
+                    let right_returns =
+                        returns.as_ref().map(|(params, stmt)| (filter_params(params), stmt));
+                    let right = (loc, expr, right_returns, catch);
+                    left.ast_eq(&right)
+                } else {
+                    false
+                }
+            }
             _ => gen_ast_eq_enum!(self, other, Statement {
                 _
-                // provide overridden variants regardless
-                If(loc, expr, stmt1, stmt2),
-                While(loc, expr, stmt1),
-                DoWhile(loc, stmt1, expr),
-                For(loc, stmt1, expr, stmt2, stmt3),
                 Args(loc, args),
                 Expression(loc, expr),
                 VariableDefinition(loc, decl, expr),
@@ -286,6 +308,11 @@ impl AstEq for Statement {
                 Revert(loc, expr, expr2),
                 RevertNamedArgs(loc, expr, args),
                 Emit(loc, expr),
+                // provide overridden variants regardless
+                If(loc, expr, stmt1, stmt2),
+                While(loc, expr, stmt1),
+                DoWhile(loc, stmt1, expr),
+                For(loc, stmt1, expr, stmt2, stmt3),
                 Try(loc, expr, params, claus),
                 _
                 Block {
@@ -364,8 +391,8 @@ derive_ast_eq! { (0 A, 1 B, 2 C, 3 D, 4 E) }
 derive_ast_eq! { bool }
 derive_ast_eq! { u8 }
 derive_ast_eq! { u16 }
-derive_ast_eq! { isize }
-derive_ast_eq! { usize }
+derive_ast_eq! { I256 }
+derive_ast_eq! { U256 }
 derive_ast_eq! { struct Identifier { loc, name } }
 derive_ast_eq! { struct HexLiteral { loc, hex } }
 derive_ast_eq! { struct StringLiteral { loc, unicode, string } }
@@ -435,6 +462,7 @@ derive_ast_eq! { enum FunctionAttribute {
     Immutable(loc),
     Override(loc, idents),
     BaseOrModifier(loc, base),
+    NameValue(loc, ident, expr),
     _
 }}
 derive_ast_eq! { enum StorageLocation {

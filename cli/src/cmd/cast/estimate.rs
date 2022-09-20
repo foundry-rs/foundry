@@ -62,10 +62,8 @@ Examples: 1ether, 10gwei, 0.01ether"#,
 impl EstimateArgs {
     pub async fn run(self) -> eyre::Result<()> {
         let EstimateArgs { to, sig, args, value, eth, command } = self;
-        let mut config = Config::from(&eth);
-        let provider = get_http_provider(
-            config.eth_rpc_url.take().unwrap_or_else(|| "http://localhost:8545".to_string()),
-        );
+        let config = Config::from(&eth);
+        let provider = get_http_provider(config.get_rpc_url_or_localhost_http()?);
 
         let chain: Chain =
             if let Some(chain) = eth.chain { chain } else { provider.get_chainid().await?.into() };

@@ -1,13 +1,16 @@
 use crate::abi::*;
 use anvil::{spawn, NodeConfig};
 use ethers::{
+    abi::ethereum_types::BigEndianHash,
     prelude::{
         signer::SignerMiddlewareError, BlockId, Middleware, Signer, SignerMiddleware,
         TransactionRequest,
     },
-    types::{Address, BlockNumber, Transaction, TransactionReceipt, H256, U256},
+    types::{
+        transaction::eip2930::{AccessList, AccessListItem},
+        Address, BlockNumber, Transaction, TransactionReceipt, H256, U256,
+    },
 };
-
 use futures::{future::join_all, FutureExt, StreamExt};
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::timeout;
@@ -420,16 +423,17 @@ async fn get_blocktimestamp_works() {
     assert_eq!(timestamp, latest_block.timestamp);
 
     // mock timestamp
-    api.evm_set_next_block_timestamp(1337).unwrap();
+    let next_timestamp = timestamp.as_u64() + 1337;
+    api.evm_set_next_block_timestamp(next_timestamp).unwrap();
 
     let timestamp =
         contract.get_current_block_timestamp().block(BlockNumber::Pending).call().await.unwrap();
-    assert_eq!(timestamp, 1337u64.into());
+    assert_eq!(timestamp, next_timestamp.into());
 
     // repeat call same result
     let timestamp =
         contract.get_current_block_timestamp().block(BlockNumber::Pending).call().await.unwrap();
-    assert_eq!(timestamp, 1337u64.into());
+    assert_eq!(timestamp, next_timestamp.into());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -770,4 +774,122 @@ async fn can_stream_pending_transactions() {
             }
         }
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tx_access_list() {
+    /// returns a String representation of the AccessList, with sorted
+    /// keys (address) and storage slots
+    fn access_list_to_sorted_string(a: AccessList) -> String {
+        let mut a = a.0;
+        a.sort_by_key(|v| v.address);
+
+        let a = a
+            .iter_mut()
+            .map(|v| {
+                v.storage_keys.sort();
+                (v.address, std::mem::take(&mut v.storage_keys))
+            })
+            .collect::<Vec<_>>();
+
+        format!("{:?}", a)
+    }
+
+    /// asserts that the two access lists are equal, by comparing their sorted
+    /// string representation
+    fn assert_access_list_eq(a: AccessList, b: AccessList) {
+        assert_eq!(access_list_to_sorted_string(a), access_list_to_sorted_string(b))
+    }
+
+    // We want to test a couple of things:
+    //     - When calling a contract with no storage read/write, it shouldn't be in the AL
+    //     - When a contract calls a contract, the latter one should be in the AL
+    //     - No precompiles should be in the AL
+    //     - The sender shouldn't be in the AL
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(handle.http_provider(), wallet));
+
+    let sender = Address::random();
+    let other_acc = Address::random();
+    let multicall = MulticallContract::deploy(client.clone(), ()).unwrap().send().await.unwrap();
+    let simple_storage =
+        SimpleStorage::deploy(client.clone(), "foo".to_string()).unwrap().send().await.unwrap();
+
+    // when calling `setValue` on SimpleStorage, both the `lastSender` and `_value` storages are
+    // modified The `_value` is a `string`, so the storage slots here (small string) are `0x1`
+    // and `keccak(0x1)`
+    let set_value_tx = simple_storage.set_value("bar".to_string()).from(sender).tx;
+    let access_list = client.create_access_list(&set_value_tx, None).await.unwrap();
+    assert_access_list_eq(
+        access_list.access_list,
+        AccessList::from(vec![AccessListItem {
+            address: simple_storage.address(),
+            storage_keys: vec![
+                H256::zero(),
+                H256::from_uint(&(1u64.into())),
+                "0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6"
+                    .parse()
+                    .unwrap(),
+            ],
+        }]),
+    );
+
+    // With a subcall that fetches the balances of an account (`other_acc`), only the address
+    // of this account should be in the Access List
+    let call_tx = multicall.get_eth_balance(other_acc).from(sender).tx;
+    let access_list = client.create_access_list(&call_tx, None).await.unwrap();
+    assert_access_list_eq(
+        access_list.access_list,
+        AccessList::from(vec![AccessListItem { address: other_acc, storage_keys: vec![] }]),
+    );
+
+    // With a subcall to another contract, the AccessList should be the same as when calling the
+    // subcontract directly (given that the proxy contract doesn't read/write any state)
+    let subcall_tx = multicall
+        .aggregate(vec![Call {
+            target: simple_storage.address(),
+            call_data: set_value_tx.data().unwrap().clone(),
+        }])
+        .from(sender)
+        .tx;
+    let access_list = client.create_access_list(&subcall_tx, None).await.unwrap();
+    assert_access_list_eq(
+        access_list.access_list,
+        AccessList::from(vec![AccessListItem {
+            address: simple_storage.address(),
+            storage_keys: vec![
+                H256::zero(),
+                H256::from_uint(&(1u64.into())),
+                "0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6"
+                    .parse()
+                    .unwrap(),
+            ],
+        }]),
+    );
+}
+
+// ensures that the gas estimate is running on pending block by default
+#[tokio::test(flavor = "multi_thread")]
+async fn estimates_gas_on_pending_by_default() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    // disable auto mine
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let sender = wallet.address();
+    let recipient = Address::random();
+
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let tx = TransactionRequest::new().from(sender).to(recipient).value(1e18 as u64);
+    client.send_transaction(tx, None).await.unwrap();
+
+    let tx =
+        TransactionRequest::new().from(recipient).to(sender).value(1e10 as u64).data(vec![0x42]);
+    api.estimate_gas(tx.into(), None).await.unwrap();
 }

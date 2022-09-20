@@ -1,5 +1,5 @@
 use super::{
-    identifier::{SignaturesIdentifier, TraceIdentifier},
+    identifier::{SingleSignaturesIdentifier, TraceIdentifier},
     CallTraceArena, RawOrDecodedCall, RawOrDecodedLog, RawOrDecodedReturnData,
 };
 use crate::{
@@ -13,11 +13,7 @@ use ethers::{
     types::H256,
 };
 use foundry_utils::get_indexed_event;
-use std::{
-    collections::{BTreeMap, HashMap},
-    sync::Arc,
-};
-use tokio::sync::RwLock;
+use std::collections::{BTreeMap, HashMap};
 
 /// Build a new [CallTraceDecoder].
 #[derive(Default)]
@@ -79,7 +75,7 @@ pub struct CallTraceDecoder {
     /// All known errors
     pub errors: Abi,
     /// A signature identifier for events and functions.
-    pub signature_identifier: Option<Arc<RwLock<SignaturesIdentifier>>>,
+    pub signature_identifier: Option<SingleSignaturesIdentifier>,
 }
 
 impl CallTraceDecoder {
@@ -184,14 +180,14 @@ impl CallTraceDecoder {
         }
     }
 
-    pub fn add_signature_identifier(&mut self, identifier: SignaturesIdentifier) {
-        self.signature_identifier = Some(Arc::new(RwLock::new(identifier)));
+    pub fn add_signature_identifier(&mut self, identifier: SingleSignaturesIdentifier) {
+        self.signature_identifier = Some(identifier);
     }
 
     /// Identify unknown addresses in the specified call trace using the specified identifier.
     ///
     /// Unknown contracts are contracts that either lack a label or an ABI.
-    pub fn identify(&mut self, trace: &CallTraceArena, identifier: &impl TraceIdentifier) {
+    pub fn identify(&mut self, trace: &CallTraceArena, identifier: &mut impl TraceIdentifier) {
         let unidentified_addresses = trace
             .addresses()
             .into_iter()

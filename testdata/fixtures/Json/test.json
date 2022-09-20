@@ -9,6 +9,7 @@
     "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
     "0x7109709ECfa91a80626fF3989D68f67F5b1DD12D"
   ],
+  "H160NotAddress": "0000000000000000000000000000000000001337",
   "nestedObject": {
     "number": 13,
     "str": "NEST"

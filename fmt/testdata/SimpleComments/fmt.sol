@@ -1,4 +1,6 @@
 contract SimpleComments {
+    mapping(address /* asset */ => address /* router */) public router;
+
     constructor() {
         // TODO: do this and that
 
@@ -30,3 +32,20 @@ contract SimpleComments {
         // line comment
     }
 }
+
+/*
+ * @notice Here is my comment
+ *       - item 1
+ *       - item 2
+ * Some equations:
+ *     y = mx + b
+ */
+function test() {}
+// comment after function
+
+// comment with extra newlines
+
+// some comment
+// another comment
+
+// eof comment

@@ -1,39 +1,20 @@
-use std::{collections::HashMap, fs, path::PathBuf};
-
+use super::{VerifyArgs, VerifyCheckArgs};
+use crate::cmd::LoadConfig;
 use async_trait::async_trait;
 use cast::SimpleCast;
+use ethers::solc::ConfigurableContractArtifact;
+
+use crate::cmd::forge::verify::provider::VerificationProvider;
+use foundry_common::fs;
 use foundry_utils::Retry;
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, path::PathBuf};
 use tracing::{trace, warn};
-
-use crate::cmd::LoadConfig;
-
-use super::{VerificationProvider, VerifyArgs, VerifyCheckArgs};
 
 pub static SOURCIFY_URL: &str = "https://sourcify.dev/server/";
 
-#[derive(Serialize, Debug)]
-pub struct SourcifyVerifyRequest {
-    address: String,
-    chain: String,
-    files: HashMap<String, String>,
-    #[serde(rename = "chosenContract", skip_serializing_if = "Option::is_none")]
-    chosen_contract: Option<String>,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct SourcifyVerificationResponse {
-    result: Vec<SourcifyResponseElement>,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct SourcifyResponseElement {
-    status: String,
-    #[serde(rename = "storageTimestamp")]
-    storage_timestamp: Option<String>,
-}
-
+/// The type that can verify a contract on `sourcify`
 pub struct SourcifyVerificationProvider;
 
 #[async_trait]
@@ -51,19 +32,42 @@ impl VerificationProvider for SourcifyVerificationProvider {
         let cache = project.read_cache_file()?;
         let (path, entry) = crate::cmd::get_cached_entry_by_name(&cache, &args.contract.name)?;
 
-        let path = args.contract.path.map_or(path, PathBuf::from);
+        if entry.solc_config.settings.metadata.is_none() {
+            eyre::bail!(
+                r#"Contract {} was compiled without the solc `metadata` setting.
+Sourcify requires contract metadata for verification.
+metadata output can be enabled via `extra_output = ["metadata"]` in `foundry.toml`"#,
+                args.contract.name
+            )
+        }
 
-        let mut files = HashMap::new();
+        let mut files = HashMap::with_capacity(2 + entry.imports.len());
 
-        let filename = path.file_name().unwrap().to_str().unwrap().to_owned();
-        let metadata_path =
-            config.out.join(&filename).join(format!("{}.metadata.json", args.contract.name));
+        // the metadata is included in the contract's artifact file
+        let artifact_path = entry
+            .find_artifact_path(&args.contract.name)
+            .ok_or_else(|| eyre::eyre!("No artifact found for contract {}", args.contract.name))?;
 
-        files.insert("metadata.json".to_owned(), fs::read_to_string(&metadata_path)?);
-        files.insert(filename, fs::read_to_string(&path)?);
+        let artifact: ConfigurableContractArtifact = fs::read_json_file(artifact_path)?;
+        if let Some(metadata) = artifact.metadata {
+            let metadata = serde_json::to_string_pretty(&metadata)?;
+            files.insert("metadata.json".to_string(), metadata);
+        } else {
+            eyre::bail!(
+                r#"No metadata found in artifact `{}` for contract {}.
+Sourcify requires contract metadata for verification.
+metadata output can be enabled via `extra_output = ["metadata"]` in `foundry.toml`"#,
+                artifact_path.display(),
+                args.contract.name
+            )
+        }
+
+        let contract_path = args.contract.path.map_or(path, PathBuf::from);
+        let filename = contract_path.file_name().unwrap().to_string_lossy().to_string();
+        files.insert(filename, fs::read_to_string(&contract_path)?);
 
         for import in entry.imports {
-            let import_entry = import.clone().into_os_string().into_string().unwrap();
+            let import_entry = format!("{}", import.display());
             files.insert(import_entry, fs::read_to_string(&import)?);
         }
 
@@ -85,10 +89,10 @@ impl VerificationProvider for SourcifyVerificationProvider {
                     println!(
                         "\nSubmitting verification for [{}] {:?}.",
                         args.contract.name,
-                        SimpleCast::checksum_address(&args.address)?
+                        SimpleCast::to_checksum_address(&args.address)
                     );
                     let response = client
-                        .post(SOURCIFY_URL)
+                        .post(args.verifier.verifier_url.as_deref().unwrap_or(SOURCIFY_URL))
                         .header("Content-Type", "application/json")
                         .body(serde_json::to_string(&body)?)
                         .send()
@@ -125,7 +129,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
                 async {
                     let url = format!(
                         "{}check-by-addresses?addresses={}&chainIds={}",
-                        SOURCIFY_URL,
+                        args.verifier.verifier_url.as_deref().unwrap_or(SOURCIFY_URL),
                         args.id,
                         args.chain.id(),
                     );
@@ -168,4 +172,25 @@ impl SourcifyVerificationProvider {
             std::process::exit(1);
         }
     }
+}
+
+#[derive(Serialize, Debug)]
+pub struct SourcifyVerifyRequest {
+    address: String,
+    chain: String,
+    files: HashMap<String, String>,
+    #[serde(rename = "chosenContract", skip_serializing_if = "Option::is_none")]
+    chosen_contract: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct SourcifyVerificationResponse {
+    result: Vec<SourcifyResponseElement>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct SourcifyResponseElement {
+    status: String,
+    #[serde(rename = "storageTimestamp")]
+    storage_timestamp: Option<String>,
 }

@@ -1,29 +1,26 @@
 use crate::{cmd::Cmd, init_progress, update_progress, utils::consume_config_rpc_url};
-use cast::{
-    revm::TransactTo,
-    trace::{identifier::SignaturesIdentifier, CallTraceDecoder},
-};
+use cast::trace::{identifier::SignaturesIdentifier, CallTraceDecoder};
 use clap::Parser;
 use ethers::{
     abi::Address,
-    prelude::Middleware,
+    prelude::{artifacts::ContractBytecodeSome, ArtifactId, Middleware},
     solc::utils::RuntimeOrHandle,
-    types::{Transaction, H256},
+    types::H256,
 };
 use eyre::WrapErr;
 use forge::{
     debug::DebugArena,
-    executor::{opts::EvmOpts, Backend, DeployResult, ExecutorBuilder, RawCallResult},
+    executor::{
+        inspector::cheatcodes::util::configure_tx_env, opts::EvmOpts, Backend, DeployResult,
+        ExecutorBuilder, RawCallResult,
+    },
     trace::{identifier::EtherscanIdentifier, CallTraceArena, CallTraceDecoderBuilder, TraceKind},
-    utils::h256_to_u256_be,
 };
 use foundry_common::get_http_provider;
 use foundry_config::{find_project_root_path, Config};
 use indicatif::{ProgressBar, ProgressStyle};
-use std::{
-    collections::{BTreeMap, HashMap},
-    str::FromStr,
-};
+use std::{collections::BTreeMap, str::FromStr};
+use tracing::trace;
 use ui::{TUIExitReason, Tui, Ui};
 use yansi::Paint;
 
@@ -53,6 +50,11 @@ pub struct RunArgs {
 
 impl Cmd for RunArgs {
     type Output = ();
+    /// Executes the transaction by replaying it
+    ///
+    /// This replays the entire block the transaction was mined in unless `quick` is set to true
+    ///
+    /// Note: This executes the transaction(s) as is: Cheatcodes are disabled
     fn run(self) -> eyre::Result<Self::Output> {
         RuntimeOrHandle::new().block_on(self.run_tx())
     }
@@ -85,6 +87,8 @@ impl RunArgs {
             let env = evm_opts.evm_env().await;
             let db = Backend::spawn(evm_opts.get_fork(&config, env.clone()));
 
+            // configures a bare version of the evm executor: no cheatcode inspector is enabled,
+            // tracing will be enabled only for the targeted transaction
             let builder = ExecutorBuilder::default()
                 .with_config(env)
                 .with_spec(crate::utils::evm_spec(&config.evm_version));
@@ -115,13 +119,14 @@ impl RunArgs {
                         if tx.hash().eq(&tx_hash) {
                             break
                         }
-                        // executor.set_gas_limit(past_tx.gas);
+
                         configure_tx_env(&mut env, &tx);
 
                         if let Some(to) = tx.to {
-                            env.tx.transact_to = TransactTo::Call(to);
+                            trace!(tx=?tx.hash,?to, "executing previous call transaction");
                             executor.commit_tx_with_env(env.clone()).unwrap();
                         } else {
+                            trace!(tx=?tx.hash, "executing previous create transaction");
                             executor.deploy_with_env(env.clone(), None).unwrap();
                         }
 
@@ -137,31 +142,37 @@ impl RunArgs {
                 configure_tx_env(&mut env, &tx);
 
                 if let Some(to) = tx.to {
-                    env.tx.transact_to = TransactTo::Call(to);
+                    trace!(tx=?tx.hash,to=?to, "executing call transaction");
                     let RawCallResult {
-                        reverted, gas, traces, debug: run_debug, status: _, ..
+                        reverted,
+                        gas_used: gas,
+                        traces,
+                        debug: run_debug,
+                        exit_reason: _,
+                        ..
                     } = executor.commit_tx_with_env(env).unwrap();
 
                     RunResult {
                         success: !reverted,
                         traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
                         debug: run_debug.unwrap_or_default(),
-                        gas,
+                        gas_used: gas,
                     }
                 } else {
-                    let DeployResult { gas, traces, debug: run_debug, .. }: DeployResult =
+                    trace!(tx=?tx.hash, "executing create transaction");
+                    let DeployResult { gas_used, traces, debug: run_debug, .. }: DeployResult =
                         executor.deploy_with_env(env, None).unwrap();
 
                     RunResult {
                         success: true,
                         traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
                         debug: run_debug.unwrap_or_default(),
-                        gas,
+                        gas_used,
                     }
                 }
             };
 
-            let etherscan_identifier =
+            let mut etherscan_identifier =
                 EtherscanIdentifier::new(&config, evm_opts.get_remote_chain_id())?;
 
             let labeled_addresses: BTreeMap<Address, String> = self
@@ -185,11 +196,12 @@ impl RunArgs {
                 .add_signature_identifier(SignaturesIdentifier::new(Config::foundry_cache_dir())?);
 
             for (_, trace) in &mut result.traces {
-                decoder.identify(trace, &etherscan_identifier);
+                decoder.identify(trace, &mut etherscan_identifier);
             }
 
             if self.debug {
-                run_debugger(result, decoder)?;
+                let (sources, bytecode) = etherscan_identifier.get_compiled_contracts().await?;
+                run_debugger(result, decoder, bytecode, sources)?;
             } else {
                 print_traces(&mut result, decoder, self.verbose).await?;
             }
@@ -198,30 +210,28 @@ impl RunArgs {
     }
 }
 
-/// Configures the env for the transaction
-fn configure_tx_env(env: &mut forge::revm::Env, tx: &Transaction) {
-    env.tx.caller = tx.from;
-    env.tx.gas_limit = tx.gas.as_u64();
-    env.tx.gas_price = tx.gas_price.unwrap_or_default();
-    env.tx.gas_priority_fee = tx.max_priority_fee_per_gas;
-    env.tx.nonce = Some(tx.nonce.as_u64());
-    env.tx.access_list = tx
-        .access_list
-        .clone()
-        .unwrap_or_default()
-        .0
-        .into_iter()
-        .map(|item| (item.address, item.storage_keys.into_iter().map(h256_to_u256_be).collect()))
-        .collect();
-    env.tx.value = tx.value;
-    env.tx.data = tx.input.0.clone();
-}
-
-fn run_debugger(result: RunResult, decoder: CallTraceDecoder) -> eyre::Result<()> {
-    // TODO Get source from etherscan
+fn run_debugger(
+    result: RunResult,
+    decoder: CallTraceDecoder,
+    known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
+    sources: BTreeMap<ArtifactId, String>,
+) -> eyre::Result<()> {
     let calls: Vec<DebugArena> = vec![result.debug];
     let flattened = calls.last().expect("we should have collected debug info").flatten(0);
-    let tui = Tui::new(flattened, 0, decoder.contracts, HashMap::new(), BTreeMap::new())?;
+    let tui = Tui::new(
+        flattened,
+        0,
+        decoder.contracts,
+        known_contracts.into_iter().map(|(id, artifact)| (id.name, artifact)).collect(),
+        sources
+            .into_iter()
+            .map(|(id, source)| {
+                let mut sources = BTreeMap::new();
+                sources.insert(0, source);
+                (id.name, sources)
+            })
+            .collect(),
+    )?;
     match tui.start().expect("Failed to start tui") {
         TUIExitReason::CharExit => Ok(()),
     }
@@ -253,7 +263,7 @@ async fn print_traces(
         println!("{}", Paint::red("Transaction failed."));
     }
 
-    println!("Gas used: {}", result.gas);
+    println!("Gas used: {}", result.gas_used);
     Ok(())
 }
 
@@ -261,5 +271,5 @@ struct RunResult {
     pub success: bool,
     pub traces: Vec<(TraceKind, CallTraceArena)>,
     pub debug: DebugArena,
-    pub gas: u64,
+    pub gas_used: u64,
 }

@@ -1,6 +1,6 @@
 //! Support for validating transactions at certain stages
 
-use crate::eth::error::InvalidTransactionError;
+use crate::eth::error::{BlockchainError, InvalidTransactionError};
 use anvil_core::eth::transaction::PendingTransaction;
 use foundry_evm::revm::{AccountInfo, Env};
 
@@ -15,7 +15,7 @@ pub trait TransactionValidator {
     async fn validate_pool_transaction(
         &self,
         tx: &PendingTransaction,
-    ) -> Result<(), InvalidTransactionError>;
+    ) -> Result<(), BlockchainError>;
 
     /// Validates the transaction against a specific account before entering the pool
     fn validate_pool_transaction_for(

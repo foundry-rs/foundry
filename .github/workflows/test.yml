@@ -146,6 +146,12 @@ jobs:
         with:
           path: "$HOME/.foundry/cache"
           key: rpc-cache-${{ hashFiles('cli/tests/rpc-cache-keyfile') }}
+
+      - name: Setup git config
+        run: |
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "<>"
+
       - name: Force use of HTTPS for submodules
         run: git config --global url."https://github.com/".insteadOf "git@github.com:"
 

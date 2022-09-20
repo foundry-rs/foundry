@@ -3,7 +3,7 @@ use crate::{fuzz::*, CALLER};
 mod error;
 use error::*;
 mod filters;
-pub use filters::ArtifactFilters;
+pub use filters::{ArtifactFilters, SenderFilters};
 mod call_override;
 pub use call_override::{set_up_inner_replay, RandomCallGenerator};
 mod executor;
@@ -32,18 +32,6 @@ pub struct InvariantContract<'a> {
     pub invariant_functions: Vec<&'a Function>,
     /// Abi of the test contract.
     pub abi: &'a Abi,
-}
-
-/// Metadata on how to run invariant tests
-#[derive(Debug, Clone, Copy, Default)]
-pub struct InvariantTestOptions {
-    /// The number of calls executed to attempt to break invariants in one run.
-    pub depth: u32,
-    /// Fails the invariant fuzzing if a revert occurs
-    pub fail_on_revert: bool,
-    /// Allows overriding an unsafe external call when running invariant tests. eg. reetrancy
-    /// checks
-    pub call_override: bool,
 }
 
 /// Given the executor state, asserts that no invariant has been broken. Otherwise, it fills the

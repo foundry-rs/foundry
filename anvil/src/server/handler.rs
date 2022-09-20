@@ -9,7 +9,7 @@ use anvil_core::eth::{
     EthPubSub, EthRequest, EthRpcCall,
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
-use anvil_server::{RpcHandler, WsContext, WsRpcHandler};
+use anvil_server::{PubSubContext, PubSubRpcHandler, RpcHandler};
 use ethers::types::FilteredParams;
 use tracing::trace;
 
@@ -38,21 +38,21 @@ impl RpcHandler for HttpEthRpcHandler {
     }
 }
 
-/// A `RpcHandler` that expects `EthRequest` rpc calls and `EthPubSub` via websocket
+/// A `RpcHandler` that expects `EthRequest` rpc calls and `EthPubSub` via pubsub connection
 #[derive(Clone)]
-pub struct WsEthRpcHandler {
+pub struct PubSubEthRpcHandler {
     /// Access to the node
     api: EthApi,
 }
 
-impl WsEthRpcHandler {
+impl PubSubEthRpcHandler {
     /// Creates a new instance of the handler using the given `EthApi`
     pub fn new(api: EthApi) -> Self {
         Self { api }
     }
 
     /// Invoked for an ethereum pubsub rpc call
-    async fn on_pub_sub(&self, pubsub: EthPubSub, cx: WsContext<Self>) -> ResponseResult {
+    async fn on_pub_sub(&self, pubsub: EthPubSub, cx: PubSubContext<Self>) -> ResponseResult {
         let id = SubscriptionId::random_hex();
         trace!(target: "rpc::ws", "received pubsub request {:?}", pubsub);
         match pubsub {
@@ -105,13 +105,13 @@ impl WsEthRpcHandler {
 }
 
 #[async_trait::async_trait]
-impl WsRpcHandler for WsEthRpcHandler {
+impl PubSubRpcHandler for PubSubEthRpcHandler {
     type Request = EthRpcCall;
     type SubscriptionId = SubscriptionId;
     type Subscription = EthSubscription;
 
-    async fn on_request(&self, request: Self::Request, cx: WsContext<Self>) -> ResponseResult {
-        trace!(target: "rpc::ws", "received ws request {:?}", request);
+    async fn on_request(&self, request: Self::Request, cx: PubSubContext<Self>) -> ResponseResult {
+        trace!(target: "rpc", "received pubsub request {:?}", request);
         match request {
             EthRpcCall::Request(request) => self.api.execute(*request).await,
             EthRpcCall::PubSub(pubsub) => self.on_pub_sub(pubsub, cx).await,

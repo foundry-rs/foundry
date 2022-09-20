@@ -6,27 +6,37 @@ use crate::{
         inspector::DEFAULT_CREATE2_DEPLOYER,
         snapshot::Snapshots,
     },
-    CALLER,
+    CALLER, TEST_CONTRACT_ADDRESS,
 };
 use ethers::{
     prelude::{H160, H256, U256},
-    types::Address,
+    types::{Address, BlockNumber, Transaction, U64},
 };
 use hashbrown::HashMap as Map;
 pub use in_memory_db::MemDb;
 use revm::{
     db::{CacheDB, DatabaseRef},
-    Account, AccountInfo, Bytecode, Database, DatabaseCommit, Env, InMemoryDB, Inspector, Log,
-    Return, SubRoutine, TransactOut, TransactTo, KECCAK_EMPTY,
+    precompiles::Precompiles,
+    Account, AccountInfo, Bytecode, Database, DatabaseCommit, Env, ExecutionResult, Inspector,
+    JournaledState, Log, SpecId, TransactTo, EVM, KECCAK_EMPTY,
 };
 use std::collections::{HashMap, HashSet};
 use tracing::{trace, warn};
 
 mod fuzz;
-mod snapshot;
+pub mod snapshot;
 pub use fuzz::FuzzBackendWrapper;
 mod diagnostic;
+
 pub use diagnostic::RevertDiagnostic;
+
+pub mod error;
+use crate::executor::{
+    backend::{error::NoCheatcodeAccessError, in_memory_db::FoundryEvmInMemoryDB},
+    inspector::cheatcodes::util::configure_tx_env,
+};
+pub use error::{DatabaseError, DatabaseResult};
+
 mod in_memory_db;
 
 // A `revm::Database` that is used in forking mode
@@ -42,18 +52,17 @@ pub type LocalForkId = U256;
 type ForkLookupIndex = usize;
 
 /// All accounts that will have persistent storage across fork swaps. See also [`clone_data()`]
-const DEFAULT_PERSISTENT_ACCOUNTS: [H160; 3] =
-    [CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER];
+const DEFAULT_PERSISTENT_ACCOUNTS: [H160; 2] = [CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER];
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
 #[auto_impl::auto_impl(&mut, Box)]
-pub trait DatabaseExt: Database {
+pub trait DatabaseExt: Database<Error = DatabaseError> {
     /// Creates a new snapshot at the current point of execution.
     ///
     /// A snapshot is associated with a new unique id that's created for the snapshot.
     /// Snapshots can be reverted: [DatabaseExt::revert], however a snapshot can only be reverted
     /// once. After a successful revert, the same snapshot id cannot be used again.
-    fn snapshot(&mut self, subroutine: &SubRoutine, env: &Env) -> U256;
+    fn snapshot(&mut self, journaled_state: &JournaledState, env: &Env) -> U256;
     /// Reverts the snapshot if it exists
     ///
     /// Returns `true` if the snapshot was successfully reverted, `false` if no snapshot for that id
@@ -64,7 +73,12 @@ pub trait DatabaseExt: Database {
     /// snapshot and its revert.
     /// This will also revert any changes in the `Env` and replace it with the captured `Env` of
     /// `Self::snapshot`
-    fn revert(&mut self, id: U256, subroutine: &SubRoutine, env: &mut Env) -> Option<SubRoutine>;
+    fn revert(
+        &mut self,
+        id: U256,
+        journaled_state: &JournaledState,
+        env: &mut Env,
+    ) -> Option<JournaledState>;
 
     /// Creates and also selects a new fork
     ///
@@ -73,10 +87,25 @@ pub trait DatabaseExt: Database {
         &mut self,
         fork: CreateFork,
         env: &mut Env,
-        subroutine: &mut SubRoutine,
+        journaled_state: &mut JournaledState,
     ) -> eyre::Result<LocalForkId> {
-        let id = self.create_fork(fork, subroutine)?;
-        self.select_fork(id, env, subroutine)?;
+        let id = self.create_fork(fork, journaled_state)?;
+        self.select_fork(id, env, journaled_state)?;
+        Ok(id)
+    }
+
+    /// Creates and also selects a new fork
+    ///
+    /// This is basically `create_fork` + `select_fork`
+    fn create_select_fork_at_transaction(
+        &mut self,
+        fork: CreateFork,
+        env: &mut Env,
+        journaled_state: &mut JournaledState,
+        transaction: H256,
+    ) -> eyre::Result<LocalForkId> {
+        let id = self.create_fork_at_transaction(fork, journaled_state, transaction)?;
+        self.select_fork(id, env, journaled_state)?;
         Ok(id)
     }
 
@@ -84,7 +113,15 @@ pub trait DatabaseExt: Database {
     fn create_fork(
         &mut self,
         fork: CreateFork,
-        subroutine: &SubRoutine,
+        journaled_state: &JournaledState,
+    ) -> eyre::Result<LocalForkId>;
+
+    /// Creates a new fork but does _not_ select it
+    fn create_fork_at_transaction(
+        &mut self,
+        fork: CreateFork,
+        journaled_state: &JournaledState,
+        transaction: H256,
     ) -> eyre::Result<LocalForkId>;
 
     /// Selects the fork's state
@@ -100,7 +137,7 @@ pub trait DatabaseExt: Database {
         &mut self,
         id: LocalForkId,
         env: &mut Env,
-        subroutine: &mut SubRoutine,
+        journaled_state: &mut JournaledState,
     ) -> eyre::Result<()>;
 
     /// Updates the fork to given block number.
@@ -115,7 +152,23 @@ pub trait DatabaseExt: Database {
         id: Option<LocalForkId>,
         block_number: U256,
         env: &mut Env,
-        subroutine: &mut SubRoutine,
+        journaled_state: &mut JournaledState,
+    ) -> eyre::Result<()>;
+
+    /// Updates the fork to given transaction hash
+    ///
+    /// This will essentially create a new fork at the block this transaction was mined and replays
+    /// all transactions up until the given transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if not matching fork was found.
+    fn roll_fork_to_transaction(
+        &mut self,
+        id: Option<LocalForkId>,
+        transaction: H256,
+        env: &mut Env,
+        journaled_state: &mut JournaledState,
     ) -> eyre::Result<()>;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
@@ -129,7 +182,7 @@ pub trait DatabaseExt: Database {
     /// Ensures that an appropriate fork exits
     ///
     /// If `id` contains a requested `Fork` this will ensure it exits.
-    /// Otherwise this returns the currently active fork.
+    /// Otherwise, this returns the currently active fork.
     ///
     /// # Errors
     ///
@@ -167,8 +220,11 @@ pub trait DatabaseExt: Database {
     /// the contract is deployed there.
     ///
     /// Returns a more useful error message if that's the case
-    fn diagnose_revert(&self, callee: Address, subroutine: &SubRoutine)
-        -> Option<RevertDiagnostic>;
+    fn diagnose_revert(
+        &self,
+        callee: Address,
+        journaled_state: &JournaledState,
+    ) -> Option<RevertDiagnostic>;
 
     /// Returns true if the given account is currently marked as persistent.
     fn is_persistent(&self, acc: &Address) -> bool;
@@ -191,6 +247,41 @@ pub trait DatabaseExt: Database {
         for acc in accounts {
             self.add_persistent_account(acc);
         }
+    }
+
+    /// Grants cheatcode access for the given `account`
+    ///
+    /// Returns true if the `account` already has access
+    fn allow_cheatcode_access(&mut self, account: Address) -> bool;
+
+    /// Revokes cheatcode access for the given account
+    ///
+    /// Returns true if the `account` was previously allowed cheatcode access
+    fn revoke_cheatcode_access(&mut self, account: Address) -> bool;
+
+    /// Returns `true` if the given account is allowed to execute cheatcodes
+    fn has_cheatcode_access(&self, account: Address) -> bool;
+
+    /// Ensures that `account` is allowed to execute cheatcodes
+    ///
+    /// Returns an error if [`Self::has_cheatcode_access`] returns `false`
+    fn ensure_cheatcode_access(&self, account: Address) -> Result<(), NoCheatcodeAccessError> {
+        if !self.has_cheatcode_access(account) {
+            return Err(NoCheatcodeAccessError(account))
+        }
+        Ok(())
+    }
+
+    /// Same as [`Self::ensure_cheatcode_access()`] but only enforces it if the backend is currently
+    /// in forking mode
+    fn ensure_cheatcode_access_forking_mode(
+        &self,
+        account: Address,
+    ) -> Result<(), NoCheatcodeAccessError> {
+        if self.is_forked_mode() {
+            return self.ensure_cheatcode_access(account)
+        }
+        Ok(())
     }
 }
 
@@ -230,7 +321,7 @@ pub trait DatabaseExt: Database {
 /// accordingly, so that all `block.*` config values match
 ///
 /// When another for is selected [`DatabaseExt::select_fork()`] the entire storage, including
-/// `Subroutine` is swapped, but the storage of the caller's and the test contract account is
+/// `JournaledState` is swapped, but the storage of the caller's and the test contract account is
 /// _always_ cloned. This way a fork has entirely separate storage but data can still be shared
 /// across fork boundaries via stack and contract variables.
 ///
@@ -251,24 +342,24 @@ pub struct Backend {
     /// The access point for managing forks
     forks: MultiFork,
     // The default in memory db
-    mem_db: InMemoryDB,
-    /// The subroutine to use to initialize new forks with
+    mem_db: FoundryEvmInMemoryDB,
+    /// The journaled_state to use to initialize new forks with
     ///
-    /// The way [`revm::SubRoutine`] works is, that it holds the "hot" accounts loaded from the
+    /// The way [`revm::JournaledState`] works is, that it holds the "hot" accounts loaded from the
     /// underlying `Database` that feeds the Account and State data ([`revm::AccountInfo`])to the
-    /// subroutine so it can apply changes to the state while the evm executes.
+    /// journaled_state so it can apply changes to the state while the evm executes.
     ///
-    /// In a way the `Subroutine` is something like a cache that
+    /// In a way the `JournaledState` is something like a cache that
     /// 1. check if account is already loaded (hot)
     /// 2. if not load from the `Database` (this will then retrieve the account via RPC in forking
     /// mode)
     ///
-    /// To properly initialize we store the `Subroutine` before the first fork is selected
+    /// To properly initialize we store the `JournaledState` before the first fork is selected
     /// ([`DatabaseExt::select_fork`]).
     ///
-    /// This will be an empty `Subroutine`, which will be populated with persistent accounts, See
-    /// [`Self::update_fork_db()`] and [`clone_data()`].
-    fork_init_subroutine: SubRoutine,
+    /// This will be an empty `JournaledState`, which will be populated with persistent accounts,
+    /// See [`Self::update_fork_db()`] and [`clone_data()`].
+    fork_init_journaled_state: JournaledState,
     /// The currently active fork database
     ///
     /// If this is set, then the Backend is currently in forking mode
@@ -290,26 +381,35 @@ impl Backend {
     /// if `fork` is `Some` this will launch with a `fork` database, otherwise with an in-memory
     /// database
     pub fn new(forks: MultiFork, fork: Option<CreateFork>) -> Self {
+        trace!(target: "backend", forking_mode=?fork.is_some(), "creating executor backend");
         // Note: this will take of registering the `fork`
+        let inner = BackendInner {
+            persistent_accounts: HashSet::from(DEFAULT_PERSISTENT_ACCOUNTS),
+            ..Default::default()
+        };
+
         let mut backend = Self {
             forks,
-            mem_db: InMemoryDB::default(),
-            fork_init_subroutine: Default::default(),
+            mem_db: CacheDB::new(Default::default()),
+            fork_init_journaled_state: inner.new_journaled_state(),
             active_fork_ids: None,
-            inner: BackendInner {
-                persistent_accounts: HashSet::from(DEFAULT_PERSISTENT_ACCOUNTS),
-                ..Default::default()
-            },
+            inner,
         };
 
         if let Some(fork) = fork {
             let (fork_id, fork, _) =
                 backend.forks.create_fork(fork).expect("Unable to create fork");
             let fork_db = ForkDB::new(fork);
-            backend.active_fork_ids =
-                Some(backend.inner.insert_new_fork(fork_id.clone(), fork_db, Default::default()));
-            backend.inner.launched_with_fork = Some(fork_id);
+            let fork_ids = backend.inner.insert_new_fork(
+                fork_id.clone(),
+                fork_db,
+                backend.inner.new_journaled_state(),
+            );
+            backend.inner.launched_with_fork = Some((fork_id, fork_ids.0, fork_ids.1));
+            backend.active_fork_ids = Some(fork_ids);
         }
+
+        trace!(target: "backend", forking_mode=? backend.active_fork_ids.is_some(), "created executor backend");
 
         backend
     }
@@ -318,8 +418,8 @@ impl Backend {
     pub fn clone_empty(&self) -> Self {
         Self {
             forks: self.forks.clone(),
-            mem_db: InMemoryDB::default(),
-            fork_init_subroutine: Default::default(),
+            mem_db: CacheDB::new(Default::default()),
+            fork_init_journaled_state: self.inner.new_journaled_state(),
             active_fork_ids: None,
             inner: Default::default(),
         }
@@ -342,33 +442,34 @@ impl Backend {
     ///
     /// This will also mark the caller as persistent and remove the persistent status from the
     /// previous test contract address
+    ///
+    /// This will also grant cheatcode access to the test account
     pub fn set_test_contract(&mut self, acc: Address) -> &mut Self {
         trace!(?acc, "setting test account");
         // toggle the previous sender
         if let Some(current) = self.inner.test_contract_address.take() {
             self.remove_persistent_account(&current);
+            self.revoke_cheatcode_access(acc);
         }
 
         self.add_persistent_account(acc);
+        self.allow_cheatcode_access(acc);
         self.inner.test_contract_address = Some(acc);
         self
     }
 
     /// Sets the caller address
-    ///
-    /// This will also mark the caller as persistent and remove the persistent status from the
-    /// previous caller
     pub fn set_caller(&mut self, acc: Address) -> &mut Self {
         trace!(?acc, "setting caller account");
-        // toggle the previous sender
-        if let Some(current) = self.inner.caller.take() {
-            if current != CALLER {
-                self.remove_persistent_account(&current);
-            }
-        }
-
-        self.add_persistent_account(acc);
         self.inner.caller = Some(acc);
+        self.allow_cheatcode_access(acc);
+        self
+    }
+
+    /// Sets the current spec id
+    pub fn set_spec_id(&mut self, spec_id: SpecId) -> &mut Self {
+        trace!("setting precompile id");
+        self.inner.precompile_id = spec_id.to_precompile_id();
         self
     }
 
@@ -382,10 +483,19 @@ impl Backend {
         self.inner.caller
     }
 
+    /// Failures occurred in snapshots are tracked when the snapshot is reverted
+    ///
+    /// If an error occurs in a restored snapshot, the test is considered failed.
+    ///
+    /// This returns whether there was a reverted snapshot that recorded an error
+    pub fn has_snapshot_failure(&self) -> bool {
+        self.inner.has_snapshot_failure
+    }
+
     /// Checks if the test contract associated with this backend failed, See
     /// [Self::is_failed_test_contract]
     pub fn is_failed(&self) -> bool {
-        self.inner.has_failure_snapshot ||
+        self.has_snapshot_failure() ||
             self.test_contract_address()
                 .map(|addr| self.is_failed_test_contract(addr))
                 .unwrap_or_default()
@@ -404,9 +514,28 @@ impl Backend {
             bool private _failed;
          }
         */
-        let value = self.storage(address, U256::zero());
-
+        let value = self.storage(address, U256::zero()).unwrap_or_default();
         value.byte(1) != 0
+    }
+
+    /// Checks if the given test function failed by looking at the present value of the test
+    /// contract's `JournaledState`
+    ///
+    /// See [`Self::is_failed_test_contract()]`
+    ///
+    /// Note: we assume the test contract is either `forge-std/Test` or `DSTest`
+    pub fn is_failed_test_contract_state(
+        &self,
+        address: Address,
+        current_state: &JournaledState,
+    ) -> bool {
+        if let Some(account) = current_state.state.get(&address) {
+            let value =
+                account.storage.get(&U256::zero()).cloned().unwrap_or_default().present_value();
+            return value.byte(1) != 0
+        }
+
+        false
     }
 
     /// In addition to the `_failed` variable, `DSTest::fail()` stores a failure
@@ -414,40 +543,44 @@ impl Backend {
     /// See <https://github.com/dapphub/ds-test/blob/9310e879db8ba3ea6d5c6489a579118fd264a3f5/src/test.sol#L66-L72>
     pub fn is_global_failure(&self) -> bool {
         let index = U256::from(&b"failed"[..]);
-        let value = self.storage(CHEATCODE_ADDRESS, index);
-        value == U256::one()
+        self.storage(CHEATCODE_ADDRESS, index).map(|value| value == U256::one()).unwrap_or_default()
     }
 
-    /// when creating or switching forks, we update the AccountInfo of the contract
-    pub(crate) fn update_fork_db(&self, subroutine: &mut SubRoutine, fork: &mut Fork) {
+    /// When creating or switching forks, we update the AccountInfo of the contract
+    pub(crate) fn update_fork_db(
+        &self,
+        active_journaled_state: &mut JournaledState,
+        target_fork: &mut Fork,
+    ) {
         debug_assert!(
             self.inner.test_contract_address.is_some(),
             "Test contract address must be set"
         );
+
         self.update_fork_db_contracts(
             self.inner.persistent_accounts.iter().copied(),
-            subroutine,
-            fork,
+            active_journaled_state,
+            target_fork,
         )
     }
 
-    /// Copies the state of all `accounts` from the currently active db into the given `fork`
+    /// Merges the state of all `accounts` from the currently active db into the given `fork`
     pub(crate) fn update_fork_db_contracts(
         &self,
         accounts: impl IntoIterator<Item = Address>,
-        subroutine: &mut SubRoutine,
-        fork: &mut Fork,
+        active_journaled_state: &mut JournaledState,
+        target_fork: &mut Fork,
     ) {
         if let Some((_, fork_idx)) = self.active_fork_ids.as_ref() {
             let active = self.inner.get_fork(*fork_idx);
-            clone_data(accounts, &active.db, subroutine, fork)
+            merge_account_data(accounts, &active.db, active_journaled_state, target_fork)
         } else {
-            clone_data(accounts, &self.mem_db, subroutine, fork)
+            merge_account_data(accounts, &self.mem_db, active_journaled_state, target_fork)
         }
     }
 
     /// Returns the memory db used if not in forking mode
-    pub fn mem_db(&self) -> &InMemoryDB {
+    pub fn mem_db(&self) -> &FoundryEvmInMemoryDB {
         &self.mem_db
     }
 
@@ -506,7 +639,7 @@ impl Backend {
                     if idx == active {
                         all_logs.append(&mut logs);
                     } else {
-                        all_logs.extend(f.subroutine.logs.clone())
+                        all_logs.extend(f.journaled_state.logs.clone())
                     }
                 });
             return all_logs
@@ -518,28 +651,124 @@ impl Backend {
     /// Executes the configured test call of the `env` without commiting state changes
     pub fn inspect_ref<INSP>(
         &mut self,
-        mut env: Env,
+        env: &mut Env,
         mut inspector: INSP,
-    ) -> (Return, TransactOut, u64, Map<Address, Account>, Vec<Log>)
+    ) -> (ExecutionResult, Map<Address, Account>)
     where
         INSP: Inspector<Self>,
     {
         self.set_caller(env.tx.caller);
+        self.set_spec_id(env.cfg.spec_id);
         if let TransactTo::Call(to) = env.tx.transact_to {
             self.set_test_contract(to);
         }
-        revm::evm_inner::<Self, true>(&mut env, self, &mut inspector).transact()
+        revm::evm_inner::<Self, true>(env, self, &mut inspector).transact()
+    }
+
+    /// Returns true if the address is a precompile
+    pub fn is_existing_precompile(&self, addr: &Address) -> bool {
+        self.inner.precompiles().contains(addr)
+    }
+
+    /// Ths will clean up already loaded accounts that would be initialized without the correct data
+    /// from the fork
+    ///
+    /// It can happen that an account is loaded before the first fork is selected, like
+    /// `getNonce(addr)`, which will load an empty account by default.
+    ///
+    /// This account data then would not match the account data of a fork if it exists.
+    /// So when the first fork is initialized we replace these accounts with the actual account as
+    /// it exists on the fork.
+    fn prepare_init_journal_state(&mut self) -> Result<(), DatabaseError> {
+        let loaded_accounts = self
+            .fork_init_journaled_state
+            .state
+            .iter()
+            .filter(|(addr, _)| !self.is_existing_precompile(addr) && !self.is_persistent(addr))
+            .map(|(addr, _)| addr)
+            .copied()
+            .collect::<Vec<_>>();
+
+        for fork in self.inner.forks_iter_mut() {
+            let mut journaled_state = self.fork_init_journaled_state.clone();
+            for loaded_account in loaded_accounts.iter().copied() {
+                trace!(?loaded_account, "replacing account on init");
+                let fork_account = Database::basic(&mut fork.db, loaded_account)?
+                    .ok_or(DatabaseError::MissingAccount(loaded_account))?;
+                let init_account =
+                    journaled_state.state.get_mut(&loaded_account).expect("exists; qed");
+                init_account.info = fork_account;
+            }
+            fork.journaled_state = journaled_state;
+        }
+        Ok(())
+    }
+
+    /// Returns the block numbers required for replaying a transaction
+    fn get_block_numbers_for_transaction(
+        &self,
+        id: LocalForkId,
+        transaction: H256,
+    ) -> eyre::Result<(U64, U64)> {
+        let fork = self.inner.get_fork_by_id(id)?;
+        let tx = fork.db.db.get_transaction(transaction)?;
+
+        // get the block number we need to fork
+        if let Some(tx_block) = tx.block_number {
+            // we need to subtract 1 here because we want the state before the transaction
+            // was mined
+            let fork_block = tx_block - 1;
+            Ok((fork_block, tx_block))
+        } else {
+            let block = fork
+                .db
+                .db
+                .get_full_block(BlockNumber::Latest)?
+                .number
+                .ok_or_else(|| DatabaseError::BlockNotFound(BlockNumber::Latest.into()))?;
+            Ok((block, block))
+        }
+    }
+
+    /// Replays all the transactions at the forks current block that were mined before the `tx`
+    ///
+    /// Returns the _unmined_ transaction that corresponds to the given `tx_hash`
+    pub fn replay_until(
+        &mut self,
+        id: LocalForkId,
+        mut env: Env,
+        tx_hash: H256,
+    ) -> eyre::Result<Option<Transaction>> {
+        let fork = self.inner.get_fork_by_id_mut(id)?;
+        let full_block =
+            fork.db.db.get_full_block(BlockNumber::Number(env.block.number.as_u64().into()))?;
+
+        for tx in full_block.transactions.into_iter() {
+            if tx.hash().eq(&tx_hash) {
+                // found the target transaction
+                return Ok(Some(tx))
+            }
+
+            configure_tx_env(&mut env, &tx);
+
+            let mut evm = EVM::new();
+            evm.env = env.clone();
+            evm.database(&mut fork.db);
+            evm.transact_commit();
+        }
+
+        Ok(None)
     }
 }
 
 // === impl a bunch of `revm::Database` adjacent implementations ===
 
 impl DatabaseExt for Backend {
-    fn snapshot(&mut self, subroutine: &SubRoutine, env: &Env) -> U256 {
+    fn snapshot(&mut self, journaled_state: &JournaledState, env: &Env) -> U256 {
         trace!("create snapshot");
         let id = self.inner.snapshots.insert(BackendSnapshot::new(
             self.create_db_snapshot(),
-            subroutine.clone(),
+            journaled_state.clone(),
             env.clone(),
         ));
         trace!(target: "backend", "Created new snapshot {}", id);
@@ -549,34 +778,55 @@ impl DatabaseExt for Backend {
     fn revert(
         &mut self,
         id: U256,
-        subroutine: &SubRoutine,
+        current_state: &JournaledState,
         current: &mut Env,
-    ) -> Option<SubRoutine> {
+    ) -> Option<JournaledState> {
         trace!(?id, "revert snapshot");
         if let Some(mut snapshot) = self.inner.snapshots.remove(id) {
             // need to check whether DSTest's `failed` variable is set to `true` which means an
             // error occurred either during the snapshot or even before
-            if self.is_failed() {
-                self.inner.has_failure_snapshot = true;
+            if self
+                .test_contract_address()
+                .map(|addr| self.is_failed_test_contract_state(addr, current_state))
+                .unwrap_or_default()
+            {
+                self.inner.has_snapshot_failure = true;
             }
 
             // merge additional logs
-            snapshot.merge(subroutine);
-            let BackendSnapshot { db, subroutine, env } = snapshot;
+            snapshot.merge(current_state);
+            let BackendSnapshot { db, mut journaled_state, env } = snapshot;
             match db {
                 BackendDatabaseSnapshot::InMemory(mem_db) => {
                     self.mem_db = mem_db;
                 }
-                BackendDatabaseSnapshot::Forked(id, fork_id, idx, fork) => {
+                BackendDatabaseSnapshot::Forked(id, fork_id, idx, mut fork) => {
+                    // there might be the case where the snapshot was created during `setUp` with
+                    // another caller, so we need to ensure the caller account is present in the
+                    // journaled state and database
+                    let caller = current.tx.caller;
+                    if !journaled_state.state.contains_key(&caller) {
+                        let caller_account = current_state
+                            .state
+                            .get(&caller)
+                            .map(|acc| acc.info.clone())
+                            .unwrap_or_default();
+
+                        if !fork.db.accounts.contains_key(&caller) {
+                            // update the caller account which is required by the evm
+                            fork.db.insert_account_info(caller, caller_account.clone());
+                        }
+                        journaled_state.state.insert(caller, caller_account.into());
+                    }
                     self.inner.revert_snapshot(id, fork_id, idx, *fork);
                     self.active_fork_ids = Some((id, idx))
                 }
             }
 
             update_current_env_with_fork_env(current, env);
-
             trace!(target: "backend", "Reverted snapshot {}", id);
-            Some(subroutine)
+
+            Some(journaled_state)
         } else {
             warn!(target: "backend", "No snapshot to revert for {}", id);
             None
@@ -586,14 +836,50 @@ impl DatabaseExt for Backend {
     fn create_fork(
         &mut self,
         fork: CreateFork,
-        _subroutine: &SubRoutine,
+        journaled_state: &JournaledState,
     ) -> eyre::Result<LocalForkId> {
         trace!("create fork");
         let (fork_id, fork, _) = self.forks.create_fork(fork)?;
         let fork_db = ForkDB::new(fork);
 
+        // there might be the case where a fork was previously created and selected during `setUp`
+        // not necessarily with the current caller in which case we need to ensure that the init
+        // state also includes the caller
+        if let Some(caller) = self.caller_address() {
+            if !self.fork_init_journaled_state.state.contains_key(&caller) {
+                if let Some(account) = journaled_state.state.get(&caller).cloned() {
+                    self.fork_init_journaled_state.state.insert(caller, account);
+                }
+            }
+        }
+
         let (id, _) =
-            self.inner.insert_new_fork(fork_id, fork_db, self.fork_init_subroutine.clone());
+            self.inner.insert_new_fork(fork_id, fork_db, self.fork_init_journaled_state.clone());
+        Ok(id)
+    }
+
+    fn create_fork_at_transaction(
+        &mut self,
+        fork: CreateFork,
+        journaled_state: &JournaledState,
+        transaction: H256,
+    ) -> eyre::Result<LocalForkId> {
+        trace!(?transaction, "create fork at transaction");
+        let id = self.create_fork(fork, journaled_state)?;
+        let fork_id = self.ensure_fork_id(id).cloned()?;
+        let mut env = self
+            .forks
+            .get_env(fork_id)?
+            .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exit", id))?;
+
+        // we still need to roll to the transaction, but we only need an empty dummy state since we
+        // don't need to update the active journaled state yet
+        self.roll_fork_to_transaction(
+            Some(id),
+            transaction,
+            &mut env,
+            &mut self.inner.new_journaled_state(),
+        )?;
         Ok(id)
     }
 
@@ -602,7 +888,7 @@ impl DatabaseExt for Backend {
         &mut self,
         id: LocalForkId,
         env: &mut Env,
-        subroutine: &mut SubRoutine,
+        active_journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
         trace!(?id, "select fork");
         if self.is_active_fork(id) {
@@ -617,31 +903,81 @@ impl DatabaseExt for Backend {
             .get_env(fork_id)?
             .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exit", id))?;
 
-        // If we're currently in forking mode we need to update the subroutine to this point, this
-        // ensures the changes performed while the fork was active are recorded
+        let launched_with_fork = self.inner.launched_with_fork.is_some();
+
+        // If we're currently in forking mode we need to update the journaled_state to this point,
+        // this ensures the changes performed while the fork was active are recorded
         if let Some(active) = self.active_fork_mut() {
-            active.subroutine = subroutine.clone();
+            active.journaled_state = active_journaled_state.clone();
+
+            // if the Backend was launched in forking mode, then we also need to adjust the depth of
+            // the `JournalState` at this point
+            if launched_with_fork {
+                let caller = env.tx.caller;
+                let caller_account =
+                    active.journaled_state.state.get(&env.tx.caller).map(|acc| acc.info.clone());
+                let target_fork = self.inner.get_fork_mut(idx);
+
+                // depth 0 will be the default value when the fork was created
+                if target_fork.journaled_state.depth == 0 {
+                    // we also need to initialize and touch the caller
+                    if let Some(acc) = caller_account {
+                        if !target_fork.db.accounts.contains_key(&caller) {
+                            target_fork.db.insert_account_info(caller, acc.clone());
+                        }
+                        target_fork.journaled_state.state.insert(caller, acc.into());
+                    }
+                }
+            }
         } else {
             // this is the first time a fork is selected. This means up to this point all changes
-            // are made in a single `SubRoutine`, for example after a `setup` that only created
-            // different forks. Since the `Subroutine` is valid for all forks until the
+            // are made in a single `JournaledState`, for example after a `setup` that only created
+            // different forks. Since the `JournaledState` is valid for all forks until the
             // first fork is selected, we need to update it for all forks and use it as init state
             // for all future forks
-            trace!("recording fork init subroutine");
-            self.fork_init_subroutine = subroutine.clone();
-            for fork in self.inner.forks_iter_mut() {
-                fork.subroutine = self.fork_init_subroutine.clone();
-            }
+            trace!("recording fork init journaled_state");
+            self.fork_init_journaled_state = active_journaled_state.clone();
+            self.prepare_init_journal_state()?;
         }
 
-        // update the shared state and track
-        let mut fork = self.inner.take_fork(idx);
-        self.update_fork_db(subroutine, &mut fork);
-        self.inner.set_fork(idx, fork);
+        {
+            // update the shared state and track
+            let mut fork = self.inner.take_fork(idx);
+
+            // since all forks handle their state separately, the depth can drift
+            // this is a handover where the target fork starts at the same depth where it was
+            // selected. This ensures that there are no gaps in depth which would
+            // otherwise cause issues with the tracer
+            fork.journaled_state.depth = active_journaled_state.depth;
+
+            // another edge case where a fork is created and selected during setup with not
+            // necessarily the same caller as for the test, however we must always
+            // ensure that fork's state contains the current sender
+            let caller = env.tx.caller;
+            if !fork.journaled_state.state.contains_key(&caller) {
+                let caller_account = active_journaled_state
+                    .state
+                    .get(&env.tx.caller)
+                    .map(|acc| acc.info.clone())
+                    .unwrap_or_default();
+
+                if !fork.db.accounts.contains_key(&caller) {
+                    // update the caller account which is required by the evm
+                    fork.db.insert_account_info(caller, caller_account.clone());
+                }
+                fork.journaled_state.state.insert(caller, caller_account.into());
+            }
+
+            self.update_fork_db(active_journaled_state, &mut fork);
+
+            // insert the fork back
+            self.inner.set_fork(idx, fork);
+        }
 
         self.active_fork_ids = Some((id, idx));
         // update the environment accordingly
         update_current_env_with_fork_env(env, fork_env);
+
         Ok(())
     }
 
@@ -651,7 +987,7 @@ impl DatabaseExt for Backend {
         id: Option<LocalForkId>,
         block_number: U256,
         env: &mut Env,
-        subroutine: &mut SubRoutine,
+        journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
         trace!(?id, ?block_number, "roll fork");
         let id = self.ensure_fork(id)?;
@@ -667,18 +1003,46 @@ impl DatabaseExt for Backend {
                 // forks are selected `select_fork`
                 update_current_env_with_fork_env(env, fork_env);
 
-                // we also need to update the subroutine right away, this has essentially the same
-                // effect as selecting (`select_fork`) by discarding non-persistent storage from the
-                // subroutine. This which will reset cached state from the previous block
-                let persitent_addrs = self.inner.persistent_accounts.clone();
+                // we also need to update the journaled_state right away, this has essentially the
+                // same effect as selecting (`select_fork`) by discarding
+                // non-persistent storage from the journaled_state. This which will
+                // reset cached state from the previous block
+                let mut persistent_addrs = self.inner.persistent_accounts.clone();
+                // we also want to copy the caller state here
+                persistent_addrs.extend(self.caller_address());
+
                 let active = self.inner.get_fork_mut(active_idx);
-                active.subroutine = self.fork_init_subroutine.clone();
-                for addr in persitent_addrs {
-                    clone_subroutine_data(addr, subroutine, &mut active.subroutine);
+                active.journaled_state = self.fork_init_journaled_state.clone();
+                active.journaled_state.depth = journaled_state.depth;
+                for addr in persistent_addrs {
+                    merge_journaled_state_data(addr, journaled_state, &mut active.journaled_state);
                 }
-                *subroutine = active.subroutine.clone();
+                *journaled_state = active.journaled_state.clone();
             }
         }
+        Ok(())
+    }
+
+    fn roll_fork_to_transaction(
+        &mut self,
+        id: Option<LocalForkId>,
+        transaction: H256,
+        env: &mut Env,
+        journaled_state: &mut JournaledState,
+    ) -> eyre::Result<()> {
+        trace!(?id, ?transaction, "roll fork to transaction");
+        let id = self.ensure_fork(id)?;
+
+        let (fork_block, tx_block) = self.get_block_numbers_for_transaction(id, transaction)?;
+
+        // roll the fork to the transaction's block or latest if it's pending
+        self.roll_fork(Some(id), fork_block.as_u64().into(), env, journaled_state)?;
+
+        // replay all transactions that came before
+        let mut env = env.clone();
+        env.block.number = tx_block.as_u64().into();
+        self.replay_until(id, env, transaction)?;
+
         Ok(())
     }
 
@@ -707,21 +1071,26 @@ impl DatabaseExt for Backend {
     fn diagnose_revert(
         &self,
         callee: Address,
-        _subroutine: &SubRoutine,
+        journaled_state: &JournaledState,
     ) -> Option<RevertDiagnostic> {
         let active_id = self.active_fork_id()?;
         let active_fork = self.active_fork()?;
-        if !active_fork.is_contract(callee) {
+        if !active_fork.is_contract(callee) && !is_contract_in_state(journaled_state, callee) {
             // no contract for `callee` available on current fork, check if available on other forks
             let mut available_on = Vec::new();
             for (id, fork) in self.inner.forks_iter().filter(|(id, _)| *id != active_id) {
+                trace!(?id, address=?callee, "checking if account exists");
                 if fork.is_contract(callee) {
                     available_on.push(id);
                 }
             }
 
             return if available_on.is_empty() {
-                Some(RevertDiagnostic::ContractDoesNotExist { contract: callee, active: active_id })
+                Some(RevertDiagnostic::ContractDoesNotExist {
+                    contract: callee,
+                    active: active_id,
+                    persistent: self.is_persistent(&callee),
+                })
             } else {
                 // likely user error: called a contract that's not available on active fork but is
                 // present other forks
@@ -748,72 +1117,89 @@ impl DatabaseExt for Backend {
         trace!(?account, "add persistent account");
         self.inner.persistent_accounts.insert(account)
     }
+
+    fn allow_cheatcode_access(&mut self, account: Address) -> bool {
+        trace!(?account, "allow cheatcode access");
+        self.inner.cheatcode_access_accounts.insert(account)
+    }
+
+    fn revoke_cheatcode_access(&mut self, account: Address) -> bool {
+        trace!(?account, "revoke cheatcode access");
+        self.inner.cheatcode_access_accounts.remove(&account)
+    }
+
+    fn has_cheatcode_access(&self, account: Address) -> bool {
+        self.inner.cheatcode_access_accounts.contains(&account)
+    }
 }
 
 impl DatabaseRef for Backend {
-    fn basic(&self, address: H160) -> AccountInfo {
+    type Error = DatabaseError;
+
+    fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         if let Some(db) = self.active_fork_db() {
             db.basic(address)
         } else {
-            self.mem_db.basic(address)
+            Ok(self.mem_db.basic(address)?)
         }
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> Bytecode {
+    fn code_by_hash(&self, code_hash: H256) -> Result<Bytecode, Self::Error> {
         if let Some(db) = self.active_fork_db() {
             db.code_by_hash(code_hash)
         } else {
-            self.mem_db.code_by_hash(code_hash)
+            Ok(self.mem_db.code_by_hash(code_hash)?)
         }
     }
 
-    fn storage(&self, address: H160, index: U256) -> U256 {
+    fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
         if let Some(db) = self.active_fork_db() {
             DatabaseRef::storage(db, address, index)
         } else {
-            DatabaseRef::storage(&self.mem_db, address, index)
+            Ok(DatabaseRef::storage(&self.mem_db, address, index)?)
         }
     }
 
-    fn block_hash(&self, number: U256) -> H256 {
+    fn block_hash(&self, number: U256) -> Result<H256, Self::Error> {
         if let Some(db) = self.active_fork_db() {
             db.block_hash(number)
         } else {
-            self.mem_db.block_hash(number)
+            Ok(self.mem_db.block_hash(number)?)
         }
     }
 }
 
 impl<'a> DatabaseRef for &'a mut Backend {
-    fn basic(&self, address: H160) -> AccountInfo {
+    type Error = DatabaseError;
+    fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         if let Some(db) = self.active_fork_db() {
             DatabaseRef::basic(db, address)
         } else {
-            DatabaseRef::basic(&self.mem_db, address)
+            Ok(DatabaseRef::basic(&self.mem_db, address)?)
         }
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> Bytecode {
+    fn code_by_hash(&self, code_hash: H256) -> Result<Bytecode, Self::Error> {
         if let Some(db) = self.active_fork_db() {
             DatabaseRef::code_by_hash(db, code_hash)
         } else {
-            DatabaseRef::code_by_hash(&self.mem_db, code_hash)
+            Ok(DatabaseRef::code_by_hash(&self.mem_db, code_hash)?)
         }
     }
 
-    fn storage(&self, address: H160, index: U256) -> U256 {
+    fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
         if let Some(db) = self.active_fork_db() {
             DatabaseRef::storage(db, address, index)
         } else {
-            DatabaseRef::storage(&self.mem_db, address, index)
+            Ok(DatabaseRef::storage(&self.mem_db, address, index)?)
         }
     }
 
-    fn block_hash(&self, number: U256) -> H256 {
+    fn block_hash(&self, number: U256) -> Result<H256, Self::Error> {
         if let Some(db) = self.active_fork_db() {
             DatabaseRef::block_hash(db, number)
         } else {
-            DatabaseRef::block_hash(&self.mem_db, number)
+            Ok(DatabaseRef::block_hash(&self.mem_db, number)?)
         }
     }
 }
@@ -829,35 +1215,36 @@ impl DatabaseCommit for Backend {
 }
 
 impl Database for Backend {
-    fn basic(&mut self, address: H160) -> AccountInfo {
+    type Error = DatabaseError;
+    fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         if let Some(db) = self.active_fork_db_mut() {
             db.basic(address)
         } else {
-            self.mem_db.basic(address)
+            Ok(self.mem_db.basic(address)?)
         }
     }
 
-    fn code_by_hash(&mut self, code_hash: H256) -> Bytecode {
+    fn code_by_hash(&mut self, code_hash: H256) -> Result<Bytecode, Self::Error> {
         if let Some(db) = self.active_fork_db_mut() {
             db.code_by_hash(code_hash)
         } else {
-            self.mem_db.code_by_hash(code_hash)
+            Ok(self.mem_db.code_by_hash(code_hash)?)
         }
     }
 
-    fn storage(&mut self, address: H160, index: U256) -> U256 {
+    fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
         if let Some(db) = self.active_fork_db_mut() {
             Database::storage(db, address, index)
         } else {
-            Database::storage(&mut self.mem_db, address, index)
+            Ok(Database::storage(&mut self.mem_db, address, index)?)
         }
     }
 
-    fn block_hash(&mut self, number: U256) -> H256 {
+    fn block_hash(&mut self, number: U256) -> Result<H256, Self::Error> {
         if let Some(db) = self.active_fork_db_mut() {
             db.block_hash(number)
         } else {
-            self.mem_db.block_hash(number)
+            Ok(self.mem_db.block_hash(number)?)
         }
     }
 }
@@ -866,7 +1253,7 @@ impl Database for Backend {
 #[derive(Debug, Clone)]
 pub enum BackendDatabaseSnapshot {
     /// Simple in-memory [revm::Database]
-    InMemory(InMemoryDB),
+    InMemory(FoundryEvmInMemoryDB),
     /// Contains the entire forking mode database
     Forked(LocalForkId, ForkId, ForkLookupIndex, Box<Fork>),
 }
@@ -875,7 +1262,7 @@ pub enum BackendDatabaseSnapshot {
 #[derive(Debug, Clone)]
 pub struct Fork {
     db: ForkDB,
-    subroutine: SubRoutine,
+    journaled_state: JournaledState,
 }
 
 // === impl Fork ===
@@ -883,23 +1270,23 @@ pub struct Fork {
 impl Fork {
     /// Returns true if the account is a contract
     pub fn is_contract(&self, acc: Address) -> bool {
-        self.db.basic(acc).code_hash != KECCAK_EMPTY ||
-            self.subroutine
-                .state
-                .get(&acc)
-                .map(|acc| acc.info.code_hash != KECCAK_EMPTY)
-                .unwrap_or_default()
+        if let Ok(Some(acc)) = self.db.basic(acc) {
+            if acc.code_hash != KECCAK_EMPTY {
+                return true
+            }
+        }
+        is_contract_in_state(&self.journaled_state, acc)
     }
 }
 
 /// Container type for various Backend related data
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct BackendInner {
     /// Stores the `ForkId` of the fork the `Backend` launched with from the start.
     ///
     /// In other words if [`Backend::spawn()`] was called with a `CreateFork` command, to launch
-    /// directly in fork mode, this holds the corresponding `ForkId` of this fork.
-    pub launched_with_fork: Option<ForkId>,
+    /// directly in fork mode, this holds the corresponding fork identifier of this fork.
+    pub launched_with_fork: Option<(ForkId, LocalForkId, ForkLookupIndex)>,
     /// This tracks numeric fork ids and the `ForkId` used by the handler.
     ///
     /// This is necessary, because there can be multiple `Backends` associated with a single
@@ -926,10 +1313,10 @@ pub struct BackendInner {
     /// failed. When a snapshot is reverted, it reverts the state of the evm, but we still want
     /// to know if there was an `assert` that failed after the snapshot was taken so that we can
     /// check if the test function passed all asserts even across snapshots. When a snapshot is
-    /// reverted we get the _current_ `revm::Subroutine` which contains the state that we can check
-    /// if the `_failed` variable is set,
+    /// reverted we get the _current_ `revm::JournaledState` which contains the state that we can
+    /// check if the `_failed` variable is set,
     /// additionally
-    pub has_failure_snapshot: bool,
+    pub has_snapshot_failure: bool,
     /// Tracks the address of a Test contract
     ///
     /// This address can be used to inspect the state of the contract when a test is being
@@ -945,6 +1332,10 @@ pub struct BackendInner {
     ///
     /// See also [`clone_data()`]
     pub persistent_accounts: HashSet<Address>,
+    /// The configured precompile spec id
+    pub precompile_id: revm::precompiles::SpecId,
+    /// All accounts that are allowed to execute cheatcodes
+    pub cheatcode_access_accounts: HashSet<Address>,
 }
 
 // === impl BackendInner ===
@@ -963,18 +1354,36 @@ impl BackendInner {
             .ok_or_else(|| eyre::eyre!("No matching fork found for {}", id))
     }
 
-    /// Returns the underlying
+    pub fn ensure_fork_index_by_local_id(&self, id: LocalForkId) -> eyre::Result<ForkLookupIndex> {
+        self.ensure_fork_index(self.ensure_fork_id(id)?)
+    }
+
+    /// Returns the underlying fork mapped to the index
     #[track_caller]
     fn get_fork(&self, idx: ForkLookupIndex) -> &Fork {
         debug_assert!(idx < self.forks.len(), "fork lookup index must exist");
         self.forks[idx].as_ref().unwrap()
     }
 
-    /// Returns the underlying
+    /// Returns the underlying fork mapped to the index
     #[track_caller]
     fn get_fork_mut(&mut self, idx: ForkLookupIndex) -> &mut Fork {
         debug_assert!(idx < self.forks.len(), "fork lookup index must exist");
         self.forks[idx].as_mut().unwrap()
+    }
+
+    /// Returns the underlying fork corresponding to the id
+    #[track_caller]
+    fn get_fork_by_id_mut(&mut self, id: LocalForkId) -> eyre::Result<&mut Fork> {
+        let idx = self.ensure_fork_index_by_local_id(id)?;
+        Ok(self.get_fork_mut(idx))
+    }
+
+    /// Returns the underlying fork corresponding to the id
+    #[track_caller]
+    fn get_fork_by_id(&self, id: LocalForkId) -> eyre::Result<&Fork> {
+        let idx = self.ensure_fork_index_by_local_id(id)?;
+        Ok(self.get_fork(idx))
     }
 
     /// Removes the fork
@@ -1018,13 +1427,13 @@ impl BackendInner {
         id: LocalForkId,
         fork_id: ForkId,
         db: ForkDB,
-        subroutine: SubRoutine,
+        journaled_state: JournaledState,
     ) -> ForkLookupIndex {
         let idx = self.forks.len();
         self.issued_local_fork_ids.insert(id, fork_id.clone());
         self.created_forks.insert(fork_id, idx);
 
-        let fork = Fork { db, subroutine };
+        let fork = Fork { db, journaled_state };
         self.forks.push(Some(fork));
         idx
     }
@@ -1042,7 +1451,7 @@ impl BackendInner {
             // we initialize a _new_ `ForkDB` but keep the state of persistent accounts
             let mut new_db = ForkDB::new(backend);
             for addr in self.persistent_accounts.iter().copied() {
-                clone_db_account_data(addr, &active.db, &mut new_db);
+                merge_db_account_data(addr, &active.db, &mut new_db);
             }
             active.db = new_db;
         }
@@ -1059,13 +1468,13 @@ impl BackendInner {
         &mut self,
         fork_id: ForkId,
         db: ForkDB,
-        subroutine: SubRoutine,
+        journaled_state: JournaledState,
     ) -> (LocalForkId, ForkLookupIndex) {
         let idx = self.forks.len();
         self.created_forks.insert(fork_id.clone(), idx);
         let id = self.next_id();
         self.issued_local_fork_ids.insert(id, fork_id);
-        let fork = Fork { db, subroutine };
+        let fork = Fork { db, journaled_state };
         self.forks.push(Some(fork));
         (id, idx)
     }
@@ -1085,6 +1494,40 @@ impl BackendInner {
     pub fn is_empty(&self) -> bool {
         self.issued_local_fork_ids.is_empty()
     }
+
+    pub fn precompiles(&self) -> &'static Precompiles {
+        Precompiles::new(self.precompile_id)
+    }
+
+    /// Returns a new, empty, `JournaledState` with set precompiles
+    pub fn new_journaled_state(&self) -> JournaledState {
+        JournaledState::new(self.precompiles().len())
+    }
+}
+
+impl Default for BackendInner {
+    fn default() -> Self {
+        Self {
+            launched_with_fork: None,
+            issued_local_fork_ids: Default::default(),
+            created_forks: Default::default(),
+            forks: vec![],
+            snapshots: Default::default(),
+            has_snapshot_failure: false,
+            test_contract_address: None,
+            caller: None,
+            next_fork_id: Default::default(),
+            persistent_accounts: Default::default(),
+            precompile_id: revm::precompiles::SpecId::LATEST,
+            // grant the cheatcode,default test and caller address access to execute cheatcodes
+            // itself
+            cheatcode_access_accounts: HashSet::from([
+                CHEATCODE_ADDRESS,
+                TEST_CONTRACT_ADDRESS,
+                CALLER,
+            ]),
+        }
+    }
 }
 
 /// This updates the currently used env with the fork's environment
@@ -1094,43 +1537,72 @@ pub(crate) fn update_current_env_with_fork_env(current: &mut Env, fork: Env) {
 }
 
 /// Clones the data of the given `accounts` from the `active` database into the `fork_db`
-/// This includes the data held in storage (`CacheDB`) and kept in the `Subroutine`
-pub(crate) fn clone_data<ExtDB: DatabaseRef>(
+/// This includes the data held in storage (`CacheDB`) and kept in the `JournaledState`.
+pub(crate) fn merge_account_data<ExtDB: DatabaseRef>(
     accounts: impl IntoIterator<Item = Address>,
     active: &CacheDB<ExtDB>,
-    active_subroutine: &mut SubRoutine,
-    fork: &mut Fork,
+    active_journaled_state: &mut JournaledState,
+    target_fork: &mut Fork,
 ) {
     for addr in accounts.into_iter() {
-        clone_db_account_data(addr, active, &mut fork.db);
-        clone_subroutine_data(addr, active_subroutine, &mut fork.subroutine);
+        merge_db_account_data(addr, active, &mut target_fork.db);
+        merge_journaled_state_data(addr, active_journaled_state, &mut target_fork.journaled_state);
     }
 
-    *active_subroutine = fork.subroutine.clone();
+    // need to mock empty journal entries in case the current checkpoint is higher than the existing
+    // journal entries
+    while active_journaled_state.journal.len() > target_fork.journaled_state.journal.len() {
+        target_fork.journaled_state.journal.push(Default::default());
+    }
+
+    *active_journaled_state = target_fork.journaled_state.clone();
 }
 
-/// Clones the account data from the `active_subroutine`  into the `fork_subroutine`
-fn clone_subroutine_data(
+/// Clones the account data from the `active_journaled_state`  into the `fork_journaled_state`
+fn merge_journaled_state_data(
     addr: Address,
-    active_subroutine: &mut SubRoutine,
-    fork_subroutine: &mut SubRoutine,
+    active_journaled_state: &JournaledState,
+    fork_journaled_state: &mut JournaledState,
 ) {
-    if let Some(acc) = active_subroutine.state.get(&addr).cloned() {
-        trace!(?addr, "updating subroutine account data");
-        fork_subroutine.state.insert(addr, acc);
+    if let Some(mut acc) = active_journaled_state.state.get(&addr).cloned() {
+        trace!(?addr, "updating journaled_state account data");
+        if let Some(fork_account) = fork_journaled_state.state.get_mut(&addr) {
+            // This will merge the fork's tracked storage with active storage and update values
+            fork_account.storage.extend(std::mem::take(&mut acc.storage));
+            // swap them so we can insert the account as whole in the next step
+            std::mem::swap(&mut fork_account.storage, &mut acc.storage);
+        }
+        fork_journaled_state.state.insert(addr, acc);
     }
 }
 
 /// Clones the account data from the `active` db into the `ForkDB`
-fn clone_db_account_data<ExtDB: DatabaseRef>(
+fn merge_db_account_data<ExtDB: DatabaseRef>(
     addr: Address,
     active: &CacheDB<ExtDB>,
     fork_db: &mut ForkDB,
 ) {
-    trace!(?addr, "cloning database data");
-    let acc = active.accounts.get(&addr).cloned().unwrap_or_default();
+    trace!(?addr, "merging database data");
+    let mut acc = active.accounts.get(&addr).cloned().unwrap_or_default();
     if let Some(code) = active.contracts.get(&acc.info.code_hash).cloned() {
         fork_db.contracts.insert(acc.info.code_hash, code);
     }
+
+    if let Some(fork_account) = fork_db.accounts.get_mut(&addr) {
+        // This will merge the fork's tracked storage with active storage and update values
+        fork_account.storage.extend(std::mem::take(&mut acc.storage));
+        // swap them so we can insert the account as whole in the next step
+        std::mem::swap(&mut fork_account.storage, &mut acc.storage);
+    }
+
     fork_db.accounts.insert(addr, acc);
+}
+
+/// Returns true of the address is a contract
+fn is_contract_in_state(journaled_state: &JournaledState, acc: Address) -> bool {
+    journaled_state
+        .state
+        .get(&acc)
+        .map(|acc| acc.info.code_hash != KECCAK_EMPTY)
+        .unwrap_or_default()
 }

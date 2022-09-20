@@ -1,14 +1,12 @@
-use crate::cmd::{unwrap_contracts, LoadConfig};
-use std::sync::Arc;
-
+use super::{sequence::ScriptSequence, *};
+use crate::cmd::{forge::script::verify::VerifyBundle, LoadConfig};
 use ethers::{
-    prelude::{artifacts::CompactContractBytecode, ArtifactId, Middleware, Signer},
+    prelude::{Middleware, Signer},
     types::{transaction::eip2718::TypedTransaction, U256},
 };
-use foundry_common::get_http_provider;
+use foundry_common::{contracts::flatten_contracts, get_http_provider};
+use std::sync::Arc;
 use tracing::trace;
-
-use super::{sequence::ScriptSequence, *};
 
 impl ScriptArgs {
     /// Executes the script
@@ -26,9 +24,8 @@ impl ScriptArgs {
         };
 
         self.maybe_load_private_key(&mut script_config)?;
-        self.maybe_load_etherscan_api_key(&mut script_config)?;
 
-        if let Some(fork_url) = script_config.evm_opts.fork_url.as_ref() {
+        if let Some(ref fork_url) = script_config.evm_opts.fork_url {
             // when forking, override the sender's nonce to the onchain value
             script_config.sender_nonce =
                 foundry_utils::next_nonce(script_config.evm_opts.sender, fork_url, None).await?
@@ -37,30 +34,66 @@ impl ScriptArgs {
             script_config.config.libraries = Default::default();
         }
 
-        let (build_output, mut verify) = self.compile(&script_config)?;
+        let build_output = self.compile(&script_config)?;
+
+        let mut verify = VerifyBundle::new(
+            &build_output.project,
+            &script_config.config,
+            flatten_contracts(&build_output.highlevel_known_contracts, false),
+            self.retry.clone(),
+            self.verifier.clone(),
+        );
+
+        let BuildOutput {
+            project,
+            target,
+            contract,
+            mut highlevel_known_contracts,
+            predeploy_libraries,
+            known_contracts: default_known_contracts,
+            sources,
+            mut libraries,
+        } = build_output;
+
+        // Execute once with default sender.
+        let sender = script_config.evm_opts.sender;
+        let mut result =
+            self.execute(&mut script_config, contract, sender, &predeploy_libraries).await?;
 
         if self.resume || (self.verify && !self.broadcast) {
             let fork_url = self
                 .evm_opts
                 .fork_url
-                .as_ref()
-                .expect("You must provide an RPC URL (see --fork-url).")
-                .clone();
+                .clone()
+                .ok_or_else(|| eyre::eyre!("You must provide an RPC URL (see --fork-url)."))?;
 
             let provider = Arc::new(get_http_provider(&fork_url));
             let chain = provider.get_chainid().await?.as_u64();
 
-            let mut deployment_sequence = ScriptSequence::load(
+            verify.set_chain(&script_config.config, chain.into());
+
+            let broadcasted = self.broadcast || self.resume;
+            let mut deployment_sequence = match ScriptSequence::load(
                 &script_config.config,
                 &self.sig,
-                &build_output.target,
+                &target,
                 chain,
-            )?;
+                broadcasted,
+            ) {
+                Ok(seq) => seq,
+                // If the script was simulated, but there was no attempt to broadcast yet,
+                // try to read the script sequence from the `dry-run/` folder
+                Err(_) if broadcasted => {
+                    ScriptSequence::load(&script_config.config, &self.sig, &target, chain, false)?
+                }
+                Err(err) => eyre::bail!(err),
+            };
 
             receipts::wait_for_pending(provider, &mut deployment_sequence).await?;
 
             if self.resume {
-                self.send_transactions(&mut deployment_sequence, &fork_url).await?;
+                self.send_transactions(&mut deployment_sequence, &fork_url, result.script_wallets)
+                    .await?;
             }
 
             if self.verify {
@@ -68,35 +101,19 @@ impl ScriptArgs {
                 // the contracts with them, since their mapping is not included in the solc cache
                 // files.
                 let BuildOutput { highlevel_known_contracts, .. } = self.link(
-                    build_output.project,
-                    build_output.known_contracts,
+                    project,
+                    default_known_contracts,
                     Libraries::parse(&deployment_sequence.libraries)?,
                     script_config.config.sender, // irrelevant, since we're not creating any
                     U256::zero(),                // irrelevant, since we're not creating any
                 )?;
 
-                verify.known_contracts = unwrap_contracts(&highlevel_known_contracts, false);
+                verify.known_contracts = flatten_contracts(&highlevel_known_contracts, false);
 
                 deployment_sequence.verify_contracts(verify, chain).await?;
             }
         } else {
-            let BuildOutput {
-                project,
-                target,
-                contract,
-                mut highlevel_known_contracts,
-                predeploy_libraries,
-                known_contracts: default_known_contracts,
-                sources,
-                mut libraries,
-            } = build_output;
-
-            let known_contracts = unwrap_contracts(&highlevel_known_contracts, true);
-
-            // Execute once with default sender.
-            let sender = script_config.evm_opts.sender;
-            let mut result =
-                self.execute(&mut script_config, contract, sender, &predeploy_libraries).await?;
+            let known_contracts = flatten_contracts(&highlevel_known_contracts, true);
 
             let mut decoder = self.decode_traces(&script_config, &mut result, &known_contracts)?;
 
@@ -122,7 +139,7 @@ impl ScriptArgs {
                     decoder = self.decode_traces(
                         &script_config,
                         &mut result,
-                        &unwrap_contracts(&highlevel_known_contracts, true),
+                        &flatten_contracts(&highlevel_known_contracts, true),
                     )?;
                 } else {
                     // Add predeploy libraries to the list of broadcastable transactions.
@@ -146,12 +163,9 @@ impl ScriptArgs {
                     self.show_traces(&script_config, &decoder, &mut result).await?;
                 }
 
-                verify.known_contracts = unwrap_contracts(&highlevel_known_contracts, false);
+                verify.known_contracts = flatten_contracts(&highlevel_known_contracts, false);
 
-                self.check_contract_sizes(
-                    result.transactions.as_ref(),
-                    &highlevel_known_contracts,
-                )?;
+                self.check_contract_sizes(&result, &highlevel_known_contracts)?;
 
                 self.handle_broadcastable_transactions(
                     &target,
@@ -175,8 +189,8 @@ impl ScriptArgs {
         script_config: &mut ScriptConfig,
         new_sender: Address,
         first_run_result: &mut ScriptResult,
-        default_known_contracts: BTreeMap<ArtifactId, CompactContractBytecode>,
-    ) -> eyre::Result<(Libraries, BTreeMap<ArtifactId, ContractBytecodeSome>)> {
+        default_known_contracts: ArtifactContracts,
+    ) -> eyre::Result<(Libraries, ArtifactContracts<ContractBytecodeSome>)> {
         // if we had a new sender that requires relinking, we need to
         // get the nonce mainnet for accurate addresses for predeploy libs
         let nonce = foundry_utils::next_nonce(
@@ -228,16 +242,6 @@ impl ScriptArgs {
             if wallets.len() == 1 {
                 script_config.evm_opts.sender = wallets.get(0).unwrap().address()
             }
-        }
-        Ok(())
-    }
-
-    fn maybe_load_etherscan_api_key(
-        &mut self,
-        script_config: &mut ScriptConfig,
-    ) -> eyre::Result<()> {
-        if let Some(ref etherscan_api_key) = self.etherscan_api_key {
-            script_config.config.etherscan_api_key = Some(etherscan_api_key.clone());
         }
         Ok(())
     }

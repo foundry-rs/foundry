@@ -1,38 +1,38 @@
-use super::{NestedValue, ScriptResult, VerifyBundle};
+use super::NestedValue;
 use crate::cmd::forge::{
     init::get_commit_hash,
-    verify::{self, VerifyArgs},
+    script::{
+        transaction::{wrapper, AdditionalContract, TransactionWithMetadata},
+        verify::VerifyBundle,
+    },
+    verify::provider::VerificationProviderType,
 };
-use cast::{executor::inspector::DEFAULT_CREATE2_DEPLOYER, CallKind};
 use ethers::{
-    abi::{Abi, Address},
-    prelude::{artifacts::Libraries, ArtifactId, NameOrAddress, TransactionReceipt, TxHash},
-    solc::info::ContractInfo,
+    abi::Address,
+    prelude::{artifacts::Libraries, ArtifactId, TransactionReceipt, TxHash},
     types::transaction::eip2718::TypedTransaction,
 };
 use eyre::ContextCompat;
-use forge::trace::CallTraceDecoder;
-use foundry_common::fs;
+use foundry_common::{fs, SELECTOR_LEN};
 use foundry_config::Config;
-use yansi::Paint;
-
-use crate::cmd::forge::verify::VerificationProviderType;
-
-use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{HashMap, VecDeque},
     io::BufWriter,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 use tracing::trace;
+use yansi::Paint;
+
+const DRY_RUN_DIR: &str = "dry-run";
 
 /// Helper that saves the transactions sequence and its state on which transactions have been
 /// broadcasted
 #[derive(Deserialize, Serialize, Clone)]
 pub struct ScriptSequence {
     pub transactions: VecDeque<TransactionWithMetadata>,
+    #[serde(serialize_with = "wrapper::serialize_receipts")]
     pub receipts: Vec<TransactionReceipt>,
     pub libraries: Vec<String>,
     pub pending: Vec<TxHash>,
@@ -50,8 +50,9 @@ impl ScriptSequence {
         target: &ArtifactId,
         config: &Config,
         chain_id: u64,
+        broadcasted: bool,
     ) -> eyre::Result<Self> {
-        let path = ScriptSequence::get_path(&config.broadcast, sig, target, chain_id)?;
+        let path = ScriptSequence::get_path(&config.broadcast, sig, target, chain_id, broadcasted)?;
         let commit = get_commit_hash(&config.__root.0);
 
         Ok(ScriptSequence {
@@ -69,14 +70,15 @@ impl ScriptSequence {
         })
     }
 
-    /// Loads The sequence for the correspondng json file
+    /// Loads The sequence for the corresponding json file
     pub fn load(
         config: &Config,
         sig: &str,
         target: &ArtifactId,
         chain_id: u64,
+        broadcasted: bool,
     ) -> eyre::Result<Self> {
-        let path = ScriptSequence::get_path(&config.broadcast, sig, target, chain_id)?;
+        let path = ScriptSequence::get_path(&config.broadcast, sig, target, chain_id, broadcasted)?;
         Ok(ethers::solc::utils::read_json_file(path)?)
     }
 
@@ -139,16 +141,21 @@ impl ScriptSequence {
         sig: &str,
         target: &ArtifactId,
         chain_id: u64,
+        broadcasted: bool,
     ) -> eyre::Result<PathBuf> {
         let mut out = out.to_path_buf();
-
         let target_fname = target.source.file_name().wrap_err("No filename.")?;
         out.push(target_fname);
         out.push(chain_id.to_string());
+        if !broadcasted {
+            out.push(DRY_RUN_DIR);
+        }
 
         fs::create_dir_all(&out)?;
 
-        let filename = sig.split_once('(').wrap_err("Sig is invalid.")?.0.to_owned();
+        // TODO: ideally we want the name of the function here if sig is calldata
+        let filename = sig_to_file_name(sig);
+
         out.push(format!("{filename}-latest.json"));
         Ok(out)
     }
@@ -157,8 +164,10 @@ impl ScriptSequence {
     /// created contract on etherscan.
     pub async fn verify_contracts(&mut self, verify: VerifyBundle, chain: u64) -> eyre::Result<()> {
         trace!(?chain, "verifying {} contracts", verify.known_contracts.len());
-        if verify.etherscan_key.is_some() {
-            let mut future_verifications = vec![];
+        if verify.etherscan_key.is_some() ||
+            verify.verifier.verifier != VerificationProviderType::Etherscan
+        {
+            let mut future_verifications = Vec::with_capacity(self.receipts.len());
             let mut unverifiable_contracts = vec![];
 
             // Make sure the receipts have the right order first.
@@ -177,8 +186,7 @@ impl ScriptSequence {
                 if let (Some(address), Some(data)) =
                     (receipt.contract_address, tx.typed_tx().data())
                 {
-                    match get_verify_args(address, offset, &data.0, &verify, chain, &self.libraries)
-                    {
+                    match verify.get_verify_args(address, offset, &data.0, &self.libraries) {
                         Some(verify) => future_verifications.push(verify.run()),
                         None => unverifiable_contracts.push(address),
                     };
@@ -186,7 +194,7 @@ impl ScriptSequence {
 
                 // Verify potential contracts created during the transaction execution
                 for AdditionalContract { address, init_code, .. } in &tx.additional_contracts {
-                    match get_verify_args(*address, 0, init_code, &verify, chain, &self.libraries) {
+                    match verify.get_verify_args(*address, 0, init_code, &self.libraries) {
                         Some(verify) => future_verifications.push(verify.run()),
                         None => unverifiable_contracts.push(*address),
                     };
@@ -241,61 +249,6 @@ impl ScriptSequence {
     }
 }
 
-/// Given a verify bundle and contract details, it tries to generate a valid `VerifyArgs` to use
-/// against the `contract_address`.
-fn get_verify_args(
-    contract_address: Address,
-    create2_offset: usize,
-    data: &[u8],
-    verify: &VerifyBundle,
-    chain: u64,
-    libraries: &[String],
-) -> Option<VerifyArgs> {
-    for (artifact, (_contract, bytecode)) in verify.known_contracts.iter() {
-        // If it's a CREATE2, the tx.data comes with a 32-byte salt in the beginning
-        // of the transaction
-        if data.split_at(create2_offset).1.starts_with(bytecode) {
-            let constructor_args = data.split_at(create2_offset + bytecode.len()).1.to_vec();
-
-            let contract = ContractInfo {
-                path: Some(
-                    artifact.source.to_str().expect("There should be an artifact.").to_string(),
-                ),
-                name: artifact.name.clone(),
-            };
-
-            // We strip the build metadadata information, since it can lead to
-            // etherscan not identifying it correctly. eg:
-            // `v0.8.10+commit.fc410830.Linux.gcc` != `v0.8.10+commit.fc410830`
-            let version = Version::new(
-                artifact.version.major,
-                artifact.version.minor,
-                artifact.version.patch,
-            );
-
-            let verify = verify::VerifyArgs {
-                address: contract_address,
-                contract,
-                compiler_version: Some(version.to_string()),
-                constructor_args: Some(hex::encode(&constructor_args)),
-                num_of_optimizations: verify.num_of_optimizations,
-                chain: chain.into(),
-                etherscan_key: verify.etherscan_key.clone(),
-                flatten: false,
-                force: false,
-                watch: true,
-                retry: verify.retry.clone(),
-                libraries: libraries.to_vec(),
-                root: None,
-                verifier: VerificationProviderType::Etherscan,
-            };
-
-            return Some(verify)
-        }
-    }
-    None
-}
-
 impl Drop for ScriptSequence {
     fn drop(&mut self) {
         self.sort_receipts();
@@ -303,175 +256,38 @@ impl Drop for ScriptSequence {
     }
 }
 
-#[derive(Deserialize, Serialize, Clone, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct AdditionalContract {
-    #[serde(rename = "transactionType")]
-    pub opcode: CallKind,
-    pub address: Address,
-    #[serde(with = "hex")]
-    pub init_code: Vec<u8>,
+/// Converts the `sig` argument into the corresponding file path.
+///
+/// This accepts either the signature of the function or the raw calldata
+
+fn sig_to_file_name(sig: &str) -> String {
+    if let Some((name, _)) = sig.split_once('(') {
+        // strip until call argument parenthesis
+        return name.to_string()
+    }
+    // assume calldata if `sig` is hex
+    if let Ok(calldata) = hex::decode(sig) {
+        // in which case we return the function signature
+        return hex::encode(&calldata[..SELECTOR_LEN])
+    }
+
+    // return sig as is
+    sig.to_string()
 }
 
-#[derive(Deserialize, Serialize, Clone, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct TransactionWithMetadata {
-    pub hash: Option<TxHash>,
-    #[serde(rename = "transactionType")]
-    pub opcode: CallKind,
-    #[serde(default = "default_string")]
-    pub contract_name: Option<String>,
-    #[serde(default = "default_address")]
-    pub contract_address: Option<Address>,
-    #[serde(default = "default_string")]
-    pub function: Option<String>,
-    #[serde(default = "default_vec_of_strings")]
-    pub arguments: Option<Vec<String>>,
-    pub transaction: TypedTransaction,
-    pub additional_contracts: Vec<AdditionalContract>,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-fn default_string() -> Option<String> {
-    Some("".to_owned())
-}
-
-fn default_address() -> Option<Address> {
-    Some(Address::from_low_u64_be(0))
-}
-
-fn default_vec_of_strings() -> Option<Vec<String>> {
-    Some(vec![])
-}
-
-impl TransactionWithMetadata {
-    pub fn from_typed_transaction(transaction: TypedTransaction) -> Self {
-        Self { transaction, ..Default::default() }
-    }
-
-    pub fn new(
-        transaction: TypedTransaction,
-        result: &ScriptResult,
-        local_contracts: &BTreeMap<Address, (String, &Abi)>,
-        decoder: &CallTraceDecoder,
-        additional_contracts: Vec<AdditionalContract>,
-    ) -> eyre::Result<Self> {
-        let mut metadata = Self { transaction, ..Default::default() };
-
-        // Specify if any contract was directly created with this transaction
-        if let Some(NameOrAddress::Address(to)) = metadata.transaction.to().cloned() {
-            if to == DEFAULT_CREATE2_DEPLOYER {
-                metadata.set_create(true, Address::from_slice(&result.returned), local_contracts)
-            } else {
-                metadata.set_call(to, local_contracts, decoder)?;
-            }
-        } else if metadata.transaction.to().is_none() {
-            metadata.set_create(
-                false,
-                result.address.expect("There should be a contract address."),
-                local_contracts,
-            );
-        }
-
-        // Add the additional contracts created in this transaction, so we can verify them later.
-        if let Some(tx_address) = metadata.contract_address {
-            metadata.additional_contracts = additional_contracts
-                .into_iter()
-                .filter_map(|contract| {
-                    // Filter out the transaction contract repeated init_code.
-                    if contract.address != tx_address {
-                        Some(contract)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-        }
-
-        Ok(metadata)
-    }
-
-    fn set_create(
-        &mut self,
-        is_create2: bool,
-        address: Address,
-        contracts: &BTreeMap<Address, (String, &Abi)>,
-    ) {
-        if is_create2 {
-            self.opcode = CallKind::Create2;
-        } else {
-            self.opcode = CallKind::Create;
-        }
-
-        self.contract_name = contracts.get(&address).map(|(name, _)| name.clone());
-        self.contract_address = Some(address);
-    }
-
-    fn set_call(
-        &mut self,
-        target: Address,
-        local_contracts: &BTreeMap<Address, (String, &Abi)>,
-        decoder: &CallTraceDecoder,
-    ) -> eyre::Result<()> {
-        self.opcode = CallKind::Create;
-
-        if let Some(data) = self.transaction.data() {
-            if data.0.len() >= 4 {
-                if let Some((contract_name, abi)) = local_contracts.get(&target) {
-                    // This CALL is made to a local contract.
-
-                    self.contract_name = Some(contract_name.clone());
-                    if let Some(function) =
-                        abi.functions().find(|function| function.short_signature() == data.0[0..4])
-                    {
-                        self.function = Some(function.signature());
-                        self.arguments =
-                            Some(function.decode_input(&data.0[4..]).map(|tokens| {
-                                tokens.iter().map(|token| format!("{token}")).collect()
-                            })?);
-                    }
-                } else {
-                    // This CALL is made to an external contract. We can only decode it, if it has
-                    // been verified and identified by etherscan.
-
-                    if let Some(Some(function)) =
-                        decoder.functions.get(&data.0[0..4]).map(|functions| functions.first())
-                    {
-                        self.contract_name = decoder.contracts.get(&target).cloned();
-
-                        self.function = Some(function.signature());
-                        self.arguments =
-                            Some(function.decode_input(&data.0[4..]).map(|tokens| {
-                                tokens.iter().map(|token| format!("{token}")).collect()
-                            })?);
-                    }
-                }
-                self.contract_address = Some(target);
-            }
-        }
-        Ok(())
-    }
-
-    pub fn set_tx(&mut self, tx: TypedTransaction) {
-        self.transaction = tx;
-    }
-
-    pub fn change_type(&mut self, is_legacy: bool) {
-        self.transaction = if is_legacy {
-            TypedTransaction::Legacy(self.transaction.clone().into())
-        } else {
-            TypedTransaction::Eip1559(self.transaction.clone().into())
-        };
-    }
-
-    pub fn typed_tx(&self) -> &TypedTransaction {
-        &self.transaction
-    }
-
-    pub fn typed_tx_mut(&mut self) -> &mut TypedTransaction {
-        &mut self.transaction
-    }
-
-    pub fn is_create2(&self) -> bool {
-        self.opcode == CallKind::Create2
+    #[test]
+    fn can_convert_sig() {
+        assert_eq!(sig_to_file_name("run()").as_str(), "run");
+        assert_eq!(
+            sig_to_file_name(
+                "522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266"
+            )
+            .as_str(),
+            "522bb704"
+        );
     }
 }

@@ -11,7 +11,7 @@ use foundry_config::Config;
 use foundry_utils::Retry;
 use std::{fs, path::PathBuf};
 
-const VERIFICATION_PROVIDERS: &'static [&'static str] = &["etherscan", "sourcify"];
+const VERIFICATION_PROVIDERS: &[&str] = &["etherscan", "sourcify"];
 
 /// Adds a `Unique` contract to the source directory of the project that can be imported as
 /// `import {Unique} from "./unique.sol";`
@@ -164,7 +164,8 @@ fn verify_flag_on_create_on_chain(
                 .args(info.create_args())
                 .arg("--verify")
                 .arg(contract_path)
-                .arg(format!("--verification-provider {}", verifier));
+                .arg("--verifier")
+                .arg(verifier);
             parse_verification_result(&mut cmd, 1).expect("Failed to verify check")
         }
     }
@@ -237,7 +238,8 @@ forgetest!(
                     ])
                     .arg("--verify")
                     .arg(contract_path)
-                    .arg(format!("--verification-provider {}", verifier));
+                    .arg("--verifier")
+                    .arg(verifier);
 
                 parse_verification_result(&mut cmd, 1).expect("Failed to verify check")
             }
@@ -354,15 +356,21 @@ forgetest_async!(
 
         let output = cmd.unchecked_output();
         let stdout = String::from_utf8_lossy(&output.stdout);
-
-        assert!(
-            stdout.contains("All (7) contracts were verified!"),
-            "{}",
-            format!(
-                "Failed to get verification, stdout: {}, stderr: {}",
-                stdout,
-                String::from_utf8_lossy(&output.stderr)
-            )
+        let err = format!(
+            "Failed to get verification, stdout: {}, stderr: {}",
+            stdout,
+            String::from_utf8_lossy(&output.stderr)
         );
+
+        // ensure we're sending all 5 transactions
+        assert!(stdout.contains("Sending transactions [0 - 4]"), "{}", err);
+
+        // ensure all transactions are successful
+        assert_eq!(5, stdout.matches('✅').count(), "{}", err);
+
+        // ensure verified all deployments
+        // Note: the 5th tx creates contracts internally, which are little flaky at times because
+        // the goerli etherscan indexer can take a long time to index these contracts
+        assert!(stdout.matches("Contract successfully verified").count() >= 4, "{}", err);
     }
 );

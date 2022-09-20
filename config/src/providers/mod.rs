@@ -1,10 +1,12 @@
-use crate::{Config, Warning};
+use crate::{Config, Warning, DEPRECATIONS};
 use figment::{
     value::{Dict, Map, Value},
     Error, Figment, Metadata, Profile, Provider,
 };
 
-/// Generate warnings for unknown sections
+pub mod remappings;
+
+/// Generate warnings for unknown sections and deprecated keys
 pub struct WarningsProvider<P> {
     provider: P,
     profile: Profile,
@@ -38,6 +40,7 @@ impl<P> WarningsProvider<P> {
 impl<P: Provider> WarningsProvider<P> {
     pub fn collect_warnings(&self) -> Result<Vec<Warning>, Error> {
         let mut out = self.old_warnings.clone()?;
+        // add warning for unknown sections
         out.extend(
             self.provider
                 .data()
@@ -50,6 +53,21 @@ impl<P: Provider> WarningsProvider<P> {
                 .map(|unknown_section| {
                     let source = self.provider.metadata().source.map(|s| s.to_string());
                     Warning::UnknownSection { unknown_section: unknown_section.clone(), source }
+                }),
+        );
+        // add warning for deprecated keys
+        out.extend(
+            self.provider
+                .data()
+                .unwrap_or_default()
+                .iter()
+                .flat_map(|(profile, dict)| {
+                    dict.keys().map(move |key| format!("{}.{}", profile, key))
+                })
+                .filter(|k| DEPRECATIONS.contains_key(k))
+                .map(|deprecated_key| Warning::DeprecatedKey {
+                    old: deprecated_key.clone(),
+                    new: DEPRECATIONS.get(&deprecated_key).unwrap().to_string(),
                 }),
         );
         Ok(out)
@@ -73,6 +91,44 @@ impl<P: Provider> Provider for WarningsProvider<P> {
             )]),
         )]))
     }
+    fn profile(&self) -> Option<Profile> {
+        Some(self.profile.clone())
+    }
+}
+
+/// Extracts the profile from the `profile` key and sets unset values according to the fallback
+/// provider
+pub struct FallbackProfileProvider<P> {
+    provider: P,
+    profile: Profile,
+    fallback: Profile,
+}
+
+impl<P> FallbackProfileProvider<P> {
+    pub fn new(provider: P, profile: impl Into<Profile>, fallback: impl Into<Profile>) -> Self {
+        FallbackProfileProvider { provider, profile: profile.into(), fallback: fallback.into() }
+    }
+}
+
+impl<P: Provider> Provider for FallbackProfileProvider<P> {
+    fn metadata(&self) -> Metadata {
+        self.provider.metadata()
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        if let Some(fallback) = self.provider.data()?.get(&self.fallback) {
+            let mut inner = self.provider.data()?.remove(&self.profile).unwrap_or_default();
+            for (k, v) in fallback.iter() {
+                if !inner.contains_key(k) {
+                    inner.insert(k.to_owned(), v.clone());
+                }
+            }
+            Ok(self.profile.collect(inner))
+        } else {
+            self.provider.data()
+        }
+    }
+
     fn profile(&self) -> Option<Profile> {
         Some(self.profile.clone())
     }

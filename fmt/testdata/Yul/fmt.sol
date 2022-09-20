@@ -112,7 +112,9 @@ contract Yul {
                 not(
                     eq(
                         sload(gByte(caller(), 0x6)),
-                        sload(0x3212643709c27e33a5245e3719959b915fa892ed21a95cefee2f1fb126ea6810)
+                        sload(
+                            0x3212643709c27e33a5245e3719959b915fa892ed21a95cefee2f1fb126ea6810
+                        )
                     )
                 ),
                 eq(chainid(), 0x1)

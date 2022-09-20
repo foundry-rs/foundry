@@ -1,10 +1,11 @@
-use super::{util, Cheatcodes};
+use super::Cheatcodes;
 use crate::{
     abi::HEVMCalls,
+    error,
     executor::{backend::DatabaseExt, fork::CreateFork},
 };
 use bytes::Bytes;
-use ethers::{abi::AbiEncode, prelude::U256};
+use ethers::{abi::AbiEncode, prelude::U256, types::H256};
 use revm::EVMData;
 
 /// Handles fork related cheatcodes
@@ -21,6 +22,10 @@ pub fn apply<DB: DatabaseExt>(
             create_fork(state, data, fork.0.clone(), Some(fork.1.as_u64()))
                 .map(|id| id.encode().into())
         }
+        HEVMCalls::CreateFork2(fork) => {
+            create_fork_at_transaction(state, data, fork.0.clone(), fork.1.into())
+                .map(|id| id.encode().into())
+        }
         HEVMCalls::CreateSelectFork0(fork) => {
             create_select_fork(state, data, fork.0.clone(), None).map(|id| id.encode().into())
         }
@@ -28,7 +33,11 @@ pub fn apply<DB: DatabaseExt>(
             create_select_fork(state, data, fork.0.clone(), Some(fork.1.as_u64()))
                 .map(|id| id.encode().into())
         }
-        HEVMCalls::SelectFork(fork_id) => select_fork(data, fork_id.0),
+        HEVMCalls::CreateSelectFork2(fork) => {
+            create_select_fork_at_transaction(state, data, fork.0.clone(), fork.1.into())
+                .map(|id| id.encode().into())
+        }
+        HEVMCalls::SelectFork(fork_id) => select_fork(state, data, fork_id.0),
         HEVMCalls::MakePersistent0(acc) => {
             data.db.add_persistent_account(acc.0);
             Ok(Default::default())
@@ -61,20 +70,25 @@ pub fn apply<DB: DatabaseExt>(
             .db
             .active_fork_id()
             .map(|id| id.encode().into())
-            .ok_or_else(|| util::encode_error("No active fork")),
+            .ok_or_else(|| error::encode_error("No active fork")),
         HEVMCalls::RollFork0(fork) => {
             let block_number = fork.0;
             data.db
-                .roll_fork(None, block_number, data.env, &mut data.subroutine)
+                .roll_fork(None, block_number, data.env, &mut data.journaled_state)
                 .map(|_| Default::default())
-                .map_err(util::encode_error)
+                .map_err(error::encode_error)
         }
-        HEVMCalls::RollFork1(fork) => {
+        HEVMCalls::RollFork1(fork) => data
+            .db
+            .roll_fork_to_transaction(None, fork.0.into(), data.env, &mut data.journaled_state)
+            .map(|_| Default::default())
+            .map_err(error::encode_error),
+        HEVMCalls::RollFork2(fork) => {
             let block_number = fork.1;
             data.db
-                .roll_fork(Some(fork.0), block_number, data.env, &mut data.subroutine)
+                .roll_fork(Some(fork.0), block_number, data.env, &mut data.journaled_state)
                 .map(|_| Default::default())
-                .map_err(util::encode_error)
+                .map_err(error::encode_error)
         }
         HEVMCalls::RpcUrl(rpc) => state.config.get_rpc_url(&rpc.0).map(|url| url.encode().into()),
         HEVMCalls::RpcUrls(_) => {
@@ -89,6 +103,10 @@ pub fn apply<DB: DatabaseExt>(
             }
             Ok(urls.encode().into())
         }
+        HEVMCalls::AllowCheatcodes(addr) => {
+            data.db.allow_cheatcode_access(addr.0);
+            Ok(Default::default())
+        }
         _ => return None,
     };
 
@@ -96,11 +114,18 @@ pub fn apply<DB: DatabaseExt>(
 }
 
 /// Selects the given fork id
-fn select_fork<DB: DatabaseExt>(data: &mut EVMData<DB>, fork_id: U256) -> Result<Bytes, Bytes> {
+fn select_fork<DB: DatabaseExt>(
+    state: &mut Cheatcodes,
+    data: &mut EVMData<DB>,
+    fork_id: U256,
+) -> Result<Bytes, Bytes> {
+    // No need to correct since the sender's nonce does not get incremented when selecting a fork.
+    state.corrected_nonce = true;
+
     data.db
-        .select_fork(fork_id, data.env, &mut data.subroutine)
+        .select_fork(fork_id, data.env, &mut data.journaled_state)
         .map(|_| Default::default())
-        .map_err(util::encode_error)
+        .map_err(error::encode_error)
 }
 
 /// Creates and then also selects the new fork
@@ -110,8 +135,13 @@ fn create_select_fork<DB: DatabaseExt>(
     url_or_alias: String,
     block: Option<u64>,
 ) -> Result<U256, Bytes> {
+    // No need to correct since the sender's nonce does not get incremented when selecting a fork.
+    state.corrected_nonce = true;
+
     let fork = create_fork_request(state, url_or_alias, block, data)?;
-    data.db.create_select_fork(fork, data.env, &mut data.subroutine).map_err(util::encode_error)
+    data.db
+        .create_select_fork(fork, data.env, &mut data.journaled_state)
+        .map_err(error::encode_error)
 }
 
 /// Creates a new fork
@@ -122,7 +152,35 @@ fn create_fork<DB: DatabaseExt>(
     block: Option<u64>,
 ) -> Result<U256, Bytes> {
     let fork = create_fork_request(state, url_or_alias, block, data)?;
-    data.db.create_fork(fork, &data.subroutine).map_err(util::encode_error)
+    data.db.create_fork(fork, &data.journaled_state).map_err(error::encode_error)
+}
+/// Creates and then also selects the new fork at the given transaction
+fn create_select_fork_at_transaction<DB: DatabaseExt>(
+    state: &mut Cheatcodes,
+    data: &mut EVMData<'_, DB>,
+    url_or_alias: String,
+    transaction: H256,
+) -> Result<U256, Bytes> {
+    // No need to correct since the sender's nonce does not get incremented when selecting a fork.
+    state.corrected_nonce = true;
+
+    let fork = create_fork_request(state, url_or_alias, None, data)?;
+    data.db
+        .create_select_fork_at_transaction(fork, data.env, &mut data.journaled_state, transaction)
+        .map_err(error::encode_error)
+}
+
+/// Creates a new fork at the given transaction
+fn create_fork_at_transaction<DB: DatabaseExt>(
+    state: &mut Cheatcodes,
+    data: &mut EVMData<'_, DB>,
+    url_or_alias: String,
+    transaction: H256,
+) -> Result<U256, Bytes> {
+    let fork = create_fork_request(state, url_or_alias, None, data)?;
+    data.db
+        .create_fork_at_transaction(fork, &data.journaled_state, transaction)
+        .map_err(error::encode_error)
 }
 
 /// Creates the request object for a new fork request

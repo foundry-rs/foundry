@@ -1,13 +1,14 @@
 //! Commonly used helpers to construct `Provider`s
 
-use crate::REQUEST_TIMEOUT;
+use crate::{ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT};
 use ethers_core::types::Chain;
 use ethers_providers::{
     is_local_endpoint, Http, HttpRateLimitRetryPolicy, Middleware, Provider, RetryClient,
-    DEFAULT_LOCAL_POLL_INTERVAL,
+    RetryClientBuilder, DEFAULT_LOCAL_POLL_INTERVAL,
 };
+use eyre::WrapErr;
 use reqwest::{IntoUrl, Url};
-use std::time::Duration;
+use std::{borrow::Cow, time::Duration};
 
 /// Helper type alias for a retry provider
 pub type RetryProvider = Provider<RetryClient<Http>>;
@@ -39,12 +40,15 @@ pub fn try_get_http_provider(builder: impl Into<ProviderBuilder>) -> eyre::Resul
 /// Helper type to construct a `RetryProvider`
 #[derive(Debug)]
 pub struct ProviderBuilder {
-    // Note: this is a result so we can easily chain builder calls
+    // Note: this is a result, so we can easily chain builder calls
     url: reqwest::Result<Url>,
     chain: Chain,
     max_retry: u32,
+    timeout_retry: u32,
     initial_backoff: u64,
     timeout: Duration,
+    /// available CUPS
+    compute_units_per_second: u64,
 }
 
 // === impl ProviderBuilder ===
@@ -52,12 +56,22 @@ pub struct ProviderBuilder {
 impl ProviderBuilder {
     /// Creates a new builder instance
     pub fn new(url: impl IntoUrl) -> Self {
+        let url_str = url.as_str();
+        if url_str.starts_with("localhost:") {
+            // invalid url: non-prefixed URL scheme is not allowed, so we prepend the default http
+            // prefix
+            return Self::new(format!("http://{}", url_str))
+        }
+
         Self {
             url: url.into_url(),
             chain: Chain::Mainnet,
             max_retry: 100,
+            timeout_retry: 5,
             initial_backoff: 100,
             timeout: REQUEST_TIMEOUT,
+            // alchemy max cpus <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
+            compute_units_per_second: ALCHEMY_FREE_TIER_CUPS,
         }
     }
 
@@ -86,9 +100,23 @@ impl ProviderBuilder {
         self
     }
 
+    /// How often to retry a failed request due to connection issues
+    pub fn timeout_retry(mut self, timeout_retry: u32) -> Self {
+        self.timeout_retry = timeout_retry;
+        self
+    }
+
     /// The starting backoff delay to use after the first failed request
     pub fn initial_backoff(mut self, initial_backoff: u64) -> Self {
         self.initial_backoff = initial_backoff;
+        self
+    }
+
+    /// Sets the number of assumed available compute units per second
+    ///
+    /// See also, <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
+    pub fn compute_units_per_second(mut self, compute_units_per_second: u64) -> Self {
+        self.compute_units_per_second = compute_units_per_second;
         self
     }
 
@@ -113,20 +141,30 @@ impl ProviderBuilder {
 
     /// Constructs the `RetryProvider` taking all configs into account
     pub fn build(self) -> eyre::Result<RetryProvider> {
-        let ProviderBuilder { url, chain, max_retry, initial_backoff, timeout } = self;
-        let url = url?;
+        let ProviderBuilder {
+            url,
+            chain,
+            max_retry,
+            timeout_retry,
+            initial_backoff,
+            timeout,
+            compute_units_per_second,
+        } = self;
+        let url = url.wrap_err("Invalid provider url")?;
 
         let client = reqwest::Client::builder().timeout(timeout).build()?;
         let is_local = is_local_endpoint(url.as_str());
 
         let provider = Http::new_with_client(url, client);
 
-        let mut provider = Provider::new(RetryClient::new(
-            provider,
-            Box::new(HttpRateLimitRetryPolicy::default()),
-            max_retry,
-            initial_backoff,
-        ));
+        let mut provider = Provider::new(
+            RetryClientBuilder::default()
+                .initial_backoff(Duration::from_millis(initial_backoff))
+                .rate_limit_retries(max_retry)
+                .timeout_retries(timeout_retry)
+                .compute_units_per_second(compute_units_per_second)
+                .build(provider, Box::new(HttpRateLimitRetryPolicy::default())),
+        );
 
         if is_local {
             provider = provider.interval(DEFAULT_LOCAL_POLL_INTERVAL);
@@ -152,5 +190,25 @@ impl<'a> From<&'a String> for ProviderBuilder {
 impl From<String> for ProviderBuilder {
     fn from(url: String) -> Self {
         url.as_str().into()
+    }
+}
+
+impl<'a> From<Cow<'a, str>> for ProviderBuilder {
+    fn from(url: Cow<'a, str>) -> Self {
+        url.as_ref().into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_auto_correct_missing_prefix() {
+        let builder = ProviderBuilder::new("localhost:8545");
+        assert!(builder.url.is_ok());
+
+        let url = builder.url.unwrap();
+        assert_eq!(url, Url::parse("http://localhost:8545").unwrap());
     }
 }

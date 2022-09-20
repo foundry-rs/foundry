@@ -9,19 +9,26 @@ use ethers::{
 };
 use forge::revm::KECCAK_EMPTY;
 use foundry_evm::{
-    executor::{backend::MemDb, DatabaseRef},
-    revm::{db::CacheDB, Bytecode, Database, DatabaseCommit},
+    executor::{
+        backend::{snapshot::StateSnapshot, DatabaseError, DatabaseResult, MemDb},
+        DatabaseRef,
+    },
+    revm::{
+        db::{CacheDB, DbAccount},
+        Bytecode, Database, DatabaseCommit,
+    },
     HashMap,
 };
 use hash_db::HashDB;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 /// Type alias for the `HashDB` representation of the Database
 pub type AsHashDB = Box<dyn HashDB<KeccakHasher, Vec<u8>>>;
 
 /// Helper trait get access to the data in `HashDb` form
-#[auto_impl::auto_impl(&, Box)]
-pub trait MaybeHashDatabase: DatabaseRef {
+#[auto_impl::auto_impl(Box)]
+pub trait MaybeHashDatabase: DatabaseRef<Error = DatabaseError> {
     /// Return the DB as read-only hashdb and the root key
     fn maybe_as_hash_db(&self) -> Option<(AsHashDB, H256)> {
         None
@@ -30,30 +37,64 @@ pub trait MaybeHashDatabase: DatabaseRef {
     fn maybe_account_db(&self, _addr: Address) -> Option<(AsHashDB, H256)> {
         None
     }
+
+    /// Clear the state and move it into a new `StateSnapshot`
+    fn clear_into_snapshot(&mut self) -> StateSnapshot;
+
+    /// Reverses `clear_into_snapshot` by initializing the db's state with the snapshot
+    fn init_from_snapshot(&mut self, snapshot: StateSnapshot);
+}
+
+impl<'a, T: 'a + MaybeHashDatabase + ?Sized> MaybeHashDatabase for &'a T
+where
+    &'a T: DatabaseRef<Error = DatabaseError>,
+{
+    fn maybe_as_hash_db(&self) -> Option<(AsHashDB, H256)> {
+        T::maybe_as_hash_db(self)
+    }
+    fn maybe_account_db(&self, addr: Address) -> Option<(AsHashDB, H256)> {
+        T::maybe_account_db(self, addr)
+    }
+
+    fn clear_into_snapshot(&mut self) -> StateSnapshot {
+        unimplemented!()
+    }
+
+    fn init_from_snapshot(&mut self, _snapshot: StateSnapshot) {}
 }
 
 /// This bundles all required revm traits
-pub trait Db: DatabaseRef + Database + DatabaseCommit + MaybeHashDatabase + Send + Sync {
+pub trait Db:
+    DatabaseRef<Error = DatabaseError>
+    + Database<Error = DatabaseError>
+    + DatabaseCommit
+    + MaybeHashDatabase
+    + fmt::Debug
+    + Send
+    + Sync
+{
     /// Inserts an account
     fn insert_account(&mut self, address: Address, account: AccountInfo);
 
     /// Sets the nonce of the given address
-    fn set_nonce(&mut self, address: Address, nonce: u64) {
-        let mut info = self.basic(address);
+    fn set_nonce(&mut self, address: Address, nonce: u64) -> DatabaseResult<()> {
+        let mut info = self.basic(address)?.unwrap_or_default();
         info.nonce = nonce;
         self.insert_account(address, info);
+        Ok(())
     }
 
     /// Sets the balance of the given address
-    fn set_balance(&mut self, address: Address, balance: U256) {
-        let mut info = self.basic(address);
+    fn set_balance(&mut self, address: Address, balance: U256) -> DatabaseResult<()> {
+        let mut info = self.basic(address)?.unwrap_or_default();
         info.balance = balance;
         self.insert_account(address, info);
+        Ok(())
     }
 
     /// Sets the balance of the given address
-    fn set_code(&mut self, address: Address, code: Bytes) {
-        let mut info = self.basic(address);
+    fn set_code(&mut self, address: Address, code: Bytes) -> DatabaseResult<()> {
+        let mut info = self.basic(address)?.unwrap_or_default();
         let code_hash = if code.as_ref().is_empty() {
             KECCAK_EMPTY
         } else {
@@ -62,19 +103,20 @@ pub trait Db: DatabaseRef + Database + DatabaseCommit + MaybeHashDatabase + Send
         info.code_hash = code_hash;
         info.code = Some(Bytecode::new_raw(code.0).to_checked());
         self.insert_account(address, info);
+        Ok(())
     }
 
     /// Sets the balance of the given address
-    fn set_storage_at(&mut self, address: Address, slot: U256, val: U256);
+    fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) -> DatabaseResult<()>;
 
     /// inserts a blockhash for the given number
     fn insert_block_hash(&mut self, number: U256, hash: H256);
 
     /// Write all chain data to serialized bytes buffer
-    fn dump_state(&self) -> Option<SerializableState>;
+    fn dump_state(&self) -> DatabaseResult<Option<SerializableState>>;
 
     /// Deserialize and add all chain data to the backend storage
-    fn load_state(&mut self, buf: SerializableState) -> bool;
+    fn load_state(&mut self, buf: SerializableState) -> DatabaseResult<bool>;
 
     /// Creates a new snapshot
     fn snapshot(&mut self) -> U256;
@@ -97,12 +139,12 @@ pub trait Db: DatabaseRef + Database + DatabaseCommit + MaybeHashDatabase + Send
 /// This is useful to create blocks without actually writing to the `Db`, but rather in the cache of
 /// the `CacheDB` see also
 /// [Backend::pending_block()](crate::eth::backend::mem::Backend::pending_block())
-impl<T: DatabaseRef + Send + Sync + Clone> Db for CacheDB<T> {
+impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> Db for CacheDB<T> {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
         self.insert_account_info(address, account)
     }
 
-    fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) {
+    fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) -> DatabaseResult<()> {
         self.insert_account_storage(address, slot, val)
     }
 
@@ -110,12 +152,12 @@ impl<T: DatabaseRef + Send + Sync + Clone> Db for CacheDB<T> {
         self.block_hashes.insert(number, hash);
     }
 
-    fn dump_state(&self) -> Option<SerializableState> {
-        None
+    fn dump_state(&self) -> DatabaseResult<Option<SerializableState>> {
+        Ok(None)
     }
 
-    fn load_state(&mut self, _buf: SerializableState) -> bool {
-        false
+    fn load_state(&mut self, _buf: SerializableState) -> DatabaseResult<bool> {
+        Ok(false)
     }
 
     fn snapshot(&mut self) -> U256 {
@@ -131,14 +173,47 @@ impl<T: DatabaseRef + Send + Sync + Clone> Db for CacheDB<T> {
     }
 }
 
-impl<T: DatabaseRef> MaybeHashDatabase for CacheDB<T> {
+impl<T: DatabaseRef<Error = DatabaseError>> MaybeHashDatabase for CacheDB<T> {
     fn maybe_as_hash_db(&self) -> Option<(AsHashDB, H256)> {
         Some(trie_hash_db(&self.accounts))
+    }
+    fn clear_into_snapshot(&mut self) -> StateSnapshot {
+        let db_accounts = std::mem::take(&mut self.accounts);
+        let mut accounts = HashMap::new();
+        let mut account_storage = HashMap::new();
+
+        for (addr, mut acc) in db_accounts {
+            account_storage.insert(addr, std::mem::take(&mut acc.storage));
+            let mut info = acc.info;
+            info.code = self.contracts.remove(&info.code_hash);
+            accounts.insert(addr, info);
+        }
+        let block_hashes = std::mem::take(&mut self.block_hashes);
+        StateSnapshot { accounts, storage: account_storage, block_hashes }
+    }
+
+    fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
+        let StateSnapshot { accounts, mut storage, block_hashes } = snapshot;
+
+        for (addr, mut acc) in accounts {
+            if let Some(code) = acc.code.take() {
+                self.contracts.insert(acc.code_hash, code);
+            }
+            self.accounts.insert(
+                addr,
+                DbAccount {
+                    info: acc,
+                    storage: storage.remove(&addr).unwrap_or_default(),
+                    ..Default::default()
+                },
+            );
+        }
+        self.block_hashes = block_hashes;
     }
 }
 
 /// Represents a state at certain point
-pub struct StateDb(Box<dyn MaybeHashDatabase + Send + Sync>);
+pub struct StateDb(pub(crate) Box<dyn MaybeHashDatabase + Send + Sync>);
 
 // === impl StateDB ===
 
@@ -149,19 +224,20 @@ impl StateDb {
 }
 
 impl DatabaseRef for StateDb {
-    fn basic(&self, address: H160) -> AccountInfo {
+    type Error = DatabaseError;
+    fn basic(&self, address: H160) -> DatabaseResult<Option<AccountInfo>> {
         self.0.basic(address)
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> Bytecode {
+    fn code_by_hash(&self, code_hash: H256) -> DatabaseResult<Bytecode> {
         self.0.code_by_hash(code_hash)
     }
 
-    fn storage(&self, address: H160, index: U256) -> U256 {
+    fn storage(&self, address: H160, index: U256) -> DatabaseResult<U256> {
         self.0.storage(address, index)
     }
 
-    fn block_hash(&self, number: U256) -> H256 {
+    fn block_hash(&self, number: U256) -> DatabaseResult<H256> {
         self.0.block_hash(number)
     }
 }
@@ -169,6 +245,18 @@ impl DatabaseRef for StateDb {
 impl MaybeHashDatabase for StateDb {
     fn maybe_as_hash_db(&self) -> Option<(AsHashDB, H256)> {
         self.0.maybe_as_hash_db()
+    }
+
+    fn maybe_account_db(&self, addr: Address) -> Option<(AsHashDB, H256)> {
+        self.0.maybe_account_db(addr)
+    }
+
+    fn clear_into_snapshot(&mut self) -> StateSnapshot {
+        self.0.clear_into_snapshot()
+    }
+
+    fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
+        self.0.init_from_snapshot(snapshot)
     }
 }
 

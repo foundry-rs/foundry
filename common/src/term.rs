@@ -1,7 +1,6 @@
 //! terminal utils
-
 use atty::{self, Stream};
-use ethers::solc::{
+use ethers_solc::{
     remappings::Remapping,
     report::{self, BasicStdoutReporter, Reporter, SolcCompilerIoReporter},
     CompilerInput, CompilerOutput, Solc,
@@ -38,6 +37,7 @@ pub struct TermSettings {
 }
 
 impl TermSettings {
+    #[allow(missing_docs)]
     pub fn from_env() -> TermSettings {
         if atty::is(Stream::Stdout) {
             TermSettings { indicate_progress: true }
@@ -47,6 +47,7 @@ impl TermSettings {
     }
 }
 
+#[allow(missing_docs)]
 pub struct Spinner {
     indicator: &'static [&'static str],
     no_progress: bool,
@@ -55,6 +56,7 @@ pub struct Spinner {
 }
 
 #[allow(unused)]
+#[allow(missing_docs)]
 impl Spinner {
     pub fn new(msg: impl Into<String>) -> Self {
         Self::with_indicator(SPINNERS[0], msg)
@@ -231,6 +233,8 @@ pub fn with_spinner_reporter<T>(f: impl FnOnce() -> T) -> T {
     report::with_scoped(&reporter, f)
 }
 
+#[macro_export]
+/// Displays warnings on the cli
 macro_rules! cli_warn {
     ($($arg:tt)*) => {
         eprintln!(
@@ -242,7 +246,7 @@ macro_rules! cli_warn {
     }
 }
 
-pub(crate) use cli_warn;
+pub use cli_warn;
 
 #[cfg(test)]
 mod tests {

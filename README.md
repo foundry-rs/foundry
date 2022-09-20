@@ -123,7 +123,7 @@ More documentation can be found in the [cast package](./cast).
 
 ### Using `foundry.toml`
 
-Foundry is designed to be very configurable. You can configure Foundry using a file called [`foundry.toml`](./config) in the root of your project, or any other parent director. See [config package](./config/README.md#all-options) for all available options.
+Foundry is designed to be very configurable. You can configure Foundry using a file called [`foundry.toml`](./config) in the root of your project, or any other parent directory. See [config package](./config/README.md#all-options) for all available options.
 
 Configuration can be arbitrarily namespaced by profiles. The default profile is named `default` (see ["Default Profile"](./config/README.md#default-profile)).
 

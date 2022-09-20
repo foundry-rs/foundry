@@ -1,12 +1,11 @@
 use crate::{
     cmd::{Cmd, LoadConfig},
-    term::cli_warn,
     utils::FoundryPathExt,
 };
 use clap::{Parser, ValueHint};
 use console::{style, Style};
 use forge_fmt::{format, parse};
-use foundry_common::fs;
+use foundry_common::{fs, term::cli_warn};
 use foundry_config::{impl_figment_convert_basic, Config};
 use rayon::prelude::*;
 use similar::{ChangeTag, TextDiff};
@@ -100,7 +99,7 @@ impl Cmd for FmtArgs {
             .par_iter()
             .map(|input| {
                 let source = match input {
-                    Input::Path(path) => fs::read_to_string(&path)?,
+                    Input::Path(path) => fs::read_to_string(path)?,
                     Input::Stdin(source) => source.to_string()
                 };
 

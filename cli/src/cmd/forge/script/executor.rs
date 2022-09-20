@@ -1,8 +1,12 @@
-use super::{sequence::AdditionalContract, *};
+use super::*;
 use crate::{
     cmd::{
         ensure_clean_constructor,
-        forge::script::{runner::SimulationStage, sequence::TransactionWithMetadata},
+        forge::script::{
+            artifacts::ArtifactInfo,
+            runner::SimulationStage,
+            transaction::{AdditionalContract, TransactionWithMetadata},
+        },
         needs_setup,
     },
     utils,
@@ -55,12 +59,13 @@ impl ScriptArgs {
             let script_result = runner.script(address, calldata)?;
 
             result.success &= script_result.success;
-            result.gas = script_result.gas;
+            result.gas_used = script_result.gas_used;
             result.logs.extend(script_result.logs);
             result.traces.extend(script_result.traces);
             result.debug = script_result.debug;
             result.labeled_addresses.extend(script_result.labeled_addresses);
             result.returned = script_result.returned;
+            result.script_wallets.extend(script_result.script_wallets);
 
             match (&mut result.transactions, script_result.transactions) {
                 (Some(txs), Some(new_txs)) => {
@@ -88,21 +93,27 @@ impl ScriptArgs {
         let mut runner = self
             .prepare_runner(script_config, script_config.evm_opts.sender, SimulationStage::OnChain)
             .await;
-        let mut failed = false;
 
         if script_config.evm_opts.verbosity > 3 {
             println!("==========================");
             println!("Simulated On-chain Traces:\n");
         }
 
-        let address_to_abi: BTreeMap<Address, (String, &Abi)> = decoder
+        let address_to_abi: BTreeMap<Address, ArtifactInfo> = decoder
             .contracts
             .iter()
             .filter_map(|(addr, contract_id)| {
-                let contract_name = utils::get_contract_name(contract_id);
-                if let Ok(Some((_, (abi, _)))) = contracts.find_by_name_or_identifier(contract_name)
+                let contract_name = get_contract_name(contract_id);
+                if let Ok(Some((_, (abi, code)))) =
+                    contracts.find_by_name_or_identifier(contract_name)
                 {
-                    return Some((*addr, (contract_name.to_string(), abi)))
+                    let info = ArtifactInfo {
+                        contract_name: contract_name.to_string(),
+                        contract_id: contract_id.to_string(),
+                        abi,
+                        code,
+                    };
+                    return Some((*addr, info))
                 }
                 None
             })
@@ -130,6 +141,17 @@ impl ScriptArgs {
                         )
                     }
 
+                    if !result.success || script_config.evm_opts.verbosity > 3 {
+                        for (_kind, trace) in &mut result.traces {
+                            decoder.decode(trace).await;
+                            println!("{}", trace);
+                        }
+                    }
+
+                    if !result.success {
+                        eyre::bail!("Simulated execution failed");
+                    }
+
                     let created_contracts = result
                         .traces
                         .iter()
@@ -153,18 +175,7 @@ impl ScriptArgs {
                     }
 
                     // We inflate the gas used by the user specified percentage
-                    tx.gas = Some(U256::from(result.gas * self.gas_estimate_multiplier / 100));
-
-                    if !result.success {
-                        failed = true;
-                    }
-
-                    if script_config.evm_opts.verbosity > 3 {
-                        for (_kind, trace) in &mut result.traces {
-                            decoder.decode(trace).await;
-                            println!("{}", trace);
-                        }
-                    }
+                    tx.gas = Some(U256::from(result.gas_used * self.gas_estimate_multiplier / 100));
 
                     final_txs.push_back(TransactionWithMetadata::new(
                         tx.into(),
@@ -178,11 +189,7 @@ impl ScriptArgs {
             }
         }
 
-        if failed {
-            eyre::bail!("Simulated execution failed")
-        } else {
-            Ok(final_txs)
-        }
+        Ok(final_txs)
     }
 
     /// Creates the Runner that drives script execution

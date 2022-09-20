@@ -67,6 +67,16 @@ fn test_core() {
                 ],
             ),
             ("core/Abstract.t.sol:AbstractTest", vec![("testSomething()", true, None, None, None)]),
+            (
+                "core/FailingTestAfterFailedSetup.t.sol:FailingTestAfterFailedSetupTest",
+                vec![(
+                    "setUp()",
+                    false,
+                    Some("Setup failed: execution error".to_string()),
+                    None,
+                    None,
+                )],
+            ),
         ]),
     );
 }

@@ -3,13 +3,13 @@ use crate::{
         subscription::{SubscriptionId, SubscriptionKind, SubscriptionParams},
         transaction::EthTransactionRequest,
     },
-    types::{EvmMineOptions, Forking, GethDebugTracingOptions, Index},
+    types::{EvmMineOptions, Forking, Index},
 };
 use ethers_core::{
     abi::ethereum_types::H64,
     types::{
         serde_helpers::*, transaction::eip712::TypedData, Address, BlockId, BlockNumber, Bytes,
-        Filter, TxHash, H256, U256,
+        Filter, GethDebugTracingOptions, TxHash, H256, U256,
     },
 };
 use serde::Deserialize;
@@ -19,11 +19,14 @@ pub mod block;
 pub mod proof;
 pub mod receipt;
 pub mod serde_helpers;
+pub mod state;
 pub mod subscription;
 pub mod transaction;
 pub mod trie;
 pub mod utils;
 use serde_helpers::*;
+
+use self::state::StateOverride;
 
 /// Represents ethereum JSON-RPC API
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -117,7 +120,11 @@ pub enum EthRequest {
     EthSendRawTransaction(Bytes),
 
     #[serde(rename = "eth_call")]
-    EthCall(EthTransactionRequest, #[serde(default)] Option<BlockId>),
+    EthCall(
+        EthTransactionRequest,
+        #[serde(default)] Option<BlockId>,
+        #[serde(default)] Option<StateOverride>,
+    ),
 
     #[serde(rename = "eth_createAccessList")]
     EthCreateAccessList(EthTransactionRequest, #[serde(default)] Option<BlockId>),

@@ -58,7 +58,7 @@ impl Cmd for FlattenArgs {
 
         match output {
             Some(output) => {
-                fs::create_dir_all(&output.parent().unwrap())?;
+                fs::create_dir_all(output.parent().unwrap())?;
                 fs::write(&output, flattened)?;
                 println!("Flattened file written at {}", output.display());
             }

@@ -1,8 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
-
+use super::{WalletTrait, WalletType};
 use clap::Parser;
 use ethers::{
     middleware::SignerMiddleware,
@@ -11,12 +7,15 @@ use ethers::{
     types::Address,
 };
 use eyre::{Context, Result};
-
 use foundry_common::RetryProvider;
 use foundry_config::Config;
+use itertools::izip;
 use serde::Serialize;
-
-use super::{wallet::WalletTrait, WalletType};
+use std::{
+    collections::{HashMap, HashSet},
+    iter::repeat,
+    sync::Arc,
+};
 
 macro_rules! get_wallets {
     ($id:ident, [ $($wallets:expr),+ ], $call:expr) => {
@@ -45,6 +44,9 @@ macro_rules! collect_addresses {
     };
 }
 
+/// A macro that initializes multiple wallets
+///
+/// Should be used with a [`MultiWallet`] instance
 macro_rules! create_hw_wallets {
     ($self:ident, $chain_id:ident ,$get_wallet:ident, $wallets:ident) => {
         let mut $wallets = vec![];
@@ -118,15 +120,34 @@ pub struct MultiWallet {
     pub private_key: Option<String>,
 
     #[clap(
-        long = "mnemonic-paths",
+        long = "mnemonics",
+        alias = "mnemonic-paths",
         help_heading = "WALLET OPTIONS - RAW",
-        help = "Use the mnemonic files at the specified paths.",
+        help = "Use the mnemonic phrases or mnemonic files at the specified paths.",
         value_name = "PATHS"
     )]
-    pub mnemonic_paths: Option<Vec<String>>,
+    pub mnemonics: Option<Vec<String>>,
+
+    #[clap(
+        long = "mnemonic-passphrases",
+        help_heading = "WALLET OPTIONS - RAW",
+        help = "Use a BIP39 passphrases for the mnemonic.",
+        value_name = "PASSPHRASE"
+    )]
+    pub mnemonic_passphrases: Option<Vec<String>>,
+
+    #[clap(
+        long = "mnemonic-derivation-paths",
+        alias = "hd-paths",
+        help_heading = "WALLET OPTIONS - RAW",
+        help = "The wallet derivation path. Works with both --mnemonic-path and hardware wallets.",
+        value_name = "PATHS"
+    )]
+    pub hd_paths: Option<Vec<String>>,
 
     #[clap(
         long = "mnemonic-indexes",
+        conflicts_with = "hd-paths",
         help_heading = "WALLET OPTIONS - RAW",
         help = "Use the private key from the given mnemonic index. Used with --mnemonic-paths.",
         default_value = "0",
@@ -169,14 +190,6 @@ pub struct MultiWallet {
     pub trezor: bool,
 
     #[clap(
-        long = "hd-paths",
-        help_heading = "WALLET OPTIONS - HARDWARE WALLET",
-        help = "The derivation path to use with hardware wallets.",
-        value_name = "PATHS"
-    )]
-    pub hd_paths: Option<Vec<String>>,
-
-    #[clap(
         env = "ETH_FROM",
         short = 'a',
         long = "froms",
@@ -196,12 +209,20 @@ impl MultiWallet {
         &self,
         provider: Arc<RetryProvider>,
         mut addresses: HashSet<Address>,
+        script_wallets: Vec<LocalWallet>,
     ) -> Result<HashMap<Address, WalletType>> {
         println!("\n###\nFinding wallets for all the necessary addresses...");
         let chain = provider.get_chainid().await?.as_u64();
 
         let mut local_wallets = HashMap::new();
         let mut unused_wallets = vec![];
+
+        let script_wallets_fn = || -> Result<Option<Vec<LocalWallet>>> {
+            if !script_wallets.is_empty() {
+                return Ok(Some(script_wallets))
+            }
+            Ok(None)
+        };
 
         get_wallets!(
             wallets,
@@ -211,7 +232,8 @@ impl MultiWallet {
                 self.private_keys()?,
                 self.interactives()?,
                 self.mnemonics()?,
-                self.keystores()?
+                self.keystores()?,
+                script_wallets_fn()?
             ],
             for wallet in wallets.into_iter() {
                 let address = wallet.address();
@@ -253,7 +275,7 @@ impl MultiWallet {
         if let Some(private_keys) = &self.private_keys {
             let mut wallets = vec![];
             for private_key in private_keys.iter() {
-                wallets.push(self.get_from_private_key(private_key)?);
+                wallets.push(self.get_from_private_key(private_key.trim())?);
             }
             return Ok(Some(wallets))
         }
@@ -287,12 +309,34 @@ impl MultiWallet {
     }
 
     pub fn mnemonics(&self) -> Result<Option<Vec<LocalWallet>>> {
-        if let (Some(mnemonic_paths), Some(mnemonic_indexes)) =
-            (self.mnemonic_paths.as_ref(), self.mnemonic_indexes.as_ref())
-        {
+        if let Some(ref mnemonics) = self.mnemonics {
             let mut wallets = vec![];
-            for (path, mnemonic_index) in mnemonic_paths.iter().zip(mnemonic_indexes) {
-                wallets.push(self.get_from_mnemonic(path, *mnemonic_index)?)
+            let hd_paths: Vec<_> = if let Some(ref hd_paths) = self.hd_paths {
+                hd_paths.iter().map(Some).collect()
+            } else {
+                repeat(None).take(mnemonics.len()).collect()
+            };
+            let mnemonic_passphrases: Vec<_> =
+                if let Some(ref mnemonic_passphrases) = self.mnemonic_passphrases {
+                    mnemonic_passphrases.iter().map(Some).collect()
+                } else {
+                    repeat(None).take(mnemonics.len()).collect()
+                };
+            let mnemonic_indexes: Vec<_> = if let Some(ref mnemonic_indexes) = self.mnemonic_indexes
+            {
+                mnemonic_indexes.to_vec()
+            } else {
+                repeat(0).take(mnemonics.len()).collect()
+            };
+            for (mnemonic, mnemonic_passphrase, hd_path, mnemonic_index) in
+                izip!(mnemonics, mnemonic_passphrases, hd_paths, mnemonic_indexes)
+            {
+                wallets.push(self.get_from_mnemonic(
+                    mnemonic,
+                    mnemonic_passphrase,
+                    hd_path,
+                    mnemonic_index,
+                )?)
             }
             return Ok(Some(wallets))
         }

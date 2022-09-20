@@ -13,7 +13,7 @@ use foundry_cli_test_utils::{
 };
 use foundry_config::{
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
-    Config, OptimizerDetails, SolcReq,
+    Config, FuzzConfig, InvariantConfig, OptimizerDetails, SolcReq,
 };
 use path_slash::PathBufExt;
 use std::{fs, path::PathBuf, str::FromStr};
@@ -38,6 +38,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         gas_reports_ignore: vec![],
         solc: Some(SolcReq::Local(PathBuf::from("custom-solc"))),
         auto_detect_solc: false,
+        auto_detect_remappings: true,
         offline: true,
         optimizer: false,
         optimizer_runs: 1000,
@@ -57,14 +58,13 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         contract_pattern_inverse: None,
         path_pattern: None,
         path_pattern_inverse: None,
-        fuzz_runs: 1000,
-        fuzz_max_local_rejects: 2000,
-        fuzz_max_global_rejects: 100203,
-        fuzz_seed: Some(1000.into()),
-        invariant_runs: 256,
-        invariant_depth: 15,
-        invariant_fail_on_revert: false,
-        invariant_call_override: false,
+        fuzz: FuzzConfig {
+            runs: 1000,
+            max_test_rejects: 100203,
+            seed: Some(1000.into()),
+            ..Default::default()
+        },
+        invariant: InvariantConfig { runs: 256, ..Default::default() },
         ffi: true,
         sender: "00a329c0648769A73afAc7F9381D08FB43dBEA72".parse().unwrap(),
         tx_origin: "00a329c0648769A73afAc7F9F81E08FB43dBEA72".parse().unwrap(),
@@ -104,6 +104,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         build_info: false,
         build_info_path: None,
         fmt: Default::default(),
+        fs_permissions: Default::default(),
         __non_exhaustive: (),
         __warnings: vec![],
     };
@@ -535,4 +536,20 @@ forgetest!(config_emit_warnings, |prj: TestProject, mut cmd: TestCommand| {
             .count(),
         1
     )
+});
+
+forgetest_init!(can_skip_remappings_auto_detection, |prj: TestProject, mut cmd: TestCommand| {
+    // explicitly set remapping and libraries
+    let config = Config {
+        remappings: vec![Remapping::from_str("remapping/=lib/remapping/").unwrap().into()],
+        auto_detect_remappings: false,
+        ..Default::default()
+    };
+    prj.write_config(config);
+
+    let config = cmd.config();
+
+    // only loads remappings from foundry.toml
+    assert_eq!(config.remappings.len(), 1);
+    assert_eq!("remapping/=lib/remapping/", config.remappings[0].to_string());
 });

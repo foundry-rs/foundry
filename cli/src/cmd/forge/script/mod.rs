@@ -1,36 +1,36 @@
 //! script command
-use crate::{
-    cmd::forge::build::{BuildArgs, ProjectPathsArgs},
-    opts::MultiWallet,
-    utils::{get_contract_name, parse_ether_value},
-};
+use crate::{cmd::forge::build::BuildArgs, opts::MultiWallet, utils::parse_ether_value};
 use cast::{decode, executor::inspector::DEFAULT_CREATE2_DEPLOYER};
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use ethers::{
-    abi::{Abi, Function},
+    abi::{Abi, Function, HumanReadableParser},
     prelude::{
         artifacts::{ContractBytecodeSome, Libraries},
         ArtifactId, Bytes, Project,
     },
+    signers::LocalWallet,
+    solc::contracts::ArtifactContracts,
     types::{
         transaction::eip2718::TypedTransaction, Address, Log, NameOrAddress, TransactionRequest,
         U256,
     },
 };
-use eyre::ContextCompat;
+use eyre::{ContextCompat, WrapErr};
 use forge::{
     debug::DebugArena,
     decode::decode_console_logs,
     executor::{opts::EvmOpts, Backend},
     trace::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
-        CallTraceArena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
+        CallTraceArena, CallTraceDecoder, CallTraceDecoderBuilder, RawOrDecodedCall,
+        RawOrDecodedReturnData, TraceKind,
     },
+    CallKind,
 };
-use foundry_common::{evm::EvmArgs, ContractsByArtifact, CONTRACT_MAX_SIZE};
-use foundry_config::Config;
-use foundry_utils::{encode_args, format_token, IntoFunction};
+use foundry_common::{evm::EvmArgs, ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN};
+use foundry_config::{figment, Config};
+use foundry_utils::{encode_args, format_token};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -40,6 +40,11 @@ use yansi::Paint;
 
 mod build;
 use build::{filter_sources_and_artifacts, BuildOutput};
+use foundry_common::{contracts::get_contract_name, errors::UnlinkedByteCode};
+use foundry_config::figment::{
+    value::{Dict, Map},
+    Metadata, Profile, Provider,
+};
 
 mod runner;
 use runner::ScriptRunner;
@@ -47,15 +52,19 @@ use runner::ScriptRunner;
 mod broadcast;
 use ui::{TUIExitReason, Tui, Ui};
 
+mod artifacts;
 mod cmd;
 mod executor;
 mod receipts;
 mod sequence;
+mod transaction;
+mod verify;
+
 use crate::cmd::retry::RetryArgs;
-pub use sequence::TransactionWithMetadata;
+pub use transaction::TransactionWithMetadata;
 
 // Loads project's figment and merges the build cli arguments into it
-foundry_config::impl_figment_convert!(ScriptArgs, opts, evm_opts);
+foundry_config::merge_impl_figment_convert!(ScriptArgs, opts, evm_opts);
 
 #[derive(Debug, Clone, Parser, Default)]
 pub struct ScriptArgs {
@@ -75,7 +84,13 @@ pub struct ScriptArgs {
     pub target_contract: Option<String>,
 
     /// The signature of the function you want to call in the contract, or raw calldata.
-    #[clap(long, short, default_value = "run()", value_name = "SIGNATURE")]
+    #[clap(
+        long,
+        short,
+        default_value = "run()",
+        value_name = "SIGNATURE",
+        value_parser = foundry_common::clap_helpers::strip_0x_prefix
+    )]
     pub sig: String,
 
     #[clap(
@@ -131,10 +146,12 @@ pub struct ScriptArgs {
 
     #[clap(
         long,
-        help = "If it finds a matching broadcast log, it tries to verify every contract found in the receipts.",
-        requires = "etherscan-api-key"
+        help = "If it finds a matching broadcast log, it tries to verify every contract found in the receipts."
     )]
     pub verify: bool,
+
+    #[clap(flatten)]
+    pub verifier: super::verify::VerifierArgs,
 
     #[clap(long, help = "Output results in JSON format.")]
     pub json: bool,
@@ -161,20 +178,20 @@ impl ScriptArgs {
         result: &mut ScriptResult,
         known_contracts: &ContractsByArtifact,
     ) -> eyre::Result<CallTraceDecoder> {
-        let etherscan_identifier = EtherscanIdentifier::new(
+        let mut etherscan_identifier = EtherscanIdentifier::new(
             &script_config.config,
             script_config.evm_opts.get_remote_chain_id(),
         )?;
 
-        let local_identifier = LocalTraceIdentifier::new(known_contracts);
+        let mut local_identifier = LocalTraceIdentifier::new(known_contracts);
         let mut decoder =
             CallTraceDecoderBuilder::new().with_labels(result.labeled_addresses.clone()).build();
 
         decoder.add_signature_identifier(SignaturesIdentifier::new(Config::foundry_cache_dir())?);
 
         for (_, trace) in &mut result.traces {
-            decoder.identify(trace, &local_identifier);
-            decoder.identify(trace, &etherscan_identifier);
+            decoder.identify(trace, &mut local_identifier);
+            decoder.identify(trace, &mut etherscan_identifier);
         }
         Ok(decoder)
     }
@@ -250,7 +267,7 @@ impl ScriptArgs {
         }
 
         if script_config.evm_opts.fork_url.is_none() {
-            println!("Gas used: {}", result.gas);
+            println!("Gas used: {}", result.gas_used);
         }
 
         if result.success && !result.returned.is_empty() {
@@ -301,7 +318,7 @@ impl ScriptArgs {
         let returns = self.get_returns(script_config, &result.returned)?;
 
         let console_logs = decode_console_logs(&result.logs);
-        let output = JsonResult { logs: console_logs, gas_used: result.gas, returns };
+        let output = JsonResult { logs: console_logs, gas_used: result.gas_used, returns };
         let j = serde_json::to_string(&output)?;
         println!("{}", j);
 
@@ -372,10 +389,14 @@ impl ScriptArgs {
         sources: BTreeMap<u32, String>,
         result: ScriptResult,
         project: Project,
-        highlevel_known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
+        highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
     ) -> eyre::Result<()> {
-        let (sources, artifacts) =
-            filter_sources_and_artifacts(&self.path, sources, highlevel_known_contracts, project)?;
+        let (sources, artifacts) = filter_sources_and_artifacts(
+            &self.path,
+            sources,
+            highlevel_known_contracts.clone(),
+            project,
+        )?;
         let flattened = result
             .debug
             .and_then(|arena| arena.last().map(|arena| arena.flatten(0)))
@@ -386,35 +407,55 @@ impl ScriptArgs {
             .map(|(addr, identifier)| (*addr, get_contract_name(identifier).to_string()))
             .collect();
 
-        let tui = Tui::new(flattened, 0, identified_contracts, artifacts, sources)?;
+        let tui = Tui::new(
+            flattened,
+            0,
+            identified_contracts,
+            artifacts,
+            highlevel_known_contracts
+                .into_iter()
+                .map(|(id, _)| (id.name, sources.clone()))
+                .collect(),
+        )?;
         match tui.start().expect("Failed to start tui") {
             TUIExitReason::CharExit => Ok(()),
         }
     }
 
+    /// Returns the Function and calldata based on the signature
+    ///
+    /// If the `sig` is a valid human-readable function we find the corresponding function in the
+    /// `abi` If the `sig` is valid hex, we assume it's calldata and try to find the
+    /// corresponding function by matching the selector, first 4 bytes in the calldata.
+    ///
+    /// Note: We assume that the `sig` is already stripped of its prefix, See [`ScriptArgs`]
     pub fn get_method_and_calldata(&self, abi: &Abi) -> eyre::Result<(Function, Bytes)> {
-        let (func, data) = match self.sig.strip_prefix("0x") {
-            Some(calldata) => (
+        let (func, data) = if let Ok(func) = HumanReadableParser::parse_function(&self.sig) {
+            (
                 abi.functions()
-                    .find(|&func| {
-                        func.short_signature().to_vec() == hex::decode(calldata).unwrap()[..4]
-                    })
-                    .expect("Function selector not found in the ABI"),
-                hex::decode(calldata).unwrap().into(),
-            ),
-            _ => {
-                let func = IntoFunction::into(self.sig.clone());
-                (
-                    abi.functions()
-                        .find(|&abi_func| abi_func.short_signature() == func.short_signature())
-                        .wrap_err(format!(
-                            "Function `{}` is not implemented in your script.",
-                            self.sig
-                        ))?,
-                    encode_args(&func, &self.args)?.into(),
-                )
-            }
+                    .find(|&abi_func| abi_func.short_signature() == func.short_signature())
+                    .wrap_err(format!(
+                        "Function `{}` is not implemented in your script.",
+                        self.sig
+                    ))?,
+                encode_args(&func, &self.args)?.into(),
+            )
+        } else {
+            let decoded = hex::decode(&self.sig).wrap_err("Invalid hex calldata")?;
+            let selector = &decoded[..SELECTOR_LEN];
+            (
+                abi.functions().find(|&func| selector == &func.short_signature()[..]).ok_or_else(
+                    || {
+                        eyre::eyre!(
+                            "Function selector `{}` not found in the ABI",
+                            hex::encode(selector)
+                        )
+                    },
+                )?,
+                decoded.into(),
+            )
         };
+
         Ok((func.clone(), data))
     }
 
@@ -424,10 +465,55 @@ impl ScriptArgs {
     /// the user.
     fn check_contract_sizes(
         &self,
-        transactions: Option<&VecDeque<TypedTransaction>>,
+        result: &ScriptResult,
         known_contracts: &BTreeMap<ArtifactId, ContractBytecodeSome>,
     ) -> eyre::Result<()> {
-        for (data, to) in transactions.iter().flat_map(|txes| {
+        // (name, &init, &deployed)[]
+        let mut bytecodes: Vec<(String, &[u8], &[u8])> = vec![];
+
+        // From artifacts
+        for (artifact, bytecode) in known_contracts.iter() {
+            if bytecode.bytecode.object.is_unlinked() {
+                return Err(UnlinkedByteCode::Bytecode(artifact.identifier()).into())
+            }
+            let init_code = bytecode.bytecode.object.as_bytes().unwrap();
+            // Ignore abstract contracts
+            if let Some(ref deployed_code) = bytecode.deployed_bytecode.bytecode {
+                if deployed_code.object.is_unlinked() {
+                    return Err(UnlinkedByteCode::DeployedBytecode(artifact.identifier()).into())
+                }
+                let deployed_code = deployed_code.object.as_bytes().unwrap();
+                bytecodes.push((artifact.name.clone(), init_code, deployed_code));
+            }
+        }
+
+        // From traces
+        let create_nodes = result.traces.iter().flat_map(|(_, traces)| {
+            traces
+                .arena
+                .iter()
+                .filter(|node| matches!(node.kind(), CallKind::Create | CallKind::Create2))
+        });
+        let mut unknown_c = 0usize;
+        for node in create_nodes {
+            // Calldata == init code
+            if let RawOrDecodedCall::Raw(ref init_code) = node.trace.data {
+                // Output is the runtime code
+                if let RawOrDecodedReturnData::Raw(ref deployed_code) = node.trace.output {
+                    // Only push if it was not present already
+                    if !bytecodes.iter().any(|(_, b, _)| b == init_code) {
+                        bytecodes.push((format!("Unknown{}", unknown_c), init_code, deployed_code));
+                        unknown_c += 1;
+                    }
+                    continue
+                }
+            }
+            // Both should be raw and not decoded since it's just bytecode
+            eyre::bail!("Create node returned decoded data: {:?}", node);
+        }
+
+        let mut prompt_user = false;
+        for (data, to) in result.transactions.iter().flat_map(|txes| {
             txes.iter().filter_map(|tx| {
                 tx.data().filter(|data| data.len() > CONTRACT_MAX_SIZE).map(|data| (data, tx.to()))
             })
@@ -445,41 +531,48 @@ impl ScriptArgs {
             }
 
             // Find artifact with a deployment code same as the data.
-            if let Some((artifact, bytecode)) =
-                known_contracts.iter().find(|(_, bytecode)| {
-                    bytecode
-                        .bytecode
-                        .object
-                        .as_bytes()
-                        .expect("Code should have been linked before.") ==
-                        &data[offset..]
-                })
+            if let Some((name, _, deployed_code)) =
+                bytecodes.iter().find(|(_, init_code, _)| *init_code == &data[offset..])
             {
-                // Find the deployed code size of the artifact.
-                if let Some(deployed_bytecode) = &bytecode.deployed_bytecode.bytecode {
-                    let deployment_size = deployed_bytecode.object.bytes_len();
+                let deployment_size = deployed_code.len();
 
-                    if deployment_size > CONTRACT_MAX_SIZE {
-                        println!(
-                            "{}",
-                            Paint::red(format!(
-                                "`{}` is above the contract size limit ({} vs {}).",
-                                artifact.name, deployment_size, CONTRACT_MAX_SIZE
-                            ))
-                        );
-
-                        if self.broadcast &&
-                            !Confirm::new()
-                                .with_prompt("Do you wish to continue?".to_string())
-                                .interact()?
-                        {
-                            eyre::bail!("User canceled the script.");
-                        }
-                    }
+                if deployment_size > CONTRACT_MAX_SIZE {
+                    prompt_user = self.broadcast;
+                    println!(
+                        "{}",
+                        Paint::red(format!(
+                            "`{}` is above the EIP-170 contract size limit ({} > {}).",
+                            name, deployment_size, CONTRACT_MAX_SIZE
+                        ))
+                    );
                 }
             }
         }
+
+        if prompt_user &&
+            !Confirm::new().with_prompt("Do you wish to continue?".to_string()).interact()?
+        {
+            eyre::bail!("User canceled the script.");
+        }
+
         Ok(())
+    }
+}
+
+impl Provider for ScriptArgs {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Script Args Provider")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
+        let mut dict = Dict::default();
+        if let Some(ref etherscan_api_key) = self.etherscan_api_key {
+            dict.insert(
+                "etherscan_api_key".to_string(),
+                figment::value::Value::from(etherscan_api_key.to_string()),
+            );
+        }
+        Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
 
@@ -488,11 +581,12 @@ pub struct ScriptResult {
     pub logs: Vec<Log>,
     pub traces: Vec<(TraceKind, CallTraceArena)>,
     pub debug: Option<Vec<DebugArena>>,
-    pub gas: u64,
+    pub gas_used: u64,
     pub labeled_addresses: BTreeMap<Address, String>,
     pub transactions: Option<VecDeque<TypedTransaction>>,
     pub returned: bytes::Bytes,
     pub address: Option<Address>,
+    pub script_wallets: Vec<LocalWallet>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -509,51 +603,72 @@ pub struct NestedValue {
 }
 
 pub struct ScriptConfig {
-    pub config: foundry_config::Config,
+    pub config: Config,
     pub evm_opts: EvmOpts,
     pub sender_nonce: U256,
     pub backend: Option<Backend>,
     pub called_function: Option<Function>,
 }
 
-/// Data struct to help `ScriptSequence` verify contracts on `etherscan`.
-pub struct VerifyBundle {
-    pub num_of_optimizations: Option<usize>,
-    pub known_contracts: ContractsByArtifact,
-    pub etherscan_key: Option<String>,
-    pub project_paths: ProjectPathsArgs,
-    pub retry: RetryArgs,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cmd::LoadConfig;
+    use foundry_cli_test_utils::tempfile::tempdir;
+    use std::fs;
 
-impl VerifyBundle {
-    pub fn new(
-        project: &Project,
-        config: &Config,
-        known_contracts: ContractsByArtifact,
-        retry: RetryArgs,
-    ) -> Self {
-        let num_of_optimizations =
-            if config.optimizer { Some(config.optimizer_runs) } else { None };
+    #[test]
+    fn can_parse_sig() {
+        let args: ScriptArgs = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--sig",
+            "0x522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266",
+        ]);
+        assert_eq!(
+            args.sig,
+            "522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266"
+        );
+    }
 
-        let config_path = config.get_config_path();
+    #[test]
+    fn can_merge_script_config() {
+        let args: ScriptArgs = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--etherscan-api-key",
+            "goerli",
+        ]);
+        let config = args.load_config();
+        assert_eq!(config.etherscan_api_key, Some("goerli".to_string()));
+    }
 
-        let project_paths = ProjectPathsArgs {
-            root: Some(project.paths.root.clone()),
-            contracts: Some(project.paths.sources.clone()),
-            remappings: project.paths.remappings.clone(),
-            remappings_env: None,
-            cache_path: Some(project.paths.cache.clone()),
-            lib_paths: project.paths.libraries.clone(),
-            hardhat: config.profile == Config::HARDHAT_PROFILE,
-            config_path: if config_path.exists() { Some(config_path) } else { None },
-        };
+    #[test]
+    fn can_extract_script_etherscan_key() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
 
-        VerifyBundle {
-            num_of_optimizations,
-            known_contracts,
-            etherscan_key: config.etherscan_api_key.clone(),
-            project_paths,
-            retry,
-        }
+        let config = r#"
+                [profile.default]
+                etherscan_api_key = "mumbai"
+
+                [etherscan]
+                mumbai = { key = "https://etherscan-mumbai.com/" }
+            "#;
+
+        let toml_file = root.join(Config::FILE_NAME);
+        fs::write(toml_file, config).unwrap();
+        let args: ScriptArgs = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--etherscan-api-key",
+            "mumbai",
+            "--root",
+            root.as_os_str().to_str().unwrap(),
+        ]);
+
+        let config = args.load_config();
+        let mumbai = config.get_etherscan_api_key(Some(ethers::types::Chain::PolygonMumbai));
+        assert_eq!(mumbai, Some("https://etherscan-mumbai.com/".to_string()));
     }
 }

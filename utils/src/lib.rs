@@ -2,31 +2,29 @@
 use ethers_addressbook::contract;
 use ethers_core::{
     abi::{
-        self,
         token::{LenientTokenizer, StrictTokenizer, Tokenizer},
-        Abi, Event, EventParam, Function, HumanReadableParser, Param, ParamType, RawLog, Token,
+        Event, Function, HumanReadableParser, ParamType, RawLog, Token,
     },
     types::*,
+    utils::to_checksum,
 };
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, Provider, ProviderError};
 use ethers_solc::{
     artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode, Libraries},
+    contracts::ArtifactContracts,
     ArtifactId,
 };
 use eyre::{Result, WrapErr};
 use futures::future::BoxFuture;
 use std::{
-    collections::{BTreeMap, BTreeSet},
-    env::VarError,
-    fmt::Write,
-    path::PathBuf,
-    str::FromStr,
-    time::Duration,
+    collections::BTreeMap, env::VarError, fmt::Write, path::PathBuf, str::FromStr, time::Duration,
 };
 
+pub mod abi;
 pub mod rpc;
 pub mod selectors;
+
 pub use selectors::decode_selector;
 
 #[derive(Debug)]
@@ -40,7 +38,7 @@ pub struct PostLinkInput<'a, T, U> {
 
 #[allow(clippy::too_many_arguments)]
 pub fn link_with_nonce_or_address<T, U>(
-    contracts: BTreeMap<ArtifactId, CompactContractBytecode>,
+    contracts: ArtifactContracts,
     known_contracts: &mut BTreeMap<ArtifactId, T>,
     deployed_library_addresses: Libraries,
     sender: Address,
@@ -262,7 +260,24 @@ pub fn to_table(value: serde_json::Value) -> String {
 
 /// Given a function signature string, it tries to parse it as a `Function`
 pub fn get_func(sig: &str) -> Result<Function> {
-    Ok(HumanReadableParser::parse_function(sig)?)
+    Ok(match HumanReadableParser::parse_function(sig) {
+        Ok(func) => func,
+        Err(err) => {
+            if let Ok(constructor) = HumanReadableParser::parse_constructor(sig) {
+                #[allow(deprecated)]
+                Function {
+                    name: "constructor".to_string(),
+                    inputs: constructor.inputs,
+                    outputs: vec![],
+                    constant: None,
+                    state_mutability: Default::default(),
+                }
+            } else {
+                // we return the `Function` parse error as this case is more likely
+                return Err(err.into())
+            }
+        }
+    })
 }
 
 /// Given an event signature string, it tries to parse it as a `Event`
@@ -431,6 +446,11 @@ pub fn encode_args(func: &Function, args: &[impl AsRef<str>]) -> Result<Vec<u8>>
     Ok(func.encode_input(&tokens)?)
 }
 
+/// Decodes the calldata of the function
+///
+/// # Panics
+///
+/// If the `sig` is an invalid function signature
 pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
     let func = IntoFunction::into(sig);
     let calldata = calldata.strip_prefix("0x").unwrap_or(calldata);
@@ -485,13 +505,13 @@ pub fn format_tokens(tokens: &[Token]) -> impl Iterator<Item = String> + '_ {
 // Gets pretty print strings for tokens
 pub fn format_token(param: &Token) -> String {
     match param {
-        Token::Address(addr) => format!("{:?}", addr),
-        Token::FixedBytes(bytes) => format!("0x{}", hex::encode(&bytes)),
-        Token::Bytes(bytes) => format!("0x{}", hex::encode(&bytes)),
+        Token::Address(addr) => to_checksum(addr, None),
+        Token::FixedBytes(bytes) => format!("0x{}", hex::encode(bytes)),
+        Token::Bytes(bytes) => format!("0x{}", hex::encode(bytes)),
         Token::Int(num) => format!("{}", I256::from_raw(*num)),
         Token::Uint(num) => num.to_string(),
         Token::Bool(b) => format!("{b}"),
-        Token::String(s) => format!("{:?}", s),
+        Token::String(s) => s.to_string(),
         Token::FixedArray(tokens) => {
             let string = tokens.iter().map(format_token).collect::<Vec<String>>().join(", ");
             format!("[{string}]")
@@ -521,217 +541,6 @@ pub fn etherscan_api_key() -> eyre::Result<String> {
             eyre::eyre!("Invalid `ETHERSCAN_API_KEY`: {:?}", err)
         }
     })
-}
-
-// Helper for generating solidity abi encoder v2 field names.
-const ASCII_LOWER: [char; 26] = [
-    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's',
-    't', 'u', 'v', 'w', 'x', 'y', 'z',
-];
-
-fn capitalize(s: &str) -> String {
-    let mut c = s.chars();
-    match c.next() {
-        None => String::new(),
-        Some(f) => f.to_uppercase().chain(c).collect(),
-    }
-}
-
-// Returns the function parameter formatted as a string, as well as inserts into the provided
-// `structs` set in order to create type definitions for any Abi Encoder v2 structs.
-fn format_param(param: &Param, structs: &mut BTreeSet<String>) -> String {
-    let kind = get_param_type(&param.kind, &param.name, param.internal_type.as_deref(), structs);
-
-    // add `memory` if required (not needed for events, only for functions)
-    let is_memory = matches!(
-        param.kind,
-        ParamType::Array(_) |
-            ParamType::Bytes |
-            ParamType::String |
-            ParamType::FixedArray(_, _) |
-            ParamType::Tuple(_),
-    );
-    let kind = if is_memory { format!("{kind} memory") } else { kind };
-
-    if param.name.is_empty() {
-        kind
-    } else {
-        format!("{} {}", kind, param.name)
-    }
-}
-
-fn format_event_params(param: &EventParam, structs: &mut BTreeSet<String>) -> String {
-    let kind = get_param_type(&param.kind, &param.name, None, structs);
-
-    if param.name.is_empty() {
-        kind
-    } else if param.indexed {
-        format!("{} indexed {}", kind, param.name)
-    } else {
-        format!("{} {}", kind, param.name)
-    }
-}
-
-fn get_param_type(
-    kind: &ParamType,
-    name: &str,
-    internal_type: Option<&str>,
-    structs: &mut BTreeSet<String>,
-) -> String {
-    let (kind, v2_struct) = match kind {
-        // We need to do some extra work to parse ABI Encoder V2 types.
-        ParamType::Tuple(ref args) => {
-            let name = internal_type
-                .map(|ty| ty.trim_start_matches("struct ").to_string())
-                .unwrap_or_else(|| capitalize(name));
-            let name = if name.contains('.') {
-                name.split('.').nth(1).expect("could not get struct name").to_owned()
-            } else {
-                name
-            };
-
-            // NB: This does not take into account recursive ABI Encoder v2 structs. Left
-            // as future work.
-            let args = args
-                .iter()
-                .enumerate()
-                // Unfortunately Solidity does not support unnamed struct fields, so we
-                // just codegen ones alphabetically.
-                .map(|(i, x)| format!("{} {};", x, ASCII_LOWER[i]))
-                .collect::<Vec<_>>()
-                .join(" ");
-
-            let v2_struct = format!("struct {name} {{ {args} }}");
-            (name, Some(v2_struct))
-        }
-        // If not, just get the string of the param kind.
-        _ => (kind.to_string(), None),
-    };
-
-    // if there was a v2 struct, push it for later usage
-    if let Some(v2_struct) = v2_struct {
-        structs.insert(v2_struct);
-    }
-
-    kind
-}
-
-/// This function takes a contract [`Abi`] and a name and proceeds to generate a Solidity
-/// `interface` from that ABI. If the provided name is empty, then it defaults to `interface
-/// Interface`.
-///
-/// This is done by iterating over the functions and their ABI inputs/outputs, and generating
-/// function signatures/inputs/outputs according to the ABI.
-///
-/// Notes:
-/// * ABI Encoder V2 is not supported yet
-/// * Kudos to [maxme/abi2solidity](https://github.com/maxme/abi2solidity) for the algorithm
-pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<String> {
-    let functions_iterator = contract_abi.functions();
-    let events_iterator = contract_abi.events();
-    if contract_name.trim().is_empty() {
-        contract_name = "Interface";
-    };
-
-    // instantiate an array of all ABI Encoder v2 structs
-    let mut structs = BTreeSet::new();
-
-    let events = events_iterator
-        .map(|event| {
-            let inputs = event
-                .inputs
-                .iter()
-                .map(|param| format_event_params(param, &mut structs))
-                .collect::<Vec<String>>()
-                .join(", ");
-
-            let event_final = format!("event {}({})", event.name, inputs);
-            format!("{event_final};")
-        })
-        .collect::<Vec<_>>()
-        .join("\n    ");
-
-    let functions = functions_iterator
-        .map(|function| {
-            let inputs = function
-                .inputs
-                .iter()
-                .map(|param| format_param(param, &mut structs))
-                .collect::<Vec<String>>()
-                .join(", ");
-            let outputs = function
-                .outputs
-                .iter()
-                .map(|param| format_param(param, &mut structs))
-                .collect::<Vec<String>>()
-                .join(", ");
-
-            let mutability = match function.state_mutability {
-                abi::StateMutability::Pure => "pure",
-                abi::StateMutability::View => "view",
-                abi::StateMutability::Payable => "payable",
-                _ => "",
-            };
-
-            let mut func = format!("function {}({})", function.name, inputs);
-            if !mutability.is_empty() {
-                func = format!("{func} {mutability}");
-            }
-            func = format!("{func} external");
-            if !outputs.is_empty() {
-                func = format!("{func} returns ({outputs})");
-            }
-            format!("{func};")
-        })
-        .collect::<Vec<_>>()
-        .join("\n    ");
-
-    let sol = if structs.is_empty() {
-        match events.is_empty() {
-            true => format!(
-                r#"interface {} {{
-    {}
-}}
-"#,
-                contract_name, functions
-            ),
-            false => format!(
-                r#"interface {} {{
-    {}
-
-    {}
-}}
-"#,
-                contract_name, events, functions
-            ),
-        }
-    } else {
-        let structs = structs.into_iter().collect::<Vec<_>>().join("\n    ");
-        match events.is_empty() {
-            true => format!(
-                r#"interface {} {{
-    {}
-
-    {}
-}}
-"#,
-                contract_name, structs, functions
-            ),
-            false => format!(
-                r#"interface {} {{
-    {}
-
-    {}
-
-    {}
-}}
-"#,
-                contract_name, events, structs, functions
-            ),
-        }
-    };
-
-    forge_fmt::fmt(&sol).map_err(|err| eyre::eyre!(err.to_string()))
 }
 
 /// A type that keeps track of attempts
@@ -807,9 +616,10 @@ mod tests {
     use super::*;
     use ethers::{
         abi::Abi,
-        solc::{artifacts::CompactContractBytecode, Project, ProjectPathsConfig},
+        solc::{Project, ProjectPathsConfig},
         types::{Address, Bytes},
     };
+
     use foundry_common::ContractsByArtifact;
 
     #[test]
@@ -879,7 +689,7 @@ mod tests {
             .into_artifacts()
             .filter(|(i, _)| contract_names.contains(&i.slug().as_str()))
             .map(|(id, c)| (id, c.into_contract_bytecode()))
-            .collect::<BTreeMap<ArtifactId, CompactContractBytecode>>();
+            .collect::<ArtifactContracts>();
 
         let mut known_contracts = ContractsByArtifact::default();
         let mut deployable_contracts: BTreeMap<String, (Abi, Bytes, Vec<Bytes>)> =
@@ -1004,40 +814,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    fn abi2solidity() {
-        let contract_abi: Abi = serde_json::from_str(include_str!(
-            "../../testdata/fixtures/SolidityGeneration/InterfaceABI.json"
-        ))
-        .unwrap();
-        assert_eq!(
-            include_str!("../../testdata/fixtures/SolidityGeneration/GeneratedNamedInterface.sol"),
-            abi_to_solidity(&contract_abi, "test").unwrap()
-        );
-        assert_eq!(
-            include_str!(
-                "../../testdata/fixtures/SolidityGeneration/GeneratedUnnamedInterface.sol"
-            ),
-            abi_to_solidity(&contract_abi, "").unwrap()
-        );
-    }
-
-    #[test]
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    fn abi2solidity_with_structs() {
-        let contract_abi: Abi = serde_json::from_str(include_str!(
-            "../../testdata/fixtures/SolidityGeneration/WithStructs.json"
-        ))
-        .unwrap();
-
-        println!("{}", abi_to_solidity(&contract_abi, "test").unwrap());
-        assert_eq!(
-            include_str!("../../testdata/fixtures/SolidityGeneration/WithStructs.sol").trim(),
-            abi_to_solidity(&contract_abi, "test").unwrap().trim()
-        );
-    }
-
-    #[test]
     fn test_indexed_only_address() {
         let event = get_event("event Ev(address,uint256,address)").unwrap();
 
@@ -1086,5 +862,22 @@ mod tests {
         assert_eq!(parsed.params[1].value, Token::Uint(U256::from_big_endian(&param1)));
         assert_eq!(parsed.params[2].name, "param2");
         assert_eq!(parsed.params[2].value, Token::Address(param2.into()));
+    }
+
+    #[test]
+    fn test_format_token_addr() {
+        // copied from testcases in https://github.com/ethereum/EIPs/blob/master/EIPS/eip-55.md
+        let eip55 = "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed";
+        assert_eq!(
+            format_token(&Token::Address(Address::from_str(&eip55.to_lowercase()).unwrap())),
+            eip55.to_string()
+        );
+
+        // copied from testcases in https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1191.md
+        let eip1191 = "0xFb6916095cA1Df60bb79ce92cE3EA74c37c5d359";
+        assert_ne!(
+            format_token(&Token::Address(Address::from_str(&eip1191.to_lowercase()).unwrap())),
+            eip1191.to_string()
+        );
     }
 }

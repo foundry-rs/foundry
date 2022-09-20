@@ -24,9 +24,7 @@ contract Emitter {
         uint256[2] memory topic2,
         uint256[2] memory topic3,
         uint256[2] memory data
-    )
-        public
-    {
+    ) public {
         emit Something(topic1[0], topic2[0], topic3[0], data[0]);
         emit Something(topic1[1], topic2[1], topic3[1], data[1]);
     }
@@ -85,9 +83,7 @@ contract ExpectEmitTest is DSTest {
         uint128 topic2,
         uint128 topic3,
         uint128 data
-    )
-        public
-    {
+    ) public {
         uint256 transformedTopic1 = checkTopic1 ? uint256(topic1) : uint256(topic1) + 1;
         uint256 transformedTopic2 = checkTopic2 ? uint256(topic2) : uint256(topic2) + 1;
         uint256 transformedTopic3 = checkTopic3 ? uint256(topic3) : uint256(topic3) + 1;
@@ -110,9 +106,7 @@ contract ExpectEmitTest is DSTest {
         uint128 topic2,
         uint128 topic3,
         uint128 data
-    )
-        public
-    {
+    ) public {
         cheats.assume(checkTopic1 || checkTopic2 || checkTopic3 || checkData);
 
         uint256 transformedTopic1 = checkTopic1 ? uint256(topic1) + 1 : uint256(topic1);
@@ -137,9 +131,7 @@ contract ExpectEmitTest is DSTest {
         uint128 topic2,
         uint128 topic3,
         uint128 data
-    )
-        public
-    {
+    ) public {
         Emitter inner = new Emitter();
 
         uint256 transformedTopic1 = checkTopic1 ? uint256(topic1) : uint256(topic1) + 1;
@@ -164,9 +156,7 @@ contract ExpectEmitTest is DSTest {
         uint128 topic2,
         uint128 topic3,
         uint128 data
-    )
-        public
-    {
+    ) public {
         cheats.assume(checkTopic1 || checkTopic2 || checkTopic3 || checkData);
         Emitter inner = new Emitter();
 

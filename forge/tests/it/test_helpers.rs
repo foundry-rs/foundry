@@ -6,6 +6,7 @@ use ethers::{
     solc::{artifacts::Libraries, utils::RuntimeOrHandle, Project, ProjectPathsConfig},
     types::{Address, U256},
 };
+use foundry_config::Config;
 use foundry_evm::{
     executor::{
         backend::Backend,
@@ -63,12 +64,12 @@ pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
     env: Env {
         gas_limit: 18446744073709551615,
         chain_id: Some(foundry_common::DEV_CHAIN_ID),
-        tx_origin: Address::from_str("00a329c0648769a73afac7f9381e08fb43dbea72").unwrap(),
+        tx_origin: Config::DEFAULT_SENDER,
         block_number: 1,
         block_timestamp: 1,
         ..Default::default()
     },
-    sender: Address::from_str("00a329c0648769a73afac7f9381e08fb43dbea72").unwrap(),
+    sender: Config::DEFAULT_SENDER,
     initial_balance: U256::MAX,
     ffi: true,
     memory_limit: 2u64.pow(24),
@@ -78,7 +79,12 @@ pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
 pub fn fuzz_executor<DB: DatabaseRef>(executor: &Executor) -> FuzzedExecutor {
     let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
 
-    FuzzedExecutor::new(executor, proptest::test_runner::TestRunner::new(cfg), CALLER)
+    FuzzedExecutor::new(
+        executor,
+        proptest::test_runner::TestRunner::new(cfg),
+        CALLER,
+        config::TEST_OPTS.fuzz,
+    )
 }
 
 pub const RE_PATH_SEPARATOR: &str = "/";
@@ -93,16 +99,30 @@ pub mod filter {
         contract_regex: Regex,
         path_regex: Regex,
         exclude_tests: Option<Regex>,
+        exclude_paths: Option<Regex>,
     }
 
     impl Filter {
         pub fn new(test_pattern: &str, contract_pattern: &str, path_pattern: &str) -> Self {
             Filter {
-                test_regex: Regex::new(test_pattern).unwrap(),
-                contract_regex: Regex::new(contract_pattern).unwrap(),
-                path_regex: Regex::new(path_pattern).unwrap(),
+                test_regex: Regex::new(test_pattern)
+                    .unwrap_or_else(|_| panic!("Failed to parse test pattern: `{}`", test_pattern)),
+                contract_regex: Regex::new(contract_pattern).unwrap_or_else(|_| {
+                    panic!("Failed to parse contract pattern: `{}`", contract_pattern)
+                }),
+                path_regex: Regex::new(path_pattern)
+                    .unwrap_or_else(|_| panic!("Failed to parse path pattern: `{}`", path_pattern)),
                 exclude_tests: None,
+                exclude_paths: None,
             }
+        }
+
+        pub fn contract(contract_pattern: &str) -> Self {
+            Self::new(".*", contract_pattern, ".*")
+        }
+
+        pub fn path(path_pattern: &str) -> Self {
+            Self::new(".*", ".*", path_pattern)
         }
 
         /// All tests to also exclude
@@ -113,12 +133,21 @@ pub mod filter {
             self
         }
 
+        /// All paths to also exclude
+        ///
+        /// This is a workaround since regex does not support negative look aheads
+        pub fn exclude_paths(mut self, pattern: &str) -> Self {
+            self.exclude_paths = Some(Regex::new(pattern).unwrap());
+            self
+        }
+
         pub fn matches_all() -> Self {
             Filter {
                 test_regex: Regex::new(".*").unwrap(),
                 contract_regex: Regex::new(".*").unwrap(),
                 path_regex: Regex::new(".*").unwrap(),
                 exclude_tests: None,
+                exclude_paths: None,
             }
         }
     }
@@ -139,7 +168,13 @@ pub mod filter {
         }
 
         fn matches_path(&self, path: impl AsRef<str>) -> bool {
-            self.path_regex.is_match(path.as_ref())
+            let path = path.as_ref();
+            if let Some(ref exclude) = self.exclude_paths {
+                if exclude.is_match(path) {
+                    return false
+                }
+            }
+            self.path_regex.is_match(path)
         }
     }
 }
