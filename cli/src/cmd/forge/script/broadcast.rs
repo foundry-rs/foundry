@@ -418,17 +418,17 @@ impl ScriptArgs {
             }
 
             addresses.clear();
-            let sequence = ScriptSequence::new(
+            let mut sequence = ScriptSequence::new(
                 new_txes,
                 returns.clone(),
                 &self.sig,
                 target,
                 config,
-                provider_info.chain,
                 self.broadcast,
                 is_multi_deployment,
             )?;
 
+            sequence.set_chain_id(provider_info.chain);
             deployments.push(sequence);
 
             new_txes = VecDeque::new();

@@ -51,15 +51,16 @@ impl ScriptSequence {
         sig: &str,
         target: &ArtifactId,
         config: &Config,
-        chain_id: u64,
         broadcasted: bool,
         is_multi: bool,
     ) -> eyre::Result<Self> {
+        let chain = config.chain_id.unwrap_or_default().id();
+
         let path = ScriptSequence::get_path(
             &config.broadcast,
             sig,
             target,
-            chain_id,
+            chain,
             broadcasted && !is_multi,
         )?;
         let commit = get_commit_hash(&config.__root.0);
@@ -75,10 +76,14 @@ impl ScriptSequence {
                 .expect("Wrong system time.")
                 .as_secs(),
             libraries: vec![],
-            chain: chain_id,
+            chain,
             multi: is_multi,
             commit,
         })
+    }
+
+    pub fn set_chain_id(&mut self, chain: u64) {
+        self.chain = chain;
     }
 
     /// Loads The sequence for the corresponding json file
