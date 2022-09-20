@@ -23,6 +23,7 @@ use forge::{
 use foundry_common::{
     compile::{self, ProjectCompiler},
     evm::EvmArgs,
+    get_contract_name, get_file_name,
 };
 use foundry_config::{figment, Config};
 use regex::Regex;
@@ -199,7 +200,7 @@ impl TestArgs {
                     // Run the debugger
                     let debugger = DebugArgs {
                         path: PathBuf::from(runner.source_paths.get(&id).unwrap()),
-                        target_contract: Some(utils::get_contract_name(&id).to_string()),
+                        target_contract: Some(get_contract_name(&id).to_string()),
                         sig,
                         args: Vec::new(),
                         debug: true,
@@ -303,12 +304,12 @@ impl Test {
 
     /// Returns the contract name of the artifact id
     pub fn contract_name(&self) -> &str {
-        utils::get_contract_name(&self.artifact_id)
+        get_contract_name(&self.artifact_id)
     }
 
     /// Returns the file name of the artifact id
     pub fn file_name(&self) -> &str {
-        utils::get_file_name(&self.artifact_id)
+        get_file_name(&self.artifact_id)
     }
 }
 

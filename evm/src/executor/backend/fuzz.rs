@@ -85,6 +85,16 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         self.backend.to_mut().create_fork(fork, journaled_state)
     }
 
+    fn create_fork_at_transaction(
+        &mut self,
+        fork: CreateFork,
+        journaled_state: &JournaledState,
+        transaction: H256,
+    ) -> eyre::Result<LocalForkId> {
+        trace!(?transaction, "fuzz: create fork at");
+        self.backend.to_mut().create_fork_at_transaction(fork, journaled_state, transaction)
+    }
+
     fn select_fork(
         &mut self,
         id: LocalForkId,
@@ -104,6 +114,17 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
     ) -> eyre::Result<()> {
         trace!(?id, ?block_number, "fuzz: roll fork");
         self.backend.to_mut().roll_fork(id, block_number, env, journaled_state)
+    }
+
+    fn roll_fork_to_transaction(
+        &mut self,
+        id: Option<LocalForkId>,
+        transaction: H256,
+        env: &mut Env,
+        journaled_state: &mut JournaledState,
+    ) -> eyre::Result<()> {
+        trace!(?id, ?transaction, "fuzz: roll fork to transaction");
+        self.backend.to_mut().roll_fork_to_transaction(id, transaction, env, journaled_state)
     }
 
     fn active_fork_id(&self) -> Option<LocalForkId> {

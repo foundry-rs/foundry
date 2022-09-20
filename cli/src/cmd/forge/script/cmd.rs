@@ -1,13 +1,13 @@
 use super::{sequence::ScriptSequence, *};
 use crate::cmd::{
     forge::script::{multi::MultiChainSequence, verify::VerifyBundle},
-    unwrap_contracts, LoadConfig,
+    LoadConfig,
 };
 use ethers::{
-    prelude::{artifacts::CompactContractBytecode, ArtifactId, Middleware, Signer},
+    prelude::{Middleware, Signer},
     types::{transaction::eip2718::TypedTransaction, U256},
 };
-use foundry_common::get_http_provider;
+use foundry_common::{contracts::flatten_contracts, get_http_provider};
 use std::sync::Arc;
 use tracing::trace;
 
@@ -42,7 +42,7 @@ impl ScriptArgs {
         let mut verify = VerifyBundle::new(
             &build_output.project,
             &script_config.config,
-            unwrap_contracts(&build_output.highlevel_known_contracts, false),
+            flatten_contracts(&build_output.highlevel_known_contracts, false),
             self.retry.clone(),
             self.verifier.clone(),
         );
@@ -119,7 +119,7 @@ impl ScriptArgs {
                         U256::zero(),                // irrelevant, since we're not creating any
                     )?;
 
-                    verify.known_contracts = unwrap_contracts(&highlevel_known_contracts, false);
+                    verify.known_contracts = flatten_contracts(&highlevel_known_contracts, false);
 
                     deployment_sequence.verify_contracts(&script_config.config, verify).await?;
                 }
@@ -131,7 +131,7 @@ impl ScriptArgs {
                     .await?;
             }
         } else {
-            let known_contracts = unwrap_contracts(&highlevel_known_contracts, true);
+            let known_contracts = flatten_contracts(&highlevel_known_contracts, true);
 
             let mut decoder = self.decode_traces(&script_config, &mut result, &known_contracts)?;
 
@@ -157,7 +157,7 @@ impl ScriptArgs {
                     decoder = self.decode_traces(
                         &script_config,
                         &mut result,
-                        &unwrap_contracts(&highlevel_known_contracts, true),
+                        &flatten_contracts(&highlevel_known_contracts, true),
                     )?;
                 } else {
                     // Add predeploy libraries to the list of broadcastable transactions.
@@ -186,7 +186,7 @@ impl ScriptArgs {
                     self.show_traces(&script_config, &decoder, &mut result).await?;
                 }
 
-                verify.known_contracts = unwrap_contracts(&highlevel_known_contracts, false);
+                verify.known_contracts = flatten_contracts(&highlevel_known_contracts, false);
 
                 self.check_contract_sizes(&result, &highlevel_known_contracts)?;
 
@@ -212,8 +212,8 @@ impl ScriptArgs {
         script_config: &mut ScriptConfig,
         new_sender: Address,
         first_run_result: &mut ScriptResult,
-        default_known_contracts: BTreeMap<ArtifactId, CompactContractBytecode>,
-    ) -> eyre::Result<(Libraries, BTreeMap<ArtifactId, ContractBytecodeSome>)> {
+        default_known_contracts: ArtifactContracts,
+    ) -> eyre::Result<(Libraries, ArtifactContracts<ContractBytecodeSome>)> {
         // if we had a new sender that requires relinking, we need to
         // get the nonce mainnet for accurate addresses for predeploy libs
         let nonce = foundry_utils::next_nonce(

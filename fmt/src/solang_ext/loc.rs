@@ -397,7 +397,8 @@ impl LineOfCode for FunctionAttribute {
             FunctionAttribute::Virtual(loc) |
             FunctionAttribute::Immutable(loc) |
             FunctionAttribute::Override(loc, _) |
-            FunctionAttribute::BaseOrModifier(loc, _) => *loc,
+            FunctionAttribute::BaseOrModifier(loc, _) |
+            FunctionAttribute::NameValue(loc, _, _) => *loc,
         }
     }
 }

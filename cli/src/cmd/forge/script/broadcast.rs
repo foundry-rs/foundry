@@ -272,7 +272,7 @@ impl ScriptArgs {
                         .await?;
                     }
                 } else if self.broadcast {
-                    let mut deployment_sequence = deployments.first_mut().expect("to be set.");
+                    let deployment_sequence = deployments.first_mut().expect("to be set.");
                     let rpc = deployment_sequence
                         .transactions
                         .front()
@@ -284,7 +284,7 @@ impl ScriptArgs {
 
                     deployment_sequence.add_libraries(libraries);
 
-                    self.send_transactions(&mut deployment_sequence, &rpc, result.script_wallets)
+                    self.send_transactions(deployment_sequence, &rpc, result.script_wallets)
                         .await?;
 
                     if self.verify {

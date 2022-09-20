@@ -1,9 +1,5 @@
 //! script command
-use crate::{
-    cmd::forge::build::BuildArgs,
-    opts::MultiWallet,
-    utils::{get_contract_name, parse_ether_value},
-};
+use crate::{cmd::forge::build::BuildArgs, opts::MultiWallet, utils::parse_ether_value};
 use cast::{
     decode,
     executor::inspector::{cheatcodes::BroadcastableTransaction, DEFAULT_CREATE2_DEPLOYER},
@@ -17,6 +13,7 @@ use ethers::{
         ArtifactId, Bytes, Project,
     },
     signers::LocalWallet,
+    solc::contracts::ArtifactContracts,
     types::{
         transaction::eip2718::TypedTransaction, Address, Log, NameOrAddress, TransactionRequest,
         U256,
@@ -46,7 +43,7 @@ use yansi::Paint;
 
 mod build;
 use build::{filter_sources_and_artifacts, BuildOutput};
-use foundry_common::errors::UnlinkedByteCode;
+use foundry_common::{contracts::get_contract_name, errors::UnlinkedByteCode};
 use foundry_config::figment::{
     value::{Dict, Map},
     Metadata, Profile, Provider,
@@ -58,6 +55,7 @@ use runner::ScriptRunner;
 mod broadcast;
 use ui::{TUIExitReason, Tui, Ui};
 
+mod artifacts;
 mod cmd;
 mod executor;
 mod multi;
@@ -404,7 +402,7 @@ impl ScriptArgs {
         sources: BTreeMap<u32, String>,
         result: ScriptResult,
         project: Project,
-        highlevel_known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
+        highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
     ) -> eyre::Result<()> {
         let (sources, artifacts) = filter_sources_and_artifacts(
             &self.path,

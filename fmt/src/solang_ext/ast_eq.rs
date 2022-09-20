@@ -462,6 +462,7 @@ derive_ast_eq! { enum FunctionAttribute {
     Immutable(loc),
     Override(loc, idents),
     BaseOrModifier(loc, base),
+    NameValue(loc, ident, expr),
     _
 }}
 derive_ast_eq! { enum StorageLocation {

@@ -122,11 +122,11 @@ impl ScriptArgs {
             let futs = deployments
                 .deployments
                 .iter_mut()
-                .map(|mut sequence| async move {
+                .map(|sequence| async move {
                     let provider = Arc::new(get_http_provider(
                         &sequence.typed_transactions().first().unwrap().0.clone(),
                     ));
-                    receipts::wait_for_pending(provider, &mut sequence).await
+                    receipts::wait_for_pending(provider, sequence).await
                 })
                 .collect::<Vec<_>>();
 
