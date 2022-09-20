@@ -128,37 +128,54 @@ impl Cmd for VanityArgs {
     }
 }
 
-fn find_vanity_address<T: VanityMatcher>(matcher: T) -> Option<LocalWallet> {
-    keygen().find_any(|(_, addr)| matcher.is_match(addr)).map(|(key, _)| key.into())
+type _Wallet = (SigningKey, H160);
+
+pub fn find_vanity_address<T: VanityMatcher>(m: T) -> Option<LocalWallet> {
+    wallet_generator().find_any(matcher(m)).map(|(key, _)| key.into())
 }
 
-fn find_vanity_address_with_nonce<T: VanityMatcher>(matcher: T, nonce: u64) -> Option<LocalWallet> {
+pub fn find_vanity_address_with_nonce<T: VanityMatcher>(m: T, nonce: u64) -> Option<LocalWallet> {
     let nonce: U256 = nonce.into();
-    keygen()
-        .find_any(|(_, addr)| {
-            let contract_addr = get_contract_address(*addr, nonce);
-            matcher.is_match(&contract_addr)
-        })
-        .map(|(key, _)| key.into())
+    wallet_generator().find_any(nonce_matcher(m, nonce)).map(|(key, _)| key.into())
 }
 
-fn keygen() -> impl ParallelIterator<Item = (SigningKey, H160)> {
-    std::iter::repeat(0u8).par_bridge().map(|_| {
-        let key = SigningKey::random(&mut thread_rng());
-        let address = secret_key_to_address(&key);
-        (key, address)
-    })
+/// Creates a matcher function.
+#[inline]
+pub fn matcher<T: VanityMatcher>(m: T) -> impl Fn(&_Wallet) -> bool {
+    move |(_, addr)| m.is_match(addr)
+}
+
+/// Creates a nonce matcher function.
+#[inline]
+pub fn nonce_matcher<T: VanityMatcher>(m: T, nonce: U256) -> impl Fn(&_Wallet) -> bool {
+    move |(_, addr)| {
+        let contract_addr = get_contract_address(*addr, nonce);
+        m.is_match(&contract_addr)
+    }
+}
+
+/// Returns an infinite iterator that calls [generate_wallet].
+#[inline]
+pub fn wallet_generator() -> impl ParallelIterator<Item = _Wallet> {
+    std::iter::repeat(0u8).par_bridge().map(|_| generate_wallet())
+}
+
+/// Creates a Wallet and derives its Ethereum address using [thread_rng].
+pub fn generate_wallet() -> _Wallet {
+    let key = SigningKey::random(&mut thread_rng());
+    let address = secret_key_to_address(&key);
+    (key, address)
 }
 
 /// A trait to match vanity addresses
-trait VanityMatcher: Send + Sync {
+pub trait VanityMatcher: Send + Sync {
     fn is_match(&self, addr: &H160) -> bool;
 }
 
 /// A matcher that checks for if an address starts or ends with certain hex
-struct HexMatcher {
-    left: Vec<u8>,
-    right: Vec<u8>,
+pub struct HexMatcher {
+    pub left: Vec<u8>,
+    pub right: Vec<u8>,
 }
 
 impl VanityMatcher for HexMatcher {
@@ -169,8 +186,8 @@ impl VanityMatcher for HexMatcher {
     }
 }
 
-struct LeftHexMatcher {
-    left: Vec<u8>,
+pub struct LeftHexMatcher {
+    pub left: Vec<u8>,
 }
 
 impl VanityMatcher for LeftHexMatcher {
@@ -180,8 +197,9 @@ impl VanityMatcher for LeftHexMatcher {
         bytes.starts_with(&self.left)
     }
 }
-struct RightHexMatcher {
-    right: Vec<u8>,
+
+pub struct RightHexMatcher {
+    pub right: Vec<u8>,
 }
 
 impl VanityMatcher for RightHexMatcher {
@@ -192,9 +210,9 @@ impl VanityMatcher for RightHexMatcher {
     }
 }
 
-struct LeftExactRightRegexMatcher {
-    left: Vec<u8>,
-    right: Regex,
+pub struct LeftExactRightRegexMatcher {
+    pub left: Vec<u8>,
+    pub right: Regex,
 }
 
 impl VanityMatcher for LeftExactRightRegexMatcher {
@@ -205,9 +223,9 @@ impl VanityMatcher for LeftExactRightRegexMatcher {
     }
 }
 
-struct LeftRegexRightExactMatcher {
-    left: Regex,
-    right: Vec<u8>,
+pub struct LeftRegexRightExactMatcher {
+    pub left: Regex,
+    pub right: Vec<u8>,
 }
 
 impl VanityMatcher for LeftRegexRightExactMatcher {
@@ -218,9 +236,11 @@ impl VanityMatcher for LeftRegexRightExactMatcher {
     }
 }
 
-struct SingleRegexMatcher {
-    re: Regex,
+/// Matches a single regex
+pub struct SingleRegexMatcher {
+    pub re: Regex,
 }
+
 impl VanityMatcher for SingleRegexMatcher {
     #[inline]
     fn is_match(&self, addr: &H160) -> bool {
@@ -229,12 +249,12 @@ impl VanityMatcher for SingleRegexMatcher {
     }
 }
 
-struct RegexMatcher {
-    left: Regex,
-    right: Regex,
+/// Matches left and right regex
+pub struct RegexMatcher {
+    pub left: Regex,
+    pub right: Regex,
 }
 
-/// matches if all regex match
 impl VanityMatcher for RegexMatcher {
     #[inline]
     fn is_match(&self, addr: &H160) -> bool {
