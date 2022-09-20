@@ -226,7 +226,12 @@ impl ScriptArgs {
                 let gas_filled_txs = if self.skip_simulation {
                     println!("\nSKIPPING ON CHAIN SIMULATION.");
                     txs.into_iter()
-                        .map(|tx| TransactionWithMetadata::from_typed_transaction(tx.transaction))
+                        .map(|btx| {
+                            let mut tx =
+                                TransactionWithMetadata::from_typed_transaction(btx.transaction);
+                            tx.rpc = btx.rpc;
+                            tx
+                        })
                         .collect()
                 } else {
                     self.execute_transactions(
@@ -322,14 +327,6 @@ impl ScriptArgs {
                 eyre::bail!(
                     "Multi chain deployment does not support library linking at the moment."
                 )
-            }
-            if self.skip_simulation {
-                eyre::bail!(
-                    "Multi chain deployment does not support skipping simulations at the moment."
-                );
-            }
-            if self.verify {
-                eyre::bail!("Multi chain deployment does not contract verification at the moment.");
             }
         }
         Ok(())

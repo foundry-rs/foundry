@@ -7,7 +7,7 @@ use ethers::{
     utils::format_units,
 };
 use forge::executor::SpecId;
-use foundry_config::Config;
+use foundry_config::{Chain, Config};
 use std::{
     future::Future,
     ops::Mul,
@@ -199,7 +199,7 @@ pub fn enable_paint() {
 }
 
 /// Prints parts of the receipt to stdout
-pub fn print_receipt(receipt: &TransactionReceipt) {
+pub fn print_receipt(chain: Chain, receipt: &TransactionReceipt) {
     let contract_address = receipt
         .contract_address
         .map(|addr| format!("\nContract Address: 0x{}", hex::encode(addr.as_bytes())))
@@ -227,7 +227,7 @@ pub fn print_receipt(receipt: &TransactionReceipt) {
     };
 
     println!(
-        "\n#####\n{}Hash: 0x{}{}\nBlock: {}\n{}\n",
+        "\n##### {chain}\n{}Hash: 0x{}{}\nBlock: {}\n{}\n",
         check,
         hex::encode(receipt.transaction_hash.as_bytes()),
         contract_address,
