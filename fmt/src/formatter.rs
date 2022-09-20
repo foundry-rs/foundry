@@ -1015,14 +1015,15 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Visit the block item. Attempt to write it on the single
     /// line if requested. Surround by curly braces and indent
-    /// each line otherwise.
+    /// each line otherwise. Returns `true` if the block fit
+    /// on a single line
     fn visit_block<T>(
         &mut self,
         loc: Loc,
         statements: &mut Vec<T>,
         attempt_single_line: bool,
         attempt_omit_braces: bool,
-    ) -> Result<()>
+    ) -> Result<bool>
     where
         T: Visitable + LineOfCode,
     {
@@ -1039,7 +1040,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             })?;
 
             if fits_on_single {
-                return Ok(())
+                return Ok(true)
             }
         }
 
@@ -1060,7 +1061,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
         write_chunk!(self, loc.end(), "}}")?;
 
-        Ok(())
+        Ok(false)
     }
 
     /// Visit statement as `Statement::Block`.
@@ -1068,7 +1069,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         &mut self,
         stmt: &mut Statement,
         attempt_single_line: bool,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         match stmt {
             Statement::Block { loc, statements, .. } => {
                 self.visit_block(*loc, statements, attempt_single_line, true)
@@ -2324,7 +2325,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             write_chunk!(self, loc.start(), "unchecked ")?;
         }
 
-        self.visit_block(loc, statements, false, false)
+        self.visit_block(loc, statements, false, false)?;
+        Ok(())
     }
 
     fn visit_opening_paren(&mut self) -> Result<()> {
@@ -2662,9 +2664,14 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             },
         )?;
         match body {
-            Some(body) => self.visit_stmt_as_block(body, false), // TODO:
-            None => self.write_empty_brackets(),
-        }
+            Some(body) => {
+                self.visit_stmt_as_block(body, false)?;
+            }
+            None => {
+                self.write_empty_brackets()?;
+            }
+        };
+        Ok(())
     }
 
     fn visit_while(
@@ -2686,7 +2693,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         let cond_close_paren_loc =
             self.find_next_in_src(cond.loc().end(), ')').unwrap_or_else(|| cond.loc().end());
         let attempt_single_line = self.should_attempt_block_single_line(body, cond_close_paren_loc);
-        self.visit_stmt_as_block(body, attempt_single_line)
+        self.visit_stmt_as_block(body, attempt_single_line)?;
+        Ok(())
     }
 
     fn visit_do_while(
@@ -3045,7 +3053,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         attempt_single_line: bool,
     ) -> Result<(), Self::Error> {
         return_source_if_disabled!(self, loc);
-        self.visit_block(loc, statements, attempt_single_line, false)
+        self.visit_block(loc, statements, attempt_single_line, false)?;
+        Ok(())
     }
 
     fn visit_yul_assignment<T>(
