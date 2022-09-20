@@ -64,7 +64,7 @@ impl Cmd for GeigerArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let config = self.load_config_emit_warnings();
+        let config = self.try_load_config_emit_warnings()?;
         let sources = self.sources(&config).wrap_err("Failed to resolve files")?;
 
         if config.ffi {

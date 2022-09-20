@@ -3,6 +3,9 @@ use figment::providers::{Format, Toml};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{collections::HashSet, error::Error, fmt, str::FromStr};
 
+/// The message shown upon panic if the config could not be extracted from the figment
+pub const FAILED_TO_EXTRACT_CONFIG_PANIC_MSG: &str = "failed to extract foundry config:";
+
 /// Represents a failed attempt to extract `Config` from a `Figment`
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExtractConfigError {
@@ -30,10 +33,11 @@ impl fmt::Display for ExtractConfigError {
                 unique_errors.push(err);
             }
         }
+        writeln!(f, "{}", FAILED_TO_EXTRACT_CONFIG_PANIC_MSG)?;
         for err in unique_errors {
             writeln!(f, "{}", err)?;
         }
-        f.write_str("failed to extract foundry config")
+        Ok(())
     }
 }
 
@@ -44,14 +48,46 @@ impl Error for ExtractConfigError {
 }
 
 /// Represents an error that can occur when constructing the `Config`
-#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum FoundryConfigError {
     /// An error thrown during toml parsing
-    #[error("foundry.toml error: {0}")]
     Toml(figment::Error),
     /// Any other error thrown when constructing the config's figment
-    #[error("foundry config error: {0}")]
     Other(figment::Error),
+}
+
+impl fmt::Display for FoundryConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let fmt_err = |err: &figment::Error, f: &mut fmt::Formatter<'_>| {
+            write!(f, "{}", err)?;
+            if !err.path.is_empty() {
+                // the path will contain the setting value like `["etherscan_api_key"]`
+                write!(f, " for setting `{}`", err.path.join("."))?;
+            }
+            Ok(())
+        };
+
+        match self {
+            FoundryConfigError::Toml(err) => {
+                f.write_str("foundry.toml error: ")?;
+                fmt_err(err, f)
+            }
+            FoundryConfigError::Other(err) => {
+                f.write_str("foundry config error: ")?;
+                fmt_err(err, f)
+            }
+        }
+    }
+}
+
+impl Error for FoundryConfigError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            FoundryConfigError::Other(error) | FoundryConfigError::Toml(error) => {
+                Error::source(error)
+            }
+        }
+    }
 }
 
 /// A non-exhaustive list of solidity error codes
