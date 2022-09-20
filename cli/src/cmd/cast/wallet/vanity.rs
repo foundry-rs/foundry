@@ -132,12 +132,13 @@ impl Cmd for VanityArgs {
     }
 }
 
-/// Uses [wallet_generator] to find a match by using `matcher`, returning the Wallet.
+/// Generates random wallets until `matcher` matches the wallet address, returning the wallet.
 pub fn find_vanity_address<T: VanityMatcher>(matcher: T) -> Option<LocalWallet> {
     wallet_generator().find_any(create_matcher(matcher)).map(|(key, _)| key.into())
 }
 
-/// Generates random wallets until a match is found by using `matcher`, returning the Wallet.
+/// Generates random wallets until `matcher` matches the contract address created at `nonce`,
+/// returning the wallet.
 pub fn find_vanity_address_with_nonce<T: VanityMatcher>(
     matcher: T,
     nonce: u64,
@@ -146,15 +147,15 @@ pub fn find_vanity_address_with_nonce<T: VanityMatcher>(
     wallet_generator().find_any(create_nonce_matcher(matcher, nonce)).map(|(key, _)| key.into())
 }
 
-/// Creates a nonce matcher function, which takes a [GeneratedWallet] and returns whether it found a
-/// match or not by using `matcher`.
+/// Creates a nonce matcher function, which takes a reference to a [GeneratedWallet] and returns
+/// whether it found a match or not by using `matcher`.
 #[inline]
 pub fn create_matcher<T: VanityMatcher>(matcher: T) -> impl Fn(&GeneratedWallet) -> bool {
     move |(_, addr)| matcher.is_match(addr)
 }
 
-/// Creates a nonce matcher function, which takes a [GeneratedWallet] and a nonce and returns
-/// whether it found a match or not by using `matcher`.
+/// Creates a nonce matcher function, which takes a reference to a [GeneratedWallet] and a nonce and
+/// returns whether it found a match or not by using `matcher`.
 #[inline]
 pub fn create_nonce_matcher<T: VanityMatcher>(
     matcher: T,
@@ -172,7 +173,7 @@ pub fn wallet_generator() -> impl ParallelIterator<Item = GeneratedWallet> {
     std::iter::repeat(()).par_bridge().map(|_| generate_wallet())
 }
 
-/// Generates a random private key and derives its Ethereum address using [thread_rng].
+/// Generates a random K-256 signing key and derives its Ethereum address.
 pub fn generate_wallet() -> GeneratedWallet {
     let key = SigningKey::random(&mut thread_rng());
     let address = secret_key_to_address(&key);
