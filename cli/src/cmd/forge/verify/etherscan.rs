@@ -179,7 +179,7 @@ impl EtherscanVerificationProvider {
     /// If `--flatten` is set to `true` then this will send with [`CodeFormat::SingleFile`]
     /// otherwise this will use the [`CodeFormat::StandardJsonInput`]
     async fn create_verify_request(&self, args: &VerifyArgs) -> eyre::Result<VerifyContract> {
-        let mut config = args.load_config_emit_warnings();
+        let mut config = args.try_load_config_emit_warnings()?;
         config.libraries.extend(args.libraries.clone());
 
         let project = config.project()?;

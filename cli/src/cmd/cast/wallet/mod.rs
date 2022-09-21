@@ -12,7 +12,8 @@ use ethers::{
     types::{Address, Chain, Signature},
 };
 use std::str::FromStr;
-mod vanity;
+
+pub mod vanity;
 
 #[derive(Debug, Parser)]
 pub enum WalletSubcommands {

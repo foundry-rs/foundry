@@ -44,6 +44,11 @@ impl EtherscanConfigs {
         self.configs.is_empty()
     }
 
+    /// Returns the first config that matches the chain
+    pub fn find_chain(&self, chain: Chain) -> Option<&EtherscanConfig> {
+        self.configs.values().find(|config| config.chain == Some(chain))
+    }
+
     /// Returns all (alias -> url) pairs
     pub fn resolved(self) -> ResolvedEtherscanConfigs {
         ResolvedEtherscanConfigs {

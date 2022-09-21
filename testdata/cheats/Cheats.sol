@@ -188,6 +188,8 @@ interface Cheats {
     // Returns the currently active fork
     // Reverts if no fork is currently active
     function activeFork() external returns (uint256);
+    // In forking mode, explicitly grant the given address cheatcode access
+    function allowCheatcodes(address) external;
     // Marks that the account(s) should use persistent storage across fork swaps.
     // Meaning, changes made to the state of this account will be kept when switching forks
     function makePersistent(address) external;
@@ -203,7 +205,7 @@ interface Cheats {
     // This is similar to `roll` but for the currently active fork
     function rollFork(uint256) external;
     // Updates the currently active fork to given transaction
-    // this will `rollFork` with the number of the block the transaction was mined it and replays all transaction mined before it in the block
+    // this will `rollFork` with the number of the block the transaction was mined in and replays all transaction mined before it in the block
     function rollFork(bytes32) external;
     // Updates the given fork to given block number
     function rollFork(uint256 forkId, uint256 blockNumber) external;

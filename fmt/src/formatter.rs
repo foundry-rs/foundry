@@ -71,6 +71,7 @@ macro_rules! bail {
 struct Context {
     contract: Option<ContractDefinition>,
     function: Option<FunctionDefinition>,
+    if_stmt_single_line: Option<bool>,
 }
 
 /// A Solidity formatter
@@ -308,19 +309,19 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// where `end_at` is the start of the block.
     fn should_attempt_block_single_line(
         &mut self,
-        block: &mut Statement,
+        stmt: &mut Statement,
         start_from: usize,
     ) -> bool {
         match self.config.single_line_statement_blocks {
             SingleLineBlockStyle::Single => true,
             SingleLineBlockStyle::Multi => false,
             SingleLineBlockStyle::Preserve => {
-                let end_at = match block {
+                let end_at = match stmt {
                     Statement::Block { statements, .. } if !statements.is_empty() => {
                         statements.first().as_ref().unwrap().loc().start()
                     }
                     Statement::Expression(loc, _) => loc.start(),
-                    _ => block.loc().start(),
+                    _ => stmt.loc().start(),
                 };
 
                 self.find_next_line(start_from).map_or(false, |loc| loc >= end_at)
@@ -943,9 +944,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         self.write_postfix_comments_before(expr.loc().start())?;
         self.write_prefix_comments_before(expr.loc().start())?;
 
-        let fits_on_single_line =
-            self.try_on_single_line(|fmt| fmt.indented(1, |fmt| expr.visit(fmt)))?;
-        if self.is_beginning_of_line() && fits_on_single_line {
+        if self.try_on_single_line(|fmt| fmt.indented(1, |fmt| expr.visit(fmt)))? {
             return Ok(())
         }
 
@@ -1015,14 +1014,15 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Visit the block item. Attempt to write it on the single
     /// line if requested. Surround by curly braces and indent
-    /// each line otherwise.
+    /// each line otherwise. Returns `true` if the block fit
+    /// on a single line
     fn visit_block<T>(
         &mut self,
         loc: Loc,
         statements: &mut Vec<T>,
         attempt_single_line: bool,
         attempt_omit_braces: bool,
-    ) -> Result<()>
+    ) -> Result<bool>
     where
         T: Visitable + LineOfCode,
     {
@@ -1039,7 +1039,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             })?;
 
             if fits_on_single {
-                return Ok(())
+                return Ok(true)
             }
         }
 
@@ -1060,7 +1060,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
         write_chunk!(self, loc.end(), "}}")?;
 
-        Ok(())
+        Ok(false)
     }
 
     /// Visit statement as `Statement::Block`.
@@ -1068,7 +1068,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         &mut self,
         stmt: &mut Statement,
         attempt_single_line: bool,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         match stmt {
             Statement::Block { loc, statements, .. } => {
                 self.visit_block(*loc, statements, attempt_single_line, true)
@@ -1398,6 +1398,55 @@ impl<'a, W: Write> Formatter<'a, W> {
             write_attributes(self, true)?;
         }
         Ok(attrs_multiline)
+    }
+
+    /// Write potentially nested `if statements`
+    fn write_if_stmt(
+        &mut self,
+        loc: Loc,
+        cond: &mut Expression,
+        if_branch: &mut Box<Statement>,
+        else_branch: &mut Option<Box<Statement>>,
+    ) -> Result<(), FormatterError> {
+        let single_line_stmt_wide = self.context.if_stmt_single_line.unwrap_or_default();
+
+        visit_source_if_disabled_else!(self, loc.with_end(if_branch.loc().start()), {
+            self.surrounded(
+                SurroundingChunk::new("if (", Some(loc.start()), Some(cond.loc().start())),
+                SurroundingChunk::new(")", None, Some(if_branch.loc().start())),
+                |fmt, _| {
+                    cond.visit(fmt)?;
+                    fmt.write_postfix_comments_before(if_branch.loc().start())
+                },
+            )?;
+        });
+
+        let cond_close_paren_loc =
+            self.find_next_in_src(cond.loc().end(), ')').unwrap_or_else(|| cond.loc().end());
+        let attempt_single_line = single_line_stmt_wide &&
+            self.should_attempt_block_single_line(if_branch.as_mut(), cond_close_paren_loc);
+        let if_branch_is_single_line = self.visit_stmt_as_block(if_branch, attempt_single_line)?;
+        if single_line_stmt_wide && !if_branch_is_single_line {
+            bail!(FormatterError::fmt())
+        }
+
+        if let Some(else_branch) = else_branch {
+            self.write_postfix_comments_before(else_branch.loc().start())?;
+            if if_branch_is_single_line {
+                writeln!(self.buf())?;
+            }
+            write_chunk!(self, else_branch.loc().start(), "else")?;
+            if let Statement::If(loc, cond, if_branch, else_branch) = else_branch.as_mut() {
+                self.visit_if(*loc, cond, if_branch, else_branch, false)?;
+            } else {
+                let else_branch_is_single_line =
+                    self.visit_stmt_as_block(else_branch, if_branch_is_single_line)?;
+                if single_line_stmt_wide && !else_branch_is_single_line {
+                    bail!(FormatterError::fmt())
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1954,26 +2003,23 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 self.visit_assignment(right)?;
             }
             Expression::Ternary(loc, cond, first_expr, second_expr) => {
-                let mut chunks = vec![];
+                cond.visit(self)?;
 
-                chunks.push(
-                    self.chunked(loc.start(), Some(first_expr.loc().start()), |fmt| {
-                        cond.visit(fmt)
-                    })?,
-                );
-                chunks.push(self.chunked(
+                let first_expr = self.chunked(
                     first_expr.loc().start(),
                     Some(second_expr.loc().start()),
                     |fmt| {
                         write_chunk!(fmt, "?")?;
                         first_expr.visit(fmt)
                     },
-                )?);
-                chunks.push(self.chunked(second_expr.loc().start(), Some(loc.end()), |fmt| {
-                    write_chunk!(fmt, ":")?;
-                    second_expr.visit(fmt)
-                })?);
+                )?;
+                let second_expr =
+                    self.chunked(second_expr.loc().start(), Some(loc.end()), |fmt| {
+                        write_chunk!(fmt, ":")?;
+                        second_expr.visit(fmt)
+                    })?;
 
+                let chunks = vec![first_expr, second_expr];
                 if !self.try_on_single_line(|fmt| fmt.write_chunks_separated(&chunks, "", false))? {
                     self.grouped(|fmt| fmt.write_chunks_separated(&chunks, "", true))?;
                 }
@@ -2324,7 +2370,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             write_chunk!(self, loc.start(), "unchecked ")?;
         }
 
-        self.visit_block(loc, statements, false, false)
+        self.visit_block(loc, statements, false, false)?;
+        Ok(())
     }
 
     fn visit_opening_paren(&mut self) -> Result<()> {
@@ -2662,9 +2709,14 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             },
         )?;
         match body {
-            Some(body) => self.visit_stmt_as_block(body, false), // TODO:
-            None => self.write_empty_brackets(),
-        }
+            Some(body) => {
+                self.visit_stmt_as_block(body, false)?;
+            }
+            None => {
+                self.write_empty_brackets()?;
+            }
+        };
+        Ok(())
     }
 
     fn visit_while(
@@ -2686,7 +2738,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         let cond_close_paren_loc =
             self.find_next_in_src(cond.loc().end(), ')').unwrap_or_else(|| cond.loc().end());
         let attempt_single_line = self.should_attempt_block_single_line(body, cond_close_paren_loc);
-        self.visit_stmt_as_block(body, attempt_single_line)
+        self.visit_stmt_as_block(body, attempt_single_line)?;
+        Ok(())
     }
 
     fn visit_do_while(
@@ -2718,33 +2771,29 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     ) -> Result<(), Self::Error> {
         return_source_if_disabled!(self, loc);
 
-        visit_source_if_disabled_else!(self, loc.with_end(if_branch.loc().start()), {
-            self.surrounded(
-                SurroundingChunk::new("if (", Some(loc.start()), Some(cond.loc().start())),
-                SurroundingChunk::new(")", None, Some(if_branch.loc().start())),
-                |fmt, _| {
-                    cond.visit(fmt)?;
-                    fmt.write_postfix_comments_before(if_branch.loc().start())
-                },
-            )?;
-        });
-
-        let cond_close_paren_loc =
-            self.find_next_in_src(cond.loc().end(), ')').unwrap_or_else(|| cond.loc().end());
-        let attempt_single_line = is_first_stmt &&
-            else_branch.is_none() &&
-            self.should_attempt_block_single_line(if_branch.as_mut(), cond_close_paren_loc);
-        self.visit_stmt_as_block(if_branch, attempt_single_line)?;
-
-        if let Some(else_branch) = else_branch {
-            self.write_postfix_comments_before(else_branch.loc().start())?;
-            write_chunk!(self, else_branch.loc().start(), "else")?;
-            if let Statement::If(loc, cond, if_branch, else_branch) = else_branch.as_mut() {
-                self.visit_if(*loc, cond, if_branch, else_branch, false)?;
-            } else {
-                self.visit_stmt_as_block(else_branch, false)?;
-            }
+        if !is_first_stmt {
+            self.write_if_stmt(loc, cond, if_branch, else_branch)?;
+            return Ok(())
         }
+
+        self.context.if_stmt_single_line = Some(true);
+        let mut stmt_fits_on_single = false;
+        let tx = self.transact(|fmt| {
+            stmt_fits_on_single = match fmt.write_if_stmt(loc, cond, if_branch, else_branch) {
+                Ok(()) => true,
+                Err(FormatterError::Fmt(_)) => false,
+                Err(err) => bail!(err),
+            };
+            Ok(())
+        })?;
+        if stmt_fits_on_single {
+            tx.commit()?;
+        } else {
+            self.context.if_stmt_single_line = Some(false);
+            self.write_if_stmt(loc, cond, if_branch, else_branch)?;
+        }
+        self.context.if_stmt_single_line = None;
+
         Ok(())
     }
 
@@ -3045,7 +3094,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         attempt_single_line: bool,
     ) -> Result<(), Self::Error> {
         return_source_if_disabled!(self, loc);
-        self.visit_block(loc, statements, attempt_single_line, false)
+        self.visit_block(loc, statements, attempt_single_line, false)?;
+        Ok(())
     }
 
     fn visit_yul_assignment<T>(

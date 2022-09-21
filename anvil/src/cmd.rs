@@ -128,12 +128,20 @@ pub struct NodeArgs {
 
     #[clap(
         long,
-        help = "Whether to launch an ipc server.",
+        help = IPC_HELP,
         value_name = "PATH",
         visible_alias = "ipcpath"
     )]
     pub ipc: Option<Option<String>>,
 }
+
+#[cfg(windows)]
+const IPC_HELP: &str =
+    "Launch an ipc server at the given path or default path = `\\.\\pipe\\anvil.ipc`";
+
+/// The default IPC endpoint
+#[cfg(not(windows))]
+const IPC_HELP: &str = "Launch an ipc server at the given path or default path = `/tmp/anvil.ipc`";
 
 impl NodeArgs {
     pub fn into_node_config(self) -> NodeConfig {

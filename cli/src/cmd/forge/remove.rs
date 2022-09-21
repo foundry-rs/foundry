@@ -27,7 +27,7 @@ impl Cmd for RemoveArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let config = self.load_config_emit_warnings();
+        let config = self.try_load_config_emit_warnings()?;
         let prj_root = config.__root.0.clone();
         let git_root =
             find_git_root_path(&prj_root).wrap_err("Unable to detect git root directory")?;

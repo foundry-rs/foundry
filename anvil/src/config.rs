@@ -49,6 +49,14 @@ pub const CHAIN_ID: u64 = 31337;
 /// Default mnemonic for dev accounts
 pub const DEFAULT_MNEMONIC: &str = "test test test test test test test test test test test junk";
 
+/// The default IPC endpoint
+#[cfg(windows)]
+pub const DEFAULT_IPC_ENDPOINT: &str = r"\\.\pipe\anvil.ipc";
+
+/// The default IPC endpoint
+#[cfg(not(windows))]
+pub const DEFAULT_IPC_ENDPOINT: &str = "/tmp/anvil.ipc";
+
 /// `anvil 0.1.0 (f01b232bc 2022-04-13T23:28:39.493201+00:00)`
 pub const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
@@ -628,16 +636,7 @@ impl NodeConfig {
     /// Returns the ipc path for the ipc endpoint if any
     pub fn get_ipc_path(&self) -> Option<String> {
         match self.ipc_path.as_ref() {
-            Some(path) => path.clone().or_else(|| {
-                #[cfg(windows)]
-                {
-                    Some(r"\\.\pipe\anvil.ipc".to_string())
-                }
-                #[cfg(not(windows))]
-                {
-                    Some("/tmp/anvil.ipc".to_string())
-                }
-            }),
+            Some(path) => path.clone().or_else(|| Some(DEFAULT_IPC_ENDPOINT.to_string())),
             None => None,
         }
     }
