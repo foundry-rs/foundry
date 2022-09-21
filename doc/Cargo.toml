@@ -25,7 +25,7 @@ clap = { version = "3.0.10", features = [
 ] }
 
 # misc
-solang-parser = "0.1.17"
+solang-parser = "=0.1.18"
 eyre = "0.6"
 thiserror = "1.0.30"
 rayon = "1.5.1"

@@ -1,15 +1,20 @@
 use eyre;
 use forge_fmt::Visitable;
+use itertools::Itertools;
 use rayon::prelude::*;
-use solang_parser::pt::{Base, ContractTy, Identifier};
+use solang_parser::{
+    doccomment::DocComment,
+    pt::{Base, ContractTy, Identifier},
+};
 use std::{
+    collections::HashMap,
     fmt::Write,
     fs,
     path::{Path, PathBuf},
 };
 
 use crate::{
-    format::DocFormat, macros::*, output::DocOutput, SolidityDoc, SolidityDocPart,
+    as_code::AsCode, format::DocFormat, macros::*, output::DocOutput, SolidityDoc, SolidityDocPart,
     SolidityDocPartElement,
 };
 
@@ -77,13 +82,14 @@ impl DocBuilder {
 
                 Ok((path.clone(), doc.parts))
             })
-            .collect::<eyre::Result<Vec<_>>>()?;
+            .collect::<eyre::Result<HashMap<_, _>>>()?;
 
         let out_dir = self.config.out_dir();
         let out_dir_src = out_dir.join("src");
         fs::create_dir_all(&out_dir_src)?;
 
         let mut filenames = vec![];
+
         for (path, doc) in docs.iter() {
             for part in doc.iter() {
                 if let SolidityDocPartElement::Contract(ref contract) = part.element {
@@ -111,14 +117,19 @@ impl DocBuilder {
 
                     let mut attributes = vec![];
                     let mut funcs = vec![];
+                    let mut events = vec![];
 
                     for child in part.children.iter() {
+                        // TODO: remove `clone`s
                         match &child.element {
                             SolidityDocPartElement::Function(func) => {
                                 funcs.push((func.clone(), child.comments.clone()))
                             }
                             SolidityDocPartElement::Variable(var) => {
                                 attributes.push((var.clone(), child.comments.clone()))
+                            }
+                            SolidityDocPartElement::Event(event) => {
+                                events.push((event.clone(), child.comments.clone()))
                             }
                             _ => {}
                         }
@@ -128,6 +139,8 @@ impl DocBuilder {
                         writeln_doc!(doc_file, DocOutput::H2("Attributes"))?;
                         for (var, comments) in attributes {
                             writeln_doc!(doc_file, "{}\n{}\n", var, comments)?;
+                            writeln_code!(doc_file, "{}", var)?;
+                            writeln!(doc_file)?;
                         }
                     }
 
@@ -135,6 +148,17 @@ impl DocBuilder {
                         writeln_doc!(doc_file, DocOutput::H2("Functions"))?;
                         for (func, comments) in funcs {
                             writeln_doc!(doc_file, "{}\n{}\n", func, comments)?;
+                            writeln_code!(doc_file, "{}", func)?;
+                            writeln!(doc_file)?;
+                        }
+                    }
+
+                    if !events.is_empty() {
+                        writeln_doc!(doc_file, DocOutput::H2("Events"))?;
+                        for (ev, comments) in events {
+                            writeln_doc!(doc_file, "{}\n{}\n", ev, comments)?;
+                            writeln_code!(doc_file, "{}", ev)?;
+                            writeln!(doc_file)?;
                         }
                     }
 
@@ -151,54 +175,105 @@ impl DocBuilder {
         let mut summary = String::new();
         writeln_doc!(summary, DocOutput::H1("Summary"))?;
 
-        // TODO:
-        let mut interfaces = vec![];
-        let mut contracts = vec![];
-        let mut abstract_contracts = vec![];
-        let mut libraries = vec![];
-        for entry in filenames.into_iter() {
-            match entry.1 {
-                ContractTy::Abstract(_) => abstract_contracts.push(entry),
-                ContractTy::Contract(_) => contracts.push(entry),
-                ContractTy::Interface(_) => interfaces.push(entry),
-                ContractTy::Library(_) => libraries.push(entry),
-            }
-        }
-
-        let mut write_section = |title: &str,
-                                 entries: &[(Identifier, ContractTy, PathBuf)]|
-         -> Result<(), std::fmt::Error> {
-            if !entries.is_empty() {
-                writeln_doc!(summary, DocOutput::H1(title))?;
-                for (src, _, filename) in entries {
-                    writeln_doc!(
-                        summary,
-                        "- {}",
-                        DocOutput::Link(&src.name, &filename.display().to_string())
-                    )?;
-                }
-                writeln!(summary)?;
-            }
-            Ok(())
-        };
-
-        write_section("Contracts", &contracts)?;
-        write_section("Libraries", &libraries)?;
-        write_section("Interfaces", &interfaces)?;
-        write_section("Abstract Contracts", &abstract_contracts)?;
+        self.write_section(&mut summary, 0, None, &filenames)?;
 
         fs::write(out_dir_src.join("SUMMARY.md"), summary)?;
-        // TODO: take values from config
         fs::write(
             out_dir.join("book.toml"),
-            format!("[book]\ntitle = \"{}\"\nsrc = \"src\"", self.config.title),
+            format!(
+                "[book]\ntitle = \"{}\"\nsrc = \"src\"\n\n[output.html]\nno-section-label = true\n\n[output.html.fold]\nenable = true",
+                self.config.title
+            ),
         )?;
+        Ok(())
+    }
+
+    fn write_section(
+        &self,
+        out: &mut String,
+        depth: usize,
+        path: Option<&Path>,
+        entries: &[(Identifier, ContractTy, PathBuf)],
+    ) -> eyre::Result<()> {
+        if !entries.is_empty() {
+            if let Some(path) = path {
+                let title = path.iter().last().unwrap().to_string_lossy();
+                let section_title = if depth == 1 {
+                    DocOutput::H1(&title).doc()
+                } else {
+                    format!(
+                        "{}- {}",
+                        " ".repeat((depth - 1) * 2),
+                        DocOutput::Link(
+                            &title,
+                            &path.join("README.md").as_os_str().to_string_lossy()
+                        )
+                    )
+                };
+                writeln_doc!(out, section_title)?;
+            }
+
+            let mut grouped = HashMap::new();
+            for entry in entries {
+                let key = entry.2.iter().take(depth + 1).collect::<PathBuf>();
+                grouped.entry(key).or_insert_with(Vec::new).push(entry.clone());
+            }
+            // TODO:
+            let grouped = grouped.iter().sorted_by(|(left_key, _), (right_key, _)| {
+                (left_key.extension().map(|ext| ext.eq("sol")).unwrap_or_default() as i32).cmp(
+                    &(right_key.extension().map(|ext| ext.eq("sol")).unwrap_or_default() as i32),
+                )
+            });
+
+            let indent = " ".repeat(2 * depth);
+            let mut readme = String::from("\n\n# Contents\n");
+            for (path, entries) in grouped {
+                if path.extension().map(|ext| ext.eq("sol")).unwrap_or_default() {
+                    for (src, _, filename) in entries {
+                        writeln_doc!(
+                            readme,
+                            "- {}",
+                            DocOutput::Link(
+                                &src.name,
+                                &Path::new("/").join(filename).display().to_string()
+                            )
+                        )?;
+
+                        writeln_doc!(
+                            out,
+                            "{}- {}",
+                            indent,
+                            DocOutput::Link(&src.name, &filename.display().to_string())
+                        )?;
+                    }
+                } else {
+                    writeln_doc!(
+                        readme,
+                        "- {}",
+                        DocOutput::Link(
+                            &path.iter().last().unwrap().to_string_lossy(),
+                            &path.join("README.md").display().to_string()
+                        )
+                    )?;
+                    // let subsection = path.iter().last().unwrap().to_string_lossy();
+                    self.write_section(out, depth + 1, Some(&path), &entries)?;
+                }
+            }
+            if !readme.is_empty() {
+                if let Some(path) = path {
+                    fs::write(
+                        self.config.out_dir().join("src").join(path).join("README.md"),
+                        readme,
+                    )?;
+                }
+            }
+        }
         Ok(())
     }
 
     fn lookup_contract_base(
         &self,
-        docs: &Vec<(PathBuf, Vec<SolidityDocPart>)>,
+        docs: &HashMap<PathBuf, Vec<SolidityDocPart>>,
         base: &Base,
     ) -> eyre::Result<Option<String>> {
         for (base_path, base_doc) in docs.iter() {

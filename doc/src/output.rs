@@ -6,6 +6,7 @@ pub enum DocOutput<'a> {
     H3(&'a str),
     Bold(&'a str),
     Link(&'a str, &'a str),
+    CodeBlock(&'a str, &'a str),
 }
 
 impl<'a> std::fmt::Display for DocOutput<'a> {

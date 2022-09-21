@@ -2,12 +2,13 @@ use forge_fmt::{Visitable, Visitor};
 use solang_parser::{
     doccomment::{parse_doccomments, DocComment},
     pt::{
-        Comment, ContractDefinition, FunctionDefinition, Loc, SourceUnit, SourceUnitPart,
-        VariableDefinition,
+        Comment, ContractDefinition, EventDefinition, FunctionDefinition, Loc, SourceUnit,
+        SourceUnitPart, VariableDefinition,
     },
 };
 use thiserror::Error;
 
+mod as_code;
 pub mod builder;
 mod format;
 mod macros;
@@ -23,7 +24,18 @@ struct SolidityDoc {
     parts: Vec<SolidityDocPart>,
     comments: Vec<Comment>,
     start_at: usize,
-    curr_parent: Option<SolidityDocPart>,
+    context: DocContext,
+}
+
+#[derive(Debug)]
+struct DocContext {
+    parent: Option<SolidityDocPart>,
+}
+
+impl Default for DocContext {
+    fn default() -> Self {
+        Self { parent: None }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -35,7 +47,7 @@ struct SolidityDocPart {
 
 impl SolidityDoc {
     fn new(comments: Vec<Comment>) -> Self {
-        SolidityDoc { parts: vec![], comments, start_at: 0, curr_parent: None }
+        SolidityDoc { parts: vec![], comments, start_at: 0, context: Default::default() }
     }
 
     fn with_parent(
@@ -43,18 +55,18 @@ impl SolidityDoc {
         mut parent: SolidityDocPart,
         mut visit: impl FnMut(&mut Self) -> Result<()>,
     ) -> Result<SolidityDocPart> {
-        let curr = self.curr_parent.take();
-        self.curr_parent = Some(parent);
+        let curr = self.context.parent.take();
+        self.context.parent = Some(parent);
         visit(self)?;
-        parent = self.curr_parent.take().unwrap();
-        self.curr_parent = curr;
+        parent = self.context.parent.take().unwrap();
+        self.context.parent = curr;
         Ok(parent)
     }
 
     fn add_element_to_parent(&mut self, element: SolidityDocPartElement, loc: Loc) {
         let child =
             SolidityDocPart { comments: self.parse_docs(loc.start()), element, children: vec![] };
-        if let Some(parent) = self.curr_parent.as_mut() {
+        if let Some(parent) = self.context.parent.as_mut() {
             parent.children.push(child);
         } else {
             self.parts.push(child);
@@ -72,6 +84,7 @@ enum SolidityDocPartElement {
     Contract(Box<ContractDefinition>),
     Function(FunctionDefinition),
     Variable(VariableDefinition),
+    Event(EventDefinition),
 }
 
 impl Visitor for SolidityDoc {
@@ -88,10 +101,7 @@ impl Visitor for SolidityDoc {
                     };
                     self.start_at = def.loc.start();
                     let contract = self.with_parent(contract, |doc| {
-                        for d in def.parts.iter_mut() {
-                            d.visit(doc)?;
-                        }
-
+                        def.parts.iter_mut().map(|d| d.visit(doc)).collect::<Result<Vec<_>>>()?;
                         Ok(())
                     })?;
 
@@ -99,6 +109,7 @@ impl Visitor for SolidityDoc {
                     self.parts.push(contract);
                 }
                 SourceUnitPart::FunctionDefinition(func) => self.visit_function(func)?,
+                SourceUnitPart::EventDefinition(event) => self.visit_event(event)?,
                 _ => {}
             };
         }
@@ -115,6 +126,13 @@ impl Visitor for SolidityDoc {
         self.add_element_to_parent(SolidityDocPartElement::Variable(var.clone()), var.loc);
         Ok(())
     }
+
+    fn visit_event(&mut self, event: &mut EventDefinition) -> Result<()> {
+        self.add_element_to_parent(SolidityDocPartElement::Event(event.clone()), event.loc);
+        Ok(())
+    }
+
+    // TODO: structs
 }
 
 #[cfg(test)]
