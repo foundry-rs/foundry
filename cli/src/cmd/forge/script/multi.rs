@@ -4,7 +4,10 @@ use super::{
     verify::VerifyBundle,
     ScriptArgs,
 };
-use ethers::prelude::{artifacts::Libraries, ArtifactId};
+use ethers::{
+    prelude::{artifacts::Libraries, ArtifactId},
+    signers::LocalWallet,
+};
 use eyre::ContextCompat;
 use foundry_common::{fs, get_http_provider};
 use foundry_config::Config;
@@ -112,6 +115,7 @@ impl ScriptArgs {
         mut deployments: MultiChainSequence,
         libraries: Libraries,
         config: &Config,
+        script_wallets: Vec<LocalWallet>,
         verify: VerifyBundle,
     ) -> eyre::Result<()> {
         if !libraries.is_empty() {
@@ -146,7 +150,7 @@ impl ScriptArgs {
                     .send_transactions(
                         sequence,
                         &sequence.typed_transactions().first().unwrap().0.clone(),
-                        vec![],
+                        &script_wallets,
                     )
                     .await
                 {

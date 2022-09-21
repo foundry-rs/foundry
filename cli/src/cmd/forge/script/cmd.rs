@@ -102,7 +102,7 @@ impl ScriptArgs {
                     self.send_transactions(
                         &mut deployment_sequence,
                         &fork_url,
-                        result.script_wallets,
+                        &result.script_wallets,
                     )
                     .await?;
                 }
@@ -127,8 +127,14 @@ impl ScriptArgs {
                 let multi =
                     MultiChainSequence::load(&script_config.config.broadcast, &self.sig, &target)?;
 
-                self.multi_chain_deployment(multi, libraries, &script_config.config, verify)
-                    .await?;
+                self.multi_chain_deployment(
+                    multi,
+                    libraries,
+                    &script_config.config,
+                    result.script_wallets,
+                    verify,
+                )
+                .await?;
             }
         } else {
             let known_contracts = flatten_contracts(&highlevel_known_contracts, true);

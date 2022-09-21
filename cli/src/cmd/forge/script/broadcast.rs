@@ -40,7 +40,7 @@ impl ScriptArgs {
         &self,
         deployment_sequence: &mut ScriptSequence,
         fork_url: &str,
-        script_wallets: Vec<LocalWallet>,
+        script_wallets: &[LocalWallet],
     ) -> eyre::Result<()> {
         let provider = Arc::new(get_http_provider(fork_url));
         let already_broadcasted = deployment_sequence.receipts.len();
@@ -296,6 +296,7 @@ impl ScriptArgs {
                             multi,
                             libraries,
                             &script_config.config,
+                            result.script_wallets,
                             verify,
                         )
                         .await?;
@@ -313,7 +314,7 @@ impl ScriptArgs {
 
                     deployment_sequence.add_libraries(libraries);
 
-                    self.send_transactions(deployment_sequence, &rpc, result.script_wallets)
+                    self.send_transactions(deployment_sequence, &rpc, &result.script_wallets)
                         .await?;
 
                     if self.verify {
@@ -372,8 +373,6 @@ impl ScriptArgs {
 
         let mut total_gas_per_rpc: HashMap<String, (U256, bool)> = HashMap::new();
 
-        // Required to find user provided wallets.
-        let mut addresses = HashSet::new();
         // Batches sequences from different rpcs.
         let mut new_txes = VecDeque::new();
         let mut manager = ProvidersManager::default();
@@ -420,11 +419,6 @@ impl ScriptArgs {
                 *total_gas += *typed_tx.gas().expect("gas is set");
             }
 
-            let from = tx.typed_tx().from().expect("No sender for onchain transaction.");
-            if !provider_info.wallets.contains_key(from) {
-                addresses.insert(*from);
-            }
-
             if let Some(next_tx) = txes_iter.peek() {
                 if next_tx.rpc == tx.rpc {
                     new_txes.push_back(tx);
@@ -434,16 +428,6 @@ impl ScriptArgs {
 
             new_txes.push_back(tx);
 
-            if self.broadcast {
-                provider_info.wallets.extend(
-                    self.wallets
-                        .find_all(provider_info.provider.clone(), addresses.clone(), vec![])
-                        .await?,
-                );
-                provider_info.sequential &= provider_info.wallets.len() != 1;
-            }
-
-            addresses.clear();
             let sequence = ScriptSequence::new(
                 new_txes,
                 returns.clone(),
