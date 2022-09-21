@@ -183,9 +183,8 @@ fn expand_output_param_type(
         }
         ParamType::Tuple(_) => {
             if param.internal_type.is_none() {
-                let mut result = kind.to_string();
-                result.pop();
-                result.remove(0);
+                let result =
+                    kind.to_string().trim_start_matches("(").trim_end_matches(")").to_string();
                 Ok(result)
             } else {
                 let ty = if let Some(struct_name) = structs.get_function_output_struct_type(
@@ -227,20 +226,14 @@ fn format_function_output_param(
 
 fn format_param(param: &Param, kind: String) -> String {
     // add `memory` if required (not needed for events, only for functions)
-    let mut is_memory = matches!(
-        param.kind,
+    let is_memory = match param.kind {
         ParamType::Array(_)
-            | ParamType::Bytes
-            | ParamType::String
-            | ParamType::FixedArray(_, _)
-            | ParamType::Tuple(_),
-    );
-    is_memory =
-        if (matches!(param.kind, ParamType::Tuple(_)) && param.internal_type.as_ref() == None) {
-            false
-        } else {
-            is_memory
-        };
+        | ParamType::Bytes
+        | ParamType::String
+        | ParamType::FixedArray(_, _) => true,
+        ParamType::Tuple(_) => !param.internal_type.is_none(),
+        _ => false,
+    };
 
     let kind = if is_memory { format!("{kind} memory") } else { kind };
 
