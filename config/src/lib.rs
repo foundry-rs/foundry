@@ -82,7 +82,7 @@ mod fuzz;
 pub use fuzz::FuzzConfig;
 
 mod invariant;
-use crate::resolve::UnresolvedEnvVarError;
+use crate::{fs_permissions::PathPermission, resolve::UnresolvedEnvVarError};
 pub use invariant::InvariantConfig;
 use providers::remappings::RemappingsProvider;
 
@@ -1010,7 +1010,7 @@ impl Config {
         let root = root.into();
         let paths = ProjectPathsConfig::builder().build_with_root(&root);
         Config {
-            __root: paths.root.into(),
+            __root: paths.root.clone().into(),
             src: paths.sources.file_name().unwrap().into(),
             out: paths.artifacts.file_name().unwrap().into(),
             libs: paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect(),
@@ -1019,6 +1019,7 @@ impl Config {
                 .into_iter()
                 .map(|r| RelativeRemapping::new(r, &root))
                 .collect(),
+            fs_permissions: FsPermissions::new([PathPermission::read(paths.root)]),
             ..Config::default()
         }
     }
@@ -1640,9 +1641,11 @@ impl Provider for Config {
 
 impl Default for Config {
     fn default() -> Self {
+        let root: RootPath = Default::default();
         Self {
             profile: Self::DEFAULT_PROFILE,
-            __root: Default::default(),
+            fs_permissions: FsPermissions::new([PathPermission::read(root.as_ref())]),
+            __root: root,
             src: "src".into(),
             test: "test".into(),
             script: "script".into(),
@@ -1712,7 +1715,6 @@ impl Default for Config {
             build_info: false,
             build_info_path: None,
             fmt: Default::default(),
-            fs_permissions: Default::default(),
             __non_exhaustive: (),
             __warnings: vec![],
         }
