@@ -13,6 +13,7 @@ pub struct ProvidersManager {
     pub inner: HashMap<String, ProviderInfo>,
 }
 
+/// Holds related metadata to each provider RPC.
 pub struct ProviderInfo {
     pub provider: Arc<Provider<RetryClient<Http>>>,
     pub chain: u64,

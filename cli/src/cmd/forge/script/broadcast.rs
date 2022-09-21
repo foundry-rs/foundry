@@ -359,30 +359,34 @@ impl ScriptArgs {
         config: &mut Config,
         returns: HashMap<String, NestedValue>,
     ) -> eyre::Result<Vec<ScriptSequence>> {
+        // User might be using both "in-code" forks and `--fork-url`.
         let arg_url = self.evm_opts.fork_url.clone().unwrap_or_default();
-
         let last_rpc = &transactions.back().expect("exists; qed").rpc;
         let is_multi_deployment = transactions.iter().any(|tx| &tx.rpc != last_rpc);
 
         let mut total_gas_per_rpc: HashMap<String, (U256, bool)> = HashMap::new();
 
-        // Batches sequences from different rpcs.
-        let mut new_txes = VecDeque::new();
+        // Batches sequence of transactions from different rpcs.
+        let mut new_sequence = VecDeque::new();
         let mut manager = ProvidersManager::default();
         let mut deployments = vec![];
 
+        // Peeks next transaction to figure out if it's the same rpc as the current batch.
         let mut txes_iter = transactions.into_iter().peekable();
+
+        // Config is used to initialize the sequence chain, so we need to change when handling a new
+        // sequence. This makes sure we don't lose the original value.
         let original_config_chain = config.chain_id;
 
         while let Some(mut tx) = txes_iter.next() {
+            // Fills the RPC on the transaction in case it's missing one.
             let tx_rpc = tx.rpc.unwrap_or_else(|| arg_url.clone());
-
             if tx_rpc.is_empty() {
                 eyre::bail!("Transaction needs an associated RPC if it is to be broadcasted.");
             }
-
             tx.rpc = Some(tx_rpc.clone());
 
+            // Get or initialize the RPC provider.
             let provider_info = match manager.inner.entry(tx_rpc.clone()) {
                 Entry::Occupied(entry) => entry.into_mut(),
                 Entry::Vacant(entry) => {
@@ -391,12 +395,11 @@ impl ScriptArgs {
                 }
             };
 
+            // Handles chain specific requirements.
             let mut is_legacy = self.legacy;
             if let Chain::Named(chain) = Chain::from(provider_info.chain) {
                 is_legacy |= chain.is_legacy();
             };
-            config.chain_id = Some(provider_info.chain.into());
-
             tx.change_type(is_legacy);
 
             if !self.skip_simulation {
@@ -412,17 +415,20 @@ impl ScriptArgs {
                 *total_gas += *typed_tx.gas().expect("gas is set");
             }
 
+            // We only create the [`ScriptSequence`] object when we collect all the rpc related
+            // transactions.
             if let Some(next_tx) = txes_iter.peek() {
                 if next_tx.rpc == tx.rpc {
-                    new_txes.push_back(tx);
+                    new_sequence.push_back(tx);
                     continue
                 }
             }
 
-            new_txes.push_back(tx);
+            new_sequence.push_back(tx);
 
+            config.chain_id = Some(provider_info.chain.into());
             let sequence = ScriptSequence::new(
-                new_txes,
+                new_sequence,
                 returns.clone(),
                 &self.sig,
                 target,
@@ -433,13 +439,14 @@ impl ScriptArgs {
 
             deployments.push(sequence);
 
-            new_txes = VecDeque::new();
+            new_sequence = VecDeque::new();
         }
 
-        // Restore
+        // Restore previous config chain.
         config.chain_id = original_config_chain;
 
         if !self.skip_simulation {
+            // Present gas information on a per RPC basis.
             for (rpc, (total_gas, is_eip1559)) in total_gas_per_rpc {
                 let provider_info = manager.inner.get(&rpc).expect("to be set.");
 
