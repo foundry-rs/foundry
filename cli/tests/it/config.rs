@@ -117,9 +117,10 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
 forgetest!(
     #[serial_test::serial]
     can_show_config,
-    |_prj: TestProject, mut cmd: TestCommand| {
+    |prj: TestProject, mut cmd: TestCommand| {
         cmd.arg("config");
-        let expected = Config::load().to_string_pretty().unwrap().trim().to_string();
+        let expected =
+            Config::load_with_root(prj.root()).to_string_pretty().unwrap().trim().to_string();
         assert_eq!(expected, cmd.stdout().trim().to_string());
     }
 );
