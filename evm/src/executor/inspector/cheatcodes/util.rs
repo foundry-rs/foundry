@@ -13,7 +13,7 @@ use ethers::{
         LocalWallet, Signer, H160, *,
     },
     signers::{coins_bip39::English, MnemonicBuilder},
-    types::{NameOrAddress, H256, U256, transaction::eip2718::TypedTransaction},
+    types::{transaction::eip2718::TypedTransaction, NameOrAddress, H256, U256},
     utils,
 };
 use foundry_common::fmt::*;

@@ -390,7 +390,7 @@ impl ScriptArgs {
             let provider_info = match manager.inner.entry(tx_rpc.clone()) {
                 Entry::Occupied(entry) => entry.into_mut(),
                 Entry::Vacant(entry) => {
-                    let info = ProviderInfo::new(&tx_rpc, &tx, self.slow).await?;
+                    let info = ProviderInfo::new(&tx_rpc, &tx).await?;
                     entry.insert(info)
                 }
             };
