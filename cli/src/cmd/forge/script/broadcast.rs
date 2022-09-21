@@ -380,6 +380,7 @@ impl ScriptArgs {
         let mut deployments = vec![];
 
         let mut txes_iter = transactions.into_iter().peekable();
+        let original_config_chain = config.chain_id;
 
         while let Some(mut tx) = txes_iter.next() {
             let tx_rpc = tx.rpc.unwrap_or_else(|| arg_url.clone());
@@ -402,6 +403,7 @@ impl ScriptArgs {
             if let Chain::Named(chain) = Chain::from(provider_info.chain) {
                 is_legacy |= chain.is_legacy();
             };
+            config.chain_id = Some(provider_info.chain.into());
 
             tx.change_type(is_legacy);
 
@@ -442,7 +444,7 @@ impl ScriptArgs {
             }
 
             addresses.clear();
-            let mut sequence = ScriptSequence::new(
+            let sequence = ScriptSequence::new(
                 new_txes,
                 returns.clone(),
                 &self.sig,
@@ -452,11 +454,13 @@ impl ScriptArgs {
                 is_multi_deployment,
             )?;
 
-            sequence.set_chain_id(provider_info.chain);
             deployments.push(sequence);
 
             new_txes = VecDeque::new();
         }
+
+        // Restore
+        config.chain_id = original_config_chain;
 
         if !self.skip_simulation {
             for (rpc, (total_gas, is_eip1559)) in total_gas_per_rpc {

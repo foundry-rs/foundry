@@ -82,10 +82,6 @@ impl ScriptSequence {
         })
     }
 
-    pub fn set_chain_id(&mut self, chain: u64) {
-        self.chain = chain;
-    }
-
     /// Loads The sequence for the corresponding json file
     pub fn load(
         config: &Config,
