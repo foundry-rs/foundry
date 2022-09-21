@@ -184,7 +184,11 @@ pub fn has_batch_support(chain: u64) -> bool {
     if let ConfigChain::Named(chain) = ConfigChain::from(chain) {
         return !matches!(
             chain,
-            Chain::Arbitrum | Chain::ArbitrumTestnet | Chain::Optimism | Chain::OptimismKovan
+            Chain::Arbitrum |
+                Chain::ArbitrumTestnet |
+                Chain::Optimism |
+                Chain::OptimismKovan |
+                Chain::OptimismGoerli
         )
     }
     true
