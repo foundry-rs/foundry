@@ -23,9 +23,7 @@ contract ReturnStatement {
                 0x00;
         }
 
-        if (val == 1) {
-            return 1;
-        }
+        if (val == 1) return 1;
 
         if (val == 2) {
             return 3 - 1;
@@ -33,9 +31,8 @@ contract ReturnStatement {
 
         if (val == 4) {
             /* return single 2 */
-            return 2
-                ** // return single 3
-                3; // return single 4
+            return 2 // return single 3
+                ** 3; // return single 4
         }
 
         return value(); // return single 5

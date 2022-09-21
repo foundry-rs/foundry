@@ -23,5 +23,11 @@ contract ForStatement {
         for (type(uint256).min;;) {}
 
         for (;;) { "test" ; }
+
+        for (uint256 i4; i4< 10; i4++) i4++;
+
+        for (uint256 i5; ;)
+            for (uint256 i6 = 10; i6 > i5; i6--)
+                i5++;
     }
 }

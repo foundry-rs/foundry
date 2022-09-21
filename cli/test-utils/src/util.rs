@@ -4,6 +4,7 @@ use ethers_solc::{
     project_util::{copy_dir, TempProject},
     ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig, Solc,
 };
+use eyre::WrapErr;
 use foundry_config::Config;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -16,7 +17,7 @@ use std::{
     fs::File,
     io::{BufWriter, Write},
     path::{Path, PathBuf},
-    process::{self, Command},
+    process::{self, Command, Stdio},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -85,6 +86,97 @@ pub fn setup_forge_project(test: TestProject) -> (TestProject, TestCommand) {
 
     let cmd = test.forge_command();
     (test, cmd)
+}
+
+/// How to initialize a remote git project
+#[derive(Debug, Clone)]
+pub struct RemoteProject {
+    id: String,
+    run_build: bool,
+    run_commands: Vec<Vec<String>>,
+    path_style: PathStyle,
+}
+
+impl RemoteProject {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            run_build: true,
+            run_commands: vec![],
+            path_style: PathStyle::Dapptools,
+        }
+    }
+
+    /// Whether to run `forge build`
+    pub fn set_build(mut self, run_build: bool) -> Self {
+        self.run_build = run_build;
+        self
+    }
+
+    /// Configures the project's pathstyle
+    pub fn path_style(mut self, path_style: PathStyle) -> Self {
+        self.path_style = path_style;
+        self
+    }
+
+    /// Add another command to run after cloning
+    pub fn cmd(mut self, cmd: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.run_commands.push(cmd.into_iter().map(Into::into).collect());
+        self
+    }
+}
+
+impl<T: Into<String>> From<T> for RemoteProject {
+    fn from(id: T) -> Self {
+        Self::new(id)
+    }
+}
+
+/// Setups a new local forge project by cloning and initializing the `RemoteProject`
+///
+/// This will
+///   1. clone the prj, like "transmissions1/solmate"
+///   2. run `forge build`, if configured
+///   3. run additional commands
+///
+/// # Panics
+///
+/// If anything goes wrong during, checkout, build, or other commands are unsuccessful
+pub fn setup_forge_remote(prj: impl Into<RemoteProject>) -> (TestProject, TestCommand) {
+    try_setup_forge_remote(prj).unwrap()
+}
+
+/// Same as `setup_forge_remote` but not panicing
+pub fn try_setup_forge_remote(
+    config: impl Into<RemoteProject>,
+) -> eyre::Result<(TestProject, TestCommand)> {
+    let config = config.into();
+    let mut tmp = TempProject::checkout(&config.id).wrap_err("failed to checkout project")?;
+    tmp.project_mut().paths = config.path_style.paths(tmp.root())?;
+
+    let prj = TestProject::with_project(tmp);
+    if config.run_build {
+        let mut cmd = prj.forge_command();
+        cmd.arg("build");
+        cmd.ensure_execute_success().wrap_err("`forge build` unsuccessful")?;
+    }
+    for addon in config.run_commands {
+        debug_assert!(!addon.is_empty());
+        let mut cmd = Command::new(&addon[0]);
+        if addon.len() > 1 {
+            cmd.args(&addon[1..]);
+        }
+        let status = cmd
+            .current_dir(prj.root())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .wrap_err_with(|| format!("Failed to execute {:?}", addon))?;
+        eyre::ensure!(status.success(), "Failed to execute command {:?}", addon);
+    }
+
+    let cmd = prj.forge_command();
+    Ok((prj, cmd))
 }
 
 pub fn setup_cast(name: &str, style: PathStyle) -> (TestProject, TestCommand) {
@@ -264,7 +356,7 @@ impl TestProject {
     /// Creates a new command that is set to use the cast executable for this project
     pub fn cast_command(&self) -> TestCommand {
         let mut cmd = self.cast_bin();
-        cmd.current_dir(&self.inner.root());
+        cmd.current_dir(self.inner.root());
         let _lock = CURRENT_DIR_LOCK.lock();
         TestCommand {
             project: self.clone(),
@@ -310,6 +402,17 @@ impl TestProject {
     pub fn wipe(&self) {
         pretty_err(self.root(), fs::remove_dir_all(self.root()));
         pretty_err(self.root(), fs::create_dir_all(self.root()));
+    }
+
+    /// Removes all contract files from `src`, `test`, `script`
+    pub fn wipe_contracts(&self) {
+        fn rm_create(path: &Path) {
+            pretty_err(path, fs::remove_dir_all(path));
+            pretty_err(path, fs::create_dir(path));
+        }
+        rm_create(&self.paths().sources);
+        rm_create(&self.paths().tests);
+        rm_create(&self.paths().scripts);
     }
 }
 
@@ -487,20 +590,28 @@ impl TestCommand {
 
     /// Executes command, applies stdin function and returns output
     pub fn execute(&mut self) -> process::Output {
-        let mut child = self
-            .cmd
-            .stdout(process::Stdio::piped())
-            .stderr(process::Stdio::piped())
-            .stdin(process::Stdio::piped())
-            .spawn()
-            .unwrap();
+        self.try_execute().unwrap()
+    }
+
+    pub fn try_execute(&mut self) -> std::io::Result<process::Output> {
+        let mut child =
+            self.cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::piped()).spawn()?;
         if let Some(fun) = self.stdin_fun.take() {
             fun(child.stdin.take().unwrap())
         }
-        child.wait_with_output().unwrap()
+        child.wait_with_output()
+    }
+
+    /// Executes command and expects an successful result
+    #[track_caller]
+    pub fn ensure_execute_success(&mut self) -> eyre::Result<process::Output> {
+        let out = self.try_execute()?;
+        self.ensure_success(out)
     }
 
     /// Runs the command and prints its output
+    /// You have to pass --nocapture to cargo test or the print won't be displayed.
+    /// The full command would be: cargo test -- --nocapture
     pub fn print_output(&mut self) {
         let output = self.execute();
         println!("stdout: {}", String::from_utf8_lossy(&output.stdout));
@@ -599,13 +710,17 @@ impl TestCommand {
     }
 
     fn expect_success(&self, out: process::Output) -> process::Output {
+        self.ensure_success(out).unwrap()
+    }
+
+    pub fn ensure_success(&self, out: process::Output) -> eyre::Result<process::Output> {
         if !out.status.success() {
             let suggest = if out.stderr.is_empty() {
                 "\n\nDid your forge command end up with no output?".to_string()
             } else {
                 "".to_string()
             };
-            panic!(
+            eyre::bail!(
                 "\n\n==========\n\
                     command failed but expected success!\
                     {}\
@@ -623,7 +738,7 @@ impl TestCommand {
                 String::from_utf8_lossy(&out.stderr)
             );
         }
-        out
+        Ok(out)
     }
 }
 
@@ -644,7 +759,7 @@ pub trait OutputExt {
 ///
 /// This should strip everything that can vary from run to run, like elapsed time, file paths
 static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(\r|finished in (.*)?s|-->(.*).sol|Location(.|\n)*\.rs(.|\n)*Backtrace|installing solc version(.*?)\n|Successfully installed solc(.*?)\n)").unwrap()
+    Regex::new(r"(\r|finished in (.*)?s|-->(.*).sol|Location(.|\n)*\.rs(.|\n)*Backtrace|installing solc version(.*?)\n|Successfully installed solc(.*?)\n|runs: \d+, μ: \d+, ~: \d+)").unwrap()
 });
 
 impl OutputExt for process::Output {

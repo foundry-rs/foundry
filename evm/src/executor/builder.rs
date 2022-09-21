@@ -1,12 +1,18 @@
 use super::{
-    inspector::{Cheatcodes, InspectorStackConfig},
+    inspector::{Cheatcodes, Fuzzer, InspectorStackConfig},
     Executor,
 };
-use crate::executor::{backend::Backend, inspector::CheatsConfig};
+use crate::{
+    executor::{backend::Backend, inspector::CheatsConfig},
+    fuzz::{invariant::RandomCallGenerator, strategies::EvmFuzzState},
+};
 use ethers::types::U256;
-
 use revm::{Env, SpecId};
 
+/// The builder that allows to configure an evm [`Executor`] which a stack of optional
+/// [`revm::Inspector`]s, such as [`Cheatcodes`]
+///
+/// By default, the [`Executor`] will be configured with an empty [`InspectorStack`]
 #[derive(Default, Debug)]
 pub struct ExecutorBuilder {
     /// The execution environment configuration.
@@ -45,6 +51,17 @@ impl ExecutorBuilder {
     #[must_use]
     pub fn set_coverage(mut self, enable: bool) -> Self {
         self.inspector_config.coverage = enable;
+        self
+    }
+
+    /// Enables the fuzzer for data collection and maybe call overriding
+    #[must_use]
+    pub fn with_fuzzer(
+        mut self,
+        call_generator: Option<RandomCallGenerator>,
+        fuzz_state: EvmFuzzState,
+    ) -> Self {
+        self.inspector_config.fuzzer = Some(Fuzzer { call_generator, fuzz_state, collect: false });
         self
     }
 

@@ -2,17 +2,20 @@
 
 use crate::{
     executor::{
+        backend::{error::DatabaseError, snapshot::StateSnapshot},
         fork::{BlockchainDb, SharedBackend},
         snapshot::Snapshots,
     },
     revm::db::CacheDB,
 };
-use bytes::Bytes;
-use ethers::prelude::{Address, H256, U256};
+use ethers::{
+    prelude::{Address, H256, U256},
+    types::BlockId,
+};
 use hashbrown::HashMap as Map;
 use parking_lot::Mutex;
-use revm::{db::DatabaseRef, Account, AccountInfo, Database, DatabaseCommit};
-use std::{collections::BTreeMap, sync::Arc};
+use revm::{db::DatabaseRef, Account, AccountInfo, Bytecode, Database, DatabaseCommit};
+use std::sync::Arc;
 use tracing::{trace, warn};
 
 /// a [revm::Database] that's forked off another client
@@ -65,10 +68,12 @@ impl ForkedDatabase {
     }
 
     /// Reset the fork to a fresh forked state, and optionally update the fork config
-    pub fn reset(&mut self, _url: Option<String>, block_number: Option<u64>) -> Result<(), String> {
-        if let Some(block_number) = block_number {
-            self.backend.set_pinned_block(block_number).map_err(|err| err.to_string())?;
-        }
+    pub fn reset(
+        &mut self,
+        _url: Option<String>,
+        block_number: impl Into<BlockId>,
+    ) -> Result<(), String> {
+        self.backend.set_pinned_block(block_number).map_err(|err| err.to_string())?;
 
         // TODO need to find a way to update generic provider via url
 
@@ -92,12 +97,12 @@ impl ForkedDatabase {
 
     pub fn create_snapshot(&self) -> ForkDbSnapshot {
         let db = self.db.db();
-        ForkDbSnapshot {
-            local: self.cache_db.clone(),
+        let snapshot = StateSnapshot {
             accounts: db.accounts.read().clone(),
             storage: db.storage.read().clone(),
             block_hashes: db.block_hashes.read().clone(),
-        }
+        };
+        ForkDbSnapshot { local: self.cache_db.clone(), snapshot }
     }
 
     pub fn insert_snapshot(&self) -> U256 {
@@ -111,7 +116,10 @@ impl ForkedDatabase {
     pub fn revert_snapshot(&mut self, id: U256) -> bool {
         let snapshot = { self.snapshots().lock().remove(id) };
         if let Some(snapshot) = snapshot {
-            let ForkDbSnapshot { accounts, storage, block_hashes, local } = snapshot;
+            let ForkDbSnapshot {
+                local,
+                snapshot: StateSnapshot { accounts, storage, block_hashes },
+            } = snapshot;
             let db = self.inner().db();
             {
                 let mut accounts_lock = db.accounts.write();
@@ -141,37 +149,44 @@ impl ForkedDatabase {
 }
 
 impl Database for ForkedDatabase {
-    fn basic(&mut self, address: Address) -> AccountInfo {
-        self.cache_db.basic(address)
+    type Error = DatabaseError;
+
+    fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        // Note: this will always return Some, since the `SharedBackend` will always load the
+        // account, this differs from `<CacheDB as Database>::basic`, See also
+        // [MemDb::ensure_loaded](crate::executor::backend::MemDb::ensure_loaded)
+        Database::basic(&mut self.cache_db, address)
     }
 
-    fn code_by_hash(&mut self, code_hash: H256) -> bytes::Bytes {
-        self.cache_db.code_by_hash(code_hash)
+    fn code_by_hash(&mut self, code_hash: H256) -> Result<Bytecode, Self::Error> {
+        Database::code_by_hash(&mut self.cache_db, code_hash)
     }
 
-    fn storage(&mut self, address: Address, index: U256) -> U256 {
+    fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
         Database::storage(&mut self.cache_db, address, index)
     }
 
-    fn block_hash(&mut self, number: U256) -> H256 {
-        self.cache_db.block_hash(number)
+    fn block_hash(&mut self, number: U256) -> Result<H256, Self::Error> {
+        Database::block_hash(&mut self.cache_db, number)
     }
 }
 
 impl DatabaseRef for ForkedDatabase {
-    fn basic(&self, address: Address) -> AccountInfo {
+    type Error = DatabaseError;
+
+    fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         self.cache_db.basic(address)
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> bytes::Bytes {
+    fn code_by_hash(&self, code_hash: H256) -> Result<Bytecode, Self::Error> {
         self.cache_db.code_by_hash(code_hash)
     }
 
-    fn storage(&self, address: Address, index: U256) -> U256 {
+    fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
         DatabaseRef::storage(&self.cache_db, address, index)
     }
 
-    fn block_hash(&self, number: U256) -> H256 {
+    fn block_hash(&self, number: U256) -> Result<H256, Self::Error> {
         self.cache_db.block_hash(number)
     }
 }
@@ -183,12 +198,12 @@ impl DatabaseCommit for ForkedDatabase {
 }
 
 /// Represents a snapshot of the database
+///
+/// This mimics `revm::CacheDB`
 #[derive(Debug)]
 pub struct ForkDbSnapshot {
-    local: CacheDB<SharedBackend>,
-    accounts: BTreeMap<Address, AccountInfo>,
-    storage: BTreeMap<Address, BTreeMap<U256, U256>>,
-    block_hashes: BTreeMap<u64, H256>,
+    pub local: CacheDB<SharedBackend>,
+    pub snapshot: StateSnapshot,
 }
 
 // === impl DbSnapshot ===
@@ -203,37 +218,85 @@ impl ForkDbSnapshot {
 // and uses another db as fallback
 // We prioritize stored changed accounts/storage
 impl DatabaseRef for ForkDbSnapshot {
-    fn basic(&self, address: Address) -> AccountInfo {
+    type Error = DatabaseError;
+
+    fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         match self.local.accounts.get(&address) {
-            Some(account) => account.info.clone(),
+            Some(account) => Ok(Some(account.info.clone())),
             None => {
-                self.accounts.get(&address).cloned().unwrap_or_else(|| self.local.basic(address))
+                let mut acc = self.snapshot.accounts.get(&address).cloned();
+
+                if acc.is_none() {
+                    acc = self.local.basic(address)?;
+                }
+                Ok(acc)
             }
         }
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> Bytes {
+    fn code_by_hash(&self, code_hash: H256) -> Result<Bytecode, Self::Error> {
         self.local.code_by_hash(code_hash)
     }
 
-    fn storage(&self, address: Address, index: U256) -> U256 {
+    fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
         match self.local.accounts.get(&address) {
             Some(account) => match account.storage.get(&index) {
-                Some(entry) => *entry,
-                None => self
-                    .get_storage(address, index)
-                    .unwrap_or_else(|| DatabaseRef::storage(&self.local, address, index)),
+                Some(entry) => Ok(*entry),
+                None => match self.get_storage(address, index) {
+                    None => DatabaseRef::storage(&self.local, address, index),
+                    Some(storage) => Ok(storage),
+                },
             },
-            None => self
-                .get_storage(address, index)
-                .unwrap_or_else(|| DatabaseRef::storage(&self.local, address, index)),
+            None => match self.get_storage(address, index) {
+                None => DatabaseRef::storage(&self.local, address, index),
+                Some(storage) => Ok(storage),
+            },
         }
     }
 
-    fn block_hash(&self, number: U256) -> H256 {
-        self.block_hashes
-            .get(&number.as_u64())
-            .copied()
-            .unwrap_or_else(|| self.local.block_hash(number))
+    fn block_hash(&self, number: U256) -> Result<H256, Self::Error> {
+        match self.snapshot.block_hashes.get(&number).copied() {
+            None => self.local.block_hash(number),
+            Some(block_hash) => Ok(block_hash),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::executor::fork::BlockchainDbMeta;
+    use foundry_common::get_http_provider;
+    use std::collections::BTreeSet;
+
+    /// Demonstrates that `Database::basic` for `ForkedDatabase` will always return the
+    /// `AccountInfo`
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_db_insert_basic_default() {
+        let rpc = foundry_utils::rpc::next_http_rpc_endpoint();
+        let provider = get_http_provider(rpc.clone());
+        let meta = BlockchainDbMeta {
+            cfg_env: Default::default(),
+            block_env: Default::default(),
+            hosts: BTreeSet::from([rpc]),
+        };
+        let db = BlockchainDb::new(meta, None);
+
+        let backend = SharedBackend::spawn_backend(Arc::new(provider), db.clone(), None).await;
+
+        let mut db = ForkedDatabase::new(backend, db);
+        let address = Address::random();
+
+        let info = Database::basic(&mut db, address).unwrap();
+        assert!(info.is_some());
+        let mut info = info.unwrap();
+        info.balance = 500u64.into();
+
+        // insert the modified account info
+        db.database_mut().insert_account_info(address, info.clone());
+
+        let loaded = Database::basic(&mut db, address).unwrap();
+        assert!(loaded.is_some());
+        assert_eq!(loaded.unwrap(), info);
     }
 }

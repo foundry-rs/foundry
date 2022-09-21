@@ -53,7 +53,7 @@ just fill in what you can. Contributors will ask follow up questions if somethin
 The most important pieces of information we need in a bug report are:
 
 - The Foundry version you are on (and that it is up to date)
-- The platform you are on (Windows, macOS, an M1 Mac or Windows)
+- The platform you are on (Windows, macOS, an M1 Mac or Linux)
 - Code snippets if this is happening in relation to testing or building code
 - Concrete steps to reproduce the bug
 
@@ -85,6 +85,16 @@ cargo check --all
 cargo test --all --all-features
 cargo +nightly fmt -- --check
 cargo +nightly clippy --all --all-features -- -D warnings
+```
+
+If you are working in VSCode, we recommend you install the [rust-analyzer](https://rust-analyzer.github.io/) extension, and use the following VSCode user settings:
+
+```json
+"editor.formatOnSave": true,
+"rust-analyzer.rustfmt.extraArgs": ["+nightly"],
+"[rust]": {
+  "editor.defaultFormatter": "rust-lang.rust-analyzer"
+}
 ```
 
 If you are working on a larger feature, we encourage you to open up a draft pull request, to make sure that other contributors are not duplicating work.

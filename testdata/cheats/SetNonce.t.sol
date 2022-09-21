@@ -5,7 +5,7 @@ import "ds-test/test.sol";
 import "./Cheats.sol";
 
 contract Foo {
-    function f() external view returns(uint256) {
+    function f() external view returns (uint256) {
         return 1;
     }
 }

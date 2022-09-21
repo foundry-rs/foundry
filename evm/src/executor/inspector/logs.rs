@@ -1,5 +1,6 @@
 use crate::executor::{
-    patch_hardhat_console_selector, HardhatConsoleCalls, HARDHAT_CONSOLE_ADDRESS,
+    format_hardhat_call, patch_hardhat_console_selector, HardhatConsoleCalls,
+    HARDHAT_CONSOLE_ADDRESS,
 };
 use bytes::Bytes;
 use ethers::{
@@ -11,7 +12,7 @@ use revm::{db::Database, CallInputs, EVMData, Gas, Inspector, Return};
 /// An inspector that collects logs during execution.
 ///
 /// The inspector collects logs from the LOG opcodes as well as Hardhat-style logs.
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct LogCollector {
     pub logs: Vec<Log>,
 }
@@ -74,7 +75,7 @@ fn convert_hh_log_to_event(call: HardhatConsoleCalls) -> Log {
                 .unwrap(),
         )],
         // Convert the parameters of the call to their string representation for the log
-        data: ethers::abi::encode(&[Token::String(call.to_string())]).into(),
+        data: ethers::abi::encode(&[Token::String(format_hardhat_call(&call))]).into(),
         ..Default::default()
     }
 }

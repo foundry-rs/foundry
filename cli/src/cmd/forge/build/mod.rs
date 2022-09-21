@@ -1,11 +1,14 @@
-//! build command
-
-use crate::{
-    cmd::{forge::watch::WatchArgs, Cmd},
-    compile,
+//! Build command
+use crate::cmd::{
+    forge::{
+        install::{self},
+        watch::WatchArgs,
+    },
+    Cmd, LoadConfig,
 };
 use clap::Parser;
 use ethers::solc::{Project, ProjectCompileOutput};
+use foundry_common::compile;
 use foundry_config::{
     figment::{
         self,
@@ -24,27 +27,30 @@ pub use self::core::CoreBuildArgs;
 mod paths;
 pub use self::paths::ProjectPathsArgs;
 
-// All `forge build` related arguments
-//
-// CLI arguments take the highest precedence in the Config/Figment hierarchy.
-// In order to override them in the foundry `Config` they need to be merged into an existing
-// `figment::Provider`, like `foundry_config::Config` is.
-//
-// # Example
-//
-// ```ignore
-// use foundry_config::Config;
-// # fn t(args: BuildArgs) {
-// let config = Config::from(&args);
-// # }
-// ```
-//
-// `BuildArgs` implements `figment::Provider` in which all config related fields are serialized and
-// then merged into an existing `Config`, effectively overwriting them.
-//
-// Some arguments are marked as `#[serde(skip)]` and require manual processing in
-// `figment::Provider` implementation
-#[derive(Debug, Clone, Parser, Serialize)]
+foundry_config::merge_impl_figment_convert!(BuildArgs, args);
+
+/// All `forge build` related arguments
+///
+/// CLI arguments take the highest precedence in the Config/Figment hierarchy.
+/// In order to override them in the foundry `Config` they need to be merged into an existing
+/// `figment::Provider`, like `foundry_config::Config` is.
+///
+/// # Example
+///
+/// ```
+/// use foundry_cli::cmd::forge::build::BuildArgs;
+/// use foundry_config::Config;
+/// # fn t(args: BuildArgs) {
+/// let config = Config::from(&args);
+/// # }
+/// ```
+///
+/// `BuildArgs` implements `figment::Provider` in which all config related fields are serialized and
+/// then merged into an existing `Config`, effectively overwriting them.
+///
+/// Some arguments are marked as `#[serde(skip)]` and require manual processing in
+/// `figment::Provider` implementation
+#[derive(Debug, Clone, Parser, Serialize, Default)]
 pub struct BuildArgs {
     #[clap(flatten)]
     #[serde(flatten)]
@@ -66,7 +72,16 @@ pub struct BuildArgs {
 impl Cmd for BuildArgs {
     type Output = ProjectCompileOutput;
     fn run(self) -> eyre::Result<Self::Output> {
-        let project = self.project()?;
+        let mut config = self.try_load_config_emit_warnings()?;
+        let mut project = config.project()?;
+
+        if install::install_missing_dependencies(&mut config, &project, self.args.silent) &&
+            config.auto_detect_remappings
+        {
+            // need to re-configure here to also catch additional remappings
+            config = self.load_config();
+            project = config.project()?;
+        }
 
         if self.args.silent {
             compile::suppress_compile(&project)
@@ -124,5 +139,3 @@ impl Provider for BuildArgs {
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
-
-foundry_config::impl_figment_convert!(BuildArgs, args);

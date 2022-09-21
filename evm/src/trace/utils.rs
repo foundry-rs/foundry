@@ -1,6 +1,10 @@
 //! utilities used within tracing
 
-use ethers::abi::{Abi, Address, Function, Token};
+use crate::decode;
+use ethers::{
+    abi::{Abi, Address, Function, Token},
+    core::utils::to_checksum,
+};
 use foundry_utils::format_token;
 use std::collections::HashMap;
 
@@ -12,7 +16,7 @@ pub fn label(token: &Token, labels: &HashMap<Address, String>) -> String {
     match token {
         Token::Address(addr) => {
             if let Some(label) = labels.get(addr) {
-                format!("{}: [{:?}]", label, addr)
+                format!("{}: [{}]", label, to_checksum(addr, None))
             } else {
                 format_token(token)
             }
@@ -28,7 +32,7 @@ pub(crate) fn decode_cheatcode_inputs(
 ) -> Option<Vec<String>> {
     match func.name.as_str() {
         "expectRevert" => {
-            foundry_utils::decode_revert(data, Some(errors)).ok().map(|decoded| vec![decoded])
+            decode::decode_revert(data, Some(errors), None).ok().map(|decoded| vec![decoded])
         }
         _ => None,
     }

@@ -53,18 +53,13 @@ contract NestedVictim {
 }
 
 contract NestedPranker {
-    Cheats constant cheats = Cheats(
-        address(bytes20(uint160(uint256(keccak256('hevm cheat code')))))
-    );
+    Cheats constant cheats = Cheats(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
 
     address newSender;
     address newOrigin;
     address oldOrigin;
 
-    constructor(
-        address _newSender,
-        address _newOrigin
-    ) {
+    constructor(address _newSender, address _newOrigin) {
         newSender = _newSender;
         newOrigin = _newOrigin;
         oldOrigin = tx.origin;
@@ -76,10 +71,7 @@ contract NestedPranker {
 
     function completePrank(NestedVictim victim) public {
         victim.assertCallerAndOrigin(
-            newSender,
-            "msg.sender was not set in nested prank",
-            newOrigin,
-            "tx.origin was not set in nested prank"
+            newSender, "msg.sender was not set in nested prank", newOrigin, "tx.origin was not set in nested prank"
         );
         cheats.stopPrank();
 
@@ -101,18 +93,12 @@ contract PrankTest is DSTest {
         Victim victim = new Victim();
         cheats.prank(sender);
         victim.assertCallerAndOrigin(
-            sender,
-            "msg.sender was not set during prank",
-            tx.origin,
-            "tx.origin invariant failed"
+            sender, "msg.sender was not set during prank", tx.origin, "tx.origin invariant failed"
         );
 
         // Ensure we cleaned up correctly
         victim.assertCallerAndOrigin(
-            address(this),
-            "msg.sender was not cleaned up",
-            tx.origin,
-            "tx.origin invariant failed"
+            address(this), "msg.sender was not cleaned up", tx.origin, "tx.origin invariant failed"
         );
     }
 
@@ -123,18 +109,12 @@ contract PrankTest is DSTest {
         Victim victim = new Victim();
         cheats.prank(sender, origin);
         victim.assertCallerAndOrigin(
-            sender,
-            "msg.sender was not set during prank",
-            origin,
-            "tx.origin was not set during prank"
+            sender, "msg.sender was not set during prank", origin, "tx.origin was not set during prank"
         );
 
         // Ensure we cleaned up correctly
         victim.assertCallerAndOrigin(
-            address(this),
-            "msg.sender was not cleaned up",
-            oldOrigin,
-            "tx.origin was not cleaned up"
+            address(this), "msg.sender was not cleaned up", oldOrigin, "tx.origin was not cleaned up"
         );
     }
 
@@ -149,10 +129,7 @@ contract PrankTest is DSTest {
 
         // Ensure we cleaned up correctly
         victim.assertCallerAndOrigin(
-            address(this),
-            "msg.sender was not cleaned up",
-            tx.origin,
-            "tx.origin invariant failed"
+            address(this), "msg.sender was not cleaned up", tx.origin, "tx.origin invariant failed"
         );
     }
 
@@ -168,11 +145,8 @@ contract PrankTest is DSTest {
 
         // Ensure we cleaned up correctly
         victim.assertCallerAndOrigin(
-            address(this),
-            "msg.sender was not cleaned up",
-            tx.origin,
-            "tx.origin was not cleaned up"
-        ); 
+            address(this), "msg.sender was not cleaned up", tx.origin, "tx.origin was not cleaned up"
+        );
     }
 
     function testPrankStartStop(address sender, address origin) public {
@@ -182,10 +156,7 @@ contract PrankTest is DSTest {
         Victim victim = new Victim();
         cheats.startPrank(sender, origin);
         victim.assertCallerAndOrigin(
-            sender,
-            "msg.sender was not set during prank",
-            origin,
-            "tx.origin was not set during prank"
+            sender, "msg.sender was not set during prank", origin, "tx.origin was not set during prank"
         );
         victim.assertCallerAndOrigin(
             sender,
@@ -197,11 +168,8 @@ contract PrankTest is DSTest {
 
         // Ensure we cleaned up correctly
         victim.assertCallerAndOrigin(
-            address(this),
-            "msg.sender was not cleaned up",
-            oldOrigin,
-            "tx.origin was not cleaned up"
-        ); 
+            address(this), "msg.sender was not cleaned up", oldOrigin, "tx.origin was not cleaned up"
+        );
     }
 
     function testPrankStartStopConstructor(address sender, address origin) public {
@@ -223,10 +191,7 @@ contract PrankTest is DSTest {
 
         // Ensure we cleaned up correctly
         victim.assertCallerAndOrigin(
-            address(this),
-            "msg.sender was not cleaned up",
-            tx.origin,
-            "tx.origin was not cleaned up"
+            address(this), "msg.sender was not cleaned up", tx.origin, "tx.origin was not cleaned up"
         );
     }
 
@@ -252,36 +217,36 @@ contract PrankTest is DSTest {
     /// ┌────┐          ┌───────┐     ┌──────┐ ┌──────┐               ┌────────────┐
     /// │Test│          │Pranker│     │Cheats│ │Victim│               │Inner Victim│
     /// └─┬──┘          └───┬───┘     └──┬───┘ └──┬───┘               └─────┬──────┘
-    ///   │                 │            │        │                         │       
-    ///   │incompletePrank()│            │        │                         │       
-    ///   │────────────────>│            │        │                         │       
-    ///   │                 │            │        │                         │       
-    ///   │                 │startPrank()│        │                         │       
-    ///   │                 │───────────>│        │                         │       
-    ///   │                 │            │        │                         │       
-    ///   │         should not be pranked│        │                         │       
-    ///   │──────────────────────────────────────>│                         │       
-    ///   │                 │            │        │                         │       
-    ///   │                 │            │        │  should not be pranked  │       
-    ///   │                 │            │        │────────────────────────>│       
-    ///   │                 │            │        │                         │       
-    ///   │ completePrank() │            │        │                         │       
-    ///   │────────────────>│            │        │                         │       
-    ///   │                 │            │        │                         │       
-    ///   │                 │  should be pranked  │                         │       
-    ///   │                 │────────────────────>│                         │       
-    ///   │                 │            │        │                         │       
-    ///   │                 │            │        │only tx.origin is pranked│       
-    ///   │                 │            │        │────────────────────────>│       
-    ///   │                 │            │        │                         │       
-    ///   │                 │stopPrank() │        │                         │       
-    ///   │                 │───────────>│        │                         │       
-    ///   │                 │            │        │                         │       
-    ///   │                 │should not be pranked│                         │       
-    ///   │                 │────────────────────>│                         │       
-    ///   │                 │            │        │                         │       
-    ///   │                 │            │        │  should not be pranked  │       
-    ///   │                 │            │        │────────────────────────>│       
+    ///   │                 │            │        │                         │
+    ///   │incompletePrank()│            │        │                         │
+    ///   │────────────────>│            │        │                         │
+    ///   │                 │            │        │                         │
+    ///   │                 │startPrank()│        │                         │
+    ///   │                 │───────────>│        │                         │
+    ///   │                 │            │        │                         │
+    ///   │         should not be pranked│        │                         │
+    ///   │──────────────────────────────────────>│                         │
+    ///   │                 │            │        │                         │
+    ///   │                 │            │        │  should not be pranked  │
+    ///   │                 │            │        │────────────────────────>│
+    ///   │                 │            │        │                         │
+    ///   │ completePrank() │            │        │                         │
+    ///   │────────────────>│            │        │                         │
+    ///   │                 │            │        │                         │
+    ///   │                 │  should be pranked  │                         │
+    ///   │                 │────────────────────>│                         │
+    ///   │                 │            │        │                         │
+    ///   │                 │            │        │only tx.origin is pranked│
+    ///   │                 │            │        │────────────────────────>│
+    ///   │                 │            │        │                         │
+    ///   │                 │stopPrank() │        │                         │
+    ///   │                 │───────────>│        │                         │
+    ///   │                 │            │        │                         │
+    ///   │                 │should not be pranked│                         │
+    ///   │                 │────────────────────>│                         │
+    ///   │                 │            │        │                         │
+    ///   │                 │            │        │  should not be pranked  │
+    ///   │                 │            │        │────────────────────────>│
     /// ┌─┴──┐          ┌───┴───┐     ┌──┴───┐ ┌──┴───┐               ┌─────┴──────┐
     /// │Test│          │Pranker│     │Cheats│ │Victim│               │Inner Victim│
     /// └────┘          └───────┘     └──────┘ └──────┘               └────────────┘
@@ -317,10 +282,7 @@ contract PrankTest is DSTest {
 
         cheats.prank(sender, origin);
         victim.assertCallerAndOrigin(
-            sender,
-            "msg.sender was not set correctly",
-            origin,
-            "tx.origin was not set correctly"
+            sender, "msg.sender was not set correctly", origin, "tx.origin was not set correctly"
         );
     }
 }

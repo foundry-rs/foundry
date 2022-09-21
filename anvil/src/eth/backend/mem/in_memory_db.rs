@@ -1,78 +1,91 @@
 //! The in memory DB
 
 use crate::{
-    eth::backend::db::{Db, SerializableAccountRecord, SerializableState, StateDb},
-    mem::state::state_merkle_trie_root,
+    eth::backend::db::{
+        AsHashDB, Db, MaybeHashDatabase, SerializableAccountRecord, SerializableState, StateDb,
+    },
+    mem::state::{state_merkle_trie_root, trie_hash_db},
     revm::AccountInfo,
     Address, U256,
 };
 use ethers::prelude::H256;
+use forge::revm::{Bytecode, KECCAK_EMPTY};
 use tracing::{trace, warn};
-// reexport for convenience
-pub use foundry_evm::executor::{backend::MemDb, DatabaseRef};
 
-use forge::revm::KECCAK_EMPTY;
+// reexport for convenience
+use crate::mem::state::storage_trie_db;
+use foundry_evm::executor::backend::{snapshot::StateSnapshot, DatabaseResult};
+pub use foundry_evm::executor::{backend::MemDb, DatabaseRef};
 
 impl Db for MemDb {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
         self.inner.insert_account_info(address, account)
     }
 
-    fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) {
+    fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) -> DatabaseResult<()> {
         self.inner.insert_account_storage(address, slot, val)
     }
 
-    fn dump_state(&self) -> Option<SerializableState> {
+    fn insert_block_hash(&mut self, number: U256, hash: H256) {
+        self.inner.block_hashes.insert(number, hash);
+    }
+
+    fn dump_state(&self) -> DatabaseResult<Option<SerializableState>> {
         let accounts = self
             .inner
             .accounts
             .clone()
             .into_iter()
-            .map(|(k, v)| {
-                (
+            .map(|(k, v)| -> DatabaseResult<_> {
+                let code = if let Some(code) = v.info.code {
+                    code
+                } else {
+                    self.inner.code_by_hash(v.info.code_hash)?
+                }
+                .to_checked();
+                Ok((
                     k,
                     SerializableAccountRecord {
                         nonce: v.info.nonce,
                         balance: v.info.balance,
-                        code: v
-                            .info
-                            .code
-                            .unwrap_or_else(|| self.inner.code_by_hash(v.info.code_hash))
-                            .into(),
+                        code: code.bytes()[..code.len()].to_vec().into(),
                         storage: v.storage.into_iter().collect(),
                     },
-                )
+                ))
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
 
-        Some(SerializableState { accounts })
+        Ok(Some(SerializableState { accounts }))
     }
 
-    fn load_state(&mut self, state: SerializableState) -> bool {
+    fn load_state(&mut self, state: SerializableState) -> DatabaseResult<bool> {
         for (addr, account) in state.accounts.into_iter() {
-            let old_account = self.inner.accounts.get(&addr);
+            let old_account_nonce =
+                self.inner.accounts.get(&addr).map(|a| a.info.nonce).unwrap_or_default();
+            // use max nonce in case account is imported multiple times with difference
+            // nonces to prevent collisions
+            let nonce = std::cmp::max(old_account_nonce, account.nonce);
 
             self.insert_account(
                 addr,
                 AccountInfo {
                     balance: account.balance,
                     code_hash: KECCAK_EMPTY, // will be set automatically
-                    code: if account.code.0.is_empty() { None } else { Some(account.code.0) },
-                    // use max nonce in case account is imported multiple times with difference
-                    // nonces to prevent collisions
-                    nonce: std::cmp::max(
-                        old_account.map(|a| a.info.nonce).unwrap_or_default(),
-                        account.nonce,
-                    ),
+                    code: if account.code.0.is_empty() {
+                        None
+                    } else {
+                        Some(Bytecode::new_raw(account.code.0).to_checked())
+                    },
+                    nonce,
                 },
             );
 
             for (k, v) in account.storage.into_iter() {
-                self.set_storage_at(addr, k, v);
+                self.set_storage_at(addr, k, v)?;
             }
         }
 
-        true
+        Ok(true)
     }
 
     /// Creates a new snapshot
@@ -98,7 +111,29 @@ impl Db for MemDb {
     }
 
     fn current_state(&self) -> StateDb {
-        StateDb::new(self.inner.clone())
+        StateDb::new(MemDb { inner: self.inner.clone(), ..Default::default() })
+    }
+}
+
+impl MaybeHashDatabase for MemDb {
+    fn maybe_as_hash_db(&self) -> Option<(AsHashDB, H256)> {
+        Some(trie_hash_db(&self.inner.accounts))
+    }
+
+    fn maybe_account_db(&self, addr: Address) -> Option<(AsHashDB, H256)> {
+        if let Some(acc) = self.inner.accounts.get(&addr) {
+            Some(storage_trie_db(&acc.storage))
+        } else {
+            Some(storage_trie_db(&Default::default()))
+        }
+    }
+
+    fn clear_into_snapshot(&mut self) -> StateSnapshot {
+        self.inner.clear_into_snapshot()
+    }
+
+    fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
+        self.inner.init_from_snapshot(snapshot)
     }
 }
 
@@ -110,7 +145,7 @@ mod tests {
         Address,
     };
     use bytes::Bytes;
-    use forge::revm::KECCAK_EMPTY;
+    use forge::revm::{Bytecode, KECCAK_EMPTY};
     use foundry_evm::{
         executor::{backend::MemDb, DatabaseRef},
         HashMap,
@@ -126,7 +161,8 @@ mod tests {
 
         let mut dump_db = MemDb::default();
 
-        let contract_code: Bytes = Bytes::from("fake contract code");
+        let contract_code: Bytecode =
+            Bytecode::new_raw(Bytes::from("fake contract code")).to_checked();
 
         dump_db.insert_account(
             test_addr,
@@ -138,20 +174,20 @@ mod tests {
             },
         );
 
-        dump_db.set_storage_at(test_addr, "0x1234567".into(), "0x1".into());
+        dump_db.set_storage_at(test_addr, "0x1234567".into(), "0x1".into()).unwrap();
 
-        let state = dump_db.dump_state().unwrap();
+        let state = dump_db.dump_state().unwrap().unwrap();
 
         let mut load_db = MemDb::default();
 
-        load_db.load_state(state);
+        load_db.load_state(state).unwrap();
 
-        let loaded_account = load_db.basic(test_addr);
+        let loaded_account = load_db.basic(test_addr).unwrap().unwrap();
 
         assert_eq!(loaded_account.balance, 123456.into());
-        assert_eq!(load_db.code_by_hash(loaded_account.code_hash), contract_code);
+        assert_eq!(load_db.code_by_hash(loaded_account.code_hash).unwrap(), contract_code);
         assert_eq!(loaded_account.nonce, 1234);
-        assert_eq!(load_db.storage(test_addr, "0x1234567".into()), "0x1".into());
+        assert_eq!(load_db.storage(test_addr, "0x1234567".into()).unwrap(), "0x1".into());
     }
 
     // verifies that multiple accounts can be loaded at a time, and storage is merged within those
@@ -163,7 +199,8 @@ mod tests {
         let test_addr2: Address =
             Address::from_str("0x70997970c51812dc3a010c7d01b50e0d17dc79c8").unwrap();
 
-        let contract_code: Bytes = Bytes::from("fake contract code");
+        let contract_code: Bytecode =
+            Bytecode::new_raw(Bytes::from("fake contract code")).to_checked();
 
         let mut db = MemDb::default();
 
@@ -177,8 +214,8 @@ mod tests {
             },
         );
 
-        db.set_storage_at(test_addr, "0x1234567".into(), "0x1".into());
-        db.set_storage_at(test_addr, "0x1234568".into(), "0x2".into());
+        db.set_storage_at(test_addr, "0x1234567".into(), "0x1".into()).unwrap();
+        db.set_storage_at(test_addr, "0x1234568".into(), "0x2".into()).unwrap();
 
         let mut new_state = SerializableState::default();
 
@@ -199,23 +236,23 @@ mod tests {
             test_addr,
             SerializableAccountRecord {
                 balance: 100100.into(),
-                code: contract_code.clone().into(),
+                code: contract_code.bytes()[..contract_code.len()].to_vec().into(),
                 nonce: 100,
                 storage: new_storage,
             },
         );
 
-        db.load_state(new_state);
+        db.load_state(new_state).unwrap();
 
-        let loaded_account = db.basic(test_addr);
-        let loaded_account2 = db.basic(test_addr2);
+        let loaded_account = db.basic(test_addr).unwrap().unwrap();
+        let loaded_account2 = db.basic(test_addr2).unwrap().unwrap();
 
         assert_eq!(loaded_account2.nonce, 1);
 
         assert_eq!(loaded_account.balance, 100100.into());
-        assert_eq!(db.code_by_hash(loaded_account.code_hash), contract_code);
+        assert_eq!(db.code_by_hash(loaded_account.code_hash).unwrap(), contract_code);
         assert_eq!(loaded_account.nonce, 1234);
-        assert_eq!(db.storage(test_addr, "0x1234567".into()), "0x1".into());
-        assert_eq!(db.storage(test_addr, "0x1234568".into()), "0x5".into());
+        assert_eq!(db.storage(test_addr, "0x1234567".into()).unwrap(), "0x1".into());
+        assert_eq!(db.storage(test_addr, "0x1234568".into()).unwrap(), "0x5".into());
     }
 }

@@ -1,15 +1,19 @@
 //! Contains various tests for checking forge's commands
-use ethers::solc::{
-    artifacts::{BytecodeHash, Metadata},
-    ConfigurableContractArtifact,
+use crate::constants::*;
+use ethers::{
+    prelude::remappings::Remapping,
+    solc::{
+        artifacts::{BytecodeHash, Metadata},
+        ConfigurableContractArtifact,
+    },
 };
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
     forgetest, forgetest_init,
-    util::{read_string, OutputExt, TestCommand, TestProject},
+    util::{pretty_err, read_string, OutputExt, TestCommand, TestProject},
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
-use std::{env, fs, path::PathBuf};
+use std::{env, fs, path::PathBuf, str::FromStr};
 
 // tests `--help` is printed to std out
 forgetest!(print_help, |_: TestProject, mut cmd: TestCommand| {
@@ -342,7 +346,7 @@ forgetest_init!(can_clean_config, |prj: TestProject, mut cmd: TestCommand| {
     cmd.assert_non_empty_stdout();
 
     // default test contract is written in custom out directory
-    let artifact = prj.root().join("custom-out/Contract.t.sol/ContractTest.json");
+    let artifact = prj.root().join(format!("custom-out/{}", TEMPLATE_TEST_CONTRACT_ARTIFACT_JSON));
     assert!(artifact.exists());
 
     cmd.forge_fuse().arg("clean");
@@ -355,7 +359,7 @@ forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| 
     cmd.args(["build", "--extra-output", "metadata"]);
     cmd.assert_non_empty_stdout();
 
-    let artifact_path = prj.paths().artifacts.join("Contract.sol/Contract.json");
+    let artifact_path = prj.paths().artifacts.join(TEMPLATE_CONTRACT_ARTIFACT_JSON);
     let artifact: ConfigurableContractArtifact =
         ethers::solc::utils::read_json_file(artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
@@ -363,7 +367,8 @@ forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| 
     cmd.forge_fuse().args(["build", "--extra-output-files", "metadata", "--force"]).root_arg();
     cmd.assert_non_empty_stdout();
 
-    let metadata_path = prj.paths().artifacts.join("Contract.sol/Contract.metadata.json");
+    let metadata_path =
+        prj.paths().artifacts.join(format!("{}.metadata.json", TEMPLATE_CONTRACT_ARTIFACT_BASE));
     let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
 });
 
@@ -372,7 +377,7 @@ forgetest_init!(can_emit_multiple_extra_output, |prj: TestProject, mut cmd: Test
     cmd.args(["build", "--extra-output", "metadata", "ir-optimized", "--extra-output", "ir"]);
     cmd.assert_non_empty_stdout();
 
-    let artifact_path = prj.paths().artifacts.join("Contract.sol/Contract.json");
+    let artifact_path = prj.paths().artifacts.join(TEMPLATE_CONTRACT_ARTIFACT_JSON);
     let artifact: ConfigurableContractArtifact =
         ethers::solc::utils::read_json_file(artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
@@ -391,13 +396,15 @@ forgetest_init!(can_emit_multiple_extra_output, |prj: TestProject, mut cmd: Test
         .root_arg();
     cmd.assert_non_empty_stdout();
 
-    let metadata_path = prj.paths().artifacts.join("Contract.sol/Contract.metadata.json");
+    let metadata_path =
+        prj.paths().artifacts.join(format!("{}.metadata.json", TEMPLATE_CONTRACT_ARTIFACT_BASE));
     let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
 
-    let iropt = prj.paths().artifacts.join("Contract.sol/Contract.iropt");
+    let iropt = prj.paths().artifacts.join(format!("{}.iropt", TEMPLATE_CONTRACT_ARTIFACT_BASE));
     std::fs::read_to_string(iropt).unwrap();
 
-    let sourcemap = prj.paths().artifacts.join("Contract.sol/Contract.sourcemap");
+    let sourcemap =
+        prj.paths().artifacts.join(format!("{}.sourcemap", TEMPLATE_CONTRACT_ARTIFACT_BASE));
     std::fs::read_to_string(sourcemap).unwrap();
 });
 
@@ -535,12 +542,7 @@ contract Foo {
     cmd.arg("inspect").arg(contract_name).arg("bytecode");
     check_output(cmd.stdout_lossy());
 
-    let info = format!(
-        "src{}{}:{}",
-        std::path::MAIN_SEPARATOR,
-        path.file_name().unwrap().to_string_lossy(),
-        contract_name
-    );
+    let info = format!("src/{}:{}", path.file_name().unwrap().to_string_lossy(), contract_name);
     cmd.forge_fuse().arg("inspect").arg(info).arg("bytecode");
     check_output(cmd.stdout_lossy());
 });
@@ -861,3 +863,481 @@ contract MyTokenCopy is MyToken {
         assert!(output.contains("Compiler run successful",));
     }
 );
+
+forgetest!(gas_report_all_contracts, |prj: TestProject, mut cmd: TestCommand| {
+    prj.insert_ds_test();
+    prj.inner()
+        .add_source(
+            "Contracts.sol",
+            r#"
+//SPDX-license-identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./test.sol";
+
+contract ContractOne {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function foo() public{
+        while(i<5){
+            i++;
+        }
+    }
+}
+
+contract ContractOneTest is DSTest {
+    ContractOne c1;
+
+    function setUp() public {
+        c1 = new ContractOne();
+    }
+
+    function testFoo() public {
+        c1.foo();
+    }
+}
+
+
+contract ContractTwo {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function bar() public{
+        while(i<50){
+            i++;
+        }
+    }
+}
+
+contract ContractTwoTest is DSTest {
+    ContractTwo c2;
+
+    function setUp() public {
+        c2 = new ContractTwo();
+    }
+
+    function testBar() public {
+        c2.bar();
+    }
+}
+
+contract ContractThree {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function baz() public{
+        while(i<500){
+            i++;
+        }
+    }
+}
+
+contract ContractThreeTest is DSTest {
+    ContractThree c3;
+
+    function setUp() public {
+        c3 = new ContractThree();
+    }
+
+    function testBaz() public {
+        c3.baz();
+    }
+}
+    "#,
+        )
+        .unwrap();
+
+    // report for all
+    prj.write_config(Config {
+        gas_reports: (vec!["*".to_string()]),
+        gas_reports_ignore: (vec![]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let first_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(first_out.contains("foo") && first_out.contains("bar") && first_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    cmd.forge_fuse();
+    prj.write_config(Config { gas_reports: (vec![]), ..Default::default() });
+    cmd.forge_fuse();
+    let second_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(second_out.contains("foo") && second_out.contains("bar") && second_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    cmd.forge_fuse();
+    prj.write_config(Config { gas_reports: (vec!["*".to_string()]), ..Default::default() });
+    cmd.forge_fuse();
+    let third_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(third_out.contains("foo") && third_out.contains("bar") && third_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    cmd.forge_fuse();
+    prj.write_config(Config {
+        gas_reports: (vec![
+            "ContractOne".to_string(),
+            "ContractTwo".to_string(),
+            "ContractThree".to_string(),
+        ]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let fourth_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(fourth_out.contains("foo") && fourth_out.contains("bar") && fourth_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+});
+
+forgetest!(gas_report_some_contracts, |prj: TestProject, mut cmd: TestCommand| {
+    prj.insert_ds_test();
+    prj.inner()
+        .add_source(
+            "Contracts.sol",
+            r#"
+//SPDX-license-identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./test.sol";
+
+contract ContractOne {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function foo() public{
+        while(i<5){
+            i++;
+        }
+    }
+}
+
+contract ContractOneTest is DSTest {
+    ContractOne c1;
+
+    function setUp() public {
+        c1 = new ContractOne();
+    }
+
+    function testFoo() public {
+        c1.foo();
+    }
+}
+
+
+contract ContractTwo {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function bar() public{
+        while(i<50){
+            i++;
+        }
+    }
+}
+
+contract ContractTwoTest is DSTest {
+    ContractTwo c2;
+
+    function setUp() public {
+        c2 = new ContractTwo();
+    }
+
+    function testBar() public {
+        c2.bar();
+    }
+}
+
+contract ContractThree {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function baz() public{
+        while(i<500){
+            i++;
+        }
+    }
+}
+
+contract ContractThreeTest is DSTest {
+    ContractThree c3;
+
+    function setUp() public {
+        c3 = new ContractThree();
+    }
+
+    function testBaz() public {
+        c3.baz();
+    }
+}
+    "#,
+        )
+        .unwrap();
+
+    // report for One
+    prj.write_config(Config {
+        gas_reports: (vec!["ContractOne".to_string()]),
+        gas_reports_ignore: (vec![]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let first_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(first_out.contains("foo") && !first_out.contains("bar") && !first_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    // report for Two
+    cmd.forge_fuse();
+    prj.write_config(Config {
+        gas_reports: (vec!["ContractTwo".to_string()]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let second_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(
+        !second_out.contains("foo") && second_out.contains("bar") && !second_out.contains("baz")
+    );
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    // report for Three
+    cmd.forge_fuse();
+    prj.write_config(Config {
+        gas_reports: (vec!["ContractThree".to_string()]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let third_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(!third_out.contains("foo") && !third_out.contains("bar") && third_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+});
+
+forgetest!(gas_ignore_some_contracts, |prj: TestProject, mut cmd: TestCommand| {
+    prj.insert_ds_test();
+    prj.inner()
+        .add_source(
+            "Contracts.sol",
+            r#"
+//SPDX-license-identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./test.sol";
+
+contract ContractOne {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function foo() public{
+        while(i<5){
+            i++;
+        }
+    }
+}
+
+contract ContractOneTest is DSTest {
+    ContractOne c1;
+
+    function setUp() public {
+        c1 = new ContractOne();
+    }
+
+    function testFoo() public {
+        c1.foo();
+    }
+}
+
+
+contract ContractTwo {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function bar() public{
+        while(i<50){
+            i++;
+        }
+    }
+}
+
+contract ContractTwoTest is DSTest {
+    ContractTwo c2;
+
+    function setUp() public {
+        c2 = new ContractTwo();
+    }
+
+    function testBar() public {
+        c2.bar();
+    }
+}
+
+contract ContractThree {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function baz() public{
+        while(i<500){
+            i++;
+        }
+    }
+}
+
+contract ContractThreeTest is DSTest {
+    ContractThree c3;
+
+    function setUp() public {
+        c3 = new ContractThree();
+    }
+
+    function testBaz() public {
+        c3.baz();
+    }
+}
+    "#,
+        )
+        .unwrap();
+
+    // ignore ContractOne
+    prj.write_config(Config {
+        gas_reports: (vec!["*".to_string()]),
+        gas_reports_ignore: (vec!["ContractOne".to_string()]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let first_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(!first_out.contains("foo") && first_out.contains("bar") && first_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    // ignore ContractTwo
+    cmd.forge_fuse();
+    prj.write_config(Config {
+        gas_reports: (vec![]),
+        gas_reports_ignore: (vec!["ContractTwo".to_string()]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let second_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(
+        second_out.contains("foo") && !second_out.contains("bar") && second_out.contains("baz")
+    );
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    // ignore ContractThree
+    cmd.forge_fuse();
+    prj.write_config(Config {
+        gas_reports: (vec![
+            "ContractOne".to_string(),
+            "ContractTwo".to_string(),
+            "ContractThree".to_string(),
+        ]),
+        gas_reports_ignore: (vec!["ContractThree".to_string()]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let third_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(third_out.contains("foo") && third_out.contains("bar") && third_out.contains("baz"));
+});
+
+forgetest_init!(can_use_absolute_imports, |prj: TestProject, mut cmd: TestCommand| {
+    let remapping = prj.paths().libraries[0].join("myDepdendency");
+    let config = Config {
+        remappings: vec![Remapping::from_str(&format!("myDepdendency/={}", remapping.display()))
+            .unwrap()
+            .into()],
+        ..Default::default()
+    };
+    prj.write_config(config);
+
+    prj.inner()
+        .add_lib(
+            "myDepdendency/src/interfaces/IConfig.sol",
+            r#"
+    pragma solidity ^0.8.10;
+
+    interface IConfig {}
+   "#,
+        )
+        .unwrap();
+
+    prj.inner()
+        .add_lib(
+            "myDepdendency/src/Config.sol",
+            r#"
+    pragma solidity ^0.8.10;
+    import "src/interfaces/IConfig.sol";
+
+    contract Config {}
+   "#,
+        )
+        .unwrap();
+
+    prj.inner()
+        .add_source(
+            "Greeter",
+            r#"
+    pragma solidity ^0.8.10;
+    import "myDepdendency/src/Config.sol";
+
+    contract Greeter {}
+   "#,
+        )
+        .unwrap();
+
+    cmd.arg("build");
+    let stdout = cmd.stdout_lossy();
+    assert!(stdout.contains("Compiler run successful"));
+});
+
+// checks forge bind works correctly on the default project
+forgetest_init!(can_bind, |_prj: TestProject, mut cmd: TestCommand| {
+    cmd.arg("bind");
+    cmd.assert_non_empty_stdout();
+});
+
+// checks missing dependencies are auto installed
+forgetest_init!(can_install_missing_deps_test, |prj: TestProject, mut cmd: TestCommand| {
+    // wipe forge-std
+    let forge_std_dir = prj.root().join("lib/forge-std");
+    pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
+
+    cmd.arg("test");
+
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("Missing dependencies found. Installing now"), "{}", output);
+    assert!(output.contains("[PASS]"), "{}", output);
+});
+
+// checks missing dependencies are auto installed
+forgetest_init!(can_install_missing_deps_build, |prj: TestProject, mut cmd: TestCommand| {
+    // wipe forge-std
+    let forge_std_dir = prj.root().join("lib/forge-std");
+    pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
+
+    cmd.arg("build");
+
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("Missing dependencies found. Installing now"), "{}", output);
+    assert!(output.contains("Compiler run successful"), "{}", output);
+});

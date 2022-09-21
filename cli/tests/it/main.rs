@@ -8,6 +8,7 @@ mod config;
 mod create;
 #[cfg(not(feature = "external-integration-tests"))]
 mod script;
+mod svm;
 #[cfg(not(feature = "external-integration-tests"))]
 mod test_cmd;
 #[cfg(not(feature = "external-integration-tests"))]
@@ -22,5 +23,7 @@ pub(crate) mod forge_utils;
 
 #[cfg(feature = "external-integration-tests")]
 mod integration;
+
+pub mod constants;
 
 fn main() {}

@@ -1,12 +1,11 @@
+use crate::TestCommand;
 use ethers::{
     abi::Address,
-    prelude::{Http, Middleware, NameOrAddress, Provider, U256},
+    prelude::{Middleware, NameOrAddress, U256},
     utils::hex,
 };
-
+use foundry_common::{get_http_provider, RetryProvider};
 use std::{collections::BTreeMap, path::Path, str::FromStr};
-
-use crate::TestCommand;
 
 pub const BROADCAST_TEST_PATH: &str = "src/Broadcast.t.sol";
 
@@ -14,8 +13,9 @@ pub const BROADCAST_TEST_PATH: &str = "src/Broadcast.t.sol";
 pub struct ScriptTester {
     pub accounts_pub: Vec<Address>,
     pub accounts_priv: Vec<String>,
-    pub provider: Provider<Http>,
+    pub provider: RetryProvider,
     pub nonces: BTreeMap<u32, U256>,
+    pub address_nonces: BTreeMap<Address, U256>,
     pub cmd: TestCommand,
 }
 
@@ -53,8 +53,9 @@ impl ScriptTester {
                 "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d".to_string(),
                 "5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a".to_string(),
             ],
-            provider: Provider::<Http>::try_from(endpoint).unwrap(),
+            provider: get_http_provider(endpoint),
             nonces: BTreeMap::default(),
+            address_nonces: BTreeMap::default(),
             cmd,
         }
     }
@@ -102,10 +103,22 @@ impl ScriptTester {
         self
     }
 
+    pub async fn load_addresses(&mut self, addresses: Vec<Address>) -> &mut Self {
+        for address in addresses {
+            let nonce = self
+                .provider
+                .get_transaction_count(NameOrAddress::Address(address), None)
+                .await
+                .unwrap();
+            self.address_nonces.insert(address, nonce);
+        }
+        self
+    }
+
     pub fn add_deployer(&mut self, index: u32) -> &mut Self {
         self.cmd.args([
             "--sender",
-            &format!("0x{}", hex::encode(&self.accounts_pub[index as usize].as_bytes())),
+            &format!("0x{}", hex::encode(self.accounts_pub[index as usize].as_bytes())),
         ]);
         self
     }
@@ -147,6 +160,24 @@ impl ScriptTester {
         self
     }
 
+    /// In Vec<(address, expected increment)>
+    pub async fn assert_nonce_increment_addresses(
+        &mut self,
+        address_indexes: Vec<(Address, u32)>,
+    ) -> &mut Self {
+        for (address, expected_increment) in address_indexes {
+            let nonce = self
+                .provider
+                .get_transaction_count(NameOrAddress::Address(address), None)
+                .await
+                .unwrap();
+            let prev_nonce = self.address_nonces.get(&address).unwrap();
+
+            assert_eq!(nonce, prev_nonce + U256::from(expected_increment));
+        }
+        self
+    }
+
     pub fn run(&mut self, expected: ScriptOutcome) -> &mut Self {
         let output =
             if expected.is_err() { self.cmd.stderr_lossy() } else { self.cmd.stdout_lossy() };
@@ -171,6 +202,7 @@ pub enum ScriptOutcome {
     WarnSpecifyDeployer,
     MissingSender,
     MissingWallet,
+    StaticCallNotAllowed,
     FailedScript,
 }
 
@@ -182,6 +214,7 @@ impl ScriptOutcome {
             ScriptOutcome::WarnSpecifyDeployer => "You have more than one deployer who could predeploy libraries. Using `--sender` instead.",
             ScriptOutcome::MissingSender => "You seem to be using Foundry's default sender. Be sure to set your own --sender",
             ScriptOutcome::MissingWallet => "No associated wallet",
+            ScriptOutcome::StaticCallNotAllowed => "Staticcalls are not allowed after vm.broadcast. Either remove it, or use vm.startBroadcast instead.",
             ScriptOutcome::FailedScript => "Script failed.",
         }
     }
@@ -193,6 +226,7 @@ impl ScriptOutcome {
             ScriptOutcome::WarnSpecifyDeployer => false,
             ScriptOutcome::MissingSender |
             ScriptOutcome::MissingWallet |
+            ScriptOutcome::StaticCallNotAllowed |
             ScriptOutcome::FailedScript => true,
         }
     }

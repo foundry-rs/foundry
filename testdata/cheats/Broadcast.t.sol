@@ -20,10 +20,7 @@ contract Test is DSTest {
         changed += 1;
     }
 
-    function multiple_arguments(uint256 a, address b, uint256[] memory c)
-        public
-        returns (uint256)
-    {}
+    function multiple_arguments(uint256 a, address b, uint256[] memory c) public returns (uint256) {}
 
     function echoSender() public view returns (address) {
         return msg.sender;
@@ -54,6 +51,46 @@ contract BroadcastTest is DSTest {
         // this will
         cheats.broadcast(ACCOUNT_B);
         test.t(2);
+    }
+
+    function deployPrivateKey() public {
+        string memory mnemonic = "test test test test test test test test test test test junk";
+
+        uint256 privateKey = cheats.deriveKey(mnemonic, 3);
+        assertEq(privateKey, 0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6);
+
+        cheats.broadcast(privateKey);
+        Test test = new Test();
+
+        cheats.startBroadcast(privateKey);
+        Test test2 = new Test();
+        cheats.stopBroadcast();
+    }
+
+    function deployRememberKey() public {
+        string memory mnemonic = "test test test test test test test test test test test junk";
+
+        uint256 privateKey = cheats.deriveKey(mnemonic, 3);
+        assertEq(privateKey, 0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6);
+
+        address thisAddress = cheats.rememberKey(privateKey);
+        assertEq(thisAddress, 0x90F79bf6EB2c4f870365E785982E1f101E93b906);
+
+        cheats.broadcast(thisAddress);
+        Test test = new Test();
+    }
+
+    function deployRememberKeyResume() public {
+        cheats.broadcast(ACCOUNT_A);
+        Test test = new Test();
+
+        string memory mnemonic = "test test test test test test test test test test test junk";
+
+        uint256 privateKey = cheats.deriveKey(mnemonic, 3);
+        address thisAddress = cheats.rememberKey(privateKey);
+
+        cheats.broadcast(thisAddress);
+        Test test2 = new Test();
     }
 
     function deployOther() public {
@@ -164,7 +201,7 @@ contract BroadcastTestNoLinking is DSTest {
 
         cheats.startBroadcast();
 
-        for (uint256 i; i < 100; i++) {
+        for (uint256 i; i < 50; i++) {
             NoLink test9 = new NoLink();
         }
 
@@ -300,9 +337,7 @@ contract TestInitialBalance is DSTest {
 
     function runCustomSender() public {
         // Make sure we're testing a different caller than the default one.
-        assert(
-            msg.sender != address(0x00a329c0648769A73afAc7F9381E08FB43dBEA72)
-        );
+        assert(msg.sender != address(0x00a329c0648769A73afAc7F9381E08FB43dBEA72));
 
         // NodeConfig::test() sets the balance of the address used in this test to 100 ether.
         assert(msg.sender.balance == 100 ether);
@@ -313,9 +348,7 @@ contract TestInitialBalance is DSTest {
 
     function runDefaultSender() public {
         // Make sure we're testing with the default caller.
-        assert(
-            msg.sender == address(0x00a329c0648769A73afAc7F9381E08FB43dBEA72)
-        );
+        assert(msg.sender == address(0x00a329c0648769A73afAc7F9381E08FB43dBEA72));
 
         assert(msg.sender.balance == type(uint256).max);
 

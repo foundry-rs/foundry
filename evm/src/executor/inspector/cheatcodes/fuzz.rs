@@ -1,4 +1,4 @@
-use crate::{abi::HEVMCalls, fuzz::ASSUME_MAGIC_RETURN_CODE};
+use crate::{abi::HEVMCalls, fuzz::error::ASSUME_MAGIC_RETURN_CODE};
 use bytes::Bytes;
 use revm::{Database, EVMData};
 

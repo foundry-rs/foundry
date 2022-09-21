@@ -1,9 +1,12 @@
-use crate::{cmd::Cmd, utils::FoundryPathExt};
+use crate::{
+    cmd::{Cmd, LoadConfig},
+    utils::FoundryPathExt,
+};
 use clap::{Parser, ValueHint};
 use console::{style, Style};
-use forge_fmt::{Comments, Formatter, Visitable};
-use foundry_common::fs;
-use foundry_config::{load_config_with_root, Config};
+use forge_fmt::{format, parse};
+use foundry_common::{fs, term::cli_warn};
+use foundry_config::{impl_figment_convert_basic, Config};
 use rayon::prelude::*;
 use similar::{ChangeTag, TextDiff};
 use std::{
@@ -12,6 +15,7 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
 };
+use tracing::log::warn;
 
 #[derive(Debug, Clone, Parser)]
 pub struct FmtArgs {
@@ -19,9 +23,10 @@ pub struct FmtArgs {
         help = "path to the file, directory or '-' to read from stdin",
         conflicts_with = "root",
         value_hint = ValueHint::FilePath,
-        value_name = "PATH"
+        value_name = "PATH",
+        multiple = true
     )]
-    path: Option<PathBuf>,
+    paths: Vec<PathBuf>,
     #[clap(
         help = "The project's root path.",
         long_help = "The project's root path. By default, this is the root directory of the current Git repository, or the current working directory.",
@@ -43,26 +48,38 @@ pub struct FmtArgs {
     raw: bool,
 }
 
+impl_figment_convert_basic!(FmtArgs);
+
 // === impl FmtArgs ===
 
 impl FmtArgs {
     /// Returns all inputs to format
     fn inputs(&self, config: &Config) -> Vec<Input> {
-        if let Some(ref path) = self.path {
-            if path.is_dir() {
-                ethers::solc::utils::source_files(path).into_iter().map(Input::Path).collect()
-            } else if path.is_sol() {
-                vec![Input::Path(path.to_path_buf())]
-            } else if path == Path::new("-") || !atty::is(atty::Stream::Stdin) {
+        if self.paths.is_empty() {
+            return config.project_paths().input_files().into_iter().map(Input::Path).collect()
+        }
+
+        let mut paths = self.paths.iter().peekable();
+
+        if let Some(path) = paths.peek() {
+            if *path == Path::new("-") && !atty::is(atty::Stream::Stdin) {
                 let mut buf = String::new();
                 io::stdin().read_to_string(&mut buf).expect("Failed to read from stdin");
-                vec![Input::Stdin(buf)]
-            } else {
-                vec![]
+                return vec![Input::Stdin(buf)]
             }
-        } else {
-            config.project_paths().input_files().into_iter().map(Input::Path).collect()
         }
+
+        let mut out = Vec::with_capacity(self.paths.len());
+        for path in self.paths.iter() {
+            if path.is_dir() {
+                out.extend(ethers::solc::utils::source_files(path).into_iter().map(Input::Path));
+            } else if path.is_sol() {
+                out.push(Input::Path(path.to_path_buf()));
+            } else {
+                warn!("Cannot process path {}", path.display());
+            }
+        }
+        out
     }
 }
 
@@ -70,31 +87,47 @@ impl Cmd for FmtArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let config = load_config_with_root(self.root.clone());
+        let config = self.try_load_config_emit_warnings()?;
         let inputs = self.inputs(&config);
+
+        if inputs.is_empty() {
+            cli_warn!("Nothing to format.\nHINT: If you are working outside of the project, try providing paths to your source files: `forge fmt <paths>`");
+            return Ok(())
+        }
 
         let diffs = inputs
             .par_iter()
-            .enumerate()
-            .map(|(i, input)| {
+            .map(|input| {
                 let source = match input {
-                    Input::Path(path) => fs::read_to_string(&path)?,
+                    Input::Path(path) => fs::read_to_string(path)?,
                     Input::Stdin(source) => source.to_string()
                 };
 
-                let (mut source_unit, comments) = solang_parser::parse(&source, i)
+                let parsed = parse(&source)
                     .map_err(|diags| eyre::eyre!(
                             "Failed to parse Solidity code for {}. Leaving source unchanged.\nDebug info: {:?}",
                             input,
                             diags
                         ))?;
-                let comments = Comments::new(comments, &source);
+
+                if !parsed.invalid_inline_config_items.is_empty() {
+                    let path = match input {
+                        Input::Path(path) => {
+                            let path = path.strip_prefix(&config.__root.0).unwrap_or(path);
+                            format!("{}", path.display())
+                        }
+                        Input::Stdin(_) => "stdin".to_string()
+                    };
+                    for (loc, warning) in &parsed.invalid_inline_config_items {
+                        let mut lines = source[..loc.start().min(source.len())].split('\n');
+                        let col = lines.next_back().unwrap().len() + 1;
+                        let row = lines.count() + 1;
+                        cli_warn!("[{}:{}:{}] {}", path, row, col, warning);
+                    }
+                }
 
                 let mut output = String::new();
-                let mut formatter =
-                    Formatter::new(&mut output, &source, comments, config.fmt.clone());
-
-                source_unit.visit(&mut formatter).unwrap();
+                format(&mut output, parsed, config.fmt.clone()).unwrap();
 
                 solang_parser::parse(&output, 0).map_err(|diags| {
                     eyre::eyre!(

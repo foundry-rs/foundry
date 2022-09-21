@@ -23,6 +23,8 @@ pub mod fuzz;
 /// utils for working with revm
 pub mod utils;
 
+pub mod error;
+
 // Re-exports
 pub use ethers::types::Address;
 pub use hashbrown::{self, HashMap};
@@ -36,18 +38,25 @@ use serde::{Deserialize, Serialize};
 ///
 /// The address was derived from `address(uint160(uint256(keccak256("foundry default caller"))))`
 /// and is equal to 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38.
-pub static CALLER: Address = H160([
+pub const CALLER: Address = H160([
     0x18, 0x04, 0xc8, 0xAB, 0x1F, 0x12, 0xE6, 0xbb, 0xF3, 0x89, 0x4D, 0x40, 0x83, 0xF3, 0x3E, 0x07,
     0x30, 0x9D, 0x1F, 0x38,
 ]);
 
+/// Stores the default test contract address: 0xb4c79daB8f259C7Aee6E5b2Aa729821864227e84
+pub const TEST_CONTRACT_ADDRESS: Address = H160([
+    180, 199, 157, 171, 143, 37, 156, 122, 238, 110, 91, 42, 167, 41, 130, 24, 100, 34, 126, 132,
+]);
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
 pub enum CallKind {
     Call,
     StaticCall,
     CallCode,
     DelegateCall,
     Create,
+    Create2,
 }
 
 impl Default for CallKind {
@@ -68,8 +77,11 @@ impl From<CallScheme> for CallKind {
 }
 
 impl From<CreateScheme> for CallKind {
-    fn from(_: CreateScheme) -> Self {
-        CallKind::Create
+    fn from(create: CreateScheme) -> Self {
+        match create {
+            CreateScheme::Create => CallKind::Create,
+            CreateScheme::Create2 { .. } => CallKind::Create2,
+        }
     }
 }
 
@@ -80,6 +92,7 @@ impl From<CallKind> for ActionType {
                 ActionType::Call
             }
             CallKind::Create => ActionType::Create,
+            CallKind::Create2 => ActionType::Create,
         }
     }
 }
@@ -92,6 +105,7 @@ impl From<CallKind> for CallType {
             CallKind::CallCode => CallType::CallCode,
             CallKind::DelegateCall => CallType::DelegateCall,
             CallKind::Create => CallType::None,
+            CallKind::Create2 => CallType::None,
         }
     }
 }

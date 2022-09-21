@@ -1,14 +1,14 @@
+use crate::executor::fork::CreateFork;
 use ethers::{
     providers::{Middleware, Provider},
     solc::utils::RuntimeOrHandle,
     types::{Address, Chain, U256},
 };
+use eyre::WrapErr;
+use foundry_common::{self, try_get_http_provider};
+use foundry_config::Config;
 use revm::{BlockEnv, CfgEnv, SpecId, TxEnv};
 use serde::{Deserialize, Deserializer, Serialize};
-
-use crate::executor::fork::CreateFork;
-use foundry_common;
-use foundry_config::Config;
 
 use super::fork::environment;
 
@@ -53,7 +53,7 @@ impl EvmOpts {
     /// id, )
     pub async fn evm_env(&self) -> revm::Env {
         if let Some(ref fork_url) = self.fork_url {
-            self.fork_evm_env(fork_url).await.expect("could not instantiate forked environment")
+            self.fork_evm_env(fork_url).await.expect("Could not instantiate forked environment")
         } else {
             self.local_evm_env()
         }
@@ -62,19 +62,20 @@ impl EvmOpts {
     /// Convenience implementation to configure a `revm::Env` from non async code
     ///
     /// This only attaches are creates a temporary tokio runtime if `fork_url` is set
-    pub fn evm_env_blocking(&self) -> revm::Env {
+    ///
+    /// Returns an error if a RPC request failed, or the fork url is not a valid url
+    pub fn evm_env_blocking(&self) -> eyre::Result<revm::Env> {
         if let Some(ref fork_url) = self.fork_url {
-            RuntimeOrHandle::new().block_on(async {
-                self.fork_evm_env(fork_url).await.expect("could not instantiate forked environment")
-            })
+            RuntimeOrHandle::new().block_on(async { self.fork_evm_env(fork_url).await })
         } else {
-            self.local_evm_env()
+            Ok(self.local_evm_env())
         }
     }
 
     /// Returns the `revm::Env` configured with settings retrieved from the endpoints
     pub async fn fork_evm_env(&self, fork_url: impl AsRef<str>) -> eyre::Result<revm::Env> {
-        let provider = Provider::try_from(fork_url.as_ref())?;
+        let fork_url = fork_url.as_ref();
+        let provider = try_get_http_provider(fork_url)?;
         environment(
             &provider,
             self.memory_limit,
@@ -84,6 +85,9 @@ impl EvmOpts {
             self.sender,
         )
         .await
+        .wrap_err_with(|| {
+            format!("Could not instantiate forked environment with fork url: {}", fork_url)
+        })
     }
 
     /// Returns the `revm::Env` configured with only local settings
@@ -101,7 +105,9 @@ impl EvmOpts {
                 chain_id: self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID).into(),
                 spec_id: SpecId::LONDON,
                 perf_all_precompiles_have_balance: false,
+                limit_contract_code_size: Some(usize::MAX),
                 memory_limit: self.memory_limit,
+                ..Default::default()
             },
             tx: TxEnv {
                 gas_price: self.env.gas_price.unwrap_or_default().into(),
@@ -152,9 +158,10 @@ impl EvmOpts {
     pub fn get_remote_chain_id(&self) -> Option<Chain> {
         if let Some(ref url) = self.fork_url {
             if url.contains("mainnet") {
-                tracing::trace!("auto detected mainnet chain from url {url}");
+                tracing::trace!(?url, "auto detected mainnet chain");
                 return Some(Chain::Mainnet)
             }
+            tracing::trace!(?url, "retrieving chain via eth_chainId");
             let provider = Provider::try_from(url.as_str())
                 .unwrap_or_else(|_| panic!("Failed to establish provider to {url}"));
 

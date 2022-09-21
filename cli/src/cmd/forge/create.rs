@@ -1,32 +1,27 @@
 //! Create command
 use super::verify;
 use crate::{
-    cmd::{forge::build::CoreBuildArgs, utils, RetryArgs},
-    compile,
+    cmd::{
+        forge::build::CoreBuildArgs, read_constructor_args_file, remove_contract,
+        retry::RETRY_VERIFY_ON_CREATE, LoadConfig,
+    },
     opts::{EthereumOpts, TransactionOpts, WalletType},
-    utils::get_http_provider,
 };
 use cast::SimpleCast;
 use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, Constructor, Token},
     prelude::{artifacts::BytecodeObject, ContractFactory, Middleware},
-    solc::{
-        info::ContractInfo,
-        utils::{canonicalized, read_json_file},
-    },
+    solc::{info::ContractInfo, utils::canonicalized},
     types::{transaction::eip2718::TypedTransaction, Chain},
 };
 use eyre::Context;
-use foundry_common::fs;
-use foundry_config::Config;
+use foundry_common::{compile, get_http_provider};
 use foundry_utils::parse_tokens;
 use rustc_hex::ToHex;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
 use tracing::log::trace;
-
-pub const RETRY_VERIFY_ON_CREATE: RetryArgs = RetryArgs { retries: 15, delay: Some(3) };
 
 #[derive(Debug, Clone, Parser)]
 pub struct CreateArgs {
@@ -81,6 +76,9 @@ pub struct CreateArgs {
         requires = "from"
     )]
     unlocked: bool,
+
+    #[clap(flatten)]
+    pub verifier: verify::VerifierArgs,
 }
 
 impl CreateArgs {
@@ -97,10 +95,10 @@ impl CreateArgs {
 
         if let Some(ref mut path) = self.contract.path {
             // paths are absolute in the project's output
-            *path = format!("{}", canonicalized(project.root().join(&path)).display());
+            *path = canonicalized(project.root().join(&path)).to_string_lossy().to_string();
         }
 
-        let (abi, bin, _) = utils::remove_contract(&mut output, &self.contract)?;
+        let (abi, bin, _) = remove_contract(&mut output, &self.contract)?;
 
         let bin = match bin.object {
             BytecodeObject::Bytecode(_) => bin.object,
@@ -118,34 +116,13 @@ impl CreateArgs {
         };
 
         // Add arguments to constructor
-        let config = Config::from(&self.eth);
-        let provider = get_http_provider(
-            config.eth_rpc_url.as_deref().unwrap_or("http://localhost:8545"),
-            false,
-        );
+        let config = self.eth.try_load_config_emit_warnings()?;
+        let provider = Arc::new(get_http_provider(config.get_rpc_url_or_localhost_http()?));
         let params = match abi.constructor {
             Some(ref v) => {
                 let constructor_args =
                     if let Some(ref constructor_args_path) = self.constructor_args_path {
-                        if !constructor_args_path.exists() {
-                            eyre::bail!(
-                                "Constructor args file \"{}\" not found",
-                                constructor_args_path.display()
-                            );
-                        }
-                        if constructor_args_path.extension() == Some(std::ffi::OsStr::new("json")) {
-                            match read_json_file(constructor_args_path) {
-                                Ok(args) => args,
-                                Err(err) => eyre::bail!(
-                                    "Constructor args file \"{}\" must encode a json array: \"{}\"",
-                                    constructor_args_path.display(),
-                                    err
-                                ),
-                            }
-                        } else {
-                            let file = fs::read_to_string(constructor_args_path)?;
-                            file.split_whitespace().map(str::to_string).collect::<Vec<String>>()
-                        }
+                        read_constructor_args_file(constructor_args_path.to_path_buf())?
                     } else {
                         self.constructor_args.clone()
                     };
@@ -245,17 +222,18 @@ impl CreateArgs {
         }
 
         let (deployed_contract, receipt) = deployer.send_with_receipt().await?;
+
         let address = deployed_contract.address();
         if self.json {
             let output = json!({
-                "deployer": SimpleCast::checksum_address(&deployer_address)?,
-                "deployedTo": SimpleCast::checksum_address(&address)?,
+                "deployer": SimpleCast::to_checksum_address(&deployer_address),
+                "deployedTo": SimpleCast::to_checksum_address(&address),
                 "transactionHash": receipt.transaction_hash
             });
             println!("{output}");
         } else {
-            println!("Deployer: {}", SimpleCast::checksum_address(&deployer_address)?);
-            println!("Deployed to: {}", SimpleCast::checksum_address(&address)?);
+            println!("Deployer: {}", SimpleCast::to_checksum_address(&deployer_address));
+            println!("Deployed to: {}", SimpleCast::to_checksum_address(&address));
             println!("Transaction hash: {:?}", receipt.transaction_hash);
         };
 
@@ -284,20 +262,19 @@ impl CreateArgs {
             contract: self.contract,
             compiler_version: None,
             constructor_args,
+            constructor_args_path: None,
             num_of_optimizations,
             chain: chain.into(),
-            etherscan_key: self
-                .eth
-                .etherscan_api_key
-                .ok_or(eyre::eyre!("ETHERSCAN_API_KEY must be set"))?,
-            project_paths: self.opts.project_paths,
+            etherscan_key: self.eth.etherscan_api_key,
             flatten: false,
             force: false,
             watch: true,
             retry: RETRY_VERIFY_ON_CREATE,
             libraries: vec![],
+            root: None,
+            verifier: self.verifier,
         };
-        println!("Waiting for etherscan to detect contract deployment...");
+        println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier);
         verify.run().await
     }
 

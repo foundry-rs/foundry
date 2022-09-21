@@ -32,6 +32,14 @@ impl Chain {
             Chain::Id(_) => false,
         }
     }
+
+    /// Returns the corresponding etherscan URLs
+    pub fn etherscan_urls(&self) -> Option<(&'static str, &'static str)> {
+        match self {
+            Chain::Named(c) => c.etherscan_urls(),
+            Chain::Id(_) => None,
+        }
+    }
 }
 
 impl fmt::Display for Chain {
@@ -154,5 +162,11 @@ impl Encodable for Chain {
 impl Decodable for Chain {
     fn decode(buf: &mut &[u8]) -> Result<Self, fastrlp::DecodeError> {
         Ok(u64::decode(buf)?.into())
+    }
+}
+
+impl Default for Chain {
+    fn default() -> Self {
+        ethers_core::types::Chain::Mainnet.into()
     }
 }

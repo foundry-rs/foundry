@@ -12,22 +12,22 @@ contract LoadTest is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
     uint256 slot0 = 20;
     Storage store;
- 
+
     function setUp() public {
         store = new Storage();
     }
 
     function testLoadOwnStorage() public {
-        uint slot;
+        uint256 slot;
         assembly {
             slot := slot0.slot
         }
-        uint val = uint(cheats.load(address(this), bytes32(slot)));
+        uint256 val = uint256(cheats.load(address(this), bytes32(slot)));
         assertEq(val, 20, "load failed");
     }
 
     function testLoadOtherStorage() public {
-        uint val = uint(cheats.load(address(store), bytes32(0)));
+        uint256 val = uint256(cheats.load(address(store), bytes32(0)));
         assertEq(val, 10, "load failed");
     }
 }

@@ -13,10 +13,18 @@ contract DoWhileStatement {
         do {
             "test";
         } while (
-            someVeryVeryLongCondition
-                && !someVeryVeryLongCondition
-                && !someVeryVeryLongCondition
-                && someVeryVeryLongCondition
+            someVeryVeryLongCondition && !someVeryVeryLongCondition
+                && !someVeryVeryLongCondition && someVeryVeryLongCondition
         );
+
+        do {
+            i++;
+        } while (i < 10);
+
+        do {
+            do {
+                i++;
+            } while (i < 30);
+        } while (i < 20);
     }
 }

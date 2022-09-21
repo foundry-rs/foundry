@@ -1,71 +1,158 @@
 use super::{AddressIdentity, TraceIdentifier};
+
 use ethers::{
     abi::{Abi, Address},
     etherscan,
-    prelude::{contract::ContractMetadata, errors::EtherscanError},
+    prelude::{
+        artifacts::ContractBytecodeSome, contract::ContractMetadata, errors::EtherscanError,
+        ArtifactId,
+    },
     solc::utils::RuntimeOrHandle,
-    types::Chain,
+    types::H160,
 };
+use foundry_common::compile;
+use foundry_config::{Chain, Config};
 use futures::{
-    future::Future,
+    future::{join_all, Future},
     stream::{FuturesUnordered, Stream, StreamExt},
     task::{Context, Poll},
 };
-use std::{borrow::Cow, path::PathBuf, pin::Pin};
+use std::{
+    borrow::Cow,
+    collections::BTreeMap,
+    pin::Pin,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 use tokio::time::{Duration, Interval};
 use tracing::{trace, warn};
 
 /// A trace identifier that tries to identify addresses using Etherscan.
+#[derive(Default)]
 pub struct EtherscanIdentifier {
     /// The Etherscan client
-    client: Option<etherscan::Client>,
+    client: Option<Arc<etherscan::Client>>,
+    /// Tracks whether the API key provides was marked as invalid
+    ///
+    /// After the first [EtherscanError::InvalidApiKey] this will get set to true, so we can
+    /// prevent any further attempts
+    invalid_api_key: Arc<AtomicBool>,
+    pub contracts: BTreeMap<H160, (String, String, bool, u32, String)>,
+    pub sources: BTreeMap<u32, String>,
 }
 
 impl EtherscanIdentifier {
-    /// Creates a new Etherscan identifier.
-    ///
-    /// The identifier is a noop if either `chain` or `etherscan_api_key` are `None`.
-    pub fn new(
-        chain: Option<impl Into<Chain>>,
-        etherscan_api_key: Option<String>,
-        cache_path: Option<PathBuf>,
-        ttl: Duration,
-    ) -> Self {
-        if let Some(cache_path) = &cache_path {
-            if let Err(err) = std::fs::create_dir_all(cache_path.join("sources")) {
-                warn!(target: "etherscanidentifier", "could not create etherscan cache dir: {:?}", err);
-            }
+    /// Creates a new Etherscan identifier with the given client
+    pub fn new(config: &Config, chain: Option<impl Into<Chain>>) -> eyre::Result<Self> {
+        if let Some(config) = config.get_etherscan_config_with_chain(chain)? {
+            trace!(target: "etherscanidentifier", chain=?config.chain, url=?config.api_url, "using etherscan identifier");
+            Ok(Self {
+                client: Some(Arc::new(config.into_client()?)),
+                invalid_api_key: Arc::new(Default::default()),
+                contracts: BTreeMap::new(),
+                sources: BTreeMap::new(),
+            })
+        } else {
+            Ok(Default::default())
+        }
+    }
+
+    /// Goes over the list of contracts we have pulled from the traces, clones their source from
+    /// Etherscan and compiles them locally, for usage in the debugger.
+    pub async fn get_compiled_contracts(
+        &self,
+    ) -> eyre::Result<(BTreeMap<ArtifactId, String>, BTreeMap<ArtifactId, ContractBytecodeSome>)>
+    {
+        let mut compiled_contracts = BTreeMap::new();
+        let mut sources = BTreeMap::new();
+
+        // TODO: Add caching so we dont double-fetch contracts.
+        let contracts_iter = self
+            .contracts
+            .iter()
+            // filter out vyper files and invalid source
+            .filter(|(_, (_, source_code, _, _, version))| {
+                !source_code.starts_with("{{") && !version.starts_with("vyper")
+            });
+
+        let outputs_fut = contracts_iter
+            .map(|(label, (name, source_code, optimization, runs, version))| {
+                println!("Compiling: {name} {:?}", label);
+                compile::compile_from_source(
+                    name.to_string(),
+                    source_code.clone(),
+                    *optimization,
+                    *runs,
+                    version.to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        // poll all the futures concurrently
+        let artifacts = join_all(outputs_fut).await;
+
+        // construct the map
+        let contracts_iter = self
+            .contracts
+            .iter()
+            // filter out vyper files and invalid source
+            .filter(|(_, (_, source_code, _, _, version))| {
+                !source_code.starts_with("{{") && !version.starts_with("vyper")
+            });
+        for (compiled, (_, (_, source_code, _, _, _))) in artifacts.into_iter().zip(contracts_iter)
+        {
+            // get the inner type
+            let compiled = compiled?;
+            compiled_contracts.insert(compiled.0.clone(), compiled.1.clone());
+            sources.insert(compiled.0.to_owned(), source_code.to_owned());
         }
 
-        Self {
-            client: chain.and_then(|chain| {
-                etherscan_api_key.and_then(|key| {
-                    etherscan::Client::new_cached(chain.into(), key, cache_path, ttl).ok()
-                })
-            }),
-        }
+        Ok((sources, compiled_contracts))
     }
 }
 
 impl TraceIdentifier for EtherscanIdentifier {
     fn identify_addresses(
-        &self,
+        &mut self,
         addresses: Vec<(&Address, Option<&Vec<u8>>)>,
     ) -> Vec<AddressIdentity> {
+        trace!(target: "etherscanidentifier", "identify {} addresses", addresses.len());
+
+        if self.invalid_api_key.load(Ordering::Relaxed) {
+            // api key was marked as invalid
+            return Vec::new()
+        }
+
         self.client.as_ref().map_or(Default::default(), |client| {
-            let mut fetcher = EtherscanFetcher::new(client.clone(), Duration::from_secs(1), 5);
+            let mut fetcher = EtherscanFetcher::new(
+                Arc::clone(client),
+                Duration::from_secs(1),
+                5,
+                Arc::clone(&self.invalid_api_key),
+            );
 
             for (addr, _) in addresses {
-                fetcher.push(*addr);
+                if !self.contracts.contains_key(addr) {
+                    fetcher.push(*addr);
+                }
             }
 
             let fut = fetcher
-                .map(|(address, label, abi)| AddressIdentity {
-                    address,
-                    label: Some(label.clone()),
-                    contract: Some(label),
-                    abi: Some(Cow::Owned(abi)),
-                    artifact_id: None,
+                .map(|(address, label, abi, source_code, optimization, runs, version)| {
+                    self.contracts.insert(
+                        address,
+                        (label.to_string(), source_code, optimization, runs, version),
+                    );
+
+                    AddressIdentity {
+                        address,
+                        label: Some(label.clone()),
+                        contract: Some(label),
+                        abi: Some(Cow::Owned(abi)),
+                        artifact_id: None,
+                    }
                 })
                 .collect();
 
@@ -82,7 +169,7 @@ type EtherscanFuture =
 /// Fetches information about multiple addresses concurrently, while respecting rate limits.
 pub struct EtherscanFetcher {
     /// The Etherscan client
-    client: etherscan::Client,
+    client: Arc<etherscan::Client>,
     /// The time we wait if we hit the rate limit
     timeout: Duration,
     /// The interval we are currently waiting for before making a new request
@@ -93,10 +180,17 @@ pub struct EtherscanFetcher {
     queue: Vec<Address>,
     /// The in progress requests
     in_progress: FuturesUnordered<EtherscanFuture>,
+    /// tracks whether the API key provides was marked as invalid
+    invalid_api_key: Arc<AtomicBool>,
 }
 
 impl EtherscanFetcher {
-    pub fn new(client: etherscan::Client, timeout: Duration, concurrency: usize) -> Self {
+    pub fn new(
+        client: Arc<etherscan::Client>,
+        timeout: Duration,
+        concurrency: usize,
+        invalid_api_key: Arc<AtomicBool>,
+    ) -> Self {
         Self {
             client,
             timeout,
@@ -104,6 +198,7 @@ impl EtherscanFetcher {
             concurrency,
             queue: Vec::new(),
             in_progress: FuturesUnordered::new(),
+            invalid_api_key,
         }
     }
 
@@ -114,7 +209,7 @@ impl EtherscanFetcher {
     fn queue_next_reqs(&mut self) {
         while self.in_progress.len() < self.concurrency {
             if let Some(addr) = self.queue.pop() {
-                let client = self.client.clone();
+                let client = Arc::clone(&self.client);
                 trace!(target: "etherscanidentifier", "fetching info for {:?}", addr);
                 self.in_progress.push(Box::pin(async move {
                     let res = client.contract_source_code(addr).await;
@@ -128,7 +223,7 @@ impl EtherscanFetcher {
 }
 
 impl Stream for EtherscanFetcher {
-    type Item = (Address, String, Abi);
+    type Item = (Address, String, Abi, String, bool, u32, String);
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let pin = self.get_mut();
@@ -153,14 +248,34 @@ impl Stream for EtherscanFetcher {
                         Ok(mut metadata) => {
                             if let Some(item) = metadata.items.pop() {
                                 if let Ok(abi) = serde_json::from_str(&item.abi) {
-                                    return Poll::Ready(Some((addr, item.contract_name, abi)))
+                                    return Poll::Ready(Some((
+                                        addr,
+                                        item.contract_name,
+                                        abi,
+                                        item.source_code,
+                                        item.optimization_used.eq("1"),
+                                        item.runs.parse::<u32>().expect("runs parse error"),
+                                        item.compiler_version,
+                                    )))
                                 }
                             }
                         }
-                        Err(etherscan::errors::EtherscanError::RateLimitExceeded) => {
+                        Err(EtherscanError::RateLimitExceeded) => {
                             warn!(target: "etherscanidentifier", "rate limit exceeded on attempt");
                             pin.backoff = Some(tokio::time::interval(pin.timeout));
                             pin.queue.push(addr);
+                        }
+                        Err(EtherscanError::InvalidApiKey) => {
+                            warn!(target: "etherscanidentifier", "invalid api key");
+                            // mark key as invalid
+                            pin.invalid_api_key.store(true, Ordering::Relaxed);
+                            return Poll::Ready(None)
+                        }
+                        Err(EtherscanError::BlockedByCloudflare) => {
+                            warn!(target: "etherscanidentifier", "blocked by cloudflare");
+                            // mark key as invalid
+                            pin.invalid_api_key.store(true, Ordering::Relaxed);
+                            return Poll::Ready(None)
                         }
                         Err(err) => {
                             warn!(target: "etherscanidentifier", "could not get etherscan info: {:?}", err);

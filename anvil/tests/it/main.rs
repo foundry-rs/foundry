@@ -5,10 +5,15 @@ mod api;
 mod fork;
 mod ganache;
 mod gas;
+mod genesis;
 mod geth;
+#[cfg(not(windows))]
+mod ipc;
 mod logs;
+mod proof;
 mod pubsub;
 mod revert;
+mod sign;
 mod traces;
 mod transaction;
 mod txpool;
