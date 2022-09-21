@@ -49,7 +49,7 @@ mod fuzz;
 mod snapshot;
 /// Utility cheatcodes (`sign` etc.)
 pub mod util;
-pub use util::DEFAULT_CREATE2_DEPLOYER;
+pub use util::{BroadcastableTransaction, DEFAULT_CREATE2_DEPLOYER};
 
 mod config;
 use crate::executor::{backend::RevertDiagnostic, inspector::utils::get_create_address};
@@ -135,12 +135,6 @@ pub struct Cheatcodes {
     // Commit FS changes such as file creations, writes and deletes.
     // Used to prevent duplicate changes file executing non-committing calls.
     pub fs_commit: bool,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct BroadcastableTransaction {
-    pub rpc: Option<String>,
-    pub transaction: TypedTransaction,
 }
 
 impl Cheatcodes {
