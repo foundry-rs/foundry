@@ -20,6 +20,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+/// Holds the sequences of multiple chain deployments.
 #[derive(Deserialize, Serialize, Clone, Default)]
 pub struct MultiChainSequence {
     pub deployments: Vec<ScriptSequence>,
@@ -110,6 +111,8 @@ impl MultiChainSequence {
 }
 
 impl ScriptArgs {
+    /// Given a [`MultiChainSequence`] with multiple sequences of different chains, it executes them
+    /// all in parallel. Supports `--resume` and `--verify`.
     pub async fn multi_chain_deployment(
         &self,
         mut deployments: MultiChainSequence,
