@@ -5,7 +5,7 @@ use crate::{
     executor::{backend::DatabaseExt, fork::CreateFork},
 };
 use bytes::Bytes;
-use ethers::{abi::AbiEncode, prelude::U256};
+use ethers::{abi::AbiEncode, prelude::U256, types::H256};
 use revm::EVMData;
 
 /// Handles fork related cheatcodes
@@ -22,11 +22,19 @@ pub fn apply<DB: DatabaseExt>(
             create_fork(state, data, fork.0.clone(), Some(fork.1.as_u64()))
                 .map(|id| id.encode().into())
         }
+        HEVMCalls::CreateFork2(fork) => {
+            create_fork_at_transaction(state, data, fork.0.clone(), fork.1.into())
+                .map(|id| id.encode().into())
+        }
         HEVMCalls::CreateSelectFork0(fork) => {
             create_select_fork(state, data, fork.0.clone(), None).map(|id| id.encode().into())
         }
         HEVMCalls::CreateSelectFork1(fork) => {
             create_select_fork(state, data, fork.0.clone(), Some(fork.1.as_u64()))
+                .map(|id| id.encode().into())
+        }
+        HEVMCalls::CreateSelectFork2(fork) => {
+            create_select_fork_at_transaction(state, data, fork.0.clone(), fork.1.into())
                 .map(|id| id.encode().into())
         }
         HEVMCalls::SelectFork(fork_id) => select_fork(state, data, fork_id.0),
@@ -70,7 +78,12 @@ pub fn apply<DB: DatabaseExt>(
                 .map(|_| Default::default())
                 .map_err(error::encode_error)
         }
-        HEVMCalls::RollFork1(fork) => {
+        HEVMCalls::RollFork1(fork) => data
+            .db
+            .roll_fork_to_transaction(None, fork.0.into(), data.env, &mut data.journaled_state)
+            .map(|_| Default::default())
+            .map_err(error::encode_error),
+        HEVMCalls::RollFork2(fork) => {
             let block_number = fork.1;
             data.db
                 .roll_fork(Some(fork.0), block_number, data.env, &mut data.journaled_state)
@@ -140,6 +153,34 @@ fn create_fork<DB: DatabaseExt>(
 ) -> Result<U256, Bytes> {
     let fork = create_fork_request(state, url_or_alias, block, data)?;
     data.db.create_fork(fork, &data.journaled_state).map_err(error::encode_error)
+}
+/// Creates and then also selects the new fork at the given transaction
+fn create_select_fork_at_transaction<DB: DatabaseExt>(
+    state: &mut Cheatcodes,
+    data: &mut EVMData<'_, DB>,
+    url_or_alias: String,
+    transaction: H256,
+) -> Result<U256, Bytes> {
+    // No need to correct since the sender's nonce does not get incremented when selecting a fork.
+    state.corrected_nonce = true;
+
+    let fork = create_fork_request(state, url_or_alias, None, data)?;
+    data.db
+        .create_select_fork_at_transaction(fork, data.env, &mut data.journaled_state, transaction)
+        .map_err(error::encode_error)
+}
+
+/// Creates a new fork at the given transaction
+fn create_fork_at_transaction<DB: DatabaseExt>(
+    state: &mut Cheatcodes,
+    data: &mut EVMData<'_, DB>,
+    url_or_alias: String,
+    transaction: H256,
+) -> Result<U256, Bytes> {
+    let fork = create_fork_request(state, url_or_alias, None, data)?;
+    data.db
+        .create_fork_at_transaction(fork, &data.journaled_state, transaction)
+        .map_err(error::encode_error)
 }
 
 /// Creates the request object for a new fork request

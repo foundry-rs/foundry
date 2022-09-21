@@ -1,10 +1,4 @@
-use itertools::izip;
-use std::{
-    collections::{HashMap, HashSet},
-    iter::repeat,
-    sync::Arc,
-};
-
+use super::{WalletTrait, WalletType};
 use clap::Parser;
 use ethers::{
     middleware::SignerMiddleware,
@@ -13,12 +7,15 @@ use ethers::{
     types::Address,
 };
 use eyre::{Context, Result};
-
 use foundry_common::RetryProvider;
 use foundry_config::Config;
+use itertools::izip;
 use serde::Serialize;
-
-use super::{wallet::WalletTrait, WalletType};
+use std::{
+    collections::{HashMap, HashSet},
+    iter::repeat,
+    sync::Arc,
+};
 
 macro_rules! get_wallets {
     ($id:ident, [ $($wallets:expr),+ ], $call:expr) => {
@@ -47,6 +44,9 @@ macro_rules! collect_addresses {
     };
 }
 
+/// A macro that initializes multiple wallets
+///
+/// Should be used with a [`MultiWallet`] instance
 macro_rules! create_hw_wallets {
     ($self:ident, $chain_id:ident ,$get_wallet:ident, $wallets:ident) => {
         let mut $wallets = vec![];
@@ -218,7 +218,7 @@ impl MultiWallet {
         let mut unused_wallets = vec![];
 
         let script_wallets_fn = || -> Result<Option<Vec<LocalWallet>>> {
-            if script_wallets.len().gt(&0) {
+            if !script_wallets.is_empty() {
                 return Ok(Some(script_wallets))
             }
             Ok(None)

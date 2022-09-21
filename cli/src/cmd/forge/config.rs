@@ -34,7 +34,7 @@ impl Cmd for ConfigArgs {
             return Ok(())
         }
 
-        let config = self.load_config_unsanitized_emit_warnings();
+        let config = self.try_load_config_unsanitized_emit_warnings()?;
 
         let s = if self.basic {
             let config = config.into_basic();

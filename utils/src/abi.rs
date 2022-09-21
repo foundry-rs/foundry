@@ -295,6 +295,8 @@ fn format_struct_types(structs: &InternalStructs) -> String {
 }
 
 fn format_struct_field(name: &str, sol_struct: &SolStruct) -> String {
+    // strip member access if any
+    let name = name.split('.').last().unwrap();
     let mut def = format!("struct {} {{\n", name);
     for field in sol_struct.fields.iter() {
         let ty = match &field.ty {

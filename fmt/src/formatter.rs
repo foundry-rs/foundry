@@ -11,7 +11,7 @@ use crate::{
     FormatterConfig, InlineConfig, IntTypes, NumberUnderscore,
 };
 use ethers_core::{types::H160, utils::to_checksum};
-use foundry_config::fmt::SingleLineBlockStyle;
+use foundry_config::fmt::{MultilineFuncHeaderStyle, SingleLineBlockStyle};
 use itertools::{Either, Itertools};
 use solang_parser::pt::*;
 use std::{fmt::Write, str::FromStr};
@@ -71,6 +71,7 @@ macro_rules! bail {
 struct Context {
     contract: Option<ContractDefinition>,
     function: Option<FunctionDefinition>,
+    if_stmt_single_line: Option<bool>,
 }
 
 /// A Solidity formatter
@@ -308,19 +309,19 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// where `end_at` is the start of the block.
     fn should_attempt_block_single_line(
         &mut self,
-        block: &mut Statement,
+        stmt: &mut Statement,
         start_from: usize,
     ) -> bool {
         match self.config.single_line_statement_blocks {
             SingleLineBlockStyle::Single => true,
             SingleLineBlockStyle::Multi => false,
             SingleLineBlockStyle::Preserve => {
-                let end_at = match block {
+                let end_at = match stmt {
                     Statement::Block { statements, .. } if !statements.is_empty() => {
                         statements.first().as_ref().unwrap().loc().start()
                     }
                     Statement::Expression(loc, _) => loc.start(),
-                    _ => block.loc().start(),
+                    _ => stmt.loc().start(),
                 };
 
                 self.find_next_line(start_from).map_or(false, |loc| loc >= end_at)
@@ -910,6 +911,12 @@ impl<'a, W: Write> Formatter<'a, W> {
             }
         }
 
+        // write manually to avoid eof comment being detected as first
+        let comments = self.comments.remove_prefixes_before(loc.end());
+        for comment in comments {
+            self.write_comment(&comment, false)?;
+        }
+
         let (unwritten_src_loc, mut unwritten_whitespace) =
             unwritten_whitespace(last_byte_written, loc.end());
         if self.inline_config.is_disabled(unwritten_src_loc) {
@@ -937,9 +944,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         self.write_postfix_comments_before(expr.loc().start())?;
         self.write_prefix_comments_before(expr.loc().start())?;
 
-        let fits_on_single_line =
-            self.try_on_single_line(|fmt| fmt.indented(1, |fmt| expr.visit(fmt)))?;
-        if self.is_beginning_of_line() && fits_on_single_line {
+        if self.try_on_single_line(|fmt| fmt.indented(1, |fmt| expr.visit(fmt)))? {
             return Ok(())
         }
 
@@ -1009,14 +1014,15 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Visit the block item. Attempt to write it on the single
     /// line if requested. Surround by curly braces and indent
-    /// each line otherwise.
+    /// each line otherwise. Returns `true` if the block fit
+    /// on a single line
     fn visit_block<T>(
         &mut self,
         loc: Loc,
         statements: &mut Vec<T>,
         attempt_single_line: bool,
         attempt_omit_braces: bool,
-    ) -> Result<()>
+    ) -> Result<bool>
     where
         T: Visitable + LineOfCode,
     {
@@ -1033,7 +1039,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             })?;
 
             if fits_on_single {
-                return Ok(())
+                return Ok(true)
             }
         }
 
@@ -1054,7 +1060,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
         write_chunk!(self, loc.end(), "}}")?;
 
-        Ok(())
+        Ok(false)
     }
 
     /// Visit statement as `Statement::Block`.
@@ -1062,7 +1068,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         &mut self,
         stmt: &mut Statement,
         attempt_single_line: bool,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         match stmt {
             Statement::Block { loc, statements, .. } => {
                 self.visit_block(*loc, statements, attempt_single_line, true)
@@ -1231,6 +1237,216 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
 
         write_chunk!(self, loc.start(), loc.end(), "{out}")
+    }
+
+    /// Write the function header
+    fn write_function_header(
+        &mut self,
+        func: &mut FunctionDefinition,
+        body_loc: Option<Loc>,
+        header_multiline: bool,
+    ) -> Result<bool> {
+        let func_name = if let Some(ident) = &func.name {
+            format!("{} {}", func.ty, ident.name)
+        } else {
+            func.ty.to_string()
+        };
+
+        // calculate locations of chunk groups
+        let attrs_loc = func.attributes.first().map(|attr| attr.loc());
+        let returns_loc = func.returns.first().map(|param| param.0);
+
+        let params_next_offset = attrs_loc
+            .as_ref()
+            .or(returns_loc.as_ref())
+            .or(body_loc.as_ref())
+            .map(|loc| loc.start());
+        let attrs_end = returns_loc.as_ref().or(body_loc.as_ref()).map(|loc| loc.start());
+        let returns_end = body_loc.as_ref().map(|loc| loc.start());
+
+        let mut params_multiline = false;
+
+        let params_loc = {
+            let mut loc = func.loc.with_end(func.loc.start());
+            self.extend_loc_until(&mut loc, ')');
+            loc
+        };
+        if self.inline_config.is_disabled(params_loc) {
+            let chunk = self.chunked(func.loc.start(), None, |fmt| fmt.visit_source(params_loc))?;
+            params_multiline = chunk.content.contains('\n');
+            self.write_chunk(&chunk)?;
+        } else {
+            let first_surrounding = SurroundingChunk::new(
+                format!("{func_name}("),
+                Some(func.loc.start()),
+                Some(
+                    func.params
+                        .first()
+                        .map(|param| param.0.start())
+                        .unwrap_or_else(|| params_loc.end()),
+                ),
+            );
+            self.surrounded(
+                first_surrounding,
+                SurroundingChunk::new(")", None, params_next_offset),
+                |fmt, multiline| {
+                    let params = fmt.items_to_chunks(
+                        params_next_offset,
+                        func.params.iter_mut().filter_map(|(loc, param)| {
+                            param.as_mut().map(|param| Ok((*loc, param)))
+                        }),
+                    )?;
+                    let after_params = if !func.attributes.is_empty() || !func.returns.is_empty() {
+                        ""
+                    } else if func.body.is_some() {
+                        " {"
+                    } else {
+                        ";"
+                    };
+                    let should_multiline = header_multiline &&
+                        matches!(
+                            fmt.config.multiline_func_header,
+                            MultilineFuncHeaderStyle::ParamsFirst | MultilineFuncHeaderStyle::All
+                        );
+                    params_multiline = should_multiline ||
+                        multiline ||
+                        fmt.are_chunks_separated_multiline(
+                            &format!("{{}}){after_params}"),
+                            &params,
+                            ",",
+                        )?;
+                    fmt.write_chunks_separated(&params, ",", params_multiline)?;
+                    Ok(())
+                },
+            )?;
+        }
+
+        let mut write_attributes = |fmt: &mut Self, multiline: bool| -> Result<()> {
+            // write attributes
+            if !func.attributes.is_empty() {
+                let attrs_loc = func
+                    .attributes
+                    .first()
+                    .unwrap()
+                    .loc()
+                    .with_end_from(&func.attributes.last().unwrap().loc());
+                if fmt.inline_config.is_disabled(attrs_loc) {
+                    fmt.indented(1, |fmt| fmt.visit_source(attrs_loc))?;
+                } else {
+                    fmt.write_postfix_comments_before(attrs_loc.start())?;
+                    fmt.write_whitespace_separator(multiline)?;
+                    let attributes = fmt.items_to_chunks_sorted(
+                        attrs_end,
+                        func.attributes.iter_mut().map(|attr| Ok((attr.loc(), attr))),
+                    )?;
+                    fmt.indented(1, |fmt| {
+                        fmt.write_chunks_separated(&attributes, "", multiline)?;
+                        Ok(())
+                    })?;
+                }
+            }
+
+            // write returns
+            if !func.returns.is_empty() {
+                let returns_start_loc = func.returns.first().unwrap().0;
+                let returns_loc = returns_start_loc.with_end_from(&func.returns.last().unwrap().0);
+                if fmt.inline_config.is_disabled(returns_loc) {
+                    fmt.indented(1, |fmt| fmt.visit_source(returns_loc))?;
+                } else {
+                    let returns = fmt.items_to_chunks(
+                        returns_end,
+                        func.returns.iter_mut().filter_map(|(loc, param)| {
+                            param.as_mut().map(|param| Ok((*loc, param)))
+                        }),
+                    )?;
+                    fmt.write_postfix_comments_before(returns_loc.start())?;
+                    fmt.write_whitespace_separator(multiline)?;
+                    fmt.indented(1, |fmt| {
+                        fmt.surrounded(
+                            SurroundingChunk::new("returns (", Some(returns_loc.start()), None),
+                            SurroundingChunk::new(")", None, returns_end),
+                            |fmt, multiline_hint| {
+                                fmt.write_chunks_separated(&returns, ",", multiline_hint)?;
+                                Ok(())
+                            },
+                        )?;
+                        Ok(())
+                    })?;
+                }
+            }
+            Ok(())
+        };
+
+        let should_multiline = header_multiline &&
+            if params_multiline {
+                matches!(self.config.multiline_func_header, MultilineFuncHeaderStyle::All)
+            } else {
+                matches!(
+                    self.config.multiline_func_header,
+                    MultilineFuncHeaderStyle::AttributesFirst
+                )
+            };
+        let attrs_multiline = should_multiline ||
+            !self.try_on_single_line(|fmt| {
+                write_attributes(fmt, false)?;
+                if !fmt.will_it_fit(if func.body.is_some() { " {" } else { ";" }) {
+                    bail!(FormatterError::fmt())
+                }
+                Ok(())
+            })?;
+        if attrs_multiline {
+            write_attributes(self, true)?;
+        }
+        Ok(attrs_multiline)
+    }
+
+    /// Write potentially nested `if statements`
+    fn write_if_stmt(
+        &mut self,
+        loc: Loc,
+        cond: &mut Expression,
+        if_branch: &mut Box<Statement>,
+        else_branch: &mut Option<Box<Statement>>,
+    ) -> Result<(), FormatterError> {
+        let single_line_stmt_wide = self.context.if_stmt_single_line.unwrap_or_default();
+
+        visit_source_if_disabled_else!(self, loc.with_end(if_branch.loc().start()), {
+            self.surrounded(
+                SurroundingChunk::new("if (", Some(loc.start()), Some(cond.loc().start())),
+                SurroundingChunk::new(")", None, Some(if_branch.loc().start())),
+                |fmt, _| {
+                    cond.visit(fmt)?;
+                    fmt.write_postfix_comments_before(if_branch.loc().start())
+                },
+            )?;
+        });
+
+        let cond_close_paren_loc =
+            self.find_next_in_src(cond.loc().end(), ')').unwrap_or_else(|| cond.loc().end());
+        let attempt_single_line = single_line_stmt_wide &&
+            self.should_attempt_block_single_line(if_branch.as_mut(), cond_close_paren_loc);
+        let if_branch_is_single_line = self.visit_stmt_as_block(if_branch, attempt_single_line)?;
+        if single_line_stmt_wide && !if_branch_is_single_line {
+            bail!(FormatterError::fmt())
+        }
+
+        if let Some(else_branch) = else_branch {
+            self.write_postfix_comments_before(else_branch.loc().start())?;
+            if if_branch_is_single_line {
+                writeln!(self.buf())?;
+            }
+            write_chunk!(self, else_branch.loc().start(), "else")?;
+            if let Statement::If(loc, cond, if_branch, else_branch) = else_branch.as_mut() {
+                self.visit_if(*loc, cond, if_branch, else_branch, false)?;
+            } else {
+                let else_branch_is_single_line =
+                    self.visit_stmt_as_block(else_branch, if_branch_is_single_line)?;
+                if single_line_stmt_wide && !else_branch_is_single_line {
+                    bail!(FormatterError::fmt())
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1787,26 +2003,23 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 self.visit_assignment(right)?;
             }
             Expression::Ternary(loc, cond, first_expr, second_expr) => {
-                let mut chunks = vec![];
+                cond.visit(self)?;
 
-                chunks.push(
-                    self.chunked(loc.start(), Some(first_expr.loc().start()), |fmt| {
-                        cond.visit(fmt)
-                    })?,
-                );
-                chunks.push(self.chunked(
+                let first_expr = self.chunked(
                     first_expr.loc().start(),
                     Some(second_expr.loc().start()),
                     |fmt| {
                         write_chunk!(fmt, "?")?;
                         first_expr.visit(fmt)
                     },
-                )?);
-                chunks.push(self.chunked(second_expr.loc().start(), Some(loc.end()), |fmt| {
-                    write_chunk!(fmt, ":")?;
-                    second_expr.visit(fmt)
-                })?);
+                )?;
+                let second_expr =
+                    self.chunked(second_expr.loc().start(), Some(loc.end()), |fmt| {
+                        write_chunk!(fmt, ":")?;
+                        second_expr.visit(fmt)
+                    })?;
 
+                let chunks = vec![first_expr, second_expr];
                 if !self.try_on_single_line(|fmt| fmt.write_chunks_separated(&chunks, "", false))? {
                     self.grouped(|fmt| fmt.write_chunks_separated(&chunks, "", true))?;
                 }
@@ -1959,148 +2172,14 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             fmt.write_postfix_comments_before(func.loc.start())?;
             fmt.write_prefix_comments_before(func.loc.start())?;
 
-            let func_name = if let Some(ident) = &func.name {
-                format!("{} {}", func.ty, ident.name)
-            } else {
-                func.ty.to_string()
-            };
-
-            // calculate locations of chunk groups
-            let attrs_loc = func.attributes.first().map(|attr| attr.loc());
-            let returns_loc = func.returns.first().map(|param| param.0);
             let body_loc = func.body.as_ref().map(LineOfCode::loc);
-
-            let params_next_offset = attrs_loc
-                .as_ref()
-                .or(returns_loc.as_ref())
-                .or(body_loc.as_ref())
-                .map(|loc| loc.start());
-            let attrs_end = returns_loc.as_ref().or(body_loc.as_ref()).map(|loc| loc.start());
-            let returns_end = body_loc.as_ref().map(|loc| loc.start());
-
-            let mut params_multiline = false;
-
-            let params_loc = {
-                let mut loc = func.loc.with_end(func.loc.start());
-                fmt.extend_loc_until(&mut loc, ')');
-                loc
-            };
-            if fmt.inline_config.is_disabled(params_loc) {
-                let chunk =
-                    fmt.chunked(func.loc.start(), None, |fmt| fmt.visit_source(params_loc))?;
-                params_multiline = chunk.content.contains('\n');
-                fmt.write_chunk(&chunk)?;
-            } else {
-                let first_surrounding = SurroundingChunk::new(
-                    format!("{func_name}("),
-                    Some(func.loc.start()),
-                    Some(
-                        func.params
-                            .first()
-                            .map(|param| param.0.start())
-                            .unwrap_or_else(|| params_loc.end()),
-                    ),
-                );
-                fmt.surrounded(
-                    first_surrounding,
-                    SurroundingChunk::new(")", None, params_next_offset),
-                    |fmt, multiline| {
-                        let params = fmt.items_to_chunks(
-                            params_next_offset,
-                            func.params.iter_mut().filter_map(|(loc, param)| {
-                                param.as_mut().map(|param| Ok((*loc, param)))
-                            }),
-                        )?;
-                        let after_params =
-                            if !func.attributes.is_empty() || !func.returns.is_empty() {
-                                ""
-                            } else if func.body.is_some() {
-                                " {"
-                            } else {
-                                ";"
-                            };
-                        params_multiline = multiline ||
-                            fmt.are_chunks_separated_multiline(
-                                &format!("{{}}){after_params}"),
-                                &params,
-                                ",",
-                            )?;
-                        fmt.write_chunks_separated(&params, ",", params_multiline)?;
-                        Ok(())
-                    },
-                )?;
-            }
-
-            let mut write_attributes = |fmt: &mut Self, multiline: bool| -> Result<()> {
-                // write attributes
-                if !func.attributes.is_empty() {
-                    let attrs_loc = func
-                        .attributes
-                        .first()
-                        .unwrap()
-                        .loc()
-                        .with_end_from(&func.attributes.last().unwrap().loc());
-                    if fmt.inline_config.is_disabled(attrs_loc) {
-                        fmt.indented(1, |fmt| fmt.visit_source(attrs_loc))?;
-                    } else {
-                        fmt.write_postfix_comments_before(attrs_loc.start())?;
-                        fmt.write_whitespace_separator(multiline)?;
-                        let attributes = fmt.items_to_chunks_sorted(
-                            attrs_end,
-                            func.attributes.iter_mut().map(|attr| Ok((attr.loc(), attr))),
-                        )?;
-                        fmt.indented(1, |fmt| {
-                            fmt.write_chunks_separated(&attributes, "", multiline)?;
-                            Ok(())
-                        })?;
-                    }
-                }
-
-                // write returns
-                if !func.returns.is_empty() {
-                    let returns_loc = func
-                        .returns
-                        .first()
-                        .unwrap()
-                        .0
-                        .with_end_from(&func.returns.last().unwrap().0);
-                    if fmt.inline_config.is_disabled(returns_loc) {
-                        fmt.indented(1, |fmt| fmt.visit_source(returns_loc))?;
-                    } else {
-                        let returns = fmt.items_to_chunks(
-                            returns_end,
-                            func.returns.iter_mut().filter_map(|(loc, param)| {
-                                param.as_mut().map(|param| Ok((*loc, param)))
-                            }),
-                        )?;
-                        fmt.write_postfix_comments_before(returns_loc.start())?;
-                        fmt.write_whitespace_separator(multiline)?;
-                        fmt.indented(1, |fmt| {
-                            fmt.surrounded(
-                                SurroundingChunk::new("returns (", Some(returns_loc.start()), None),
-                                SurroundingChunk::new(")", None, returns_end),
-                                |fmt, multiline_hint| {
-                                    fmt.write_chunks_separated(&returns, ",", multiline_hint)?;
-                                    Ok(())
-                                },
-                            )?;
-                            Ok(())
-                        })?;
-                    }
-                }
+            let mut attrs_multiline = false;
+            let fits_on_single = fmt.try_on_single_line(|fmt| {
+                fmt.write_function_header(func, body_loc, false)?;
                 Ok(())
-            };
-
-            let attrs_multiline = fmt.config.func_attrs_with_params_multiline && params_multiline ||
-                !fmt.try_on_single_line(|fmt| {
-                    write_attributes(fmt, false)?;
-                    if !fmt.will_it_fit(if func.body.is_some() { " {" } else { ";" }) {
-                        bail!(FormatterError::fmt())
-                    }
-                    Ok(())
-                })?;
-            if attrs_multiline {
-                write_attributes(fmt, true)?;
+            })?;
+            if !fits_on_single {
+                attrs_multiline = fmt.write_function_header(func, body_loc, true)?;
             }
 
             // write function body
@@ -2161,6 +2240,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     }
                     self.write_chunk(&base_or_modifier)?;
                 }
+            }
+            // substrate compatibility
+            FunctionAttribute::NameValue(loc, ident, expr) => {
+                let expr = self.simulate_to_string(|fmt| expr.visit(fmt))?;
+                write_chunk!(self, loc.start(), loc.end(), "{}={}", ident.name, expr)?;
             }
         };
 
@@ -2286,7 +2370,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             write_chunk!(self, loc.start(), "unchecked ")?;
         }
 
-        self.visit_block(loc, statements, false, false)
+        self.visit_block(loc, statements, false, false)?;
+        Ok(())
     }
 
     fn visit_opening_paren(&mut self) -> Result<()> {
@@ -2624,9 +2709,14 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             },
         )?;
         match body {
-            Some(body) => self.visit_stmt_as_block(body, false), // TODO:
-            None => self.write_empty_brackets(),
-        }
+            Some(body) => {
+                self.visit_stmt_as_block(body, false)?;
+            }
+            None => {
+                self.write_empty_brackets()?;
+            }
+        };
+        Ok(())
     }
 
     fn visit_while(
@@ -2648,7 +2738,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         let cond_close_paren_loc =
             self.find_next_in_src(cond.loc().end(), ')').unwrap_or_else(|| cond.loc().end());
         let attempt_single_line = self.should_attempt_block_single_line(body, cond_close_paren_loc);
-        self.visit_stmt_as_block(body, attempt_single_line)
+        self.visit_stmt_as_block(body, attempt_single_line)?;
+        Ok(())
     }
 
     fn visit_do_while(
@@ -2680,33 +2771,29 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     ) -> Result<(), Self::Error> {
         return_source_if_disabled!(self, loc);
 
-        visit_source_if_disabled_else!(self, loc.with_end(if_branch.loc().start()), {
-            self.surrounded(
-                SurroundingChunk::new("if (", Some(loc.start()), Some(cond.loc().start())),
-                SurroundingChunk::new(")", None, Some(if_branch.loc().start())),
-                |fmt, _| {
-                    cond.visit(fmt)?;
-                    fmt.write_postfix_comments_before(if_branch.loc().start())
-                },
-            )?;
-        });
-
-        let cond_close_paren_loc =
-            self.find_next_in_src(cond.loc().end(), ')').unwrap_or_else(|| cond.loc().end());
-        let attempt_single_line = is_first_stmt &&
-            else_branch.is_none() &&
-            self.should_attempt_block_single_line(if_branch.as_mut(), cond_close_paren_loc);
-        self.visit_stmt_as_block(if_branch, attempt_single_line)?;
-
-        if let Some(else_branch) = else_branch {
-            self.write_postfix_comments_before(else_branch.loc().start())?;
-            write_chunk!(self, else_branch.loc().start(), "else")?;
-            if let Statement::If(loc, cond, if_branch, else_branch) = else_branch.as_mut() {
-                self.visit_if(*loc, cond, if_branch, else_branch, false)?;
-            } else {
-                self.visit_stmt_as_block(else_branch, false)?;
-            }
+        if !is_first_stmt {
+            self.write_if_stmt(loc, cond, if_branch, else_branch)?;
+            return Ok(())
         }
+
+        self.context.if_stmt_single_line = Some(true);
+        let mut stmt_fits_on_single = false;
+        let tx = self.transact(|fmt| {
+            stmt_fits_on_single = match fmt.write_if_stmt(loc, cond, if_branch, else_branch) {
+                Ok(()) => true,
+                Err(FormatterError::Fmt(_)) => false,
+                Err(err) => bail!(err),
+            };
+            Ok(())
+        })?;
+        if stmt_fits_on_single {
+            tx.commit()?;
+        } else {
+            self.context.if_stmt_single_line = Some(false);
+            self.write_if_stmt(loc, cond, if_branch, else_branch)?;
+        }
+        self.context.if_stmt_single_line = None;
+
         Ok(())
     }
 
@@ -3007,7 +3094,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         attempt_single_line: bool,
     ) -> Result<(), Self::Error> {
         return_source_if_disabled!(self, loc);
-        self.visit_block(loc, statements, attempt_single_line, false)
+        self.visit_block(loc, statements, attempt_single_line, false)?;
+        Ok(())
     }
 
     fn visit_yul_assignment<T>(
@@ -3382,4 +3470,5 @@ mod tests {
     test_directory! { NumberLiteralUnderscore }
     test_directory! { FunctionCall }
     test_directory! { TrailingComma }
+    test_directory! { SelectorOverride }
 }

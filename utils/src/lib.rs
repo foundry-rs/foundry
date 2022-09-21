@@ -12,6 +12,7 @@ use ethers_etherscan::Client;
 use ethers_providers::{Middleware, Provider, ProviderError};
 use ethers_solc::{
     artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode, Libraries},
+    contracts::ArtifactContracts,
     ArtifactId,
 };
 use eyre::{Result, WrapErr};
@@ -37,7 +38,7 @@ pub struct PostLinkInput<'a, T, U> {
 
 #[allow(clippy::too_many_arguments)]
 pub fn link_with_nonce_or_address<T, U>(
-    contracts: BTreeMap<ArtifactId, CompactContractBytecode>,
+    contracts: ArtifactContracts,
     known_contracts: &mut BTreeMap<ArtifactId, T>,
     deployed_library_addresses: Libraries,
     sender: Address,
@@ -615,7 +616,7 @@ mod tests {
     use super::*;
     use ethers::{
         abi::Abi,
-        solc::{artifacts::CompactContractBytecode, Project, ProjectPathsConfig},
+        solc::{Project, ProjectPathsConfig},
         types::{Address, Bytes},
     };
 
@@ -688,7 +689,7 @@ mod tests {
             .into_artifacts()
             .filter(|(i, _)| contract_names.contains(&i.slug().as_str()))
             .map(|(id, c)| (id, c.into_contract_bytecode()))
-            .collect::<BTreeMap<ArtifactId, CompactContractBytecode>>();
+            .collect::<ArtifactContracts>();
 
         let mut known_contracts = ContractsByArtifact::default();
         let mut deployable_contracts: BTreeMap<String, (Abi, Bytes, Vec<Bytes>)> =

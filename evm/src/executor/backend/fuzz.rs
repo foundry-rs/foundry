@@ -23,7 +23,7 @@ use tracing::trace;
 /// a clone-on-write `Backend`, where cloning is only necessary if cheatcodes will modify the
 /// `Backend`
 ///
-/// Entire purpose of this type is for fuzzing. A test function fuzzer will repeatedly execute  the
+/// Entire purpose of this type is for fuzzing. A test function fuzzer will repeatedly execute the
 /// function via immutable raw (no state changes) calls.
 ///
 /// **N.B.**: we're assuming cheatcodes that alter the state (like multi fork swapping) are niche.
@@ -85,6 +85,16 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         self.backend.to_mut().create_fork(fork, journaled_state)
     }
 
+    fn create_fork_at_transaction(
+        &mut self,
+        fork: CreateFork,
+        journaled_state: &JournaledState,
+        transaction: H256,
+    ) -> eyre::Result<LocalForkId> {
+        trace!(?transaction, "fuzz: create fork at");
+        self.backend.to_mut().create_fork_at_transaction(fork, journaled_state, transaction)
+    }
+
     fn select_fork(
         &mut self,
         id: LocalForkId,
@@ -104,6 +114,17 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
     ) -> eyre::Result<()> {
         trace!(?id, ?block_number, "fuzz: roll fork");
         self.backend.to_mut().roll_fork(id, block_number, env, journaled_state)
+    }
+
+    fn roll_fork_to_transaction(
+        &mut self,
+        id: Option<LocalForkId>,
+        transaction: H256,
+        env: &mut Env,
+        journaled_state: &mut JournaledState,
+    ) -> eyre::Result<()> {
+        trace!(?id, ?transaction, "fuzz: roll fork to transaction");
+        self.backend.to_mut().roll_fork_to_transaction(id, transaction, env, journaled_state)
     }
 
     fn active_fork_id(&self) -> Option<LocalForkId> {
@@ -177,9 +198,11 @@ impl<'a> Database for FuzzBackendWrapper<'a> {
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         DatabaseRef::basic(self, address)
     }
+
     fn code_by_hash(&mut self, code_hash: H256) -> Result<Bytecode, Self::Error> {
         DatabaseRef::code_by_hash(self, code_hash)
     }
+
     fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
         DatabaseRef::storage(self, address, index)
     }

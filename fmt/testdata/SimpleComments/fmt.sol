@@ -41,3 +41,11 @@ contract SimpleComments {
  *     y = mx + b
  */
 function test() {}
+// comment after function
+
+// comment with extra newlines
+
+// some comment
+// another comment
+
+// eof comment

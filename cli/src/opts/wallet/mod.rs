@@ -1,5 +1,3 @@
-use std::{path::Path, str::FromStr, sync::Arc};
-
 use clap::Parser;
 use ethers::{
     middleware::SignerMiddleware,
@@ -10,43 +8,15 @@ use ethers::{
 use eyre::{eyre, Result};
 use foundry_common::{fs, RetryProvider};
 use serde::Serialize;
+use std::{path::Path, str::FromStr, sync::Arc};
+
+pub mod multi_wallet;
+use crate::opts::error::PrivateKeyError;
+pub use multi_wallet::*;
+
+pub mod error;
 
 type SignerClient<T> = SignerMiddleware<Arc<RetryProvider>, T>;
-
-#[derive(Debug)]
-pub enum WalletType {
-    Local(SignerClient<LocalWallet>),
-    Ledger(SignerClient<Ledger>),
-    Trezor(SignerClient<Trezor>),
-}
-
-impl From<SignerClient<Ledger>> for WalletType {
-    fn from(hw: SignerClient<Ledger>) -> WalletType {
-        WalletType::Ledger(hw)
-    }
-}
-
-impl From<SignerClient<Trezor>> for WalletType {
-    fn from(hw: SignerClient<Trezor>) -> WalletType {
-        WalletType::Trezor(hw)
-    }
-}
-
-impl From<SignerClient<LocalWallet>> for WalletType {
-    fn from(wallet: SignerClient<LocalWallet>) -> WalletType {
-        WalletType::Local(wallet)
-    }
-}
-
-impl WalletType {
-    pub fn chain_id(&self) -> u64 {
-        match self {
-            WalletType::Local(inner) => inner.signer().chain_id(),
-            WalletType::Ledger(inner) => inner.signer().chain_id(),
-            WalletType::Trezor(inner) => inner.signer().chain_id(),
-        }
-    }
-}
 
 #[derive(Parser, Debug, Default, Clone, Serialize)]
 #[cfg_attr(not(doc), allow(missing_docs))]
@@ -202,9 +172,34 @@ pub trait WalletTrait {
     }
 
     fn get_from_private_key(&self, private_key: &str) -> Result<LocalWallet> {
+        use ethers::signers::WalletError;
         let privk = private_key.trim().strip_prefix("0x").unwrap_or(private_key);
-        LocalWallet::from_str(privk)
-            .map_err(|x| eyre!("Failed to create wallet from private key: {x}"))
+        LocalWallet::from_str(privk).map_err(|err| {
+            // helper macro to check if pk was meant to be an env var, this usually happens if `$`
+            // is missing
+            macro_rules! bail_env_var {
+                ($private_key:ident) => {
+                    // check if pk was meant to be an env var
+                    if !$private_key.starts_with("0x") && std::env::var($private_key).is_ok() {
+                        // SAFETY: at this point we know the user actually wanted to use an env var
+                        // and most likely forgot the `$` anchor, so the
+                        // `private_key` here is an unresolved env var
+                        return PrivateKeyError::ExistsAsEnvVar($private_key.to_string()).into()
+                    }
+                };
+            }
+            match err {
+                WalletError::HexError(err) => {
+                    bail_env_var!(private_key);
+                    return PrivateKeyError::InvalidHex(err).into()
+                }
+                WalletError::EcdsaError(_) => {
+                    bail_env_var!(private_key);
+                }
+                _ => {}
+            };
+            eyre!("Failed to create wallet from private key: {err}")
+        })
     }
 
     fn get_from_mnemonic(
@@ -246,6 +241,41 @@ pub trait WalletTrait {
             }
             (None, _) => None,
         })
+    }
+}
+
+#[derive(Debug)]
+pub enum WalletType {
+    Local(SignerClient<LocalWallet>),
+    Ledger(SignerClient<Ledger>),
+    Trezor(SignerClient<Trezor>),
+}
+
+impl From<SignerClient<Ledger>> for WalletType {
+    fn from(hw: SignerClient<Ledger>) -> WalletType {
+        WalletType::Ledger(hw)
+    }
+}
+
+impl From<SignerClient<Trezor>> for WalletType {
+    fn from(hw: SignerClient<Trezor>) -> WalletType {
+        WalletType::Trezor(hw)
+    }
+}
+
+impl From<SignerClient<LocalWallet>> for WalletType {
+    fn from(wallet: SignerClient<LocalWallet>) -> WalletType {
+        WalletType::Local(wallet)
+    }
+}
+
+impl WalletType {
+    pub fn chain_id(&self) -> u64 {
+        match self {
+            WalletType::Local(inner) => inner.signer().chain_id(),
+            WalletType::Ledger(inner) => inner.signer().chain_id(),
+            WalletType::Trezor(inner) => inner.signer().chain_id(),
+        }
     }
 }
 

@@ -7,6 +7,7 @@ use ethers::{
     },
     solc::{
         artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
+        contracts::ArtifactContracts,
         info::ContractInfo,
     },
     types::{Address, U256},
@@ -27,25 +28,28 @@ impl ScriptArgs {
     pub fn build(&mut self, script_config: &ScriptConfig) -> eyre::Result<BuildOutput> {
         let (project, output) = self.get_project_and_output(script_config)?;
 
-        let mut contracts: BTreeMap<ArtifactId, CompactContractBytecode> = BTreeMap::new();
         let mut sources: BTreeMap<u32, String> = BTreeMap::new();
 
-        for (id, artifact) in output.into_artifacts() {
-            // Sources are only required for the debugger, but it *might* mean that there's
-            // something wrong with the build and/or artifacts.
-            if let Some(source) = artifact.source_file() {
-                sources.insert(
-                    source.id,
-                    source
-                        .ast
-                        .ok_or(eyre::eyre!("Source from artifact has no AST."))?
-                        .absolute_path,
-                );
-            } else {
-                warn!("source not found for artifact={:?}", id);
-            }
-            contracts.insert(id, artifact.into());
-        }
+        let contracts = output
+            .into_artifacts()
+            .into_iter()
+            .map(|(id, artifact)| -> eyre::Result<_> {
+                // Sources are only required for the debugger, but it *might* mean that there's
+                // something wrong with the build and/or artifacts.
+                if let Some(source) = artifact.source_file() {
+                    sources.insert(
+                        source.id,
+                        source
+                            .ast
+                            .ok_or(eyre::eyre!("Source from artifact has no AST."))?
+                            .absolute_path,
+                    );
+                } else {
+                    warn!("source not found for artifact={:?}", id);
+                }
+                Ok((id, artifact))
+            })
+            .collect::<eyre::Result<ArtifactContracts>>()?;
 
         let mut output = self.link(
             project,
@@ -61,7 +65,7 @@ impl ScriptArgs {
     pub fn link(
         &self,
         project: Project,
-        contracts: BTreeMap<ArtifactId, CompactContractBytecode>,
+        contracts: ArtifactContracts,
         libraries_addresses: Libraries,
         sender: Address,
         nonce: U256,
@@ -167,7 +171,7 @@ impl ScriptArgs {
             target,
             contract,
             known_contracts: contracts,
-            highlevel_known_contracts,
+            highlevel_known_contracts: ArtifactContracts(highlevel_known_contracts),
             predeploy_libraries,
             sources: BTreeMap::new(),
             project,
@@ -227,7 +231,7 @@ impl ScriptArgs {
 pub fn filter_sources_and_artifacts(
     target: &str,
     sources: BTreeMap<u32, String>,
-    highlevel_known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
+    highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
     project: Project,
 ) -> eyre::Result<(BTreeMap<u32, String>, HashMap<String, ContractBytecodeSome>)> {
     // Find all imports
@@ -303,8 +307,8 @@ pub struct BuildOutput {
     pub project: Project,
     pub target: ArtifactId,
     pub contract: CompactContractBytecode,
-    pub known_contracts: BTreeMap<ArtifactId, CompactContractBytecode>,
-    pub highlevel_known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
+    pub known_contracts: ArtifactContracts,
+    pub highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
     pub libraries: Libraries,
     pub predeploy_libraries: Vec<ethers::types::Bytes>,
     pub sources: BTreeMap<u32, String>,

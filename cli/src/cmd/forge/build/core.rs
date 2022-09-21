@@ -131,7 +131,7 @@ impl CoreBuildArgs {
     /// [`utils::find_project_root_path`] and merges the cli `BuildArgs` into it before returning
     /// [`foundry_config::Config::project()`]
     pub fn project(&self) -> eyre::Result<Project> {
-        let config = self.load_config_emit_warnings();
+        let config = self.try_load_config_emit_warnings()?;
         Ok(config.project()?)
     }
 
