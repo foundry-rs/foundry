@@ -122,10 +122,9 @@ impl Create2Args {
                 let init_code = init_code.clone();
 
                 let addr = if case_sensitive {
-                    SimpleCast::checksum_address(&get_create2_address_from_hash(
+                    SimpleCast::to_checksum_address(&get_create2_address_from_hash(
                         deployer, salt, init_code,
                     ))
-                    .unwrap()
                 } else {
                     get_create2_address_from_hash(deployer, salt, init_code).to_string()
                 };
@@ -138,11 +137,11 @@ impl Create2Args {
         println!(
             "Successfully found contract address in {} seconds.\nAddress: {}\nSalt: {}",
             timer.elapsed().as_secs(),
-            SimpleCast::checksum_address(&get_create2_address_from_hash(
+            SimpleCast::to_checksum_address(&get_create2_address_from_hash(
                 deployer,
                 Bytes::from(salt.to_fixed_bytes()),
                 init_code
-            ))?,
+            )),
             U256::from(salt.to_fixed_bytes())
         );
 

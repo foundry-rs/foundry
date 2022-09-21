@@ -1,11 +1,11 @@
 use super::{ClapChain, EthereumOpts};
 use crate::{
     cmd::cast::{
-        create2::Create2Args, call::CallArgs, estimate::EstimateArgs, find_block::FindBlockArgs,
+        call::CallArgs, create2::Create2Args, estimate::EstimateArgs, find_block::FindBlockArgs,
         interface::InterfaceArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs,
         wallet::WalletSubcommands,
     },
-    utils::{parse_ether_value, parse_u256}
+    utils::parse_u256,
 };
 use clap::{Parser, Subcommand, ValueHint};
 use ethers::{
