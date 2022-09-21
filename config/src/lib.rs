@@ -82,7 +82,7 @@ mod fuzz;
 pub use fuzz::FuzzConfig;
 
 mod invariant;
-use crate::resolve::UnresolvedEnvVarError;
+use crate::{fs_permissions::PathPermission, resolve::UnresolvedEnvVarError};
 pub use invariant::InvariantConfig;
 use providers::remappings::RemappingsProvider;
 
@@ -1019,6 +1019,7 @@ impl Config {
                 .into_iter()
                 .map(|r| RelativeRemapping::new(r, &root))
                 .collect(),
+            fs_permissions: FsPermissions::new([PathPermission::read(paths.artifacts)]),
             ..Config::default()
         }
     }
@@ -1642,6 +1643,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             profile: Self::DEFAULT_PROFILE,
+            fs_permissions: FsPermissions::new([PathPermission::read("out")]),
             __root: Default::default(),
             src: "src".into(),
             test: "test".into(),
@@ -1712,7 +1714,6 @@ impl Default for Config {
             build_info: false,
             build_info_path: None,
             fmt: Default::default(),
-            fs_permissions: Default::default(),
             __non_exhaustive: (),
             __warnings: vec![],
         }

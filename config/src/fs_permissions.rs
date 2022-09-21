@@ -55,6 +55,22 @@ impl FsPermissions {
         self.join_all(root);
         self
     }
+
+    /// Removes all existing permissions for the given path
+    pub fn remove(&mut self, path: impl AsRef<Path>) {
+        let path = path.as_ref();
+        self.permissions.retain(|permission| permission.path != path)
+    }
+
+    /// Returns true if no permissions are configured
+    pub fn is_empty(&self) -> bool {
+        self.permissions.is_empty()
+    }
+
+    /// Returns the number of configured permissions
+    pub fn len(&self) -> usize {
+        self.permissions.len()
+    }
 }
 
 /// Represents an access permission to a single path
