@@ -17,20 +17,33 @@ use std::time::Instant;
 pub struct Create2Args {
     #[clap(
         long,
+        short,
         help = "Prefix for the contract address.",
         required_unless_present_any = &["ends-with", "matching"],
         value_name = "HEX"
     )]
     starts_with: Option<String>,
-    #[clap(long, help = "Suffix for the contract address.", value_name = "HEX")]
+    #[clap(long, short, help = "Suffix for the contract address.", value_name = "HEX")]
     ends_with: Option<String>,
-    #[clap(long, help = "Sequence that the address has to match", value_name = "HEX")]
+    #[clap(long, short, help = "Sequence that the address has to match", value_name = "HEX")]
     matching: Option<String>,
     #[clap(short, long)]
     case_sensitive: bool,
-    #[clap(short, long, help = "Address of the contract deployer.")]
+    #[clap(
+        short,
+        long,
+        help = "Address of the contract deployer.",
+        default_value = "0x4e59b44847b379578588920ca78fbf26c0b4956c",
+        value_name = "ADDRESS"
+    )]
     deployer: Address,
-    #[clap(short, long, help = "Init code of the contract to be deployed.", value_name = "HEX")]
+    #[clap(
+        short,
+        long,
+        help = "Init code of the contract to be deployed.",
+        value_name = "HEX",
+        default_value = ""
+    )]
     init_code: String,
 }
 
@@ -62,13 +75,16 @@ impl Create2Args {
     ) -> Result<()> {
         let mut regexs = vec![];
 
-        if let Some(matches) = matching {
+        if let Some(mut matches) = matching {
             if starts_with.is_some() || ends_with.is_some() {
                 eyre::bail!("Either use --matching or --starts/ends-with");
             }
 
             if matches.len() != 40 {
-                eyre::bail!("Please provide a 40 bytes long sequence for matching");
+                if !(matches.len() == 42 && matches.starts_with("0x")) {
+                    eyre::bail!("Please provide a 40 characters long sequence for matching");
+                }
+                matches = matches.strip_prefix("0x").unwrap().to_string();
             }
 
             hex::decode(&matches.replace('X', "0")).wrap_err("invalid matching hex provided")?;
