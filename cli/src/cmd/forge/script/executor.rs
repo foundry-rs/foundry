@@ -99,7 +99,7 @@ impl ScriptArgs {
             self.build_runners(script_config, &transactions)
                 .await
                 .into_iter()
-                .map(|(k, runner)| (k, Arc::new(RwLock::new(runner))))
+                .map(|(rpc, runner)| (rpc, Arc::new(RwLock::new(runner))))
                 .collect::<HashMap<_, _>>(),
         );
 
@@ -130,7 +130,7 @@ impl ScriptArgs {
 
         let final_txs = Arc::new(RwLock::new(VecDeque::new()));
 
-        // for transaction in transactions
+        // Executes all transactions from the different forks concurrently.
         let futs = transactions
             .into_iter()
             .map(|transaction| async {
