@@ -182,7 +182,7 @@ fn expand_output_param_type(
             Ok(format!("{}[{}]", ty, *size))
         }
         ParamType::Tuple(_) => {
-            if param.internal_type.as_ref() == None {
+            if param.internal_type.is_none() {
                 let mut result = kind.to_string();
                 result.pop();
                 result.remove(0);
