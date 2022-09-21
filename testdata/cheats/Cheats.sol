@@ -188,6 +188,8 @@ interface Cheats {
     // Returns the currently active fork
     // Reverts if no fork is currently active
     function activeFork() external returns (uint256);
+    // In forking mode, explicitly grant the given address cheatcode access
+    function allowCheatcodes(address) external;
     // Marks that the account(s) should use persistent storage across fork swaps.
     // Meaning, changes made to the state of this account will be kept when switching forks
     function makePersistent(address) external;
