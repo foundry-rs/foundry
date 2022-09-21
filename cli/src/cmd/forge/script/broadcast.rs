@@ -455,9 +455,9 @@ impl ScriptArgs {
                 let per_gas = if let Some(gas_price) = self.with_gas_price {
                     gas_price
                 } else if is_eip1559 {
-                    provider_info.provider.estimate_eip1559_fees(None).await?.0
+                    provider_info.eip1559_fees.expect("to be set.").0
                 } else {
-                    provider_info.provider.get_gas_price().await?
+                    provider_info.gas_price.expect("to be set.")
                 };
 
                 println!("\n==========================");
