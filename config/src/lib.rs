@@ -1010,7 +1010,7 @@ impl Config {
         let root = root.into();
         let paths = ProjectPathsConfig::builder().build_with_root(&root);
         Config {
-            __root: paths.root.clone().into(),
+            __root: paths.root.into(),
             src: paths.sources.file_name().unwrap().into(),
             out: paths.artifacts.file_name().unwrap().into(),
             libs: paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect(),
@@ -1019,7 +1019,7 @@ impl Config {
                 .into_iter()
                 .map(|r| RelativeRemapping::new(r, &root))
                 .collect(),
-            fs_permissions: FsPermissions::new([PathPermission::read(paths.root)]),
+            fs_permissions: FsPermissions::new([PathPermission::read(paths.artifacts)]),
             ..Config::default()
         }
     }
@@ -1641,11 +1641,10 @@ impl Provider for Config {
 
 impl Default for Config {
     fn default() -> Self {
-        let root: RootPath = Default::default();
         Self {
             profile: Self::DEFAULT_PROFILE,
-            fs_permissions: FsPermissions::new([PathPermission::read(root.as_ref())]),
-            __root: root,
+            fs_permissions: FsPermissions::new([PathPermission::read("out")]),
+            __root: Default::default(),
             src: "src".into(),
             test: "test".into(),
             script: "script".into(),

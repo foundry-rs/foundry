@@ -16,7 +16,8 @@ fn test_fs_disabled() {
 }
 #[test]
 fn test_fs_default() {
-    let config = Config::with_root(PROJECT.root());
+    let mut config = Config::with_root(PROJECT.root());
+    config.fs_permissions = FsPermissions::new(vec![PathPermission::read("./fixtures")]);
     let runner = runner_with_config(config);
     let filter = Filter::new(".*", ".*", ".*fs/Default");
     TestConfig::with_filter(runner, filter).run();

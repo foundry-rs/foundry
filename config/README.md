@@ -162,10 +162,10 @@ root = "root"
 #    `read` => only read access (`vm.readFile`)
 #    `write` => only write access (`vm.writeFile`)
 # The `allowed_paths` further lists the paths that are considered, e.g. `./` represents the project root directory
-# By default, only read access is granted to the project dir
+# By default, only read access is granted to the project's out dir, so generated artifacts can be read by default
 # following example enables read-write access for the project dir :
 #       `fs_permissions = [{ access = "read-write", path = "./"}]`
-fs_permissions = [{ access = "read", path = "./"}]
+fs_permissions = [{ access = "read", path = "./out"}]
 [fuzz]
 runs = 256
 max_test_rejects = 65536
