@@ -18,12 +18,10 @@ use crate::{
 use ethers::{
     prelude::{Provider, Signer, SignerMiddleware, TxHash},
     providers::{JsonRpcClient, Middleware},
-    types::transaction::eip2718::TypedTransaction,
     utils::format_units,
 };
 use eyre::{ContextCompat, WrapErr};
 use foundry_common::get_http_provider;
-use foundry_config::Chain;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::{
@@ -364,7 +362,7 @@ impl ScriptArgs {
         let last_rpc = &transactions.back().expect("exists; qed").rpc;
         let is_multi_deployment = transactions.iter().any(|tx| &tx.rpc != last_rpc);
 
-        let mut total_gas_per_rpc: HashMap<String, (U256, bool)> = HashMap::new();
+        let mut total_gas_per_rpc: HashMap<String, U256> = HashMap::new();
 
         // Batches sequence of transactions from different rpcs.
         let mut new_sequence = VecDeque::new();
@@ -390,17 +388,13 @@ impl ScriptArgs {
             let provider_info = match manager.inner.entry(tx_rpc.clone()) {
                 Entry::Occupied(entry) => entry.into_mut(),
                 Entry::Vacant(entry) => {
-                    let info = ProviderInfo::new(&tx_rpc, &tx).await?;
+                    let info = ProviderInfo::new(&tx_rpc, &tx, self.legacy).await?;
                     entry.insert(info)
                 }
             };
 
             // Handles chain specific requirements.
-            let mut is_legacy = self.legacy;
-            if let Chain::Named(chain) = Chain::from(provider_info.chain) {
-                is_legacy |= chain.is_legacy();
-            };
-            tx.change_type(is_legacy);
+            tx.change_type(provider_info.is_legacy);
 
             if !self.skip_simulation {
                 let typed_tx = tx.typed_tx_mut();
@@ -409,9 +403,7 @@ impl ScriptArgs {
                     self.estimate_gas(typed_tx, &provider_info.provider).await?;
                 }
 
-                let (total_gas, _) =
-                    total_gas_per_rpc.entry(tx_rpc.clone()).or_insert((U256::zero(), !is_legacy));
-
+                let total_gas = total_gas_per_rpc.entry(tx_rpc.clone()).or_insert(U256::zero());
                 *total_gas += *typed_tx.gas().expect("gas is set");
             }
 
@@ -447,17 +439,17 @@ impl ScriptArgs {
 
         if !self.skip_simulation {
             // Present gas information on a per RPC basis.
-            for (rpc, (total_gas, is_eip1559)) in total_gas_per_rpc {
+            for (rpc, total_gas) in total_gas_per_rpc {
                 let provider_info = manager.inner.get(&rpc).expect("to be set.");
 
                 // We don't store it in the transactions, since we want the most updated value.
                 // Right before broadcasting.
                 let per_gas = if let Some(gas_price) = self.with_gas_price {
                     gas_price
-                } else if is_eip1559 {
-                    provider_info.eip1559_fees.expect("to be set.").0
-                } else {
+                } else if provider_info.is_legacy {
                     provider_info.gas_price.expect("to be set.")
+                } else {
+                    provider_info.eip1559_fees.expect("to be set.").0
                 };
 
                 println!("\n==========================");
