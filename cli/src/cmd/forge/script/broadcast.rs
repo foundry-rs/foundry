@@ -303,14 +303,7 @@ impl ScriptArgs {
                     }
                 } else if self.broadcast {
                     let deployment_sequence = deployments.first_mut().expect("to be set.");
-                    let rpc = deployment_sequence
-                        .transactions
-                        .front()
-                        .as_ref()
-                        .expect("to be set")
-                        .rpc
-                        .clone()
-                        .expect("to be set.");
+                    let rpc = total_rpcs.into_iter().next().expect("exists; qed");
 
                     deployment_sequence.add_libraries(libraries);
 

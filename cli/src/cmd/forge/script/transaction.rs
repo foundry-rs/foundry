@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 
 use tracing::error;
 
-#[derive(Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AdditionalContract {
     #[serde(rename = "transactionType")]
@@ -26,7 +26,7 @@ pub struct AdditionalContract {
     pub init_code: Vec<u8>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct TransactionWithMetadata {
     pub hash: Option<TxHash>,
