@@ -360,6 +360,7 @@ impl ScriptArgs {
 
             // Handles chain specific requirements.
             tx.change_type(provider_info.is_legacy);
+            tx.transaction.set_chain_id(provider_info.chain);
 
             if !self.skip_simulation {
                 let typed_tx = tx.typed_tx_mut();
