@@ -17,7 +17,7 @@ use ethers::{
     utils::format_units,
 };
 use eyre::{ContextCompat, WrapErr};
-use foundry_common::{get_http_provider, RetryProvider};
+use foundry_common::{try_get_http_provider, RetryProvider};
 use foundry_config::Chain;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -31,7 +31,7 @@ impl ScriptArgs {
         fork_url: &str,
         script_wallets: Vec<LocalWallet>,
     ) -> eyre::Result<()> {
-        let provider = Arc::new(get_http_provider(fork_url));
+        let provider = Arc::new(try_get_http_provider(fork_url)?);
         let already_broadcasted = deployment_sequence.receipts.len();
 
         if already_broadcasted < deployment_sequence.transactions.len() {
@@ -245,7 +245,7 @@ impl ScriptArgs {
                     })?
                 };
 
-                let provider = Arc::new(get_http_provider(&fork_url));
+                let provider = Arc::new(try_get_http_provider(&fork_url)?);
                 let chain = provider.get_chainid().await?.as_u64();
 
                 verify.set_chain(&script_config.config, chain.into());
