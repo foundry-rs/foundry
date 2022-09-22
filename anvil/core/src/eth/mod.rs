@@ -50,6 +50,9 @@ pub enum EthRequest {
     #[serde(rename = "eth_gasPrice", with = "empty_params")]
     EthGasPrice(()),
 
+    #[serde(rename = "eth_maxPriorityFeePerGas", with = "empty_params")]
+    EthMaxPriorityFeePerGas(()),
+
     #[serde(rename = "eth_accounts", alias = "eth_requestAccounts", with = "empty_params")]
     EthAccounts(()),
 
@@ -492,6 +495,13 @@ mod tests {
     #[test]
     fn test_eth_block_number() {
         let s = r#"{"method": "eth_blockNumber", "params":[]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_eth_max_priority_fee() {
+        let s = r#"{"method": "eth_maxPriorityFeePerGas", "params":[]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
