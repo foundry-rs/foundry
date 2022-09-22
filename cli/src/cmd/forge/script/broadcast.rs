@@ -323,7 +323,6 @@ impl ScriptArgs {
         returns: HashMap<String, NestedValue>,
     ) -> eyre::Result<Vec<ScriptSequence>> {
         // User might be using both "in-code" forks and `--fork-url`.
-        let arg_url = self.evm_opts.fork_url.clone().unwrap_or_default();
         let last_rpc = &transactions.back().expect("exists; qed").rpc;
         let is_multi_deployment = transactions.iter().any(|tx| &tx.rpc != last_rpc);
 
@@ -342,12 +341,19 @@ impl ScriptArgs {
         let original_config_chain = config.chain_id;
 
         while let Some(mut tx) = txes_iter.next() {
-            // Fills the RPC on the transaction in case it's missing one.
-            let tx_rpc = tx.rpc.unwrap_or_else(|| arg_url.clone());
-            if tx_rpc.is_empty() {
-                eyre::bail!("Transaction needs an associated RPC if it is to be broadcasted.");
-            }
-            tx.rpc = Some(tx_rpc.clone());
+            let tx_rpc = match &tx.rpc {
+                Some(rpc) => rpc.clone(),
+                None => {
+                    // Fills the RPC inside the transaction, if missing one.
+                    let rpc = self.evm_opts.fork_url.clone().ok_or_else(|| {
+                        eyre::eyre!(
+                            "Transaction needs an associated RPC if it is to be broadcasted."
+                        )
+                    })?;
+                    tx.rpc = Some(rpc.clone());
+                    rpc
+                }
+            };
 
             // Get or initialize the RPC provider.
             let provider_info = match manager.inner.entry(tx_rpc.clone()) {
