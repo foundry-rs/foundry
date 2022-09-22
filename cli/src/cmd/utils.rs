@@ -15,6 +15,7 @@ use forge::executor::opts::EvmOpts;
 use foundry_common::{cli_warn, fs, TestFunctionExt};
 use foundry_config::{error::ExtractConfigError, figment::Figment, Chain as ConfigChain, Config};
 use std::path::PathBuf;
+use tracing::trace;
 use yansi::Paint;
 
 /// Common trait for all cli commands
@@ -250,6 +251,7 @@ where
 
         // update the fork url if it was an alias
         if let Some(fork_url) = config.get_rpc_url() {
+            trace!(target: "forge::config", ?fork_url, "Update EvmOpts fork url");
             evm_opts.fork_url = Some(fork_url?.into_owned());
         }
 
