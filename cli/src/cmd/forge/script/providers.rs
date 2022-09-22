@@ -1,4 +1,3 @@
-use super::transaction::TransactionWithMetadata;
 use ethers::prelude::{Http, Middleware, Provider, RetryClient, U256};
 use foundry_common::get_http_provider;
 use foundry_config::Chain;

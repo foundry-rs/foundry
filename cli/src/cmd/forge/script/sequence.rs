@@ -40,6 +40,7 @@ pub struct ScriptSequence {
     pub returns: HashMap<String, NestedValue>,
     pub timestamp: u64,
     pub chain: u64,
+    /// If `True`, the sequence belongs to a `MultiChainSequence` and won't save to disk as usual.
     pub multi: bool,
     pub commit: Option<String>,
 }
