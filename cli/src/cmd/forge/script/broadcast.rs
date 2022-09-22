@@ -263,12 +263,7 @@ impl ScriptArgs {
 
                 let returns = self.get_returns(&script_config, &result.returned)?;
                 let mut deployments = self
-                    .handle_chain_requirements(
-                        gas_filled_txs,
-                        target,
-                        &mut script_config.config,
-                        returns,
-                    )
+                    .bundle_transactions(gas_filled_txs, target, &mut script_config.config, returns)
                     .await?;
 
                 if script_config.has_multiple_rpcs() {
@@ -316,9 +311,11 @@ impl ScriptArgs {
         Ok(())
     }
 
-    /// Modify each transaction according to the specific chain requirements (transaction type
-    /// and/or gas calculations).
-    async fn handle_chain_requirements(
+    /// Returns all transactions in a list of [`ScriptSequence`]. List length will be higher than 1,
+    /// if we're dealing with a multi chain deployment.
+    ///
+    /// Each transaction will be added with the correct transaction type and gas estimation.
+    async fn bundle_transactions(
         &self,
         transactions: VecDeque<TransactionWithMetadata>,
         target: &ArtifactId,
