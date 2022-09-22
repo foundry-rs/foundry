@@ -6,6 +6,7 @@ use foundry_config::Chain;
 use std::{collections::HashMap, sync::Arc};
 
 #[derive(Default)]
+/// Contains a map of RPC urls to single instances of [`ProviderInfo`].
 pub struct ProvidersManager {
     pub inner: HashMap<String, ProviderInfo>,
 }
