@@ -1,7 +1,5 @@
 //! transaction related data
 
-use std::cmp::Ordering;
-
 use crate::eth::{
     receipt::Log,
     utils::{enveloped, to_access_list},
@@ -18,12 +16,12 @@ use ethers_core::{
     },
 };
 use fastrlp::{length_of_length, Header, RlpDecodable, RlpEncodable};
-use foundry_evm::{
-    revm::{CreateScheme, Return, TransactTo, TxEnv},
-    trace::CallTraceArena,
-};
+use foundry_evm::trace::CallTraceArena;
+use revm::{CreateScheme, Return, TransactTo, TxEnv};
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 
+/// compatibility with `ethers-rs` types
 mod ethers_compat;
 
 /// Container type for various Ethereum transaction requests
