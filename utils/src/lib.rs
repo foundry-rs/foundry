@@ -9,7 +9,7 @@ use ethers_core::{
     utils::to_checksum,
 };
 use ethers_etherscan::Client;
-use ethers_providers::{Middleware, Provider, ProviderError};
+use ethers_providers::{Middleware, Provider};
 use ethers_solc::{
     artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode, Libraries},
     contracts::ArtifactContracts,
@@ -606,9 +606,10 @@ pub async fn next_nonce(
     caller: Address,
     provider_url: &str,
     block: Option<BlockId>,
-) -> Result<U256, ProviderError> {
-    let provider = Provider::try_from(provider_url).expect("Bad fork_url provider");
-    provider.get_transaction_count(caller, block).await
+) -> Result<U256> {
+    let provider = Provider::try_from(provider_url)
+        .wrap_err_with(|| format!("Bad fork_url provider: {}", provider_url))?;
+    Ok(provider.get_transaction_count(caller, block).await?)
 }
 
 #[cfg(test)]

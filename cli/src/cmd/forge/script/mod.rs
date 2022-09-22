@@ -615,6 +615,7 @@ mod tests {
     use super::*;
     use crate::cmd::LoadConfig;
     use foundry_cli_test_utils::tempfile::tempdir;
+    use foundry_config::UnresolvedEnvVarError;
     use std::fs;
 
     #[test]
@@ -670,5 +671,41 @@ mod tests {
         let config = args.load_config();
         let mumbai = config.get_etherscan_api_key(Some(ethers::types::Chain::PolygonMumbai));
         assert_eq!(mumbai, Some("https://etherscan-mumbai.com/".to_string()));
+    }
+
+    #[test]
+    fn can_extract_script_rpc_alias() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+
+        let config = r#"
+                [profile.default]
+
+                [rpc_endpoints]
+                polygonMumbai = "https://polygon-mumbai.g.alchemy.com/v2/${_EXTRACT_RPC_ALIAS}"
+            "#;
+
+        let toml_file = root.join(Config::FILE_NAME);
+        fs::write(toml_file, config).unwrap();
+        let args: ScriptArgs = ScriptArgs::parse_from([
+            "foundry-cli",
+            "DeployV1",
+            "--rpc-url",
+            "polygonMumbai",
+            "--root",
+            root.as_os_str().to_str().unwrap(),
+        ]);
+
+        let err = args.clone().load_config_and_evm_opts().unwrap_err();
+
+        assert!(err.downcast::<UnresolvedEnvVarError>().is_ok());
+
+        std::env::set_var("_EXTRACT_RPC_ALIAS", "123456");
+        let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
+        assert_eq!(config.eth_rpc_url, Some("polygonMumbai".to_string()));
+        assert_eq!(
+            evm_opts.fork_url,
+            Some("https://polygon-mumbai.g.alchemy.com/v2/123456".to_string())
+        );
     }
 }
