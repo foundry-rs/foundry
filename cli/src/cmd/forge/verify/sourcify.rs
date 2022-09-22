@@ -20,7 +20,7 @@ pub struct SourcifyVerificationProvider;
 #[async_trait]
 impl VerificationProvider for SourcifyVerificationProvider {
     async fn verify(&self, args: VerifyArgs) -> eyre::Result<()> {
-        let mut config = args.load_config_emit_warnings();
+        let mut config = args.try_load_config_emit_warnings()?;
         config.libraries.extend(args.libraries.clone());
 
         let project = config.project()?;

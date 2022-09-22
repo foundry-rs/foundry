@@ -28,7 +28,7 @@ impl Cmd for TreeArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let config = self.load_config_emit_warnings();
+        let config = self.try_load_config_emit_warnings()?;
         let graph = Graph::resolve(&config.project_paths())?;
         let opts = TreeOptions { charset: self.charset, no_dedupe: self.no_dedupe };
         graph.print_with_options(opts);

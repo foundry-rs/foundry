@@ -82,7 +82,7 @@ mod fuzz;
 pub use fuzz::FuzzConfig;
 
 mod invariant;
-use crate::resolve::UnresolvedEnvVarError;
+use crate::{fs_permissions::PathPermission, resolve::UnresolvedEnvVarError};
 pub use invariant::InvariantConfig;
 use providers::remappings::RemappingsProvider;
 
@@ -423,7 +423,7 @@ impl Config {
     /// ```
     pub fn from_provider<T: Provider>(provider: T) -> Self {
         trace!("load config with provider: {:?}", provider.metadata());
-        Self::try_from(provider).unwrap()
+        Self::try_from(provider).unwrap_or_else(|err| panic!("{}", err))
     }
 
     /// Attempts to extract a `Config` from `provider`, returning the result.
@@ -834,17 +834,35 @@ impl Config {
 
     /// Same as [`Self::get_etherscan_config()`] but optionally updates the config with the given
     /// `chain`
+    ///
+    /// If not matching alias was found, then this will try to find the first entry in the table
+    /// with a matching chain id
     pub fn get_etherscan_config_with_chain(
         &self,
         chain: Option<impl Into<Chain>>,
     ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
-        if let Some(config) = self.get_etherscan_config() {
-            let mut config = config?;
-            if let Some(chain) = chain {
-                config.set_chain(chain);
+        let chain = chain.map(Into::into);
+        if let Some(maybe_alias) = self.etherscan_api_key.as_ref() {
+            if self.etherscan.contains_key(maybe_alias) {
+                let mut resolved = self.etherscan.clone().resolved();
+                return resolved.remove(maybe_alias).transpose()
             }
-            return Ok(Some(config))
         }
+
+        // try to find by comparing chain ids
+        if let Some((chain, config)) =
+            chain.and_then(|chain| self.etherscan.find_chain(chain).map(|config| (chain, config)))
+        {
+            let key = config.key.clone().resolve()?;
+            return Ok(ResolvedEtherscanConfig::create(key, chain))
+        }
+
+        // fallback `etherscan_api_key` as actual key
+        if let Some(key) = self.etherscan_api_key.as_ref() {
+            let chain = self.chain_id.unwrap_or_else(|| Mainnet.into());
+            return Ok(ResolvedEtherscanConfig::create(key, chain))
+        }
+
         Ok(None)
     }
 
@@ -1013,6 +1031,7 @@ impl Config {
                 .into_iter()
                 .map(|r| RelativeRemapping::new(r, &root))
                 .collect(),
+            fs_permissions: FsPermissions::new([PathPermission::read(paths.artifacts)]),
             ..Config::default()
         }
     }
@@ -1636,6 +1655,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             profile: Self::DEFAULT_PROFILE,
+            fs_permissions: FsPermissions::new([PathPermission::read("out")]),
             __root: Default::default(),
             src: "src".into(),
             test: "test".into(),
@@ -1706,7 +1726,6 @@ impl Default for Config {
             build_info: false,
             build_info_path: None,
             fmt: Default::default(),
-            fs_permissions: Default::default(),
             __non_exhaustive: (),
             __warnings: vec![],
         }
@@ -2926,6 +2945,31 @@ mod tests {
             let mumbai =
                 config.get_etherscan_api_key(Some(ethers_core::types::Chain::PolygonMumbai));
             assert_eq!(mumbai, Some("https://etherscan-mumbai.com/".to_string()));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_extract_etherscan_config_by_chain() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+
+                [etherscan]
+                mumbai = { key = "https://etherscan-mumbai.com/", chain = 80001 }
+            "#,
+            )?;
+
+            let config = Config::load();
+
+            let mumbai = config
+                .get_etherscan_config_with_chain(Some(ethers_core::types::Chain::PolygonMumbai))
+                .unwrap()
+                .unwrap();
+            assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
 
             Ok(())
         });

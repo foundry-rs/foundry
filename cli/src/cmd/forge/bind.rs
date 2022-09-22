@@ -201,7 +201,7 @@ impl Cmd for BindArgs {
             compile::compile(&project, false, false)?;
         }
 
-        let artifacts = self.load_config_emit_warnings().out;
+        let artifacts = self.try_load_config_emit_warnings()?.out;
 
         if !self.overwrite && self.bindings_exist(&artifacts) {
             println!("Bindings found. Checking for consistency.");
