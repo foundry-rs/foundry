@@ -227,7 +227,8 @@ pub fn print_receipt(chain: Chain, receipt: &TransactionReceipt) {
     };
 
     println!(
-        "\n##### {chain}\n{}Hash: 0x{}{}\nBlock: {}\n{}\n",
+        "\n##### {}\n{}Hash: 0x{}{}\nBlock: {}\n{}\n",
+        chain,
         check,
         hex::encode(receipt.transaction_hash.as_bytes()),
         contract_address,
