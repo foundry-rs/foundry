@@ -150,6 +150,9 @@ impl EthApi {
             EthRequest::EthNetworkId(_) => self.network_id().to_rpc_result(),
             EthRequest::NetListening(_) => self.net_listening().to_rpc_result(),
             EthRequest::EthGasPrice(_) => self.gas_price().to_rpc_result(),
+            EthRequest::EthMaxPriorityFeePerGas(_) => {
+                self.gas_max_priority_fee_per_gas().to_rpc_result()
+            }
             EthRequest::EthAccounts(_) => self.accounts().to_rpc_result(),
             EthRequest::EthBlockNumber(_) => self.block_number().to_rpc_result(),
             EthRequest::EthGetStorageAt(addr, slot, block) => {
@@ -441,6 +444,14 @@ impl EthApi {
     /// Returns the current gas price
     pub fn gas_price(&self) -> Result<U256> {
         Ok(self.backend.gas_price())
+    }
+
+    /// Returns a fee per gas that is an estimate of how much you can pay as a priority fee, or
+    /// 'tip', to get a transaction included in the current block.
+    ///
+    /// Handler for ETH RPC call: `eth_maxPriorityFeePerGas`
+    pub fn gas_max_priority_fee_per_gas(&self) -> Result<U256> {
+        Ok(self.backend.max_priority_fee_per_gas())
     }
 
     /// Returns the block gas limit

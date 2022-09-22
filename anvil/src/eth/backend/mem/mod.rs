@@ -456,6 +456,11 @@ impl Backend {
         self.fees.gas_price()
     }
 
+    /// Returns the suggested fee cap
+    pub fn max_priority_fee_per_gas(&self) -> U256 {
+        self.fees.max_priority_fee_per_gas()
+    }
+
     /// Sets the gas price
     pub fn set_gas_price(&self, price: U256) {
         self.fees.set_gas_price(price)
