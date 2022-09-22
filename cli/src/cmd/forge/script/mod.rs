@@ -36,7 +36,7 @@ use foundry_config::{figment, Config};
 use foundry_utils::{encode_args, format_token};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     path::PathBuf,
 };
 use yansi::Paint;
@@ -619,13 +619,52 @@ pub struct NestedValue {
     pub value: String,
 }
 
-#[derive(Clone)]
+#[derive(Default, Clone)]
 pub struct ScriptConfig {
     pub config: Config,
     pub evm_opts: EvmOpts,
     pub sender_nonce: U256,
     pub backend: HashMap<String, Backend>,
     pub called_function: Option<Function>,
+    pub total_rpcs: HashSet<String>,
+}
+
+impl ScriptConfig {
+    fn collect_rpcs(&mut self, txs: &VecDeque<BroadcastableTransaction>) {
+        self.total_rpcs
+            .extend(txs.iter().filter_map(|tx| tx.rpc.as_ref().cloned()).collect::<HashSet<_>>());
+
+        if let Some(rpc) = &self.evm_opts.fork_url {
+            self.total_rpcs.insert(rpc.clone());
+        }
+    }
+
+    fn has_rpcs(&self) -> bool {
+        !self.total_rpcs.is_empty()
+    }
+
+    fn has_multiple_rpcs(&self) -> bool {
+        self.total_rpcs.len() > 1
+    }
+
+    /// Certain features are disabled for multi chain deployments, and if tried, will return
+    /// error. [library support]
+    fn check_multi_chain_constraints(&self, libraries: &Libraries) -> eyre::Result<()> {
+        if self.has_multiple_rpcs() {
+            eprintln!(
+                "{}",
+                Paint::yellow(
+                    "Multi chain deployment is still under development. Use with caution."
+                )
+            );
+            if !libraries.libs.is_empty() {
+                eyre::bail!(
+                    "Multi chain deployment does not support library linking at the moment."
+                )
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

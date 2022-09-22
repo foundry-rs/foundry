@@ -24,13 +24,7 @@ use eyre::{ContextCompat, WrapErr};
 use foundry_common::get_http_provider;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::{
-    cmp::min,
-    collections::{hash_map::Entry, HashSet},
-    fmt,
-    ops::Mul,
-    sync::Arc,
-};
+use std::{cmp::min, collections::hash_map::Entry, fmt, ops::Mul, sync::Arc};
 
 impl ScriptArgs {
     /// Sends the transactions which haven't been broadcasted yet.
@@ -237,15 +231,10 @@ impl ScriptArgs {
         verify: VerifyBundle,
     ) -> eyre::Result<()> {
         if let Some(txs) = result.transactions {
-            let mut total_rpcs: HashSet<String> =
-                txs.iter().filter_map(|tx| tx.rpc.as_ref().cloned()).collect();
+            script_config.collect_rpcs(&txs);
 
-            if let Some(rpc) = &script_config.evm_opts.fork_url {
-                total_rpcs.insert(rpc.clone());
-            }
-
-            if !total_rpcs.is_empty() {
-                self.check_multi_chain_constraints(total_rpcs.len(), &libraries)?;
+            if script_config.has_rpcs() {
+                script_config.check_multi_chain_constraints(&libraries)?;
 
                 let gas_filled_txs = if self.skip_simulation {
                     println!("\nSKIPPING ON CHAIN SIMULATION.");
@@ -282,7 +271,7 @@ impl ScriptArgs {
                     )
                     .await?;
 
-                if deployments.len() > 1 {
+                if script_config.has_multiple_rpcs() {
                     let multi = MultiChainSequence::new(
                         deployments.clone(),
                         &self.sig,
@@ -303,7 +292,7 @@ impl ScriptArgs {
                     }
                 } else if self.broadcast {
                     let deployment_sequence = deployments.first_mut().expect("to be set.");
-                    let rpc = total_rpcs.into_iter().next().expect("exists; qed");
+                    let rpc = script_config.total_rpcs.into_iter().next().expect("exists; qed");
 
                     deployment_sequence.add_libraries(libraries);
 
@@ -323,29 +312,6 @@ impl ScriptArgs {
             }
         } else if self.broadcast {
             eyre::bail!("No onchain transactions generated in script");
-        }
-        Ok(())
-    }
-
-    /// Certain features are disabled for multi chain deployments, and if tried, will return
-    /// error.
-    fn check_multi_chain_constraints(
-        &self,
-        total_rpcs: usize,
-        libraries: &Libraries,
-    ) -> eyre::Result<()> {
-        if total_rpcs > 1 {
-            eprintln!(
-                "{}",
-                Paint::yellow(
-                    "Multi chain deployment is still under development. Use with caution."
-                )
-            );
-            if !libraries.libs.is_empty() {
-                eyre::bail!(
-                    "Multi chain deployment does not support library linking at the moment."
-                )
-            }
         }
         Ok(())
     }

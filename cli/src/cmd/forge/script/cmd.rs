@@ -22,8 +22,7 @@ impl ScriptArgs {
             sender_nonce: U256::one(),
             config,
             evm_opts,
-            called_function: None,
-            backend: HashMap::new(),
+            ..Default::default()
         };
 
         self.maybe_load_private_key(&mut script_config)?;
