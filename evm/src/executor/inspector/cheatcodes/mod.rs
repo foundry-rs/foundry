@@ -55,6 +55,8 @@ mod config;
 use crate::executor::{backend::RevertDiagnostic, inspector::utils::get_create_address};
 pub use config::CheatsConfig;
 
+mod error;
+
 /// An inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
 /// Cheatcodes can be called by contracts during execution to modify the VM environment, such as

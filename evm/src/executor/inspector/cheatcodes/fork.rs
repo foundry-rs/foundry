@@ -1,4 +1,4 @@
-use super::Cheatcodes;
+use super::{error::CheatcodesError, Cheatcodes};
 use crate::{
     abi::HEVMCalls,
     error,
@@ -120,9 +120,7 @@ fn select_fork<DB: DatabaseExt>(
     fork_id: U256,
 ) -> Result<Bytes, Bytes> {
     if state.broadcast.is_some() {
-        return Err(error::encode_error(
-            "You need to stop broadcasting before you can select forks.",
-        ))
+        return Err(CheatcodesError::SelectForkDuringBroadcast.into())
     }
 
     // No need to correct since the sender's nonce does not get incremented when selecting a fork.
@@ -142,9 +140,7 @@ fn create_select_fork<DB: DatabaseExt>(
     block: Option<u64>,
 ) -> Result<U256, Bytes> {
     if state.broadcast.is_some() {
-        return Err(error::encode_error(
-            "You need to stop broadcasting before you can select forks.",
-        ))
+        return Err(CheatcodesError::SelectForkDuringBroadcast.into())
     }
 
     // No need to correct since the sender's nonce does not get incremented when selecting a fork.
@@ -173,6 +169,10 @@ fn create_select_fork_at_transaction<DB: DatabaseExt>(
     url_or_alias: String,
     transaction: H256,
 ) -> Result<U256, Bytes> {
+    if state.broadcast.is_some() {
+        return Err(CheatcodesError::SelectForkDuringBroadcast.into())
+    }
+
     // No need to correct since the sender's nonce does not get incremented when selecting a fork.
     state.corrected_nonce = true;
 
