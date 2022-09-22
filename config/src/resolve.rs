@@ -33,7 +33,7 @@ impl fmt::Display for UnresolvedEnvVarError {
         write!(
             f,
             "Failed to resolve env var `{}` in `{}`: {}",
-            self.unresolved, self.var, self.source
+            self.var, self.unresolved, self.source
         )
     }
 }
