@@ -86,9 +86,9 @@ impl ScriptArgs {
         Ok(result)
     }
 
-    /// Executes a list of transactions locally and persists their state. Returns the transactions
-    /// and any CREATE2 contract addresses created.
-    pub async fn execute_transactions(
+    /// Simulates onchain state by executing a list of transactions locally and persisting their
+    /// state. Returns the transactions and any CREATE2 contract address created.
+    pub async fn onchain_simulation(
         &self,
         transactions: VecDeque<BroadcastableTransaction>,
         script_config: &mut ScriptConfig,

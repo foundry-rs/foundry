@@ -1,9 +1,4 @@
-use super::{
-    multi::MultiChainSequence,
-    providers::{ProviderInfo, ProvidersManager},
-    sequence::ScriptSequence,
-    *,
-};
+use super::{multi::MultiChainSequence, providers::ProvidersManager, sequence::ScriptSequence, *};
 use crate::{
     cmd::{
         forge::script::{
@@ -24,7 +19,7 @@ use eyre::{ContextCompat, WrapErr};
 use foundry_common::get_http_provider;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::{cmp::min, collections::hash_map::Entry, fmt, ops::Mul, sync::Arc};
+use std::{cmp::min, fmt, ops::Mul, sync::Arc};
 
 impl ScriptArgs {
     /// Sends the transactions which haven't been broadcasted yet.
@@ -219,51 +214,31 @@ impl ScriptArgs {
         }
     }
 
-    /// Executes the passed transactions in sequence, and if no error has occurred, broadcasts
+    /// Executes the created transactions, and if no error has occurred, broadcasts
     /// them.
     pub async fn handle_broadcastable_transactions(
         &self,
         target: &ArtifactId,
-        result: ScriptResult,
+        mut result: ScriptResult,
         libraries: Libraries,
         decoder: &mut CallTraceDecoder,
         mut script_config: ScriptConfig,
         verify: VerifyBundle,
     ) -> eyre::Result<()> {
-        if let Some(txs) = result.transactions {
+        if let Some(txs) = result.transactions.take() {
             script_config.collect_rpcs(&txs);
-
             if script_config.has_rpcs() {
                 script_config.check_multi_chain_constraints(&libraries)?;
 
-                let gas_filled_txs = if self.skip_simulation {
-                    println!("\nSKIPPING ON CHAIN SIMULATION.");
-                    txs.into_iter()
-                        .map(|btx| {
-                            let mut tx =
-                                TransactionWithMetadata::from_typed_transaction(btx.transaction);
-                            tx.rpc = btx.rpc;
-                            tx
-                        })
-                        .collect()
-                } else {
-                    self.execute_transactions(
+                let mut deployments = self
+                    .create_script_sequences(
                         txs,
+                        &result,
                         &mut script_config,
                         decoder,
+                        target,
                         &verify.known_contracts,
                     )
-                    .await
-                    .map_err(|err| {
-                        eyre::eyre!(
-                            "{err}\n\nTransaction failed when running the on-chain simulation. Check the trace above for more information."
-                        )
-                    })?
-                };
-
-                let returns = self.get_returns(&script_config, &result.returned)?;
-                let mut deployments = self
-                    .bundle_transactions(gas_filled_txs, target, &mut script_config.config, returns)
                     .await?;
 
                 if script_config.has_multiple_rpcs() {
@@ -286,6 +261,8 @@ impl ScriptArgs {
                         .await?;
                     }
                 } else if self.broadcast {
+                    // Only deploys to one chain
+
                     let deployment_sequence = deployments.first_mut().expect("to be set.");
                     let rpc = script_config.total_rpcs.into_iter().next().expect("exists; qed");
 
@@ -305,14 +282,80 @@ impl ScriptArgs {
             } else {
                 println!("\nIf you wish to simulate on-chain transactions pass a RPC URL.");
             }
-        } else if self.broadcast {
-            eyre::bail!("No onchain transactions generated in script");
         }
         Ok(())
     }
 
-    /// Returns all transactions in a list of [`ScriptSequence`]. List length will be higher than 1,
-    /// if we're dealing with a multi chain deployment.
+    /// Given the collected transactions it creates a list of [`ScriptSequence`].  List length will
+    /// be higher than 1, if we're dealing with a multi chain deployment.
+    ///
+    /// If `--skip-simulation` is not passed, it will make an onchain simulation of the transactions
+    /// before adding them to [`ScriptSequence`].
+    async fn create_script_sequences(
+        &self,
+        txs: VecDeque<BroadcastableTransaction>,
+        script_result: &ScriptResult,
+        script_config: &mut ScriptConfig,
+        decoder: &mut CallTraceDecoder,
+        target: &ArtifactId,
+        known_contracts: &ContractsByArtifact,
+    ) -> eyre::Result<Vec<ScriptSequence>> {
+        if !txs.is_empty() {
+            let gas_filled_txs = self
+                .fills_transactions_with_gas(txs, script_config, decoder, known_contracts)
+                .await?;
+
+            let returns = self.get_returns(&*script_config, &script_result.returned)?;
+
+            return self
+                .bundle_transactions(gas_filled_txs, target, &mut script_config.config, returns)
+                .await
+        } else if self.broadcast {
+            eyre::bail!("No onchain transactions generated in script");
+        }
+
+        Ok(vec![])
+    }
+
+    /// Takes the collected transactions and executes them locally before converting them to
+    /// [`TransactionWithMetadata`] with the appropriate gas execution estimation. If
+    /// `--skip-simulation` is passed, then it will skip the execution.
+    async fn fills_transactions_with_gas(
+        &self,
+        txs: VecDeque<BroadcastableTransaction>,
+        script_config: &mut ScriptConfig,
+        decoder: &mut CallTraceDecoder,
+        known_contracts: &ContractsByArtifact,
+    ) -> eyre::Result<VecDeque<TransactionWithMetadata>> {
+        let gas_filled_txs = if self.skip_simulation {
+            println!("\nSKIPPING ON CHAIN SIMULATION.");
+            txs.into_iter()
+                .map(|btx| {
+                    let mut tx = TransactionWithMetadata::from_typed_transaction(btx.transaction);
+                    tx.rpc = btx.rpc;
+                    tx
+                })
+                .collect()
+        } else {
+            self.onchain_simulation(
+                txs,
+                script_config,
+                decoder,
+                known_contracts,
+            )
+            .await
+            .map_err(|err| {
+                eyre::eyre!(
+                    "{err}\n\nTransaction failed when running the on-chain simulation. Check the trace above for more information."
+                )
+            })?
+        };
+        Ok(gas_filled_txs)
+    }
+
+    /// Returns all transactions of the [`TransactionWithMetadata`] type in a list of
+    /// [`ScriptSequence`]. List length will be higher than 1, if we're dealing with a multi
+    /// chain deployment.
     ///
     /// Each transaction will be added with the correct transaction type and gas estimation.
     async fn bundle_transactions(
@@ -355,14 +398,7 @@ impl ScriptArgs {
                 }
             };
 
-            // Get or initialize the RPC provider.
-            let provider_info = match manager.inner.entry(tx_rpc.clone()) {
-                Entry::Occupied(entry) => entry.into_mut(),
-                Entry::Vacant(entry) => {
-                    let info = ProviderInfo::new(&tx_rpc, &tx, self.legacy).await?;
-                    entry.insert(info)
-                }
-            };
+            let provider_info = manager.get_or_init_provider(&tx_rpc, self.legacy).await?;
 
             // Handles chain specific requirements.
             tx.change_type(provider_info.is_legacy);
