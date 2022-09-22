@@ -16,7 +16,7 @@ use forge::{
     },
     trace::{identifier::EtherscanIdentifier, CallTraceArena, CallTraceDecoderBuilder, TraceKind},
 };
-use foundry_common::get_http_provider;
+use foundry_common::try_get_http_provider;
 use foundry_config::{find_project_root_path, Config};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::{collections::BTreeMap, str::FromStr};
@@ -67,7 +67,7 @@ impl RunArgs {
         let config = Config::from_provider(figment).sanitized();
 
         let rpc_url = consume_config_rpc_url(self.rpc_url);
-        let provider = get_http_provider(rpc_url.as_str());
+        let provider = try_get_http_provider(rpc_url.as_str())?;
 
         if let Some(tx) = provider
             .get_transaction(
