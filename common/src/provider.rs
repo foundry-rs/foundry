@@ -41,7 +41,7 @@ pub fn try_get_http_provider(builder: impl Into<ProviderBuilder>) -> eyre::Resul
 #[derive(Debug)]
 pub struct ProviderBuilder {
     // Note: this is a result, so we can easily chain builder calls
-    url: reqwest::Result<Url>,
+    url: eyre::Result<Url>,
     chain: Chain,
     max_retry: u32,
     timeout_retry: u32,
@@ -62,9 +62,9 @@ impl ProviderBuilder {
             // prefix
             return Self::new(format!("http://{}", url_str))
         }
-
+        let err = format!("Invalid provider url: {}", url_str);
         Self {
-            url: url.into_url(),
+            url: url.into_url().wrap_err(err),
             chain: Chain::Mainnet,
             max_retry: 100,
             timeout_retry: 5,
@@ -150,7 +150,7 @@ impl ProviderBuilder {
             timeout,
             compute_units_per_second,
         } = self;
-        let url = url.wrap_err("Invalid provider url")?;
+        let url = url?;
 
         let client = reqwest::Client::builder().timeout(timeout).build()?;
         let is_local = is_local_endpoint(url.as_str());
