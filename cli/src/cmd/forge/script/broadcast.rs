@@ -81,7 +81,9 @@ impl ScriptArgs {
                 .skip(already_broadcasted)
                 .map(|(_, tx)| {
                     let from = *tx.from().expect("No sender for onchain transaction!");
-                    let signer = local_wallets.get(&from).expect("`find_all` returned incomplete.");
+                    let signer = local_wallets
+                        .get(&from)
+                        .wrap_err("`wallets.find_all` returned incomplete.")?;
 
                     let mut tx = tx.clone();
 
@@ -104,9 +106,9 @@ impl ScriptArgs {
                         }
                     }
 
-                    (tx, signer)
+                    Ok((tx, signer))
                 })
-                .collect::<Vec<_>>();
+                .collect::<eyre::Result<Vec<_>>>()?;
 
             let pb = init_progress!(deployment_sequence.transactions, "txes");
 
