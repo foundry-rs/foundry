@@ -1665,10 +1665,13 @@ fn apply_state_changeset(
     journaled_state: &mut JournaledState,
     fork: &mut Fork,
 ) {
+    let changed_accounts = state.keys().copied().collect::<Vec<_>>();
     // commit the state and update the loaded accounts
-    fork.db.commit(state.clone());
-    for (addr, _) in state {
-        // reload all changed accounts
+    fork.db.commit(state);
+
+    for addr in changed_accounts {
+        // reload all changed accounts by removing them from the journaled state and reloading them
+        // from the now updated database
         if journaled_state.state.remove(&addr).is_some() {
             let _ = journaled_state.load_account(addr, &mut fork.db);
         }
