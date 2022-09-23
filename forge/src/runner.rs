@@ -453,8 +453,8 @@ impl<'a> ContractRunner<'a> {
             evm.invariant_fuzz(invariant_contract)?
         {
             let results = invariants
-                .iter()
-                .map(|(_, test_error)| {
+                .values()
+                .map(|test_error| {
                     let mut counterexample = None;
                     let mut logs = logs.clone();
                     let mut traces = traces.clone();
