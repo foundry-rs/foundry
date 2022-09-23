@@ -34,7 +34,7 @@ use forge::{
     },
     CallKind,
 };
-use foundry_common::{evm::EvmArgs, ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN};
+use foundry_common::{evm::EvmArgs, ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE, SELECTOR_LEN};
 use foundry_config::{figment, Config};
 use foundry_utils::{encode_args, format_token};
 use serde::{Deserialize, Serialize};
@@ -384,7 +384,7 @@ impl ScriptArgs {
         from: Address,
         nonce: U256,
         data: &[Bytes],
-        fork_url: &Option<String>,
+        fork_url: &Option<RpcUrl>,
     ) -> BroadcastableTransactions {
         data.iter()
             .enumerate()
@@ -627,9 +627,9 @@ pub struct ScriptConfig {
     pub config: Config,
     pub evm_opts: EvmOpts,
     pub sender_nonce: U256,
-    pub backend: HashMap<String, Backend>,
+    pub backends: HashMap<RpcUrl, Backend>,
     pub called_function: Option<Function>,
-    pub total_rpcs: HashSet<String>,
+    pub total_rpcs: HashSet<RpcUrl>,
 }
 
 impl ScriptConfig {

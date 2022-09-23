@@ -16,7 +16,7 @@ use ethers::{
     utils::format_units,
 };
 use eyre::{ContextCompat, WrapErr};
-use foundry_common::get_http_provider;
+use foundry_common::{get_http_provider, RpcUrl};
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::{cmp::min, fmt, ops::Mul, sync::Arc};
@@ -369,7 +369,7 @@ impl ScriptArgs {
         let last_rpc = &transactions.back().expect("exists; qed").rpc;
         let is_multi_deployment = transactions.iter().any(|tx| &tx.rpc != last_rpc);
 
-        let mut total_gas_per_rpc: HashMap<String, U256> = HashMap::new();
+        let mut total_gas_per_rpc: HashMap<RpcUrl, U256> = HashMap::new();
 
         // Batches sequence of transactions from different rpcs.
         let mut new_sequence = VecDeque::new();

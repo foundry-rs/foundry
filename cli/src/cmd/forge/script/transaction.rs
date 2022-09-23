@@ -7,7 +7,7 @@ use ethers::{
     types::transaction::eip2718::TypedTransaction,
 };
 use eyre::{ContextCompat, WrapErr};
-use foundry_common::SELECTOR_LEN;
+use foundry_common::{RpcUrl, SELECTOR_LEN};
 use foundry_utils::format_token;
 
 use serde::{Deserialize, Serialize};
@@ -40,7 +40,7 @@ pub struct TransactionWithMetadata {
     pub function: Option<String>,
     #[serde(default = "default_vec_of_strings")]
     pub arguments: Option<Vec<String>>,
-    pub rpc: Option<String>,
+    pub rpc: Option<RpcUrl>,
     pub transaction: TypedTransaction,
     pub additional_contracts: Vec<AdditionalContract>,
 }
@@ -64,7 +64,7 @@ impl TransactionWithMetadata {
 
     pub fn new(
         transaction: TypedTransaction,
-        rpc: Option<String>,
+        rpc: Option<RpcUrl>,
         result: &ScriptResult,
         local_contracts: &BTreeMap<Address, ArtifactInfo>,
         decoder: &CallTraceDecoder,

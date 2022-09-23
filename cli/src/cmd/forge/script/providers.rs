@@ -1,5 +1,5 @@
 use ethers::prelude::{Http, Middleware, Provider, RetryClient, U256};
-use foundry_common::get_http_provider;
+use foundry_common::{get_http_provider, RpcUrl};
 use foundry_config::Chain;
 use std::{
     collections::{hash_map::Entry, HashMap},
@@ -9,7 +9,7 @@ use std::{
 #[derive(Default)]
 /// Contains a map of RPC urls to single instances of [`ProviderInfo`].
 pub struct ProvidersManager {
-    pub inner: HashMap<String, ProviderInfo>,
+    pub inner: HashMap<RpcUrl, ProviderInfo>,
 }
 
 impl ProvidersManager {

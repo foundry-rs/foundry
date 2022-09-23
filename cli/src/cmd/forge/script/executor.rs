@@ -21,6 +21,7 @@ use forge::{
     trace::CallTraceDecoder,
     CallKind,
 };
+use foundry_common::RpcUrl;
 use futures::future::join_all;
 use parking_lot::RwLock;
 use std::{
@@ -238,13 +239,13 @@ impl ScriptArgs {
         &self,
         script_config: &mut ScriptConfig,
         transactions: &BroadcastableTransactions,
-    ) -> HashMap<String, ScriptRunner> {
+    ) -> HashMap<RpcUrl, ScriptRunner> {
         let sender = script_config.evm_opts.sender;
 
         let unique_rpcs = transactions
             .iter()
             .map(|tx| tx.rpc.clone().unwrap_or_default())
-            .collect::<HashSet<String>>();
+            .collect::<HashSet<RpcUrl>>();
 
         eprintln!("\n## Setting up ({}) EVMs.", unique_rpcs.len());
 
@@ -276,14 +277,14 @@ impl ScriptArgs {
         let url = script_config.evm_opts.fork_url.clone().unwrap_or_default();
 
         // The db backend that serves all the data.
-        let db = match script_config.backend.get(&url) {
+        let db = match script_config.backends.get(&url) {
             Some(db) => db.clone(),
             None => {
                 let backend = Backend::spawn(
                     script_config.evm_opts.get_fork(&script_config.config, env.clone()),
                 );
-                script_config.backend.insert(url.clone(), backend);
-                script_config.backend.get(&url).unwrap().clone()
+                script_config.backends.insert(url.clone(), backend);
+                script_config.backends.get(&url).unwrap().clone()
             }
         };
 
