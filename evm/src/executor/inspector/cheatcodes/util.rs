@@ -19,7 +19,7 @@ use ethers::{
 use foundry_common::fmt::*;
 use hex::FromHex;
 use revm::{Account, CreateInputs, Database, EVMData, JournaledState, TransactTo};
-use std::str::FromStr;
+use std::{collections::VecDeque, str::FromStr};
 
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 
@@ -34,6 +34,8 @@ pub struct BroadcastableTransaction {
     pub rpc: Option<String>,
     pub transaction: TypedTransaction,
 }
+
+pub type BroadcastableTransactions = VecDeque<BroadcastableTransaction>;
 
 /// Configures the env for the transaction
 pub fn configure_tx_env(env: &mut revm::Env, tx: &Transaction) {

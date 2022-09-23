@@ -11,6 +11,7 @@ use crate::{
     },
     utils,
 };
+use cast::executor::inspector::cheatcodes::util::BroadcastableTransactions;
 use ethers::{
     solc::artifacts::CompactContractBytecode,
     types::{transaction::eip2718::TypedTransaction, Address, U256},
@@ -90,7 +91,7 @@ impl ScriptArgs {
     /// state. Returns the transactions and any CREATE2 contract address created.
     pub async fn onchain_simulation(
         &self,
-        transactions: VecDeque<BroadcastableTransaction>,
+        transactions: BroadcastableTransactions,
         script_config: &mut ScriptConfig,
         decoder: &mut CallTraceDecoder,
         contracts: &ContractsByArtifact,
@@ -236,7 +237,7 @@ impl ScriptArgs {
     async fn build_runners(
         &self,
         script_config: &mut ScriptConfig,
-        transactions: &VecDeque<BroadcastableTransaction>,
+        transactions: &BroadcastableTransactions,
     ) -> HashMap<String, ScriptRunner> {
         let sender = script_config.evm_opts.sender;
 

@@ -1,7 +1,7 @@
 use self::{
     env::Broadcast,
     expect::{handle_expect_emit, handle_expect_revert},
-    util::process_create,
+    util::{process_create, BroadcastableTransactions},
 };
 use crate::{
     abi::HEVMCalls,
@@ -25,7 +25,7 @@ use revm::{
     TransactTo,
 };
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{BTreeMap, HashMap},
     fs::File,
     io::BufReader,
     path::PathBuf,
@@ -126,7 +126,7 @@ pub struct Cheatcodes {
     pub corrected_nonce: bool,
 
     /// Scripting based transactions
-    pub broadcastable_transactions: VecDeque<BroadcastableTransaction>,
+    pub broadcastable_transactions: BroadcastableTransactions,
 
     /// Additional, user configurable context this Inspector has access to when inspecting a call
     pub config: Arc<CheatsConfig>,

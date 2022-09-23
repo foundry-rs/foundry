@@ -2,7 +2,10 @@
 use crate::{cmd::forge::build::BuildArgs, opts::MultiWallet, utils::parse_ether_value};
 use cast::{
     decode,
-    executor::inspector::{cheatcodes::BroadcastableTransaction, DEFAULT_CREATE2_DEPLOYER},
+    executor::inspector::{
+        cheatcodes::{util::BroadcastableTransactions, BroadcastableTransaction},
+        DEFAULT_CREATE2_DEPLOYER,
+    },
 };
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
@@ -343,7 +346,7 @@ impl ScriptArgs {
     fn maybe_new_sender(
         &self,
         evm_opts: &EvmOpts,
-        transactions: Option<&VecDeque<BroadcastableTransaction>>,
+        transactions: Option<&BroadcastableTransactions>,
         predeploy_libraries: &[Bytes],
     ) -> eyre::Result<Option<Address>> {
         let mut new_sender = None;
@@ -382,7 +385,7 @@ impl ScriptArgs {
         nonce: U256,
         data: &[Bytes],
         fork_url: &Option<String>,
-    ) -> VecDeque<BroadcastableTransaction> {
+    ) -> BroadcastableTransactions {
         data.iter()
             .enumerate()
             .map(|(i, bytes)| BroadcastableTransaction {
@@ -600,7 +603,7 @@ pub struct ScriptResult {
     pub debug: Option<Vec<DebugArena>>,
     pub gas_used: u64,
     pub labeled_addresses: BTreeMap<Address, String>,
-    pub transactions: Option<VecDeque<BroadcastableTransaction>>,
+    pub transactions: Option<BroadcastableTransactions>,
     pub returned: bytes::Bytes,
     pub address: Option<Address>,
     pub script_wallets: Vec<LocalWallet>,
@@ -630,7 +633,7 @@ pub struct ScriptConfig {
 }
 
 impl ScriptConfig {
-    fn collect_rpcs(&mut self, txs: &VecDeque<BroadcastableTransaction>) {
+    fn collect_rpcs(&mut self, txs: &BroadcastableTransactions) {
         self.total_rpcs
             .extend(txs.iter().filter_map(|tx| tx.rpc.as_ref().cloned()).collect::<HashSet<_>>());
 

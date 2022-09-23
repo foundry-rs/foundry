@@ -293,7 +293,7 @@ impl ScriptArgs {
     /// before adding them to [`ScriptSequence`].
     async fn create_script_sequences(
         &self,
-        txs: VecDeque<BroadcastableTransaction>,
+        txs: BroadcastableTransactions,
         script_result: &ScriptResult,
         script_config: &mut ScriptConfig,
         decoder: &mut CallTraceDecoder,
@@ -322,7 +322,7 @@ impl ScriptArgs {
     /// `--skip-simulation` is passed, then it will skip the execution.
     async fn fills_transactions_with_gas(
         &self,
-        txs: VecDeque<BroadcastableTransaction>,
+        txs: BroadcastableTransactions,
         script_config: &mut ScriptConfig,
         decoder: &mut CallTraceDecoder,
         known_contracts: &ContractsByArtifact,

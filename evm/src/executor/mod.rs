@@ -1,5 +1,5 @@
 use self::inspector::{
-    cheatcodes::BroadcastableTransaction, Cheatcodes, InspectorData, InspectorStackConfig,
+    cheatcodes::util::BroadcastableTransactions, Cheatcodes, InspectorData, InspectorStackConfig,
 };
 use crate::{debug::DebugArena, decode, trace::CallTraceArena, CALLER};
 pub use abi::{
@@ -22,7 +22,7 @@ use revm::{
 };
 /// Reexport commonly used revm types
 pub use revm::{db::DatabaseRef, Env, SpecId};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use tracing::trace;
 
 /// ABIs used internally in the executor
@@ -596,7 +596,7 @@ pub enum EvmError {
         traces: Option<CallTraceArena>,
         debug: Option<DebugArena>,
         labels: BTreeMap<Address, String>,
-        transactions: Option<VecDeque<BroadcastableTransaction>>,
+        transactions: Option<BroadcastableTransactions>,
         state_changeset: Option<StateChangeset>,
         script_wallets: Vec<LocalWallet>,
     },
@@ -651,7 +651,7 @@ pub struct CallResult<D: Detokenize> {
     /// The debug nodes of the call
     pub debug: Option<DebugArena>,
     /// Scripted transactions generated from this call
-    pub transactions: Option<VecDeque<BroadcastableTransaction>>,
+    pub transactions: Option<BroadcastableTransactions>,
     /// The changeset of the state.
     ///
     /// This is only present if the changed state was not committed to the database (i.e. if you
@@ -689,7 +689,7 @@ pub struct RawCallResult {
     /// The debug nodes of the call
     pub debug: Option<DebugArena>,
     /// Scripted transactions generated from this call
-    pub transactions: Option<VecDeque<BroadcastableTransaction>>,
+    pub transactions: Option<BroadcastableTransactions>,
     /// The changeset of the state.
     ///
     /// This is only present if the changed state was not committed to the database (i.e. if you
