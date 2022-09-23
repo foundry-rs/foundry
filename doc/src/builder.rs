@@ -299,7 +299,7 @@ impl DocBuilder {
         fs::write(
             self.config.out_dir().join("book.toml"),
             format!(
-                "[book]\ntitle = \"{}\"\nsrc = \"src\"\n\n[output.html]\nno-section-label = true\nadditional-js = [\"src/static/solidity.min.js\"]\n\n[output.html.fold]\nenable = true\nlevel = 2",
+                "[book]\ntitle = \"{}\"\nsrc = \"src\"\n\n[output.html]\nno-section-label = true\nadditional-js = [\"src/static/solidity.min.js\"]\n\n[output.html.fold]\nenable = true",
                 self.config.title
             ),
         )?;
