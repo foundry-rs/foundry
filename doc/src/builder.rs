@@ -279,14 +279,7 @@ impl DocBuilder {
 
         let mut summary = String::new();
         writeln_doc!(summary, DocOutput::H1("Summary"))?;
-        writeln_doc!(
-            summary,
-            "- {}",
-            DocOutput::Link(
-                "README",
-                &readme_path.strip_prefix(&self.config.root)?.display().to_string()
-            )
-        )?;
+        writeln_doc!(summary, "- {}", DocOutput::Link("README", "README.md"))?;
 
         self.write_summary_section(&mut summary, 0, None, &filenames)?;
 
