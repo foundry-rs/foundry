@@ -1,7 +1,7 @@
 use crate::output::DocOutput;
 use itertools::Itertools;
 use solang_parser::{
-    doccomment::DocComment,
+    doccomment::DocCommentTag,
     pt::{Base, EventDefinition, FunctionDefinition, VariableDefinition},
 };
 
@@ -29,21 +29,21 @@ impl DocFormat for String {
     }
 }
 
-impl DocFormat for DocComment {
-    // TODO:
+impl DocFormat for DocCommentTag {
     fn doc(&self) -> String {
-        match self {
-            DocComment::Line { comment } => comment.value.to_owned(),
-            DocComment::Block { comments } => {
-                comments.iter().map(|comment| comment.value.to_owned()).join("\n\n")
-            }
-        }
+        self.value.to_owned()
     }
 }
 
-impl DocFormat for Vec<DocComment> {
+impl DocFormat for Vec<&DocCommentTag> {
     fn doc(&self) -> String {
-        self.iter().map(DocComment::doc).join("\n\n")
+        self.iter().map(|c| DocCommentTag::doc(*c)).join("\n\n")
+    }
+}
+
+impl DocFormat for Vec<DocCommentTag> {
+    fn doc(&self) -> String {
+        self.iter().map(DocCommentTag::doc).join("\n\n")
     }
 }
 

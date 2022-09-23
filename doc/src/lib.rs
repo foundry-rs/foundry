@@ -1,6 +1,7 @@
 use forge_fmt::{Visitable, Visitor};
+use itertools::Itertools;
 use solang_parser::{
-    doccomment::{parse_doccomments, DocComment},
+    doccomment::{parse_doccomments, DocComment, DocCommentTag},
     pt::{
         Comment, ContractDefinition, EventDefinition, FunctionDefinition, Loc, SourceUnit,
         SourceUnitPart, VariableDefinition,
@@ -11,6 +12,7 @@ use thiserror::Error;
 mod as_code;
 pub mod builder;
 mod format;
+mod helpers;
 mod macros;
 mod output;
 
@@ -40,7 +42,7 @@ impl Default for DocContext {
 
 #[derive(Debug, PartialEq)]
 struct SolidityDocPart {
-    comments: Vec<DocComment>,
+    comments: Vec<DocCommentTag>,
     element: SolidityDocPartElement,
     children: Vec<SolidityDocPart>,
 }
@@ -74,8 +76,15 @@ impl SolidityDoc {
         self.start_at = loc.end();
     }
 
-    fn parse_docs(&mut self, end: usize) -> Vec<DocComment> {
-        parse_doccomments(&self.comments, self.start_at, end)
+    fn parse_docs(&mut self, end: usize) -> Vec<DocCommentTag> {
+        let mut res = vec![];
+        for comment in parse_doccomments(&self.comments, self.start_at, end) {
+            match comment {
+                DocComment::Line { comment } => res.push(comment),
+                DocComment::Block { comments } => res.extend(comments.into_iter()),
+            }
+        }
+        res
     }
 }
 

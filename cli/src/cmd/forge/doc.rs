@@ -23,7 +23,7 @@ impl Cmd for DocArgs {
         let config = load_config_with_root(self.root.clone());
         DocBuilder::from_config(DocConfig {
             root: self.root.as_ref().unwrap_or(&find_project_root_path()?).to_path_buf(),
-            paths: config.project_paths().input_files(),
+            sources: config.project_paths().sources,
             ..Default::default()
         })
         .build()
