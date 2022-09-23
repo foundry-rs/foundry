@@ -24,10 +24,7 @@ use forge::{
 use foundry_common::RpcUrl;
 use futures::future::join_all;
 use parking_lot::RwLock;
-use std::{
-    collections::{HashSet, VecDeque},
-    sync::Arc,
-};
+use std::{collections::VecDeque, sync::Arc};
 use tracing::trace;
 
 impl ScriptArgs {
@@ -98,7 +95,7 @@ impl ScriptArgs {
         contracts: &ContractsByArtifact,
     ) -> eyre::Result<VecDeque<TransactionWithMetadata>> {
         let runners = Arc::new(
-            self.build_runners(script_config, &transactions)
+            self.build_runners(script_config)
                 .await
                 .into_iter()
                 .map(|(rpc, runner)| (rpc, Arc::new(RwLock::new(runner))))
@@ -238,18 +235,13 @@ impl ScriptArgs {
     async fn build_runners(
         &self,
         script_config: &mut ScriptConfig,
-        transactions: &BroadcastableTransactions,
     ) -> HashMap<RpcUrl, ScriptRunner> {
         let sender = script_config.evm_opts.sender;
 
-        let unique_rpcs = transactions
-            .iter()
-            .map(|tx| tx.rpc.clone().unwrap_or_default())
-            .collect::<HashSet<RpcUrl>>();
+        eprintln!("\n## Setting up ({}) EVMs.", script_config.total_rpcs.len());
 
-        eprintln!("\n## Setting up ({}) EVMs.", unique_rpcs.len());
-
-        let futs = unique_rpcs
+        let futs = script_config
+            .total_rpcs
             .iter()
             .map(|rpc| async {
                 let mut script_config = script_config.clone();
@@ -274,17 +266,24 @@ impl ScriptArgs {
     ) -> ScriptRunner {
         trace!("preparing script runner");
         let env = script_config.evm_opts.evm_env().await;
-        let url = script_config.evm_opts.fork_url.clone().unwrap_or_default();
 
         // The db backend that serves all the data.
-        let db = match script_config.backends.get(&url) {
-            Some(db) => db.clone(),
+        let db = match &script_config.evm_opts.fork_url {
+            Some(url) => match script_config.backends.get(url) {
+                Some(db) => db.clone(),
+                None => {
+                    let backend = Backend::spawn(
+                        script_config.evm_opts.get_fork(&script_config.config, env.clone()),
+                    );
+                    script_config.backends.insert(url.clone(), backend);
+                    script_config.backends.get(url).unwrap().clone()
+                }
+            },
             None => {
-                let backend = Backend::spawn(
-                    script_config.evm_opts.get_fork(&script_config.config, env.clone()),
-                );
-                script_config.backends.insert(url.clone(), backend);
-                script_config.backends.get(&url).unwrap().clone()
+                // It's only really `None`, when we don't pass any `--fork-url`. And if so, there is
+                // no need to cache it, since there won't be any onchain simulation that we'd need
+                // to cache the backend for.
+                Backend::spawn(script_config.evm_opts.get_fork(&script_config.config, env.clone()))
             }
         };
 

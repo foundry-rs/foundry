@@ -627,23 +627,26 @@ pub struct ScriptConfig {
     pub config: Config,
     pub evm_opts: EvmOpts,
     pub sender_nonce: U256,
+    /// Maps a rpc url to a backend
     pub backends: HashMap<RpcUrl, Backend>,
+    /// Function called by the script
     pub called_function: Option<Function>,
+    /// Unique list of rpc urls present
     pub total_rpcs: HashSet<RpcUrl>,
+    /// If true, one of the transactions did not have a rpc
+    pub missing_rpc: bool,
 }
 
 impl ScriptConfig {
     fn collect_rpcs(&mut self, txs: &BroadcastableTransactions) {
+        self.missing_rpc = txs.iter().any(|tx| tx.rpc.is_none());
+
         self.total_rpcs
             .extend(txs.iter().filter_map(|tx| tx.rpc.as_ref().cloned()).collect::<HashSet<_>>());
 
         if let Some(rpc) = &self.evm_opts.fork_url {
             self.total_rpcs.insert(rpc.clone());
         }
-    }
-
-    fn has_rpcs(&self) -> bool {
-        !self.total_rpcs.is_empty()
     }
 
     fn has_multiple_rpcs(&self) -> bool {
