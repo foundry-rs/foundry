@@ -696,7 +696,7 @@ mod tests {
             root.as_os_str().to_str().unwrap(),
         ]);
 
-        let err = args.clone().load_config_and_evm_opts().unwrap_err();
+        let err = args.load_config_and_evm_opts().unwrap_err();
 
         assert!(err.downcast::<UnresolvedEnvVarError>().is_ok());
 
@@ -736,7 +736,7 @@ mod tests {
             "--root",
             root.as_os_str().to_str().unwrap(),
         ]);
-        let err = args.clone().load_config_and_evm_opts().unwrap_err();
+        let err = args.load_config_and_evm_opts().unwrap_err();
 
         assert!(err.downcast::<UnresolvedEnvVarError>().is_ok());
 
