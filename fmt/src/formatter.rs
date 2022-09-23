@@ -450,9 +450,23 @@ impl<'a, W: Write> Formatter<'a, W> {
                 let lines = content.lines();
                 writeln!(self.buf(), "/**")?;
                 for line in lines {
-                    let line = line.trim().trim_start_matches('*');
-                    let needs_space = line.chars().next().map_or(false, |ch| !ch.is_whitespace());
-                    writeln!(self.buf(), " *{}{}", if needs_space { " " } else { "" }, line)?;
+                    if line.trim().starts_with('*') {
+                        let line = line.trim().trim_start_matches('*');
+                        let needs_space =
+                            line.chars().next().map_or(false, |ch| !ch.is_whitespace());
+                        writeln!(self.buf(), " *{}{}", if needs_space { " " } else { "" }, line)?;
+                    } else {
+                        let curr_indent = self.buf.current_indent_len();
+
+                        let indent_whitespace_count = line
+                            .char_indices()
+                            .take_while(|(idx, ch)| ch.is_whitespace() && *idx <= curr_indent)
+                            .count();
+                        let to_skip = indent_whitespace_count -
+                            indent_whitespace_count % self.config.tab_width;
+
+                        writeln!(self.buf(), " * {}", &line[to_skip..])?;
+                    }
                 }
                 write!(self.buf(), " */")?;
             } else {

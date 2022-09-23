@@ -54,4 +54,31 @@ contract HelloWorld {
      *     y = mx + b
      */
     function anotherExample() external {}
+
+    /**
+     * contract A {
+     *     function foo() public {
+     *         // does nothing.
+     *     }
+     * }
+     */
+    function multilineIndent() external {}
+
+    /**
+     * contract A {
+     * function foo() public {
+     *             // does nothing.
+     *   }
+     * }
+     */
+    function multilineMalformedIndent() external {}
 }
+
+/**
+ * contract A {
+ *     function foo() public {
+ *         // does nothing.
+ *     }
+ * }
+ */
+function freeFloatingMultilineIndent() {}
