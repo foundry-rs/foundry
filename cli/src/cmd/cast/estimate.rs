@@ -9,7 +9,7 @@ use ethers::{
     providers::Middleware,
     types::{NameOrAddress, U256},
 };
-use foundry_common::get_http_provider;
+use foundry_common::try_get_http_provider;
 use foundry_config::{Chain, Config};
 
 #[derive(Debug, Parser)]
@@ -63,7 +63,7 @@ impl EstimateArgs {
     pub async fn run(self) -> eyre::Result<()> {
         let EstimateArgs { to, sig, args, value, eth, command } = self;
         let config = Config::from(&eth);
-        let provider = get_http_provider(config.get_rpc_url_or_localhost_http()?);
+        let provider = try_get_http_provider(config.get_rpc_url_or_localhost_http()?)?;
 
         let chain: Chain =
             if let Some(chain) = eth.chain { chain } else { provider.get_chainid().await?.into() };

@@ -12,7 +12,7 @@ use ethers::{
     providers::Middleware,
     types::{BlockId, NameOrAddress, U256},
 };
-use foundry_common::get_http_provider;
+use foundry_common::try_get_http_provider;
 use foundry_config::{Chain, Config};
 
 #[derive(Debug, Parser)]
@@ -60,7 +60,7 @@ impl CallArgs {
     pub async fn run(self) -> eyre::Result<()> {
         let CallArgs { to, sig, args, tx, eth, command, block } = self;
         let config = Config::from(&eth);
-        let provider = get_http_provider(config.get_rpc_url_or_localhost_http()?);
+        let provider = try_get_http_provider(config.get_rpc_url_or_localhost_http()?)?;
 
         let chain: Chain =
             if let Some(chain) = eth.chain { chain } else { provider.get_chainid().await?.into() };

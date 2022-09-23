@@ -46,6 +46,7 @@ pub use endpoints::{ResolvedRpcEndpoints, RpcEndpoint, RpcEndpoints};
 
 mod etherscan;
 mod resolve;
+pub use resolve::UnresolvedEnvVarError;
 
 pub mod cache;
 use cache::{Cache, ChainCache};
@@ -82,7 +83,7 @@ mod fuzz;
 pub use fuzz::FuzzConfig;
 
 mod invariant;
-use crate::{fs_permissions::PathPermission, resolve::UnresolvedEnvVarError};
+use crate::fs_permissions::PathPermission;
 pub use invariant::InvariantConfig;
 use providers::remappings::RemappingsProvider;
 
@@ -1886,7 +1887,8 @@ impl Provider for TomlFileProvider {
     }
 }
 
-/// A Provider that ensures all keys are snake case
+/// A Provider that ensures all keys are snake case if they're not standalone sections, See
+/// `Config::STANDALONE_SECTIONS`
 struct ForcedSnakeCaseData<P>(P);
 
 impl<P: Provider> Provider for ForcedSnakeCaseData<P> {
@@ -1897,6 +1899,11 @@ impl<P: Provider> Provider for ForcedSnakeCaseData<P> {
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let mut map = Map::new();
         for (profile, dict) in self.0.data()? {
+            if Config::STANDALONE_SECTIONS.contains(&profile.as_ref()) {
+                // don't force snake case for keys in standalone sections
+                map.insert(profile, dict);
+                continue
+            }
             map.insert(profile, dict.into_iter().map(|(k, v)| (k.to_snake_case(), v)).collect());
         }
         Ok(map)
@@ -2847,6 +2854,34 @@ mod tests {
 
             config.eth_rpc_url = Some("optimism".to_string());
             assert_eq!("https://example.com/", config.get_rpc_url_or_localhost_http().unwrap());
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_resolve_rpc_url_alias() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                [rpc_endpoints]
+                polygonMumbai = "https://polygon-mumbai.g.alchemy.com/v2/${_RESOLVE_RPC_ALIAS}"
+            "#,
+            )?;
+            let mut config = Config::load();
+            config.eth_rpc_url = Some("polygonMumbai".to_string());
+            assert!(config.get_rpc_url().unwrap().is_err());
+
+            jail.set_env("_RESOLVE_RPC_ALIAS", "123455");
+
+            let mut config = Config::load();
+            config.eth_rpc_url = Some("polygonMumbai".to_string());
+            assert_eq!(
+                "https://polygon-mumbai.g.alchemy.com/v2/123455",
+                config.get_rpc_url().unwrap().unwrap()
+            );
 
             Ok(())
         })

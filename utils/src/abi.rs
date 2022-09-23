@@ -182,14 +182,21 @@ fn expand_output_param_type(
             Ok(format!("{}[{}]", ty, *size))
         }
         ParamType::Tuple(_) => {
-            let ty = if let Some(struct_name) = structs
-                .get_function_output_struct_type(&fun.name, param.internal_type.as_ref().unwrap())
-            {
-                struct_name.to_string()
+            if param.internal_type.is_none() {
+                let result =
+                    kind.to_string().trim_start_matches('(').trim_end_matches(')').to_string();
+                Ok(result)
             } else {
-                kind.to_string()
-            };
-            Ok(ty)
+                let ty = if let Some(struct_name) = structs.get_function_output_struct_type(
+                    &fun.name,
+                    param.internal_type.as_ref().unwrap(),
+                ) {
+                    struct_name.to_string()
+                } else {
+                    kind.to_string()
+                };
+                Ok(ty)
+            }
         }
         _ => Ok(kind.to_string()),
     }
@@ -219,14 +226,15 @@ fn format_function_output_param(
 
 fn format_param(param: &Param, kind: String) -> String {
     // add `memory` if required (not needed for events, only for functions)
-    let is_memory = matches!(
-        param.kind,
+    let is_memory = match param.kind {
         ParamType::Array(_) |
-            ParamType::Bytes |
-            ParamType::String |
-            ParamType::FixedArray(_, _) |
-            ParamType::Tuple(_),
-    );
+        ParamType::Bytes |
+        ParamType::String |
+        ParamType::FixedArray(_, _) => true,
+        ParamType::Tuple(_) => param.internal_type.is_some(),
+        _ => false,
+    };
+
     let kind = if is_memory { format!("{kind} memory") } else { kind };
 
     if param.name.is_empty() {
@@ -351,7 +359,32 @@ mod tests {
             abi_to_solidity(&contract_abi, "").unwrap()
         );
     }
-
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn abi2solidity_gaugecontroller() {
+        let contract_abi: RawAbi = serde_json::from_str(include_str!(
+            "../../testdata/fixtures/SolidityGeneration/GaugeController.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            include_str!("../../testdata/fixtures/SolidityGeneration/GeneratedGaugeController.sol"),
+            abi_to_solidity(&contract_abi, "test").unwrap()
+        );
+    }
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn abi2dolidity_liquiditygauge() {
+        let contract_abi: RawAbi = serde_json::from_str(include_str!(
+            "../../testdata/fixtures/SolidityGeneration/LiquidityGaugeV4.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            include_str!(
+                "../../testdata/fixtures/SolidityGeneration/GeneratedLiquidityGaugeV4.sol"
+            ),
+            abi_to_solidity(&contract_abi, "test").unwrap()
+        );
+    }
     #[test]
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn abi2solidity_fastlane() {

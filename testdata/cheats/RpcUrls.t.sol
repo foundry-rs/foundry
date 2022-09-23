@@ -16,7 +16,7 @@ contract RpcUrlTest is DSTest {
     // returns an error if env alias does not exist
     function testRevertsOnMissingEnv() public {
         cheats.expectRevert(
-            "Failed to resolve env var `${RPC_ENV_ALIAS}` in `RPC_ENV_ALIAS`: environment variable not found"
+            "Failed to resolve env var `RPC_ENV_ALIAS` in `${RPC_ENV_ALIAS}`: environment variable not found"
         );
         string memory url = cheats.rpcUrl("rpcEnvAlias");
     }
@@ -25,7 +25,7 @@ contract RpcUrlTest is DSTest {
     function testCanSetAndGetURLAndAllUrls() public {
         // this will fail because alias is not set
         cheats.expectRevert(
-            "Failed to resolve env var `${RPC_ENV_ALIAS}` in `RPC_ENV_ALIAS`: environment variable not found"
+            "Failed to resolve env var `RPC_ENV_ALIAS` in `${RPC_ENV_ALIAS}`: environment variable not found"
         );
         string[2][] memory _urls = cheats.rpcUrls();
 
