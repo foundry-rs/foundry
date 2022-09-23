@@ -1,4 +1,4 @@
-use bytes::Bytes;
+use crate::error::SolError;
 
 /// Errors that can happen when working with [`Cheacodes`]
 #[derive(Debug, thiserror::Error)]
@@ -7,8 +7,4 @@ pub enum CheatcodesError {
     SelectForkDuringBroadcast,
 }
 
-impl From<CheatcodesError> for Bytes {
-    fn from(err: CheatcodesError) -> Self {
-        Bytes::copy_from_slice(err.to_string().as_bytes())
-    }
-}
+impl SolError for CheatcodesError {}

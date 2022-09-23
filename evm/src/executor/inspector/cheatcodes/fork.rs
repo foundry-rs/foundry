@@ -2,6 +2,7 @@ use super::{error::CheatcodesError, Cheatcodes};
 use crate::{
     abi::HEVMCalls,
     error,
+    error::SolError,
     executor::{backend::DatabaseExt, fork::CreateFork},
 };
 use bytes::Bytes;
@@ -120,7 +121,7 @@ fn select_fork<DB: DatabaseExt>(
     fork_id: U256,
 ) -> Result<Bytes, Bytes> {
     if state.broadcast.is_some() {
-        return Err(CheatcodesError::SelectForkDuringBroadcast.into())
+        return Err(CheatcodesError::SelectForkDuringBroadcast.encode_string())
     }
 
     // No need to correct since the sender's nonce does not get incremented when selecting a fork.
@@ -140,7 +141,7 @@ fn create_select_fork<DB: DatabaseExt>(
     block: Option<u64>,
 ) -> Result<U256, Bytes> {
     if state.broadcast.is_some() {
-        return Err(CheatcodesError::SelectForkDuringBroadcast.into())
+        return Err(CheatcodesError::SelectForkDuringBroadcast.encode_string())
     }
 
     // No need to correct since the sender's nonce does not get incremented when selecting a fork.
@@ -170,7 +171,7 @@ fn create_select_fork_at_transaction<DB: DatabaseExt>(
     transaction: H256,
 ) -> Result<U256, Bytes> {
     if state.broadcast.is_some() {
-        return Err(CheatcodesError::SelectForkDuringBroadcast.into())
+        return Err(CheatcodesError::SelectForkDuringBroadcast.encode_string())
     }
 
     // No need to correct since the sender's nonce does not get incremented when selecting a fork.
