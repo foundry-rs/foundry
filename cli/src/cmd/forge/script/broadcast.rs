@@ -227,10 +227,9 @@ impl ScriptArgs {
     ) -> eyre::Result<()> {
         if let Some(txs) = result.transactions.take() {
             script_config.collect_rpcs(&txs);
+            script_config.check_multi_chain_constraints(&libraries)?;
 
             if !script_config.missing_rpc {
-                script_config.check_multi_chain_constraints(&libraries)?;
-
                 let mut deployments = self
                     .create_script_sequences(
                         txs,

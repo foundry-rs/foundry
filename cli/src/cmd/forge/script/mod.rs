@@ -656,7 +656,7 @@ impl ScriptConfig {
     /// Certain features are disabled for multi chain deployments, and if tried, will return
     /// error. [library support]
     fn check_multi_chain_constraints(&self, libraries: &Libraries) -> eyre::Result<()> {
-        if self.has_multiple_rpcs() {
+        if self.has_multiple_rpcs() || (self.missing_rpc && !self.total_rpcs.is_empty()) {
             eprintln!(
                 "{}",
                 Paint::yellow(
