@@ -282,7 +282,10 @@ impl DocBuilder {
         writeln_doc!(
             summary,
             "- {}",
-            DocOutput::Link("README", &readme_path.display().to_string())
+            DocOutput::Link(
+                "README",
+                &readme_path.strip_prefix(&self.config.root)?.display().to_string()
+            )
         )?;
 
         self.write_summary_section(&mut summary, 0, None, &filenames)?;
@@ -296,13 +299,10 @@ impl DocBuilder {
             include_str!("../static/solidity.min.js"),
         )?;
 
-        fs::write(
-            self.config.out_dir().join("book.toml"),
-            format!(
-                "[book]\ntitle = \"{}\"\nsrc = \"src\"\n\n[output.html]\nno-section-label = true\nadditional-js = [\"src/static/solidity.min.js\"]\n\n[output.html.fold]\nenable = true",
-                self.config.title
-            ),
-        )?;
+        let mut book: toml::Value = toml::from_str(include_str!("../static/book.toml"))?;
+        let book_entry = book["book"].as_table_mut().unwrap();
+        book_entry.insert(String::from("title"), self.config.title.clone().into());
+        fs::write(self.config.out_dir().join("book.toml"), toml::to_string_pretty(&book)?)?;
 
         Ok(())
     }

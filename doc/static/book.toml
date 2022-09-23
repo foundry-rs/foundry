@@ -1,0 +1,9 @@
+[book]
+src = "src"
+
+[output.html]
+no-section-label = true
+additional-js = ["src/static/solidity.min.js"]
+
+[output.html.fold]
+enable = true

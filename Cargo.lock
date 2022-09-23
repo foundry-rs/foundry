@@ -2086,6 +2086,7 @@ dependencies = [
  "rayon",
  "solang-parser",
  "thiserror",
+ "toml",
 ]
 
 [[package]]
