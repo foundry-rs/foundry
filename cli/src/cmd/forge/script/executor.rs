@@ -128,7 +128,7 @@ impl ScriptArgs {
             })
             .collect();
 
-        let final_txs = Arc::new(RwLock::new(VecDeque::new()));
+        let mut final_txs = VecDeque::new();
 
         // Executes all transactions from the different forks concurrently.
         let futs = transactions
@@ -152,10 +152,10 @@ impl ScriptArgs {
                         .expect("Internal EVM error");
 
                     if !result.success || result.traces.is_empty() {
-                        return Ok::<(bool, Vec<(TraceKind, CallTraceArena)>), eyre::ErrReport>((
-                            false,
-                            result.traces,
-                        ))
+                        return Ok::<
+                            (Option<TransactionWithMetadata>, Vec<(TraceKind, CallTraceArena)>),
+                            eyre::ErrReport,
+                        >((None, result.traces))
                     }
 
                     let created_contracts = result
@@ -183,16 +183,16 @@ impl ScriptArgs {
                     // We inflate the gas used by the user specified percentage
                     tx.gas = Some(U256::from(result.gas_used * self.gas_estimate_multiplier / 100));
 
-                    final_txs.write().push_back(TransactionWithMetadata::new(
+                    let tx = TransactionWithMetadata::new(
                         tx.into(),
                         transaction.rpc,
                         &result,
                         &address_to_abi,
                         decoder,
                         created_contracts,
-                    )?);
+                    )?;
 
-                    Ok((true, result.traces))
+                    Ok((Some(tx), result.traces))
                 } else {
                     unreachable!()
                 }
@@ -201,13 +201,10 @@ impl ScriptArgs {
 
         let mut abort = false;
         for res in join_all(futs).await {
-            let (passed, mut traces) = res?;
+            let (tx, mut traces) = res?;
 
-            if !passed || script_config.evm_opts.verbosity > 3 {
-                if !passed {
-                    abort = true;
-                }
-
+            // Transaction will be `None`, if execution didn't pass.
+            if tx.is_none() || script_config.evm_opts.verbosity > 3 {
                 // Identify all contracts created during the call.
                 if traces.is_empty() {
                     eyre::bail!(
@@ -220,13 +217,19 @@ impl ScriptArgs {
                     println!("{}", trace);
                 }
             }
+
+            if let Some(tx) = tx {
+                final_txs.push_back(tx);
+            } else {
+                abort = true;
+            }
         }
 
         if abort {
-            eyre::bail!("Simulated execution failed")
+            eyre::bail!("Simulated execution failed.")
         }
 
-        Ok(Arc::try_unwrap(final_txs).expect("Only one ref").into_inner())
+        Ok(final_txs)
     }
 
     /// Build the multiple runners from different forks.
@@ -235,7 +238,6 @@ impl ScriptArgs {
         script_config: &mut ScriptConfig,
         transactions: &VecDeque<BroadcastableTransaction>,
     ) -> HashMap<String, ScriptRunner> {
-        let runners = Arc::new(RwLock::new(HashMap::new()));
         let sender = script_config.evm_opts.sender;
 
         let unique_rpcs = transactions
@@ -251,16 +253,14 @@ impl ScriptArgs {
                 let mut script_config = script_config.clone();
                 script_config.evm_opts.fork_url = Some(rpc.clone());
 
-                let runner =
-                    self.prepare_runner(&mut script_config, sender, SimulationStage::OnChain).await;
-
-                runners.write().insert(rpc.clone(), runner);
+                (
+                    rpc.clone(),
+                    self.prepare_runner(&mut script_config, sender, SimulationStage::OnChain).await,
+                )
             })
             .collect::<Vec<_>>();
 
-        join_all(futs).await;
-
-        Arc::try_unwrap(runners).expect("Only one ref.").into_inner()
+        join_all(futs).await.into_iter().collect()
     }
 
     /// Creates the Runner that drives script execution
