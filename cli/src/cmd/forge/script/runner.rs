@@ -84,6 +84,7 @@ impl ScriptRunner {
         // Optionally call the `setUp` function
         let (success, gas_used, labeled_addresses, transactions, debug, script_wallets) = if !setup
         {
+            self.executor.backend_mut().set_test_contract(address);
             (
                 true,
                 0,
