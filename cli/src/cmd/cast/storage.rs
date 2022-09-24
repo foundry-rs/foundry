@@ -119,7 +119,7 @@ impl StorageArgs {
         // Create a new temp project
         let root = tempfile::tempdir()?;
         let root_path = root.path();
-        // let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/temp_build"));
+        // let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/out"));
         // let root_path = root.as_path();
         let sources = root_path.join(&metadata.contract_name);
         source_tree.write_to(root_path)?;
