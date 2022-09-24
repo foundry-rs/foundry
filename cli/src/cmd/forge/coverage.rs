@@ -96,7 +96,8 @@ impl CoverageArgs {
 
             // Disable the optimizer for more accurate source maps
             project.solc_config.settings.optimizer.disable();
-
+            project.solc_config.settings.via_ir = Some(false);
+            
             project
         };
 
