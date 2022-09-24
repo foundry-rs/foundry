@@ -51,28 +51,15 @@ impl Cmd for Create2Args {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let Create2Args { starts_with, ends_with, matching, case_sensitive, deployer, init_code } =
-            self;
-        Create2Args::generate_address(
-            starts_with,
-            ends_with,
-            matching,
-            case_sensitive,
-            deployer,
-            init_code,
-        )
+        Create2Args::generate_address(self)
     }
 }
 
 impl Create2Args {
-    fn generate_address(
-        starts_with: Option<String>,
-        ends_with: Option<String>,
-        matching: Option<String>,
-        case_sensitive: bool,
-        deployer: Address,
-        init_code: String,
-    ) -> Result<()> {
+    fn generate_address(self) -> Result<()> {
+        let Create2Args { starts_with, ends_with, matching, case_sensitive, deployer, init_code } =
+            self;
+
         let mut regexs = vec![];
 
         if let Some(mut matches) = matching {
@@ -115,34 +102,34 @@ impl Create2Args {
 
         println!("Starting to generate deterministic contract address...");
         let timer = Instant::now();
-        let salt = std::iter::repeat_with(move || H256::random_using(&mut thread_rng()))
+        let (salt, addr) = std::iter::repeat(())
             .par_bridge()
-            .find_any(|salt| {
+            .map(|_| {
+                let salt = H256::random_using(&mut thread_rng());
                 let salt = Bytes::from(salt.to_fixed_bytes());
+
                 let init_code = init_code.clone();
 
-                let addr = if case_sensitive {
-                    SimpleCast::to_checksum_address(&get_create2_address_from_hash(
-                        deployer, salt, init_code,
-                    ))
-                } else {
-                    get_create2_address_from_hash(deployer, salt, init_code).to_string()
-                };
-                let addr = addr.strip_prefix("0x").unwrap();
+                let addr = SimpleCast::to_checksum_address(&get_create2_address_from_hash(
+                    deployer,
+                    salt.clone(),
+                    init_code,
+                ));
 
+                (salt, addr)
+            })
+            .find_any(move |(_, addr)| {
+                let addr = addr.to_string();
+                let addr = addr.strip_prefix("0x").unwrap();
                 regex.matches(addr).into_iter().count() == regex.patterns().len()
             })
-            .expect("failed to generate vanity wallet");
+            .unwrap();
 
         println!(
             "Successfully found contract address in {} seconds.\nAddress: {}\nSalt: {}",
             timer.elapsed().as_secs(),
-            SimpleCast::to_checksum_address(&get_create2_address_from_hash(
-                deployer,
-                Bytes::from(salt.to_fixed_bytes()),
-                init_code
-            )),
-            U256::from(salt.to_fixed_bytes())
+            addr,
+            U256::from(salt.to_vec().as_slice())
         );
 
         Ok(())
