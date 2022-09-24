@@ -12,6 +12,7 @@ use ethers::{
     abi::{Abi, Address, Event, Function, Param, ParamType, Token},
     types::H256,
 };
+use foundry_common::SELECTOR_LEN;
 use foundry_utils::get_indexed_event;
 use std::collections::{BTreeMap, HashMap};
 
@@ -250,14 +251,14 @@ impl CallTraceDecoder {
                 node.decode_precompile(precompile_fn, &self.labels);
             } else if let RawOrDecodedCall::Raw(ref bytes) = node.trace.data {
                 if bytes.len() >= 4 {
-                    if let Some(funcs) = self.functions.get(&bytes[0..4]) {
+                    if let Some(funcs) = self.functions.get(&bytes[..SELECTOR_LEN]) {
                         node.decode_function(funcs, &self.labels, &self.errors);
                     } else if node.trace.address == DEFAULT_CREATE2_DEPLOYER {
                         node.trace.data =
                             RawOrDecodedCall::Decoded("create2".to_string(), String::new(), vec![]);
                     } else if let Some(identifier) = &self.signature_identifier {
                         if let Some(function) =
-                            identifier.write().await.identify_function(&bytes[0..4]).await
+                            identifier.write().await.identify_function(&bytes[..SELECTOR_LEN]).await
                         {
                             node.decode_function(&[function], &self.labels, &self.errors);
                         }
