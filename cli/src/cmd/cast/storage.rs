@@ -10,9 +10,7 @@ use errors::EtherscanError;
 use ethers::{
     etherscan::Client,
     prelude::*,
-    solc::artifacts::{
-        output_selection::ContractOutputSelection, BytecodeHash, Optimizer, Settings,
-    },
+    solc::artifacts::{Optimizer, Settings},
 };
 use eyre::{ContextCompat, Result};
 use foundry_common::{compile::compile, try_get_http_provider};
@@ -119,7 +117,7 @@ impl StorageArgs {
         // Create a new temp project
         let root = tempfile::tempdir()?;
         let root_path = root.path();
-        // let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/out"));
+        // let root = std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/out"));
         // let root_path = root.as_path();
         let sources = root_path.join(&metadata.contract_name);
         source_tree.write_to(root_path)?;
@@ -193,12 +191,9 @@ impl StorageArgs {
 }
 
 fn with_storage_layout_output(mut project: Project) -> Project {
-    project.solc_config.settings.metadata = Some(BytecodeHash::Ipfs.into());
-    let settings = project.solc_config.settings.with_extra_output([
-        ContractOutputSelection::Metadata,
-        ContractOutputSelection::StorageLayout,
-    ]);
-
+    project.artifacts.additional_values.storage_layout = true;
+    let output_selection = project.artifacts.output_selection();
+    let settings = project.solc_config.settings.with_extra_output(output_selection);
     project.solc_config.settings = settings;
     project
 }
