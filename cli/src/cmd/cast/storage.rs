@@ -12,6 +12,7 @@ use ethers::{
 use eyre::{ContextCompat, Result};
 use foundry_common::{compile::compile, try_get_http_provider};
 use foundry_config::Config;
+use semver::Version;
 
 #[derive(Debug, Clone, Parser)]
 pub struct StorageArgs {
@@ -83,16 +84,13 @@ impl StorageArgs {
             // Find in artifacts and pretty print
             let project = with_storage_layout_output(project);
             let out = compile(&project, false, false)?;
-            let artifact = out.artifacts().find(|(_, artifact)| match artifact.deployed_bytecode {
-                Some(ref deployed_code) => match deployed_code.bytecode {
-                    Some(ref bytecode) => match bytecode.object.as_bytes() {
-                        Some(bytes) => bytes == &address_code,
-                        None => false,
-                    },
-                    None => false,
-                },
-                None => false,
-            });
+            let match_code = |artifact: &ConfigurableContractArtifact| -> Option<bool> {
+                let bytes =
+                    artifact.deployed_bytecode.as_ref()?.bytecode.as_ref()?.object.as_bytes()?;
+                Some(bytes == &address_code)
+            };
+            let artifact =
+                out.artifacts().find(|(_, artifact)| match_code(artifact).unwrap_or_default());
             if let Some((_, artifact)) = artifact {
                 return print_storage_layout(&artifact.storage_layout, true)
             }
@@ -107,6 +105,9 @@ impl StorageArgs {
         let client = ethers::etherscan::Client::new(chain, api_key)?;
         println!("No artifacts found, fetching source code from etherscan...");
         let source = client.contract_source_code(address).await?;
+        if source.items.is_empty() {
+            eyre::bail!("Etherscan returned no data");
+        }
         let source_tree = source.source_tree()?;
 
         // Create a new temp project
@@ -119,11 +120,12 @@ impl StorageArgs {
         // Configure Solc
         let paths = ProjectPathsConfig::builder().sources(root_path).build_with_root(root_path);
 
-        let metadata = &source.items[0];
+        // `items` has at least 1 item
+        let metadata = source.items.first().unwrap();
         let mut settings = Settings::default();
 
         let mut optimizer = Optimizer::default();
-        if parse_etherscan_bool(&metadata.optimization_used)? {
+        if metadata.optimization_used.trim().parse::<usize>()? == 1 {
             optimizer.enable();
             match metadata.runs.parse::<usize>() {
                 Ok(runs) => optimizer.runs(runs),
@@ -136,8 +138,11 @@ impl StorageArgs {
         }
         settings.evm_version = Some(metadata.evm_version.parse().unwrap_or_default());
 
-        let solc = match parse_etherscan_compiler_version(&metadata.compiler_version) {
-            Ok(v) => Solc::find_or_install_svm_version(v)?,
+        let version = metadata.compiler_version.as_str().trim();
+        let solc = match version.strip_prefix('v').unwrap_or(version).parse::<Version>() {
+            Ok(v) => {
+                Solc::find_or_install_svm_version(&format!("{}.{}.{}", v.major, v.minor, v.patch))?
+            }
             Err(_) => Solc::default(),
         }
         .with_base_path(root_path);
@@ -161,6 +166,9 @@ impl StorageArgs {
             // metadata does not contain many compiler settings...
             Err(e) => {
                 if e.to_string().contains("--via-ir") {
+                    println!(
+                        "Compilation failed due to \"stack too deep\", retrying with \"--via-ir\"..."
+                    );
                     project.solc_config.settings.via_ir = Some(true);
                     compile(&project, false, false)
                 } else {
@@ -169,8 +177,14 @@ impl StorageArgs {
             }
         }?;
         let artifact = out.artifacts().find(|(name, _)| name == &metadata.contract_name);
-        let artifact = artifact.wrap_err("Compilation failed")?.1;
-        print_storage_layout(&artifact.storage_layout, true)
+        let artifact = artifact.wrap_err("Artifact not found")?.1;
+
+        print_storage_layout(&artifact.storage_layout, true)?;
+
+        // Clear temp directory
+        root.close()?;
+
+        Ok(())
     }
 }
 
@@ -182,28 +196,4 @@ fn with_storage_layout_output(mut project: Project) -> Project {
 
     project.solc_config.settings = settings;
     project
-}
-
-/// Usually 0 or 1
-fn parse_etherscan_bool(s: &str) -> Result<bool> {
-    let s = s.trim();
-    match s.parse::<u8>() {
-        Ok(n) => match n {
-            0 | 1 => Ok(n != 0),
-            _ => Err(eyre::eyre!("error parsing bool value from etherscan: number is not 0 or 1")),
-        },
-        Err(e) => match s.parse::<bool>() {
-            Ok(b) => Ok(b),
-            Err(_) => Err(eyre::eyre!("error parsing bool value from etherscan: {}", e)),
-        },
-    }
-}
-
-fn parse_etherscan_compiler_version(s: &str) -> Result<&str> {
-    // "v0.6.8+commit.0bbfe453"
-    let mut version = s.trim().split('+');
-    // "v0.6.8"
-    let version = version.next().wrap_err("got empty compiler version from etherscan")?;
-    // "0.6.8"
-    Ok(version.strip_prefix('v').unwrap_or(version))
 }
