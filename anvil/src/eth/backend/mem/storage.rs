@@ -33,6 +33,8 @@ pub struct InMemoryBlockStates {
     on_disk_states: HashMap<H256, StateDb>,
     /// How many states to store at most
     limit: usize,
+    /// minimum amount of states we keep in memory
+    min_limit: usize,
     /// all states present, used to enforce `limit`
     present: VecDeque<H256>,
     /// Stores old states on disk
@@ -48,6 +50,7 @@ impl InMemoryBlockStates {
             states: Default::default(),
             on_disk_states: Default::default(),
             limit,
+            min_limit: limit.min(10),
             present: Default::default(),
             disk_cache: Default::default(),
         }
@@ -57,8 +60,19 @@ impl InMemoryBlockStates {
     ///
     /// When the configured limit for the number of states that can be stored in memory is reached,
     /// the oldest state is removed.
+    ///
+    /// Since we keep a snapshot of the entire state as history, the size of the state will increase
+    /// with the transactions processed. To counter this, we gradually decrease the cache limit with
+    /// the number of states/blocks until we reached the `min_limit`.
+    ///
+    /// When a state that was previously written to disk is requested, it is simply read from disk.
     pub fn insert(&mut self, hash: H256, state: StateDb) {
         if self.present.len() >= self.limit {
+            // once we hit the max limit we decrease it
+            self.limit = self.limit.saturating_sub(1).max(self.min_limit);
+        }
+
+        while self.present.len() >= self.limit {
             // evict the oldest block
             if let Some((hash, mut state)) = self
                 .present
@@ -70,6 +84,7 @@ impl InMemoryBlockStates {
                 self.on_disk_states.insert(hash, state);
             }
         }
+
         self.states.insert(hash, state);
         self.present.push_back(hash);
     }
@@ -85,6 +100,11 @@ impl InMemoryBlockStates {
             }
             None
         })
+    }
+
+    /// Sets the maximum number of stats we keep in memory
+    pub fn set_cache_limit(&mut self, limit: usize) {
+        self.limit = limit;
     }
 
     /// Clears all entries
@@ -106,9 +126,8 @@ impl fmt::Debug for InMemoryBlockStates {
 
 impl Default for InMemoryBlockStates {
     fn default() -> Self {
-        // enough in memory to store 1_000 blocks in memory, this is ~30min of up-time with 1s
-        // interval mining mode
-        Self::new(1_000)
+        // enough in memory to store 250 blocks in memory
+        Self::new(250)
     }
 }
 
@@ -327,5 +346,34 @@ mod tests {
 
         let acc = loaded.basic(addr).unwrap().unwrap();
         assert_eq!(acc.balance, 1337u64.into());
+    }
+
+    #[test]
+    fn can_decrease_state_cache_size() {
+        let limit = 20;
+        let mut storage = InMemoryBlockStates::new(limit);
+
+        let num_states = 30;
+        for idx in 0..num_states {
+            let mut state = MemDb::default();
+            let hash = H256::from_uint(&U256::from(idx));
+            let addr = Address::from(hash);
+            let balance = (idx * 2) as u64;
+            let info = AccountInfo::from_balance(balance.into());
+            state.insert_account(addr, info);
+            storage.insert(hash, StateDb::new(state));
+        }
+
+        assert_eq!(storage.on_disk_states.len(), num_states - storage.min_limit);
+        assert_eq!(storage.present.len(), storage.min_limit);
+
+        for idx in 0..num_states {
+            let hash = H256::from_uint(&U256::from(idx));
+            let addr = Address::from(hash);
+            let loaded = storage.get(&hash).unwrap();
+            let acc = loaded.basic(addr).unwrap().unwrap();
+            let balance = (idx * 2) as u64;
+            assert_eq!(acc.balance, balance.into());
+        }
     }
 }

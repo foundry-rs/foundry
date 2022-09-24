@@ -452,6 +452,7 @@ impl<'a> ContractRunner<'a> {
         if let Some(InvariantFuzzTestResult { invariants, cases, reverts }) =
             evm.invariant_fuzz(invariant_contract)?
         {
+
             let results = invariants.values().map(|test_error| {
                     let mut counterexample = None;
                     let mut logs = logs.clone();

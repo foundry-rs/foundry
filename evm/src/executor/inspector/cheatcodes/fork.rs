@@ -107,6 +107,16 @@ pub fn apply<DB: DatabaseExt>(
             data.db.allow_cheatcode_access(addr.0);
             Ok(Default::default())
         }
+        HEVMCalls::Transact0(inner) => data
+            .db
+            .transact(None, inner.0.into(), data.env, &mut data.journaled_state)
+            .map(|_| Default::default())
+            .map_err(error::encode_error),
+        HEVMCalls::Transact1(inner) => data
+            .db
+            .transact(Some(inner.0), inner.1.into(), data.env, &mut data.journaled_state)
+            .map(|_| Default::default())
+            .map_err(error::encode_error),
         _ => return None,
     };
 

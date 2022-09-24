@@ -152,6 +152,7 @@ dependencies = [
  "hash256-std-hasher",
  "keccak-hasher",
  "reference-trie",
+ "revm",
  "serde",
  "serde_json",
  "triehash",

@@ -41,10 +41,18 @@ fn test_cheats_fork() {
     TestConfig::filter(filter).run();
 }
 
+/// Tests that we can launch in forking mode
 #[test]
-fn test_fork() {
+fn test_launch_fork() {
     let rpc_url = foundry_utils::rpc::next_http_archive_rpc_endpoint();
     let runner = forked_runner(&rpc_url);
-    let filter = Filter::new(".*", ".*", ".*fork");
+    let filter = Filter::new(".*", ".*", &format!(".*fork{}Launch", RE_PATH_SEPARATOR));
     TestConfig::with_filter(runner, filter).run();
+}
+
+/// Tests that we can transact transactions in forking mode
+#[test]
+fn test_transact_fork() {
+    let filter = Filter::new(".*", ".*", &format!(".*fork{}Transact", RE_PATH_SEPARATOR));
+    TestConfig::filter(filter).run();
 }
