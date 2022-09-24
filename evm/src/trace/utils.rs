@@ -25,6 +25,7 @@ pub fn label(token: &Token, labels: &HashMap<Address, String>) -> String {
     }
 }
 
+/// Custom decoding of cheatcode calls
 pub(crate) fn decode_cheatcode_inputs(
     func: &Function,
     data: &[u8],
@@ -37,7 +38,7 @@ pub(crate) fn decode_cheatcode_inputs(
         "sign" | "startBroadcast" | "broadcast" => {
             // sign and broadcast functions accept a private key as uint256, which should not be
             // converted to plain text
-            if func.inputs.len() > 0 && matches!(&func.inputs[0].kind, ParamType::Uint(_)) {
+            if !func.inputs.is_empty() && matches!(&func.inputs[0].kind, ParamType::Uint(_)) {
                 // redact private key input
                 Some(vec!["<pk>".to_string()])
             } else {
@@ -47,4 +48,13 @@ pub(crate) fn decode_cheatcode_inputs(
 
         _ => None,
     }
+}
+
+/// Custom decoding of cheatcode return values
+pub(crate) fn decode_cheatcode_outputs(func: &Function, _data: &[u8]) -> Option<String> {
+    if func.name.starts_with("env") {
+        // redacts the value stored in the env var
+        return Some("<env var value>".to_string())
+    }
+    None
 }
