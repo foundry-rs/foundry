@@ -5,14 +5,20 @@ use crate::{
 };
 use cast::Cast;
 use clap::Parser;
+use contract::ContractMetadata;
+use errors::EtherscanError;
 use ethers::{
+    etherscan::Client,
     prelude::*,
-    solc::artifacts::{output_selection::ContractOutputSelection, Optimizer, Settings},
+    solc::artifacts::{
+        output_selection::ContractOutputSelection, BytecodeHash, Optimizer, Settings,
+    },
 };
 use eyre::{ContextCompat, Result};
 use foundry_common::{compile::compile, try_get_http_provider};
 use foundry_config::Config;
 use semver::Version;
+use std::{future::Future, pin::Pin};
 
 #[derive(Debug, Clone, Parser)]
 pub struct StorageArgs {
@@ -98,30 +104,29 @@ impl StorageArgs {
 
         // Not a forge project or artifact not found
         // Get code from Etherscan
+        println!("No artifacts found, fetching source code from Etherscan...");
         let api_key = etherscan_api_key.or_else(|| {
             let config = Config::load();
             config.get_etherscan_api_key(Some(chain))
         }).ok_or_else(|| eyre::eyre!("No Etherscan API Key is set. Consider using the ETHERSCAN_API_KEY env var, or setting the -e CLI argument or etherscan-api-key in foundry.toml"))?;
-        let client = ethers::etherscan::Client::new(chain, api_key)?;
-        println!("No artifacts found, fetching source code from etherscan...");
-        let source = client.contract_source_code(address).await?;
-        if source.items.is_empty() {
-            eyre::bail!("Etherscan returned no data");
-        }
+        let client = Client::new(chain, api_key)?;
+
+        let source = find_source(client, address).await?;
+        let metadata = source.items.first().unwrap();
+
         let source_tree = source.source_tree()?;
 
         // Create a new temp project
         let root = tempfile::tempdir()?;
         let root_path = root.path();
-        // let root = std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/temp_build"));
+        // let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/temp_build"));
         // let root_path = root.as_path();
+        let sources = root_path.join(&metadata.contract_name);
         source_tree.write_to(root_path)?;
 
         // Configure Solc
-        let paths = ProjectPathsConfig::builder().sources(root_path).build_with_root(root_path);
+        let paths = ProjectPathsConfig::builder().sources(sources).build_with_root(root_path);
 
-        // `items` has at least 1 item
-        let metadata = source.items.first().unwrap();
         let mut settings = Settings::default();
 
         let mut optimizer = Optimizer::default();
@@ -189,11 +194,44 @@ impl StorageArgs {
 }
 
 fn with_storage_layout_output(mut project: Project) -> Project {
-    let mut outputs = ContractOutputSelection::basic();
-    outputs.push(ContractOutputSelection::Metadata);
-    outputs.push(ContractOutputSelection::StorageLayout);
-    let settings = project.solc_config.settings.with_extra_output(outputs);
+    project.solc_config.settings.metadata = Some(BytecodeHash::Ipfs.into());
+    let settings = project.solc_config.settings.with_extra_output([
+        ContractOutputSelection::Metadata,
+        ContractOutputSelection::StorageLayout,
+    ]);
 
     project.solc_config.settings = settings;
     project
+}
+
+/// If the code at `address` is a proxy, recurse until we find the implementation.
+fn find_source(
+    client: Client,
+    address: Address,
+) -> Pin<Box<dyn Future<Output = Result<ContractMetadata>>>> {
+    Box::pin(async move {
+        let source = client.contract_source_code(address).await?;
+        let metadata = source.items.first().wrap_err("Etherscan returned no data")?;
+        if metadata.proxy.parse::<usize>()? == 0 {
+            Ok(source)
+        } else {
+            let implementation = metadata.implementation.parse()?;
+            println!(
+                "Contract at {} is a proxy, trying to fetch source at {:?}...",
+                address, implementation
+            );
+            match find_source(client, implementation).await {
+                impl_source @ Ok(_) => impl_source,
+                Err(e) => {
+                    let err = EtherscanError::ContractCodeNotVerified(address).to_string();
+                    if e.to_string() == err {
+                        println!("{}, using {}", err, address);
+                        Ok(source)
+                    } else {
+                        Err(e)
+                    }
+                }
+            }
+        }
+    })
 }
