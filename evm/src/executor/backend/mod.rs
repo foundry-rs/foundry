@@ -171,6 +171,15 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()>;
 
+    /// Fetches the given transaction for the fork and executes it, committing the state in the DB
+    fn transact(
+        &mut self,
+        id: Option<LocalForkId>,
+        transaction: H256,
+        env: &mut Env,
+        journaled_state: &mut JournaledState,
+    ) -> eyre::Result<()>;
+
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
     fn active_fork_id(&self) -> Option<LocalForkId>;
 
@@ -736,8 +745,9 @@ impl Backend {
     pub fn replay_until(
         &mut self,
         id: LocalForkId,
-        mut env: Env,
+        env: Env,
         tx_hash: H256,
+        journaled_state: &mut JournaledState,
     ) -> eyre::Result<Option<Transaction>> {
         let fork = self.inner.get_fork_by_id_mut(id)?;
         let full_block =
@@ -749,12 +759,7 @@ impl Backend {
                 return Ok(Some(tx))
             }
 
-            configure_tx_env(&mut env, &tx);
-
-            let mut evm = EVM::new();
-            evm.env = env.clone();
-            evm.database(&mut fork.db);
-            evm.transact_commit();
+            commit_transaction(tx, env.clone(), journaled_state, fork);
         }
 
         Ok(None)
@@ -1041,7 +1046,34 @@ impl DatabaseExt for Backend {
         // replay all transactions that came before
         let mut env = env.clone();
         env.block.number = tx_block.as_u64().into();
-        self.replay_until(id, env, transaction)?;
+        self.replay_until(id, env, transaction, journaled_state)?;
+
+        Ok(())
+    }
+
+    fn transact(
+        &mut self,
+        maybe_id: Option<LocalForkId>,
+        transaction: H256,
+        env: &mut Env,
+        journaled_state: &mut JournaledState,
+    ) -> eyre::Result<()> {
+        trace!(?maybe_id, ?transaction, "execute transaction");
+        let id = self.ensure_fork(maybe_id)?;
+
+        let env = if maybe_id.is_none() {
+            let fork_id = self.ensure_fork_id(id).cloned()?;
+            self.forks
+                .get_env(fork_id)?
+                .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exit", id))?
+        } else {
+            env.clone()
+        };
+
+        let fork = self.inner.get_fork_by_id_mut(id)?;
+        let tx = fork.db.db.get_transaction(transaction)?;
+
+        commit_transaction(tx, env, journaled_state, fork);
 
         Ok(())
     }
@@ -1605,4 +1637,46 @@ fn is_contract_in_state(journaled_state: &JournaledState, acc: Address) -> bool 
         .get(&acc)
         .map(|acc| acc.info.code_hash != KECCAK_EMPTY)
         .unwrap_or_default()
+}
+
+/// Executes the given transaction and commits state changes to the database _and_ the journaled
+/// state
+fn commit_transaction(
+    tx: Transaction,
+    mut env: Env,
+    journaled_state: &mut JournaledState,
+    fork: &mut Fork,
+) {
+    configure_tx_env(&mut env, &tx);
+    let (_, state) = {
+        let mut evm = EVM::new();
+        evm.env = env;
+        evm.database(&mut fork.db);
+        evm.transact()
+    };
+
+    apply_state_changeset(state, journaled_state, fork);
+}
+
+/// Applies the changeset of a transaction to the active journaled state and also commits it in the
+/// forked db
+fn apply_state_changeset(
+    state: hashbrown::HashMap<Address, Account>,
+    journaled_state: &mut JournaledState,
+    fork: &mut Fork,
+) {
+    let changed_accounts = state.keys().copied().collect::<Vec<_>>();
+    // commit the state and update the loaded accounts
+    fork.db.commit(state);
+
+    for addr in changed_accounts {
+        // reload all changed accounts by removing them from the journaled state and reloading them
+        // from the now updated database
+        if journaled_state.state.remove(&addr).is_some() {
+            let _ = journaled_state.load_account(addr, &mut fork.db);
+        }
+        if fork.journaled_state.state.remove(&addr).is_some() {
+            let _ = fork.journaled_state.load_account(addr, &mut fork.db);
+        }
+    }
 }

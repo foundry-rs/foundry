@@ -109,6 +109,8 @@ ethers::contract::abigen!(
             createSelectFork(string)(uint256)
             selectFork(uint256)
             activeFork()(uint256)
+            transact(bytes32)
+            transact(uint256,bytes32)
             makePersistent(address)
             makePersistent(address,address)
             makePersistent(address,address,address)
