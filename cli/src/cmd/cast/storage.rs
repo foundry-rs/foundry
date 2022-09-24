@@ -13,10 +13,18 @@ use ethers::{
     solc::artifacts::{Optimizer, Settings},
 };
 use eyre::{ContextCompat, Result};
-use foundry_common::{compile::compile, try_get_http_provider};
+use foundry_common::{
+    compile::{compile, suppress_compile},
+    try_get_http_provider,
+};
 use foundry_config::Config;
 use semver::Version;
 use std::{future::Future, pin::Pin};
+
+/// The minimum Solc version for outputting storage layouts.
+///
+/// https://github.com/ethereum/solidity/blob/develop/Changelog.md#065-2020-04-06
+const MIN_SOLC: Version = Version::new(0, 6, 5);
 
 #[derive(Debug, Clone, Parser)]
 pub struct StorageArgs {
@@ -75,7 +83,6 @@ impl StorageArgs {
         }
 
         // No slot was provided
-
         // Get deployed bytecode at given address
         let address_code = provider.get_code(address, block).await?;
         if address_code.is_empty() {
@@ -141,11 +148,21 @@ impl StorageArgs {
         settings.evm_version = Some(metadata.evm_version.parse().unwrap_or_default());
 
         let version = metadata.compiler_version.as_str().trim();
+        let mut auto_detect = false;
         let solc = match version.strip_prefix('v').unwrap_or(version).parse::<Version>() {
-            Ok(v) => {
-                Solc::find_or_install_svm_version(&format!("{}.{}.{}", v.major, v.minor, v.patch))?
+            Ok(mut v) => {
+                if v < MIN_SOLC {
+                    tracing::warn!("The requested contract was compiled with {} while the minimum version for storage layouts is {} and as a result it may be empty.", v, MIN_SOLC);
+                    auto_detect = true;
+                    v = MIN_SOLC
+                };
+                let v = &format!("{}.{}.{}", v.major, v.minor, v.patch);
+                Solc::find_or_install_svm_version(v)?
             }
-            Err(_) => Solc::default(),
+            Err(_) => {
+                auto_detect = true;
+                Solc::default()
+            }
         }
         .with_base_path(root_path);
         let solc_config = SolcConfig::builder().settings(settings).build();
@@ -153,7 +170,7 @@ impl StorageArgs {
         let project = Project::builder()
             .solc(solc)
             .solc_config(solc_config)
-            .no_auto_detect()
+            .set_auto_detect(auto_detect)
             .ephemeral()
             .no_artifacts()
             .ignore_error_code(1878) // License warning
@@ -163,16 +180,14 @@ impl StorageArgs {
         let mut project = with_storage_layout_output(project);
 
         // Compile
-        let out = match compile(&project, false, false) {
+        let out = match suppress_compile(&project) {
             Ok(out) => Ok(out),
             // metadata does not contain many compiler settings...
             Err(e) => {
                 if e.to_string().contains("--via-ir") {
-                    println!(
-                        "Compilation failed due to \"stack too deep\", retrying with \"--via-ir\"..."
-                    );
+                    tracing::warn!("Compilation failed due to \"stack too deep\", retrying with \"--via-ir\"...");
                     project.solc_config.settings.via_ir = Some(true);
-                    compile(&project, false, false)
+                    suppress_compile(&project)
                 } else {
                     Err(e)
                 }
