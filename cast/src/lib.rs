@@ -702,13 +702,13 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn storage(
+    pub async fn storage<T: Into<NameOrAddress> + Send + Sync>(
         &self,
-        address: Address,
+        from: T,
         slot: H256,
         block: Option<BlockId>,
     ) -> Result<String> {
-        Ok(format!("{}", self.provider.get_storage_at(from, location, block).await?))
+        Ok(format!("{:?}", self.provider.get_storage_at(from, slot, block).await?))
     }
 }
 
