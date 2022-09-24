@@ -68,7 +68,7 @@ pub(crate) fn decode_cheatcode_outputs(func: &Function, _data: &[u8]) -> Option<
     }
     if func.name == "deriveKey" {
         // redacts derived private key
-        return Some("<pl>".to_string())
+        return Some("<pk>".to_string())
     }
     None
 }
