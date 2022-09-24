@@ -110,14 +110,14 @@ impl StorageArgs {
         let source_tree = source.source_tree()?;
 
         // Create a new temp project
-        // let root = tempfile::tempdir()?;
-        let root = std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/temp_build"));
-        println!("root: {}", root.display());
-        std::fs::create_dir_all(&root)?;
-        source_tree.write_to(&root)?;
+        let root = tempfile::tempdir()?;
+        let root_path = root.path();
+        // let root = std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/temp_build"));
+        // let root_path = root.as_path();
+        source_tree.write_to(root_path)?;
 
         // Configure Solc
-        let paths = ProjectPathsConfig::builder().sources(&root).build_with_root(root);
+        let paths = ProjectPathsConfig::builder().sources(root_path).build_with_root(root_path);
 
         let metadata = &source.items[0];
         let mut settings = Settings::default();
@@ -139,14 +139,16 @@ impl StorageArgs {
         let solc = match parse_etherscan_compiler_version(&metadata.compiler_version) {
             Ok(v) => Solc::find_or_install_svm_version(v)?,
             Err(_) => Solc::default(),
-        };
+        }
+        .with_base_path(root_path);
         let solc_config = SolcConfig::builder().settings(settings).build();
 
         let project = Project::builder()
             .solc(solc)
             .solc_config(solc_config)
-            // .ephemeral()
-            // .no_artifacts()
+            .no_auto_detect()
+            .ephemeral()
+            .no_artifacts()
             .ignore_error_code(1878) // License warning
             .ignore_error_code(5574) // Contract code size warning
             .paths(paths)
@@ -174,6 +176,7 @@ impl StorageArgs {
 
 fn with_storage_layout_output(mut project: Project) -> Project {
     let mut outputs = ContractOutputSelection::basic();
+    outputs.push(ContractOutputSelection::Metadata);
     outputs.push(ContractOutputSelection::StorageLayout);
     let settings = project.solc_config.settings.with_extra_output(outputs);
 
@@ -198,7 +201,7 @@ fn parse_etherscan_bool(s: &str) -> Result<bool> {
 
 fn parse_etherscan_compiler_version(s: &str) -> Result<&str> {
     // "v0.6.8+commit.0bbfe453"
-    let mut version = s.split('+');
+    let mut version = s.trim().split('+');
     // "v0.6.8"
     let version = version.next().wrap_err("got empty compiler version from etherscan")?;
     // "0.6.8"
