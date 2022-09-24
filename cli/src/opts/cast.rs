@@ -1,7 +1,7 @@
 use super::{ClapChain, EthereumOpts};
 use crate::{
     cmd::cast::{
-        call::CallArgs, estimate::EstimateArgs, find_block::FindBlockArgs,
+        call::CallArgs, create2::Create2Args, estimate::EstimateArgs, find_block::FindBlockArgs,
         interface::InterfaceArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs,
         wallet::WalletSubcommands,
     },
@@ -710,6 +710,12 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
         )]
         sig: String,
     },
+    #[clap(
+        name = "create2",
+        visible_alias = "c2",
+        about = "Generate a deterministic contract address using CREATE2"
+    )]
+    Create2(Create2Args),
     #[clap(
         name = "find-block",
         visible_alias = "f",
