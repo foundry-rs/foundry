@@ -132,10 +132,9 @@ impl StorageArgs {
         let mut optimizer = Optimizer::default();
         if metadata.optimization_used.trim().parse::<usize>()? == 1 {
             optimizer.enable();
-            match metadata.runs.parse::<usize>() {
-                Ok(runs) => optimizer.runs(runs),
-                _ => {}
-            };
+            if let Ok(runs) = metadata.runs.parse::<usize>() {
+                optimizer.runs(runs);
+            }
         }
         settings.optimizer = optimizer;
         if !metadata.source_code.contains("pragma solidity") {
