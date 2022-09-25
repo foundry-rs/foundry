@@ -15,15 +15,16 @@ use foundry_cli::{
     utils,
     utils::consume_config_rpc_url,
 };
-use foundry_common::{fs, try_get_http_provider};
-use foundry_config::{Chain, Config};
-use foundry_utils::{
-    format_tokens,
+use foundry_common::{
+    abi::format_tokens,
+    fs,
     selectors::{
         decode_calldata, decode_event_topic, decode_function_selector, import_selectors,
         parse_signatures, pretty_calldata, ParsedSignatures, SelectorImportData,
     },
+    try_get_http_provider,
 };
+use foundry_config::{Chain, Config};
 use rustc_hex::ToHex;
 use std::{
     io::{self, Read, Write},
