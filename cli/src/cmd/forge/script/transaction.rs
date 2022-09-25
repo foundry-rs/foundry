@@ -6,8 +6,7 @@ use ethers::{
     prelude::{NameOrAddress, H256 as TxHash},
     types::transaction::eip2718::TypedTransaction,
 };
-use foundry_common::SELECTOR_LEN;
-use foundry_utils::format_token;
+use foundry_common::{abi::format_token, SELECTOR_LEN};
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

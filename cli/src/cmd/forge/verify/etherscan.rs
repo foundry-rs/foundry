@@ -19,8 +19,9 @@ use ethers::{
     },
 };
 use eyre::{eyre, Context};
+use foundry_common::abi::encode_args;
 use foundry_config::{Chain, Config, SolcReq};
-use foundry_utils::{encode_args, Retry};
+use foundry_utils::Retry;
 use futures::FutureExt;
 use once_cell::sync::Lazy;
 use regex::Regex;

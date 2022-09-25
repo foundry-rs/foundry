@@ -8,8 +8,8 @@ use ethers_core::{
 };
 use ethers_providers::Middleware;
 use eyre::{eyre, Result};
+use foundry_common::abi::{encode_args, get_func, get_func_etherscan};
 use foundry_config::Chain;
-use foundry_utils::{encode_args, get_func, get_func_etherscan};
 use futures::future::join_all;
 
 use crate::strip_0x;

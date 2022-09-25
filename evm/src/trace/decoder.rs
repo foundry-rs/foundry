@@ -12,8 +12,8 @@ use ethers::{
     abi::{Abi, Address, Event, Function, Param, ParamType, Token},
     types::H256,
 };
-use foundry_common::SELECTOR_LEN;
-use foundry_utils::get_indexed_event;
+use foundry_common::{abi::get_indexed_event, SELECTOR_LEN};
+use hashbrown::HashSet;
 use std::collections::{BTreeMap, HashMap};
 
 /// Build a new [CallTraceDecoder].
@@ -316,14 +316,24 @@ impl CallTraceDecoder {
                 }
             }
 
-            for event in events {
+            for mut event in events {
+                // ensure all params are named, otherwise this will cause issues with decoding: See also <https://github.com/rust-ethereum/ethabi/issues/206>
+                let empty_params = patch_nameless_params(&mut event);
                 if let Ok(decoded) = event.parse_log(raw_log.clone()) {
                     *log = RawOrDecodedLog::Decoded(
                         event.name,
                         decoded
                             .params
                             .into_iter()
-                            .map(|param| (param.name, self.apply_label(&param.value)))
+                            .map(|param| {
+                                // undo patched names
+                                let name = if empty_params.contains(&param.name) {
+                                    "".to_string()
+                                } else {
+                                    param.name
+                                };
+                                (name, self.apply_label(&param.value))
+                            })
                             .collect(),
                     );
                     break
@@ -335,6 +345,21 @@ impl CallTraceDecoder {
     fn apply_label(&self, token: &Token) -> String {
         utils::label(token, &self.labels)
     }
+}
+
+/// This is a bit horrible but due to <https://github.com/rust-ethereum/ethabi/issues/206> we need to patch nameless (valid) params before decoding a logs, otherwise [`Event::parse_log()`] will result in wrong results since they're identified by name.
+///
+/// Returns a set of patched param names, that originally were empty.
+fn patch_nameless_params(event: &mut Event) -> HashSet<String> {
+    let mut patches = HashSet::new();
+    if event.inputs.iter().filter(|input| input.name.is_empty()).count() > 1 {
+        for (idx, param) in event.inputs.iter_mut().enumerate() {
+            // this is an illegal arg name, which ensures patched identifiers are unique
+            param.name = format!("<patched {}>", idx);
+            patches.insert(param.name.clone());
+        }
+    }
+    patches
 }
 
 fn precompile<I, O>(number: u8, name: impl ToString, inputs: I, outputs: O) -> (Address, Function)

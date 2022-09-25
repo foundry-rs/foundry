@@ -1,6 +1,7 @@
-use crate::abi_decode;
+#![allow(missing_docs)]
+//! Support for handling/identifying selectors
+use crate::abi::abi_decode;
 use ethers_solc::artifacts::LosslessAbi;
-use eyre::Result;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt};
 
@@ -16,11 +17,13 @@ pub struct PossibleSigs {
     method: SelectorOrSig,
     data: Vec<String>,
 }
+
 impl PossibleSigs {
     fn new() -> Self {
         PossibleSigs { method: SelectorOrSig::Selector("0x00000000".to_string()), data: vec![] }
     }
 }
+
 impl fmt::Display for PossibleSigs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.method {
@@ -51,7 +54,10 @@ pub enum SelectorType {
 }
 
 /// Decodes the given function or event selector using sig.eth.samczsun.com
-pub async fn decode_selector(selector: &str, selector_type: SelectorType) -> Result<Vec<String>> {
+pub async fn decode_selector(
+    selector: &str,
+    selector_type: SelectorType,
+) -> eyre::Result<Vec<String>> {
     #[derive(Deserialize)]
     struct Decoded {
         name: String,
@@ -103,7 +109,7 @@ pub async fn decode_selector(selector: &str, selector_type: SelectorType) -> Res
 }
 
 /// Fetches a function signature given the selector using sig.eth.samczsun.com
-pub async fn decode_function_selector(selector: &str) -> Result<Vec<String>> {
+pub async fn decode_function_selector(selector: &str) -> eyre::Result<Vec<String>> {
     let prefixed_selector = format!("0x{}", selector.strip_prefix("0x").unwrap_or(selector));
     if prefixed_selector.len() != 10 {
         eyre::bail!("Invalid selector: expected 8 characters (excluding 0x prefix), got {} characters (including 0x prefix).", prefixed_selector.len())
@@ -113,7 +119,7 @@ pub async fn decode_function_selector(selector: &str) -> Result<Vec<String>> {
 }
 
 /// Fetches all possible signatures and attempts to abi decode the calldata
-pub async fn decode_calldata(calldata: &str) -> Result<Vec<String>> {
+pub async fn decode_calldata(calldata: &str) -> eyre::Result<Vec<String>> {
     let calldata = calldata.strip_prefix("0x").unwrap_or(calldata);
     if calldata.len() < 8 {
         eyre::bail!(
@@ -133,7 +139,7 @@ pub async fn decode_calldata(calldata: &str) -> Result<Vec<String>> {
 }
 
 /// Fetches a event signature given the 32 byte topic using sig.eth.samczsun.com
-pub async fn decode_event_topic(topic: &str) -> Result<Vec<String>> {
+pub async fn decode_event_topic(topic: &str) -> eyre::Result<Vec<String>> {
     let prefixed_topic = format!("0x{}", topic.strip_prefix("0x").unwrap_or(topic));
     if prefixed_topic.len() != 66 {
         eyre::bail!("Invalid topic: expected 64 characters (excluding 0x prefix), got {} characters (including 0x prefix).", prefixed_topic.len())
@@ -145,7 +151,7 @@ pub async fn decode_event_topic(topic: &str) -> Result<Vec<String>> {
 ///
 /// ```no_run
 /// 
-/// use foundry_utils::selectors::pretty_calldata;
+/// use foundry_common::selectors::pretty_calldata;
 ///
 /// # async fn foo() -> eyre::Result<()> {
 ///   let pretty_data = pretty_calldata("0x70a08231000000000000000000000000d0074f4e6490ae3f888d1d4f7e3e43326bd3f0f5".to_string(), false).await?;
@@ -154,7 +160,10 @@ pub async fn decode_event_topic(topic: &str) -> Result<Vec<String>> {
 /// # }
 /// ```
 
-pub async fn pretty_calldata(calldata: impl AsRef<str>, offline: bool) -> Result<PossibleSigs> {
+pub async fn pretty_calldata(
+    calldata: impl AsRef<str>,
+    offline: bool,
+) -> eyre::Result<PossibleSigs> {
     let mut possible_info = PossibleSigs::new();
     let calldata = calldata.as_ref().trim_start_matches("0x");
 
@@ -254,7 +263,7 @@ impl SelectorImportResponse {
 }
 
 /// uploads selectors to sig.eth.samczsun.com using the given data
-pub async fn import_selectors(data: SelectorImportData) -> Result<SelectorImportResponse> {
+pub async fn import_selectors(data: SelectorImportData) -> eyre::Result<SelectorImportResponse> {
     let request = match &data {
         SelectorImportData::Abi(_) => {
             SelectorImportRequest { import_type: "abi".to_string(), data }
@@ -327,127 +336,134 @@ pub fn parse_signatures(tokens: Vec<String>) -> ParsedSignatures {
     ParsedSignatures { signatures, abis }
 }
 
-#[tokio::test]
-async fn test_decode_selector() {
-    let sigs = decode_function_selector("0xa9059cbb").await;
-    assert_eq!(sigs.unwrap()[0], "transfer(address,uint256)".to_string());
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let sigs = decode_function_selector("a9059cbb").await;
-    assert_eq!(sigs.unwrap()[0], "transfer(address,uint256)".to_string());
+    #[tokio::test]
+    async fn test_decode_selector() {
+        let sigs = decode_function_selector("0xa9059cbb").await;
+        assert_eq!(sigs.unwrap()[0], "transfer(address,uint256)".to_string());
 
-    // invalid signature
-    decode_function_selector("0xa9059c")
-        .await
-        .map_err(|e| assert_eq!(e.to_string(), "Invalid selector: expected 8 characters (excluding 0x prefix), got 8 characters (including 0x prefix)."))
-        .map(|_| panic!("Expected fourbyte error"))
-        .ok();
-}
+        let sigs = decode_function_selector("a9059cbb").await;
+        assert_eq!(sigs.unwrap()[0], "transfer(address,uint256)".to_string());
 
-#[tokio::test]
-async fn test_decode_calldata() {
-    let decoded = decode_calldata("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79").await;
-    assert_eq!(decoded.unwrap()[0], "transfer(address,uint256)".to_string());
+        // invalid signature
+        decode_function_selector("0xa9059c")
+            .await
+            .map_err(|e| assert_eq!(e.to_string(), "Invalid selector: expected 8 characters (excluding 0x prefix), got 8 characters (including 0x prefix)."))
+            .map(|_| panic!("Expected fourbyte error"))
+            .ok();
+    }
 
-    let decoded = decode_calldata("a9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79").await;
-    assert_eq!(decoded.unwrap()[0], "transfer(address,uint256)".to_string());
-}
+    #[tokio::test]
+    async fn test_decode_calldata() {
+        let decoded = decode_calldata("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79").await;
+        assert_eq!(decoded.unwrap()[0], "transfer(address,uint256)".to_string());
 
-#[tokio::test]
-async fn test_import_selectors() {
-    let mut data = RawSelectorImportData::default();
-    data.function.push("transfer(address,uint256)".to_string());
-    let result = import_selectors(SelectorImportData::Raw(data)).await;
-    assert_eq!(
-        result.unwrap().result.function.duplicated.get("transfer(address,uint256)").unwrap(),
-        "0xa9059cbb"
-    );
+        let decoded = decode_calldata("a9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79").await;
+        assert_eq!(decoded.unwrap()[0], "transfer(address,uint256)".to_string());
+    }
 
-    let abi: LosslessAbi = serde_json::from_str(r#"[{"constant":false,"inputs":[{"name":"_to","type":"address"},{"name":"_value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"}]"#).unwrap();
-    let result = import_selectors(SelectorImportData::Abi(vec![abi])).await;
-    assert_eq!(
-        result.unwrap().result.function.duplicated.get("transfer(address,uint256)").unwrap(),
-        "0xa9059cbb"
-    );
-}
+    #[tokio::test]
+    async fn test_import_selectors() {
+        let mut data = RawSelectorImportData::default();
+        data.function.push("transfer(address,uint256)".to_string());
+        let result = import_selectors(SelectorImportData::Raw(data)).await;
+        assert_eq!(
+            result.unwrap().result.function.duplicated.get("transfer(address,uint256)").unwrap(),
+            "0xa9059cbb"
+        );
 
-#[tokio::test]
-async fn test_parse_signatures() {
-    let result = parse_signatures(vec!["transfer(address,uint256)".to_string()]);
-    assert_eq!(
-        result,
-        ParsedSignatures {
-            signatures: RawSelectorImportData {
-                function: vec!["transfer(address,uint256)".to_string()],
+        let abi: LosslessAbi = serde_json::from_str(r#"[{"constant":false,"inputs":[{"name":"_to","type":"address"},{"name":"_value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"}]"#).unwrap();
+        let result = import_selectors(SelectorImportData::Abi(vec![abi])).await;
+        assert_eq!(
+            result.unwrap().result.function.duplicated.get("transfer(address,uint256)").unwrap(),
+            "0xa9059cbb"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_parse_signatures() {
+        let result = parse_signatures(vec!["transfer(address,uint256)".to_string()]);
+        assert_eq!(
+            result,
+            ParsedSignatures {
+                signatures: RawSelectorImportData {
+                    function: vec!["transfer(address,uint256)".to_string()],
+                    ..Default::default()
+                },
                 ..Default::default()
-            },
-            ..Default::default()
-        }
-    );
+            }
+        );
 
-    let result = parse_signatures(vec![
-        "transfer(address,uint256)".to_string(),
-        "function approve(address,uint256)".to_string(),
-    ]);
-    assert_eq!(
-        result,
-        ParsedSignatures {
-            signatures: RawSelectorImportData {
-                function: vec![
-                    "transfer(address,uint256)".to_string(),
-                    "approve(address,uint256)".to_string()
-                ],
+        let result = parse_signatures(vec![
+            "transfer(address,uint256)".to_string(),
+            "function approve(address,uint256)".to_string(),
+        ]);
+        assert_eq!(
+            result,
+            ParsedSignatures {
+                signatures: RawSelectorImportData {
+                    function: vec![
+                        "transfer(address,uint256)".to_string(),
+                        "approve(address,uint256)".to_string()
+                    ],
+                    ..Default::default()
+                },
                 ..Default::default()
-            },
-            ..Default::default()
-        }
-    );
+            }
+        );
 
-    let result = parse_signatures(vec![
-        "transfer(address,uint256)".to_string(),
-        "event Approval(address,address,uint256)".to_string(),
-    ]);
-    assert_eq!(
-        result,
-        ParsedSignatures {
-            signatures: RawSelectorImportData {
-                function: vec!["transfer(address,uint256)".to_string()],
-                event: vec!["Approval(address,address,uint256)".to_string()],
+        let result = parse_signatures(vec![
+            "transfer(address,uint256)".to_string(),
+            "event Approval(address,address,uint256)".to_string(),
+        ]);
+        assert_eq!(
+            result,
+            ParsedSignatures {
+                signatures: RawSelectorImportData {
+                    function: vec!["transfer(address,uint256)".to_string()],
+                    event: vec!["Approval(address,address,uint256)".to_string()],
+                    ..Default::default()
+                },
                 ..Default::default()
-            },
-            ..Default::default()
-        }
-    );
+            }
+        );
 
-    // skips invalid
-    let result = parse_signatures(vec!["event".to_string()]);
-    assert_eq!(
-        result,
-        ParsedSignatures {
-            signatures: RawSelectorImportData { ..Default::default() },
-            ..Default::default()
-        }
-    );
-}
+        // skips invalid
+        let result = parse_signatures(vec!["event".to_string()]);
+        assert_eq!(
+            result,
+            ParsedSignatures {
+                signatures: RawSelectorImportData { ..Default::default() },
+                ..Default::default()
+            }
+        );
+    }
 
-#[tokio::test]
-async fn test_decode_event_topic() {
-    let decoded =
-        decode_event_topic("0x7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6")
-            .await;
-    assert_eq!(decoded.unwrap()[0], "updateAuthority(address,uint8)".to_string());
+    #[tokio::test]
+    async fn test_decode_event_topic() {
+        let decoded = decode_event_topic(
+            "0x7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6",
+        )
+        .await;
+        assert_eq!(decoded.unwrap()[0], "updateAuthority(address,uint8)".to_string());
 
-    let decoded =
-        decode_event_topic("7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6")
-            .await;
-    assert_eq!(decoded.unwrap()[0], "updateAuthority(address,uint8)".to_string());
+        let decoded =
+            decode_event_topic("7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6")
+                .await;
+        assert_eq!(decoded.unwrap()[0], "updateAuthority(address,uint8)".to_string());
 
-    let decoded =
-        decode_event_topic("0xb7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd")
-            .await;
-    assert_eq!(decoded.unwrap()[0], "canCall(address,address,bytes4)".to_string());
+        let decoded = decode_event_topic(
+            "0xb7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd",
+        )
+        .await;
+        assert_eq!(decoded.unwrap()[0], "canCall(address,address,bytes4)".to_string());
 
-    let decoded =
-        decode_event_topic("b7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd")
-            .await;
-    assert_eq!(decoded.unwrap()[0], "canCall(address,address,bytes4)".to_string());
+        let decoded =
+            decode_event_topic("b7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd")
+                .await;
+        assert_eq!(decoded.unwrap()[0], "canCall(address,address,bytes4)".to_string());
+    }
 }
