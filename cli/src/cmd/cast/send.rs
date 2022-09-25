@@ -11,7 +11,7 @@ use std::sync::Arc;
 pub struct SendTxArgs {
     #[clap(
             help = "The destination of the transaction. If not provided, you must use cast send --create.",
-            parse(try_from_str = parse_name_or_address),
+             value_parser = parse_name_or_address,
             value_name = "TO"
         )]
     to: Option<NameOrAddress>,

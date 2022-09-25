@@ -9,7 +9,7 @@ pub struct TransactionOpts {
     long = "gas-limit",
         help = "Gas limit for the transaction.",
         env = "ETH_GAS_LIMIT",
-        parse(try_from_str = parse_u256),
+        value_parser = parse_u256,
         value_name = "GAS_LIMIT"
     )]
     pub gas_limit: Option<U256>,
@@ -18,7 +18,7 @@ pub struct TransactionOpts {
         long = "gas-price",
         help = "Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.",
         env = "ETH_GAS_PRICE",
-        parse(try_from_str = parse_ether_value),
+        value_parser = parse_ether_value,
         value_name = "PRICE"
     )]
     pub gas_price: Option<U256>,
@@ -27,7 +27,7 @@ pub struct TransactionOpts {
         long = "priority-gas-price",
         help = "Max priority fee per gas for EIP1559 transactions.",
         env = "ETH_PRIORITY_GAS_PRICE",
-        parse(try_from_str = parse_ether_value),
+        value_parser = parse_ether_value,
         value_name = "PRICE"
     )]
     pub priority_gas_price: Option<U256>,
@@ -38,7 +38,7 @@ pub struct TransactionOpts {
         long_help = r#"Ether to send in the transaction, either specified in wei, or as a string with a unit type.
 
 Examples: 1ether, 10gwei, 0.01ether"#,
-        parse(try_from_str = parse_ether_value),
+        value_parser = parse_ether_value,
         value_name = "VALUE"
     )]
     pub value: Option<U256>,
@@ -46,7 +46,7 @@ Examples: 1ether, 10gwei, 0.01ether"#,
     #[clap(
         long,
         help = "Nonce for the transaction.",
-        parse(try_from_str = parse_u256),
+        value_parser = parse_u256,
         value_name = "NONCE"
     )]
     pub nonce: Option<U256>,

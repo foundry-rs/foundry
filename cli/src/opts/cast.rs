@@ -223,7 +223,7 @@ Examples:
     #[clap(visible_aliases = &["ac", "acl"])]
     #[clap(about = "Create an access list for a transaction.")]
     AccessList {
-        #[clap(help = "The destination of the transaction.", parse(try_from_str = parse_name_or_address), value_name = "ADDRESS")]
+        #[clap(help = "The destination of the transaction.",  value_parser = parse_name_or_address, value_name = "ADDRESS")]
         address: NameOrAddress,
         #[clap(help = "The signature of the function to call.", value_name = "SIG")]
         sig: String,
@@ -234,7 +234,7 @@ Examples:
             short = 'B',
             help = "The block height you want to query at.",
             long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
-            parse(try_from_str = parse_block_id),
+             value_parser = parse_block_id,
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
@@ -251,7 +251,7 @@ Examples:
         #[clap(
             help = "The block height you want to query at.",
             long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
-            parse(try_from_str = parse_block_id),
+             value_parser = parse_block_id,
             value_name = "BLOCK"
         )]
         block: BlockId,
@@ -320,7 +320,7 @@ Examples:
         rpc_url: Option<String>,
         #[clap(help = "The deployer address.", value_name = "ADDRESS")]
         address: String,
-        #[clap(long, help = "The nonce of the deployer address.", parse(try_from_str = parse_u256), value_name = "NONCE")]
+        #[clap(long, help = "The nonce of the deployer address.", value_parser = parse_u256, value_name = "NONCE")]
         nonce: Option<U256>,
     },
     #[clap(name = "namehash")]
@@ -516,7 +516,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
             short = 'B',
             help = "The block height you want to query at.",
             long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
-            parse(try_from_str = parse_block_id),
+             value_parser = parse_block_id,
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
@@ -532,11 +532,11 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
             short = 'B',
             help = "The block height you want to query at.",
             long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
-            parse(try_from_str = parse_block_id),
+             value_parser = parse_block_id,
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
-        #[clap(help = "The account you want to query", parse(try_from_str = parse_name_or_address), value_name = "WHO")]
+        #[clap(help = "The account you want to query",  value_parser = parse_name_or_address, value_name = "WHO")]
         who: NameOrAddress,
         #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
         rpc_url: Option<String>,
@@ -550,7 +550,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
             short = 'B',
             help = "The block height you want to query at.",
             long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
-            parse(try_from_str = parse_block_id),
+             value_parser = parse_block_id,
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
@@ -566,11 +566,11 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
             short = 'B',
             help = "The block height you want to query at.",
             long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
-            parse(try_from_str = parse_block_id),
+             value_parser = parse_block_id,
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
-        #[clap(help = "The contract address.", parse(try_from_str = parse_name_or_address), value_name = "WHO")]
+        #[clap(help = "The contract address.",  value_parser = parse_name_or_address, value_name = "WHO")]
         who: NameOrAddress,
         #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
         rpc_url: Option<String>,
@@ -621,9 +621,9 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
         about = "Get the raw value of a contract's storage slot."
     )]
     Storage {
-        #[clap(help = "The contract address.", parse(try_from_str = parse_name_or_address), value_name = "ADDRESS")]
+        #[clap(help = "The contract address.",  value_parser = parse_name_or_address, value_name = "ADDRESS")]
         address: NameOrAddress,
-        #[clap(help = "The storage slot number (hex or decimal)", parse(try_from_str = parse_slot), value_name = "SLOT")]
+        #[clap(help = "The storage slot number (hex or decimal)",  value_parser = parse_slot, value_name = "SLOT")]
         slot: H256,
         #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
         rpc_url: Option<String>,
@@ -632,7 +632,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
             short = 'B',
             help = "The block height you want to query at.",
             long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
-            parse(try_from_str = parse_block_id),
+             value_parser = parse_block_id,
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
@@ -643,9 +643,9 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
         about = "Generate a storage proof for a given storage slot."
     )]
     Proof {
-        #[clap(help = "The contract address.", parse(try_from_str = parse_name_or_address), value_name = "ADDRESS")]
+        #[clap(help = "The contract address.",  value_parser = parse_name_or_address, value_name = "ADDRESS")]
         address: NameOrAddress,
-        #[clap(help = "The storage slot numbers (hex or decimal).", parse(try_from_str = parse_slot), value_name = "SLOTS")]
+        #[clap(help = "The storage slot numbers (hex or decimal).",  value_parser = parse_slot, value_name = "SLOTS")]
         slots: Vec<H256>,
         #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
         rpc_url: Option<String>,
@@ -654,7 +654,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
             short = 'B',
             help = "The block height you want to query at.",
             long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
-            parse(try_from_str = parse_block_id),
+             value_parser = parse_block_id,
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
@@ -668,11 +668,11 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
             short = 'B',
             help = "The block height you want to query at.",
             long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
-            parse(try_from_str = parse_block_id),
+             value_parser = parse_block_id,
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
-        #[clap(help = "The address you want to get the nonce for.", parse(try_from_str = parse_name_or_address), value_name = "WHO")]
+        #[clap(help = "The address you want to get the nonce for.",  value_parser = parse_name_or_address, value_name = "WHO")]
         who: NameOrAddress,
         #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
         rpc_url: Option<String>,

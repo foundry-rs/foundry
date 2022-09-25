@@ -161,7 +161,7 @@ pub struct ScriptArgs {
         long,
         help = "Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.",
         env = "ETH_GAS_PRICE",
-        parse(try_from_str = parse_ether_value),
+        value_parser = parse_ether_value,
         value_name = "PRICE"
     )]
     pub with_gas_price: Option<U256>,

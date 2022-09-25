@@ -4,7 +4,7 @@ use crate::{
     cmd::forge::{build::BuildArgs, snapshot::SnapshotArgs, test::TestArgs},
     utils::{self, FoundryPathExt},
 };
-use clap::Parser;
+use clap::{ArgAction, Parser};
 use foundry_config::Config;
 use std::{collections::HashSet, convert::Infallible, path::PathBuf, sync::Arc};
 use tracing::trace;
@@ -34,7 +34,7 @@ pub struct WatchArgs {
     ///
     /// When using --poll mode, you'll want a larger duration, or risk
     /// overloading disk I/O.
-    #[clap(long = "watch-delay", forbid_empty_values = true, value_name = "DELAY")]
+    #[clap(long = "watch-delay", value_parser = clap::builder::NonEmptyStringValueParser::default(), value_name = "DELAY")]
     pub watch_delay: Option<String>,
 
     #[clap(long = "no-restart", help = "Do not restart the command while it's still running.")]
@@ -55,7 +55,7 @@ pub struct WatchArgs {
         value_name = "PATH",
         min_values = 0,
         multiple_values = true,
-        multiple_occurrences = false,
+        action = ArgAction::Append,
         help = "Watches the given files or directories for changes. If no paths are provided, the source and test directories of the project are watched."
     )]
     pub watch: Option<Vec<PathBuf>>,
