@@ -2,7 +2,7 @@ use ethers::abi::{Event, Function};
 use foundry_common::{
     abi::{get_event, get_func},
     fs,
-    selectors::{decode_selector, SelectorType},
+    selectors::{SelectorType, SignEthClient},
 };
 use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
@@ -14,19 +14,23 @@ pub type SingleSignaturesIdentifier = Arc<RwLock<SignaturesIdentifier>>;
 
 /// An identifier that tries to identify functions and events using signatures found at
 /// `sig.eth.samczsun.com`.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct SignaturesIdentifier {
-    // Cached selectors for functions and events
+    /// Cached selectors for functions and events
     cached: CachedSignatures,
-    // Location where to save `CachedSignatures`
+    /// Location where to save `CachedSignatures`
     cached_path: Option<PathBuf>,
-    // Selectors that were unavailable during the session.
+    /// Selectors that were unavailable during the session.
     unavailable: HashSet<Vec<u8>>,
+    /// The API client to fetch signatures from
+    sign_eth_api: SignEthClient,
 }
 
 impl SignaturesIdentifier {
     #[tracing::instrument(name = "signaturescache")]
     pub fn new(cache_path: Option<PathBuf>) -> eyre::Result<SingleSignaturesIdentifier> {
+        let sign_eth_api = SignEthClient::new()?;
+
         let identifier = if let Some(cache_path) = cache_path {
             let path = cache_path.join("signatures");
             trace!(?path, "reading signature cache");
@@ -40,9 +44,14 @@ impl SignaturesIdentifier {
                 }
                 CachedSignatures::default()
             };
-            Self { cached, cached_path: Some(path), unavailable: HashSet::new() }
+            Self { cached, cached_path: Some(path), unavailable: HashSet::new(), sign_eth_api }
         } else {
-            Self::default()
+            Self {
+                cached: Default::default(),
+                cached_path: None,
+                unavailable: HashSet::new(),
+                sign_eth_api,
+            }
         };
 
         Ok(Arc::new(RwLock::new(identifier)))
@@ -81,7 +90,9 @@ impl SignaturesIdentifier {
         let hex_identifier = format!("0x{}", hex::encode(identifier));
 
         if !map.contains_key(&hex_identifier) {
-            if let Ok(signatures) = decode_selector(&hex_identifier, selector_type).await {
+            if let Ok(signatures) =
+                self.sign_eth_api.decode_selector(&hex_identifier, selector_type).await
+            {
                 if let Some(signature) = signatures.into_iter().next() {
                     map.insert(hex_identifier.clone(), signature);
                 }
