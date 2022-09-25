@@ -1,7 +1,7 @@
 //! Tests for reproducing issues
 
 use crate::{config::*, test_helpers::filter::Filter};
-use ethers::abi::Address;
+use ethers::abi::{Address, Event, EventParam, Log, LogParam, ParamType, RawLog, Token};
 use foundry_config::Config;
 use std::str::FromStr;
 
@@ -35,6 +35,25 @@ macro_rules! test_repro_with_sender {
     ($issue:expr, $sender:expr) => {
         test_repro!($issue, false, Some($sender))
     };
+}
+
+macro_rules! run_test_repro {
+    ($issue:expr) => {
+        run_test_repro!($issue, false, None)
+    };
+    ($issue:expr, $should_fail:expr, $sender:expr) => {{
+        let pattern = concat!(".*repros/", $issue);
+        let filter = Filter::path(pattern);
+
+        let mut config = Config::default();
+        if let Some(sender) = $sender {
+            config.sender = sender;
+        }
+
+        let mut config = TestConfig::with_filter(runner_with_config(config), filter)
+            .set_should_fail($should_fail);
+        config.test()
+    }};
 }
 
 // <https://github.com/foundry-rs/foundry/issues/2623>
@@ -133,4 +152,35 @@ fn test_issue_3223() {
 #[test]
 fn test_issue_3220() {
     test_repro!("Issue3220");
+}
+
+// <https://github.com/foundry-rs/foundry/issues/3347>
+#[test]
+fn test_issue_3347() {
+    let mut res = run_test_repro!("Issue3347");
+    let mut res = res.remove("repros/Issue3347.sol:Issue3347Test").unwrap();
+    let test = res.test_results.remove("test()").unwrap();
+    assert_eq!(test.logs.len(), 1);
+    let event = Event {
+        name: "log2".to_string(),
+        inputs: vec![
+            EventParam { name: "x".to_string(), kind: ParamType::Uint(256), indexed: false },
+            EventParam { name: "y".to_string(), kind: ParamType::Uint(256), indexed: false },
+        ],
+        anonymous: false,
+    };
+    let raw_log = RawLog {
+        topics: test.logs[0].topics.clone(),
+        data: test.logs[0].data.clone().to_vec().into(),
+    };
+    let log = event.parse_log(raw_log).unwrap();
+    assert_eq!(
+        log,
+        Log {
+            params: vec![
+                LogParam { name: "x".to_string(), value: Token::Uint(1u64.into()) },
+                LogParam { name: "y".to_string(), value: Token::Uint(2u64.into()) }
+            ]
+        }
+    );
 }
