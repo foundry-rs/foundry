@@ -7,7 +7,7 @@ use crate::{
     abi::HEVMCalls,
     error::SolError,
     executor::{
-        backend::DatabaseExt, inspector::cheatcodes::env::RecordedLogs, CHEATCODE_ADDRESS,
+        backend::DatabaseExt, inspector::cheatcodes::env::RecordedLogs,inspector::cheatcodes::env::Log, CHEATCODE_ADDRESS,
         HARDHAT_CONSOLE_ADDRESS,
     },
 };
@@ -274,7 +274,7 @@ where
             storage_recorded_logs
                 .entries
                 .push(Log { 
-                    emitter: address, 
+                    emitter: *address, 
                     inner: RawLog { topics: topics.to_vec(), data: data.to_vec() }});
         };
     }

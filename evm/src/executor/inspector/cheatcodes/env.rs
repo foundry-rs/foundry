@@ -151,6 +151,7 @@ pub struct RecordedLogs {
     pub entries: Vec<Log>,
 }
 
+#[derive(Clone, Debug)]
 pub struct Log {
     pub emitter: Address,
     pub inner: RawLog,
