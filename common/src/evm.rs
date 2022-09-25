@@ -1,5 +1,5 @@
 //! cli arguments for configuring the evm settings
-use clap::Parser;
+use clap::{ArgAction, Parser};
 use ethers_core::types::{Address, U256};
 use foundry_config::{
     figment::{
@@ -91,7 +91,7 @@ pub struct EvmArgs {
     /// - 3: Print execution traces for failing tests
     /// - 4: Print execution traces for all tests, and setup traces for failing tests
     /// - 5: Print execution and setup traces for all tests
-    #[clap(long, short, parse(from_occurrences), verbatim_doc_comment)]
+    #[clap(long, short, verbatim_doc_comment, action = ArgAction::Count)]
     #[serde(skip)]
     pub verbosity: u8,
 

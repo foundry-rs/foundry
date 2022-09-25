@@ -6,7 +6,7 @@ use crate::{
             test,
             test::{Test, TestOutcome},
         },
-        u32_validator, Cmd,
+        Cmd,
     },
     utils::STATIC_FUZZ_SEED,
 };
@@ -83,7 +83,7 @@ pub struct SnapshotArgs {
     #[clap(
         help = "Tolerates gas deviations up to the specified percentage.",
         long,
-        validator = u32_validator(0, 100),
+        value_parser = 0..100,
         value_name = "SNAPSHOT_THRESHOLD"
     )]
     tolerance: Option<u32>,

@@ -1,6 +1,6 @@
 //! cache command
 
-use clap::{Parser, Subcommand};
+use clap::{builder::PossibleValuesParser, Parser, Subcommand};
 use std::str::FromStr;
 use strum::VariantNames;
 
@@ -16,7 +16,7 @@ pub struct CacheArgs {
     pub sub: CacheSubcommands,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ChainOrAll {
     Chain(Chain),
     All,
@@ -43,8 +43,7 @@ pub struct CleanArgs {
     #[clap(
         env = "CHAIN",
         default_value = "all",
-        possible_value = "all",
-        possible_values = Chain::VARIANTS,
+        value_parser = chain_value_parser(),
         value_name = "CHAINS"
     )]
     chains: Vec<ChainOrAll>,
@@ -70,8 +69,7 @@ pub struct LsArgs {
     #[clap(
         env = "CHAIN",
         default_value = "all",
-        possible_value = "all",
-        possible_values = Chain::VARIANTS,
+        value_parser = chain_value_parser(),
         value_name = "CHAINS"
     )]
     chains: Vec<ChainOrAll>,
@@ -145,4 +143,8 @@ fn clean_chain_cache(
         }
     }
     Ok(())
+}
+
+fn chain_value_parser() -> PossibleValuesParser {
+    Some(&"all").into_iter().chain(Chain::VARIANTS).into()
 }

@@ -24,7 +24,7 @@ pub struct FmtArgs {
         conflicts_with = "root",
         value_hint = ValueHint::FilePath,
         value_name = "PATH",
-        multiple = true
+        multiple_values = true
     )]
     paths: Vec<PathBuf>,
     #[clap(

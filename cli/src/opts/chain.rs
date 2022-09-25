@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{builder::PossibleValuesParser, Parser};
 use ethers::types::Chain;
 use strum::VariantNames;
 
@@ -11,8 +11,7 @@ pub struct ClapChain {
         long = "chain",
         env = "CHAIN",
         default_value = "mainnet",
-        // if Chain implemented ArgEnum, we'd get this for free
-        possible_values = Chain::VARIANTS,
+        value_parser = PossibleValuesParser::from(Chain::VARIANTS),
         value_name = "CHAIN"
     )]
     pub inner: Chain,

@@ -102,7 +102,7 @@ pub struct TestArgs {
     #[clap(
         long,
         help = "Set seed used to generate randomness during your fuzz runs",
-        parse(try_from_str = utils::parse_u256)
+        value_parser =  utils::parse_u256
     )]
     pub fuzz_seed: Option<U256>,
 }
