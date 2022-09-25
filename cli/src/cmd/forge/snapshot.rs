@@ -10,7 +10,7 @@ use crate::{
     },
     utils::STATIC_FUZZ_SEED,
 };
-use clap::{Parser, ValueHint};
+use clap::{builder::RangedU64ValueParser, Parser, ValueHint};
 use ethers::types::U256;
 use eyre::Context;
 use forge::result::TestKindReport;
@@ -83,7 +83,7 @@ pub struct SnapshotArgs {
     #[clap(
         help = "Tolerates gas deviations up to the specified percentage.",
         long,
-        value_parser = 0..100,
+        value_parser = RangedU64ValueParser::<u32>::new().range(0..100),
         value_name = "SNAPSHOT_THRESHOLD"
     )]
     tolerance: Option<u32>,
