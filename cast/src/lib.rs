@@ -27,6 +27,7 @@ pub use tx::TxBuilder;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
 
 pub mod base;
+pub mod errors;
 mod rlp_converter;
 mod tx;
 

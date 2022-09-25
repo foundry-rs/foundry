@@ -1,3 +1,4 @@
+use crate::errors::FunctionSignatureError;
 use ethers_core::{
     abi::Function,
     types::{
@@ -6,7 +7,7 @@ use ethers_core::{
     },
 };
 use ethers_providers::Middleware;
-use eyre::{eyre, Result, WrapErr};
+use eyre::{eyre, Result};
 use foundry_common::abi::{encode_args, get_func, get_func_etherscan};
 use foundry_config::Chain;
 use futures::future::join_all;
@@ -172,19 +173,24 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
         let args = resolve_name_args(&args, self.provider).await;
 
         let func = if sig.contains('(') {
+            // a regular function signature with parentheses
             get_func(sig)?
         } else if sig.starts_with("0x") {
             // if only calldata is provided, returning a dummy function
             get_func("x()")?
         } else {
-            let chain =
-                self.chain.try_into().wrap_err("resolving via etherscan requires a known chain")?;
+            let chain = self
+                .chain
+                .try_into()
+                .map_err(|_| FunctionSignatureError::UnknownChain(self.chain))?;
             get_func_etherscan(
                 sig,
-                self.to.ok_or_else(|| eyre::eyre!("to value must be set"))?,
+                self.to.ok_or(FunctionSignatureError::MissingToAddress)?,
                 &args,
                 chain,
-                self.etherscan_api_key.as_ref().unwrap_or_else(|| panic!(r#"Unable to determine the function signature from `{}`. To find the function signature from the deployed contract via its name instead, a valid ETHERSCAN_API_KEY must be set."#, sig)),
+                self.etherscan_api_key.as_ref().ok_or_else(|| {
+                    FunctionSignatureError::MissingEtherscan { sig: sig.to_string() }
+                })?,
             )
             .await?
         };
@@ -263,16 +269,12 @@ async fn resolve_name_args<M: Middleware>(args: &[String], provider: &M) -> Vec<
 #[cfg(test)]
 mod tests {
     use crate::TxBuilder;
-
+    use async_trait::async_trait;
     use ethers_core::types::{
         transaction::eip2718::TypedTransaction, Address, Chain, NameOrAddress, H160, U256,
     };
     use ethers_providers::{JsonRpcClient, Middleware, ProviderError};
-
     use serde::{de::DeserializeOwned, Serialize};
-
-    use async_trait::async_trait;
-
     use std::str::FromStr;
 
     const ADDR_1: &str = "0000000000000000000000000000000000000001";
