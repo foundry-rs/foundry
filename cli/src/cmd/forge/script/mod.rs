@@ -683,7 +683,7 @@ mod tests {
                 [profile.default]
 
                 [rpc_endpoints]
-                polygonMumbai = "https://polygon-mumbai.g.alchemy.com/v2/${_EXTRACT_RPC_ALIAS}"
+                polygonMumbai = "https://polygon-mumbai.g.alchemy.com/v2/${_CAN_EXTRACT_RPC_ALIAS}"
             "#;
 
         let toml_file = root.join(Config::FILE_NAME);
@@ -701,7 +701,7 @@ mod tests {
 
         assert!(err.downcast::<UnresolvedEnvVarError>().is_ok());
 
-        std::env::set_var("_EXTRACT_RPC_ALIAS", "123456");
+        std::env::set_var("_CAN_EXTRACT_RPC_ALIAS", "123456");
         let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
         assert_eq!(config.eth_rpc_url, Some("polygonMumbai".to_string()));
         assert_eq!(
@@ -745,6 +745,48 @@ mod tests {
         std::env::set_var("_POLYSCAN_API_KEY", "polygonkey");
         let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
         assert_eq!(config.eth_rpc_url, Some("mumbai".to_string()));
+        assert_eq!(
+            evm_opts.fork_url,
+            Some("https://polygon-mumbai.g.alchemy.com/v2/123456".to_string())
+        );
+        let etherscan = config.get_etherscan_api_key(Some(80001u64));
+        assert_eq!(etherscan, Some("polygonkey".to_string()));
+        let etherscan = config.get_etherscan_api_key(Option::<u64>::None);
+        assert_eq!(etherscan, Some("polygonkey".to_string()));
+    }
+
+    #[test]
+    fn can_extract_script_rpc_and_sole_etherscan_alias() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+
+        let config = r#"
+                [profile.default]
+
+               [rpc_endpoints]
+                mumbai = "https://polygon-mumbai.g.alchemy.com/v2/${_SOLE_EXTRACT_RPC_ALIAS}"
+
+                [etherscan]
+                mumbai = { key = "${_SOLE_POLYSCAN_API_KEY}" }
+            "#;
+
+        let toml_file = root.join(Config::FILE_NAME);
+        fs::write(toml_file, config).unwrap();
+        let args: ScriptArgs = ScriptArgs::parse_from([
+            "foundry-cli",
+            "DeployV1",
+            "--rpc-url",
+            "mumbai",
+            "--root",
+            root.as_os_str().to_str().unwrap(),
+        ]);
+        let err = args.load_config_and_evm_opts().unwrap_err();
+
+        assert!(err.downcast::<UnresolvedEnvVarError>().is_ok());
+
+        std::env::set_var("_SOLE_EXTRACT_RPC_ALIAS", "123456");
+        std::env::set_var("_SOLE_POLYSCAN_API_KEY", "polygonkey");
+        let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
         assert_eq!(
             evm_opts.fork_url,
             Some("https://polygon-mumbai.g.alchemy.com/v2/123456".to_string())
