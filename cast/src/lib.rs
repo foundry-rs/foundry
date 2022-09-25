@@ -19,9 +19,8 @@ use ethers_core::{
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
-use foundry_common::fmt::*;
+use foundry_common::{abi::encode_args, fmt::*};
 pub use foundry_evm::*;
-use foundry_utils::encode_args;
 use rustc_hex::{FromHexIter, ToHex};
 use std::{path::PathBuf, str::FromStr};
 pub use tx::TxBuilder;
@@ -1151,7 +1150,7 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
-        foundry_utils::abi_decode(sig, calldata, input)
+        foundry_common::abi::abi_decode(sig, calldata, input)
     }
 
     /// Performs ABI encoding based off of the function signature. Does not include

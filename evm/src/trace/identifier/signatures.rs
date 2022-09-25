@@ -1,6 +1,9 @@
 use ethers::abi::{Event, Function};
-use foundry_common::fs;
-use foundry_utils::{decode_selector, get_event, get_func, selectors::SelectorType};
+use foundry_common::{
+    abi::{get_event, get_func},
+    fs,
+    selectors::{decode_selector, SelectorType},
+};
 use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, io::BufWriter, path::PathBuf, sync::Arc};

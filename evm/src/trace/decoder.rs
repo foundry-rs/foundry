@@ -12,8 +12,7 @@ use ethers::{
     abi::{Abi, Address, Event, Function, Param, ParamType, Token},
     types::H256,
 };
-use foundry_common::SELECTOR_LEN;
-use foundry_utils::get_indexed_event;
+use foundry_common::{abi::get_indexed_event, SELECTOR_LEN};
 use hashbrown::HashSet;
 use std::collections::{BTreeMap, HashMap};
 

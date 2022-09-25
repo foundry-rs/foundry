@@ -28,9 +28,10 @@ use forge::{
     },
     CallKind,
 };
-use foundry_common::{evm::EvmArgs, ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN};
+use foundry_common::{
+    abi::format_token, evm::EvmArgs, ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN,
+};
 use foundry_config::{figment, Config};
-use foundry_utils::{encode_args, format_token};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -40,7 +41,7 @@ use yansi::Paint;
 
 mod build;
 use build::{filter_sources_and_artifacts, BuildOutput};
-use foundry_common::{contracts::get_contract_name, errors::UnlinkedByteCode};
+use foundry_common::{abi::encode_args, contracts::get_contract_name, errors::UnlinkedByteCode};
 use foundry_config::figment::{
     value::{Dict, Map},
     Metadata, Profile, Provider,

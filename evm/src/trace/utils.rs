@@ -5,8 +5,7 @@ use ethers::{
     abi::{Abi, Address, Function, ParamType, Token},
     core::utils::to_checksum,
 };
-use foundry_common::SELECTOR_LEN;
-use foundry_utils::format_token;
+use foundry_common::{abi::format_token, SELECTOR_LEN};
 use std::collections::HashMap;
 
 /// Returns the label for the given `token`

@@ -16,8 +16,7 @@ use ethers::{
     types::{transaction::eip2718::TypedTransaction, Chain},
 };
 use eyre::Context;
-use foundry_common::{compile, try_get_http_provider};
-use foundry_utils::parse_tokens;
+use foundry_common::{abi::parse_tokens, compile, try_get_http_provider};
 use rustc_hex::ToHex;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
