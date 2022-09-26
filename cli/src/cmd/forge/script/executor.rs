@@ -27,6 +27,9 @@ use parking_lot::RwLock;
 use std::{collections::VecDeque, sync::Arc};
 use tracing::trace;
 
+/// Helper alias type for the processed result of a runner onchain simulation.
+type RunnerResult = (Option<TransactionWithMetadata>, Vec<(TraceKind, CallTraceArena)>);
+
 impl ScriptArgs {
     /// Locally deploys and executes the contract method that will collect all broadcastable
     /// transactions.
@@ -154,10 +157,7 @@ impl ScriptArgs {
                         .expect("Internal EVM error");
 
                     if !result.success || result.traces.is_empty() {
-                        return Ok::<
-                            (Option<TransactionWithMetadata>, Vec<(TraceKind, CallTraceArena)>),
-                            eyre::ErrReport,
-                        >((None, result.traces))
+                        return Ok((None, result.traces))
                     }
 
                     let created_contracts = result
@@ -203,6 +203,9 @@ impl ScriptArgs {
 
         let mut abort = false;
         for res in join_all(futs).await {
+            // type hint
+            let res: eyre::Result<RunnerResult> = res;
+
             let (tx, mut traces) = res?;
 
             // Transaction will be `None`, if execution didn't pass.
