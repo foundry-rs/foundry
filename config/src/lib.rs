@@ -739,12 +739,12 @@ impl Config {
     /// # }
     /// ```
     pub fn get_rpc_url(&self) -> Option<Result<Cow<str>, UnresolvedEnvVarError>> {
-        let eth_rpc_url = self.eth_rpc_url.as_ref().or(self.etherscan_api_key.as_ref())?;
+        let maybe_alias = self.eth_rpc_url.as_ref().or(self.etherscan_api_key.as_ref())?;
         let mut endpoints = self.rpc_endpoints.clone().resolved();
-        if let Some(alias) = endpoints.remove(eth_rpc_url) {
+        if let Some(alias) = endpoints.remove(maybe_alias) {
             Some(alias.map(Cow::Owned))
         } else {
-            Some(Ok(Cow::Borrowed(eth_rpc_url.as_str())))
+            Some(Ok(Cow::Borrowed(self.eth_rpc_url.as_deref()?)))
         }
     }
 
@@ -818,7 +818,9 @@ impl Config {
         // we treat the `etherscan_api_key` as actual API key
         // if no chain provided, we assume mainnet
         let chain = self.chain_id.unwrap_or_else(|| Mainnet.into());
-        ResolvedEtherscanConfig::create(maybe_alias, chain).map(Ok)
+
+        let api_key = self.etherscan_api_key.as_ref()?;
+        ResolvedEtherscanConfig::create(api_key, chain).map(Ok)
     }
 
     /// Same as [`Self::get_etherscan_config()`] but optionally updates the config with the given
@@ -2854,6 +2856,26 @@ mod tests {
 
             config.eth_rpc_url = Some("optimism".to_string());
             assert_eq!("https://example.com/", config.get_rpc_url_or_localhost_http().unwrap());
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_resolve_rpc_url_if_etherscan_set() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                etherscan_api_key = "dummy"
+                [rpc_endpoints]
+                optimism = "https://example.com/"
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!("http://localhost:8545", config.get_rpc_url_or_localhost_http().unwrap());
 
             Ok(())
         })
