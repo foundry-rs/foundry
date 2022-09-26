@@ -1344,6 +1344,10 @@ forgetest_init!(can_install_missing_deps_build, |prj: TestProject, mut cmd: Test
 
 // checks that extra output works
 forgetest_init!(can_build_skip_contracts, |prj: TestProject, mut cmd: TestCommand| {
+    // explicitly set to run with 0.8.17 for consistent output
+    let config = Config { solc: Some("0.8.17".into()), ..Default::default() };
+    prj.write_config(config);
+
     // only builds the single template contract `src/*`
     cmd.args(["build", "--skip", "tests", "--skip", "scripts"]);
 
