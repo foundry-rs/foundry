@@ -6,7 +6,7 @@ use crate::cmd::{
     },
     Cmd, LoadConfig,
 };
-use clap::Parser;
+use clap::{ArgAction, Parser};
 use ethers::solc::{Project, ProjectCompileOutput};
 use foundry_common::compile;
 use foundry_config::{
@@ -63,6 +63,13 @@ pub struct BuildArgs {
     #[clap(help = "Print compiled contract sizes.", long = "sizes")]
     #[serde(skip)]
     pub sizes: bool,
+
+    #[clap(long,
+    multiple_values = true,
+    action = ArgAction::Append,
+    help = "Skip building whose names contain FILTER. `tests` and `scripts` are aliases for `.t.sol` and `.s.sol`. (this flag can be used multiple times)")]
+    #[serde(skip)]
+    pub skip: Option<Vec<String>>,
 
     #[clap(flatten, next_help_heading = "WATCH OPTIONS")]
     #[serde(skip)]
