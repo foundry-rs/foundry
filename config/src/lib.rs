@@ -739,7 +739,7 @@ impl Config {
     /// # }
     /// ```
     pub fn get_rpc_url(&self) -> Option<Result<Cow<str>, UnresolvedEnvVarError>> {
-        let eth_rpc_url = self.eth_rpc_url.as_ref()?;
+        let eth_rpc_url = self.eth_rpc_url.as_ref().or(self.etherscan_api_key.as_ref())?;
         let mut endpoints = self.rpc_endpoints.clone().resolved();
         if let Some(alias) = endpoints.remove(eth_rpc_url) {
             Some(alias.map(Cow::Owned))
@@ -808,7 +808,7 @@ impl Config {
     pub fn get_etherscan_config(
         &self,
     ) -> Option<Result<ResolvedEtherscanConfig, EtherscanConfigError>> {
-        let maybe_alias = self.etherscan_api_key.as_ref()?;
+        let maybe_alias = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref())?;
         if self.etherscan.contains_key(maybe_alias) {
             // etherscan points to an alias in the `etherscan` table, so we try to resolve
             // that
@@ -831,7 +831,7 @@ impl Config {
         chain: Option<impl Into<Chain>>,
     ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
         let chain = chain.map(Into::into);
-        if let Some(maybe_alias) = self.etherscan_api_key.as_ref() {
+        if let Some(maybe_alias) = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref()) {
             if self.etherscan.contains_key(maybe_alias) {
                 let mut resolved = self.etherscan.clone().resolved();
                 return resolved.remove(maybe_alias).transpose()
@@ -2994,6 +2994,35 @@ mod tests {
                 .unwrap();
             assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
 
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_extract_etherscan_config_by_chain_and_alias() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                eth_rpc_url = "mumbai"
+
+                [etherscan]
+                mumbai = { key = "https://etherscan-mumbai.com/" }
+
+                [rpc_endpoints]
+                mumbai = "https://polygon-mumbai.g.alchemy.com/v2/mumbai"
+            "#,
+            )?;
+
+            let config = Config::load();
+
+            let mumbai =
+                config.get_etherscan_config_with_chain(Option::<u64>::None).unwrap().unwrap();
+            assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
+
+            let mumbai_rpc = config.get_rpc_url().unwrap().unwrap();
+            assert_eq!(mumbai_rpc, "https://polygon-mumbai.g.alchemy.com/v2/mumbai");
             Ok(())
         });
     }

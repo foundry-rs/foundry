@@ -6,6 +6,7 @@
 //! [`foundry_config::Config`].
 
 pub mod call;
+pub mod create2;
 pub mod estimate;
 pub mod find_block;
 pub mod interface;

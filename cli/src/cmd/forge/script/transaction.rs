@@ -7,12 +7,9 @@ use ethers::{
     types::transaction::eip2718::TypedTransaction,
 };
 use eyre::{ContextCompat, WrapErr};
-use foundry_common::{RpcUrl, SELECTOR_LEN};
-use foundry_utils::format_token;
-
+use foundry_common::{abi::format_token, RpcUrl, SELECTOR_LEN};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-
 use tracing::error;
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]

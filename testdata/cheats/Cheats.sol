@@ -185,6 +185,10 @@ interface Cheats {
     function createSelectFork(string calldata) external returns (uint256);
     // Takes a fork identifier created by `createFork` and sets the corresponding forked state as active.
     function selectFork(uint256) external;
+    // Fetches the given transaction from the active fork and executes it on the current state
+    function transact(bytes32) external;
+    // Fetches the given transaction from the given fork and executes it on the current state
+    function transact(uint256, bytes32) external;
     // Returns the currently active fork
     // Reverts if no fork is currently active
     function activeFork() external returns (uint256);

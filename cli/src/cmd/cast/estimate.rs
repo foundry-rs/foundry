@@ -14,7 +14,7 @@ use foundry_config::{Chain, Config};
 
 #[derive(Debug, Parser)]
 pub struct EstimateArgs {
-    #[clap(help = "The destination of the transaction.", parse(try_from_str = parse_name_or_address), value_name = "TO")]
+    #[clap(help = "The destination of the transaction.", value_parser = parse_name_or_address, value_name = "TO")]
     to: Option<NameOrAddress>,
     #[clap(help = "The signature of the function to call.", value_name = "SIG")]
     sig: Option<String>,
@@ -26,7 +26,7 @@ pub struct EstimateArgs {
         long_help = r#"Ether to send in the transaction, either specified in wei, or as a string with a unit type.
 
 Examples: 1ether, 10gwei, 0.01ether"#,
-        parse(try_from_str = parse_ether_value),
+        value_parser = parse_ether_value,
         value_name = "VALUE"
     )]
     value: Option<U256>,
@@ -53,7 +53,7 @@ pub enum EstimateSubcommands {
             long_help = r#"Ether to send in the transaction, either specified in wei, or as a string with a unit type.
 
 Examples: 1ether, 10gwei, 0.01ether"#,
-            parse(try_from_str = parse_ether_value),
+            value_parser = parse_ether_value,
             value_name = "VALUE"
         )]
         value: Option<U256>,

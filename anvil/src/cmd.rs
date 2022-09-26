@@ -331,7 +331,11 @@ pub struct AnvilEvmArgs {
     #[clap(long, alias = "chain", value_name = "CHAIN_ID", help_heading = "ENVIRONMENT CONFIG")]
     pub chain_id: Option<Chain>,
 
-    #[clap(long, help = "Enable steps tracing used for debug calls returning geth-style traces")]
+    #[clap(
+        long,
+        help = "Enable steps tracing used for debug calls returning geth-style traces",
+        visible_alias = "tracing"
+    )]
     pub steps_tracing: bool,
 }
 
