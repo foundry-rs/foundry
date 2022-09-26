@@ -88,7 +88,32 @@ impl Cmd for FmtArgs {
 
     fn run(self) -> eyre::Result<Self::Output> {
         let config = self.try_load_config_emit_warnings()?;
-        let inputs = self.inputs(&config);
+
+        // collect ignore paths first
+        let mut ignored = vec![];
+        for res in config.fmt.ignore.iter().map(|pattern| glob::glob(pattern)) {
+            match res {
+                Ok(paths) => ignored.extend(paths.into_iter().collect::<Result<Vec<_>, _>>()?),
+                Err(err) => {
+                    eyre::bail!("failed to parse ignore glob pattern: {err}")
+                }
+            }
+        }
+        let ignored: Vec<_> = ignored.into_iter().map(|path| config.__root.0.join(path)).collect();
+
+        let mut inputs = vec![];
+        for input in self.inputs(&config) {
+            match input {
+                Input::Path(p) => {
+                    if (p.starts_with(&config.__root.0) && !ignored.contains(&p)) ||
+                        !ignored.contains(&config.__root.0.join(&p))
+                    {
+                        inputs.push(Input::Path(p));
+                    }
+                }
+                other => inputs.push(other),
+            };
+        }
 
         if inputs.is_empty() {
             cli_warn!("Nothing to format.\nHINT: If you are working outside of the project, try providing paths to your source files: `forge fmt <paths>`");
