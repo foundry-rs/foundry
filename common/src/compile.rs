@@ -16,82 +16,6 @@ use std::{
 };
 use tempfile::NamedTempFile;
 
-/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
-/// compilation was successful or if there was a cache hit.
-pub fn compile(
-    project: &Project,
-    print_names: bool,
-    print_sizes: bool,
-) -> eyre::Result<ProjectCompileOutput> {
-    ProjectCompiler::new(print_names, print_sizes).compile(project)
-}
-
-// https://eips.ethereum.org/EIPS/eip-170
-const CONTRACT_SIZE_LIMIT: usize = 24576;
-
-/// Contracts with info about their size
-pub struct SizeReport {
-    /// `<contract name>:info>`
-    pub contracts: BTreeMap<String, ContractInfo>,
-}
-
-/// How big the contract is and whether it is a dev contract where size limits can be neglected
-pub struct ContractInfo {
-    /// size of the contract in bytes
-    pub size: usize,
-    /// A development contract is either a Script or a Test contract.
-    pub is_dev_contract: bool,
-}
-
-impl SizeReport {
-    /// Returns the size of the largest contract, excluding test contracts.
-    pub fn max_size(&self) -> usize {
-        let mut max_size = 0;
-        for contract in self.contracts.values() {
-            if !contract.is_dev_contract && contract.size > max_size {
-                max_size = contract.size;
-            }
-        }
-        max_size
-    }
-
-    /// Returns true if any contract exceeds the size limit, excluding test contracts.
-    pub fn exceeds_size_limit(&self) -> bool {
-        self.max_size() > CONTRACT_SIZE_LIMIT
-    }
-}
-
-impl Display for SizeReport {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
-        let mut table = Table::new();
-        table.load_preset(UTF8_FULL).apply_modifier(UTF8_ROUND_CORNERS);
-        table.set_header(vec![
-            Cell::new("Contract").add_attribute(Attribute::Bold).fg(Color::Blue),
-            Cell::new("Size (kB)").add_attribute(Attribute::Bold).fg(Color::Blue),
-            Cell::new("Margin (kB)").add_attribute(Attribute::Bold).fg(Color::Blue),
-        ]);
-
-        let contracts = self.contracts.iter().filter(|(_, c)| !c.is_dev_contract && c.size > 0);
-        for (name, contract) in contracts {
-            let margin = CONTRACT_SIZE_LIMIT as isize - contract.size as isize;
-            let color = match contract.size {
-                0..=17999 => Color::Reset,
-                18000..=CONTRACT_SIZE_LIMIT => Color::Yellow,
-                _ => Color::Red,
-            };
-
-            table.add_row(vec![
-                Cell::new(name).fg(color),
-                Cell::new(contract.size as f64 / 1000.0).fg(color),
-                Cell::new(margin as f64 / 1000.0).fg(color),
-            ]);
-        }
-
-        writeln!(f, "{}", table)?;
-        Ok(())
-    }
-}
-
 /// Helper type to configure how to compile a project
 ///
 /// This is merely a wrapper for [Project::compile()] which also prints to stdout dependent on its
@@ -221,6 +145,82 @@ impl ProjectCompiler {
     }
 }
 
+// https://eips.ethereum.org/EIPS/eip-170
+const CONTRACT_SIZE_LIMIT: usize = 24576;
+
+/// Contracts with info about their size
+pub struct SizeReport {
+    /// `<contract name>:info>`
+    pub contracts: BTreeMap<String, ContractInfo>,
+}
+
+impl SizeReport {
+    /// Returns the size of the largest contract, excluding test contracts.
+    pub fn max_size(&self) -> usize {
+        let mut max_size = 0;
+        for contract in self.contracts.values() {
+            if !contract.is_dev_contract && contract.size > max_size {
+                max_size = contract.size;
+            }
+        }
+        max_size
+    }
+
+    /// Returns true if any contract exceeds the size limit, excluding test contracts.
+    pub fn exceeds_size_limit(&self) -> bool {
+        self.max_size() > CONTRACT_SIZE_LIMIT
+    }
+}
+
+impl Display for SizeReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        let mut table = Table::new();
+        table.load_preset(UTF8_FULL).apply_modifier(UTF8_ROUND_CORNERS);
+        table.set_header(vec![
+            Cell::new("Contract").add_attribute(Attribute::Bold).fg(Color::Blue),
+            Cell::new("Size (kB)").add_attribute(Attribute::Bold).fg(Color::Blue),
+            Cell::new("Margin (kB)").add_attribute(Attribute::Bold).fg(Color::Blue),
+        ]);
+
+        let contracts = self.contracts.iter().filter(|(_, c)| !c.is_dev_contract && c.size > 0);
+        for (name, contract) in contracts {
+            let margin = CONTRACT_SIZE_LIMIT as isize - contract.size as isize;
+            let color = match contract.size {
+                0..=17999 => Color::Reset,
+                18000..=CONTRACT_SIZE_LIMIT => Color::Yellow,
+                _ => Color::Red,
+            };
+
+            table.add_row(vec![
+                Cell::new(name).fg(color),
+                Cell::new(contract.size as f64 / 1000.0).fg(color),
+                Cell::new(margin as f64 / 1000.0).fg(color),
+            ]);
+        }
+
+        writeln!(f, "{}", table)?;
+        Ok(())
+    }
+}
+
+/// How big the contract is and whether it is a dev contract where size limits can be neglected
+pub struct ContractInfo {
+    /// size of the contract in bytes
+    pub size: usize,
+    /// A development contract is either a Script or a Test contract.
+    pub is_dev_contract: bool,
+}
+
+/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
+/// compilation was successful or if there was a cache hit.
+pub fn compile(
+    project: &Project,
+    print_names: bool,
+    print_sizes: bool,
+) -> eyre::Result<ProjectCompileOutput> {
+    ProjectCompiler::new(print_names, print_sizes).compile(project)
+}
+
 /// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
 /// compilation was successful or if there was a cache hit.
 /// Doesn't print anything to stdout, thus is "suppressed".
@@ -228,6 +228,27 @@ pub fn suppress_compile(project: &Project) -> eyre::Result<ProjectCompileOutput>
     let output = ethers_solc::report::with_scoped(
         &ethers_solc::report::Report::new(NoReporter::default()),
         || project.compile(),
+    )?;
+
+    if output.has_compiler_errors() {
+        eyre::bail!(output.to_string())
+    }
+
+    Ok(output)
+}
+
+/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
+/// compilation was successful or if there was a cache hit.
+/// Doesn't print anything to stdout, thus is "suppressed".
+///
+/// See [`Project::compile_sparse`]
+pub fn suppress_compile_sparse<F: FileFilter + 'static>(
+    project: &Project,
+    filter: F,
+) -> eyre::Result<ProjectCompileOutput> {
+    let output = ethers_solc::report::with_scoped(
+        &ethers_solc::report::Report::new(NoReporter::default()),
+        || project.compile_sparse(filter),
     )?;
 
     if output.has_compiler_errors() {

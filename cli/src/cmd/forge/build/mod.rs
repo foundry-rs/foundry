@@ -1,14 +1,15 @@
 //! Build command
 use crate::cmd::{
     forge::{
+        build::filter::{SkipBuildFilter, SkipBuildFilters},
         install::{self},
         watch::WatchArgs,
     },
     Cmd, LoadConfig,
 };
-use clap::Parser;
+use clap::{ArgAction, Parser};
 use ethers::solc::{Project, ProjectCompileOutput};
-use foundry_common::compile;
+use foundry_common::{compile, compile::ProjectCompiler};
 use foundry_config::{
     figment::{
         self,
@@ -19,6 +20,7 @@ use foundry_config::{
     Config,
 };
 use serde::Serialize;
+use tracing::trace;
 use watchexec::config::{InitConfig, RuntimeConfig};
 
 mod core;
@@ -26,6 +28,8 @@ pub use self::core::CoreBuildArgs;
 
 mod paths;
 pub use self::paths::ProjectPathsArgs;
+
+mod filter;
 
 foundry_config::merge_impl_figment_convert!(BuildArgs, args);
 
@@ -64,6 +68,14 @@ pub struct BuildArgs {
     #[serde(skip)]
     pub sizes: bool,
 
+    #[clap(
+        long,
+        multiple_values = true,
+        action = ArgAction::Append,
+        help = "Skip building whose names contain FILTER. `tests` and `scripts` are aliases for `.t.sol` and `.s.sol`. (this flag can be used multiple times)")]
+    #[serde(skip)]
+    pub skip: Option<Vec<SkipBuildFilter>>,
+
     #[clap(flatten, next_help_heading = "WATCH OPTIONS")]
     #[serde(skip)]
     pub watch: WatchArgs,
@@ -83,10 +95,23 @@ impl Cmd for BuildArgs {
             project = config.project()?;
         }
 
+        let filters = self.skip.unwrap_or_default();
+
         if self.args.silent {
-            compile::suppress_compile(&project)
+            if filters.is_empty() {
+                compile::suppress_compile(&project)
+            } else {
+                trace!(?filters, "compile with filters suppressed");
+                compile::suppress_compile_sparse(&project, SkipBuildFilters(filters))
+            }
         } else {
-            compile::compile(&project, self.names, self.sizes)
+            let compiler = ProjectCompiler::new(self.names, self.sizes);
+            if filters.is_empty() {
+                compiler.compile(&project)
+            } else {
+                trace!(?filters, "compile with filters");
+                compiler.compile_sparse(&project, SkipBuildFilters(filters))
+            }
         }
     }
 }
@@ -137,5 +162,26 @@ impl Provider for BuildArgs {
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_parse_build_filters() {
+        let args: BuildArgs = BuildArgs::parse_from(["foundry-cli", "--skip", "tests"]);
+        assert_eq!(args.skip, Some(vec![SkipBuildFilter::Tests]));
+
+        let args: BuildArgs = BuildArgs::parse_from(["foundry-cli", "--skip", "scripts"]);
+        assert_eq!(args.skip, Some(vec![SkipBuildFilter::Scripts]));
+
+        let args: BuildArgs =
+            BuildArgs::parse_from(["foundry-cli", "--skip", "tests", "--skip", "scripts"]);
+        assert_eq!(args.skip, Some(vec![SkipBuildFilter::Tests, SkipBuildFilter::Scripts]));
+
+        let args: BuildArgs = BuildArgs::parse_from(["foundry-cli", "--skip", "tests", "scripts"]);
+        assert_eq!(args.skip, Some(vec![SkipBuildFilter::Tests, SkipBuildFilter::Scripts]));
     }
 }
