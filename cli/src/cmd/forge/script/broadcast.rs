@@ -372,13 +372,13 @@ impl ScriptArgs {
         let mut manager = ProvidersManager::default();
         let mut deployments = vec![];
 
-        // Peeking is used to check if the next rpc url is different. If so, it creates a
-        // [`ScriptSequence`] from all the collected transactions up to this point.
-        let mut txes_iter = transactions.into_iter().peekable();
-
         // Config is used to initialize the sequence chain, so we need to change when handling a new
         // sequence. This makes sure we don't lose the original value.
         let original_config_chain = config.chain_id;
+
+        // Peeking is used to check if the next rpc url is different. If so, it creates a
+        // [`ScriptSequence`] from all the collected transactions up to this point.
+        let mut txes_iter = transactions.into_iter().peekable();
 
         while let Some(mut tx) = txes_iter.next() {
             let tx_rpc = match &tx.rpc {
