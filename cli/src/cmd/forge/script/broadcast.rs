@@ -384,12 +384,8 @@ impl ScriptArgs {
             let tx_rpc = match &tx.rpc {
                 Some(rpc) => rpc.clone(),
                 None => {
+                    let rpc = self.evm_opts.ensure_fork_url()?.clone();
                     // Fills the RPC inside the transaction, if missing one.
-                    let rpc = self.evm_opts.fork_url.clone().ok_or_else(|| {
-                        eyre::eyre!(
-                            "Transaction needs an associated RPC if it is to be broadcasted."
-                        )
-                    })?;
                     tx.rpc = Some(rpc.clone());
                     rpc
                 }

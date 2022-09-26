@@ -1,16 +1,10 @@
 //! Contains various tests related to forge script
 use anvil::{spawn, NodeConfig};
-use cast::SimpleCast;
-use ethers::abi::Address;
 use foundry_cli_test_utils::{
-    forgetest, forgetest_async, forgetest_init,
-    util::{OutputExt, TestCommand, TestProject},
+    forgetest_async,
+    util::{TestCommand, TestProject},
     ScriptOutcome, ScriptTester,
 };
-use foundry_utils::rpc;
-use regex::Regex;
-use serde_json::Value;
-use std::{env, path::PathBuf, str::FromStr};
 
 forgetest_async!(
     can_deploy_multi_chain_script_without_lib,

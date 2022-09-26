@@ -64,12 +64,9 @@ impl ScriptArgs {
 
         if self.resume || (self.verify && !self.broadcast) {
             if !self.multi {
-                let fork_url =
-                    self.evm_opts.fork_url.clone().ok_or_else(|| {
-                        eyre::eyre!("You must provide an RPC URL (see --fork-url).")
-                    })?;
+                let fork_url = self.evm_opts.ensure_fork_url()?;
 
-                let provider = Arc::new(try_get_http_provider(&fork_url)?);
+                let provider = Arc::new(try_get_http_provider(fork_url)?);
                 let chain = provider.get_chainid().await?.as_u64();
 
                 verify.set_chain(&script_config.config, chain.into());
@@ -100,7 +97,7 @@ impl ScriptArgs {
                 if self.resume {
                     self.send_transactions(
                         &mut deployment_sequence,
-                        &fork_url,
+                        fork_url,
                         &result.script_wallets,
                     )
                     .await?;
