@@ -6,6 +6,7 @@ use forge::{
     trace::{CallTraceArena, TraceKind},
     CALLER,
 };
+use tracing::log::trace;
 
 /// Represents which simulation stage is the script execution at.
 pub enum SimulationStage {
@@ -36,6 +37,8 @@ impl ScriptRunner {
         is_broadcast: bool,
         need_create2_deployer: bool,
     ) -> eyre::Result<(Address, ScriptResult)> {
+        trace!(target: "script", "executing setUP()");
+
         if !is_broadcast {
             if self.sender == Config::DEFAULT_SENDER {
                 // We max out their balance so that they can deploy and make calls.

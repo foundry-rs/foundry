@@ -14,7 +14,7 @@ use tracing::trace;
 impl ScriptArgs {
     /// Executes the script
     pub async fn run_script(mut self) -> eyre::Result<()> {
-        trace!("executing script command");
+        trace!(target: "script", "executing script command");
 
         let (config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
         let mut script_config = ScriptConfig {
@@ -215,6 +215,8 @@ impl ScriptArgs {
         result: ScriptResult,
         mut verify: VerifyBundle,
     ) -> eyre::Result<()> {
+        trace!(target: "script", "resuming single deployment");
+
         let fork_url = self.evm_opts.ensure_fork_url()?;
         let provider = Arc::new(try_get_http_provider(fork_url)?);
 

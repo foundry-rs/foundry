@@ -37,7 +37,8 @@ impl ScriptArgs {
         sender: Address,
         predeploy_libraries: &[ethers::types::Bytes],
     ) -> eyre::Result<ScriptResult> {
-        trace!("start executing script");
+        trace!(target: "script", "start executing script");
+
         let CompactContractBytecode { abi, bytecode, .. } = contract;
 
         let abi = abi.expect("no ABI for contract");
@@ -94,6 +95,8 @@ impl ScriptArgs {
         decoder: &mut CallTraceDecoder,
         contracts: &ContractsByArtifact,
     ) -> eyre::Result<VecDeque<TransactionWithMetadata>> {
+        trace!(target: "script", "executing onchain simulation");
+
         let runners = Arc::new(
             self.build_runners(script_config)
                 .await

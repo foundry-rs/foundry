@@ -229,6 +229,8 @@ impl ScriptArgs {
             script_config.check_multi_chain_constraints(&libraries)?;
 
             if !script_config.missing_rpc {
+                trace!(target: "script", "creating deployments");
+
                 let mut deployments = self
                     .create_script_sequences(
                         txs,
@@ -240,6 +242,8 @@ impl ScriptArgs {
                     .await?;
 
                 if script_config.has_multiple_rpcs() {
+                    trace!(target: "script", "broadcasting multi chain deployment");
+
                     let multi = MultiChainSequence::new(
                         deployments.clone(),
                         &self.sig,
@@ -259,19 +263,14 @@ impl ScriptArgs {
                         .await?;
                     }
                 } else if self.broadcast {
-                    // Only deploys to one chain
-
-                    let deployment_sequence = deployments.first_mut().expect("to be set.");
-                    let rpc = script_config.total_rpcs.into_iter().next().expect("exists; qed");
-
-                    deployment_sequence.add_libraries(libraries);
-
-                    self.send_transactions(deployment_sequence, &rpc, &result.script_wallets)
-                        .await?;
-
-                    if self.verify {
-                        deployment_sequence.verify_contracts(&script_config.config, verify).await?;
-                    }
+                    self.single_deployment(
+                        deployments.first_mut().expect("to be set."),
+                        script_config,
+                        libraries,
+                        result,
+                        verify,
+                    )
+                    .await?;
                 }
 
                 if !self.broadcast {
@@ -280,6 +279,29 @@ impl ScriptArgs {
             } else {
                 println!("\nIf you wish to simulate on-chain transactions pass a RPC URL.");
             }
+        }
+        Ok(())
+    }
+
+    /// Broadcasts a single chain script.
+    async fn single_deployment(
+        &self,
+        deployment_sequence: &mut ScriptSequence,
+        script_config: ScriptConfig,
+        libraries: Libraries,
+        result: ScriptResult,
+        verify: VerifyBundle,
+    ) -> eyre::Result<()> {
+        trace!(target: "script", "broadcasting single chain deployment");
+
+        let rpc = script_config.total_rpcs.into_iter().next().expect("exists; qed");
+
+        deployment_sequence.add_libraries(libraries);
+
+        self.send_transactions(deployment_sequence, &rpc, &result.script_wallets).await?;
+
+        if self.verify {
+            return deployment_sequence.verify_contracts(&script_config.config, verify).await
         }
         Ok(())
     }

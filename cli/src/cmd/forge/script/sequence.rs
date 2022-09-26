@@ -180,7 +180,8 @@ impl ScriptSequence {
         config: &Config,
         mut verify: VerifyBundle,
     ) -> eyre::Result<()> {
-        trace!(?self.chain, "verifying {} contracts", verify.known_contracts.len());
+        trace!(target: "script", "verifying {} contracts [{}]", verify.known_contracts.len(), self.chain);
+
         verify.set_chain(config, self.chain.into());
 
         if verify.etherscan_key.is_some() ||

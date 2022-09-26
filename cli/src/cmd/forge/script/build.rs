@@ -16,11 +16,13 @@ use eyre::{Context, ContextCompat};
 use foundry_common::compile;
 use foundry_utils::PostLinkInput;
 use std::{collections::BTreeMap, fs, str::FromStr};
-use tracing::warn;
+use tracing::{log::trace, warn};
 
 impl ScriptArgs {
     /// Compiles the file or project and the verify metadata.
     pub fn compile(&mut self, script_config: &mut ScriptConfig) -> eyre::Result<BuildOutput> {
+        trace!(target: "script", "compiling script");
+
         self.build(script_config)
     }
 

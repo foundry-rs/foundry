@@ -19,6 +19,7 @@ use std::{
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
+use tracing::log::trace;
 
 /// Holds the sequences of multiple chain deployments.
 #[derive(Deserialize, Serialize, Clone, Default)]
@@ -126,6 +127,8 @@ impl ScriptArgs {
         }
 
         if self.resume {
+            trace!(target: "script", "resuming multi chain deployment");
+
             let futs = deployments
                 .deployments
                 .iter_mut()
@@ -144,6 +147,8 @@ impl ScriptArgs {
                 return Err(eyre::eyre!("{errors:?}"))
             }
         }
+
+        trace!(target: "script", "broadcasting multi chain deployments");
 
         let futs = deployments
             .deployments

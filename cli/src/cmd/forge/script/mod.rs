@@ -43,6 +43,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     path::PathBuf,
 };
+use tracing::log::trace;
 use yansi::Paint;
 
 mod build;
@@ -409,6 +410,8 @@ impl ScriptArgs {
         project: Project,
         highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
     ) -> eyre::Result<()> {
+        trace!(target: "script", "debugging script");
+
         let (sources, artifacts) = filter_sources_and_artifacts(
             &self.path,
             sources,
