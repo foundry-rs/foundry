@@ -344,11 +344,7 @@ impl ScriptArgs {
                 known_contracts,
             )
             .await
-            .map_err(|err| {
-                eyre::eyre!(
-                    "{err}\n\nTransaction failed when running the on-chain simulation. Check the trace above for more information."
-                )
-            })?
+            .wrap_err("\nTransaction failed when running the on-chain simulation. Check the trace above for more information.")?
         };
         Ok(gas_filled_txs)
     }
@@ -376,7 +372,8 @@ impl ScriptArgs {
         let mut manager = ProvidersManager::default();
         let mut deployments = vec![];
 
-        // Peeks next transaction to figure out if it's the same rpc as the current batch.
+        // Peeking is used to check if the next rpc url is different. If so, it creates a
+        // [`ScriptSequence`] from all the collected transactions up to this point.
         let mut txes_iter = transactions.into_iter().peekable();
 
         // Config is used to initialize the sequence chain, so we need to change when handling a new
@@ -415,16 +412,15 @@ impl ScriptArgs {
                 *total_gas += *typed_tx.gas().expect("gas is set");
             }
 
-            // We only create the [`ScriptSequence`] object when we collect all the rpc related
+            new_sequence.push_back(tx);
+
+            // We only create a [`ScriptSequence`] object when we collect all the rpc related
             // transactions.
             if let Some(next_tx) = txes_iter.peek() {
-                if next_tx.rpc == tx.rpc {
-                    new_sequence.push_back(tx);
+                if next_tx.rpc == Some(tx_rpc) {
                     continue
                 }
             }
-
-            new_sequence.push_back(tx);
 
             config.chain_id = Some(provider_info.chain.into());
             let sequence = ScriptSequence::new(
