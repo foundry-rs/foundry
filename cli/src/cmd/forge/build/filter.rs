@@ -5,7 +5,7 @@ use std::{convert::Infallible, path::Path, str::FromStr};
 
 /// Bundles multiple `SkipBuildFilter` into a single `FileFilter`
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct SkipBuildFilters(Vec<SkipBuildFilter>);
+pub struct SkipBuildFilters(pub Vec<SkipBuildFilter>);
 
 impl FileFilter for SkipBuildFilters {
     /// Only returns a match if no filter a
@@ -77,9 +77,11 @@ mod tests {
         let file = Path::new("A.t.sol");
         assert!(!SkipBuildFilter::Tests.is_match(file));
         assert!(SkipBuildFilter::Scripts.is_match(file));
+        assert!(!SkipBuildFilter::Custom("A.t".to_string()).is_match(file));
 
         let file = Path::new("A.s.sol");
         assert!(SkipBuildFilter::Tests.is_match(file));
         assert!(!SkipBuildFilter::Scripts.is_match(file));
+        assert!(!SkipBuildFilter::Custom("A.s".to_string()).is_match(file));
     }
 }

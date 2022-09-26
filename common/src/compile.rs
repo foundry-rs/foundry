@@ -237,6 +237,27 @@ pub fn suppress_compile(project: &Project) -> eyre::Result<ProjectCompileOutput>
     Ok(output)
 }
 
+/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
+/// compilation was successful or if there was a cache hit.
+/// Doesn't print anything to stdout, thus is "suppressed".
+///
+/// See [`Project::compile_sparse`]
+pub fn suppress_compile_sparse<F: FileFilter + 'static>(
+    project: &Project,
+    filter: F,
+) -> eyre::Result<ProjectCompileOutput> {
+    let output = ethers_solc::report::with_scoped(
+        &ethers_solc::report::Report::new(NoReporter::default()),
+        || project.compile_sparse(filter),
+    )?;
+
+    if output.has_compiler_errors() {
+        eyre::bail!(output.to_string())
+    }
+
+    Ok(output)
+}
+
 /// Compile a set of files not necessarily included in the `project`'s source dir
 ///
 /// If `silent` no solc related output will be emitted to stdout
