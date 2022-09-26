@@ -139,6 +139,8 @@ pub struct NodeConfig {
     pub ipc_path: Option<Option<String>>,
     /// Enable transaction/call steps tracing for debug calls returning geth-style traces
     pub enable_steps_tracing: bool,
+    /// Configure the code size limit
+    pub code_size_limit: Option<usize>,
 }
 
 impl NodeConfig {
@@ -353,6 +355,7 @@ impl Default for NodeConfig {
             // alchemy max cpus <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
             compute_units_per_second: ALCHEMY_FREE_TIER_CUPS,
             ipc_path: None,
+            code_size_limit: None,
         }
     }
 }
@@ -373,6 +376,13 @@ impl NodeConfig {
     /// Returns the base fee to use
     pub fn get_hardfork(&self) -> Hardfork {
         self.hardfork.unwrap_or_default()
+    }
+
+    /// Sets a custom code size limit
+    #[must_use]
+    pub fn with_code_size_limit(mut self, code_size_limit: Option<usize>) -> Self {
+        self.code_size_limit = code_size_limit;
+        self
     }
 
     /// Sets the chain ID
@@ -682,7 +692,7 @@ impl NodeConfig {
             cfg: CfgEnv {
                 spec_id: self.get_hardfork().into(),
                 chain_id: self.get_chain_id().into(),
-                limit_contract_code_size: Some(usize::MAX),
+                limit_contract_code_size: self.code_size_limit,
                 ..Default::default()
             },
             block: BlockEnv {
