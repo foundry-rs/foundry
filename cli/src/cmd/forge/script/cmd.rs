@@ -59,132 +59,44 @@ impl ScriptArgs {
 
         // Execute once with default sender.
         let sender = script_config.evm_opts.sender;
+
+        // We need to execute the script even if just resuming, in case we need to collect private
+        // keys from the execution.
         let mut result =
             self.execute(&mut script_config, contract, sender, &predeploy_libraries).await?;
 
         if self.resume || (self.verify && !self.broadcast) {
-            if !self.multi {
-                let fork_url = self.evm_opts.ensure_fork_url()?;
-
-                let provider = Arc::new(try_get_http_provider(fork_url)?);
-                let chain = provider.get_chainid().await?.as_u64();
-
-                verify.set_chain(&script_config.config, chain.into());
-
-                let broadcasted = self.broadcast || self.resume;
-                let mut deployment_sequence = match ScriptSequence::load(
-                    &script_config.config,
-                    &self.sig,
-                    &target,
-                    chain,
-                    broadcasted,
-                ) {
-                    Ok(seq) => seq,
-                    // If the script was simulated, but there was no attempt to broadcast yet,
-                    // try to read the script sequence from the `dry-run/` folder
-                    Err(_) if broadcasted => ScriptSequence::load(
-                        &script_config.config,
-                        &self.sig,
-                        &target,
-                        chain,
-                        false,
-                    )?,
-                    Err(err) => eyre::bail!(err),
-                };
-
-                receipts::wait_for_pending(provider, &mut deployment_sequence).await?;
-
-                if self.resume {
-                    self.send_transactions(
-                        &mut deployment_sequence,
-                        fork_url,
-                        &result.script_wallets,
-                    )
-                    .await?;
-                }
-
-                if self.verify {
-                    // We might have predeployed libraries from the broadcasting, so we need to
-                    // relink the contracts with them, since their mapping is
-                    // not included in the solc cache files.
-                    let BuildOutput { highlevel_known_contracts, .. } = self.link(
-                        project,
-                        default_known_contracts,
-                        Libraries::parse(&deployment_sequence.libraries)?,
-                        script_config.config.sender, // irrelevant, since we're not creating any
-                        U256::zero(),                // irrelevant, since we're not creating any
-                    )?;
-
-                    verify.known_contracts = flatten_contracts(&highlevel_known_contracts, false);
-
-                    deployment_sequence.verify_contracts(&script_config.config, verify).await?;
-                }
-
-                return Ok(())
-            }
-
-            let multi =
-                MultiChainSequence::load(&script_config.config.broadcast, &self.sig, &target)?;
-
             return self
-                .multi_chain_deployment(
-                    multi,
+                .resume_deployment(
+                    script_config,
+                    target,
                     libraries,
-                    &script_config.config,
-                    result.script_wallets,
+                    result,
                     verify,
+                    project,
+                    default_known_contracts,
                 )
                 .await
         }
 
         let known_contracts = flatten_contracts(&highlevel_known_contracts, true);
-
         let mut decoder = self.decode_traces(&script_config, &mut result, &known_contracts)?;
 
         if self.debug {
             return self.run_debugger(&decoder, sources, result, project, highlevel_known_contracts)
         }
 
-        if let Some(new_sender) = self.maybe_new_sender(
-            &script_config.evm_opts,
-            result.transactions.as_ref(),
-            &predeploy_libraries,
-        )? {
-            // We have a new sender, so we need to relink all the predeployed libraries.
-            (libraries, highlevel_known_contracts) = self
-                .rerun_with_new_deployer(
-                    project,
-                    &mut script_config,
-                    new_sender,
-                    &mut result,
-                    default_known_contracts,
-                )
-                .await?;
-            // redo traces
-            decoder = self.decode_traces(
-                &script_config,
-                &mut result,
-                &flatten_contracts(&highlevel_known_contracts, true),
-            )?;
-        } else {
-            // Add predeploy libraries to the list of broadcastable transactions.
-            let mut lib_deploy = self.create_deploy_transactions(
-                script_config.evm_opts.sender,
-                script_config.sender_nonce,
-                &predeploy_libraries,
-                &script_config.evm_opts.fork_url,
-            );
-
-            if let Some(txs) = &mut result.transactions {
-                for tx in txs.iter() {
-                    lib_deploy.push_back(BroadcastableTransaction {
-                        rpc: tx.rpc.clone(),
-                        transaction: TypedTransaction::Legacy(tx.transaction.clone().into()),
-                    });
-                }
-                *txs = lib_deploy;
-            }
-        }
+        self.maybe_prepare_libraries(
+            &mut script_config,
+            &mut result,
+            predeploy_libraries,
+            &mut libraries,
+            &mut highlevel_known_contracts,
+            project,
+            default_known_contracts,
+            &mut decoder,
+        )
+        .await?;
 
         if self.json {
             self.show_json(&script_config, &result)?;
@@ -193,7 +105,6 @@ impl ScriptArgs {
         }
 
         verify.known_contracts = flatten_contracts(&highlevel_known_contracts, false);
-
         self.check_contract_sizes(&result, &highlevel_known_contracts)?;
 
         self.handle_broadcastable_transactions(
@@ -205,6 +116,153 @@ impl ScriptArgs {
             verify,
         )
         .await
+    }
+
+    async fn maybe_prepare_libraries(
+        &mut self,
+        script_config: &mut ScriptConfig,
+        result: &mut ScriptResult,
+        predeploy_libraries: Vec<Bytes>,
+        libraries: &mut Libraries,
+        highlevel_known_contracts: &mut ArtifactContracts<ContractBytecodeSome>,
+        project: Project,
+        default_known_contracts: ArtifactContracts,
+        decoder: &mut CallTraceDecoder,
+    ) -> eyre::Result<()> {
+        if let Some(new_sender) = self.maybe_new_sender(
+            &script_config.evm_opts,
+            result.transactions.as_ref(),
+            &predeploy_libraries,
+        )? {
+            // We have a new sender, so we need to relink all the predeployed libraries.
+            (*libraries, *highlevel_known_contracts) = self
+                .rerun_with_new_deployer(
+                    project,
+                    script_config,
+                    new_sender,
+                    result,
+                    default_known_contracts,
+                )
+                .await?;
+            // redo traces
+            *decoder = self.decode_traces(
+                &*script_config,
+                result,
+                &flatten_contracts(highlevel_known_contracts, true),
+            )?;
+            return Ok(())
+        }
+
+        // Add predeploy libraries to the list of broadcastable transactions.
+        let mut lib_deploy = self.create_deploy_transactions(
+            script_config.evm_opts.sender,
+            script_config.sender_nonce,
+            &predeploy_libraries,
+            &script_config.evm_opts.fork_url,
+        );
+
+        if let Some(txs) = &mut result.transactions {
+            for tx in txs.iter() {
+                lib_deploy.push_back(BroadcastableTransaction {
+                    rpc: tx.rpc.clone(),
+                    transaction: TypedTransaction::Legacy(tx.transaction.clone().into()),
+                });
+            }
+            *txs = lib_deploy;
+        }
+
+        Ok(())
+    }
+
+    async fn resume_deployment(
+        &mut self,
+        script_config: ScriptConfig,
+        target: ArtifactId,
+        libraries: Libraries,
+        result: ScriptResult,
+        verify: VerifyBundle,
+        project: Project,
+        default_known_contracts: ArtifactContracts,
+    ) -> eyre::Result<()> {
+        if self.multi {
+            return self
+                .multi_chain_deployment(
+                    MultiChainSequence::load(&script_config.config.broadcast, &self.sig, &target)?,
+                    libraries,
+                    &script_config.config,
+                    result.script_wallets,
+                    verify,
+                )
+                .await
+        }
+        self.resume_single_deployment(
+            verify,
+            script_config,
+            target,
+            result,
+            project,
+            default_known_contracts,
+        )
+        .await
+    }
+
+    async fn resume_single_deployment(
+        &mut self,
+        mut verify: VerifyBundle,
+        script_config: ScriptConfig,
+        target: ArtifactId,
+        result: ScriptResult,
+        project: Project,
+        default_known_contracts: ArtifactContracts,
+    ) -> eyre::Result<()> {
+        let fork_url = self.evm_opts.ensure_fork_url()?;
+        let provider = Arc::new(try_get_http_provider(fork_url)?);
+
+        let chain = provider.get_chainid().await?.as_u64();
+        verify.set_chain(&script_config.config, chain.into());
+
+        let broadcasted = self.broadcast || self.resume;
+        let mut deployment_sequence = match ScriptSequence::load(
+            &script_config.config,
+            &self.sig,
+            &target,
+            chain,
+            broadcasted,
+        ) {
+            Ok(seq) => seq,
+            // If the script was simulated, but there was no attempt to broadcast yet,
+            // try to read the script sequence from the `dry-run/` folder
+            Err(_) if broadcasted => {
+                ScriptSequence::load(&script_config.config, &self.sig, &target, chain, false)?
+            }
+            Err(err) => eyre::bail!(err),
+        };
+
+        receipts::wait_for_pending(provider, &mut deployment_sequence).await?;
+
+        if self.resume {
+            self.send_transactions(&mut deployment_sequence, fork_url, &result.script_wallets)
+                .await?;
+        }
+
+        if self.verify {
+            // We might have predeployed libraries from the broadcasting, so we need to
+            // relink the contracts with them, since their mapping is
+            // not included in the solc cache files.
+            let BuildOutput { highlevel_known_contracts, .. } = self.link(
+                project,
+                default_known_contracts,
+                Libraries::parse(&deployment_sequence.libraries)?,
+                script_config.config.sender, // irrelevant, since we're not creating any
+                U256::zero(),                // irrelevant, since we're not creating any
+            )?;
+
+            verify.known_contracts = flatten_contracts(&highlevel_known_contracts, false);
+
+            deployment_sequence.verify_contracts(&script_config.config, verify).await?;
+        }
+
+        Ok(())
     }
 
     /// Reruns the execution with a new sender and relinks the libraries accordingly
