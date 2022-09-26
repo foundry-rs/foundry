@@ -16,7 +16,7 @@ use ethers::{
     types::{transaction::eip2718::TypedTransaction, NameOrAddress, H256, U256},
     utils,
 };
-use foundry_common::fmt::*;
+use foundry_common::{fmt::*, RpcUrl};
 use hex::FromHex;
 use revm::{Account, CreateInputs, Database, EVMData, JournaledState, TransactTo};
 use std::{collections::VecDeque, str::FromStr};
@@ -31,7 +31,7 @@ pub const DEFAULT_CREATE2_DEPLOYER: H160 = H160([
 /// Helps collecting transactions from different forks.
 #[derive(Debug, Clone, Default)]
 pub struct BroadcastableTransaction {
-    pub rpc: Option<String>,
+    pub rpc: Option<RpcUrl>,
     pub transaction: TypedTransaction,
 }
 

@@ -16,7 +16,7 @@ use eyre::{Context, ContextCompat};
 use foundry_common::compile;
 use foundry_utils::PostLinkInput;
 use std::{collections::BTreeMap, fs, str::FromStr};
-use tracing::{log::trace, warn};
+use tracing::{trace, warn};
 
 impl ScriptArgs {
     /// Compiles the file or project and the verify metadata.
