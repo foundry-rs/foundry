@@ -3,7 +3,7 @@ use ethers::types::{Address, Bytes, NameOrAddress, U256};
 use forge::{
     executor::{CallResult, DeployResult, EvmError, Executor, RawCallResult},
     revm::{return_ok, Return},
-    trace::{CallTraceArena, TraceKind},
+    trace::{TraceKind, Traces},
     CALLER,
 };
 use tracing::log::trace;
@@ -56,7 +56,7 @@ impl ScriptRunner {
         self.executor.set_balance(CALLER, U256::MAX)?;
 
         // Deploy libraries
-        let mut traces: Vec<(TraceKind, CallTraceArena)> = libraries
+        let mut traces: Traces = libraries
             .iter()
             .filter_map(|code| {
                 let DeployResult { traces, .. } = self

@@ -27,6 +27,8 @@ use std::{
 };
 use yansi::{Color, Paint};
 
+pub type Traces = Vec<(TraceKind, CallTraceArena)>;
+
 /// An arena of [CallTraceNode]s
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CallTraceArena {
@@ -523,7 +525,7 @@ fn trace_color(trace: &CallTrace) -> Color {
 
 /// Given a list of traces and artifacts, it returns a map connecting address to abi
 pub fn load_contracts(
-    traces: Vec<(TraceKind, CallTraceArena)>,
+    traces: Traces,
     known_contracts: Option<&ContractsByArtifact>,
 ) -> ContractsByAddress {
     if let Some(contracts) = known_contracts {

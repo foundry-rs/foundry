@@ -29,8 +29,8 @@ use forge::{
     executor::{opts::EvmOpts, Backend},
     trace::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
-        CallTraceArena, CallTraceDecoder, CallTraceDecoderBuilder, RawOrDecodedCall,
-        RawOrDecodedReturnData, TraceKind,
+        CallTraceDecoder, CallTraceDecoderBuilder, RawOrDecodedCall, RawOrDecodedReturnData,
+        TraceKind, Traces,
     },
     CallKind,
 };
@@ -603,7 +603,7 @@ impl Provider for ScriptArgs {
 pub struct ScriptResult {
     pub success: bool,
     pub logs: Vec<Log>,
-    pub traces: Vec<(TraceKind, CallTraceArena)>,
+    pub traces: Traces,
     pub debug: Option<Vec<DebugArena>>,
     pub gas_used: u64,
     pub labeled_addresses: BTreeMap<Address, String>,

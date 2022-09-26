@@ -18,7 +18,7 @@ use ethers::{
 };
 use forge::{
     executor::{inspector::CheatsConfig, Backend, ExecutorBuilder},
-    trace::CallTraceDecoder,
+    trace::{CallTraceDecoder, Traces},
     CallKind,
 };
 use foundry_common::RpcUrl;
@@ -28,7 +28,7 @@ use std::{collections::VecDeque, sync::Arc};
 use tracing::trace;
 
 /// Helper alias type for the processed result of a runner onchain simulation.
-type RunnerResult = (Option<TransactionWithMetadata>, Vec<(TraceKind, CallTraceArena)>);
+type RunnerResult = (Option<TransactionWithMetadata>, Traces);
 
 impl ScriptArgs {
     /// Locally deploys and executes the contract method that will collect all broadcastable
