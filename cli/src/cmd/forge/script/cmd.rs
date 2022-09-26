@@ -36,7 +36,7 @@ impl ScriptArgs {
             script_config.config.libraries = Default::default();
         }
 
-        let build_output = self.compile(&script_config)?;
+        let build_output = self.compile(&mut script_config)?;
 
         let mut verify = VerifyBundle::new(
             &build_output.project,
@@ -48,13 +48,13 @@ impl ScriptArgs {
 
         let BuildOutput {
             project,
-            target,
             contract,
             mut highlevel_known_contracts,
             predeploy_libraries,
             known_contracts: default_known_contracts,
             sources,
             mut libraries,
+            ..
         } = build_output;
 
         // Execute once with default sender.
@@ -69,12 +69,11 @@ impl ScriptArgs {
             return self
                 .resume_deployment(
                     script_config,
-                    target,
+                    project,
+                    default_known_contracts,
                     libraries,
                     result,
                     verify,
-                    project,
-                    default_known_contracts,
                 )
                 .await
         }
@@ -88,13 +87,11 @@ impl ScriptArgs {
 
         self.maybe_prepare_libraries(
             &mut script_config,
-            &mut result,
-            predeploy_libraries,
-            &mut libraries,
-            &mut highlevel_known_contracts,
             project,
+            &mut highlevel_known_contracts,
             default_known_contracts,
-            &mut decoder,
+            (&mut libraries, predeploy_libraries),
+            (&mut result, &mut decoder),
         )
         .await?;
 
@@ -108,7 +105,6 @@ impl ScriptArgs {
         self.check_contract_sizes(&result, &highlevel_known_contracts)?;
 
         self.handle_broadcastable_transactions(
-            &target,
             result,
             libraries,
             &mut decoder,
@@ -118,16 +114,16 @@ impl ScriptArgs {
         .await
     }
 
+    // In case there are libraries to be deployed, it makes sure that these are added to the list of
+    // broadcastable transactions  with the appropriate sender.
     async fn maybe_prepare_libraries(
         &mut self,
         script_config: &mut ScriptConfig,
-        result: &mut ScriptResult,
-        predeploy_libraries: Vec<Bytes>,
-        libraries: &mut Libraries,
-        highlevel_known_contracts: &mut ArtifactContracts<ContractBytecodeSome>,
         project: Project,
+        highlevel_known_contracts: &mut ArtifactContracts<ContractBytecodeSome>,
         default_known_contracts: ArtifactContracts,
-        decoder: &mut CallTraceDecoder,
+        (libraries, predeploy_libraries): (&mut Libraries, Vec<Bytes>),
+        (result, decoder): (&mut ScriptResult, &mut CallTraceDecoder),
     ) -> eyre::Result<()> {
         if let Some(new_sender) = self.maybe_new_sender(
             &script_config.evm_opts,
@@ -144,7 +140,8 @@ impl ScriptArgs {
                     default_known_contracts,
                 )
                 .await?;
-            // redo traces
+
+            // redo traces for the new addresses
             *decoder = self.decode_traces(
                 &*script_config,
                 result,
@@ -174,20 +171,24 @@ impl ScriptArgs {
         Ok(())
     }
 
+    /// Resumes the deployment and/or verification of the script.
     async fn resume_deployment(
         &mut self,
         script_config: ScriptConfig,
-        target: ArtifactId,
+        project: Project,
+        default_known_contracts: ArtifactContracts,
         libraries: Libraries,
         result: ScriptResult,
         verify: VerifyBundle,
-        project: Project,
-        default_known_contracts: ArtifactContracts,
     ) -> eyre::Result<()> {
         if self.multi {
             return self
                 .multi_chain_deployment(
-                    MultiChainSequence::load(&script_config.config.broadcast, &self.sig, &target)?,
+                    MultiChainSequence::load(
+                        &script_config.config.broadcast,
+                        &self.sig,
+                        script_config.target_contract(),
+                    )?,
                     libraries,
                     &script_config.config,
                     result.script_wallets,
@@ -196,24 +197,23 @@ impl ScriptArgs {
                 .await
         }
         self.resume_single_deployment(
-            verify,
             script_config,
-            target,
-            result,
             project,
             default_known_contracts,
+            result,
+            verify,
         )
         .await
     }
 
+    /// Resumes the deployment and/or verification of a single RPC script.
     async fn resume_single_deployment(
         &mut self,
-        mut verify: VerifyBundle,
         script_config: ScriptConfig,
-        target: ArtifactId,
-        result: ScriptResult,
         project: Project,
         default_known_contracts: ArtifactContracts,
+        result: ScriptResult,
+        mut verify: VerifyBundle,
     ) -> eyre::Result<()> {
         let fork_url = self.evm_opts.ensure_fork_url()?;
         let provider = Arc::new(try_get_http_provider(fork_url)?);
@@ -225,16 +225,20 @@ impl ScriptArgs {
         let mut deployment_sequence = match ScriptSequence::load(
             &script_config.config,
             &self.sig,
-            &target,
+            script_config.target_contract(),
             chain,
             broadcasted,
         ) {
             Ok(seq) => seq,
             // If the script was simulated, but there was no attempt to broadcast yet,
             // try to read the script sequence from the `dry-run/` folder
-            Err(_) if broadcasted => {
-                ScriptSequence::load(&script_config.config, &self.sig, &target, chain, false)?
-            }
+            Err(_) if broadcasted => ScriptSequence::load(
+                &script_config.config,
+                &self.sig,
+                script_config.target_contract(),
+                chain,
+                false,
+            )?,
             Err(err) => eyre::bail!(err),
         };
 

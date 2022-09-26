@@ -218,7 +218,6 @@ impl ScriptArgs {
     /// them.
     pub async fn handle_broadcastable_transactions(
         &self,
-        target: &ArtifactId,
         mut result: ScriptResult,
         libraries: Libraries,
         decoder: &mut CallTraceDecoder,
@@ -236,7 +235,6 @@ impl ScriptArgs {
                         &result,
                         &mut script_config,
                         decoder,
-                        target,
                         &verify.known_contracts,
                     )
                     .await?;
@@ -245,7 +243,7 @@ impl ScriptArgs {
                     let multi = MultiChainSequence::new(
                         deployments.clone(),
                         &self.sig,
-                        target,
+                        script_config.target_contract(),
                         &script_config.config.broadcast,
                         self.broadcast,
                     )?;
@@ -297,7 +295,6 @@ impl ScriptArgs {
         script_result: &ScriptResult,
         script_config: &mut ScriptConfig,
         decoder: &mut CallTraceDecoder,
-        target: &ArtifactId,
         known_contracts: &ContractsByArtifact,
     ) -> eyre::Result<Vec<ScriptSequence>> {
         if !txs.is_empty() {
@@ -308,7 +305,12 @@ impl ScriptArgs {
             let returns = self.get_returns(&*script_config, &script_result.returned)?;
 
             return self
-                .bundle_transactions(gas_filled_txs, target, &mut script_config.config, returns)
+                .bundle_transactions(
+                    gas_filled_txs,
+                    &script_config.target_contract().clone(),
+                    &mut script_config.config,
+                    returns,
+                )
                 .await
         } else if self.broadcast {
             eyre::bail!("No onchain transactions generated in script");

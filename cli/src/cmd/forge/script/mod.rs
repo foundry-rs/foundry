@@ -630,6 +630,8 @@ pub struct ScriptConfig {
     pub sender_nonce: U256,
     /// Maps a rpc url to a backend
     pub backends: HashMap<RpcUrl, Backend>,
+    /// Script target contract
+    pub target_contract: Option<ArtifactId>,
     /// Function called by the script
     pub called_function: Option<Function>,
     /// Unique list of rpc urls present
@@ -671,6 +673,11 @@ impl ScriptConfig {
             }
         }
         Ok(())
+    }
+
+    /// Returns the script target contract
+    fn target_contract(&self) -> &ArtifactId {
+        self.target_contract.as_ref().expect("should exist after building")
     }
 }
 

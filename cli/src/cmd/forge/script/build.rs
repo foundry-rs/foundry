@@ -20,12 +20,12 @@ use tracing::warn;
 
 impl ScriptArgs {
     /// Compiles the file or project and the verify metadata.
-    pub fn compile(&mut self, script_config: &ScriptConfig) -> eyre::Result<BuildOutput> {
+    pub fn compile(&mut self, script_config: &mut ScriptConfig) -> eyre::Result<BuildOutput> {
         self.build(script_config)
     }
 
     /// Compiles the file with auto-detection and compiler params.
-    pub fn build(&mut self, script_config: &ScriptConfig) -> eyre::Result<BuildOutput> {
+    pub fn build(&mut self, script_config: &mut ScriptConfig) -> eyre::Result<BuildOutput> {
         let (project, output) = self.get_project_and_output(script_config)?;
 
         let mut sources: BTreeMap<u32, String> = BTreeMap::new();
@@ -58,7 +58,10 @@ impl ScriptArgs {
             script_config.evm_opts.sender,
             script_config.sender_nonce,
         )?;
+
         output.sources = sources;
+        script_config.target_contract = Some(output.target.clone());
+
         Ok(output)
     }
 
