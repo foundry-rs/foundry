@@ -1,6 +1,7 @@
 //! Build command
 use crate::cmd::{
     forge::{
+        build::filter::SkipBuildFilter,
         install::{self},
         watch::WatchArgs,
     },
@@ -26,6 +27,8 @@ pub use self::core::CoreBuildArgs;
 
 mod paths;
 pub use self::paths::ProjectPathsArgs;
+
+mod filter;
 
 foundry_config::merge_impl_figment_convert!(BuildArgs, args);
 
@@ -64,12 +67,13 @@ pub struct BuildArgs {
     #[serde(skip)]
     pub sizes: bool,
 
-    #[clap(long,
-    multiple_values = true,
-    action = ArgAction::Append,
-    help = "Skip building whose names contain FILTER. `tests` and `scripts` are aliases for `.t.sol` and `.s.sol`. (this flag can be used multiple times)")]
+    #[clap(
+        long,
+        multiple_values = true,
+        action = ArgAction::Append,
+        help = "Skip building whose names contain FILTER. `tests` and `scripts` are aliases for `.t.sol` and `.s.sol`. (this flag can be used multiple times)")]
     #[serde(skip)]
-    pub skip: Option<Vec<String>>,
+    pub skip: Option<Vec<SkipBuildFilter>>,
 
     #[clap(flatten, next_help_heading = "WATCH OPTIONS")]
     #[serde(skip)]
