@@ -11,6 +11,9 @@ use foundry_common::{contracts::flatten_contracts, try_get_http_provider};
 use std::sync::Arc;
 use tracing::trace;
 
+/// Helper alias type for the collection of data changed due to the new sender.
+type NewSenderChanges = (CallTraceDecoder, Libraries, ArtifactContracts<ContractBytecodeSome>);
+
 impl ScriptArgs {
     /// Executes the script
     pub async fn run_script(mut self) -> eyre::Result<()> {
@@ -85,15 +88,20 @@ impl ScriptArgs {
             return self.run_debugger(&decoder, sources, result, project, highlevel_known_contracts)
         }
 
-        self.maybe_prepare_libraries(
-            &mut script_config,
-            project,
-            &mut highlevel_known_contracts,
-            default_known_contracts,
-            (&mut libraries, predeploy_libraries),
-            (&mut result, &mut decoder),
-        )
-        .await?;
+        if let Some((new_traces, updated_libraries, updated_contracts)) = self
+            .maybe_prepare_libraries(
+                &mut script_config,
+                project,
+                default_known_contracts,
+                predeploy_libraries,
+                &mut result,
+            )
+            .await?
+        {
+            decoder = new_traces;
+            highlevel_known_contracts = updated_contracts;
+            libraries = updated_libraries;
+        }
 
         if self.json {
             self.show_json(&script_config, &result)?;
@@ -115,23 +123,22 @@ impl ScriptArgs {
     }
 
     // In case there are libraries to be deployed, it makes sure that these are added to the list of
-    // broadcastable transactions  with the appropriate sender.
+    // broadcastable transactions with the appropriate sender.
     async fn maybe_prepare_libraries(
         &mut self,
         script_config: &mut ScriptConfig,
         project: Project,
-        highlevel_known_contracts: &mut ArtifactContracts<ContractBytecodeSome>,
         default_known_contracts: ArtifactContracts,
-        (libraries, predeploy_libraries): (&mut Libraries, Vec<Bytes>),
-        (result, decoder): (&mut ScriptResult, &mut CallTraceDecoder),
-    ) -> eyre::Result<()> {
+        predeploy_libraries: Vec<Bytes>,
+        result: &mut ScriptResult,
+    ) -> eyre::Result<Option<NewSenderChanges>> {
         if let Some(new_sender) = self.maybe_new_sender(
             &script_config.evm_opts,
             result.transactions.as_ref(),
             &predeploy_libraries,
         )? {
             // We have a new sender, so we need to relink all the predeployed libraries.
-            (*libraries, *highlevel_known_contracts) = self
+            let (libraries, highlevel_known_contracts) = self
                 .rerun_with_new_deployer(
                     project,
                     script_config,
@@ -142,12 +149,13 @@ impl ScriptArgs {
                 .await?;
 
             // redo traces for the new addresses
-            *decoder = self.decode_traces(
+            let new_traces = self.decode_traces(
                 &*script_config,
                 result,
-                &flatten_contracts(highlevel_known_contracts, true),
+                &flatten_contracts(&highlevel_known_contracts, true),
             )?;
-            return Ok(())
+
+            return Ok(Some((new_traces, libraries, highlevel_known_contracts)))
         }
 
         // Add predeploy libraries to the list of broadcastable transactions.
@@ -168,7 +176,7 @@ impl ScriptArgs {
             *txs = lib_deploy;
         }
 
-        Ok(())
+        Ok(None)
     }
 
     /// Resumes the deployment and/or verification of the script.
