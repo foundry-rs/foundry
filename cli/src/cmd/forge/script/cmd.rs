@@ -119,93 +119,92 @@ impl ScriptArgs {
 
                     deployment_sequence.verify_contracts(&script_config.config, verify).await?;
                 }
-            } else {
-                let multi =
-                    MultiChainSequence::load(&script_config.config.broadcast, &self.sig, &target)?;
 
-                self.multi_chain_deployment(
+                return Ok(())
+            }
+
+            let multi =
+                MultiChainSequence::load(&script_config.config.broadcast, &self.sig, &target)?;
+
+            return self
+                .multi_chain_deployment(
                     multi,
                     libraries,
                     &script_config.config,
                     result.script_wallets,
                     verify,
                 )
-                .await?;
-            }
-        } else {
-            let known_contracts = flatten_contracts(&highlevel_known_contracts, true);
+                .await
+        }
 
-            let mut decoder = self.decode_traces(&script_config, &mut result, &known_contracts)?;
+        let known_contracts = flatten_contracts(&highlevel_known_contracts, true);
 
-            if self.debug {
-                self.run_debugger(&decoder, sources, result, project, highlevel_known_contracts)?;
-            } else {
-                if let Some(new_sender) = self.maybe_new_sender(
-                    &script_config.evm_opts,
-                    result.transactions.as_ref(),
-                    &predeploy_libraries,
-                )? {
-                    // We have a new sender, so we need to relink all the predeployed libraries.
-                    (libraries, highlevel_known_contracts) = self
-                        .rerun_with_new_deployer(
-                            project,
-                            &mut script_config,
-                            new_sender,
-                            &mut result,
-                            default_known_contracts,
-                        )
-                        .await?;
-                    // redo traces
-                    decoder = self.decode_traces(
-                        &script_config,
-                        &mut result,
-                        &flatten_contracts(&highlevel_known_contracts, true),
-                    )?;
-                } else {
-                    // Add predeploy libraries to the list of broadcastable transactions.
-                    let mut lib_deploy = self.create_deploy_transactions(
-                        script_config.evm_opts.sender,
-                        script_config.sender_nonce,
-                        &predeploy_libraries,
-                        &script_config.evm_opts.fork_url,
-                    );
+        let mut decoder = self.decode_traces(&script_config, &mut result, &known_contracts)?;
 
-                    if let Some(txs) = &mut result.transactions {
-                        for tx in txs.iter() {
-                            lib_deploy.push_back(BroadcastableTransaction {
-                                rpc: tx.rpc.clone(),
-                                transaction: TypedTransaction::Legacy(
-                                    tx.transaction.clone().into(),
-                                ),
-                            });
-                        }
-                        *txs = lib_deploy;
-                    }
-                }
+        if self.debug {
+            return self.run_debugger(&decoder, sources, result, project, highlevel_known_contracts)
+        }
 
-                if self.json {
-                    self.show_json(&script_config, &result)?;
-                } else {
-                    self.show_traces(&script_config, &decoder, &mut result).await?;
-                }
-
-                verify.known_contracts = flatten_contracts(&highlevel_known_contracts, false);
-
-                self.check_contract_sizes(&result, &highlevel_known_contracts)?;
-
-                self.handle_broadcastable_transactions(
-                    &target,
-                    result,
-                    libraries,
-                    &mut decoder,
-                    script_config,
-                    verify,
+        if let Some(new_sender) = self.maybe_new_sender(
+            &script_config.evm_opts,
+            result.transactions.as_ref(),
+            &predeploy_libraries,
+        )? {
+            // We have a new sender, so we need to relink all the predeployed libraries.
+            (libraries, highlevel_known_contracts) = self
+                .rerun_with_new_deployer(
+                    project,
+                    &mut script_config,
+                    new_sender,
+                    &mut result,
+                    default_known_contracts,
                 )
                 .await?;
+            // redo traces
+            decoder = self.decode_traces(
+                &script_config,
+                &mut result,
+                &flatten_contracts(&highlevel_known_contracts, true),
+            )?;
+        } else {
+            // Add predeploy libraries to the list of broadcastable transactions.
+            let mut lib_deploy = self.create_deploy_transactions(
+                script_config.evm_opts.sender,
+                script_config.sender_nonce,
+                &predeploy_libraries,
+                &script_config.evm_opts.fork_url,
+            );
+
+            if let Some(txs) = &mut result.transactions {
+                for tx in txs.iter() {
+                    lib_deploy.push_back(BroadcastableTransaction {
+                        rpc: tx.rpc.clone(),
+                        transaction: TypedTransaction::Legacy(tx.transaction.clone().into()),
+                    });
+                }
+                *txs = lib_deploy;
             }
         }
 
-        Ok(())
+        if self.json {
+            self.show_json(&script_config, &result)?;
+        } else {
+            self.show_traces(&script_config, &decoder, &mut result).await?;
+        }
+
+        verify.known_contracts = flatten_contracts(&highlevel_known_contracts, false);
+
+        self.check_contract_sizes(&result, &highlevel_known_contracts)?;
+
+        self.handle_broadcastable_transactions(
+            &target,
+            result,
+            libraries,
+            &mut decoder,
+            script_config,
+            verify,
+        )
+        .await
     }
 
     /// Reruns the execution with a new sender and relinks the libraries accordingly
