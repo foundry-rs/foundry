@@ -71,6 +71,7 @@ fn parse_verification_result(cmd: &mut TestCommand, retries: u32) -> eyre::Resul
 fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: TestCommand) {
     // only execute if keys present
     if let Some(info) = info {
+        println!("verifying on {}", info.chain);
         add_unique(&prj);
         add_verify_target(&prj);
 
@@ -87,6 +88,8 @@ fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: Te
             address,
             contract_path.to_string(),
             info.etherscan.to_string(),
+            "--verifier".to_string(),
+            info.verifier.to_string(),
         ]);
 
         // `verify-contract`
@@ -111,10 +114,13 @@ fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: Te
         // verify-check
         cmd.forge_fuse()
             .arg("verify-check")
+            .arg(guid)
             .arg("--chain-id")
             .arg(info.chain.to_string())
-            .arg(guid)
-            .arg(info.etherscan);
+            .arg("--etherscan-key")
+            .arg(info.etherscan)
+            .arg("--verifier")
+            .arg(info.verifier);
 
         parse_verification_result(&mut cmd, 6).expect("Failed to verify check")
     }
@@ -154,19 +160,26 @@ fn verify_flag_on_create_on_chain(
     // only execute if keys present
     if let Some(info) = info {
         for verifier in VERIFICATION_PROVIDERS {
+            println!("verifying with {}", verifier);
+
             add_unique(&prj);
             add_verify_target(&prj);
 
             println!("root {:?}", prj.root());
 
             let contract_path = "src/Verify.sol:Verify";
+
             cmd.arg("create")
                 .args(info.create_args())
                 .arg("--verify")
                 .arg(contract_path)
                 .arg("--verifier")
                 .arg(verifier);
-            parse_verification_result(&mut cmd, 1).expect("Failed to verify check")
+
+            parse_verification_result(&mut cmd, 1).expect("Failed to verify check");
+
+            // reset command
+            cmd.forge_fuse();
         }
     }
 }
@@ -184,6 +197,10 @@ forgetest!(can_verify_random_contract_fantom_testnet, |prj: TestProject, cmd: Te
 // tests `create && contract-verify && verify-check` on Optimism kovan if correct env vars are set
 forgetest!(can_verify_random_contract_optimism_kovan, |prj: TestProject, cmd: TestCommand| {
     verify_on_chain(EnvExternalities::optimism_kovan(), prj, cmd);
+});
+
+forgetest!(can_verify_random_contract_arbitrum_goerli, |prj: TestProject, cmd: TestCommand| {
+    verify_on_chain(EnvExternalities::arbitrum_goerli(), prj, cmd);
 });
 
 // tests `create && contract-verify --watch` on goerli if correct env vars are set

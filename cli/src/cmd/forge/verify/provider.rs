@@ -57,10 +57,14 @@ impl VerificationProviderType {
                 if key.as_ref().map_or(true, |key| key.is_empty()) {
                     eyre::bail!("ETHERSCAN_API_KEY must be set")
                 }
-                Ok(Box::new(EtherscanVerificationProvider))
+                Ok(Box::new(EtherscanVerificationProvider::default()))
             }
-            VerificationProviderType::Sourcify => Ok(Box::new(SourcifyVerificationProvider)),
-            VerificationProviderType::Blockscout => Ok(Box::new(EtherscanVerificationProvider)),
+            VerificationProviderType::Sourcify => {
+                Ok(Box::new(SourcifyVerificationProvider::default()))
+            }
+            VerificationProviderType::Blockscout => {
+                Ok(Box::new(EtherscanVerificationProvider::default()))
+            }
         }
     }
 }
