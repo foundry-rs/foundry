@@ -1,3 +1,4 @@
+use super::{VerifyArgs, VerifyCheckArgs};
 use crate::cmd::{
     forge::verify::provider::VerificationProvider, read_constructor_args_file,
     retry::RETRY_CHECK_ON_VERIFY, LoadConfig,
@@ -33,11 +34,11 @@ use std::{
 };
 use tracing::{trace, warn};
 
-use super::{VerifyArgs, VerifyCheckArgs};
-
 pub static RE_BUILD_COMMIT: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?P<commit>commit\.[0-9,a-f]{8})"#).unwrap());
 
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct EtherscanVerificationProvider;
 
 #[async_trait]
