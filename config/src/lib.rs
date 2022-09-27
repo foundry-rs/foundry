@@ -71,6 +71,7 @@ pub mod fix;
 
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use figment;
+use tracing::warn;
 
 mod providers;
 use crate::{
@@ -1347,7 +1348,10 @@ impl Config {
     pub fn list_foundry_chain_cache(chain: Chain) -> eyre::Result<ChainCache> {
         let block_explorer_data_size = match Config::foundry_etherscan_chain_cache_dir(chain) {
             Some(cache_dir) => Self::get_cached_block_explorer_data(&cache_dir)?,
-            None => eyre::bail!("failed to access foundry_etherscan_chain_cache_dir"),
+            None => {
+                warn!("failed to access foundry_etherscan_chain_cache_dir");
+                0
+            }
         };
 
         if let Some(cache_dir) = Config::foundry_chain_cache_dir(chain) {
