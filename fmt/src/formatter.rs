@@ -1883,7 +1883,16 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 ty_exp.visit(self)?;
                 write!(self.buf(), "[")?;
                 index_expr.as_mut().map(|index| index.visit(self)).transpose()?;
-                write_chunk_spaced!(self, loc.end(), Some(self.config.bracket_spacing), "]")?;
+                let last_chunk = self.chunk_at(
+                    index_expr
+                        .as_ref()
+                        .map(|index| index.loc().end())
+                        .unwrap_or_else(|| ty_exp.loc().end()),
+                    Some(loc.end()),
+                    Some(self.config.bracket_spacing),
+                    "]",
+                );
+                self.write_chunk(&last_chunk)?;
             }
             Expression::ArraySlice(loc, expr, start, end) => {
                 expr.visit(self)?;
