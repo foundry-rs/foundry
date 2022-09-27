@@ -8,7 +8,7 @@ use std::{convert::Infallible, path::Path, str::FromStr};
 pub struct SkipBuildFilters(pub Vec<SkipBuildFilter>);
 
 impl FileFilter for SkipBuildFilters {
-    /// Only returns a match if no filter a
+    /// Only returns a match if _no_  exclusion filter matches
     fn is_match(&self, file: &Path) -> bool {
         self.0.iter().all(|filter| filter.is_match(file))
     }
@@ -39,8 +39,8 @@ impl SkipBuildFilter {
 impl<T: AsRef<str>> From<T> for SkipBuildFilter {
     fn from(s: T) -> Self {
         match s.as_ref() {
-            "tests" => SkipBuildFilter::Tests,
-            "scripts" => SkipBuildFilter::Scripts,
+            "test" | "tests" => SkipBuildFilter::Tests,
+            "script" | "scripts" => SkipBuildFilter::Scripts,
             s => SkipBuildFilter::Custom(s.to_string()),
         }
     }
