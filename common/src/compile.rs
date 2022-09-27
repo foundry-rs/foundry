@@ -2,7 +2,7 @@
 use crate::{term, TestFunctionExt};
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, *};
 use ethers_solc::{
-    artifacts::{ContractBytecodeSome, Source, Sources},
+    artifacts::{BytecodeObject, Contract, ContractBytecodeSome, Source, Sources},
     report::NoReporter,
     Artifact, ArtifactId, FileFilter, Graph, Project, ProjectCompileOutput, Solc,
 };
@@ -67,8 +67,6 @@ impl ProjectCompiler {
     where
         F: FnOnce(&Project) -> eyre::Result<ProjectCompileOutput>,
     {
-        let ProjectCompiler { print_sizes, print_names } = self;
-
         if !project.paths.has_input_files() {
             println!("Nothing to compile");
             // nothing to do here
@@ -88,60 +86,62 @@ impl ProjectCompiler {
             eyre::bail!(output.to_string())
         } else if output.is_unchanged() {
             println!("No files changed, compilation skipped");
+            self.handle_output(&output);
         } else {
             // print the compiler output / warnings
             println!("{output}");
 
-            // print any sizes or names
-            if print_names {
-                let compiled_contracts = output.compiled_contracts_by_compiler_version();
-                for (version, contracts) in compiled_contracts.into_iter() {
-                    println!(
-                        "  compiler version: {}.{}.{}",
-                        version.major, version.minor, version.patch
-                    );
-                    for (name, _) in contracts {
-                        println!("    - {name}");
-                    }
-                }
-            }
-            if print_sizes {
-                // add extra newline if names were already printed
-                if print_names {
-                    println!();
-                }
-                let compiled_contracts = output.compiled_contracts_by_compiler_version();
-                let mut size_report = SizeReport { contracts: BTreeMap::new() };
-                for (_, contracts) in compiled_contracts.into_iter() {
-                    for (name, contract) in contracts {
-                        let size = contract
-                            .get_deployed_bytecode_bytes()
-                            .map(|bytes| bytes.0.len())
-                            .unwrap_or_default();
-
-                        let dev_functions =
-                            contract.abi.as_ref().unwrap().abi.functions().into_iter().filter(
-                                |func| {
-                                    func.name.is_test() ||
-                                        func.name.eq("IS_TEST") ||
-                                        func.name.eq("IS_SCRIPT")
-                                },
-                            );
-
-                        let is_dev_contract = dev_functions.into_iter().count() > 0;
-                        size_report.contracts.insert(name, ContractInfo { size, is_dev_contract });
-                    }
-                }
-
-                println!("{size_report}");
-
-                // exit with error if any contract exceeds the size limit, excluding test contracts.
-                let exit_status = size_report.exceeds_size_limit().into();
-                std::process::exit(exit_status);
-            }
+            self.handle_output(&output);
         }
 
         Ok(output)
+    }
+
+    /// If configured, this will print sizes or names
+    fn handle_output(&self, output: &ProjectCompileOutput) {
+        // print any sizes or names
+        if self.print_names {
+            let compiled_contracts = output.compiled_contracts_by_compiler_version();
+            for (version, contracts) in compiled_contracts.into_iter() {
+                println!(
+                    "  compiler version: {}.{}.{}",
+                    version.major, version.minor, version.patch
+                );
+                for (name, _) in contracts {
+                    println!("    - {name}");
+                }
+            }
+        }
+        if self.print_sizes {
+            // add extra newline if names were already printed
+            if self.print_names {
+                println!();
+            }
+            let compiled_contracts = output.compiled_contracts_by_compiler_version();
+            let mut size_report = SizeReport { contracts: BTreeMap::new() };
+            for (_, contracts) in compiled_contracts.into_iter() {
+                for (name, contract) in contracts {
+                    let size = deployed_contract_size(&contract).unwrap_or_default();
+
+                    let dev_functions =
+                        contract.abi.as_ref().unwrap().abi.functions().into_iter().filter(|func| {
+                            func.name.is_test() ||
+                                func.name.eq("IS_TEST") ||
+                                func.name.eq("IS_SCRIPT")
+                        });
+
+                    let is_dev_contract = dev_functions.into_iter().count() > 0;
+                    size_report.contracts.insert(name, ContractInfo { size, is_dev_contract });
+                }
+            }
+
+            println!("{size_report}");
+
+            // exit with error if any contract exceeds the size limit, excluding test contracts.
+            if size_report.exceeds_size_limit() {
+                std::process::exit(1);
+            }
+        }
     }
 }
 
@@ -203,7 +203,27 @@ impl Display for SizeReport {
     }
 }
 
+/// Returns the size of the deployed contract
+pub fn deployed_contract_size(contract: &Contract) -> Option<usize> {
+    let bytecode = contract.get_deployed_bytecode_object()?;
+    let size = match bytecode.as_ref() {
+        BytecodeObject::Bytecode(bytes) => bytes.len(),
+        BytecodeObject::Unlinked(unlinked) => {
+            // we don't need to account for placeholders here, because library placeholders take up
+            // 40 characters: `__$<library hash>$__` which is the same as a 20byte address in hex.
+            let mut size = unlinked.as_bytes().len();
+            if unlinked.starts_with("0x") {
+                size -= 2;
+            }
+            // hex -> bytes
+            size / 2
+        }
+    };
+    Some(size)
+}
+
 /// How big the contract is and whether it is a dev contract where size limits can be neglected
+#[derive(Debug, Clone, Copy)]
 pub struct ContractInfo {
     /// size of the contract in bytes
     pub size: usize,
