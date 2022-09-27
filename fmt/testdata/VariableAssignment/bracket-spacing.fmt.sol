@@ -1,3 +1,4 @@
+// config: bracket_spacing = true
 contract TestContract {
     function aLongerTestFunctionName(uint256 input)
         public
@@ -19,8 +20,8 @@ contract TestContract {
     }
 
     function test() external {
-        uint256 value = map[key];
-        uint256 allowed = allowance[from][msg.sender];
-        allowance[from][msg.sender] = allowed;
+        uint256 value = map[ key ];
+        uint256 allowed = allowance[ from ][ msg.sender ];
+        allowance[ from ][ msg.sender ] = allowed;
     }
 }

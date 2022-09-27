@@ -1879,11 +1879,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     |fmt, _| expr.visit(fmt),
                 )?;
             }
-            Expression::ArraySubscript(_, ty_exp, size_exp) => {
+            Expression::ArraySubscript(_, ty_exp, index_expr) => {
                 ty_exp.visit(self)?;
                 write!(self.buf(), "[")?;
-                size_exp.as_mut().map(|size| size.visit(self)).transpose()?;
-                write!(self.buf(), "]")?;
+                index_expr.as_mut().map(|index| index.visit(self)).transpose()?;
+                write_chunk_spaced!(self, loc.end(), Some(self.config.bracket_spacing), "]")?;
             }
             Expression::ArraySlice(loc, expr, start, end) => {
                 expr.visit(self)?;
