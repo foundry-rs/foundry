@@ -1879,11 +1879,20 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     |fmt, _| expr.visit(fmt),
                 )?;
             }
-            Expression::ArraySubscript(_, ty_exp, size_exp) => {
+            Expression::ArraySubscript(_, ty_exp, index_expr) => {
                 ty_exp.visit(self)?;
                 write!(self.buf(), "[")?;
-                size_exp.as_mut().map(|size| size.visit(self)).transpose()?;
-                write!(self.buf(), "]")?;
+                index_expr.as_mut().map(|index| index.visit(self)).transpose()?;
+                let last_chunk = self.chunk_at(
+                    index_expr
+                        .as_ref()
+                        .map(|index| index.loc().end())
+                        .unwrap_or_else(|| ty_exp.loc().end()),
+                    Some(loc.end()),
+                    Some(self.config.bracket_spacing),
+                    "]",
+                );
+                self.write_chunk(&last_chunk)?;
             }
             Expression::ArraySlice(loc, expr, start, end) => {
                 expr.visit(self)?;
