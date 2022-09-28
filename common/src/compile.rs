@@ -2,7 +2,7 @@
 use crate::{term, TestFunctionExt};
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, *};
 use ethers_solc::{
-    artifacts::{BytecodeObject, Contract, ContractBytecodeSome, Source, Sources},
+    artifacts::{BytecodeObject, ContractBytecodeSome, Source, Sources},
     report::NoReporter,
     Artifact, ArtifactId, FileFilter, Graph, Project, ProjectCompileOutput, Solc,
 };
@@ -101,13 +101,16 @@ impl ProjectCompiler {
     fn handle_output(&self, output: &ProjectCompileOutput) {
         // print any sizes or names
         if self.print_names {
-            let compiled_contracts = output.compiled_contracts_by_compiler_version();
-            for (version, contracts) in compiled_contracts.into_iter() {
+            let mut artifacts: BTreeMap<_, Vec<_>> = BTreeMap::new();
+            for (name, (_, version)) in output.versioned_artifacts() {
+                artifacts.entry(version).or_default().push(name);
+            }
+            for (version, names) in artifacts {
                 println!(
                     "  compiler version: {}.{}.{}",
                     version.major, version.minor, version.patch
                 );
-                for (name, _) in contracts {
+                for name in names {
                     println!("    - {name}");
                 }
             }
@@ -117,22 +120,18 @@ impl ProjectCompiler {
             if self.print_names {
                 println!();
             }
-            let compiled_contracts = output.compiled_contracts_by_compiler_version();
             let mut size_report = SizeReport { contracts: BTreeMap::new() };
-            for (_, contracts) in compiled_contracts.into_iter() {
-                for (name, contract) in contracts {
-                    let size = deployed_contract_size(&contract).unwrap_or_default();
+            let artifacts: BTreeMap<_, _> = output.artifacts().collect();
+            for (name, artifact) in artifacts {
+                let size = deployed_contract_size(artifact).unwrap_or_default();
 
-                    let dev_functions =
-                        contract.abi.as_ref().unwrap().abi.functions().into_iter().filter(|func| {
-                            func.name.is_test() ||
-                                func.name.eq("IS_TEST") ||
-                                func.name.eq("IS_SCRIPT")
-                        });
+                let dev_functions =
+                    artifact.abi.as_ref().unwrap().abi.functions().into_iter().filter(|func| {
+                        func.name.is_test() || func.name.eq("IS_TEST") || func.name.eq("IS_SCRIPT")
+                    });
 
-                    let is_dev_contract = dev_functions.into_iter().count() > 0;
-                    size_report.contracts.insert(name, ContractInfo { size, is_dev_contract });
-                }
+                let is_dev_contract = dev_functions.into_iter().count() > 0;
+                size_report.contracts.insert(name, ContractInfo { size, is_dev_contract });
             }
 
             println!("{size_report}");
@@ -204,8 +203,8 @@ impl Display for SizeReport {
 }
 
 /// Returns the size of the deployed contract
-pub fn deployed_contract_size(contract: &Contract) -> Option<usize> {
-    let bytecode = contract.get_deployed_bytecode_object()?;
+pub fn deployed_contract_size<T: Artifact>(artifact: &T) -> Option<usize> {
+    let bytecode = artifact.get_deployed_bytecode_object()?;
     let size = match bytecode.as_ref() {
         BytecodeObject::Bytecode(bytes) => bytes.len(),
         BytecodeObject::Unlinked(unlinked) => {
