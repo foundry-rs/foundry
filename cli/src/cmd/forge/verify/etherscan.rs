@@ -8,8 +8,8 @@ use cast::SimpleCast;
 use ethers::{
     abi::Function,
     etherscan::{
-        contract::{CodeFormat, VerifyContract},
         utils::lookup_compiler_version,
+        verify::{CodeFormat, VerifyContract},
         Client,
     },
     prelude::artifacts::StandardJsonCompilerInput,

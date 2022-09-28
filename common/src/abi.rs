@@ -266,15 +266,8 @@ pub async fn get_func_etherscan(
     let client = Client::new(chain, etherscan_api_key)?;
     let metadata = &client.contract_source_code(contract).await?.items[0];
 
-    let abi = if metadata.implementation.is_empty() {
-        serde_json::from_str(&metadata.abi)?
-    } else {
-        let implementation = metadata.implementation.parse::<Address>()?;
-        client.contract_abi(implementation).await?
-    };
-
     let empty = vec![];
-    let funcs = abi.functions.get(function_name).unwrap_or(&empty);
+    let funcs = metadata.abi.functions.get(function_name).unwrap_or(&empty);
 
     for func in funcs {
         let res = encode_args(func, args);
