@@ -6,7 +6,7 @@ use foundry_common::{
 };
 use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, io::BufWriter, path::PathBuf, sync::Arc};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::{trace, warn};
 
@@ -29,7 +29,7 @@ pub struct SignaturesIdentifier {
 }
 
 impl SignaturesIdentifier {
-    #[tracing::instrument(name = "signaturescache")]
+    #[tracing::instrument(target = "forge::signatures")]
     pub fn new(
         cache_path: Option<PathBuf>,
         offline: bool,
@@ -69,14 +69,18 @@ impl SignaturesIdentifier {
         Ok(Arc::new(RwLock::new(identifier)))
     }
 
+    #[tracing::instrument(target = "forge::signatures", skip(self))]
     pub fn save(&self) {
         if let Some(cached_path) = &self.cached_path {
-            if let Ok(file) = std::fs::File::create(cached_path) {
-                if serde_json::to_writer(BufWriter::new(file), &self.cached).is_err() {
-                    warn!("could not serialize SignaturesIdentifier");
+            if let Some(parent) = cached_path.parent() {
+                if let Err(err) = std::fs::create_dir_all(parent) {
+                    warn!(?parent, ?err, "failed to create cache");
                 }
+            }
+            if let Err(err) = fs::write_json_file(cached_path, &self.cached) {
+                warn!(?cached_path, ?err, "failed to flush signature cache");
             } else {
-                warn!(?cached_path, "could not open cache file");
+                trace!(?cached_path, "flushed signature cache")
             }
         }
     }
