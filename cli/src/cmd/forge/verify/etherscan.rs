@@ -439,6 +439,7 @@ To skip this solc dry, pass `--force`.
 
         let source =
             serde_json::to_string(&input).wrap_err("Failed to parse standard json input")?;
+        trace!("Parsed Standard JSON Input: {source}");
         let name = format!(
             "{}:{}",
             target.strip_prefix(project.root()).unwrap_or(target).display(),
