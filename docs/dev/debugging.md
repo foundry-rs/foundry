@@ -10,11 +10,11 @@ By setting `RUST_LOG=<filter>` you can get a lot more info out of Forge and Cast
 
 The most basic valid filter is a log level, of which these are valid:
 
-- `error`
-- `warn`
-- `info`
-- `debug`
-- `trace`
+-   `error`
+-   `warn`
+-   `info`
+-   `debug`
+-   `trace`
 
 Filters are explained in detail in the [`env_logger` crate docs](https://docs.rs/env_logger).
 
