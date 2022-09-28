@@ -26,13 +26,17 @@ static DUMMY_CREATE_ADDRESS: Address =
 
 #[derive(Clone, Debug, Default)]
 pub struct ExpectedRevert {
-    /// The expected data returned by the revert
-    pub reason: Bytes,
+    /// The expected data returned by the revert, None being any
+    pub reason: Option<Bytes>,
     /// The depth at which the revert is expected
     pub depth: u64,
 }
 
-fn expect_revert(state: &mut Cheatcodes, reason: Bytes, depth: u64) -> Result<Bytes, Bytes> {
+fn expect_revert(
+    state: &mut Cheatcodes,
+    reason: Option<Bytes>,
+    depth: u64,
+) -> Result<Bytes, Bytes> {
     if state.expected_revert.is_some() {
         Err("You must call another function prior to expecting a second revert."
             .to_string()
@@ -46,13 +50,29 @@ fn expect_revert(state: &mut Cheatcodes, reason: Bytes, depth: u64) -> Result<By
 
 pub fn handle_expect_revert(
     is_create: bool,
-    expected_revert: &Bytes,
+    expected_revert: Option<&Bytes>,
     status: Return,
     retdata: Bytes,
 ) -> Result<(Option<Address>, Bytes), Bytes> {
     if matches!(status, return_ok!()) {
         return Err("Call did not revert as expected".to_string().encode().into())
     }
+
+    macro_rules! success_return {
+        () => {
+            Ok(if is_create {
+                (Some(DUMMY_CREATE_ADDRESS), Bytes::new())
+            } else {
+                (None, DUMMY_CALL_OUTPUT.to_vec().into())
+            })
+        };
+    }
+
+    // If None, accept any revert
+    let expected_revert = match expected_revert {
+        Some(x) => x,
+        None => return success_return!(),
+    };
 
     if !expected_revert.is_empty() && retdata.is_empty() {
         return Err("Call reverted as expected, but without data".to_string().encode().into())
@@ -108,11 +128,7 @@ pub fn handle_expect_revert(
     };
 
     if actual_revert == expected_revert {
-        Ok(if is_create {
-            (Some(DUMMY_CREATE_ADDRESS), Bytes::new())
-        } else {
-            (None, DUMMY_CALL_OUTPUT.to_vec().into())
-        })
+        success_return!()
     } else {
         Err(err)
     }
@@ -219,14 +235,12 @@ pub fn apply<DB: DatabaseExt>(
     call: &HEVMCalls,
 ) -> Option<Result<Bytes, Bytes>> {
     Some(match call {
-        HEVMCalls::ExpectRevert0(_) => {
-            expect_revert(state, Bytes::new(), data.journaled_state.depth())
-        }
+        HEVMCalls::ExpectRevert0(_) => expect_revert(state, None, data.journaled_state.depth()),
         HEVMCalls::ExpectRevert1(inner) => {
-            expect_revert(state, inner.0.to_vec().into(), data.journaled_state.depth())
+            expect_revert(state, Some(inner.0.to_vec().into()), data.journaled_state.depth())
         }
         HEVMCalls::ExpectRevert2(inner) => {
-            expect_revert(state, inner.0.to_vec().into(), data.journaled_state.depth())
+            expect_revert(state, Some(inner.0.to_vec().into()), data.journaled_state.depth())
         }
         HEVMCalls::ExpectEmit0(inner) => {
             state.expected_emits.push(ExpectedEmit {
