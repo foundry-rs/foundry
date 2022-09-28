@@ -91,7 +91,12 @@ impl Cmd for FmtArgs {
 
         // collect ignore paths first
         let mut ignored = vec![];
-        for res in config.fmt.ignore.iter().map(|pattern| glob::glob(pattern)) {
+        let expanded = config
+            .fmt
+            .ignore
+            .iter()
+            .map(|pattern| glob::glob(&config.__root.0.join(pattern).display().to_string()));
+        for res in expanded {
             match res {
                 Ok(paths) => ignored.extend(paths.into_iter().collect::<Result<Vec<_>, _>>()?),
                 Err(err) => {
@@ -99,14 +104,14 @@ impl Cmd for FmtArgs {
                 }
             }
         }
-        let ignored: Vec<_> = ignored.into_iter().map(|path| config.__root.0.join(path)).collect();
 
+        let cwd = std::env::current_dir()?;
         let mut inputs = vec![];
         for input in self.inputs(&config) {
             match input {
                 Input::Path(p) => {
-                    if (p.starts_with(&config.__root.0) && !ignored.contains(&p)) ||
-                        !ignored.contains(&config.__root.0.join(&p))
+                    if (p.is_absolute() && !ignored.contains(&p)) ||
+                        !ignored.contains(&cwd.join(&p))
                     {
                         inputs.push(Input::Path(p));
                     }
@@ -241,6 +246,7 @@ impl Cmd for FmtArgs {
 
 struct Line(Option<usize>);
 
+#[derive(Debug)]
 enum Input {
     Path(PathBuf),
     Stdin(String),
