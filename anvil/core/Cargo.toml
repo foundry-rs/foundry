@@ -7,7 +7,7 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 # foundry internal
 foundry-evm = { path = "../../evm" }
-revm = { version = "2.0", default-features = false, features = ["std", "k256", "with-serde", "memory_limit"] }
+revm = { version = "2.1", default-features = false, features = ["std", "k256", "with-serde", "memory_limit"] }
 
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 serde = { version = "1.0", features = ["derive"] }

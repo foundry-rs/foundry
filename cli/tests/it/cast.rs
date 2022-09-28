@@ -7,6 +7,12 @@ use foundry_cli_test_utils::{
 use foundry_utils::rpc::next_http_rpc_endpoint;
 use std::{io::Write, path::PathBuf};
 
+// tests `--help` is printed to std out
+casttest!(print_help, |_: TestProject, mut cmd: TestCommand| {
+    cmd.arg("--help");
+    cmd.assert_non_empty_stdout();
+});
+
 // tests that the `cast block` command works correctly
 casttest!(latest_block, |_: TestProject, mut cmd: TestCommand| {
     let eth_rpc_url = next_http_rpc_endpoint();

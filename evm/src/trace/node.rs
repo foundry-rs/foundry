@@ -2,7 +2,8 @@ use crate::{
     decode,
     executor::CHEATCODE_ADDRESS,
     trace::{
-        utils, CallTrace, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog, RawOrDecodedReturnData,
+        utils, utils::decode_cheatcode_outputs, CallTrace, LogCallOrder, RawOrDecodedCall,
+        RawOrDecodedLog, RawOrDecodedReturnData,
     },
     CallKind,
 };
@@ -132,6 +133,15 @@ impl CallTraceNode {
 
             if let RawOrDecodedReturnData::Raw(bytes) = &self.trace.output {
                 if !bytes.is_empty() && self.trace.success {
+                    if self.trace.address == CHEATCODE_ADDRESS {
+                        if let Some(decoded) =
+                            funcs.iter().find_map(|func| decode_cheatcode_outputs(func, bytes))
+                        {
+                            self.trace.output = RawOrDecodedReturnData::Decoded(decoded);
+                            return
+                        }
+                    }
+
                     if let Some(tokens) =
                         funcs.iter().find_map(|func| func.decode_output(bytes).ok())
                     {

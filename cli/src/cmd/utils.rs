@@ -110,17 +110,6 @@ pub fn get_cached_entry_by_name(
     eyre::bail!(err)
 }
 
-pub fn u32_validator(min: u32, max: u32) -> impl FnMut(&str) -> eyre::Result<()> {
-    move |v: &str| -> eyre::Result<()> {
-        let v = v.parse::<u32>()?;
-        if v >= min && v <= max {
-            Ok(())
-        } else {
-            Err(eyre::eyre!("Expected between {} and {} inclusive.", min, max))
-        }
-    }
-}
-
 /// Returns error if constructor has arguments.
 pub fn ensure_clean_constructor(abi: &Abi) -> eyre::Result<()> {
     if let Some(constructor) = &abi.constructor {

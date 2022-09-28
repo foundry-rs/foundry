@@ -2207,6 +2207,7 @@ dependencies = [
  "comfy-table",
  "dunce",
  "ethers-core",
+ "ethers-etherscan",
  "ethers-providers",
  "ethers-solc",
  "eyre",
@@ -2219,6 +2220,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror",
+ "tokio",
  "tracing",
  "walkdir",
  "yansi",
@@ -4487,8 +4489,9 @@ dependencies = [
 
 [[package]]
 name = "revm"
-version = "2.0.0"
-source = "git+https://github.com/bluealloy/revm#ca14d61375cc94b216742bb016d2199c0b006b17"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87344ffd3eec06b568e1fc69c225e4cbd8d68d8d9051b6d2652d596947efa1ce"
 dependencies = [
  "arrayref",
  "auto_impl 1.0.1",
@@ -4506,7 +4509,8 @@ dependencies = [
 [[package]]
 name = "revm_precompiles"
 version = "1.1.1"
-source = "git+https://github.com/bluealloy/revm#ca14d61375cc94b216742bb016d2199c0b006b17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "00e68901326fe20437526cb6d64a2898d2976383b7d222329dfce1717902da50"
 dependencies = [
  "bytes",
  "hashbrown 0.12.0",

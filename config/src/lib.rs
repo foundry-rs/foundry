@@ -71,6 +71,7 @@ pub mod fix;
 
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use figment;
+use tracing::warn;
 
 mod providers;
 use crate::{
@@ -739,12 +740,12 @@ impl Config {
     /// # }
     /// ```
     pub fn get_rpc_url(&self) -> Option<Result<Cow<str>, UnresolvedEnvVarError>> {
-        let eth_rpc_url = self.eth_rpc_url.as_ref()?;
+        let maybe_alias = self.eth_rpc_url.as_ref().or(self.etherscan_api_key.as_ref())?;
         let mut endpoints = self.rpc_endpoints.clone().resolved();
-        if let Some(alias) = endpoints.remove(eth_rpc_url) {
+        if let Some(alias) = endpoints.remove(maybe_alias) {
             Some(alias.map(Cow::Owned))
         } else {
-            Some(Ok(Cow::Borrowed(eth_rpc_url.as_str())))
+            Some(Ok(Cow::Borrowed(self.eth_rpc_url.as_deref()?)))
         }
     }
 
@@ -808,7 +809,7 @@ impl Config {
     pub fn get_etherscan_config(
         &self,
     ) -> Option<Result<ResolvedEtherscanConfig, EtherscanConfigError>> {
-        let maybe_alias = self.etherscan_api_key.as_ref()?;
+        let maybe_alias = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref())?;
         if self.etherscan.contains_key(maybe_alias) {
             // etherscan points to an alias in the `etherscan` table, so we try to resolve
             // that
@@ -818,7 +819,9 @@ impl Config {
         // we treat the `etherscan_api_key` as actual API key
         // if no chain provided, we assume mainnet
         let chain = self.chain_id.unwrap_or_else(|| Mainnet.into());
-        ResolvedEtherscanConfig::create(maybe_alias, chain).map(Ok)
+
+        let api_key = self.etherscan_api_key.as_ref()?;
+        ResolvedEtherscanConfig::create(api_key, chain).map(Ok)
     }
 
     /// Same as [`Self::get_etherscan_config()`] but optionally updates the config with the given
@@ -831,7 +834,7 @@ impl Config {
         chain: Option<impl Into<Chain>>,
     ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
         let chain = chain.map(Into::into);
-        if let Some(maybe_alias) = self.etherscan_api_key.as_ref() {
+        if let Some(maybe_alias) = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref()) {
             if self.etherscan.contains_key(maybe_alias) {
                 let mut resolved = self.etherscan.clone().resolved();
                 return resolved.remove(maybe_alias).transpose()
@@ -1345,7 +1348,10 @@ impl Config {
     pub fn list_foundry_chain_cache(chain: Chain) -> eyre::Result<ChainCache> {
         let block_explorer_data_size = match Config::foundry_etherscan_chain_cache_dir(chain) {
             Some(cache_dir) => Self::get_cached_block_explorer_data(&cache_dir)?,
-            None => eyre::bail!("failed to access foundry_etherscan_chain_cache_dir"),
+            None => {
+                warn!("failed to access foundry_etherscan_chain_cache_dir");
+                0
+            }
         };
 
         if let Some(cache_dir) = Config::foundry_chain_cache_dir(chain) {
@@ -2860,6 +2866,26 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_rpc_url_if_etherscan_set() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                etherscan_api_key = "dummy"
+                [rpc_endpoints]
+                optimism = "https://example.com/"
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!("http://localhost:8545", config.get_rpc_url_or_localhost_http().unwrap());
+
+            Ok(())
+        })
+    }
+
+    #[test]
     fn test_resolve_rpc_url_alias() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
@@ -2994,6 +3020,35 @@ mod tests {
                 .unwrap();
             assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
 
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_extract_etherscan_config_by_chain_and_alias() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                eth_rpc_url = "mumbai"
+
+                [etherscan]
+                mumbai = { key = "https://etherscan-mumbai.com/" }
+
+                [rpc_endpoints]
+                mumbai = "https://polygon-mumbai.g.alchemy.com/v2/mumbai"
+            "#,
+            )?;
+
+            let config = Config::load();
+
+            let mumbai =
+                config.get_etherscan_config_with_chain(Option::<u64>::None).unwrap().unwrap();
+            assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
+
+            let mumbai_rpc = config.get_rpc_url().unwrap().unwrap();
+            assert_eq!(mumbai_rpc, "https://polygon-mumbai.g.alchemy.com/v2/mumbai");
             Ok(())
         });
     }

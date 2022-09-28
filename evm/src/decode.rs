@@ -168,7 +168,7 @@ pub fn decode_revert(
                         if let Ok(decoded) = abi_error.decode(&err[SELECTOR_LEN..]) {
                             let inputs = decoded
                                 .iter()
-                                .map(foundry_utils::format_token)
+                                .map(foundry_common::abi::format_token)
                                 .collect::<Vec<_>>()
                                 .join(", ");
                             return Ok(format!("{}({})", abi_error.name, inputs))

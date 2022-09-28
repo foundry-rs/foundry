@@ -46,6 +46,11 @@ impl TestConfig {
         self
     }
 
+    /// Executes the test runner
+    pub fn test(&mut self) -> BTreeMap<String, SuiteResult> {
+        self.runner.test(&self.filter, None, self.opts).unwrap()
+    }
+
     #[track_caller]
     pub fn run(&mut self) {
         self.try_run().unwrap()

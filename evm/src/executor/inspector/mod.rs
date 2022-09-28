@@ -2,7 +2,9 @@
 mod utils;
 
 mod logs;
+
 pub use logs::LogCollector;
+use std::{cell::RefCell, rc::Rc};
 
 mod access_list;
 pub use access_list::AccessListTracer;
@@ -24,7 +26,7 @@ pub use cheatcodes::{Cheatcodes, CheatsConfig, DEFAULT_CREATE2_DEPLOYER};
 
 use ethers::types::U256;
 
-use revm::BlockEnv;
+use revm::{BlockEnv, GasInspector};
 
 mod fuzzer;
 pub use fuzzer::Fuzzer;
@@ -72,7 +74,9 @@ impl InspectorStackConfig {
             stack.tracer = Some(Tracer::default());
         }
         if self.debugger {
-            stack.debugger = Some(Debugger::default());
+            let gas_inspector = Rc::new(RefCell::new(GasInspector::default()));
+            stack.gas = Some(gas_inspector.clone());
+            stack.debugger = Some(Debugger::new(gas_inspector));
         }
         stack.fuzzer = self.fuzzer.clone();
 

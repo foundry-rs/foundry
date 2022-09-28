@@ -1,4 +1,6 @@
 #[cfg(not(feature = "external-integration-tests"))]
+mod cache;
+#[cfg(not(feature = "external-integration-tests"))]
 mod cast;
 #[cfg(not(feature = "external-integration-tests"))]
 mod cmd;

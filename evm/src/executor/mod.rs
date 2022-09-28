@@ -12,7 +12,7 @@ use ethers::{
     signers::LocalWallet,
     types::{transaction::eip2718::TypedTransaction, Log},
 };
-use foundry_utils::IntoFunction;
+use foundry_common::abi::IntoFunction;
 use hashbrown::HashMap;
 use revm::{
     db::DatabaseCommit, return_ok, Account, BlockEnv, Bytecode, CreateScheme, ExecutionResult,

@@ -1,3 +1,4 @@
+// config: bracket_spacing = true
 contract TestContract {
     function aLongerTestFunctionName(uint256 input)
         public

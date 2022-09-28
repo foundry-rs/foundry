@@ -588,6 +588,11 @@ impl TestCommand {
         self.expect_success(output)
     }
 
+    /// Runs the command and asserts that it resulted in success
+    pub fn assert_success(&mut self) {
+        self.output();
+    }
+
     /// Executes command, applies stdin function and returns output
     pub fn execute(&mut self) -> process::Output {
         self.try_execute().unwrap()
