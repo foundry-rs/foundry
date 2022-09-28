@@ -22,16 +22,18 @@ members = [
 # and we don't rely on it for debugging that much
 debug = 0
 
-[profile.dev.package]
 # These speed up local tests
-ethers-solc.opt-level = 3
-revm.opt-level = 3
+[profile.dev.package.ethers-solc]
+opt-level = 3
 
-[profile.test.package]
-# These will speed up all forge script related integration tests
-axum.opt-level = 3
+[profile.dev.package.revm]
+opt-level = 3
 
-# local "release" mode
+# These speed up all forge script related integration tests
+[profile.test.package.axum]
+opt-level = 3
+
+# Local "release" mode, more optimized than dev but much faster to compile than release
 [profile.local]
 inherits = "dev"
 opt-level = 3
@@ -42,27 +44,26 @@ panic = 'unwind'
 incremental = true
 codegen-units = 16
 
-
 [profile.release]
 # Optimize for binary size, but keep loop vectorization
 opt-level = "s"
-strip = true
 # Performance optimizations
 lto = "fat"
-codegen-units = 1
-panic = "abort"
-# We end up stripping away these symbols anyway
 debug = 0
+strip = true
+panic = "abort"
+codegen-units = 1
 
-## Patch ethers-rs with a local checkout then run `cargo update -p ethers`
-#[patch."https://github.com/gakonst/ethers-rs"]
-#ethers = { path = "../ethers-rs" }
-#ethers-core = { path = "../ethers-rs/ethers-core" }
-#ethers-contract = { path = "../ethers-rs/ethers-contract" }
-#ethers-providers = { path = "../ethers-rs/ethers-providers" }
-#ethers-signers = { path = "../ethers-rs/ethers-signers" }
-#ethers-etherscan = { path = "../ethers-rs/ethers-etherscan" }
-#ethers-solc = { path = "../ethers-rs/ethers-solc" }
+# # Patch ethers-rs with a local checkout then run `cargo update -p ethers`
+# [patch."https://github.com/gakonst/ethers-rs"]
+# ethers = { path = "../ethers-rs" }
+# ethers-addressbook = { path = "../ethers-rs/ethers-addressbook" }
+# ethers-core = { path = "../ethers-rs/ethers-core" }
+# ethers-contract = { path = "../ethers-rs/ethers-contract" }
+# ethers-providers = { path = "../ethers-rs/ethers-providers" }
+# ethers-signers = { path = "../ethers-rs/ethers-signers" }
+# ethers-etherscan = { path = "../ethers-rs/ethers-etherscan" }
+# ethers-solc = { path = "../ethers-rs/ethers-solc" }
 
-[patch.crates-io]
-#revm = { path = "../revm/crates/revm" }
+# [patch.crates-io]
+# revm = { path = "../revm/crates/revm" }

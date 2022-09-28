@@ -8,11 +8,7 @@ repository = "https://github.com/foundry-rs/foundry"
 keywords = ["ethereum", "web3"]
 
 [build-dependencies]
-vergen = { version = "7.0", default-features = false, features = [
-    "build",
-    "rustc",
-    "git",
-] }
+vergen = { version = "7.0", default-features = false, features = ["build", "rustc", "git"] }
 
 [dependencies]
 # foundry internal
@@ -29,12 +25,7 @@ ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = fals
 solang-parser = "0.1.11"
 
 # cli
-clap = { version = "3.0.10", features = [
-    "derive",
-    "env",
-    "unicode",
-    "wrap_help",
-] }
+clap = { version = "3.0.10", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete = "3.0.4"
 clap_complete_fig = "3.2.4"
 yansi = "0.5.1"
@@ -45,7 +36,11 @@ console = "0.15.0"
 watchexec = "2.0.0"
 atty = "0.2.14"
 comfy-table = "6.0.0"
-reqwest = { version = "0.11.8", default-features = false, features = ["json", "rustls", "rustls-native-certs"] }
+reqwest = { version = "0.11.8", default-features = false, features = [
+    "json",
+    "rustls",
+    "rustls-native-certs",
+] }
 dotenv = "0.15.0"
 dialoguer = { version = "0.10.2", default-features = false }
 
@@ -70,7 +65,7 @@ serde_json = "1.0.67"
 regex = { version = "1.5.4", default-features = false }
 rpassword = "7.0.0"
 hex = "0.4.3"
-serde = { version="1.0.133", features = ["derive"] }
+serde = { version = "1.0.133", features = ["derive"] }
 itertools = "0.10.3"
 proptest = "1.0.0"
 semver = "1.0.5"

@@ -8,12 +8,17 @@ repository = "https://github.com/foundry-rs/foundry"
 
 [dependencies]
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-contract = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["abigen"] }
+ethers-contract = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = [
+    "abigen",
+] }
 ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-providers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt"], optional = true }
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "env-filter",
+    "fmt",
+], optional = true }
 
 forge-fmt = { path = "../fmt" }
 
@@ -31,9 +36,10 @@ once_cell = "1.13"
 rand = "0.8"
 
 [dev-dependencies]
-foundry-common = {path = "./../common"}
-ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full"] }
-
+foundry-common = { path = "./../common" }
+ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = [
+    "solc-full",
+] }
 
 [features]
 test = ["tracing-subscriber"]
