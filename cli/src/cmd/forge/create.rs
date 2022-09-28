@@ -32,7 +32,7 @@ pub struct CreateArgs {
 
     #[clap(
         long,
-        multiple_values = true,
+        num_args(1..),
         help = "The constructor arguments.",
         name = "constructor_args",
         conflicts_with = "constructor_args_path",

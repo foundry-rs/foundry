@@ -57,13 +57,13 @@ yansi = "0.5.1"
 tempfile = "3.3.0"
 
 # cli
-clap = { version = "3.0.10", features = ["derive", "env", "wrap_help"], optional = true }
-clap_complete = { version = "3.0.4", optional = true }
+clap = { version = "4.0", features = ["derive", "env", "wrap_help"], optional = true }
+clap_complete = { version = "4.0", optional = true }
 chrono = "0.4.19"
 auto_impl = "0.5.0"
 ctrlc = { version = "3", optional = true }
 fdlimit = { version = "0.2.1", optional = true }
-clap_complete_fig = "3.2.4"
+clap_complete_fig = "4.0"
 ethereum-forkid = "0.10.0"
 
 # ethers

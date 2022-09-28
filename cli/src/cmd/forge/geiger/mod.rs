@@ -21,7 +21,7 @@ pub struct GeigerArgs {
         conflicts_with = "root",
         value_hint = ValueHint::FilePath,
         value_name = "PATH",
-        multiple_values = true
+        num_args(1..)
     )]
     paths: Vec<PathBuf>,
     #[clap(

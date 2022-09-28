@@ -292,7 +292,6 @@ Examples:
         args: Vec<String>,
     },
     #[clap(name = "chain")]
-    #[clap(visible_alias = "ch")]
     #[clap(about = "Get the symbolic name of the current chain.")]
     Chain {
         #[clap(long, env = "ETH_RPC_URL", value_name = "URL")]
@@ -724,7 +723,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
     FindBlock(FindBlockArgs),
     #[clap(visible_alias = "com", about = "Generate shell completions script")]
     Completions {
-        #[clap(arg_enum)]
+        #[clap(value_enum)]
         shell: clap_complete::Shell,
     },
     #[clap(visible_alias = "fig", about = "Generate Fig autocompletion spec.")]

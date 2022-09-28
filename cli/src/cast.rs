@@ -1,5 +1,5 @@
 use cast::{Cast, SimpleCast, TxBuilder};
-use clap::{IntoApp, Parser};
+use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use ethers::{
     abi::HumanReadableParser,
@@ -7,7 +7,6 @@ use ethers::{
     providers::Middleware,
     types::{Address, I256, U256},
 };
-
 use foundry_cli::{
     cmd::Cmd,
     handler,

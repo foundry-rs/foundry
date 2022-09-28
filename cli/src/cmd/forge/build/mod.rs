@@ -70,7 +70,7 @@ pub struct BuildArgs {
 
     #[clap(
         long,
-        multiple_values = true,
+        num_args(1..),
         action = ArgAction::Append,
         help = "Skip building whose names contain FILTER. `test` and `script` are aliases for `.t.sol` and `.s.sol`. (this flag can be used multiple times)")]
     #[serde(skip)]

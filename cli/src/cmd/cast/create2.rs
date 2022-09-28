@@ -23,7 +23,13 @@ pub struct Create2Args {
         value_name = "HEX"
     )]
     starts_with: Option<String>,
-    #[clap(long, short, help = "Suffix for the contract address.", value_name = "HEX")]
+    #[clap(
+        long,
+        short,
+        help = "Suffix for the contract address.",
+        value_name = "HEX",
+        name = "ends-with"
+    )]
     ends_with: Option<String>,
     #[clap(long, short, help = "Sequence that the address has to match", value_name = "HEX")]
     matching: Option<String>,

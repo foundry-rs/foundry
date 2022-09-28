@@ -25,9 +25,9 @@ ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = fals
 solang-parser = "0.1.11"
 
 # cli
-clap = { version = "3.0.10", features = ["derive", "env", "unicode", "wrap_help"] }
-clap_complete = "3.0.4"
-clap_complete_fig = "3.2.4"
+clap = { version = "4.0", features = ["derive", "env", "unicode", "wrap_help"] }
+clap_complete = "4.0"
+clap_complete_fig = "4.0"
 yansi = "0.5.1"
 tracing-error = "0.2.0"
 tracing-subscriber = { version = "0.3", features = ["registry", "env-filter", "fmt"] }
