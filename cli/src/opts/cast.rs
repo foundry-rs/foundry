@@ -141,9 +141,9 @@ The input can be:
         value: String,
         #[clap(value_name = "BITS")]
         bits: String,
-        #[clap(long = "--base-in", help = "The input base")]
+        #[clap(long = "base-in", help = "The input base")]
         base_in: Option<String>,
-        #[clap(long = "--base-out", help = "The output base", default_value = "16")]
+        #[clap(long = "base-out", help = "The output base", default_value = "16")]
         base_out: String,
     },
     #[clap(name = "shr")]
@@ -153,9 +153,9 @@ The input can be:
         value: String,
         #[clap(value_name = "BITS")]
         bits: String,
-        #[clap(long = "--base-in", help = "The input base")]
+        #[clap(long = "base-in", help = "The input base")]
         base_in: Option<String>,
-        #[clap(long = "--base-out", help = "The output base", default_value = "16")]
+        #[clap(long = "base-out", help = "The output base", default_value = "16")]
         base_out: String,
     },
     #[clap(name = "--to-unit")]
@@ -216,7 +216,7 @@ Examples:
         value: String,
         #[clap(value_name = "BASE", help = "The output base")]
         base_out: String,
-        #[clap(long = "--base-in", help = "The input base")]
+        #[clap(long = "base-in", help = "The input base")]
         base_in: Option<String>,
     },
     #[clap(name = "access-list")]

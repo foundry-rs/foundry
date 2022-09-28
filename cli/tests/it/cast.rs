@@ -1,5 +1,7 @@
 //! Contains various tests for checking cast commands
 
+use clap::CommandFactory;
+use foundry_cli::opts::cast::Opts;
 use foundry_cli_test_utils::{
     casttest,
     util::{TestCommand, TestProject},
@@ -11,6 +13,15 @@ use std::{io::Write, path::PathBuf};
 casttest!(print_help, |_: TestProject, mut cmd: TestCommand| {
     cmd.arg("--help");
     cmd.assert_non_empty_stdout();
+});
+
+// tests `--help` for all subcommand
+casttest!(print_cast_subcommand_help, |_: TestProject, mut cmd: TestCommand| {
+    let cast = Opts::command();
+    for sub_command in cast.get_subcommands() {
+        cmd.cast_fuse().args([sub_command.get_name(), "--help"]);
+        cmd.assert_non_empty_stdout();
+    }
 });
 
 // tests that the `cast block` command works correctly
