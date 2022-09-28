@@ -5,21 +5,15 @@ use crate::{
 };
 use cast::Cast;
 use clap::Parser;
-use contract::ContractMetadata;
-use errors::EtherscanError;
-use ethers::{
-    etherscan::Client,
-    prelude::*,
-    solc::artifacts::{Optimizer, Settings},
-};
+use ethers::{etherscan::Client, prelude::*};
 use eyre::{ContextCompat, Result};
 use foundry_common::{
-    compile::{compile, suppress_compile},
+    compile::{compile, etherscan_project, suppress_compile},
     try_get_http_provider,
 };
 use foundry_config::Config;
+use foundry_utils::find_source;
 use semver::Version;
-use std::{future::Future, pin::Pin};
 
 /// The minimum Solc version for outputting storage layouts.
 ///
@@ -115,85 +109,31 @@ impl StorageArgs {
             config.get_etherscan_api_key(Some(chain))
         }).ok_or_else(|| eyre::eyre!("No Etherscan API Key is set. Consider using the ETHERSCAN_API_KEY env var, or setting the -e CLI argument or etherscan-api-key in foundry.toml"))?;
         let client = Client::new(chain, api_key)?;
-
         let source = find_source(client, address).await?;
-        let metadata = source.items.first().unwrap();
+        let metadata = source.items.first().wrap_err("etherscan returned empty metadata")?;
+        if !metadata.is_vyper() {
+            eyre::bail!("Contract at provided address is not a valid Solidity contract")
+        }
 
-        let source_tree = source.source_tree()?;
+        let version = metadata.compiler_version()?;
+        let auto_detect = version < MIN_SOLC;
+        if auto_detect {
+            println!("The requested contract was compiled with {} while the minimum version for storage layouts is {} and as a result it may be empty.", version, MIN_SOLC);
+        }
 
-        // Create a new temp project
         let root = tempfile::tempdir()?;
         let root_path = root.path();
-        // let root = std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/out"));
-        // let root_path = root.as_path();
-        let sources = root_path.join(&metadata.contract_name);
-        source_tree.write_to(root_path)?;
-
-        // Configure Solc
-        let paths = ProjectPathsConfig::builder().sources(sources).build_with_root(root_path);
-
-        let mut settings = Settings::default();
-
-        let mut optimizer = Optimizer::default();
-        if metadata.optimization_used.trim().parse::<usize>()? == 1 {
-            optimizer.enable();
-            if let Ok(runs) = metadata.runs.parse::<usize>() {
-                optimizer.runs(runs);
-            }
-        }
-        settings.optimizer = optimizer;
-        if !metadata.source_code.contains("pragma solidity") {
-            eyre::bail!("Only Solidity verified contracts are allowed")
-        }
-        settings.evm_version = Some(metadata.evm_version.parse().unwrap_or_default());
-
-        let version = metadata.compiler_version.as_str().trim();
-        let mut auto_detect = false;
-        let solc = match version.strip_prefix('v').unwrap_or(version).parse::<Version>() {
-            Ok(mut v) => {
-                if v < MIN_SOLC {
-                    tracing::warn!("The requested contract was compiled with {} while the minimum version for storage layouts is {} and as a result it may be empty.", v, MIN_SOLC);
-                    auto_detect = true;
-                    v = MIN_SOLC
-                };
-                let v = &format!("{}.{}.{}", v.major, v.minor, v.patch);
-                Solc::find_or_install_svm_version(v)?
-            }
-            Err(_) => {
-                auto_detect = true;
-                Solc::default()
-            }
-        }
-        .with_base_path(root_path);
-        let solc_config = SolcConfig::builder().settings(settings).build();
-
-        let project = Project::builder()
-            .solc(solc)
-            .solc_config(solc_config)
-            .set_auto_detect(auto_detect)
-            .ephemeral()
-            .no_artifacts()
-            .ignore_error_code(1878) // License warning
-            .ignore_error_code(5574) // Contract code size warning
-            .paths(paths)
-            .build()?;
+        let project = etherscan_project(&metadata, root_path)?;
         let mut project = with_storage_layout_output(project);
+        project.auto_detect = auto_detect;
 
         // Compile
-        let out = match suppress_compile(&project) {
-            Ok(out) => Ok(out),
-            // metadata does not contain many compiler settings...
-            Err(e) => {
-                if e.to_string().contains("--via-ir") {
-                    tracing::warn!("Compilation failed due to \"stack too deep\", retrying with \"--via-ir\"...");
-                    project.solc_config.settings.via_ir = Some(true);
-                    suppress_compile(&project)
-                } else {
-                    Err(e)
-                }
-            }
-        }?;
-        let artifact = out.artifacts().find(|(name, _)| name == &metadata.contract_name);
+        let out = suppress_compile(&project)?;
+        dbg!(out.artifacts().count());
+        let artifact = out.artifacts().find(|(name, _)| {
+            println!("Artifact: {}", name);
+            name == &metadata.contract_name
+        });
         let artifact = artifact.wrap_err("Artifact not found")?.1;
 
         print_storage_layout(&artifact.storage_layout, true)?;
@@ -211,36 +151,4 @@ fn with_storage_layout_output(mut project: Project) -> Project {
     let settings = project.solc_config.settings.with_extra_output(output_selection);
     project.solc_config.settings = settings;
     project
-}
-
-/// If the code at `address` is a proxy, recurse until we find the implementation.
-fn find_source(
-    client: Client,
-    address: Address,
-) -> Pin<Box<dyn Future<Output = Result<ContractMetadata>>>> {
-    Box::pin(async move {
-        let source = client.contract_source_code(address).await?;
-        let metadata = source.items.first().wrap_err("Etherscan returned no data")?;
-        if metadata.proxy.parse::<usize>()? == 0 {
-            Ok(source)
-        } else {
-            let implementation = metadata.implementation.parse()?;
-            println!(
-                "Contract at {} is a proxy, trying to fetch source at {:?}...",
-                address, implementation
-            );
-            match find_source(client, implementation).await {
-                impl_source @ Ok(_) => impl_source,
-                Err(e) => {
-                    let err = EtherscanError::ContractCodeNotVerified(address).to_string();
-                    if e.to_string() == err {
-                        println!("{}, using {}", err, address);
-                        Ok(source)
-                    } else {
-                        Err(e)
-                    }
-                }
-            }
-        }
-    })
 }
