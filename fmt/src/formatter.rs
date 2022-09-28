@@ -190,16 +190,16 @@ impl<'a, W: Write> Formatter<'a, W> {
             return false
         }
         match last_char {
-            '{' | '[' => match next_char {
+            '{' => match next_char {
                 '{' | '[' | '(' => false,
                 '/' => true,
                 _ => self.config.bracket_spacing,
             },
-            '(' | '.' => matches!(next_char, '/'),
+            '(' | '.' | '[' => matches!(next_char, '/'),
             '/' => true,
             _ => match next_char {
-                '}' | ']' => self.config.bracket_spacing,
-                ')' | ',' | '.' | ';' => false,
+                '}' => self.config.bracket_spacing,
+                ')' | ',' | '.' | ';' | ']' => false,
                 _ => true,
             },
         }
@@ -1883,16 +1883,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 ty_exp.visit(self)?;
                 write!(self.buf(), "[")?;
                 index_expr.as_mut().map(|index| index.visit(self)).transpose()?;
-                let last_chunk = self.chunk_at(
-                    index_expr
-                        .as_ref()
-                        .map(|index| index.loc().end())
-                        .unwrap_or_else(|| ty_exp.loc().end()),
-                    Some(loc.end()),
-                    Some(self.config.bracket_spacing),
-                    "]",
-                );
-                self.write_chunk(&last_chunk)?;
+                write!(self.buf(), "]")?;
             }
             Expression::ArraySlice(loc, expr, start, end) => {
                 expr.visit(self)?;
