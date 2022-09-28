@@ -8,13 +8,13 @@ use ethers_core::{
     types::{Address, Chain, I256, U256},
     utils::{hex, to_checksum},
 };
-use ethers_etherscan::Client;
-use eyre::WrapErr;
-use std::str::FromStr;
+use ethers_etherscan::{contract::ContractMetadata, errors::EtherscanError, Client};
+use eyre::{ContextCompat, Result, WrapErr};
+use std::{future::Future, pin::Pin, str::FromStr};
 
 /// Given a function and a vector of string arguments, it proceeds to convert the args to ethabi
 /// Tokens and then ABI encode them.
-pub fn encode_args(func: &Function, args: &[impl AsRef<str>]) -> eyre::Result<Vec<u8>> {
+pub fn encode_args(func: &Function, args: &[impl AsRef<str>]) -> Result<Vec<u8>> {
     let params = func
         .inputs
         .iter()
@@ -30,7 +30,7 @@ pub fn encode_args(func: &Function, args: &[impl AsRef<str>]) -> eyre::Result<Ve
 /// # Panics
 ///
 /// If the `sig` is an invalid function signature
-pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> eyre::Result<Vec<Token>> {
+pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
     let func = IntoFunction::into(sig);
     let calldata = calldata.strip_prefix("0x").unwrap_or(calldata);
     let calldata = hex::decode(calldata)?;
@@ -53,7 +53,7 @@ pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> eyre::Result<Vec<To
 pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
     params: I,
     lenient: bool,
-) -> eyre::Result<Vec<Token>> {
+) -> Result<Vec<Token>> {
     params
         .into_iter()
         .map(|(param, value)| {
@@ -96,7 +96,7 @@ pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
         .wrap_err("Failed to parse tokens")
 }
 
-/// cleans up potential shortcomings of the ethabi Tokenizer
+/// Cleans up potential shortcomings of the ethabi Tokenizer.
 ///
 /// For example: parsing a string array with a single empty string: `[""]`, is returned as
 ///
@@ -205,7 +205,7 @@ impl<'a> IntoFunction for &'a str {
 }
 
 /// Given a function signature string, it tries to parse it as a `Function`
-pub fn get_func(sig: &str) -> eyre::Result<Function> {
+pub fn get_func(sig: &str) -> Result<Function> {
     Ok(match HumanReadableParser::parse_function(sig) {
         Ok(func) => func,
         Err(err) => {
@@ -227,7 +227,7 @@ pub fn get_func(sig: &str) -> eyre::Result<Function> {
 }
 
 /// Given an event signature string, it tries to parse it as a `Event`
-pub fn get_event(sig: &str) -> eyre::Result<Event> {
+pub fn get_event(sig: &str) -> Result<Event> {
     Ok(HumanReadableParser::parse_event(sig)?)
 }
 
@@ -262,9 +262,10 @@ pub async fn get_func_etherscan(
     args: &[String],
     chain: Chain,
     etherscan_api_key: &str,
-) -> eyre::Result<Function> {
+) -> Result<Function> {
     let client = Client::new(chain, etherscan_api_key)?;
-    let metadata = &client.contract_source_code(contract).await?.items[0];
+    let source = find_source(client, contract).await?;
+    let metadata = source.items.first().wrap_err("etherscan returned empty metadata")?;
 
     let empty = vec![];
     let funcs = metadata.abi.functions.get(function_name).unwrap_or(&empty);
@@ -277,6 +278,39 @@ pub async fn get_func_etherscan(
     }
 
     Err(eyre::eyre!("Function not found in abi"))
+}
+
+/// If the code at `address` is a proxy, recurse until we find the implementation.
+pub fn find_source(
+    client: Client,
+    address: Address,
+) -> Pin<Box<dyn Future<Output = Result<ContractMetadata>>>> {
+    Box::pin(async move {
+        tracing::trace!("find etherscan source for: {:?}", address);
+        let source = client.contract_source_code(address).await?;
+        let metadata = source.items.first().wrap_err("Etherscan returned no data")?;
+        if metadata.proxy == 0 {
+            Ok(source)
+        } else {
+            let implementation = metadata.implementation.unwrap();
+            println!(
+                "Contract at {} is a proxy, trying to fetch source at {:?}...",
+                address, implementation
+            );
+            match find_source(client, implementation).await {
+                impl_source @ Ok(_) => impl_source,
+                Err(e) => {
+                    let err = EtherscanError::ContractCodeNotVerified(address).to_string();
+                    if e.to_string() == err {
+                        tracing::error!("{}", err);
+                        Ok(source)
+                    } else {
+                        Err(e)
+                    }
+                }
+            }
+        }
+    })
 }
 
 #[cfg(test)]
