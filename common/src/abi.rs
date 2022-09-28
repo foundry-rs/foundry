@@ -99,23 +99,25 @@ pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
 /// cleans up potential shortcomings of the ethabi Tokenizer
 ///
 /// For example: parsing a string array with a single empty string: `[""]`, is returned as
+///
 /// ```text
 ///     [
-//         String(
-//             "\"\"",
-//         ),
-//     ],
+///        String(
+///            "\"\"",
+///        ),
+///    ],
 /// ```
-/// 
+///
 /// But should just be
+///
 /// ```text
 ///     [
-//         String(
-//             "",
-//         ),
-//     ],
+///        String(
+///            "",
+///        ),
+///    ],
 /// ```
-/// 
+///
 /// This will handle this edge case
 pub fn sanitize_token(token: Token) -> Token {
     match token {
