@@ -37,8 +37,8 @@ around bugs and participate in reviewing PRs.
 
 If you have reviewed existing documentation and still have questions, or you are having problems, you can get help in the following ways:
 
-- **Asking in the support Telegram:** The [Foundry Support Telegram][support-tg] is a fast and easy way to ask questions.
-- **Opening a discussion:** This repository comes with a discussions board where you can also ask for help. Click the "Discussions" tab in the top.
+-   **Asking in the support Telegram:** The [Foundry Support Telegram][support-tg] is a fast and easy way to ask questions.
+-   **Opening a discussion:** This repository comes with a discussions board where you can also ask for help. Click the "Discussions" tab in the top.
 
 As Foundry is still in heavy development, the documentation can be a bit scattered.
 The [Foundry Book][foundry-book] is our current best-effort attempt at keeping up-to-date information.
@@ -52,10 +52,10 @@ just fill in what you can. Contributors will ask follow up questions if somethin
 
 The most important pieces of information we need in a bug report are:
 
-- The Foundry version you are on (and that it is up to date)
-- The platform you are on (Windows, macOS, an M1 Mac or Linux)
-- Code snippets if this is happening in relation to testing or building code
-- Concrete steps to reproduce the bug
+-   The Foundry version you are on (and that it is up to date)
+-   The platform you are on (Windows, macOS, an M1 Mac or Linux)
+-   Code snippets if this is happening in relation to testing or building code
+-   Concrete steps to reproduce the bug
 
 In order to rule out the possibility of the bug being in your project, the code snippets should be as minimal
 as possible. It is better if you can reproduce the bug with a small snippet as opposed to an entire project!
@@ -109,11 +109,11 @@ in the future.
 
 Types of tests include:
 
-- **Unit tests**: Functions which have very specific tasks should be unit tested.
-- **Integration tests**: For general purpose, far reaching functionality, integration tests should be added.
-  The best way to add a new integration test is to look at existing ones and follow the style. 
+-   **Unit tests**: Functions which have very specific tasks should be unit tested.
+-   **Integration tests**: For general purpose, far reaching functionality, integration tests should be added.
+    The best way to add a new integration test is to look at existing ones and follow the style.
 
-Tests that use forking must contain "fork" in their name. 
+Tests that use forking must contain "fork" in their name.
 
 #### Commits
 
@@ -138,7 +138,7 @@ Keep an eye out for comments from code owners to provide guidance on conflicting
 
 **Any Foundry community member is welcome to review any pull request**.
 
-All contributors who choose to review and provide feedback on pull requests have a responsibility to both the project and individual making the contribution. Reviews and feedback must be helpful, insightful, and geared towards improving the contribution as opposed to simply blocking it. If there are reasons why you feel the PR should not be merged, explain what those are. Do not expect to be able to block a PR from advancing simply because you say "no" without giving an explanation. Be open to having your mind changed. Be open to working *with* the contributor to make the pull request better.
+All contributors who choose to review and provide feedback on pull requests have a responsibility to both the project and individual making the contribution. Reviews and feedback must be helpful, insightful, and geared towards improving the contribution as opposed to simply blocking it. If there are reasons why you feel the PR should not be merged, explain what those are. Do not expect to be able to block a PR from advancing simply because you say "no" without giving an explanation. Be open to having your mind changed. Be open to working _with_ the contributor to make the pull request better.
 
 Reviews that are dismissive or disrespectful of the contributor or any other reviewers are strictly counter to the Code of Conduct.
 
@@ -159,7 +159,7 @@ Focus first on the most significant aspects of the change:
 
 Note that only **incremental** improvement is needed to land a PR. This means that the PR does not need to be perfect, only better than the status quo. Follow-up PRs may be opened to continue iterating.
 
-When changes are necessary, *request* them, do not *demand* them, and **do not assume that the submitter already knows how to add a test or run a benchmark**.
+When changes are necessary, _request_ them, do not _demand_ them, and **do not assume that the submitter already knows how to add a test or run a benchmark**.
 
 Specific performance optimization techniques, coding styles and conventions change over time. The first impression you give to a new contributor never does.
 
@@ -171,7 +171,7 @@ If your comments were addressed but were not folded after new commits, or if the
 
 ##### Be aware of the person behind the code
 
-Be aware that *how* you communicate requests and reviews in your feedback can have a significant impact on the success of the pull request. Yes, we may merge a particular change that makes Foundry better, but the individual might just not want to have anything to do with Foundry ever again. The goal is not just having good code.
+Be aware that _how_ you communicate requests and reviews in your feedback can have a significant impact on the success of the pull request. Yes, we may merge a particular change that makes Foundry better, but the individual might just not want to have anything to do with Foundry ever again. The goal is not just having good code.
 
 ##### Abandoned or stale pull requests
 
