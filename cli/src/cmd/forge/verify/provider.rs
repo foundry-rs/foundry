@@ -42,7 +42,7 @@ impl fmt::Display for VerificationProviderType {
     }
 }
 
-#[derive(clap::ArgEnum, Debug, Clone, PartialEq, Eq)]
+#[derive(clap::ValueEnum, Debug, Clone, PartialEq, Eq)]
 pub enum VerificationProviderType {
     Etherscan,
     Sourcify,

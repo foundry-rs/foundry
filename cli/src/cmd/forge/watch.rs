@@ -53,8 +53,7 @@ pub struct WatchArgs {
         short = 'w',
         long = "watch",
         value_name = "PATH",
-        min_values = 0,
-        multiple_values = true,
+        num_args(0..),
         action = ArgAction::Append,
         help = "Watches the given files or directories for changes. If no paths are provided, the source and test directories of the project are watched."
     )]

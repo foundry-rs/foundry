@@ -1,4 +1,4 @@
-use clap::{IntoApp, Parser};
+use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use foundry_cli::{
     cmd::{

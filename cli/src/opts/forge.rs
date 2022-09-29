@@ -1,8 +1,3 @@
-use clap::{Parser, Subcommand, ValueHint};
-
-use ethers::solc::{artifacts::output_selection::ContractOutputSelection, EvmVersion};
-use std::path::PathBuf;
-
 use crate::cmd::forge::{
     bind::BindArgs,
     build::BuildArgs,
@@ -23,6 +18,9 @@ use crate::cmd::forge::{
     snapshot, test, tree, update,
     verify::{VerifyArgs, VerifyCheckArgs},
 };
+use clap::{Parser, Subcommand, ValueHint};
+use ethers::solc::{artifacts::output_selection::ContractOutputSelection, EvmVersion};
+use std::path::PathBuf;
 
 use serde::Serialize;
 
@@ -105,7 +103,7 @@ pub enum Subcommands {
 
     #[clap(visible_alias = "com", about = "Generate shell completions script.")]
     Completions {
-        #[clap(arg_enum)]
+        #[clap(value_enum)]
         shell: clap_complete::Shell,
     },
     #[clap(visible_alias = "fig", about = "Generate Fig autocompletion spec.")]
@@ -183,14 +181,50 @@ pub struct CompilerArgs {
     /// Example keys: evm.assembly, ewasm, ir, irOptimized, metadata
     ///
     /// For a full description, see https://docs.soliditylang.org/en/v0.8.13/using-the-compiler.html#input-description
-    #[clap(long, min_values = 1, value_name = "SELECTOR")]
+    #[clap(long, num_args(1..), value_name = "SELECTOR")]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub extra_output: Vec<ContractOutputSelection>,
 
     /// Extra output to write to separate files.
     ///
     /// Valid values: metadata, ir, irOptimized, ewasm, evm.assembly
-    #[clap(long, min_values = 1, value_name = "SELECTOR")]
+    #[clap(long, num_args(1..), value_name = "SELECTOR")]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub extra_output_files: Vec<ContractOutputSelection>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_parse_evm_version() {
+        let args: CompilerArgs =
+            CompilerArgs::parse_from(["foundry-cli", "--evm-version", "london"]);
+        assert_eq!(args.evm_version, Some(EvmVersion::London));
+    }
+
+    #[test]
+    fn can_parse_extra_output() {
+        let args: CompilerArgs =
+            CompilerArgs::parse_from(["foundry-cli", "--extra-output", "metadata", "ir-optimized"]);
+        assert_eq!(
+            args.extra_output,
+            vec![ContractOutputSelection::Metadata, ContractOutputSelection::IrOptimized]
+        );
+    }
+
+    #[test]
+    fn can_parse_extra_output_files() {
+        let args: CompilerArgs = CompilerArgs::parse_from([
+            "foundry-cli",
+            "--extra-output-files",
+            "metadata",
+            "ir-optimized",
+        ]);
+        assert_eq!(
+            args.extra_output_files,
+            vec![ContractOutputSelection::Metadata, ContractOutputSelection::IrOptimized]
+        );
+    }
 }

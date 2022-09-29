@@ -45,14 +45,14 @@ pub struct EvmArgs {
     /// Fetch state from a specific block number over a remote endpoint.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork-url", value_name = "BLOCK")]
+    #[clap(long, requires = "fork_url", value_name = "BLOCK")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_block_number: Option<u64>,
 
     /// Initial retry backoff on encountering errors.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork-url", value_name = "BACKOFF")]
+    #[clap(long, requires = "fork_url", value_name = "BACKOFF")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_retry_backoff: Option<u64>,
 
@@ -63,7 +63,7 @@ pub struct EvmArgs {
     /// This flag overrides the project's configuration file.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork-url")]
+    #[clap(long, requires = "fork_url")]
     #[serde(skip)]
     pub no_storage_caching: bool,
 

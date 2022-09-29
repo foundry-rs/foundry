@@ -113,7 +113,7 @@ pub struct MultiWallet {
         long = "private-key",
         help_heading = "WALLET OPTIONS - RAW",
         help = "Use the provided private key.",
-        conflicts_with = "private-keys",
+        conflicts_with = "private_keys",
         value_name = "RAW_PRIVATE_KEY",
         value_parser = foundry_common::clap_helpers::strip_0x_prefix
     )]
@@ -147,7 +147,7 @@ pub struct MultiWallet {
 
     #[clap(
         long = "mnemonic-indexes",
-        conflicts_with = "hd-paths",
+        conflicts_with = "hd_paths",
         help_heading = "WALLET OPTIONS - RAW",
         help = "Use the private key from the given mnemonic index. Used with --mnemonic-paths.",
         default_value = "0",
@@ -168,7 +168,7 @@ pub struct MultiWallet {
         long = "password",
         help_heading = "WALLET OPTIONS - KEYSTORE",
         help = "The keystore password. Used with --keystore.",
-        requires = "keystore-paths",
+        requires = "keystore_paths",
         value_name = "PASSWORDS"
     )]
     pub keystore_passwords: Option<Vec<String>>,

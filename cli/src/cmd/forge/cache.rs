@@ -40,9 +40,9 @@ pub struct CleanArgs {
     #[clap(
         short,
         long,
-        multiple_values(true),
+        num_args(1..),
         use_value_delimiter(true),
-        require_value_delimiter(true),
+        value_delimiter(','),
         value_name = "BLOCKS",
         group = "etherscan-blocks"
     )]
@@ -168,7 +168,7 @@ impl TypedValueParser for ChainOrAllValueParser {
     ) -> Result<Self::Value, clap::Error> {
         self.inner.parse_ref(cmd, arg, value)?.parse::<ChainOrAll>().map_err(|_| {
             clap::Error::raw(
-                clap::ErrorKind::InvalidValue,
+                clap::error::ErrorKind::InvalidValue,
                 "chain argument did not match any possible chain variant",
             )
         })

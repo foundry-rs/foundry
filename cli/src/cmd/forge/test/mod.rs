@@ -7,7 +7,7 @@ use crate::{
     suggestions, utils,
 };
 use cast::fuzz::CounterExample;
-use clap::{AppSettings, Parser};
+use clap::Parser;
 use ethers::{solc::utils::RuntimeOrHandle, types::U256};
 use forge::{
     decode::decode_console_logs,
@@ -43,7 +43,6 @@ use foundry_config::figment::{
 foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
 
 #[derive(Debug, Clone, Parser)]
-#[clap(global_setting = AppSettings::DeriveDisplayOrder)]
 pub struct TestArgs {
     #[clap(flatten)]
     filter: Filter,

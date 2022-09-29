@@ -21,7 +21,7 @@ pub struct VanityArgs {
     #[clap(
         long,
         help = "Prefix for the vanity address.",
-        required_unless_present = "ends-with",
+        required_unless_present = "ends_with",
         value_parser = HexAddressValidator::default(),
         value_name = "HEX"
     )]
@@ -296,12 +296,12 @@ impl TypedValueParser for HexAddressValidator {
     ) -> Result<Self::Value, clap::Error> {
         if value.len() > 40 {
             return Err(clap::Error::raw(
-                clap::ErrorKind::InvalidValue,
+                clap::error::ErrorKind::InvalidValue,
                 "vanity patterns length exceeded. cannot be more than 40 characters",
             ))
         }
         let value = value.to_str().ok_or_else(|| {
-            clap::Error::raw(clap::ErrorKind::InvalidUtf8, "address must be valid utf8")
+            clap::Error::raw(clap::error::ErrorKind::InvalidUtf8, "address must be valid utf8")
         })?;
         Ok(value.to_string())
     }

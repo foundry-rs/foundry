@@ -141,9 +141,9 @@ The input can be:
         value: String,
         #[clap(value_name = "BITS")]
         bits: String,
-        #[clap(long = "--base-in", help = "The input base")]
+        #[clap(long = "base-in", help = "The input base")]
         base_in: Option<String>,
-        #[clap(long = "--base-out", help = "The output base", default_value = "16")]
+        #[clap(long = "base-out", help = "The output base", default_value = "16")]
         base_out: String,
     },
     #[clap(name = "shr")]
@@ -153,9 +153,9 @@ The input can be:
         value: String,
         #[clap(value_name = "BITS")]
         bits: String,
-        #[clap(long = "--base-in", help = "The input base")]
+        #[clap(long = "base-in", help = "The input base")]
         base_in: Option<String>,
-        #[clap(long = "--base-out", help = "The output base", default_value = "16")]
+        #[clap(long = "base-out", help = "The output base", default_value = "16")]
         base_out: String,
     },
     #[clap(name = "--to-unit")]
@@ -216,7 +216,7 @@ Examples:
         value: String,
         #[clap(value_name = "BASE", help = "The output base")]
         base_out: String,
-        #[clap(long = "--base-in", help = "The input base")]
+        #[clap(long = "base-in", help = "The input base")]
         base_in: Option<String>,
     },
     #[clap(name = "access-list")]
@@ -292,7 +292,6 @@ Examples:
         args: Vec<String>,
     },
     #[clap(name = "chain")]
-    #[clap(visible_alias = "ch")]
     #[clap(about = "Get the symbolic name of the current chain.")]
     Chain {
         #[clap(long, env = "ETH_RPC_URL", value_name = "URL")]
@@ -724,7 +723,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
     FindBlock(FindBlockArgs),
     #[clap(visible_alias = "com", about = "Generate shell completions script")]
     Completions {
-        #[clap(arg_enum)]
+        #[clap(value_enum)]
         shell: clap_complete::Shell,
     },
     #[clap(visible_alias = "fig", about = "Generate Fig autocompletion spec.")]
