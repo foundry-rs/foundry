@@ -5,11 +5,10 @@
 use crate::rlp_converter::Item;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
-use ethers_contract::RawAbi;
 use ethers_core::{
     abi::{
         token::{LenientTokenizer, Tokenizer},
-        Function, HumanReadableParser, Token,
+        Function, HumanReadableParser, RawAbi, Token,
     },
     types::{Chain, *},
     utils::{
@@ -1274,8 +1273,7 @@ impl SimpleCast {
                     .map(|item| item.contract_name.clone())
                     .collect::<Vec<String>>();
 
-                // TODO: Abi to RawAbi ?
-                let abis = source.abis().iter().cloned().map(|_| todo!()).collect();
+                let abis = source.raw_abis()?;
 
                 (abis, names)
             }
