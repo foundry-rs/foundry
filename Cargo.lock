@@ -2207,6 +2207,7 @@ dependencies = [
  "dunce",
  "ethers-core",
  "ethers-etherscan",
+ "ethers-middleware",
  "ethers-providers",
  "ethers-solc",
  "eyre",
