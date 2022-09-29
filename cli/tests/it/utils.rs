@@ -82,6 +82,16 @@ impl EnvExternalities {
         })
     }
 
+    pub fn mumbai() -> Option<Self> {
+        Some(Self {
+            chain: Chain::PolygonMumbai,
+            rpc: network_rpc_key("mumbai")?,
+            pk: network_private_key("mumbai")?,
+            etherscan: etherscan_key(Chain::PolygonMumbai)?,
+            verifier: "etherscan".to_string(),
+        })
+    }
+
     /// Returns the arguments required to deploy the contract
     pub fn create_args(&self) -> Vec<String> {
         vec![
