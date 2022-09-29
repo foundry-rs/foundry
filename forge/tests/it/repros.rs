@@ -169,10 +169,8 @@ fn test_issue_3347() {
         ],
         anonymous: false,
     };
-    let raw_log = RawLog {
-        topics: test.logs[0].topics.clone(),
-        data: test.logs[0].data.clone().to_vec().into(),
-    };
+    let raw_log =
+        RawLog { topics: test.logs[0].topics.clone(), data: test.logs[0].data.clone().to_vec() };
     let log = event.parse_log(raw_log).unwrap();
     assert_eq!(
         log,
