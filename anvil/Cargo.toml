@@ -4,9 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
-description = """
-foundry's local ethereum node
-"""
+description = "Foundry's local ethereum node"
 
 [[bin]]
 name = "anvil"
@@ -15,11 +13,7 @@ required-features = ["cli"]
 
 [build-dependencies]
 # used to generate constants
-vergen = { version = "7.0", default-features = false, features = [
-    "build",
-    "rustc",
-    "git",
-] }
+vergen = { version = "7.0", default-features = false, features = ["build", "rustc", "git"] }
 
 [dependencies]
 # foundry internal
@@ -63,12 +57,8 @@ yansi = "0.5.1"
 tempfile = "3.3.0"
 
 # cli
-clap = { version = "3.0.10", features = [
-    "derive",
-    "env",
-    "wrap_help",
-], optional = true }
-clap_complete =  { version = "3.0.4", optional = true }
+clap = { version = "3.0.10", features = ["derive", "env", "wrap_help"], optional = true }
+clap_complete = { version = "3.0.4", optional = true }
 chrono = "0.4.19"
 auto_impl = "0.5.0"
 ctrlc = { version = "3", optional = true }

@@ -1,33 +1,33 @@
 on:
-  push:
-    branches:
-      - master
+    push:
+        branches:
+            - master
 
 name: live-test
 
 env:
-  CARGO_TERM_COLOR: always
+    CARGO_TERM_COLOR: always
 
 jobs:
-  live:
-    name: goerli live tests
-    runs-on: ubuntu-latest
-    env:
-      GOERLI_RPC_URL: https://goerli.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161
-      ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
-      TEST_PRIVATE_KEY: ${{ secrets.TEST_PRIVATE_KEY }}
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v2
-      - name: Install toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          profile: minimal
-          override: true
-      - uses: Swatinem/rust-cache@v1
-        with:
-          cache-on-failure: true
+    live:
+        name: goerli live tests
+        runs-on: ubuntu-latest
+        env:
+            GOERLI_RPC_URL: https://goerli.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161
+            ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
+            TEST_PRIVATE_KEY: ${{ secrets.TEST_PRIVATE_KEY }}
+        steps:
+            - name: Checkout sources
+              uses: actions/checkout@v2
+            - name: Install toolchain
+              uses: actions-rs/toolchain@v1
+              with:
+                  toolchain: stable
+                  profile: minimal
+                  override: true
+            - uses: Swatinem/rust-cache@v1
+              with:
+                  cache-on-failure: true
 
-      - name: cargo test
-        run: cargo test --package foundry-cli --test it -- verify::test_live_can_deploy_and_verify --exact --nocapture
+            - name: cargo test
+              run: cargo test --package foundry-cli --test it -- verify::test_live_can_deploy_and_verify --exact --nocapture
