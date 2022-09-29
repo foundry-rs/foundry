@@ -4,12 +4,14 @@ use crate::{
     error::ERROR_PREFIX,
 };
 use ethers::{
-    abi::{AbiDecode, Contract as Abi, RawLog},
+    abi::{decode, AbiDecode, Contract as Abi, ParamType, RawLog, Token},
     contract::EthLogDecode,
     prelude::U256,
     types::Log,
 };
-use foundry_common::SELECTOR_LEN;
+use foundry_common::{abi::format_token, SELECTOR_LEN};
+use itertools::Itertools;
+use once_cell::sync::Lazy;
 use revm::Return;
 
 /// Decode a set of logs, only returning logs from DSTest logging events and Hardhat's `console.log`
@@ -194,7 +196,117 @@ pub fn decode_revert(
                         .map(|err_str| format!("{}:{}", hex::encode(&err[..SELECTOR_LEN]), err_str))
                         .ok()
                 })
+                .or_else(|| {
+                    // try to decode possible variations of custom error types
+                    decode_custom_error(err).map(|token| {
+                        let s = format!("Custom Error {}:", hex::encode(&err[..SELECTOR_LEN]));
+
+                        let err_str = format_token(&token);
+                        if err_str.starts_with('(') {
+                            format!("{}{}", s, err_str)
+                        } else {
+                            format!("{}({})", s, err_str)
+                        }
+                    })
+                })
                 .ok_or_else(|| eyre::eyre!("Non-native error and not string"))
         }
+    }
+}
+
+/// Tries to optimistically decode a custom solc error, with at most 4 arguments
+pub fn decode_custom_error(err: &[u8]) -> Option<Token> {
+    decode_custom_error_args(err, 4)
+}
+
+/// Tries to optimistically decode a custom solc error with a maximal amount of arguments
+///
+/// This will brute force decoding of custom errors with up to `args` arguments
+pub fn decode_custom_error_args(err: &[u8], args: usize) -> Option<Token> {
+    if err.len() <= SELECTOR_LEN {
+        return None
+    }
+
+    let err = &err[SELECTOR_LEN..];
+    /// types we check against
+    static TYPES: Lazy<Vec<ParamType>> = Lazy::new(|| {
+        vec![
+            ParamType::Address,
+            ParamType::Bool,
+            ParamType::Uint(256),
+            ParamType::Int(256),
+            ParamType::Bytes,
+            ParamType::String,
+        ]
+    });
+
+    macro_rules! try_decode {
+        ($ty:ident) => {
+            if let Ok(mut decoded) = decode(&[$ty], err) {
+                return Some(decoded.remove(0))
+            }
+        };
+    }
+
+    // check if single param, but only if it's a single word
+    if err.len() == 32 {
+        for ty in TYPES.iter().cloned() {
+            try_decode!(ty);
+        }
+        return None
+    }
+
+    // brute force decode all possible combinations
+    for num in (2..=args).rev() {
+        for candidate in TYPES.iter().cloned().combinations(num) {
+            if let Ok(decoded) = decode(&candidate, err) {
+                return Some(Token::Tuple(decoded))
+            }
+        }
+    }
+
+    // try as array
+    for ty in TYPES.iter().cloned().map(|ty| ParamType::Array(Box::new(ty))) {
+        try_decode!(ty);
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethers::{
+        abi::{AbiEncode, Address},
+        contract::EthError,
+    };
+
+    #[test]
+    fn test_decode_custom_error_address() {
+        #[derive(Debug, Clone, EthError)]
+        struct AddressErr(Address);
+        let err = AddressErr(Address::random());
+
+        let encoded = err.clone().encode();
+        let decoded = decode_custom_error(&encoded).unwrap();
+        assert_eq!(decoded, Token::Address(err.0));
+    }
+
+    #[test]
+    fn test_decode_custom_error_args3() {
+        #[derive(Debug, Clone, EthError)]
+        struct MyError(Address, bool, U256);
+        let err = MyError(Address::random(), true, 100u64.into());
+
+        let encoded = err.clone().encode();
+        let decoded = decode_custom_error(&encoded).unwrap();
+        assert_eq!(
+            decoded,
+            Token::Tuple(vec![
+                Token::Address(err.0),
+                Token::Bool(err.1),
+                Token::Uint(100u64.into()),
+            ])
+        );
     }
 }
