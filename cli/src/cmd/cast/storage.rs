@@ -123,7 +123,7 @@ impl StorageArgs {
 
         let root = tempfile::tempdir()?;
         let root_path = root.path();
-        let project = etherscan_project(&metadata, root_path)?;
+        let project = etherscan_project(metadata, root_path)?;
         let mut project = with_storage_layout_output(project);
         project.auto_detect = auto_detect;
 
