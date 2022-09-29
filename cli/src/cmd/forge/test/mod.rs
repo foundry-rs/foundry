@@ -509,7 +509,8 @@ fn test(
 
         let mut results: BTreeMap<String, SuiteResult> = BTreeMap::new();
         let mut gas_report = GasReport::new(config.gas_reports, config.gas_reports_ignore);
-        let sig_identifier = SignaturesIdentifier::new(Config::foundry_cache_dir())?;
+        let sig_identifier =
+            SignaturesIdentifier::new(Config::foundry_cache_dir(), config.offline)?;
 
         for (contract_name, suite_result) in rx {
             let mut tests = suite_result.test_results.clone();

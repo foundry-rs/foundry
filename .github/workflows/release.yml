@@ -1,237 +1,237 @@
 name: Release version
 
 on:
-  push:
-    tags:
-      - 'v*.*.*'
-  schedule:
-    - cron: '0 0 * * *'
-  workflow_dispatch:
+    push:
+        tags:
+            - "v*.*.*"
+    schedule:
+        - cron: "0 0 * * *"
+    workflow_dispatch:
 
 env:
-  IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
-  CARGO_TERM_COLOR: always
+    IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    CARGO_TERM_COLOR: always
 
 jobs:
-  prepare:
-    name: Prepare release
-    runs-on: ubuntu-latest
+    prepare:
+        name: Prepare release
+        runs-on: ubuntu-latest
 
-    outputs:
-      tag_name: ${{ steps.release_info.outputs.tag_name }}
-      release_name: ${{ steps.release_info.outputs.release_name }}
-      changelog: ${{ steps.build_changelog.outputs.changelog }}
+        outputs:
+            tag_name: ${{ steps.release_info.outputs.tag_name }}
+            release_name: ${{ steps.release_info.outputs.release_name }}
+            changelog: ${{ steps.build_changelog.outputs.changelog }}
 
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v2
-        with:
-          fetch-depth: 0
+        steps:
+            - name: Checkout sources
+              uses: actions/checkout@v2
+              with:
+                  fetch-depth: 0
 
-      - name: Compute release name and tag
-        id: release_info
-        run: |
-          if [[ $IS_NIGHTLY ]]; then
-            echo "::set-output name=tag_name::nightly-${GITHUB_SHA}"
-            echo "::set-output name=release_name::Nightly ($(date '+%Y-%m-%d'))"
-          else
-            echo "::set-output name=tag_name::${GITHUB_REF_NAME}"
-            echo "::set-output name=release_name::${GITHUB_REF_NAME}"
-          fi
+            - name: Compute release name and tag
+              id: release_info
+              run: |
+                  if [[ $IS_NIGHTLY ]]; then
+                    echo "::set-output name=tag_name::nightly-${GITHUB_SHA}"
+                    echo "::set-output name=release_name::Nightly ($(date '+%Y-%m-%d'))"
+                  else
+                    echo "::set-output name=tag_name::${GITHUB_REF_NAME}"
+                    echo "::set-output name=release_name::${GITHUB_REF_NAME}"
+                  fi
 
-      # Creates a `nightly-SHA` tag for this specific nightly
-      # This tag is used for this specific nightly version's release
-      # which allows users to roll back. It is also used to build
-      # the changelog.
-      - name: Create build-specific nightly tag
-        if: ${{ env.IS_NIGHTLY }}
-        uses: actions/github-script@v5
-        env:
-          TAG_NAME: ${{ steps.release_info.outputs.tag_name }}
-        with:
-          script: |
-            const createTag = require('./.github/scripts/create-tag.js')
-            await createTag({ github, context }, process.env.TAG_NAME)
+            # Creates a `nightly-SHA` tag for this specific nightly
+            # This tag is used for this specific nightly version's release
+            # which allows users to roll back. It is also used to build
+            # the changelog.
+            - name: Create build-specific nightly tag
+              if: ${{ env.IS_NIGHTLY }}
+              uses: actions/github-script@v5
+              env:
+                  TAG_NAME: ${{ steps.release_info.outputs.tag_name }}
+              with:
+                  script: |
+                      const createTag = require('./.github/scripts/create-tag.js')
+                      await createTag({ github, context }, process.env.TAG_NAME)
 
-      - name: Build changelog
-        id: build_changelog
-        uses: mikepenz/release-changelog-builder-action@v2
-        with:
-          configuration: "./.github/changelog.json"
-          fromTag: ${{ env.IS_NIGHTLY && 'nightly' || '' }}
-          toTag: ${{ steps.release_info.outputs.tag_name }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            - name: Build changelog
+              id: build_changelog
+              uses: mikepenz/release-changelog-builder-action@v2
+              with:
+                  configuration: "./.github/changelog.json"
+                  fromTag: ${{ env.IS_NIGHTLY && 'nightly' || '' }}
+                  toTag: ${{ steps.release_info.outputs.tag_name }}
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  release-docker:
-    name: Release Docker
-    uses: ./.github/workflows/docker-publish.yml
+    release-docker:
+        name: Release Docker
+        uses: ./.github/workflows/docker-publish.yml
 
-  release:
-    name: ${{ matrix.job.target }} (${{ matrix.job.os }})
-    runs-on: ${{ matrix.job.os }}
-    needs: prepare
-    strategy:
-      matrix:
-        job:
-          # The OS is used for the runner
-          # The platform is a generic platform name
-          # The target is used by Cargo
-          # The arch is either 386, arm64 or amd64
-          # The svm target platform to use for the binary https://github.com/roynalnaruto/svm-rs/blob/84cbe0ac705becabdc13168bae28a45ad2299749/svm-builds/build.rs#L4-L24
-          - os: ubuntu-latest
-            platform: linux
-            target: x86_64-unknown-linux-gnu
-            arch: amd64
-            svm_target_platform: linux-amd64
-          - os: ubuntu-latest
-            platform: linux
-            target: aarch64-unknown-linux-gnu
-            arch: arm64
-            svm_target_platform: linux-aarch64
-          - os: macos-latest
-            platform: darwin
-            target: x86_64-apple-darwin
-            arch: amd64
-            svm_target_platform: macosx-amd64
-          - os: macos-latest
-            platform: darwin
-            target: aarch64-apple-darwin
-            arch: arm64
-            svm_target_platform: macosx-aarch64
-          - os: windows-latest
-            platform: win32
-            target: x86_64-pc-windows-msvc
-            arch: amd64
-            svm_target_platform: windows-amd64
+    release:
+        name: ${{ matrix.job.target }} (${{ matrix.job.os }})
+        runs-on: ${{ matrix.job.os }}
+        needs: prepare
+        strategy:
+            matrix:
+                job:
+                    # The OS is used for the runner
+                    # The platform is a generic platform name
+                    # The target is used by Cargo
+                    # The arch is either 386, arm64 or amd64
+                    # The svm target platform to use for the binary https://github.com/roynalnaruto/svm-rs/blob/84cbe0ac705becabdc13168bae28a45ad2299749/svm-builds/build.rs#L4-L24
+                    - os: ubuntu-latest
+                      platform: linux
+                      target: x86_64-unknown-linux-gnu
+                      arch: amd64
+                      svm_target_platform: linux-amd64
+                    - os: ubuntu-latest
+                      platform: linux
+                      target: aarch64-unknown-linux-gnu
+                      arch: arm64
+                      svm_target_platform: linux-aarch64
+                    - os: macos-latest
+                      platform: darwin
+                      target: x86_64-apple-darwin
+                      arch: amd64
+                      svm_target_platform: macosx-amd64
+                    - os: macos-latest
+                      platform: darwin
+                      target: aarch64-apple-darwin
+                      arch: arm64
+                      svm_target_platform: macosx-aarch64
+                    - os: windows-latest
+                      platform: win32
+                      target: x86_64-pc-windows-msvc
+                      arch: amd64
+                      svm_target_platform: windows-amd64
 
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v2
+        steps:
+            - name: Checkout sources
+              uses: actions/checkout@v2
 
-      - name: Install toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          target: ${{ matrix.job.target }}
-          override: true
+            - name: Install toolchain
+              uses: actions-rs/toolchain@v1
+              with:
+                  profile: minimal
+                  toolchain: stable
+                  target: ${{ matrix.job.target }}
+                  override: true
 
-      - uses: Swatinem/rust-cache@v1
-        with:
-          cache-on-failure: true
+            - uses: Swatinem/rust-cache@v1
+              with:
+                  cache-on-failure: true
 
-      - name: Apple M1 setup
-        if: ${{ matrix.job.target == 'aarch64-apple-darwin' }}
-        run: |
-          echo "SDKROOT=$(xcrun -sdk macosx --show-sdk-path)" >> $GITHUB_ENV
-          echo "MACOSX_DEPLOYMENT_TARGET=$(xcrun -sdk macosx --show-sdk-platform-version)" >> $GITHUB_ENV
+            - name: Apple M1 setup
+              if: ${{ matrix.job.target == 'aarch64-apple-darwin' }}
+              run: |
+                  echo "SDKROOT=$(xcrun -sdk macosx --show-sdk-path)" >> $GITHUB_ENV
+                  echo "MACOSX_DEPLOYMENT_TARGET=$(xcrun -sdk macosx --show-sdk-platform-version)" >> $GITHUB_ENV
 
-      - name: Linux ARM setup
-        if: ${{ matrix.job.target == 'aarch64-unknown-linux-gnu' }}
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+            - name: Linux ARM setup
+              if: ${{ matrix.job.target == 'aarch64-unknown-linux-gnu' }}
+              run: |
+                  sudo apt-get update -y
+                  sudo apt-get install -y gcc-aarch64-linux-gnu
+                  echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
-      - name: Build binaries
-        uses: actions-rs/cargo@v1
-        env:
-          SVM_TARGET_PLATFORM: ${{ matrix.job.svm_target_platform }}
-        with:
-          command: build
-          args: --release --bins --target ${{ matrix.job.target }}
+            - name: Build binaries
+              uses: actions-rs/cargo@v1
+              env:
+                  SVM_TARGET_PLATFORM: ${{ matrix.job.svm_target_platform }}
+              with:
+                  command: build
+                  args: --release --bins --target ${{ matrix.job.target }}
 
-      - name: Archive binaries
-        id: artifacts
-        env:
-          PLATFORM_NAME: ${{ matrix.job.platform }}
-          TARGET: ${{ matrix.job.target }}
-          ARCH: ${{ matrix.job.arch }}
-          VERSION_NAME: ${{ (env.IS_NIGHTLY && 'nightly') || needs.prepare.outputs.tag_name }}
-        run: |
-          if [ "$PLATFORM_NAME" == "linux" ]; then
-            tar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C ./target/${TARGET}/release forge cast anvil
-            echo "::set-output name=file_name::foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz"
-          elif [ "$PLATFORM_NAME" == "darwin" ]; then
-            # We need to use gtar here otherwise the archive is corrupt.
-            # See: https://github.com/actions/virtual-environments/issues/2619
-            gtar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C ./target/${TARGET}/release forge cast anvil
-            echo "::set-output name=file_name::foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz"
-          else
-            cd ./target/${TARGET}/release
-            7z a -tzip "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" forge.exe cast.exe anvil.exe
-            mv "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" ../../../
-            echo "::set-output name=file_name::foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip"
-          fi
-        shell: bash
+            - name: Archive binaries
+              id: artifacts
+              env:
+                  PLATFORM_NAME: ${{ matrix.job.platform }}
+                  TARGET: ${{ matrix.job.target }}
+                  ARCH: ${{ matrix.job.arch }}
+                  VERSION_NAME: ${{ (env.IS_NIGHTLY && 'nightly') || needs.prepare.outputs.tag_name }}
+              run: |
+                  if [ "$PLATFORM_NAME" == "linux" ]; then
+                    tar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C ./target/${TARGET}/release forge cast anvil
+                    echo "::set-output name=file_name::foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz"
+                  elif [ "$PLATFORM_NAME" == "darwin" ]; then
+                    # We need to use gtar here otherwise the archive is corrupt.
+                    # See: https://github.com/actions/virtual-environments/issues/2619
+                    gtar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C ./target/${TARGET}/release forge cast anvil
+                    echo "::set-output name=file_name::foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz"
+                  else
+                    cd ./target/${TARGET}/release
+                    7z a -tzip "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" forge.exe cast.exe anvil.exe
+                    mv "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" ../../../
+                    echo "::set-output name=file_name::foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip"
+                  fi
+              shell: bash
 
-      - name: Build man page
-        id: man
-        if: ${{ matrix.job.target == 'x86_64-unknown-linux-gnu' }}
-        env:
-          PLATFORM_NAME: ${{ matrix.job.platform }}
-          TARGET: ${{ matrix.job.target }}
-          VERSION_NAME: ${{ (env.IS_NIGHTLY && 'nightly') || needs.prepare.outputs.tag_name }}
-        run: |
-          sudo apt-get -y install help2man
-          help2man -N ./target/${TARGET}/release/forge > forge.1
-          help2man -N ./target/${TARGET}/release/cast > cast.1
-          help2man -N ./target/${TARGET}/release/anvil > anvil.1
-          gzip forge.1
-          gzip cast.1
-          gzip anvil.1
-          tar -czvf "foundry_man_${VERSION_NAME}.tar.gz" forge.1.gz cast.1.gz anvil.1.gz
-          echo "::set-output name=foundry_man::foundry_man_${VERSION_NAME}.tar.gz"
-        shell: bash
+            - name: Build man page
+              id: man
+              if: ${{ matrix.job.target == 'x86_64-unknown-linux-gnu' }}
+              env:
+                  PLATFORM_NAME: ${{ matrix.job.platform }}
+                  TARGET: ${{ matrix.job.target }}
+                  VERSION_NAME: ${{ (env.IS_NIGHTLY && 'nightly') || needs.prepare.outputs.tag_name }}
+              run: |
+                  sudo apt-get -y install help2man
+                  help2man -N ./target/${TARGET}/release/forge > forge.1
+                  help2man -N ./target/${TARGET}/release/cast > cast.1
+                  help2man -N ./target/${TARGET}/release/anvil > anvil.1
+                  gzip forge.1
+                  gzip cast.1
+                  gzip anvil.1
+                  tar -czvf "foundry_man_${VERSION_NAME}.tar.gz" forge.1.gz cast.1.gz anvil.1.gz
+                  echo "::set-output name=foundry_man::foundry_man_${VERSION_NAME}.tar.gz"
+              shell: bash
 
-      # Creates the release for this specific version
-      - name: Create release
-        uses: softprops/action-gh-release@v1
-        with:
-          name: ${{ needs.prepare.outputs.release_name }}
-          tag_name: ${{ needs.prepare.outputs.tag_name }}
-          prerelease: ${{ env.IS_NIGHTLY }}
-          body: ${{ needs.prepare.outputs.changelog }}
-          files: |
-            ${{ steps.artifacts.outputs.file_name }}
-            ${{ steps.man.outputs.foundry_man }}
+            # Creates the release for this specific version
+            - name: Create release
+              uses: softprops/action-gh-release@v1
+              with:
+                  name: ${{ needs.prepare.outputs.release_name }}
+                  tag_name: ${{ needs.prepare.outputs.tag_name }}
+                  prerelease: ${{ env.IS_NIGHTLY }}
+                  body: ${{ needs.prepare.outputs.changelog }}
+                  files: |
+                      ${{ steps.artifacts.outputs.file_name }}
+                      ${{ steps.man.outputs.foundry_man }}
 
-      # If this is a nightly release, it also updates the release
-      # tagged `nightly` for compatability with `foundryup`
-      - name: Update nightly release
-        if: ${{ env.IS_NIGHTLY }}
-        uses: softprops/action-gh-release@v1
-        with:
-          name: 'Nightly'
-          tag_name: 'nightly'
-          prerelease: true
-          body: ${{ needs.prepare.outputs.changelog }}
-          files: |
-            ${{ steps.artifacts.outputs.file_name }}
-            ${{ steps.man.outputs.foundry_man }}
+            # If this is a nightly release, it also updates the release
+            # tagged `nightly` for compatability with `foundryup`
+            - name: Update nightly release
+              if: ${{ env.IS_NIGHTLY }}
+              uses: softprops/action-gh-release@v1
+              with:
+                  name: "Nightly"
+                  tag_name: "nightly"
+                  prerelease: true
+                  body: ${{ needs.prepare.outputs.changelog }}
+                  files: |
+                      ${{ steps.artifacts.outputs.file_name }}
+                      ${{ steps.man.outputs.foundry_man }}
 
-  cleanup:
-    name: Release cleanup
-    runs-on: ubuntu-latest
-    needs: release
+    cleanup:
+        name: Release cleanup
+        runs-on: ubuntu-latest
+        needs: release
 
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v2
+        steps:
+            - name: Checkout sources
+              uses: actions/checkout@v2
 
-      # Moves the `nightly` tag to `HEAD`
-      - name: Move nightly tag
-        if: ${{ env.IS_NIGHTLY }}
-        uses: actions/github-script@v5
-        with:
-          script: |
-            const moveTag = require('./.github/scripts/move-tag.js')
-            await moveTag({ github, context }, 'nightly')
+            # Moves the `nightly` tag to `HEAD`
+            - name: Move nightly tag
+              if: ${{ env.IS_NIGHTLY }}
+              uses: actions/github-script@v5
+              with:
+                  script: |
+                      const moveTag = require('./.github/scripts/move-tag.js')
+                      await moveTag({ github, context }, 'nightly')
 
-      - name: Delete old nightlies
-        uses: actions/github-script@v5
-        with:
-          script: |
-            const prunePrereleases = require('./.github/scripts/prune-prereleases.js')
-            await prunePrereleases({github, context})
+            - name: Delete old nightlies
+              uses: actions/github-script@v5
+              with:
+                  script: |
+                      const prunePrereleases = require('./.github/scripts/prune-prereleases.js')
+                      await prunePrereleases({github, context})

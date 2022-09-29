@@ -1,14 +1,14 @@
 //! Cast
 //!
 //! Contains core function implementation for `cast`
+
 use crate::rlp_converter::Item;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
-use ethers_contract::RawAbi;
 use ethers_core::{
     abi::{
         token::{LenientTokenizer, Tokenizer},
-        Function, HumanReadableParser, Token,
+        Function, HumanReadableParser, RawAbi, Token,
     },
     types::{Chain, *},
     utils::{
@@ -16,7 +16,7 @@ use ethers_core::{
         parse_bytes32_string, parse_units, rlp, Units,
     },
 };
-use ethers_etherscan::Client;
+use ethers_etherscan::{errors::EtherscanError, Client};
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
 use foundry_common::{abi::encode_args, fmt::*};
@@ -1254,45 +1254,36 @@ impl SimpleCast {
                 let client = Client::new(chain, api_key)?;
 
                 // get the source
-                let contract_source = match client.contract_source_code(address).await {
-                    Ok(src) => src,
-                    Err(ethers_etherscan::errors::EtherscanError::InvalidApiKey) => {
-                        eyre::bail!("Invalid Etherscan API key. Did you set it correctly? You may be using an API key for another Etherscan API chain (e.g. Ethereum API key for Polygonscan).")
+                let source = match client.contract_source_code(address).await {
+                    Ok(source) => source,
+                    Err(EtherscanError::InvalidApiKey) => {
+                        eyre::bail!("Invalid Etherscan API key. Did you set it correctly? You may be using an API key for another Etherscan API chain (e.g. Etherscan API key for Polygonscan).")
+                    }
+                    Err(EtherscanError::ContractCodeNotVerified(address)) => {
+                        eyre::bail!("Contract source code at {:?} on {} not verified. Maybe you have selected the wrong chain?", address, chain)
                     }
                     Err(err) => {
                         eyre::bail!(err)
                     }
                 };
 
-                if contract_source
-                    .items
-                    .iter()
-                    .any(|item| item.abi == "Contract source code not verified")
-                {
-                    eyre::bail!("Contract source code at {:?} on {} not verified. Maybe you have selected the wrong chain?", address, chain)
-                }
-
-                let contract_source_names = contract_source
+                let names = source
                     .items
                     .iter()
                     .map(|item| item.contract_name.clone())
                     .collect::<Vec<String>>();
 
-                let mut abis = Vec::with_capacity(contract_source.items.len());
-                for item in &contract_source.items {
-                    abis.push(serde_json::from_str(&item.abi)?);
-                }
+                let abis = source.raw_abis()?;
 
-                (abis, contract_source_names)
+                (abis, names)
             }
         };
         contract_abis
             .iter()
-            .zip(&contract_names)
-            .map(|(contract_abi, contract_name)| {
-                let interface_source =
-                    foundry_utils::abi::abi_to_solidity(contract_abi, contract_name)?;
-                Ok(InterfaceSource { name: contract_name.to_owned(), source: interface_source })
+            .zip(contract_names)
+            .map(|(contract_abi, name)| {
+                let source = foundry_utils::abi::abi_to_solidity(contract_abi, &name)?;
+                Ok(InterfaceSource { name, source })
             })
             .collect::<Result<Vec<InterfaceSource>>>()
     }
@@ -1471,14 +1462,8 @@ impl SimpleCast {
         etherscan_api_key: String,
     ) -> Result<String> {
         let client = Client::new(chain, etherscan_api_key)?;
-        let meta = client.contract_source_code(contract_address.parse()?).await?;
-        let code = meta.source_code();
-
-        if code.is_empty() {
-            return Err(eyre::eyre!("unverified contract"))
-        }
-
-        Ok(code)
+        let metadata = client.contract_source_code(contract_address.parse()?).await?;
+        Ok(metadata.source_code())
     }
 
     /// Fetches the source code of verified contracts from etherscan and expands the resulting
@@ -1504,7 +1489,7 @@ impl SimpleCast {
     ) -> eyre::Result<()> {
         let client = Client::new(chain, etherscan_api_key)?;
         let meta = client.contract_source_code(contract_address.parse()?).await?;
-        let source_tree = meta.source_tree()?;
+        let source_tree = meta.source_tree();
         source_tree.write_to(&output_directory)?;
         Ok(())
     }

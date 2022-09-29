@@ -178,6 +178,7 @@ impl NodeArgs {
             .with_genesis(self.init)
             .with_steps_tracing(self.evm_opts.steps_tracing)
             .with_ipc(self.ipc)
+            .with_code_size_limit(self.evm_opts.code_size_limit)
     }
 
     fn account_generator(&self) -> AccountGenerator {
@@ -313,6 +314,11 @@ pub struct AnvilEvmArgs {
     /// The block gas limit.
     #[clap(long, value_name = "GAS_LIMIT", help_heading = "ENVIRONMENT CONFIG")]
     pub gas_limit: Option<u64>,
+
+    /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests. By
+    /// default, it is 0x6000 (~25kb).
+    #[clap(long, value_name = "CODE_SIZE", help_heading = "ENVIRONMENT CONFIG")]
+    pub code_size_limit: Option<usize>,
 
     /// The gas price.
     #[clap(long, value_name = "GAS_PRICE", help_heading = "ENVIRONMENT CONFIG")]

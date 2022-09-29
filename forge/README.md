@@ -72,44 +72,43 @@ function testDoubleWithFuzzing(uint256 x) public {
 
 ## Features
 
-- [ ] test
-  - [x] Simple unit tests
-    - [x] Gas costs
-    - [x] DappTools style test output
-    - [x] JSON test output
-    - [x] Matching on regex
-    - [x] DSTest-style assertions support
-  - [x] Fuzzing
-  - [ ] Symbolic execution
-  - [ ] Coverage
-  - [x] HEVM-style Solidity cheatcodes
-  - [ ] Structured tracing with abi decoding
-  - [ ] Per-line gas profiling
-  - [x] Forking mode
-  - [x] Automatic solc selection
-- [x] build
-  - [x] Can read DappTools-style .sol.json artifacts
-  - [x] Manual remappings
-  - [x] Automatic remappings
-  - [x] Multiple compiler versions
-  - [x] Incremental compilation
-  - [ ] Can read Hardhat-style artifacts
-  - [ ] Can read Truffle-style artifacts
-- [x] install
-- [x] update
-- [ ] debug
-- [x] CLI Tracing with `RUST_LOG=forge=trace`
+-   [ ] test
+    -   [x] Simple unit tests
+        -   [x] Gas costs
+        -   [x] DappTools style test output
+        -   [x] JSON test output
+        -   [x] Matching on regex
+        -   [x] DSTest-style assertions support
+    -   [x] Fuzzing
+    -   [ ] Symbolic execution
+    -   [ ] Coverage
+    -   [x] HEVM-style Solidity cheatcodes
+    -   [ ] Structured tracing with abi decoding
+    -   [ ] Per-line gas profiling
+    -   [x] Forking mode
+    -   [x] Automatic solc selection
+-   [x] build
+    -   [x] Can read DappTools-style .sol.json artifacts
+    -   [x] Manual remappings
+    -   [x] Automatic remappings
+    -   [x] Multiple compiler versions
+    -   [x] Incremental compilation
+    -   [ ] Can read Hardhat-style artifacts
+    -   [ ] Can read Truffle-style artifacts
+-   [x] install
+-   [x] update
+-   [ ] debug
+-   [x] CLI Tracing with `RUST_LOG=forge=trace`
 
 ### Gas Report
 
-Foundry will show you a comprehensive gas report about your contracts. It returns the `min`, `average`, `median` and, `max` gas cost for every function. 
+Foundry will show you a comprehensive gas report about your contracts. It returns the `min`, `average`, `median` and, `max` gas cost for every function.
 
 It looks at **all** the tests that make a call to a given function and records the associated gas costs. For example, if something calls a function and it reverts, that's probably the `min` value. Another example is the `max` value that is generated usually during the first call of the function (as it has to initialise storage, variables, etc.)
 
 Usually, the `median` value is what your users will probably end up paying. `max` and `min` concern edge cases that you might want to explicitly test against, but users will probably never encounter.
 
 <img width="626" alt="image" src="https://user-images.githubusercontent.com/13405632/155415392-3ef61d67-8952-40e1-a509-24a8bf18fa80.png">
-
 
 ### Cheat codes
 
@@ -120,68 +119,67 @@ We allow modifying blockchain state with "cheat codes". These can be accessed by
 calling into a contract at address `0x7109709ECfa91a80626fF3989D68f67F5b1DD12D`,
 which implements the following methods:
 
-- `function warp(uint x) public` Sets the block timestamp to `x`.
+-   `function warp(uint x) public` Sets the block timestamp to `x`.
 
-- `function difficulty(uint x) public` Sets the block difficulty to `x`.
+-   `function difficulty(uint x) public` Sets the block difficulty to `x`.
 
-- `function roll(uint x) public` Sets the block number to `x`.
+-   `function roll(uint x) public` Sets the block number to `x`.
 
-- `function coinbase(address c) public` Sets the block coinbase to `c`.
+-   `function coinbase(address c) public` Sets the block coinbase to `c`.
 
-- `function store(address c, bytes32 loc, bytes32 val) public` Sets the slot
-  `loc` of contract `c` to `val`.
+-   `function store(address c, bytes32 loc, bytes32 val) public` Sets the slot
+    `loc` of contract `c` to `val`.
 
-- `function load(address c, bytes32 loc) public returns (bytes32 val)` Reads the
-  slot `loc` of contract `c`.
+-   `function load(address c, bytes32 loc) public returns (bytes32 val)` Reads the
+    slot `loc` of contract `c`.
 
-- `function sign(uint sk, bytes32 digest) public returns (uint8 v, bytes32 r, bytes32 s)`
-  Signs the `digest` using the private key `sk`. Note that signatures produced
-  via `hevm.sign` will leak the private key.
+-   `function sign(uint sk, bytes32 digest) public returns (uint8 v, bytes32 r, bytes32 s)`
+    Signs the `digest` using the private key `sk`. Note that signatures produced
+    via `hevm.sign` will leak the private key.
 
-- `function addr(uint sk) public returns (address addr)` Derives an ethereum
-  address from the private key `sk`. Note that `hevm.addr(0)` will fail with
-  `BadCheatCode` as `0` is an invalid ECDSA private key. `sk` values above the 
-  secp256k1 curve order, near the max uint256 value will also fail.
+-   `function addr(uint sk) public returns (address addr)` Derives an ethereum
+    address from the private key `sk`. Note that `hevm.addr(0)` will fail with
+    `BadCheatCode` as `0` is an invalid ECDSA private key. `sk` values above the
+    secp256k1 curve order, near the max uint256 value will also fail.
 
-- `function ffi(string[] calldata) external returns (bytes memory)` Executes the
-  arguments as a command in the system shell and returns stdout. Note that this
-  cheatcode means test authors can execute arbitrary code on user machines as
-  part of a call to `forge test`, for this reason all calls to `ffi` will fail
-  unless the `--ffi` flag is passed.
+-   `function ffi(string[] calldata) external returns (bytes memory)` Executes the
+    arguments as a command in the system shell and returns stdout. Note that this
+    cheatcode means test authors can execute arbitrary code on user machines as
+    part of a call to `forge test`, for this reason all calls to `ffi` will fail
+    unless the `--ffi` flag is passed.
 
-- `function deal(address who, uint256 amount)`: Sets an account's balance
+-   `function deal(address who, uint256 amount)`: Sets an account's balance
 
-- `function etch(address where, bytes memory what)`: Sets the contract code at
-  some address contract code
+-   `function etch(address where, bytes memory what)`: Sets the contract code at
+    some address contract code
 
-- `function prank(address sender)`: Performs the next smart contract call as another address (prank just changes msg.sender. Tx still occurs as normal)
+-   `function prank(address sender)`: Performs the next smart contract call as another address (prank just changes msg.sender. Tx still occurs as normal)
 
-- `function prank(address sender, address origin)`: Performs the next smart contract call setting both `msg.sender` and `tx.origin`.
+-   `function prank(address sender, address origin)`: Performs the next smart contract call setting both `msg.sender` and `tx.origin`.
 
-- `function startPrank(address sender)`: Performs smart contract calls as another address. The account impersonation lasts until the end of the transaction, or until `stopPrank` is called.
+-   `function startPrank(address sender)`: Performs smart contract calls as another address. The account impersonation lasts until the end of the transaction, or until `stopPrank` is called.
 
-- `function startPrank(address sender, address origin)`: Performs smart contract calls as another address, while also setting `tx.origin`. The account impersonation lasts until the end of the transaction, or until `stopPrank` is called.
+-   `function startPrank(address sender, address origin)`: Performs smart contract calls as another address, while also setting `tx.origin`. The account impersonation lasts until the end of the transaction, or until `stopPrank` is called.
 
-- `function stopPrank()`: Stop calling smart contracts with the address set at `startPrank`
+-   `function stopPrank()`: Stop calling smart contracts with the address set at `startPrank`
 
-- `function expectRevert(<overloaded> expectedError)`:
-  Tells the evm to expect that the next call reverts with specified error bytes. Valid input types: `bytes`, and `bytes4`. Implicitly, strings get converted to bytes except when shorter than 4, in which case you will need to cast explicitly to `bytes`.
-  
-- `function expectEmit(bool,bool,bool,bool) external`: Expects the next emitted event. Params check topic 1, topic 2, topic 3 and data are the same.
+-   `function expectRevert(<overloaded> expectedError)`:
+    Tells the evm to expect that the next call reverts with specified error bytes. Valid input types: `bytes`, and `bytes4`. Implicitly, strings get converted to bytes except when shorter than 4, in which case you will need to cast explicitly to `bytes`.
+-   `function expectEmit(bool,bool,bool,bool) external`: Expects the next emitted event. Params check topic 1, topic 2, topic 3 and data are the same.
 
-- `function expectEmit(bool,bool,bool,bool,address) external`: Expects the next emitted event. Params check topic 1, topic 2, topic 3 and data are the same. Also checks supplied address against address of originating contract.
+-   `function expectEmit(bool,bool,bool,bool,address) external`: Expects the next emitted event. Params check topic 1, topic 2, topic 3 and data are the same. Also checks supplied address against address of originating contract.
 
-- `function getCode(string calldata) external returns (bytes memory)`: Fetches bytecode from a contract artifact. The parameter can either be in the form `ContractFile.sol` (if the filename and contract name are the same), `ContractFile.sol:ContractName`, or `./path/to/artifact.json`.
+-   `function getCode(string calldata) external returns (bytes memory)`: Fetches bytecode from a contract artifact. The parameter can either be in the form `ContractFile.sol` (if the filename and contract name are the same), `ContractFile.sol:ContractName`, or `./path/to/artifact.json`.
 
-- `function label(address addr, string calldata label) external`: Label an address in test traces.
+-   `function label(address addr, string calldata label) external`: Label an address in test traces.
 
-- `function assume(bool) external`: When fuzzing, generate new inputs if conditional not met
+-   `function assume(bool) external`: When fuzzing, generate new inputs if conditional not met
 
-- `function setNonce(address account, uint64 nonce) external`: Set nonce for an account, increment only.
+-   `function setNonce(address account, uint64 nonce) external`: Set nonce for an account, increment only.
 
-- `function getNonce(address account)`: Get nonce for an account.
+-   `function getNonce(address account)`: Get nonce for an account.
 
-- `function chainId(uint x) public` Sets the block chainid to `x`.
+-   `function chainId(uint x) public` Sets the block chainid to `x`.
 
 The below example uses the `warp` cheatcode to override the timestamp & `expectRevert` to expect a specific revert string:
 
@@ -238,7 +236,7 @@ contract T is DSTest {
         emit Transfer(address(this), address(1337), 1337);
         emitter.t();
     }
-  
+
     function testExpectEmitWithAddress() public {
         ExpectEmit emitter = new ExpectEmit();
         // do the same as above and check emitting address
@@ -257,6 +255,7 @@ contract ExpectEmit {
 ```
 
 A full interface for all cheatcodes is here:
+
 ```solidity
 interface Hevm {
     // Set block.timestamp (newTimestamp)
@@ -330,8 +329,8 @@ interface Hevm {
     function getNonce(address) external returns(uint64);
 }
 ```
-### `console.log`
 
+### `console.log`
 
 We support the logging functionality from Hardhat's `console.log`.
 
@@ -340,6 +339,7 @@ If you are on a hardhat project, `import hardhat/console.sol` should just work i
 If no, there is an implementation contract [here](https://raw.githubusercontent.com/NomicFoundation/hardhat/master/packages/hardhat-core/console.sol). We currently recommend that you copy this contract, place it in your `test` folder, and import it into the contract where you wish to use `console.log`, though there should be more streamlined functionality soon.
 
 Usage follows the same format as [Hardhat](https://hardhat.org/hardhat-network/reference/#console-log):
+
 ```solidity
 import "./console.sol";
 ...
@@ -348,6 +348,7 @@ console.log(someValue);
 ```
 
 Note: to make logs visible in `stdout`, you must use at least level 2 verbosity.
+
 ```bash
 $> forge test -vv
 [PASS] test1() (gas: 7683)
@@ -358,18 +359,21 @@ Logs:
 ```
 
 ## Remappings
+
 If you are working in a repo with NPM-style imports, like
+
 ```
 import "@openzeppelin/contracts/access/Ownable.sol";
 ```
 
-then you will need to create a `remappings.txt` file at the top level of your project directory, so that Forge knows where to find these dependencies. 
+then you will need to create a `remappings.txt` file at the top level of your project directory, so that Forge knows where to find these dependencies.
 
-For example, if you have `@openzeppelin` imports, you would 
+For example, if you have `@openzeppelin` imports, you would
 
 1. `forge install openzeppelin/openzeppelin-contracts` (this will add the repo to `lib/openzepplin-contracts`)
 2. Create a remappings file: `touch remappings.txt`
-3. Add this line to `remappings.txt`  
+3. Add this line to `remappings.txt`
+
 ```
 @openzeppelin/=lib/openzeppelin-contracts/
 ```
@@ -403,16 +407,16 @@ We also intend to add features which are not available in dapptools:
 1. Even faster tests with parallel EVM execution that produces state diffs
    instead of modifying the state
 1. Improved UX for assertions:
-   1. Check revert error or reason on a Solidity call
-   1. Check that an event was emitted with expected arguments
+    1. Check revert error or reason on a Solidity call
+    1. Check that an event was emitted with expected arguments
 1. Support more EVM backends ([revm](https://github.com/bluealloy/revm/), geth's
    evm, hevm etc.) & benchmark performance across them
 1. Declarative deployment system based on a config file
 1. Formatting & Linting (maybe powered by
    [Solang](https://github.com/hyperledger-labs/solang))
-   1. `forge fmt`, an automatic code formatter according to standard rules (like
-      [`prettier-plugin-solidity`](https://github.com/prettier-solidity/prettier-plugin-solidity))
-   1. `forge lint`, a linter + static analyzer, like a combination of
-      [`solhint`](https://github.com/protofire/solhint) and
-      [slither](https://github.com/crytic/slither/)
+    1. `forge fmt`, an automatic code formatter according to standard rules (like
+       [`prettier-plugin-solidity`](https://github.com/prettier-solidity/prettier-plugin-solidity))
+    1. `forge lint`, a linter + static analyzer, like a combination of
+       [`solhint`](https://github.com/protofire/solhint) and
+       [slither](https://github.com/crytic/slither/)
 1. Flamegraphs for gas profiling

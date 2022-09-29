@@ -6,7 +6,7 @@ use foundry_common::{
 };
 use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, io::BufWriter, path::PathBuf, sync::Arc};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::{trace, warn};
 
@@ -24,11 +24,16 @@ pub struct SignaturesIdentifier {
     unavailable: HashSet<Vec<u8>>,
     /// The API client to fetch signatures from
     sign_eth_api: SignEthClient,
+    /// whether traces should be decoded via `sign_eth_api`
+    offline: bool,
 }
 
 impl SignaturesIdentifier {
-    #[tracing::instrument(name = "signaturescache")]
-    pub fn new(cache_path: Option<PathBuf>) -> eyre::Result<SingleSignaturesIdentifier> {
+    #[tracing::instrument(target = "forge::signatures")]
+    pub fn new(
+        cache_path: Option<PathBuf>,
+        offline: bool,
+    ) -> eyre::Result<SingleSignaturesIdentifier> {
         let sign_eth_api = SignEthClient::new()?;
 
         let identifier = if let Some(cache_path) = cache_path {
@@ -44,27 +49,38 @@ impl SignaturesIdentifier {
                 }
                 CachedSignatures::default()
             };
-            Self { cached, cached_path: Some(path), unavailable: HashSet::new(), sign_eth_api }
+            Self {
+                cached,
+                cached_path: Some(path),
+                unavailable: HashSet::new(),
+                sign_eth_api,
+                offline,
+            }
         } else {
             Self {
                 cached: Default::default(),
                 cached_path: None,
                 unavailable: HashSet::new(),
                 sign_eth_api,
+                offline,
             }
         };
 
         Ok(Arc::new(RwLock::new(identifier)))
     }
 
+    #[tracing::instrument(target = "forge::signatures", skip(self))]
     pub fn save(&self) {
         if let Some(cached_path) = &self.cached_path {
-            if let Ok(file) = std::fs::File::create(cached_path) {
-                if serde_json::to_writer(BufWriter::new(file), &self.cached).is_err() {
-                    warn!("could not serialize SignaturesIdentifier");
+            if let Some(parent) = cached_path.parent() {
+                if let Err(err) = std::fs::create_dir_all(parent) {
+                    warn!(?parent, ?err, "failed to create cache");
                 }
+            }
+            if let Err(err) = fs::write_json_file(cached_path, &self.cached) {
+                warn!(?cached_path, ?err, "failed to flush signature cache");
             } else {
-                warn!(?cached_path, "could not open cache file");
+                trace!(?cached_path, "flushed signature cache")
             }
         }
     }
@@ -78,7 +94,7 @@ impl SignaturesIdentifier {
         get_type: fn(&str) -> eyre::Result<T>,
     ) -> Option<T> {
         // Exit early if we have unsuccessfully queried it before.
-        if self.unavailable.contains(&identifier.to_vec()) {
+        if self.unavailable.contains(identifier) {
             return None
         }
 
@@ -89,7 +105,7 @@ impl SignaturesIdentifier {
 
         let hex_identifier = format!("0x{}", hex::encode(identifier));
 
-        if !map.contains_key(&hex_identifier) {
+        if !self.offline && !map.contains_key(&hex_identifier) {
             if let Ok(signatures) =
                 self.sign_eth_api.decode_selector(&hex_identifier, selector_type).await
             {
@@ -108,13 +124,24 @@ impl SignaturesIdentifier {
         None
     }
 
+    /// Returns `None` if in offline mode
+    fn ensure_not_offline(&self) -> Option<()> {
+        if self.offline {
+            None
+        } else {
+            Some(())
+        }
+    }
+
     /// Identifies `Function` from its cache or `sig.eth.samczsun.com`
     pub async fn identify_function(&mut self, identifier: &[u8]) -> Option<Function> {
+        self.ensure_not_offline()?;
         self.identify(SelectorType::Function, identifier, get_func).await
     }
 
     /// Identifies `Event` from its cache or `sig.eth.samczsun.com`
     pub async fn identify_event(&mut self, identifier: &[u8]) -> Option<Event> {
+        self.ensure_not_offline()?;
         self.identify(SelectorType::Event, identifier, get_event).await
     }
 }
@@ -139,7 +166,7 @@ mod tests {
     async fn can_query_signatures() {
         let tmp = tempfile::tempdir().unwrap();
         {
-            let sigs = SignaturesIdentifier::new(Some(tmp.path().into())).unwrap();
+            let sigs = SignaturesIdentifier::new(Some(tmp.path().into()), false).unwrap();
 
             assert!(sigs.read().await.cached.events.is_empty());
             assert!(sigs.read().await.cached.functions.is_empty());
@@ -155,14 +182,14 @@ mod tests {
                 .await
                 .unwrap();
 
-            assert!(func == get_func("transferFrom(address,address,uint256)").unwrap());
-            assert!(event == get_event("Transfer(address,address,uint128)").unwrap());
+            assert_eq!(func, get_func("transferFrom(address,address,uint256)").unwrap());
+            assert_eq!(event, get_event("Transfer(address,address,uint128)").unwrap());
 
             // dropping saves the cache
         }
 
-        let sigs = SignaturesIdentifier::new(Some(tmp.path().into())).unwrap();
-        assert!(sigs.read().await.cached.events.len() == 1);
-        assert!(sigs.read().await.cached.functions.len() == 1);
+        let sigs = SignaturesIdentifier::new(Some(tmp.path().into()), false).unwrap();
+        assert_eq!(sigs.read().await.cached.events.len(), 1);
+        assert_eq!(sigs.read().await.cached.functions.len(), 1);
     }
 }

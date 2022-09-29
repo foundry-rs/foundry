@@ -188,7 +188,10 @@ impl ScriptArgs {
         let mut decoder =
             CallTraceDecoderBuilder::new().with_labels(result.labeled_addresses.clone()).build();
 
-        decoder.add_signature_identifier(SignaturesIdentifier::new(Config::foundry_cache_dir())?);
+        decoder.add_signature_identifier(SignaturesIdentifier::new(
+            Config::foundry_cache_dir(),
+            script_config.config.offline,
+        )?);
 
         for (_, trace) in &mut result.traces {
             decoder.identify(trace, &mut local_identifier);

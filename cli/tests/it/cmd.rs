@@ -1341,3 +1341,52 @@ forgetest_init!(can_install_missing_deps_build, |prj: TestProject, mut cmd: Test
     assert!(output.contains("Missing dependencies found. Installing now"), "{}", output);
     assert!(output.contains("Compiler run successful"), "{}", output);
 });
+
+// checks that extra output works
+forgetest_init!(can_build_skip_contracts, |prj: TestProject, mut cmd: TestCommand| {
+    // explicitly set to run with 0.8.17 for consistent output
+    let config = Config { solc: Some("0.8.17".into()), ..Default::default() };
+    prj.write_config(config);
+
+    // only builds the single template contract `src/*`
+    cmd.args(["build", "--skip", "tests", "--skip", "scripts"]);
+
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_build_skip_contracts.stdout"),
+    );
+    // re-run command
+    let out = cmd.stdout();
+
+    // unchanged
+    assert!(out.trim().contains("No files changed, compilation skipped"), "{}", out);
+});
+
+// checks that build --sizes includes all contracts even if unchanged
+forgetest_init!(can_build_sizes_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {
+    cmd.args(["build", "--sizes"]);
+    let out = cmd.stdout();
+
+    // contains: Counter    ┆ 0.247     ┆ 24.329
+    assert!(out.contains(TEMPLATE_CONTRACT));
+
+    // get the entire table
+    let table = out.split("Compiler run successful").nth(1).unwrap().trim();
+
+    let unchanged = cmd.stdout();
+    assert!(unchanged.contains(&table), "{}", table);
+});
+
+// checks that build --names includes all contracts even if unchanged
+forgetest_init!(can_build_names_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {
+    cmd.args(["build", "--names"]);
+    let out = cmd.stdout();
+
+    assert!(out.contains(TEMPLATE_CONTRACT));
+
+    // get the entire list
+    let list = out.split("Compiler run successful").nth(1).unwrap().trim();
+
+    let unchanged = cmd.stdout();
+    assert!(unchanged.contains(&list), "{}", list);
+});
