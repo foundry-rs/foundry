@@ -1740,6 +1740,7 @@ version = "0.17.0"
 source = "git+https://github.com/gakonst/ethers-rs#62beb6cf53caf9c98f1ce0c793d9992d778cee1f"
 dependencies = [
  "ethers-core",
+ "ethers-solc",
  "getrandom 0.2.6",
  "reqwest",
  "semver",

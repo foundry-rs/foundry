@@ -1,8 +1,8 @@
 use super::{AddressIdentity, TraceIdentifier};
-
 use ethers::{
-    abi::{Abi, Address},
+    abi::Address,
     etherscan,
+    etherscan::contract::Metadata,
     prelude::{
         artifacts::ContractBytecodeSome, contract::ContractMetadata, errors::EtherscanError,
         ArtifactId,
@@ -39,7 +39,7 @@ pub struct EtherscanIdentifier {
     /// After the first [EtherscanError::InvalidApiKey] this will get set to true, so we can
     /// prevent any further attempts
     invalid_api_key: Arc<AtomicBool>,
-    pub contracts: BTreeMap<H160, (String, String, bool, u32, String)>,
+    pub contracts: BTreeMap<H160, Metadata>,
     pub sources: BTreeMap<u32, String>,
 }
 
@@ -72,21 +72,14 @@ impl EtherscanIdentifier {
         let contracts_iter = self
             .contracts
             .iter()
-            // filter out vyper files and invalid source
-            .filter(|(_, (_, source_code, _, _, version))| {
-                !source_code.starts_with("{{") && !version.starts_with("vyper")
-            });
+            // filter out vyper files
+            .filter(|(_, metadata)| !metadata.is_vyper());
 
         let outputs_fut = contracts_iter
-            .map(|(label, (name, source_code, optimization, runs, version))| {
-                println!("Compiling: {name} {:?}", label);
-                compile::compile_from_source(
-                    name.to_string(),
-                    source_code.clone(),
-                    *optimization,
-                    *runs,
-                    version.to_string(),
-                )
+            .clone()
+            .map(|(address, metadata)| {
+                println!("Compiling: {} {:?}", metadata.contract_name, address);
+                compile::compile_from_source(metadata)
             })
             .collect::<Vec<_>>();
 
@@ -94,19 +87,11 @@ impl EtherscanIdentifier {
         let artifacts = join_all(outputs_fut).await;
 
         // construct the map
-        let contracts_iter = self
-            .contracts
-            .iter()
-            // filter out vyper files and invalid source
-            .filter(|(_, (_, source_code, _, _, version))| {
-                !source_code.starts_with("{{") && !version.starts_with("vyper")
-            });
-        for (compiled, (_, (_, source_code, _, _, _))) in artifacts.into_iter().zip(contracts_iter)
-        {
+        for (results, (_, metadata)) in artifacts.into_iter().zip(contracts_iter) {
             // get the inner type
-            let compiled = compiled?;
-            compiled_contracts.insert(compiled.0.clone(), compiled.1.clone());
-            sources.insert(compiled.0.to_owned(), source_code.to_owned());
+            let (artifact_id, bytecode) = results?;
+            compiled_contracts.insert(artifact_id.clone(), bytecode);
+            sources.insert(artifact_id, metadata.source_code());
         }
 
         Ok((sources, compiled_contracts))
@@ -140,11 +125,10 @@ impl TraceIdentifier for EtherscanIdentifier {
             }
 
             let fut = fetcher
-                .map(|(address, label, abi, source_code, optimization, runs, version)| {
-                    self.contracts.insert(
-                        address,
-                        (label.to_string(), source_code, optimization, runs, version),
-                    );
+                .map(|(address, metadata)| {
+                    let label = metadata.contract_name.clone();
+                    let abi = metadata.abi.clone();
+                    self.contracts.insert(address, metadata);
 
                     AddressIdentity {
                         address,
@@ -223,7 +207,7 @@ impl EtherscanFetcher {
 }
 
 impl Stream for EtherscanFetcher {
-    type Item = (Address, String, Abi, String, bool, u32, String);
+    type Item = (Address, Metadata);
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let pin = self.get_mut();
@@ -247,17 +231,7 @@ impl Stream for EtherscanFetcher {
                     match res {
                         Ok(mut metadata) => {
                             if let Some(item) = metadata.items.pop() {
-                                if let Ok(abi) = serde_json::from_str(&item.abi) {
-                                    return Poll::Ready(Some((
-                                        addr,
-                                        item.contract_name,
-                                        abi,
-                                        item.source_code,
-                                        item.optimization_used.eq("1"),
-                                        item.runs.parse::<u32>().expect("runs parse error"),
-                                        item.compiler_version,
-                                    )))
-                                }
+                                return Poll::Ready(Some((addr, item)))
                             }
                         }
                         Err(EtherscanError::RateLimitExceeded) => {
