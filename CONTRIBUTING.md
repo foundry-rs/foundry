@@ -2,7 +2,7 @@
 
 Thanks for your interest in improving Foundry!
 
-There are multiple opportunities to contribute at any level. If doesn't matter if you are just getting started with Rust or are the most weathered expert, we can use your help.
+There are multiple opportunities to contribute at any level. It doesn't matter if you are just getting started with Rust or are the most weathered expert, we can use your help.
 
 **No contribution is too small and all contributions are valued.**
 
@@ -38,7 +38,7 @@ around bugs and participate in reviewing PRs.
 If you have reviewed existing documentation and still have questions, or you are having problems, you can get help in the following ways:
 
 -   **Asking in the support Telegram:** The [Foundry Support Telegram][support-tg] is a fast and easy way to ask questions.
--   **Opening a discussion:** This repository comes with a discussions board where you can also ask for help. Click the "Discussions" tab in the top.
+-   **Opening a discussion:** This repository comes with a discussions board where you can also ask for help. Click the "Discussions" tab at the top.
 
 As Foundry is still in heavy development, the documentation can be a bit scattered.
 The [Foundry Book][foundry-book] is our current best-effort attempt at keeping up-to-date information.
@@ -48,7 +48,7 @@ The [Foundry Book][foundry-book] is our current best-effort attempt at keeping u
 When filing a new bug report in the issue tracker, you will be presented with a basic form to fill out.
 
 If you believe that you have uncovered a bug, please fill out the form to the best of your ability. Do not worry if you cannot answer every detail,
-just fill in what you can. Contributors will ask follow up questions if something is unclear.
+just fill in what you can. Contributors will ask follow-up questions if something is unclear.
 
 The most important pieces of information we need in a bug report are:
 
