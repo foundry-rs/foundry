@@ -3,7 +3,7 @@ use crate::{term, TestFunctionExt};
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, *};
 use ethers_etherscan::contract::Metadata;
 use ethers_solc::{
-    artifacts::{BytecodeObject, ContractBytecodeSome, Source, Sources},
+    artifacts::{BytecodeObject, ContractBytecodeSome},
     report::NoReporter,
     Artifact, ArtifactId, FileFilter, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
     Solc,
