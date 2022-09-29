@@ -8,11 +8,11 @@ use clap::Parser;
 use ethers::{etherscan::Client, prelude::*};
 use eyre::{ContextCompat, Result};
 use foundry_common::{
+    abi::find_source,
     compile::{compile, etherscan_project, suppress_compile},
     try_get_http_provider,
 };
 use foundry_config::Config;
-use foundry_utils::find_source;
 use semver::Version;
 
 /// The minimum Solc version for outputting storage layouts.
@@ -148,7 +148,6 @@ impl StorageArgs {
 fn with_storage_layout_output(mut project: Project) -> Project {
     project.artifacts.additional_values.storage_layout = true;
     let output_selection = project.artifacts.output_selection();
-    let settings = project.solc_config.settings.with_extra_output(output_selection);
-    project.solc_config.settings = settings;
+    project.solc_config.settings = project.solc_config.settings.with_extra_output(output_selection);
     project
 }

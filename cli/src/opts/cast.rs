@@ -620,23 +620,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
         visible_alias = "st",
         about = "Get the raw value of a contract's storage slot."
     )]
-    Storage {
-        #[clap(help = "The contract address.",  value_parser = parse_name_or_address, value_name = "ADDRESS")]
-        address: NameOrAddress,
-        #[clap(help = "The storage slot number (hex or decimal)",  value_parser = parse_slot, value_name = "SLOT")]
-        slot: H256,
-        #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
-        rpc_url: Option<String>,
-        #[clap(
-            long,
-            short = 'B',
-            help = "The block height you want to query at.",
-            long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
-             value_parser = parse_block_id,
-            value_name = "BLOCK"
-        )]
-        block: Option<BlockId>,
-    },
+    Storage(StorageArgs),
     #[clap(
         name = "proof",
         visible_alias = "pr",
