@@ -429,7 +429,12 @@ where
         if let Some(expected_revert) = &self.expected_revert {
             if data.journaled_state.depth() <= expected_revert.depth {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-                return match handle_expect_revert(false, &expected_revert.reason, status, retdata) {
+                return match handle_expect_revert(
+                    false,
+                    expected_revert.reason.as_ref(),
+                    status,
+                    retdata,
+                ) {
                     Err(retdata) => (Return::Revert, remaining_gas, retdata),
                     Ok((_, retdata)) => (Return::Return, remaining_gas, retdata),
                 }
@@ -604,7 +609,12 @@ where
         if let Some(expected_revert) = &self.expected_revert {
             if data.journaled_state.depth() <= expected_revert.depth {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-                return match handle_expect_revert(true, &expected_revert.reason, status, retdata) {
+                return match handle_expect_revert(
+                    true,
+                    expected_revert.reason.as_ref(),
+                    status,
+                    retdata,
+                ) {
                     Err(retdata) => (Return::Revert, None, remaining_gas, retdata),
                     Ok((address, retdata)) => (Return::Return, address, remaining_gas, retdata),
                 }

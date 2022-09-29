@@ -4,12 +4,12 @@
 
 ## Features
 
-* Network forking: fork any EVM-compatible blockchain, same as in `forge`
-* [Ethereum JSON-RPC](https://eth.wiki/json-rpc/API) support
-* Additional JSON-RPC endpoints, compatible with ganache and hardhat
-    * snapshot/revert state
-    * mining modes: auto, interval, manual, none
-    * ...
+-   Network forking: fork any EVM-compatible blockchain, same as in `forge`
+-   [Ethereum JSON-RPC](https://eth.wiki/json-rpc/API) support
+-   Additional JSON-RPC endpoints, compatible with ganache and hardhat
+    -   snapshot/revert state
+    -   mining modes: auto, interval, manual, none
+    -   ...
 
 ## Installation
 
@@ -26,7 +26,7 @@ cargo install --path ./anvil --bins --locked --force
 ## Getting started
 
 ```console
-anvil 
+anvil
 
                              _   _
                             (_) | |
@@ -83,4 +83,3 @@ Gas Limit
 
 Listening on 127.0.0.1:8545
 ```
-

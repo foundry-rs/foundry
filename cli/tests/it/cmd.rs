@@ -1361,3 +1361,32 @@ forgetest_init!(can_build_skip_contracts, |prj: TestProject, mut cmd: TestComman
     // unchanged
     assert!(out.trim().contains("No files changed, compilation skipped"), "{}", out);
 });
+
+// checks that build --sizes includes all contracts even if unchanged
+forgetest_init!(can_build_sizes_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {
+    cmd.args(["build", "--sizes"]);
+    let out = cmd.stdout();
+
+    // contains: Counter    ┆ 0.247     ┆ 24.329
+    assert!(out.contains(TEMPLATE_CONTRACT));
+
+    // get the entire table
+    let table = out.split("Compiler run successful").nth(1).unwrap().trim();
+
+    let unchanged = cmd.stdout();
+    assert!(unchanged.contains(&table), "{}", table);
+});
+
+// checks that build --names includes all contracts even if unchanged
+forgetest_init!(can_build_names_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {
+    cmd.args(["build", "--names"]);
+    let out = cmd.stdout();
+
+    assert!(out.contains(TEMPLATE_CONTRACT));
+
+    // get the entire list
+    let list = out.split("Compiler run successful").nth(1).unwrap().trim();
+
+    let unchanged = cmd.stdout();
+    assert!(unchanged.contains(&list), "{}", list);
+});

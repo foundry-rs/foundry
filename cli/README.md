@@ -19,5 +19,4 @@ verbosity level via the
 environment variable, on a per package level,
 e.g.:`RUST_LOG=forge,foundry_evm forge test`
 
-
 [foundry-book]: https://book.getfoundry.sh

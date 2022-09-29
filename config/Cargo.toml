@@ -3,16 +3,17 @@ name = "foundry-config"
 version = "0.2.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-description = """
-Foundry configuration
-"""
+description = "Foundry configuration"
 repository = "https://github.com/foundry-rs/foundry"
 readme = "README.md"
 
 [dependencies]
 # eth
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["async", "svm-solc"] }
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = [
+    "async",
+    "svm-solc",
+] }
 ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 
 # formats

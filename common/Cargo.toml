@@ -4,9 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
-description = """
-Common utilities for foundry's tools.
-"""
+description = "Common utilities for Foundry's tools"
 repository = "https://github.com/foundry-rs/foundry"
 
 [dependencies]
@@ -23,18 +21,12 @@ ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-featu
 reqwest = { version = "0.11", default-features = false }
 
 # cli
-clap = { version = "3.0.10", features = [
-    "derive",
-    "env",
-    "unicode",
-    "wrap_help",
-] }
+clap = { version = "3.0.10", features = ["derive", "env", "unicode", "wrap_help"] }
 comfy-table = "6.0.0"
 tracing = "0.1"
 atty = "0.2.14"
 yansi = "0.5.1"
 tempfile = "3.3.0"
-
 
 #  misc
 serde = "1.0.133"

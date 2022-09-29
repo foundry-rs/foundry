@@ -6,15 +6,17 @@ is tested on the [Prettier Solidity Plugin](https://github.com/prettier-solidity
 ## Architecture
 
 The formatter works in two steps:
+
 1. Parse Solidity source code with [solang](https://github.com/hyperledger-labs/solang) into the PT (Parse Tree)
-(not the same as Abstract Syntax Tree, [see difference](https://stackoverflow.com/a/9864571)).
+   (not the same as Abstract Syntax Tree, [see difference](https://stackoverflow.com/a/9864571)).
 2. Walk the PT and output new source code that's compliant with provided config and rule set.
 
 The technique for walking the tree is based on [Visitor Pattern](https://en.wikipedia.org/wiki/Visitor_pattern)
 and works as following:
+
 1. Implement `Formatter` callback functions for each PT node type.
-Every callback function should write formatted output for the current node
-and call `Visitable::visit` function for child nodes delegating the output writing. 
+   Every callback function should write formatted output for the current node
+   and call `Visitable::visit` function for child nodes delegating the output writing.
 1. Implement `Visitable` trait and its `visit` function for each PT node type. Every `visit` function should call corresponding `Formatter`'s callback function.
 
 ### Output
@@ -61,6 +63,7 @@ comments also get written.
 ### Example
 
 Source code
+
 ```solidity
 pragma   solidity ^0.8.10 ;
 contract  HelloWorld {
@@ -73,6 +76,7 @@ event    Greet( string  indexed  name) ;
 ```
 
 Parse Tree (simplified)
+
 ```text
 SourceUnit
  | PragmaDirective("solidity", "^0.8.10")
@@ -84,6 +88,7 @@ SourceUnit
 ```
 
 Formatted source code that was reconstructed from the Parse Tree
+
 ```solidity
 pragma solidity ^0.8.10;
 
@@ -102,15 +107,16 @@ event Greet(string indexed name);
 
 Formatter supports multiple configuration options defined in `FormatterConfig`.
 
-| Option                            | Default  | Description          
-| --------------------------------- | -------  | ---------------------
-| line_length                       | 120      | Maximum line length where formatter will try to wrap the line
-| tab_width                         | 4        | Number of spaces per indentation level
-| bracket_spacing                   | false    | Print spaces between brackets
-| int_types                         | long     | Style of uint/int256 types. Available options: `long`, `short`, `preserve`
-| func_attrs_with_params_multiline  | true     | If function parameters are multiline then always put the function attributes on separate lines
-| quote_style                       | double   | Style of quotation marks. Available options: `double`, `single`, `preserve`
-| number_underscore                 | preserve | Style of underscores in number literals. Available options: `remove`, `thousands`, `preserve`
+| Option                           | Default  | Description                                                                                    |
+| -------------------------------- | -------- | ---------------------------------------------------------------------------------------------- |
+| line_length                      | 120      | Maximum line length where formatter will try to wrap the line                                  |
+| tab_width                        | 4        | Number of spaces per indentation level                                                         |
+| bracket_spacing                  | false    | Print spaces between brackets                                                                  |
+| int_types                        | long     | Style of uint/int256 types. Available options: `long`, `short`, `preserve`                     |
+| func_attrs_with_params_multiline | true     | If function parameters are multiline then always put the function attributes on separate lines |
+| quote_style                      | double   | Style of quotation marks. Available options: `double`, `single`, `preserve`                    |
+| number_underscore                | preserve | Style of underscores in number literals. Available options: `remove`, `thousands`, `preserve`  |
+
 TODO: update ^
 
 ### Testing
@@ -118,11 +124,13 @@ TODO: update ^
 Tests reside under `fmt/testdata` folder and specify the malformated & expected Solidity code. The source code file is named `original.sol` and expected file(s) are named in a format `({prefix}.)?fmt.sol`. Multiple expected files are needed for tests covering available configuration options.
 
 The default configuration values can be overriden from within the expected file by adding a comment in the format `// config: {config_entry} = {config_value}`. For example:
+
 ```solidity
 // config: line_length = 160
 ```
 
 The `test_directory` macro is used to specify a new folder with source files for the test suite. Each test suite has the following process:
+
 1. Preparse comments with config values
 2. Parse and compare the AST for source & expected files.
     - The `AstEq` trait defines the comparison rules for the AST nodes
