@@ -31,7 +31,7 @@ serde = { version = "1.0.136", features = ["derive"] }
 async-trait = "0.1.53"
 thiserror = "1.0.34"
 
-clap = { version = "3.0.10", features = ["derive", "env"], optional = true }
+clap = { version = "4.0", features = ["derive", "env"], optional = true }
 pin-project = "1.0.12"
 
 [features]

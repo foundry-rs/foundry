@@ -15,7 +15,7 @@ mod sourcify;
 #[derive(Debug, Clone, Parser)]
 pub struct VerifierArgs {
     #[clap(
-        arg_enum,
+        value_enum,
         long = "verifier",
         help_heading = "Verification Provider",
         help = "Contract verification provider to use `etherscan`, `sourcify` or `blockscout`",

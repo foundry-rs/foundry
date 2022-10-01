@@ -73,6 +73,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         fork_block_number: Some(200),
         chain_id: Some(9999.into()),
         gas_limit: 99_000_000u64.into(),
+        code_size_limit: Some(100000),
         gas_price: Some(999),
         block_base_fee_per_gas: 10,
         block_coinbase: Address::random(),

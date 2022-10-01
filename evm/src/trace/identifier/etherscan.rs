@@ -127,14 +127,14 @@ impl TraceIdentifier for EtherscanIdentifier {
             let fut = fetcher
                 .map(|(address, metadata)| {
                     let label = metadata.contract_name.clone();
-                    let abi = metadata.abi.clone();
+                    let abi = metadata.abi().ok().map(Cow::Owned);
                     self.contracts.insert(address, metadata);
 
                     AddressIdentity {
                         address,
                         label: Some(label.clone()),
                         contract: Some(label),
-                        abi: Some(Cow::Owned(abi)),
+                        abi,
                         artifact_id: None,
                     }
                 })

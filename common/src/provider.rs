@@ -1,7 +1,8 @@
 //! Commonly used helpers to construct `Provider`s
 
 use crate::{ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT};
-use ethers_core::types::Chain;
+use ethers_core::types::{Chain, U256};
+use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};
 use ethers_providers::{
     is_local_endpoint, Http, HttpRateLimitRetryPolicy, Middleware, Provider, RetryClient,
     RetryClientBuilder, DEFAULT_LOCAL_POLL_INTERVAL,
@@ -197,6 +198,38 @@ impl<'a> From<Cow<'a, str>> for ProviderBuilder {
     fn from(url: Cow<'a, str>) -> Self {
         url.as_ref().into()
     }
+}
+
+/// Estimates EIP1559 fees depending on the chain
+///
+/// Uses custom gas oracles for
+///   - polygon
+///
+/// Fallback is the default [`Provider::estimate_eip1559_fees`] implementation
+pub async fn estimate_eip1559_fees<M: Middleware>(
+    provider: &M,
+    chain: Option<u64>,
+) -> eyre::Result<(U256, U256)>
+where
+    M::Error: 'static,
+{
+    let chain = if let Some(chain) = chain {
+        chain
+    } else {
+        provider.get_chainid().await.wrap_err("Failed to get chain id")?.as_u64()
+    };
+
+    if let Ok(chain) = Chain::try_from(chain) {
+        // handle chains that deviate from `eth_feeHistory` and have their own oracle
+        match chain {
+            Chain::Polygon | Chain::PolygonMumbai => {
+                let estimator = Polygon::new(chain)?.category(GasCategory::Standard);
+                return Ok(estimator.estimate_eip1559_fees().await?)
+            }
+            _ => {}
+        }
+    }
+    provider.estimate_eip1559_fees(None).await.wrap_err("Failed fetch EIP1559 fees")
 }
 
 #[cfg(test)]

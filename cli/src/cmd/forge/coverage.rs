@@ -6,7 +6,7 @@ use crate::{
     },
     utils::{self, p_println, STATIC_FUZZ_SEED},
 };
-use clap::{AppSettings, ArgEnum, Parser};
+use clap::{Parser, ValueEnum};
 use ethers::{
     abi::Address,
     prelude::{
@@ -38,11 +38,10 @@ foundry_config::impl_figment_convert!(CoverageArgs, opts, evm_opts);
 
 /// Generate coverage reports for your tests.
 #[derive(Debug, Clone, Parser)]
-#[clap(global_setting = AppSettings::DeriveDisplayOrder)]
 pub struct CoverageArgs {
     #[clap(
         long,
-        arg_enum,
+        value_enum,
         default_value = "summary",
         help = "The report type to use for coverage."
     )]
@@ -321,7 +320,7 @@ impl CoverageArgs {
 }
 
 // TODO: HTML
-#[derive(Debug, Clone, ArgEnum)]
+#[derive(Debug, Clone, ValueEnum)]
 pub enum CoverageReportKind {
     Summary,
     Lcov,

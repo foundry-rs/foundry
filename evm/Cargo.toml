@@ -55,6 +55,7 @@ yansi = "0.5.1"
 # Misc
 url = "2.2.2"
 auto_impl = "1.0.1"
+itertools = "0.10.5"
 
 # Coverage
 semver = "1.0.5"

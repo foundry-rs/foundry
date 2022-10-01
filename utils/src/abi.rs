@@ -1,11 +1,11 @@
 //! Convert a json abi into solidity inerface
 
-use ethers_contract::{InternalStructs, RawAbi};
+use ethers_contract::InternalStructs;
 use ethers_core::{
     abi,
     abi::{
         struct_def::{FieldType, StructFieldType},
-        Contract as Abi, Event, EventParam, Function, Param, ParamType, SolStruct,
+        Contract as Abi, Event, EventParam, Function, Param, ParamType, RawAbi, SolStruct,
     },
 };
 use std::collections::BTreeMap;
@@ -338,8 +338,6 @@ fn struct_field_to_type(ty: &StructFieldType) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use ethers_contract::RawAbi;
 
     #[test]
     #[cfg(any(target_os = "linux", target_os = "macos"))]

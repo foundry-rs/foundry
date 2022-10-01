@@ -17,6 +17,9 @@ contract FileTest is DSTest {
 
         cheats.expectRevert(FOUNDRY_READ_ERR);
         cheats.readFile("/etc/hosts");
+
+        cheats.expectRevert(FOUNDRY_READ_ERR);
+        cheats.readFileBinary("/etc/hosts");
     }
 
     function testReadLine() public {
@@ -41,6 +44,8 @@ contract FileTest is DSTest {
 
         cheats.expectRevert(FOUNDRY_WRITE_ERR);
         cheats.writeFile("/etc/hosts", "malicious stuff");
+        cheats.expectRevert(FOUNDRY_WRITE_ERR);
+        cheats.writeFileBinary("/etc/hosts", "malicious stuff");
     }
 
     function testWriteLine() public {

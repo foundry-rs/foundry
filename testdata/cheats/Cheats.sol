@@ -129,6 +129,8 @@ interface Cheats {
     function stopBroadcast() external;
     // Reads the entire content of file to string. Path is relative to the project root. (path) => (data)
     function readFile(string calldata) external returns (string memory);
+    // Reads the entire content of file as binary. Path is relative to the project root. (path) => (data)
+    function readFileBinary(string calldata) external returns (bytes memory);
     // Get the path of the current project root
     function projectRoot() external returns (string memory);
     // Reads next line of file to string, (path) => (line)
@@ -136,6 +138,9 @@ interface Cheats {
     // Writes data to file, creating a file if it does not exist, and entirely replacing its contents if it does.
     // Path is relative to the project root. (path, data) => ()
     function writeFile(string calldata, string calldata) external;
+    // Writes binary data to a file, creating a file if it does not exist, and entirely replacing its contents if it does.
+    // Path is relative to the project root. (path, data) => ()
+    function writeFileBinary(string calldata, bytes calldata) external;
     // Writes line to file, creating a file if it does not exist.
     // Path is relative to the project root. (path, data) => ()
     function writeLine(string calldata, string calldata) external;

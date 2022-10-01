@@ -267,13 +267,13 @@ pub async fn get_func_etherscan(
     let source = find_source(client, contract).await?;
     let metadata = source.items.first().wrap_err("etherscan returned empty metadata")?;
 
-    let empty = vec![];
-    let funcs = metadata.abi.functions.get(function_name).unwrap_or(&empty);
+    let mut abi = metadata.abi()?;
+    let funcs = abi.functions.remove(function_name).unwrap_or_default();
 
     for func in funcs {
-        let res = encode_args(func, args);
+        let res = encode_args(&func, args);
         if res.is_ok() {
-            return Ok(func.clone())
+            return Ok(func)
         }
     }
 

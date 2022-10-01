@@ -44,7 +44,7 @@ impl TypedValueParser for ChainValueParser {
     ) -> Result<Self::Value, clap::Error> {
         self.inner.parse_ref(cmd, arg, value)?.parse::<Chain>().map_err(|_| {
             clap::Error::raw(
-                clap::ErrorKind::InvalidValue,
+                clap::error::ErrorKind::InvalidValue,
                 "chain argument did not match any possible chain variant",
             )
         })
