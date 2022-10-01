@@ -1,29 +1,146 @@
 //! Support for compiling [ethers::solc::Project]
 use crate::{term, TestFunctionExt};
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, *};
+use ethers_etherscan::contract::Metadata;
 use ethers_solc::{
-    artifacts::{ContractBytecodeSome, Source, Sources},
+    artifacts::{BytecodeObject, ContractBytecodeSome},
     report::NoReporter,
-    Artifact, ArtifactId, FileFilter, Graph, Project, ProjectCompileOutput, Solc,
+    Artifact, ArtifactId, FileFilter, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
+    Solc,
 };
-use foundry_config::Config;
-use semver::Version;
+use eyre::Result;
 use std::{
     collections::BTreeMap,
     fmt::Display,
-    io::Write,
     path::{Path, PathBuf},
 };
-use tempfile::NamedTempFile;
 
-/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
-/// compilation was successful or if there was a cache hit.
-pub fn compile(
-    project: &Project,
+/// Helper type to configure how to compile a project
+///
+/// This is merely a wrapper for [Project::compile()] which also prints to stdout dependent on its
+/// settings
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ProjectCompiler {
+    /// whether to also print the contract names
     print_names: bool,
+    /// whether to also print the contract sizes
     print_sizes: bool,
-) -> eyre::Result<ProjectCompileOutput> {
-    ProjectCompiler::new(print_names, print_sizes).compile(project)
+}
+
+impl ProjectCompiler {
+    /// Create a new instance with the settings
+    pub fn new(print_names: bool, print_sizes: bool) -> Self {
+        Self { print_names, print_sizes }
+    }
+
+    /// Compiles the project with [`Project::compile()`]
+    pub fn compile(self, project: &Project) -> Result<ProjectCompileOutput> {
+        self.compile_with(project, |prj| Ok(prj.compile()?))
+    }
+
+    /// Compiles the project with [`Project::compile_parse()`] and the given filter.
+    ///
+    /// This will emit artifacts only for files that match the given filter.
+    /// Files that do _not_ match the filter are given a pruned output selection and do not generate
+    /// artifacts.
+    pub fn compile_sparse<F: FileFilter + 'static>(
+        self,
+        project: &Project,
+        filter: F,
+    ) -> Result<ProjectCompileOutput> {
+        self.compile_with(project, |prj| Ok(prj.compile_sparse(filter)?))
+    }
+
+    /// Compiles the project with the given closure
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use foundry_common::compile::ProjectCompiler;
+    /// let config = foundry_config::Config::load();
+    /// ProjectCompiler::default()
+    ///     .compile_with(&config.project().unwrap(), |prj| Ok(prj.compile()?)).unwrap();
+    /// ```
+    #[tracing::instrument(target = "forge::compile", skip_all)]
+    pub fn compile_with<F>(self, project: &Project, f: F) -> Result<ProjectCompileOutput>
+    where
+        F: FnOnce(&Project) -> Result<ProjectCompileOutput>,
+    {
+        if !project.paths.has_input_files() {
+            println!("Nothing to compile");
+            // nothing to do here
+            std::process::exit(0);
+        }
+
+        let now = std::time::Instant::now();
+        tracing::trace!("start compiling project");
+
+        let output = term::with_spinner_reporter(|| f(project))?;
+
+        let elapsed = now.elapsed();
+        tracing::trace!(?elapsed, "finished compiling");
+
+        if output.has_compiler_errors() {
+            tracing::warn!("compiled with errors");
+            eyre::bail!(output.to_string())
+        } else if output.is_unchanged() {
+            println!("No files changed, compilation skipped");
+            self.handle_output(&output);
+        } else {
+            // print the compiler output / warnings
+            println!("{output}");
+
+            self.handle_output(&output);
+        }
+
+        Ok(output)
+    }
+
+    /// If configured, this will print sizes or names
+    fn handle_output(&self, output: &ProjectCompileOutput) {
+        // print any sizes or names
+        if self.print_names {
+            let mut artifacts: BTreeMap<_, Vec<_>> = BTreeMap::new();
+            for (name, (_, version)) in output.versioned_artifacts() {
+                artifacts.entry(version).or_default().push(name);
+            }
+            for (version, names) in artifacts {
+                println!(
+                    "  compiler version: {}.{}.{}",
+                    version.major, version.minor, version.patch
+                );
+                for name in names {
+                    println!("    - {name}");
+                }
+            }
+        }
+        if self.print_sizes {
+            // add extra newline if names were already printed
+            if self.print_names {
+                println!();
+            }
+            let mut size_report = SizeReport { contracts: BTreeMap::new() };
+            let artifacts: BTreeMap<_, _> = output.artifacts().collect();
+            for (name, artifact) in artifacts {
+                let size = deployed_contract_size(artifact).unwrap_or_default();
+
+                let dev_functions =
+                    artifact.abi.as_ref().unwrap().abi.functions().into_iter().filter(|func| {
+                        func.name.is_test() || func.name.eq("IS_TEST") || func.name.eq("IS_SCRIPT")
+                    });
+
+                let is_dev_contract = dev_functions.into_iter().count() > 0;
+                size_report.contracts.insert(name, ContractInfo { size, is_dev_contract });
+            }
+
+            println!("{size_report}");
+
+            // exit with error if any contract exceeds the size limit, excluding test contracts.
+            if size_report.exceeds_size_limit() {
+                std::process::exit(1);
+            }
+        }
+    }
 }
 
 // https://eips.ethereum.org/EIPS/eip-170
@@ -33,14 +150,6 @@ const CONTRACT_SIZE_LIMIT: usize = 24576;
 pub struct SizeReport {
     /// `<contract name>:info>`
     pub contracts: BTreeMap<String, ContractInfo>,
-}
-
-/// How big the contract is and whether it is a dev contract where size limits can be neglected
-pub struct ContractInfo {
-    /// size of the contract in bytes
-    pub size: usize,
-    /// A development contract is either a Script or a Test contract.
-    pub is_dev_contract: bool,
 }
 
 impl SizeReport {
@@ -92,142 +201,72 @@ impl Display for SizeReport {
     }
 }
 
-/// Helper type to configure how to compile a project
-///
-/// This is merely a wrapper for [Project::compile()] which also prints to stdout dependent on its
-/// settings
-#[derive(Debug, Clone, Copy, Default)]
-pub struct ProjectCompiler {
-    /// whether to also print the contract names
-    print_names: bool,
-    /// whether to also print the contract sizes
-    print_sizes: bool,
+/// Returns the size of the deployed contract
+pub fn deployed_contract_size<T: Artifact>(artifact: &T) -> Option<usize> {
+    let bytecode = artifact.get_deployed_bytecode_object()?;
+    let size = match bytecode.as_ref() {
+        BytecodeObject::Bytecode(bytes) => bytes.len(),
+        BytecodeObject::Unlinked(unlinked) => {
+            // we don't need to account for placeholders here, because library placeholders take up
+            // 40 characters: `__$<library hash>$__` which is the same as a 20byte address in hex.
+            let mut size = unlinked.as_bytes().len();
+            if unlinked.starts_with("0x") {
+                size -= 2;
+            }
+            // hex -> bytes
+            size / 2
+        }
+    };
+    Some(size)
 }
 
-impl ProjectCompiler {
-    /// Create a new instance with the settings
-    pub fn new(print_names: bool, print_sizes: bool) -> Self {
-        Self { print_names, print_sizes }
-    }
+/// How big the contract is and whether it is a dev contract where size limits can be neglected
+#[derive(Debug, Clone, Copy)]
+pub struct ContractInfo {
+    /// size of the contract in bytes
+    pub size: usize,
+    /// A development contract is either a Script or a Test contract.
+    pub is_dev_contract: bool,
+}
 
-    /// Compiles the project with [`Project::compile()`]
-    pub fn compile(self, project: &Project) -> eyre::Result<ProjectCompileOutput> {
-        self.compile_with(project, |prj| Ok(prj.compile()?))
-    }
-
-    /// Compiles the project with [`Project::compile_parse()`] and the given filter.
-    ///
-    /// This will emit artifacts only for files that match the given filter.
-    /// Files that do _not_ match the filter are given a pruned output selection and do not generate
-    /// artifacts.
-    pub fn compile_sparse<F: FileFilter + 'static>(
-        self,
-        project: &Project,
-        filter: F,
-    ) -> eyre::Result<ProjectCompileOutput> {
-        self.compile_with(project, |prj| Ok(prj.compile_sparse(filter)?))
-    }
-
-    /// Compiles the project with the given closure
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use foundry_common::compile::ProjectCompiler;
-    /// let config = foundry_config::Config::load();
-    /// ProjectCompiler::default()
-    ///     .compile_with(&config.project().unwrap(), |prj| Ok(prj.compile()?)).unwrap();
-    /// ```
-    #[tracing::instrument(target = "forge::compile", skip_all)]
-    pub fn compile_with<F>(self, project: &Project, f: F) -> eyre::Result<ProjectCompileOutput>
-    where
-        F: FnOnce(&Project) -> eyre::Result<ProjectCompileOutput>,
-    {
-        let ProjectCompiler { print_sizes, print_names } = self;
-
-        if !project.paths.has_input_files() {
-            println!("Nothing to compile");
-            // nothing to do here
-            std::process::exit(0);
-        }
-
-        let now = std::time::Instant::now();
-        tracing::trace!("start compiling project");
-
-        let output = term::with_spinner_reporter(|| f(project))?;
-
-        let elapsed = now.elapsed();
-        tracing::trace!(?elapsed, "finished compiling");
-
-        if output.has_compiler_errors() {
-            tracing::warn!("compiled with errors");
-            eyre::bail!(output.to_string())
-        } else if output.is_unchanged() {
-            println!("No files changed, compilation skipped");
-        } else {
-            // print the compiler output / warnings
-            println!("{output}");
-
-            // print any sizes or names
-            if print_names {
-                let compiled_contracts = output.compiled_contracts_by_compiler_version();
-                for (version, contracts) in compiled_contracts.into_iter() {
-                    println!(
-                        "  compiler version: {}.{}.{}",
-                        version.major, version.minor, version.patch
-                    );
-                    for (name, _) in contracts {
-                        println!("    - {name}");
-                    }
-                }
-            }
-            if print_sizes {
-                // add extra newline if names were already printed
-                if print_names {
-                    println!();
-                }
-                let compiled_contracts = output.compiled_contracts_by_compiler_version();
-                let mut size_report = SizeReport { contracts: BTreeMap::new() };
-                for (_, contracts) in compiled_contracts.into_iter() {
-                    for (name, contract) in contracts {
-                        let size = contract
-                            .get_deployed_bytecode_bytes()
-                            .map(|bytes| bytes.0.len())
-                            .unwrap_or_default();
-
-                        let dev_functions =
-                            contract.abi.as_ref().unwrap().abi.functions().into_iter().filter(
-                                |func| {
-                                    func.name.is_test() ||
-                                        func.name.eq("IS_TEST") ||
-                                        func.name.eq("IS_SCRIPT")
-                                },
-                            );
-
-                        let is_dev_contract = dev_functions.into_iter().count() > 0;
-                        size_report.contracts.insert(name, ContractInfo { size, is_dev_contract });
-                    }
-                }
-
-                println!("{size_report}");
-
-                // exit with error if any contract exceeds the size limit, excluding test contracts.
-                let exit_status = size_report.exceeds_size_limit().into();
-                std::process::exit(exit_status);
-            }
-        }
-
-        Ok(output)
-    }
+/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
+/// compilation was successful or if there was a cache hit.
+pub fn compile(
+    project: &Project,
+    print_names: bool,
+    print_sizes: bool,
+) -> Result<ProjectCompileOutput> {
+    ProjectCompiler::new(print_names, print_sizes).compile(project)
 }
 
 /// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
 /// compilation was successful or if there was a cache hit.
 /// Doesn't print anything to stdout, thus is "suppressed".
-pub fn suppress_compile(project: &Project) -> eyre::Result<ProjectCompileOutput> {
+pub fn suppress_compile(project: &Project) -> Result<ProjectCompileOutput> {
     let output = ethers_solc::report::with_scoped(
         &ethers_solc::report::Report::new(NoReporter::default()),
         || project.compile(),
+    )?;
+
+    if output.has_compiler_errors() {
+        eyre::bail!(output.to_string())
+    }
+
+    Ok(output)
+}
+
+/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
+/// compilation was successful or if there was a cache hit.
+/// Doesn't print anything to stdout, thus is "suppressed".
+///
+/// See [`Project::compile_sparse`]
+pub fn suppress_compile_sparse<F: FileFilter + 'static>(
+    project: &Project,
+    filter: F,
+) -> Result<ProjectCompileOutput> {
+    let output = ethers_solc::report::with_scoped(
+        &ethers_solc::report::Report::new(NoReporter::default()),
+        || project.compile_sparse(filter),
     )?;
 
     if output.has_compiler_errors() {
@@ -244,7 +283,7 @@ pub fn compile_files(
     project: &Project,
     files: Vec<PathBuf>,
     silent: bool,
-) -> eyre::Result<ProjectCompileOutput> {
+) -> Result<ProjectCompileOutput> {
     let output = if silent {
         ethers_solc::report::with_scoped(
             &ethers_solc::report::Report::new(NoReporter::default()),
@@ -276,7 +315,7 @@ pub fn compile_target(
     project: &Project,
     silent: bool,
     verify: bool,
-) -> eyre::Result<ProjectCompileOutput> {
+) -> Result<ProjectCompileOutput> {
     let graph = Graph::resolve(&project.paths)?;
 
     // Checking if it's a standalone script, or part of a project.
@@ -294,62 +333,44 @@ pub fn compile_target(
     }
 }
 
-/// Compile from etherscan bytecode.
+/// Creates and compiles a project from an Etherscan source.
 pub async fn compile_from_source(
-    contract_name: String,
-    source: String,
-    // has the contract been optimized before submission to etherscan
-    optimization: bool,
-    runs: u32,
-    version: String,
-) -> eyre::Result<(ArtifactId, ContractBytecodeSome)> {
-    let mut file = NamedTempFile::new()?;
-    writeln!(file, "{}", source.clone())?;
+    metadata: &Metadata,
+) -> Result<(ArtifactId, ContractBytecodeSome)> {
+    let root = tempfile::tempdir()?;
+    let root_path = root.path();
+    let project = etherscan_project(metadata, root_path)?;
 
-    let target_contract = dunce::canonicalize(file.path())?;
-    let mut project = Config::default().ephemeral_no_artifacts_project()?;
-
-    if optimization {
-        project.solc_config.settings.optimizer.enable();
-        project.solc_config.settings.optimizer.runs(runs as usize);
-    } else {
-        project.solc_config.settings.optimizer.disable();
-    }
-
-    project.solc = if let Some(solc) = Solc::find_svm_installed_version(&version)? {
-        solc
-    } else {
-        let v: Version = version.trim_start_matches('v').parse()?;
-        Solc::install(&Version::new(v.major, v.minor, v.patch)).await?
-    };
-
-    let mut sources = Sources::new();
-    sources.insert(target_contract, Source { content: source });
-
-    let project_output = project.compile_with_version(&project.solc, sources)?;
+    let project_output = project.compile()?;
 
     if project_output.has_compiler_errors() {
         eyre::bail!(project_output.to_string())
     }
 
-    let (artifact_id, bytecode) = project_output
+    let (artifact_id, contract) = project_output
         .into_contract_bytecodes()
-        .filter_map(|(artifact_id, contract)| {
-            if artifact_id.name != contract_name {
-                None
-            } else {
-                Some((
-                    artifact_id,
-                    ContractBytecodeSome {
-                        abi: contract.abi.unwrap(),
-                        bytecode: contract.bytecode.unwrap().into(),
-                        deployed_bytecode: contract.deployed_bytecode.unwrap().into(),
-                    },
-                ))
-            }
-        })
-        .into_iter()
-        .next()
+        .find(|(artifact_id, _)| artifact_id.name == metadata.contract_name)
         .expect("there should be a contract with bytecode");
+    let bytecode = ContractBytecodeSome {
+        abi: contract.abi.unwrap(),
+        bytecode: contract.bytecode.unwrap().into(),
+        deployed_bytecode: contract.deployed_bytecode.unwrap().into(),
+    };
+
+    root.close()?;
+
     Ok((artifact_id, bytecode))
+}
+
+/// Creates a [Project] from an Etherscan source.
+pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> Result<Project> {
+    let target_path = dunce::canonicalize(target_path.as_ref())?;
+    metadata.source_tree().write_to(&target_path)?;
+
+    let paths = ProjectPathsConfig::builder().build_with_root(target_path);
+
+    let version = &metadata.compiler_version;
+    let solc = Solc::find_or_install_svm_version(version)?;
+
+    Ok(metadata.project_builder()?.paths(paths).solc(solc).ephemeral().no_artifacts().build()?)
 }

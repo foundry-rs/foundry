@@ -24,7 +24,7 @@ pub struct FmtArgs {
         conflicts_with = "root",
         value_hint = ValueHint::FilePath,
         value_name = "PATH",
-        multiple_values = true
+        num_args(1..)
     )]
     paths: Vec<PathBuf>,
     #[clap(
@@ -88,7 +88,37 @@ impl Cmd for FmtArgs {
 
     fn run(self) -> eyre::Result<Self::Output> {
         let config = self.try_load_config_emit_warnings()?;
-        let inputs = self.inputs(&config);
+
+        // collect ignore paths first
+        let mut ignored = vec![];
+        let expanded = config
+            .fmt
+            .ignore
+            .iter()
+            .map(|pattern| glob::glob(&config.__root.0.join(pattern).display().to_string()));
+        for res in expanded {
+            match res {
+                Ok(paths) => ignored.extend(paths.into_iter().collect::<Result<Vec<_>, _>>()?),
+                Err(err) => {
+                    eyre::bail!("failed to parse ignore glob pattern: {err}")
+                }
+            }
+        }
+
+        let cwd = std::env::current_dir()?;
+        let mut inputs = vec![];
+        for input in self.inputs(&config) {
+            match input {
+                Input::Path(p) => {
+                    if (p.is_absolute() && !ignored.contains(&p)) ||
+                        !ignored.contains(&cwd.join(&p))
+                    {
+                        inputs.push(Input::Path(p));
+                    }
+                }
+                other => inputs.push(other),
+            };
+        }
 
         if inputs.is_empty() {
             cli_warn!("Nothing to format.\nHINT: If you are working outside of the project, try providing paths to your source files: `forge fmt <paths>`");
@@ -216,6 +246,7 @@ impl Cmd for FmtArgs {
 
 struct Line(Option<usize>);
 
+#[derive(Debug)]
 enum Input {
     Path(PathBuf),
     Stdin(String),

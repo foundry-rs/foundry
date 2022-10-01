@@ -15,6 +15,8 @@ use tracing::{trace, warn};
 pub static SOURCIFY_URL: &str = "https://sourcify.dev/server/";
 
 /// The type that can verify a contract on `sourcify`
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct SourcifyVerificationProvider;
 
 #[async_trait]

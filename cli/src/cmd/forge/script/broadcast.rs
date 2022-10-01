@@ -16,7 +16,8 @@ use ethers::{
     utils::format_units,
 };
 use eyre::{ContextCompat, WrapErr};
-use foundry_common::{try_get_http_provider, RpcUrl};
+use foundry_common::{estimate_eip1559_fees, try_get_http_provider, RetryProvider, RpcUrl};
+use foundry_config::Chain;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::{cmp::min, fmt, ops::Mul, sync::Arc};
@@ -57,7 +58,11 @@ impl ScriptArgs {
                         (provider.get_gas_price().await.ok(), None)
                     }
                     TypedTransaction::Eip1559(_) => {
-                        (None, provider.estimate_eip1559_fees(None).await.ok())
+                        let fees = estimate_eip1559_fees(&provider, Some(chain))
+                            .await
+                            .wrap_err("Failed to estimate EIP1559 fees")?;
+
+                        (None, Some(fees))
                     }
                 }
             };

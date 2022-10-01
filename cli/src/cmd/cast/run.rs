@@ -192,8 +192,10 @@ impl RunArgs {
 
             let mut decoder = CallTraceDecoderBuilder::new().with_labels(labeled_addresses).build();
 
-            decoder
-                .add_signature_identifier(SignaturesIdentifier::new(Config::foundry_cache_dir())?);
+            decoder.add_signature_identifier(SignaturesIdentifier::new(
+                Config::foundry_cache_dir(),
+                config.offline,
+            )?);
 
             for (_, trace) in &mut result.traces {
                 decoder.identify(trace, &mut etherscan_identifier);

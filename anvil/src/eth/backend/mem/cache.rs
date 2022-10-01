@@ -40,16 +40,22 @@ impl DiskStateCache {
     }
 
     /// Stores the snapshot for the given hash
-    pub fn write(&mut self, hash: H256, state: &StateSnapshot) {
+    ///
+    /// Note: this writes the state on a new spawned task
+    ///
+    /// Caution: this requires a running tokio Runtime.
+    pub fn write(&mut self, hash: H256, state: StateSnapshot) {
         self.with_cache_file(hash, |file| {
-            match foundry_common::fs::write_json_file(&file, state) {
-                Ok(_) => {
-                    trace!(target: "backend", ?hash, "wrote state json file");
-                }
-                Err(err) => {
-                    error!(target: "backend", ?err, ?hash, "Failed to load state snapshot");
-                }
-            }
+            tokio::task::spawn(async move {
+                match foundry_common::fs::write_json_file(&file, &state) {
+                    Ok(_) => {
+                        trace!(target: "backend", ?hash, "wrote state json file");
+                    }
+                    Err(err) => {
+                        error!(target: "backend", ?err, ?hash, "Failed to load state snapshot");
+                    }
+                };
+            });
         });
     }
 

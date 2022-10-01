@@ -78,7 +78,7 @@ pub struct Wallet {
 
     #[clap(
         long = "mnemonic-index",
-        conflicts_with = "hd-path",
+        conflicts_with = "hd_path",
         help_heading = "WALLET OPTIONS - RAW",
         help = "Use the private key from the given mnemonic index. Used with --mnemonic-path.",
         default_value = "0",
@@ -99,7 +99,7 @@ pub struct Wallet {
         long = "password",
         help_heading = "WALLET OPTIONS - KEYSTORE",
         help = "The keystore password. Used with --keystore.",
-        requires = "keystore-path",
+        requires = "keystore_path",
         value_name = "PASSWORD"
     )]
     pub keystore_password: Option<String>,

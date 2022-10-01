@@ -7,7 +7,7 @@ use crate::{
     suggestions, utils,
 };
 use cast::fuzz::CounterExample;
-use clap::{AppSettings, Parser};
+use clap::Parser;
 use ethers::{solc::utils::RuntimeOrHandle, types::U256};
 use forge::{
     decode::decode_console_logs,
@@ -43,7 +43,6 @@ use foundry_config::figment::{
 foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
 
 #[derive(Debug, Clone, Parser)]
-#[clap(global_setting = AppSettings::DeriveDisplayOrder)]
 pub struct TestArgs {
     #[clap(flatten)]
     filter: Filter,
@@ -509,7 +508,8 @@ fn test(
 
         let mut results: BTreeMap<String, SuiteResult> = BTreeMap::new();
         let mut gas_report = GasReport::new(config.gas_reports, config.gas_reports_ignore);
-        let sig_identifier = SignaturesIdentifier::new(Config::foundry_cache_dir())?;
+        let sig_identifier =
+            SignaturesIdentifier::new(Config::foundry_cache_dir(), config.offline)?;
 
         for (contract_name, suite_result) in rx {
             let mut tests = suite_result.test_results.clone();

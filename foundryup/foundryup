@@ -23,7 +23,7 @@ main() {
         usage
         exit 0
         ;;
-      *) 
+      *)
         err "internal error: unknown option "$1"\n";;
     esac; shift
   done
@@ -132,11 +132,11 @@ main() {
     say "installed - $($FOUNDRY_BIN_DIR/cast --version)"
     say "installed - $($FOUNDRY_BIN_DIR/anvil --version)"
     say "done"
-    
+
     if [[ $(which forge) =~ "cargo" ]]; then
       warn "it appears your system has already has forge installed via cargo. you may need to run 'rm $(which forge)' to allow foundryup to take precedence!"
     fi
-    
+
     if [[ $(which cast) =~ "cargo" ]]; then
       warn "it appears your system has already has cast installed via cargo. you may need to run 'rm $(which cast)' to allow foundryup to take precedence!"
     fi

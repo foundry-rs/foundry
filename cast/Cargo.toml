@@ -7,16 +7,17 @@ readme = "README.md"
 repository = "https://github.com/foundry-rs/foundry"
 keywords = ["ethereum", "web3"]
 
-
 [dependencies]
 foundry-utils = { path = "../utils" }
 foundry-evm = { path = "./../evm" }
 foundry-config = { path = "./../config" }
-foundry-common = {path = "./../common"}
+foundry-common = { path = "./../common" }
 
 futures = "0.3.17"
 ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-contract = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["abigen"] }
+ethers-contract = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = [
+    "abigen",
+] }
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-providers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-signers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }

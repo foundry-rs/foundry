@@ -80,7 +80,7 @@ impl InMemoryBlockStates {
                 .and_then(|hash| self.states.remove(&hash).map(|state| (hash, state)))
             {
                 let snapshot = state.0.clear_into_snapshot();
-                self.disk_cache.write(hash, &snapshot);
+                self.disk_cache.write(hash, snapshot);
                 self.on_disk_states.insert(hash, state);
             }
         }
@@ -326,8 +326,8 @@ mod tests {
     use forge::revm::{db::DatabaseRef, AccountInfo};
     use foundry_evm::executor::backend::MemDb;
 
-    #[test]
-    fn can_read_write_cached_state() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn can_read_write_cached_state() {
         let mut storage = InMemoryBlockStates::new(1);
         let one = H256::from_uint(&U256::from(1));
         let two = H256::from_uint(&U256::from(2));
@@ -339,6 +339,9 @@ mod tests {
         storage.insert(one, StateDb::new(state));
         storage.insert(two, StateDb::new(MemDb::default()));
 
+        // wait for files to be flushed
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
         assert_eq!(storage.on_disk_states.len(), 1);
         assert!(storage.on_disk_states.get(&one).is_some());
 
@@ -348,8 +351,8 @@ mod tests {
         assert_eq!(acc.balance, 1337u64.into());
     }
 
-    #[test]
-    fn can_decrease_state_cache_size() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn can_decrease_state_cache_size() {
         let limit = 20;
         let mut storage = InMemoryBlockStates::new(limit);
 
@@ -363,6 +366,9 @@ mod tests {
             state.insert_account(addr, info);
             storage.insert(hash, StateDb::new(state));
         }
+
+        // wait for files to be flushed
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
         assert_eq!(storage.on_disk_states.len(), num_states - storage.min_limit);
         assert_eq!(storage.present.len(), storage.min_limit);

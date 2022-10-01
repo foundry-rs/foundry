@@ -73,7 +73,7 @@ pub struct NodeArgs {
     #[clap(long, help = "Don't print anything on startup.")]
     pub silent: bool,
 
-    #[clap(long, help = "The EVM hardfork to use.", value_name = "HARDFORK")]
+    #[clap(long, help = "The EVM hardfork to use.", value_name = "HARDFORK", value_parser = Hardfork::from_str)]
     pub hardfork: Option<Hardfork>,
 
     #[clap(
@@ -178,6 +178,7 @@ impl NodeArgs {
             .with_genesis(self.init)
             .with_steps_tracing(self.evm_opts.steps_tracing)
             .with_ipc(self.ipc)
+            .with_code_size_limit(self.evm_opts.code_size_limit)
     }
 
     fn account_generator(&self) -> AccountGenerator {
@@ -258,7 +259,7 @@ pub struct AnvilEvmArgs {
         long = "timeout",
         name = "timeout",
         help_heading = "FORK CONFIG",
-        requires = "fork-url"
+        requires = "fork_url"
     )]
     pub fork_request_timeout: Option<u64>,
 
@@ -269,20 +270,20 @@ pub struct AnvilEvmArgs {
         long = "retries",
         name = "retries",
         help_heading = "FORK CONFIG",
-        requires = "fork-url"
+        requires = "fork_url"
     )]
     pub fork_request_retries: Option<u32>,
 
     /// Fetch state from a specific block number over a remote endpoint.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork-url", value_name = "BLOCK", help_heading = "FORK CONFIG")]
+    #[clap(long, requires = "fork_url", value_name = "BLOCK", help_heading = "FORK CONFIG")]
     pub fork_block_number: Option<u64>,
 
     /// Initial retry backoff on encountering errors.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork-url", value_name = "BACKOFF", help_heading = "FORK CONFIG")]
+    #[clap(long, requires = "fork_url", value_name = "BACKOFF", help_heading = "FORK CONFIG")]
     pub fork_retry_backoff: Option<u64>,
 
     /// Sets the number of assumed available compute units per second for this provider
@@ -293,7 +294,7 @@ pub struct AnvilEvmArgs {
     /// See also, https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups
     #[clap(
         long,
-        requires = "fork-url",
+        requires = "fork_url",
         alias = "cups",
         value_name = "CUPS",
         help_heading = "FORK CONFIG"
@@ -307,12 +308,17 @@ pub struct AnvilEvmArgs {
     /// This flag overrides the project's configuration file.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork-url", help_heading = "FORK CONFIG")]
+    #[clap(long, requires = "fork_url", help_heading = "FORK CONFIG")]
     pub no_storage_caching: bool,
 
     /// The block gas limit.
     #[clap(long, value_name = "GAS_LIMIT", help_heading = "ENVIRONMENT CONFIG")]
     pub gas_limit: Option<u64>,
+
+    /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests. By
+    /// default, it is 0x6000 (~25kb).
+    #[clap(long, value_name = "CODE_SIZE", help_heading = "ENVIRONMENT CONFIG")]
+    pub code_size_limit: Option<usize>,
 
     /// The gas price.
     #[clap(long, value_name = "GAS_PRICE", help_heading = "ENVIRONMENT CONFIG")]
@@ -411,5 +417,11 @@ mod tests {
             fork,
             ForkUrl { url: "wss://user:password@example.com/".to_string(), block: Some(100000) }
         );
+    }
+
+    #[test]
+    fn can_parse_hardfork() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--hardfork", "berlin"]);
+        assert_eq!(args.hardfork, Some(Hardfork::Berlin));
     }
 }

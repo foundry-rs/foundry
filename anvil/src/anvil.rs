@@ -13,11 +13,11 @@ pub struct App {
     pub cmd: Option<Commands>,
 }
 
-#[derive(Clone, Debug, Subcommand)]
+#[derive(Clone, Debug, Subcommand, Eq, PartialEq)]
 pub enum Commands {
     #[clap(visible_alias = "com", about = "Generate shell completions script.")]
     Completions {
-        #[clap(arg_enum)]
+        #[clap(value_enum)]
         shell: clap_complete::Shell,
     },
     #[clap(visible_alias = "fig", about = "Generate Fig autocompletion spec.")]
@@ -52,4 +52,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.node.run().await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_parse_help() {
+        let _: App = App::parse_from(["anvil", "--help"]);
+    }
+
+    #[test]
+    fn can_parse_completions() {
+        let args: App = App::parse_from(["anvil", "completions", "bash"]);
+        assert_eq!(args.cmd, Some(Commands::Completions { shell: clap_complete::Shell::Bash }));
+    }
 }
