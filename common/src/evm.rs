@@ -142,6 +142,12 @@ pub struct EnvArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gas_limit: Option<u64>,
 
+    /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests. By
+    /// default, it is 0x6000 (~25kb).
+    #[clap(long, value_name = "CODE_SIZE")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code_size_limit: Option<usize>,
+
     /// The chain ID.
     #[clap(long, alias = "chain", value_name = "CHAIN_ID")]
     #[serde(skip_serializing_if = "Option::is_none")]
