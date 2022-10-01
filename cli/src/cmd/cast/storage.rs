@@ -103,22 +103,22 @@ impl StorageArgs {
 
         // Not a forge project or artifact not found
         // Get code from Etherscan
-        println!("No artifacts found, fetching source code from Etherscan...");
+        println!("No matching artifacts found, fetching source code from Etherscan...");
         let api_key = etherscan_api_key.or_else(|| {
             let config = Config::load();
             config.get_etherscan_api_key(Some(chain))
-        }).ok_or_else(|| eyre::eyre!("No Etherscan API Key is set. Consider using the ETHERSCAN_API_KEY env var, or setting the -e CLI argument or etherscan-api-key in foundry.toml"))?;
+        }).wrap_err("No Etherscan API Key is set. Consider using the ETHERSCAN_API_KEY env var, or setting the -e CLI argument or etherscan-api-key in foundry.toml")?;
         let client = Client::new(chain, api_key)?;
         let source = find_source(client, address).await?;
-        let metadata = source.items.first().wrap_err("etherscan returned empty metadata")?;
-        if !metadata.is_vyper() {
+        let metadata = source.items.first().unwrap();
+        if metadata.is_vyper() {
             eyre::bail!("Contract at provided address is not a valid Solidity contract")
         }
 
         let version = metadata.compiler_version()?;
         let auto_detect = version < MIN_SOLC;
         if auto_detect {
-            println!("The requested contract was compiled with {} while the minimum version for storage layouts is {} and as a result it may be empty.", version, MIN_SOLC);
+            println!("The requested contract was compiled with {} while the minimum version for storage layouts is {} and as a result the output may be empty.", version, MIN_SOLC);
         }
 
         let root = tempfile::tempdir()?;
@@ -134,7 +134,7 @@ impl StorageArgs {
             println!("Artifact: {}", name);
             name == &metadata.contract_name
         });
-        let artifact = artifact.wrap_err("Artifact not found")?.1;
+        let (_, artifact) = artifact.wrap_err("Artifact not found")?;
 
         print_storage_layout(&artifact.storage_layout, true)?;
 
