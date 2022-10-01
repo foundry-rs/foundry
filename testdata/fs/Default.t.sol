@@ -12,6 +12,8 @@ contract DefaultAccessTest is DSTest {
     function testReadFile() public {
         string memory path = "../testdata/fixtures/File/read.txt";
         cheats.readFile(path);
+
+        cheats.readFileBinary(path);
     }
 
     function testReadLine() public {
@@ -24,6 +26,8 @@ contract DefaultAccessTest is DSTest {
         string memory data = "hello writable world";
         cheats.expectRevert(FOUNDRY_WRITE_ERR);
         cheats.writeFile(path, data);
+
+        cheats.writeFileBinary(path, bytes(data));
     }
 
     function testWriteLine() public {
