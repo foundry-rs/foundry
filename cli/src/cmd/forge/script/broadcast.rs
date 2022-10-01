@@ -16,8 +16,8 @@ use ethers::{
     utils::format_units,
 };
 use eyre::{ContextCompat, WrapErr};
-use foundry_common::{estimate_eip1559_fees, try_get_http_provider, RetryProvider, RpcUrl};
-use foundry_config::Chain;
+use foundry_common::{estimate_eip1559_fees, try_get_http_provider, RpcUrl};
+
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::{cmp::min, fmt, ops::Mul, sync::Arc};
