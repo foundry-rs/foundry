@@ -23,9 +23,13 @@ const MIN_SOLC: Version = Version::new(0, 6, 5);
 #[derive(Debug, Clone, Parser)]
 pub struct StorageArgs {
     // Storage
-    #[clap(help = "The contract address.", parse(try_from_str = parse_name_or_address), value_name = "ADDRESS")]
+    #[clap(help = "The contract address.", value_parser = parse_name_or_address, value_name = "ADDRESS")]
     address: NameOrAddress,
-    #[clap(help = "The storage slot number (hex or decimal)", parse(try_from_str = parse_slot), value_name = "SLOT")]
+    #[clap(
+        help = "The storage slot number (hex or decimal)",
+        value_parser = parse_slot,
+        value_name = "SLOT"
+    )]
     slot: Option<H256>,
     #[clap(long, env = "ETH_RPC_URL", value_name = "URL")]
     rpc_url: Option<String>,
@@ -34,7 +38,7 @@ pub struct StorageArgs {
         short = 'B',
         help = "The block height you want to query at.",
         long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
-        parse(try_from_str = parse_block_id),
+        value_parser = parse_block_id,
         value_name = "BLOCK"
     )]
     block: Option<BlockId>,
@@ -129,11 +133,7 @@ impl StorageArgs {
 
         // Compile
         let out = suppress_compile(&project)?;
-        dbg!(out.artifacts().count());
-        let artifact = out.artifacts().find(|(name, _)| {
-            println!("Artifact: {}", name);
-            name == &metadata.contract_name
-        });
+        let artifact = out.artifacts().find(|(name, _)| name == &metadata.contract_name);
         let (_, artifact) = artifact.wrap_err("Artifact not found")?;
 
         print_storage_layout(&artifact.storage_layout, true)?;
