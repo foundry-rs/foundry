@@ -189,7 +189,7 @@ fn read_file_binary(state: &Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes,
 
     let data = fs::read(path).map_err(error::encode_error)?;
 
-    Ok(abi::encode(&[Token::Bytes(data.into())]).into())
+    Ok(abi::encode(&[Token::Bytes(data)]).into())
 }
 
 fn read_line(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
@@ -224,7 +224,11 @@ fn read_line(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, By
 ///
 /// Caution: writing files is only allowed if the targeted path is allowed, (inside `<root>/` by
 /// default)
-fn write_file(state: &Cheatcodes, path: impl AsRef<Path>, content: impl AsRef<[u8]>) -> Result<Bytes, Bytes> {
+fn write_file(
+    state: &Cheatcodes,
+    path: impl AsRef<Path>,
+    content: impl AsRef<[u8]>,
+) -> Result<Bytes, Bytes> {
     let path = state
         .config
         .ensure_path_allowed(&path, FsAccessKind::Write)
@@ -393,14 +397,10 @@ pub fn apply(
         HEVMCalls::EnvBytes1(inner) => get_env(&inner.0, ParamType::Bytes, Some(&inner.1)),
         HEVMCalls::ProjectRoot(_) => project_root(state),
         HEVMCalls::ReadFile(inner) => read_file(state, &inner.0),
-        HEVMCalls::ReadFileBinary(inner) => {
-            read_file_binary(state, &inner.0)
-        },
+        HEVMCalls::ReadFileBinary(inner) => read_file_binary(state, &inner.0),
         HEVMCalls::ReadLine(inner) => read_line(state, &inner.0),
         HEVMCalls::WriteFile(inner) => write_file(state, &inner.0, &inner.1),
-        HEVMCalls::WriteFileBinary(inner) => {
-            write_file(state, &inner.0, &inner.1)
-        },
+        HEVMCalls::WriteFileBinary(inner) => write_file(state, &inner.0, &inner.1),
         HEVMCalls::WriteLine(inner) => write_line(state, &inner.0, &inner.1),
         HEVMCalls::CloseFile(inner) => close_file(state, &inner.0),
         HEVMCalls::RemoveFile(inner) => remove_file(state, &inner.0),
