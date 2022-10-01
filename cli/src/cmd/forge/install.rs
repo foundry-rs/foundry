@@ -17,7 +17,7 @@ use std::{
     process::Command,
     str,
 };
-use tracing::trace;
+use tracing::{trace, warn};
 use yansi::Paint;
 
 static DEPENDENCY_VERSION_TAG_REGEX: Lazy<Regex> =
@@ -236,8 +236,20 @@ fn install_as_submodule(
         } else {
             format!("forge install: {target_dir}")
         };
+        trace!(?libs, ?message, "git commit -m");
 
-        Command::new("git").args(["commit", "-m", &message]).current_dir(libs).exec()?;
+        let output =
+            Command::new("git").args(["commit", "-m", &message]).current_dir(libs).output()?;
+
+        if !&output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            warn!(?stdout, ?stderr, "git commit -m");
+
+            if !stdout.contains("nothing to commit") {
+                eyre::bail!("Failed to commit `{message}`:\n{stdout}\n{stderr}");
+            }
+        }
     }
 
     Ok(tag)
