@@ -828,7 +828,17 @@ forgetest!(can_reinstall_after_manual_remove, |prj: TestProject, mut cmd: TestCo
     install(&mut cmd);
 });
 
-// Tests that forge update doesn't break a working depencency by recursively updating nested
+// test that we can repeatedly install the same dependency without changes
+forgetest!(can_install_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {
+    cmd.git_init();
+
+    cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]);
+    for _ in 0..3 {
+        cmd.assert_success();
+    }
+});
+
+// Tests that forge update doesn't break a working dependency by recursively updating nested
 // dependencies
 forgetest!(
     can_update_library_with_outdated_nested_dependency,

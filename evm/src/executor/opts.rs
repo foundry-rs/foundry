@@ -105,7 +105,7 @@ impl EvmOpts {
                 chain_id: self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID).into(),
                 spec_id: SpecId::LONDON,
                 perf_all_precompiles_have_balance: false,
-                limit_contract_code_size: Some(usize::MAX),
+                limit_contract_code_size: self.env.code_size_limit.or(Some(usize::MAX)),
                 memory_limit: self.memory_limit,
                 ..Default::default()
             },
@@ -209,8 +209,16 @@ pub struct Env {
     pub block_difficulty: u64,
 
     /// the block.gaslimit value during EVM execution
-    #[serde(deserialize_with = "string_or_number_opt")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "string_or_number_opt"
+    )]
     pub block_gas_limit: Option<u64>,
+
+    /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_size_limit: Option<usize>,
 }
 
 #[derive(Deserialize)]
