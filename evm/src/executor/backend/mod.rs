@@ -1107,6 +1107,13 @@ impl DatabaseExt for Backend {
     ) -> Option<RevertDiagnostic> {
         let active_id = self.active_fork_id()?;
         let active_fork = self.active_fork()?;
+
+        if self.inner.forks.len() == 1 {
+            // we only want to provide additional diagnostics here when in multifork mode with > 1
+            // forks
+            return None
+        }
+
         if !active_fork.is_contract(callee) && !is_contract_in_state(journaled_state, callee) {
             // no contract for `callee` available on current fork, check if available on other forks
             let mut available_on = Vec::new();
