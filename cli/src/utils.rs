@@ -97,14 +97,19 @@ pub fn parse_u256(s: &str) -> eyre::Result<U256> {
     Ok(if s.starts_with("0x") { U256::from_str(s)? } else { U256::from_dec_str(s)? })
 }
 
-/// Return `rpc-url` cli argument if given, or consume `eth-rpc-url` from foundry.toml. Default to
+/// Returns `rpc-url` cli argument if given, or consume `eth-rpc-url` from foundry.toml. Default to
 /// `localhost:8545`
+///
+/// This also supports rpc aliases and try to load the current foundry.toml file if it exists
+pub fn try_consume_config_rpc_url(rpc_url: Option<String>) -> eyre::Result<String> {
+    let mut config = Config::load();
+    config.eth_rpc_url = rpc_url;
+    let url = config.get_rpc_url_or_localhost_http()?;
+    Ok(url.into_owned())
+}
+
 pub fn consume_config_rpc_url(rpc_url: Option<String>) -> String {
-    if let Some(rpc_url) = rpc_url {
-        rpc_url
-    } else {
-        Config::load().get_rpc_url_or_localhost_http().expect("Invalid rpc url").into_owned()
-    }
+    try_consume_config_rpc_url(rpc_url).expect("Invalid rpc url")
 }
 
 /// Parses an ether value from a string.
