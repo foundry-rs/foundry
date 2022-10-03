@@ -90,8 +90,7 @@ fn generate_call(
 
 /// Strategy to select a sender address:
 /// * If `senders` is empty, then it's either a random address (10%) or from the dictionary (90%).
-/// * If `senders` is not empty, then there's an 80% chance that one from the list is selected. The
-///   remaining 20% will either be a random address (10%) or from the dictionary (90%).
+/// * If `senders` is not empty, a random address is chosen from the list of senders.
 fn select_random_sender(
     fuzz_state: EvmFuzzState,
     senders: Rc<SenderFilters>,
