@@ -562,6 +562,7 @@ fn collect_data(
 }
 
 /// Verifies that the invariant run execution can continue.
+/// Returns the mapping of (Invariant Function Name -> Call Result) if invariants were asserted.
 fn can_continue(
     invariant_contract: &InvariantContract,
     call_result: RawCallResult,

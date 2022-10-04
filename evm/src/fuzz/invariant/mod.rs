@@ -36,6 +36,7 @@ pub struct InvariantContract<'a> {
 
 /// Given the executor state, asserts that no invariant has been broken. Otherwise, it fills the
 /// external `invariant_failures.failed_invariant` map and returns a generic error.
+/// Returns the mapping of (Invariant Function Name -> Call Result).
 pub fn assert_invariants(
     invariant_contract: &InvariantContract,
     executor: &Executor,
