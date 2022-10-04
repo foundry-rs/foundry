@@ -1,7 +1,7 @@
 //! Fuzzing support abstracted over the [`Evm`](crate::Evm) used
 use crate::{fuzz::*, CALLER};
 mod error;
-use error::*;
+pub use error::InvariantFuzzError;
 mod filters;
 pub use filters::{ArtifactFilters, SenderFilters};
 mod call_override;

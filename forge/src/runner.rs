@@ -14,7 +14,9 @@ use foundry_common::{
 use foundry_evm::{
     executor::{CallResult, DeployResult, EvmError, Executor},
     fuzz::{
-        invariant::{InvariantContract, InvariantExecutor, InvariantFuzzTestResult},
+        invariant::{
+            InvariantContract, InvariantExecutor, InvariantFuzzError, InvariantFuzzTestResult,
+        },
         FuzzedExecutor,
     },
     trace::{load_contracts, TraceKind},
@@ -459,19 +461,11 @@ impl<'a> ContractRunner<'a> {
                     let mut logs = logs.clone();
                     let mut traces = traces.clone();
 
-                    if let Some(last_call_result) = last_call_results
-                        .as_mut()
-                        .and_then(|call_results| call_results.remove(func_name))
-                    {
-                        logs.extend(last_call_result.logs);
-
-                        if let Some(last_call_traces) = last_call_result.traces {
-                            traces.push((TraceKind::Execution, last_call_traces));
-                        }
-                    }
-
-                    if let Some(ref error) = test_error {
-                        if let TestError::Fail(_, _) = &error.test_error {
+                    match test_error {
+                        // If invariants were broken, replay the error to collect logs and traces
+                        Some(
+                            error @ InvariantFuzzError { test_error: TestError::Fail(_, _), .. },
+                        ) => {
                             counterexample = error.replay(
                                 self.executor.clone(),
                                 known_contracts,
@@ -479,6 +473,19 @@ impl<'a> ContractRunner<'a> {
                                 &mut logs,
                                 &mut traces,
                             )?;
+                        }
+                        // If invariants ran successfully, collect last call logs and traces
+                        _ => {
+                            if let Some(last_call_result) = last_call_results
+                                .as_mut()
+                                .and_then(|call_results| call_results.remove(func_name))
+                            {
+                                logs.extend(last_call_result.logs);
+
+                                if let Some(last_call_traces) = last_call_result.traces {
+                                    traces.push((TraceKind::Execution, last_call_traces));
+                                }
+                            }
                         }
                     }
 
