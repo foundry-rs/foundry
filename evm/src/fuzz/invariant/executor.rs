@@ -292,10 +292,6 @@ impl<'a> InvariantExecutor<'a> {
         self.executor.inspector_config_mut().fuzzer =
             Some(Fuzzer { call_generator, fuzz_state: fuzz_state.clone(), collect: true });
 
-        // Tracing should be off when running all runs. It will be turned on later for the failure
-        // cases.
-        self.executor.set_tracing(false);
-
         Ok((fuzz_state, targeted_contracts, strat))
     }
 

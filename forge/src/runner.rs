@@ -459,12 +459,15 @@ impl<'a> ContractRunner<'a> {
                     let mut logs = logs.clone();
                     let mut traces = traces.clone();
 
-                    if let Some(last_call_logs) = last_call_results
+                    if let Some(last_call_result) = last_call_results
                         .as_mut()
                         .and_then(|call_results| call_results.remove(func_name))
-                        .map(|call_result| call_result.logs)
                     {
-                        logs.extend(last_call_logs);
+                        logs.extend(last_call_result.logs);
+
+                        if let Some(last_call_traces) = last_call_result.traces {
+                            traces.push((TraceKind::Execution, last_call_traces));
+                        }
                     }
 
                     if let Some(ref error) = test_error {
