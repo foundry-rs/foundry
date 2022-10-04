@@ -41,7 +41,7 @@ async fn main() -> eyre::Result<()> {
     match opts.sub {
         // Constants
         Subcommands::MaxInt => {
-            println!("{}", U256::MAX);
+            println!("{}", I256::MAX);
         }
         Subcommands::MaxUint => {
             println!("{}", U256::MAX);
