@@ -449,15 +449,23 @@ impl<'a> ContractRunner<'a> {
         let invariant_contract =
             InvariantContract { address, invariant_functions: functions, abi: self.contract };
 
-        if let Some(InvariantFuzzTestResult { invariants, cases, reverts }) =
+        if let Some(InvariantFuzzTestResult { invariants, cases, reverts, mut last_call_results }) =
             evm.invariant_fuzz(invariant_contract)?
         {
             let results = invariants
-                .values()
-                .map(|test_error| {
+                .iter()
+                .map(|(func_name, test_error)| {
                     let mut counterexample = None;
                     let mut logs = logs.clone();
                     let mut traces = traces.clone();
+
+                    if let Some(last_call_logs) = last_call_results
+                        .as_mut()
+                        .and_then(|call_results| call_results.remove(func_name))
+                        .map(|call_result| call_result.logs)
+                    {
+                        logs.extend(last_call_logs);
+                    }
 
                     if let Some(ref error) = test_error {
                         if let TestError::Fail(_, _) = &error.test_error {

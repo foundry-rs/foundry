@@ -41,7 +41,7 @@ pub fn assert_invariants(
     executor: &Executor,
     calldata: &[BasicTxDetails],
     invariant_failures: &mut InvariantFailures,
-) -> eyre::Result<()> {
+) -> eyre::Result<BTreeMap<String, RawCallResult>> {
     let mut found_case = false;
     let mut inner_sequence = vec![];
 
@@ -51,6 +51,7 @@ pub fn assert_invariants(
         }
     }
 
+    let mut call_results = BTreeMap::new();
     for func in &invariant_contract.invariant_functions {
         let mut call_result = executor
             .call_raw(
@@ -96,7 +97,11 @@ pub fn assert_invariants(
                     )),
                 );
                 found_case = true;
+            } else {
+                call_results.insert(func.name.clone(), call_result);
             }
+        } else {
+            call_results.insert(func.name.clone(), call_result);
         }
     }
 
@@ -114,7 +119,8 @@ pub fn assert_invariants(
             invariant_failures.broken_invariants_count - before
         );
     }
-    Ok(())
+
+    Ok(call_results)
 }
 
 /// The outcome of an invariant fuzz test
@@ -125,4 +131,6 @@ pub struct InvariantFuzzTestResult {
     pub cases: Vec<FuzzedCases>,
     /// Number of reverted fuzz calls
     pub reverts: usize,
+
+    pub last_call_results: Option<BTreeMap<String, RawCallResult>>,
 }
