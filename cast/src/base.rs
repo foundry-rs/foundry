@@ -381,12 +381,8 @@ impl NumberWithBase {
             // a custom formatter
             Base::Binary | Base::Octal => self.format_radix(),
             Base::Decimal => {
-                if self.is_nonnegative {
-                    self.number.to_string()
-                } else {
-                    let s = I256::from_raw(self.number).to_string();
-                    s.strip_prefix('-').unwrap_or(&s).to_string()
-                }
+                let s = I256::from_raw(self.number).to_string();
+                s.strip_prefix('-').unwrap_or(&s).to_string()
             }
             Base::Hexadecimal => format!("{:x}", self.number),
         }
