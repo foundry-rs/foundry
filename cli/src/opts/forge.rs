@@ -34,7 +34,8 @@ pub struct Opts {
 #[derive(Debug, Subcommand)]
 #[clap(
     about = "Build, test, fuzz, debug and deploy Solidity contracts.",
-    after_help = "Find more information in the book: http://book.getfoundry.sh/reference/forge/forge.html"
+    after_help = "Find more information in the book: http://book.getfoundry.sh/reference/forge/forge.html",
+    next_display_order = None
 )]
 #[allow(clippy::large_enum_variant)]
 pub enum Subcommands {
