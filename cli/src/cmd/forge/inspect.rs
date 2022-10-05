@@ -194,9 +194,9 @@ impl Cmd for InspectArgs {
                 );
             }
             ContractArtifactFields::Events => {
+                let mut out = serde_json::Map::new();
                 if let Some(LosslessAbi { abi, .. }) = artifact.abi.as_ref() {
                     let events: Vec<_> = abi.events.iter().flat_map(|(_, events)| events).collect();
-                    let mut out = serde_json::Map::new();
                     // print the signature of all events including anonymous
                     for ev in events.iter() {
                         let types =
@@ -206,8 +206,8 @@ impl Cmd for InspectArgs {
                             format!("{:?}", ev.signature()).into(),
                         );
                     }
-                    println!("{}", serde_json::to_string_pretty(&out)?);
                 }
+                println!("{}", serde_json::to_string_pretty(&out)?);
             }
         };
 
