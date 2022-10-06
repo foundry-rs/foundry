@@ -4,7 +4,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 
 /// A fast local Ethereum development node.
 #[derive(Debug, Parser)]
-#[clap(name = "anvil", version = anvil::VERSION_MESSAGE)]
+#[clap(name = "anvil", version = anvil::VERSION_MESSAGE, next_display_order = None)]
 pub struct App {
     #[clap(flatten)]
     pub node: NodeArgs,
