@@ -24,9 +24,9 @@ pub struct Opts {
 #[derive(Debug, Subcommand)]
 #[clap(
     about = "Perform Ethereum RPC calls from the comfort of your command line.",
-    after_help = "Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html"
+    after_help = "Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html",
+    next_display_order = None
 )]
-
 pub enum Subcommands {
     #[clap(name = "--max-int")]
     #[clap(visible_aliases = &["max-int", "maxi"])]
