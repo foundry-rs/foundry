@@ -261,33 +261,6 @@ async fn can_deploy_greeter_on_fork() {
     assert_eq!("Hello World!", greeting);
 }
 
-/// tests that we can deploy from dev account that already has an onchain presence: https://rinkeby.etherscan.io/address/0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266
-#[tokio::test(flavor = "multi_thread")]
-async fn can_deploy_greeter_on_rinkeby_fork() {
-    let (_api, handle) = spawn(
-        NodeConfig::test().with_eth_rpc_url(Some(rpc::next_rinkeby_http_rpc_endpoint())).silent(),
-    )
-    .await;
-    let provider = handle.http_provider();
-    let wallet = handle.dev_wallets().next().unwrap();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
-
-    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
-        .unwrap()
-        .send()
-        .await
-        .unwrap();
-
-    let greeting = greeter_contract.greet().call().await.unwrap();
-    assert_eq!("Hello World!", greeting);
-
-    let greeter_contract =
-        Greeter::deploy(client, "Hello World!".to_string()).unwrap().send().await.unwrap();
-
-    let greeting = greeter_contract.greet().call().await.unwrap();
-    assert_eq!("Hello World!", greeting);
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn can_reset_properly() {
     let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
