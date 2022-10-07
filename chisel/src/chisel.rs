@@ -1,6 +1,9 @@
+use crate::env::ChiselEnv;
 use clap::Parser;
 use rustyline::error::ReadlineError;
-use rustyline::{Editor, Result};
+
+/// REPL env.
+pub mod env;
 
 /// REPL command dispatcher.
 pub mod cmd;
@@ -11,7 +14,7 @@ pub mod sol_highlighter;
 /// Chisel is a fast, utilitarian, and verbose solidity REPL.
 #[derive(Debug, Parser)]
 #[clap(name = "chisel", version = "v0.0.1-alpha")]
-pub struct Chisel {
+pub struct ChiselCommand {
     /// Set the RPC URL to fork.
     #[clap(long, short)]
     pub fork_url: Option<String>,
@@ -21,20 +24,28 @@ pub struct Chisel {
     pub solc: Option<String>,
 }
 
-fn main() -> Result<()> {
+fn main() {
     // Parse command args
-    let _args = Chisel::parse();
+    let _args = ChiselCommand::parse();
 
-    // Create new Rustyline editor
-    let mut rl = Editor::<()>::new()?;
+    // Set up default `ChiselEnv`
+    // TODO: Configuration etc.
+    let mut env = ChiselEnv::default();
 
     // Begin Rustyline loop
     loop {
-        let line = rl.readline(">> ");
+        let line = env.rl.readline(">> ");
         match line {
             Ok(line) => {
-                // TODO
-                println!("{}", line);
+                // TODO compilation, error checking before committing addition to session, basically everything lmao.
+                
+                // Playing w/ `TempProject`...
+                env.session.push(line);
+                if env.project.add_source("REPL", env.contract_source()).is_ok() {
+                    println!("{:?}", env.project.sources_path());
+                } else {
+                    eprintln!("Error writing source file to temp project.");
+                }
             }
             Err(ReadlineError::Interrupted | ReadlineError::Eof) => {
                 println!("Exiting chisel.");
@@ -46,6 +57,4 @@ fn main() -> Result<()> {
             }
         }
     }
-
-    Ok(())
 }

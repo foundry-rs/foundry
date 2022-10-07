@@ -9,5 +9,6 @@ path = "src/chisel.rs"
 
 [dependencies]
 clap = { version = "4.0", features = ["derive", "env", "wrap_help"] }
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", features = ["project-util", "full"] }
 rustyline = "10.0.0"
 ansi_term = "0.12.1"

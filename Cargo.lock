@@ -710,6 +710,7 @@ version = "0.1.0"
 dependencies = [
  "ansi_term",
  "clap 4.0.1",
+ "ethers-solc",
  "rustyline",
 ]
 
