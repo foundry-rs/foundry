@@ -23,7 +23,7 @@ mod config;
 
 mod error;
 /// handlers for axum server
-mod handler;
+pub mod handler;
 #[cfg(feature = "ipc")]
 pub mod ipc;
 mod pubsub;

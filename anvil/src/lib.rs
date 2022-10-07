@@ -40,7 +40,7 @@ use tokio::{
 use tracing::trace;
 
 /// contains the background service that drives the node
-mod service;
+pub mod service;
 
 mod config;
 pub use config::{AccountGenerator, NodeConfig, CHAIN_ID, VERSION_MESSAGE};

@@ -161,7 +161,7 @@ fn decode_revert_reason(out: impl AsRef<[u8]>) -> Option<String> {
 }
 
 /// Helper trait to easily convert results to rpc results
-pub(crate) trait ToRpcResponseResult {
+pub trait ToRpcResponseResult {
     fn to_rpc_result(self) -> ResponseResult;
 }
 
