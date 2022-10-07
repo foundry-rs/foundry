@@ -20,3 +20,4 @@ _TODO_
   - [ ] Enable / disable call tracing
   - [ ] Network forking
 - [ ] [Syntax highlighting](https://docs.rs/rustyline/10.0.0/rustyline/highlight/trait.Highlighter.html)
+- [ ] Tests.
