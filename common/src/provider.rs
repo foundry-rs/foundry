@@ -158,6 +158,7 @@ impl ProviderBuilder {
 
         let provider = Http::new_with_client(url, client);
 
+        #[allow(clippy::box_default)]
         let mut provider = Provider::new(
             RetryClientBuilder::default()
                 .initial_backoff(Duration::from_millis(initial_backoff))

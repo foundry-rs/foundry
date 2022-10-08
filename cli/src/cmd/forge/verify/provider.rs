@@ -51,6 +51,7 @@ pub enum VerificationProviderType {
 
 impl VerificationProviderType {
     /// Returns the corresponding `VerificationProvider` for the key
+    #[allow(clippy::box_default)]
     pub fn client(&self, key: &Option<String>) -> eyre::Result<Box<dyn VerificationProvider>> {
         match self {
             VerificationProviderType::Etherscan => {

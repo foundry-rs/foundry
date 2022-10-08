@@ -134,7 +134,7 @@ impl Executor {
         let create2_deployer_account = self
             .backend_mut()
             .basic(DEFAULT_CREATE2_DEPLOYER)?
-            .ok_or(DatabaseError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
+            .ok_or_else(|| DatabaseError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
 
         if create2_deployer_account.code.is_none() ||
             create2_deployer_account.code.as_ref().unwrap().is_empty()
