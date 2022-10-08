@@ -2,7 +2,9 @@ use crate::env::ChiselEnv;
 use ansi_term::Color::{Green, Red};
 use clap::Parser;
 use cmd::ChiselCommand;
+use env::SolSnippet;
 use rustyline::error::ReadlineError;
+use std::rc::Rc;
 
 /// REPL env.
 pub mod env;
@@ -64,7 +66,7 @@ fn main() {
                             // TODO: Move `error` to the `ChiselEnv`, dispatch
                             // could still result in an error.
                             error = false;
-                            cmd.dispatch(&split[1..], &env);
+                            cmd.dispatch(&split[1..], &mut env);
                         }
                         Err(e) => {
                             error = true;
@@ -98,7 +100,7 @@ fn main() {
                 error = false;
 
                 // Push the parsed source unit and comments to the environment session
-                env.session.push(parsed);
+                env.session.push(SolSnippet { source_unit: parsed, raw: Rc::new(line) });
                 if env.project.add_source("REPL", env.contract_source()).is_ok() {
                     println!("{:?}", env.project.sources_path());
                 } else {

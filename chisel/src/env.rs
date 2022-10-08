@@ -1,9 +1,26 @@
-use ethers_solc::{project_util::TempProject, Solc};
+use core::fmt;
+use std::rc::Rc;
+
+use ethers_solc::project_util::TempProject;
 use rustyline::Editor;
 
 pub use semver::Version;
 
-/// A Chisel Environment
+/// Represents a parsed snippet of Solidity code.
+#[derive(Debug)]
+pub struct SolSnippet {
+    pub source_unit: (solang_parser::pt::SourceUnit, Vec<solang_parser::pt::Comment>),
+    pub raw: Rc<String>,
+}
+
+/// Display impl for `SolToken`
+impl fmt::Display for SolSnippet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.raw)
+    }
+}
+
+/// A Chisel REPL environment.
 #[derive(Debug)]
 pub struct ChiselEnv {
     /// The `TempProject` created for the REPL contract.
@@ -13,11 +30,12 @@ pub struct ChiselEnv {
     /// The `rustyline` Editor
     pub rl: Editor<()>,
     /// The current session
-    /// A session contains an ordered vector of source units, parsed by the solang-parser.
-    pub session: Vec<(solang_parser::pt::SourceUnit, Vec<solang_parser::pt::Comment>)>,
+    /// A session contains an ordered vector of source units, parsed by the solang-parser,
+    /// as well as the raw source.
+    pub session: Vec<SolSnippet>,
 }
 
-/// A Chisel REPL environment
+/// Chisel REPL environment impl
 impl ChiselEnv {
     /// Create a new `ChiselEnv` with a specified `solc` version.
     pub fn new(solc_version: &'static str) -> Self {
@@ -40,7 +58,8 @@ impl ChiselEnv {
     /// Create a default `ChiselEnv`.
     pub fn default() -> Self {
         Self {
-            solc_version: Solc::svm_global_version().unwrap_or_else(|| Version::parse("0.8.17").unwrap()),
+            solc_version: ethers_solc::Solc::svm_global_version()
+                .unwrap_or_else(|| Version::parse("0.8.17").unwrap()),
             project: Self::create_temp_project(),
             rl: Self::create_rustyline_editor(),
             session: Vec::default(),
@@ -48,7 +67,8 @@ impl ChiselEnv {
     }
 
     /// Render the full source code for the current session.
-    /// TODO - Render source correctly, not `SourceUnit`s.
+    /// TODO - Render source correctly rather than throwing
+    /// everything into the fallback.
     pub fn contract_source(&self) -> String {
         format!(
             r#"
@@ -56,12 +76,12 @@ impl ChiselEnv {
 pragma solidity {};
 contract REPL {{
     fallback() {{
-        {:?}
+        {}
     }}
 }}
         "#,
             self.solc_version,
-            self.session
+            self.session.iter().map(|t| t.to_string()).collect::<Vec<String>>().join("\n")
         )
     }
 
