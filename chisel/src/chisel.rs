@@ -32,8 +32,7 @@ fn main() {
     // Parse command args
     let _args = ChiselCommand::parse();
 
-    // Set up default `ChiselEnv`
-    // TODO: Configuration etc.
+    // Set up default `ChiselEnv` Configuration
     let mut env = ChiselEnv::default();
 
     // Keeps track of whether or not an interrupt was the last input
@@ -52,15 +51,24 @@ fn main() {
 
         match env.rl.readline(prompt.as_str()) {
             Ok(line) => {
-                // TODO compilation, error checking before committing addition to session, basically
-                // everything lmao.
-                
-                if interrupt {
-                    interrupt = false;
-                }
+                // Parse the input with [solang-parser](https)
+                // Print dianostics and continue on error
+                // If parsing successful, grab the (source unit, comment) tuple
+                let parsed = match solang_parser::parse(&line, 0) {
+                    Ok(su) => su,
+                    Err(e) => {
+                        eprintln!("{}", Red.paint("Compilation error"));
+                    eprintln!("{}", Red.paint(format!("{:?}", e)));
+                    error = true;
+                    continue;
+                    }
+                };
 
-                // Playing w/ `TempProject`...
-                env.session.push(line);
+                // Reset interrupt flag
+                interrupt = false;
+
+                // Push the parsed source unit and comments to the environment session
+                env.session.push(parsed);
                 if env.project.add_source("REPL", env.contract_source()).is_ok() {
                     println!("{:?}", env.project.sources_path());
                 } else {
