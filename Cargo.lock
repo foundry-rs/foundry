@@ -708,8 +708,8 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 name = "chisel"
 version = "0.1.0"
 dependencies = [
- "ansi_term",
  "clap 4.0.1",
+ "ethers",
  "ethers-solc",
  "forge",
  "foundry-evm",
@@ -717,6 +717,7 @@ dependencies = [
  "solang-parser",
  "strum",
  "tracing",
+ "yansi",
 ]
 
 [[package]]

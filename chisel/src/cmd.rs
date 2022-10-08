@@ -1,7 +1,7 @@
 use crate::env::ChiselEnv;
-use ansi_term::Color::{Cyan, Green, Red};
 use std::{error, str::FromStr};
 use strum::{EnumIter, IntoEnumIterator};
+use yansi::Paint;
 
 /// Custom Chisel commands
 #[derive(Debug, EnumIter)]
@@ -20,10 +20,10 @@ impl ChiselCommand {
     pub fn dispatch(&self, args: &[&str], env: &mut ChiselEnv) {
         match self {
             ChiselCommand::Help => {
-                println!("{}", Cyan.paint("⚒️ Chisel help"));
+                println!("{}", Paint::cyan("⚒️ Chisel help"));
                 ChiselCommand::iter().for_each(|cmd| {
                     let descriptor = CmdDescriptor::from(cmd);
-                    println!("!{} - {}", Green.paint(descriptor.0), descriptor.1);
+                    println!("!{} - {}", Paint::green(descriptor.0), descriptor.1);
                 });
             }
             ChiselCommand::Source => println!("{}", env.contract_source()),
@@ -44,10 +44,12 @@ impl FromStr for ChiselCommand {
             "help" => Ok(ChiselCommand::Help),
             "source" => Ok(ChiselCommand::Source),
             "clear" => Ok(ChiselCommand::Clear),
-            _ => Err(Red
-                .paint(format!("Unknown command \"{}\"! See available commands with `!help`.", s))
-                .to_string()
-                .into()),
+            _ => Err(Paint::red(format!(
+                "Unknown command \"{}\"! See available commands with `!help`.",
+                s
+            ))
+            .to_string()
+            .into()),
         }
     }
 }

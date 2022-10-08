@@ -1,6 +1,9 @@
 use core::fmt;
-use ethers_solc::project_util::TempProject;
-use foundry_evm::executor::{backend::Backend, Executor, ExecutorBuilder};
+use ethers_solc::{
+    artifacts::{CompactBytecode, CompactContractBytecode},
+    project_util::TempProject,
+    Artifact,
+};
 use rustyline::Editor;
 use std::rc::Rc;
 
@@ -28,8 +31,6 @@ pub struct ChiselEnv {
     /// A session contains an ordered vector of source units, parsed by the solang-parser,
     /// as well as the raw source.
     pub session: Vec<SolSnippet>,
-    /// The executor used to run the REPL contract's code.
-    pub executor: Executor,
 }
 
 /// Chisel REPL environment impl
@@ -45,26 +46,16 @@ impl ChiselEnv {
         // Create a new rustyline Editor
         let rl = Self::create_rustyline_editor();
 
-        // TODO: Configurable network forking, bonus points
-        // if it can be done on-the-fly with a builtin.
-        let db = Backend::spawn(None);
-        let executor = ExecutorBuilder::default().build(db);
-
         // Return initialized ChiselEnv with set solc version
-        Self { project, rl, session: Vec::default(), executor }
+        Self { project, rl, session: Vec::default() }
     }
 
     /// Create a default `ChiselEnv`.
     pub fn default() -> Self {
-        // Create an `Executor` with an in-memory DB.
-        let db = Backend::spawn(None);
-        let executor = ExecutorBuilder::default().build(db);
-
         Self {
             project: Self::create_temp_project(),
             rl: Self::create_rustyline_editor(),
             session: Vec::default(),
-            executor,
         }
     }
 
@@ -72,17 +63,24 @@ impl ChiselEnv {
     /// TODO
     pub fn run_repl(&self) -> Result<(), &str> {
         // Recompile the project and ensure no errors occurred.
-        // TODO: This is pretty slow. Def a better way to do this.
+        // TODO: This is pretty slow. Need to speed it up.
         if let Ok(artifacts) = self.project.compile() {
             if artifacts.has_compiler_errors() {
                 return Err("Failed to compile REPL contract.")
             }
 
-            // let runner = ContractRunner::new(
-            //     self.executor,
-            //     contract: /* ... */,
-            //
-            // );
+            if let Some(contract) = artifacts.find_first("REPL") {
+                let CompactContractBytecode { abi, bytecode, .. } =
+                    contract.clone().into_contract_bytecode();
+
+                let abi = abi.expect("No ABI for contract.");
+                let bytecode = bytecode.expect("No bytecode for contract.").object.into_bytes().unwrap();
+
+                println!("REPL Bytecode: {:?}", bytecode);
+            } else {
+                return Err("Could not find artifact for REPL contract.")
+            }
+
             Ok(())
         } else {
             Err("Failed to compile REPL contract.")
@@ -91,15 +89,15 @@ impl ChiselEnv {
 
     /// Render the full source code for the current session.
     /// TODO - Render source correctly rather than throwing
-    /// everything into `setUp`.
+    /// everything into `run()`.
     pub fn contract_source(&self) -> String {
         format!(
             r#"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity {};
-// TODO: Inherit `forge-std/Test.sol`
+// TODO: Inherit `forge-std/Script.sol`
 contract REPL {{
-    function setUp() public {{
+    function run() public {{
         {}
     }}
 }}
@@ -116,7 +114,7 @@ contract REPL {{
     /// Panics if the temporary project cannot be created.
     pub(crate) fn create_temp_project() -> TempProject {
         TempProject::dapptools_init().unwrap_or_else(|e| {
-            tracing::error!(target: "chisel-env", "Failed to initialize temporary project! {}", e);
+            tracing::error!(target: "chisel-env", "Failed to initialize temporary project! {:?}", e);
             panic!("failed to create a temporary project for the chisel environment! {e}");
         })
     }

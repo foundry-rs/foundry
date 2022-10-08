@@ -1,10 +1,10 @@
 use crate::env::ChiselEnv;
-use ansi_term::Color::{Green, Red};
 use clap::Parser;
 use cmd::ChiselCommand;
 use env::SolSnippet;
 use rustyline::error::ReadlineError;
 use std::rc::Rc;
+use yansi::Paint;
 
 /// REPL env.
 pub mod env;
@@ -14,6 +14,12 @@ pub mod cmd;
 
 /// A module for highlighting Solidity code within the REPL
 pub mod sol_highlighter;
+
+/// The REPL's `Executor`
+pub mod executor;
+
+/// The REPL's `Runner`
+pub mod runner;
 
 /// Prompt arrow slice
 static PROMPT_ARROW: &str = "➜ ";
@@ -50,8 +56,10 @@ fn main() {
 
     // Begin Rustyline loop
     loop {
-        let prompt =
-            format!("{}", if error { Red.paint(PROMPT_ARROW) } else { Green.paint(PROMPT_ARROW) });
+        let prompt = format!(
+            "{}",
+            if error { Paint::red(PROMPT_ARROW) } else { Paint::green(PROMPT_ARROW) }
+        );
 
         match env.rl.readline(prompt.as_str()) {
             Ok(line) => {
@@ -87,8 +95,8 @@ fn main() {
                 let parsed = match solang_parser::parse(&line, 0) {
                     Ok(su) => su,
                     Err(e) => {
-                        eprintln!("{}", Red.paint("Compilation error"));
-                        eprintln!("{}", Red.paint(format!("{:?}", e)));
+                        eprintln!("{}", Paint::red("Compilation error"));
+                        eprintln!("{}", Paint::red(format!("{:?}", e)));
                         error = true;
                         continue
                     }
@@ -103,7 +111,7 @@ fn main() {
                 env.session.push(SolSnippet { source_unit: parsed, raw: Rc::new(line) });
                 if env.project.add_source("REPL", env.contract_source()).is_ok() {
                     if env.run_repl().is_err() {
-                        eprintln!("{}", Red.paint("Compilation error"));
+                        eprintln!("{}", Paint::red("Compilation error"));
 
                         // Remove line that caused the compilation error
                         env.session.pop();

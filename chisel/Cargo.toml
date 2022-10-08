@@ -16,12 +16,13 @@ name = "chisel"
 path = "src/chisel.rs"
 
 [dependencies]
-ansi_term = "0.12.1"
-clap = { version = "4.0", features = ["derive", "env", "wrap_help"] }
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs", features = ["project-util", "full"] }
-rustyline = "10.0.0"
-solang-parser = "0.1.18"
-tracing = "0.1.37"
-strum = { version = "0.24.1", features = ["derive"] }
 foundry-evm = { path = "../evm" }
 forge = { path = "../forge" }
+clap = { version = "4.0", features = ["derive", "env", "wrap_help"] }
+rustyline = "10.0.0"
+solang-parser = "0.1.18"
+ethers = { git = "https://github.com/gakonst/ethers-rs" }
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", features = ["project-util", "full"] }
+yansi = "0.5.1"
+strum = { version = "0.24.1", features = ["derive"] }
+tracing = "0.1.37"
