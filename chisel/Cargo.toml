@@ -27,3 +27,5 @@ yansi = "0.5.1"
 strum = { version = "0.24.1", features = ["derive"] }
 semver = "1.0.14"
 tracing = "0.1.37"
+bytes = "1.2.1"
+revm = "2.1.0"

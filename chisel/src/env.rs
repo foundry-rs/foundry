@@ -1,9 +1,9 @@
+use crate::runner::ChiselRunner;
 use core::fmt;
 use ethers_solc::{artifacts::CompactContractBytecode, project_util::TempProject};
 use rustyline::Editor;
-use std::rc::Rc;
-
 pub use semver::Version;
+use std::rc::Rc;
 
 /// Represents a parsed snippet of Solidity code.
 #[derive(Debug)]
@@ -76,14 +76,18 @@ impl ChiselEnv {
             }
 
             if let Some(contract) = artifacts.find_first("REPL") {
-                let CompactContractBytecode { abi, bytecode, .. } =
+                let CompactContractBytecode { bytecode, .. } =
                     contract.clone().into_contract_bytecode();
 
-                let abi = abi.expect("No ABI for contract.");
+                // let abi = abi.expect("No ABI for contract.");
                 let bytecode =
                     bytecode.expect("No bytecode for contract.").object.into_bytes().unwrap();
 
-                println!("REPL Bytecode: {:?}", bytecode);
+                let mut runner = ChiselRunner::default();
+                let address = runner.deploy_repl(bytecode.0).unwrap();
+                runner.run(address);
+
+                println!("Address: {}", address);
             } else {
                 return Err("Could not find artifact for REPL contract.")
             }
@@ -101,7 +105,7 @@ impl ChiselEnv {
         format!(
             r#"
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity {};
+pragma solidity ^{};
 // TODO: Inherit `forge-std/Script.sol`
 contract REPL {{
     function run() public {{
