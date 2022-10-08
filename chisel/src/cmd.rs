@@ -14,9 +14,9 @@ pub enum ChiselCommand {
 type CmdDescriptor = (&'static str, &'static str);
 
 /// Custom Chisel command implementations
-#[allow(dead_code, unused)]
+#[allow(unused)]
 impl ChiselCommand {
-    pub fn dispatch(&self, args: &[&str], env: &ChiselEnv) {
+    pub fn dispatch(&self, args: &[&str], env: &mut ChiselEnv) {
         match self {
             ChiselCommand::Help => {
                 println!("{}", Cyan.paint("⚒️ Chisel help"));
