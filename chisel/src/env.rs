@@ -3,6 +3,7 @@ use std::rc::Rc;
 
 use ethers_solc::project_util::TempProject;
 use rustyline::Editor;
+use serde::{Serialize, Deserialize};
 
 /// Represents a parsed snippet of Solidity code.
 #[derive(Debug)]
@@ -19,6 +20,7 @@ impl fmt::Display for SolSnippet {
 }
 
 /// A Chisel REPL environment.
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ChiselEnv {
     /// The `TempProject` created for the REPL contract.
     pub project: TempProject,
