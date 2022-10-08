@@ -7,33 +7,32 @@ pub struct ChiselEnv {
     /// The `rustyline` Editor
     pub rl: Editor<()>,
     /// The current session
-    /// TODO: A vector of strings is insufficient- will need to separate functions from
-    /// expressions, etc.
-    pub session: Vec<String>,
+    /// A session contains an ordered vector of source units, parsed by the solang-parser.
+    pub session: Vec<(solang_parser::pt::SourceUnit, Vec<solang_parser::pt::Comment>)>,
 }
 
 /// A Chisel REPL environment
 impl ChiselEnv {
     /// Create a new `ChiselEnv` with a specified `solc` version.
     pub fn new(solc_version: &'static str) -> Self {
-        // TODO: Error handling.
-
         // Create initialized temporary dapptools-style project
-        let mut project = TempProject::dapptools_init().unwrap();
+        let mut project = Self::create_temp_project();
+
         // Set project's solc version explicitly
         project.set_solc(solc_version);
 
+        // Create a new rustyline Editor
+        let rl = Self::create_rustyline_editor();
+
         // Return initialized ChiselEnv with set solc version
-        Self { project, rl: Editor::<()>::new().unwrap(), session: Vec::default() }
+        Self { project, rl, session: Vec::default() }
     }
 
     /// Create a default `ChiselEnv`.
     pub fn default() -> Self {
-        // TODO: Error handling
-
         Self {
-            project: TempProject::dapptools_init().unwrap(),
-            rl: Editor::<()>::new().unwrap(),
+            project: Self::create_temp_project(),
+            rl: Self::create_rustyline_editor(),
             session: Vec::default(),
         }
     }
@@ -46,11 +45,35 @@ impl ChiselEnv {
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity {};
 contract REPL {{
-    {}
+    {:?}
 }}
         "#,
             "^0.8.17", // TODO: Grab version from TempProject's solc instance.
-            self.session.join("\n")
+            self.session
         )
+    }
+
+    /// Helper function to create a new temporary project with proper error handling.
+    ///
+    /// ### Panics
+    ///
+    /// Panics if the temporary project cannot be created.
+    pub(crate) fn create_temp_project() -> TempProject {
+        TempProject::dapptools_init().unwrap_or_else(|e| {
+            tracing::error!(target: "chisel-env", "Failed to initialize temporary project! {}", e);
+            panic!("failed to create a temporary project for the chisel environment! {e}");
+        })
+    }
+
+    /// Helper function to create a new rustyline Editor with proper error handling.
+    ///
+    /// ### Panics
+    ///
+    /// Panics if the rustyline Editor cannot be created.
+    pub(crate) fn create_rustyline_editor() -> Editor<()> {
+        Editor::<()>::new().unwrap_or_else(|e| {
+            tracing::error!(target: "chisel-env", "Failed to initialize rustyline Editor! {}", e);
+            panic!("failed to create a rustyline Editor for the chisel environment! {e}");
+        })
     }
 }

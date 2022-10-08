@@ -2,13 +2,23 @@
 name = "chisel"
 version = "0.1.0"
 edition = "2021"
+authors = [
+    "clabby <https://github.com/clabby>",
+    "asnared <https://github.com/abigger87>"
+]
+description = "Solidity REPL"
+repository = "https://github.com/foundry-rs/foundry/tree/main/chisel"
+license = "MIT"
+keywords = ["Rust", "Ethereum", "Foundry", "Chisel", "REPL", "Solidity", "Solang"]
 
 [[bin]]
 name = "chisel"
 path = "src/chisel.rs"
 
 [dependencies]
+ansi_term = "0.12.1"
 clap = { version = "4.0", features = ["derive", "env", "wrap_help"] }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", features = ["project-util", "full"] }
 rustyline = "10.0.0"
-ansi_term = "0.12.1"
+solang-parser = "0.1.18"
+tracing = "0.1.37"
