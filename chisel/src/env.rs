@@ -1,9 +1,15 @@
-use ethers_solc::project_util::TempProject;
+use ethers_solc::{project_util::TempProject, Solc};
 use rustyline::Editor;
 
+pub use semver::Version;
+
+/// A Chisel Environment
+#[derive(Debug)]
 pub struct ChiselEnv {
     /// The `TempProject` created for the REPL contract.
     pub project: TempProject,
+    /// Session solidity version
+    pub solc_version: Version,
     /// The `rustyline` Editor
     pub rl: Editor<()>,
     /// The current session
@@ -18,6 +24,9 @@ impl ChiselEnv {
         // Create initialized temporary dapptools-style project
         let mut project = Self::create_temp_project();
 
+        // Parse the solc version
+        let parsed_solc_version = Self::parse_solc_version(solc_version);
+
         // Set project's solc version explicitly
         project.set_solc(solc_version);
 
@@ -25,12 +34,13 @@ impl ChiselEnv {
         let rl = Self::create_rustyline_editor();
 
         // Return initialized ChiselEnv with set solc version
-        Self { project, rl, session: Vec::default() }
+        Self { solc_version: parsed_solc_version, project, rl, session: Vec::default() }
     }
 
     /// Create a default `ChiselEnv`.
     pub fn default() -> Self {
         Self {
+            solc_version: Solc::svm_global_version().unwrap_or_else(|| Version::parse("0.8.17").unwrap()),
             project: Self::create_temp_project(),
             rl: Self::create_rustyline_editor(),
             session: Vec::default(),
@@ -50,9 +60,21 @@ contract REPL {{
     }}
 }}
         "#,
-            "^0.8.17", // TODO: Grab version from TempProject's solc instance.
+            self.solc_version,
             self.session
         )
+    }
+
+    /// Helper function to parse a solidity version string.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the version string is not a valid semver version.
+    pub fn parse_solc_version(solc_version: &'static str) -> Version {
+        Version::parse(solc_version).unwrap_or_else(|e| {
+            tracing::error!("Error parsing provided solc version: \"{}\"", e);
+            panic!("Error parsing provided solc version: \"{e}\"");
+        })
     }
 
     /// Helper function to create a new temporary project with proper error handling.

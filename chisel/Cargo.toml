@@ -23,3 +23,4 @@ rustyline = "10.0.0"
 solang-parser = "0.1.18"
 tracing = "0.1.37"
 strum = { version = "0.24.1", features = ["derive"] }
+semver = "1.0.14"
