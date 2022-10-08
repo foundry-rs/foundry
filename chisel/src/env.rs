@@ -1,9 +1,5 @@
 use core::fmt;
-use ethers_solc::{
-    artifacts::{CompactBytecode, CompactContractBytecode},
-    project_util::TempProject,
-    Artifact,
-};
+use ethers_solc::{artifacts::CompactContractBytecode, project_util::TempProject};
 use rustyline::Editor;
 use std::rc::Rc;
 
@@ -84,7 +80,8 @@ impl ChiselEnv {
                     contract.clone().into_contract_bytecode();
 
                 let abi = abi.expect("No ABI for contract.");
-                let bytecode = bytecode.expect("No bytecode for contract.").object.into_bytes().unwrap();
+                let bytecode =
+                    bytecode.expect("No bytecode for contract.").object.into_bytes().unwrap();
 
                 println!("REPL Bytecode: {:?}", bytecode);
             } else {

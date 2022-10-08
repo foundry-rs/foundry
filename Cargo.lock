@@ -714,6 +714,7 @@ dependencies = [
  "forge",
  "foundry-evm",
  "rustyline",
+ "semver",
  "solang-parser",
  "strum",
  "tracing",

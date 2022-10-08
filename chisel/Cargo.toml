@@ -26,3 +26,4 @@ ethers-solc = { git = "https://github.com/gakonst/ethers-rs", features = ["proje
 yansi = "0.5.1"
 strum = { version = "0.24.1", features = ["derive"] }
 semver = "1.0.14"
+tracing = "0.1.37"
