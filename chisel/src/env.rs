@@ -38,14 +38,16 @@ impl ChiselEnv {
     }
 
     /// Render the full source code for the current session.
-    /// TODO
+    /// TODO - Render source correctly, not `SourceUnit`s.
     pub fn contract_source(&self) -> String {
         format!(
             r#"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity {};
 contract REPL {{
-    {:?}
+    fallback() {{
+        {:?}
+    }}
 }}
         "#,
             "^0.8.17", // TODO: Grab version from TempProject's solc instance.
