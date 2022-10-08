@@ -102,7 +102,13 @@ fn main() {
                 // Push the parsed source unit and comments to the environment session
                 env.session.push(SolSnippet { source_unit: parsed, raw: Rc::new(line) });
                 if env.project.add_source("REPL", env.contract_source()).is_ok() {
-                    println!("{:?}", env.project.sources_path());
+                    if env.run_repl().is_err() {
+                        eprintln!("{}", Red.paint("Compilation error"));
+
+                        // Remove line that caused the compilation error
+                        env.session.pop();
+                    }
+                    // println!("{:?}", env.project.sources_path());
                 } else {
                     eprintln!("Error writing source file to temp project.");
                 }

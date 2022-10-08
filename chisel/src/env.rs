@@ -1,8 +1,8 @@
 use core::fmt;
-use std::rc::Rc;
-
 use ethers_solc::project_util::TempProject;
+use foundry_evm::executor::{backend::Backend, Executor, ExecutorBuilder};
 use rustyline::Editor;
+use std::rc::Rc;
 
 /// Represents a parsed snippet of Solidity code.
 #[derive(Debug)]
@@ -28,6 +28,8 @@ pub struct ChiselEnv {
     /// A session contains an ordered vector of source units, parsed by the solang-parser,
     /// as well as the raw source.
     pub session: Vec<SolSnippet>,
+    /// The executor used to run the REPL contract's code.
+    pub executor: Executor,
 }
 
 /// Chisel REPL environment impl
@@ -43,29 +45,61 @@ impl ChiselEnv {
         // Create a new rustyline Editor
         let rl = Self::create_rustyline_editor();
 
+        // TODO: Configurable network forking, bonus points
+        // if it can be done on-the-fly with a builtin.
+        let db = Backend::spawn(None);
+        let executor = ExecutorBuilder::default().build(db);
+
         // Return initialized ChiselEnv with set solc version
-        Self { project, rl, session: Vec::default() }
+        Self { project, rl, session: Vec::default(), executor }
     }
 
     /// Create a default `ChiselEnv`.
     pub fn default() -> Self {
+        // Create an `Executor` with an in-memory DB.
+        let db = Backend::spawn(None);
+        let executor = ExecutorBuilder::default().build(db);
+
         Self {
             project: Self::create_temp_project(),
             rl: Self::create_rustyline_editor(),
             session: Vec::default(),
+            executor,
+        }
+    }
+
+    /// Runs the REPL contract within the executor
+    /// TODO
+    pub fn run_repl(&self) -> Result<(), &str> {
+        // Recompile the project and ensure no errors occurred.
+        // TODO: This is pretty slow. Def a better way to do this.
+        if let Ok(artifacts) = self.project.compile() {
+            if artifacts.has_compiler_errors() {
+                return Err("Failed to compile REPL contract.")
+            }
+
+            // let runner = ContractRunner::new(
+            //     self.executor,
+            //     contract: /* ... */,
+            //
+            // );
+            Ok(())
+        } else {
+            Err("Failed to compile REPL contract.")
         }
     }
 
     /// Render the full source code for the current session.
     /// TODO - Render source correctly rather than throwing
-    /// everything into the fallback.
+    /// everything into `setUp`.
     pub fn contract_source(&self) -> String {
         format!(
             r#"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity {};
+// TODO: Inherit `forge-std/Test.sol`
 contract REPL {{
-    fallback() {{
+    function setUp() public {{
         {}
     }}
 }}

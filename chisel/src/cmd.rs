@@ -8,6 +8,7 @@ use strum::{EnumIter, IntoEnumIterator};
 pub enum ChiselCommand {
     Help,
     Source,
+    Clear,
 }
 
 /// A command descriptor type
@@ -26,6 +27,10 @@ impl ChiselCommand {
                 });
             }
             ChiselCommand::Source => println!("{}", env.contract_source()),
+            ChiselCommand::Clear => {
+                env.session.clear();
+                println!("Cleared current session.");
+            }
         }
     }
 }
@@ -38,6 +43,7 @@ impl FromStr for ChiselCommand {
         match s.to_lowercase().as_ref() {
             "help" => Ok(ChiselCommand::Help),
             "source" => Ok(ChiselCommand::Source),
+            "clear" => Ok(ChiselCommand::Clear),
             _ => Err(Red
                 .paint(format!("Unknown command \"{}\"! See available commands with `!help`.", s))
                 .to_string()
@@ -54,6 +60,7 @@ impl From<ChiselCommand> for CmdDescriptor {
             ChiselCommand::Source => {
                 ("source", "Display the source code of the current REPL session")
             }
+            ChiselCommand::Clear => ("clear", "Clear the current session"),
         }
     }
 }

@@ -711,6 +711,8 @@ dependencies = [
  "ansi_term",
  "clap 4.0.1",
  "ethers-solc",
+ "forge",
+ "foundry-evm",
  "rustyline",
  "solang-parser",
  "strum",
