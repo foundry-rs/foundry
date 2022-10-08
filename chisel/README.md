@@ -36,3 +36,63 @@ In this sense, Chisel even serves as a project generator.
   - [ ] Export to file
 - [ ] [Syntax highlighting](https://docs.rs/rustyline/10.0.0/rustyline/highlight/trait.Highlighter.html)
 - [ ] Tests.
+
+
+## Usage
+
+### Installation
+
+`chisel` is installed alongside Foundry cli commands!
+
+Simply run `foundryup` to install `chisel`!
+
+If you do not have `foundryup` installed, reference the Foundry [installation guide](../README.md#installation).
+
+
+### Project Generation
+
+Below is an example of how to use `chisel` to generate a new project.
+
+```bash
+$ chisel
+chisel > constructor() ERC20("NewProject", "NEWP", 18) {}
+Compilation Successful!
+chisel > exit
+$ chisel generate --name new_erc20
+Exporting...
+Generated new project "new_erc20"!
+$ ls
+new_erc20
+```
+
+
+### Loading a Previous Session
+
+Chisel allows you to load a previous session from your history.
+
+To view your history, you can run `chisel history`. This will print a list of your previous sessions, identifiable by their index.
+
+You can also run `chisel view <index>` to view the contents of a specific session.
+
+To load a session, run `chisel load <index>` where `<index>` is a valid session index (eg 2 in the example below).
+
+```bash
+$ chisel history
+1. 2022-05-06 15:04:32
+2. 2022-02-23 07:43:12
+$ chisel view 2
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.3;
+
+contract REPL {
+    event KeccakEvent(bytes32 hash);
+
+    constructor() ERC20("Mock ERC20", "MERC", 18) {}
+
+    function testFunction() public {
+      emit KeccakEvent(keccak256(abi.encode("Hello, world!")));
+    }
+}
+$ chisel load 2
+chisel > ...
+```
