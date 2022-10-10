@@ -8,6 +8,7 @@ use serde::{Serialize, Deserialize, Serializer};
 use eyre::Result;
 
 pub use semver::Version;
+use solang_parser::pt::SourceUnitPart;
 
 /// Represents a parsed snippet of Solidity code.
 #[derive(Debug)]
@@ -132,17 +133,39 @@ impl ChiselEnv {
     /// TODO - Render source correctly rather than throwing
     /// everything into the fallback.
     pub fn contract_source(&self) -> String {
+        // Extract a pragma definition
+        // NOTE: Optimistically uses the first pragma found
+        let pragma_def = self.session.iter().find(|i| i.source_unit.0.0.iter().any(|i| {
+            if let SourceUnitPart::PragmaDirective(_, _, _) = i { true } else { false }
+        }));
+
+        // Consume source units that are top-level
+        let top_level_units = self.session.iter().filter(|unit| {
+            if let Some(def) = unit.source_unit.0.get(0) {
+                match def {
+                    SourceUnitPart::PragmaDirective(_) => false,
+                }
+            }
+            false
+        }).map(|unit|
+            unit.raw.as_str()
+        ).collect::<Vec<&str>>().join("\n\n");
+
         format!(
             r#"
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity {};
+{}
+
 contract REPL {{
+    {}
+
     fallback() {{
         {}
     }}
 }}
         "#,
-            self.solc_version,
+            pragma_def.unwrap_or_else(|| format!("pragma solidity {};", self.solc_version))
+            top_level_units,
             self.session.iter().map(|t| t.to_string()).collect::<Vec<String>>().join("\n")
         )
     }
@@ -164,14 +187,14 @@ contract REPL {{
     pub fn latest_chached_session() -> Result<String> {
         let cache_dir = Self::cache_dir()?;
         let mut entries = std::fs::read_dir(cache_dir)?;
-        let mut latest = entries.next().unwrap().unwrap();
+        let mut latest = entries.next().ok_or(eyre::eyre!("No entries found!"))??;
         for entry in entries {
-            let entry = entry.unwrap();
-            if entry.metadata().unwrap().modified().unwrap() > latest.metadata().unwrap().modified().unwrap() {
+            let entry = entry?;
+            if entry.metadata()?.modified()? > latest.metadata()?.modified()? {
                 latest = entry;
             }
         }
-        Ok(latest.path().to_str().unwrap().to_string())
+        Ok(latest.path().to_str().ok_or(eyre::eyre!("Failed to get session path!"))?.to_string())
     }
 
     /// Loads a ChiselEnv from the cache file
