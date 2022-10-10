@@ -1,5 +1,5 @@
 use core::fmt;
-use std::{path::Path, rc::Rc};
+use std::{path::Path, rc::Rc, time::SystemTime};
 
 use ethers_solc::project_util::TempProject;
 use rustyline::Editor;
@@ -100,6 +100,9 @@ pub struct ChiselEnv {
     /// A session contains an ordered vector of source units, parsed by the solang-parser,
     /// as well as the raw source.
     pub session: Vec<SolSnippet>,
+    #[serde(skip)]
+    /// The current session's identifier
+    pub id: Option<usize>,
 }
 
 /// Chisel REPL environment impl
@@ -124,6 +127,7 @@ impl ChiselEnv {
             project: Some(project),
             rl: Some(rl),
             session: Vec::default(),
+            id: None,
         }
     }
 
@@ -135,6 +139,7 @@ impl ChiselEnv {
             project: Some(Self::create_temp_project()),
             rl: Some(Self::create_rustyline_editor()),
             session: Vec::default(),
+            id: None,
         }
     }
 
@@ -267,13 +272,14 @@ contract REPL {{
     /// ### Returns
     ///
     /// Returns the path of the new cache file
-    pub fn write(&self) -> Result<String> {
+    pub fn write(&mut self) -> Result<String> {
         // Try to create the cache directory
         let cache_dir = Self::cache_dir()?;
         std::fs::create_dir_all(&cache_dir)?;
 
         // Get the next cached session name
-        let session_name = Self::next_cached_session()?;
+        let (id, session_name) = Self::next_cached_session()?;
+        self.id = Some(id);
 
         // Write the current ChiselEnv to that file
         let cache_file_name = format!("{}{}", cache_dir, session_name);
@@ -286,13 +292,16 @@ contract REPL {{
     }
 
     /// Get the next session cache file name
-    pub fn next_cached_session() -> Result<String> {
+    pub fn next_cached_session() -> Result<(usize, String)> {
         let cache_dir = Self::cache_dir()?;
         let mut entries = std::fs::read_dir(&cache_dir)?;
 
         // If there are no existing cached sessions, just create the first one: "chisel-0.json"
-        let mut latest =
-            if let Some(e) = entries.next() { e? } else { return Ok("chisel-0.json".to_string()) };
+        let mut latest = if let Some(e) = entries.next() {
+            e?
+        } else {
+            return Ok((0, "chisel-0.json".to_string()))
+        };
 
         // Get the latest cached session
         for entry in entries {
@@ -310,7 +319,7 @@ contract REPL {{
         let session_num = latest_file_name.trim_end_matches(".json").trim_start_matches("chisel-");
         let session_num = session_num.parse::<usize>()?;
 
-        Ok(format!("{}/chisel-{}.json", cache_dir, session_num + 1))
+        Ok((session_num, format!("{}/chisel-{}.json", cache_dir, session_num + 1)))
     }
 
     /// The Chisel Cache Directory
@@ -330,6 +339,28 @@ contract REPL {{
         Ok(())
     }
 
+    /// Lists all available cached sessions
+    pub fn list_sessions() -> Result<Vec<(SystemTime, String)>> {
+        // Read the cache directory entries
+        let cache_dir = Self::cache_dir()?;
+        let entries = std::fs::read_dir(&cache_dir)?;
+
+        // For each entry, get the file name and modified time
+        let mut sessions = Vec::new();
+        for entry in entries {
+            let entry = entry?;
+            let modified_time = entry.metadata()?.modified()?;
+            let file_name = entry.file_name();
+            let file_name = file_name
+                .into_string()
+                .map_err(|e| eyre::eyre!(format!("{}", e.to_string_lossy())))?;
+            sessions.push((modified_time, file_name));
+        }
+
+        // Return the list of sessions and their modified times
+        Ok(sessions)
+    }
+
     /// Gets the most recent chisel session from the cache dir
     pub fn latest_chached_session() -> Result<String> {
         let cache_dir = Self::cache_dir()?;
@@ -344,8 +375,15 @@ contract REPL {{
         Ok(latest.path().to_str().ok_or(eyre::eyre!("Failed to get session path!"))?.to_string())
     }
 
-    /// Loads a ChiselEnv from the cache file
-    pub fn load() -> Result<Self> {
+    /// Loads a specific ChiselEnv from the specified cache file
+    pub fn load(name: &str) -> Result<Self> {
+        let contents = std::fs::read_to_string(Path::new(name))?;
+        let chisel_env: ChiselEnv = serde_json::from_str(&contents)?;
+        Ok(chisel_env)
+    }
+
+    /// Loads the latest ChiselEnv from the cache file
+    pub fn latest() -> Result<Self> {
         let last_session = Self::latest_chached_session()?;
         let last_session_contents = std::fs::read_to_string(Path::new(&last_session))?;
         let chisel_env: ChiselEnv = serde_json::from_str(&last_session_contents)?;
