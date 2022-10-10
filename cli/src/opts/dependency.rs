@@ -8,7 +8,7 @@ static GH_REPO_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new("[A-Za-z\\d-]+/[A-Za-z\\d_.-]+").unwrap());
 
 static GH_REPO_PREFIX_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"((git@)|(git\+https://)|(https://))?([A-Za-z0-9-]+)\.([A-Za-z0-9-]+)(/|:)")
+    Regex::new(r"((git@)|(git\+https://)|(https://)|(org-([A-Za-z0-9-])+@))?(?P<brand>[A-Za-z0-9-]+)\.(?P<tld>[A-Za-z0-9-]+)(/|:)")
         .unwrap()
 });
 
@@ -33,7 +33,7 @@ const COMMON_ORG_ALIASES: &[(&str, &str); 1] = &[("@openzeppelin", "openzeppelin
 ///
 /// Non Github URLs must be provided with an https:// prefix.
 /// Adding dependencies as local paths is not supported yet.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Dependency {
     /// The name of the dependency
     pub name: String,
@@ -68,10 +68,10 @@ impl FromStr for Dependency {
         let dependency = dependency.as_str();
 
         let url_with_version = if let Some(captures) = GH_REPO_PREFIX_REGEX.captures(dependency) {
-            let brand = captures.get(5).unwrap().as_str();
-            let tld = captures.get(6).unwrap().as_str();
+            let brand = captures.name("brand").unwrap().as_str();
+            let tld = captures.name("tld").unwrap().as_str();
             let project = GH_REPO_PREFIX_REGEX.replace(dependency, "");
-            Some(format!("https://{}.{}/{}", brand, tld, project))
+            Some(format!("https://{}.{}/{}", brand, tld, project.trim_end_matches(".git")))
         } else {
             // If we don't have a URL and we don't have a valid
             // GitHub repository name, then we assume this is the alias.
@@ -319,5 +319,17 @@ mod tests {
             dep.url,
             Some("https://github.com/OpenZeppelin/openzeppelin-contracts".to_string())
         );
+    }
+
+    #[test]
+    fn can_parse_org_ssh_url() {
+        let org_url = "org-git12345678@github.com:my-org/my-repo.git";
+        assert!(GH_REPO_PREFIX_REGEX.is_match(org_url));
+    }
+
+    #[test]
+    fn can_parse_org_shh_url_dependency() {
+        let dep: Dependency = "org-git12345678@github.com:my-org/my-repo.git".parse().unwrap();
+        assert_eq!(dep.url.unwrap(), "https://github.com/my-org/my-repo");
     }
 }

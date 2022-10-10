@@ -1,5 +1,5 @@
 use cast::{Cast, SimpleCast, TxBuilder};
-use clap::{IntoApp, Parser};
+use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use ethers::{
     abi::HumanReadableParser,
@@ -7,13 +7,12 @@ use ethers::{
     providers::Middleware,
     types::{Address, I256, U256},
 };
-
 use foundry_cli::{
     cmd::Cmd,
     handler,
     opts::cast::{Opts, Subcommands},
     utils,
-    utils::consume_config_rpc_url,
+    utils::try_consume_config_rpc_url,
 };
 use foundry_common::{
     abi::format_tokens,
@@ -42,7 +41,7 @@ async fn main() -> eyre::Result<()> {
     match opts.sub {
         // Constants
         Subcommands::MaxInt => {
-            println!("{}", U256::MAX);
+            println!("{}", I256::MAX);
         }
         Subcommands::MaxUint => {
             println!("{}", U256::MAX);
@@ -205,7 +204,7 @@ async fn main() -> eyre::Result<()> {
             println!("{}", Cast::new(&provider).access_list(builder_output, block, to_json).await?);
         }
         Subcommands::Age { block, rpc_url } => {
-            let rpc_url = consume_config_rpc_url(rpc_url);
+            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
             let provider = try_get_http_provider(rpc_url)?;
             println!(
                 "{}",
@@ -213,12 +212,12 @@ async fn main() -> eyre::Result<()> {
             );
         }
         Subcommands::Balance { block, who, rpc_url } => {
-            let rpc_url = consume_config_rpc_url(rpc_url);
+            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
             let provider = try_get_http_provider(rpc_url)?;
             println!("{}", Cast::new(provider).balance(who, block).await?);
         }
         Subcommands::BaseFee { block, rpc_url } => {
-            let rpc_url = consume_config_rpc_url(rpc_url);
+            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
 
             let provider = try_get_http_provider(rpc_url)?;
             println!(
@@ -227,39 +226,39 @@ async fn main() -> eyre::Result<()> {
             );
         }
         Subcommands::Block { rpc_url, block, full, field, to_json } => {
-            let rpc_url = consume_config_rpc_url(rpc_url);
+            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
             let provider = try_get_http_provider(rpc_url)?;
             println!("{}", Cast::new(provider).block(block, full, field, to_json).await?);
         }
         Subcommands::BlockNumber { rpc_url } => {
-            let rpc_url = consume_config_rpc_url(rpc_url);
+            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
             let provider = try_get_http_provider(rpc_url)?;
             println!("{}", Cast::new(provider).block_number().await?);
         }
         Subcommands::Chain { rpc_url } => {
-            let rpc_url = consume_config_rpc_url(rpc_url);
+            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
             let provider = try_get_http_provider(rpc_url)?;
             println!("{}", Cast::new(provider).chain().await?);
         }
         Subcommands::ChainId { rpc_url } => {
-            let rpc_url = consume_config_rpc_url(rpc_url);
+            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
 
             let provider = try_get_http_provider(rpc_url)?;
             println!("{}", Cast::new(provider).chain_id().await?);
         }
         Subcommands::Client { rpc_url } => {
-            let rpc_url = consume_config_rpc_url(rpc_url);
+            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
 
             let provider = try_get_http_provider(rpc_url)?;
             println!("{}", provider.client_version().await?);
         }
         Subcommands::Code { block, who, rpc_url } => {
-            let rpc_url = consume_config_rpc_url(rpc_url);
+            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
             let provider = try_get_http_provider(rpc_url)?;
             println!("{}", Cast::new(provider).code(who, block).await?);
         }
         Subcommands::ComputeAddress { rpc_url, address, nonce } => {
-            let rpc_url = consume_config_rpc_url(rpc_url);
+            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
 
             let pubkey = Address::from_str(&address).expect("invalid pubkey provided");
             let provider = try_get_http_provider(rpc_url)?;
@@ -268,7 +267,7 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::FindBlock(cmd) => cmd.run()?.await?,
         Subcommands::GasPrice { rpc_url } => {
-            let rpc_url = consume_config_rpc_url(rpc_url);
+            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
             let provider = try_get_http_provider(rpc_url)?;
             println!("{}", Cast::new(provider).gas_price().await?);
         }
@@ -277,13 +276,13 @@ async fn main() -> eyre::Result<()> {
             println!("{encoded}");
         }
         Subcommands::Nonce { block, who, rpc_url } => {
-            let rpc_url = consume_config_rpc_url(rpc_url);
+            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
 
             let provider = try_get_http_provider(rpc_url)?;
             println!("{}", Cast::new(provider).nonce(who, block).await?);
         }
         Subcommands::Proof { address, slots, rpc_url, block } => {
-            let rpc_url = consume_config_rpc_url(rpc_url);
+            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
 
             let provider = try_get_http_provider(rpc_url)?;
             let value = provider.get_proof(address, slots, block).await?;
@@ -291,7 +290,7 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::Rpc(cmd) => cmd.run()?.await?,
         Subcommands::Storage { address, slot, rpc_url, block } => {
-            let rpc_url = consume_config_rpc_url(rpc_url);
+            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
 
             let provider = try_get_http_provider(rpc_url)?;
             let value = provider.get_storage_at(address, slot, block).await?;
@@ -317,7 +316,7 @@ async fn main() -> eyre::Result<()> {
             }
         }
         Subcommands::Receipt { hash, field, to_json, rpc_url, cast_async, confirmations } => {
-            let rpc_url = consume_config_rpc_url(rpc_url);
+            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
             let provider = try_get_http_provider(rpc_url)?;
             println!(
                 "{}",
@@ -329,7 +328,7 @@ async fn main() -> eyre::Result<()> {
         Subcommands::Run(cmd) => cmd.run()?,
         Subcommands::SendTx(cmd) => cmd.run().await?,
         Subcommands::Tx { rpc_url, hash, field, to_json } => {
-            let rpc_url = consume_config_rpc_url(rpc_url);
+            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
             let provider = try_get_http_provider(rpc_url)?;
             println!("{}", Cast::new(&provider).transaction(hash, field, to_json).await?)
         }
@@ -378,7 +377,7 @@ async fn main() -> eyre::Result<()> {
 
         // ENS
         Subcommands::LookupAddress { who, rpc_url, verify } => {
-            let rpc_url = consume_config_rpc_url(rpc_url);
+            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
             let provider = try_get_http_provider(rpc_url)?;
             let who = unwrap_or_stdin(who)?;
             let name = provider.lookup_address(who).await?;
@@ -396,7 +395,7 @@ async fn main() -> eyre::Result<()> {
             println!("{}", SimpleCast::namehash(&name)?);
         }
         Subcommands::ResolveName { who, rpc_url, verify } => {
-            let rpc_url = consume_config_rpc_url(rpc_url);
+            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
             let provider = try_get_http_provider(rpc_url)?;
             let who = unwrap_or_stdin(who)?;
             let address = provider.resolve_name(&who).await?;

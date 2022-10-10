@@ -213,6 +213,7 @@ pub enum ShellOut {
 impl ShellOut {
     /// Creates a new shell that writes to memory
     pub fn memory() -> Self {
+        #[allow(clippy::box_default)]
         ShellOut::Write(WriteShellOut(Arc::new(Mutex::new(Box::new(Vec::new())))))
     }
 

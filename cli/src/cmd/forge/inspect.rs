@@ -15,7 +15,7 @@ use ethers::{
         },
         info::ContractInfo,
     },
-    solc::utils::canonicalize,
+    solc::{artifacts::LosslessAbi, utils::canonicalize},
 };
 use foundry_common::compile;
 use serde_json::{to_value, Value};
@@ -36,7 +36,7 @@ pub struct InspectArgs {
 possible_values = ["abi", "b/bytes/bytecode", "deployedBytecode/deployed_bytecode/deployed-bytecode/deployedbytecode/deployed", "assembly/asm", "asmOptimized/assemblyOptimized/assemblyoptimized/assembly_optimized/asmopt/assembly-optimized/asmo/asm-optimized/asmoptimized/asm_optimized",
 "methods/methodidentifiers/methodIdentifiers/method_identifiers/method-identifiers/mi", "gasEstimates/gas/gas_estimates/gas-estimates/gasestimates",
 "storageLayout/storage_layout/storage-layout/storagelayout/storage", "devdoc/dev-doc/devDoc",
-"ir", "ir-optimized/irOptimized/iroptimized/iro/iropt", "metadata/meta", "userdoc/userDoc/user-doc", "ewasm/e-wasm"]"#
+"ir", "ir-optimized/irOptimized/iroptimized/iro/iropt", "metadata/meta", "userdoc/userDoc/user-doc", "ewasm/e-wasm", "events/ev"]"#
     )]
     pub field: ContractArtifactFields,
 
@@ -193,6 +193,22 @@ impl Cmd for InspectArgs {
                     ))?
                 );
             }
+            ContractArtifactFields::Events => {
+                let mut out = serde_json::Map::new();
+                if let Some(LosslessAbi { abi, .. }) = artifact.abi.as_ref() {
+                    let events: Vec<_> = abi.events.iter().flat_map(|(_, events)| events).collect();
+                    // print the signature of all events including anonymous
+                    for ev in events.iter() {
+                        let types =
+                            ev.inputs.iter().map(|p| p.kind.to_string()).collect::<Vec<_>>();
+                        out.insert(
+                            format!("{}({})", ev.name, types.join(",")),
+                            format!("{:?}", ev.signature()).into(),
+                        );
+                    }
+                }
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            }
         };
 
         Ok(())
@@ -216,6 +232,7 @@ pub enum ContractArtifactFields {
     Metadata,
     UserDoc,
     Ewasm,
+    Events,
 }
 
 // === impl ContractArtifactFields ===
@@ -255,6 +272,7 @@ impl From<ContractArtifactFields> for ContractOutputSelection {
             ContractArtifactFields::Ewasm => {
                 ContractOutputSelection::Ewasm(EwasmOutputSelection::All)
             }
+            ContractArtifactFields::Events => ContractOutputSelection::Abi,
         }
     }
 }
@@ -282,6 +300,7 @@ impl fmt::Display for ContractArtifactFields {
             ContractArtifactFields::Metadata => f.write_str("metadata"),
             ContractArtifactFields::UserDoc => f.write_str("userdoc"),
             ContractArtifactFields::Ewasm => f.write_str("ewasm"),
+            ContractArtifactFields::Events => f.write_str("events"),
         }
     }
 }
@@ -315,6 +334,7 @@ impl FromStr for ContractArtifactFields {
             "metadata" | "meta" => Ok(ContractArtifactFields::Metadata),
             "userdoc" | "userDoc" | "user-doc" => Ok(ContractArtifactFields::UserDoc),
             "ewasm" | "e-wasm" => Ok(ContractArtifactFields::Ewasm),
+            "events" | "ev" => Ok(ContractArtifactFields::Events),
             _ => Err(format!("Unknown field: {s}")),
         }
     }

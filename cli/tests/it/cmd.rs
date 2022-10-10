@@ -1,5 +1,7 @@
 //! Contains various tests for checking forge's commands
+
 use crate::constants::*;
+use clap::CommandFactory;
 use ethers::{
     prelude::remappings::Remapping,
     solc::{
@@ -7,6 +9,7 @@ use ethers::{
         ConfigurableContractArtifact,
     },
 };
+use foundry_cli::opts::forge::Opts;
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
     forgetest, forgetest_init,
@@ -19,6 +22,15 @@ use std::{env, fs, path::PathBuf, str::FromStr};
 forgetest!(print_help, |_: TestProject, mut cmd: TestCommand| {
     cmd.arg("--help");
     cmd.assert_non_empty_stdout();
+});
+
+// tests `--help` is printed to std out for all subcommands
+forgetest!(print_forge_subcommand_help, |_: TestProject, mut cmd: TestCommand| {
+    let forge = Opts::command();
+    for sub_command in forge.get_subcommands() {
+        cmd.forge_fuse().args([sub_command.get_name(), "--help"]);
+        cmd.assert_non_empty_stdout();
+    }
 });
 
 // checks that `clean` can be invoked even if out and cache don't exist
@@ -816,7 +828,17 @@ forgetest!(can_reinstall_after_manual_remove, |prj: TestProject, mut cmd: TestCo
     install(&mut cmd);
 });
 
-// Tests that forge update doesn't break a working depencency by recursively updating nested
+// test that we can repeatedly install the same dependency without changes
+forgetest!(can_install_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {
+    cmd.git_init();
+
+    cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]);
+    for _ in 0..3 {
+        cmd.assert_success();
+    }
+});
+
+// Tests that forge update doesn't break a working dependency by recursively updating nested
 // dependencies
 forgetest!(
     can_update_library_with_outdated_nested_dependency,
@@ -1309,6 +1331,62 @@ forgetest_init!(can_use_absolute_imports, |prj: TestProject, mut cmd: TestComman
     let stdout = cmd.stdout_lossy();
     assert!(stdout.contains("Compiler run successful"));
 });
+
+// <https://github.com/foundry-rs/foundry/issues/3440>
+forgetest_init!(
+    can_use_absolute_imports_from_test_and_script,
+    |prj: TestProject, mut cmd: TestCommand| {
+        prj.inner()
+            .add_script(
+                "IMyScript.sol",
+                r#"
+    pragma solidity ^0.8.10;
+
+    interface IMyScript {}
+   "#,
+            )
+            .unwrap();
+
+        prj.inner()
+            .add_script(
+                "MyScript.sol",
+                r#"
+    pragma solidity ^0.8.10;
+    import "script/IMyScript.sol";
+
+    contract MyScript is IMyScript {}
+   "#,
+            )
+            .unwrap();
+
+        prj.inner()
+            .add_test(
+                "IMyTest.sol",
+                r#"
+    pragma solidity ^0.8.10;
+
+    interface IMyTest {}
+   "#,
+            )
+            .unwrap();
+
+        prj.inner()
+            .add_test(
+                "MyTest.sol",
+                r#"
+    pragma solidity ^0.8.10;
+    import "test/IMyTest.sol";
+
+    contract MyTest is IMyTest {}
+   "#,
+            )
+            .unwrap();
+
+        cmd.arg("build");
+        let stdout = cmd.stdout_lossy();
+        assert!(stdout.contains("Compiler run successful"));
+    }
+);
 
 // checks forge bind works correctly on the default project
 forgetest_init!(can_bind, |_prj: TestProject, mut cmd: TestCommand| {

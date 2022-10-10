@@ -7,7 +7,7 @@ use crate::{
     suggestions, utils,
 };
 use cast::fuzz::CounterExample;
-use clap::{AppSettings, Parser};
+use clap::Parser;
 use ethers::{solc::utils::RuntimeOrHandle, types::U256};
 use forge::{
     decode::decode_console_logs,
@@ -43,7 +43,6 @@ use foundry_config::figment::{
 foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
 
 #[derive(Debug, Clone, Parser)]
-#[clap(global_setting = AppSettings::DeriveDisplayOrder)]
 pub struct TestArgs {
     #[clap(flatten)]
     filter: Filter,
@@ -198,13 +197,15 @@ impl TestArgs {
                     };
 
                     // Run the debugger
+                    let mut opts = self.opts.clone();
+                    opts.silent = true;
                     let debugger = DebugArgs {
                         path: PathBuf::from(runner.source_paths.get(&id).unwrap()),
                         target_contract: Some(get_contract_name(&id).to_string()),
                         sig,
                         args: Vec::new(),
                         debug: true,
-                        opts: self.opts,
+                        opts,
                         evm_opts: self.evm_opts,
                     };
                     utils::block_on(debugger.debug())?;

@@ -240,6 +240,8 @@ pub struct Config {
     pub chain_id: Option<Chain>,
     /// Block gas limit
     pub gas_limit: GasLimit,
+    /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests.
+    pub code_size_limit: Option<usize>,
     /// `tx.gasprice` value during EVM execution"
     ///
     /// This is an Option, so we can determine in fork mode whether to use the config's gas price
@@ -1693,6 +1695,7 @@ impl Default for Config {
             fork_block_number: None,
             chain_id: None,
             gas_limit: i64::MAX.into(),
+            code_size_limit: None,
             gas_price: None,
             block_base_fee_per_gas: 0,
             block_coinbase: Address::zero(),

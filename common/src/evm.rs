@@ -45,14 +45,14 @@ pub struct EvmArgs {
     /// Fetch state from a specific block number over a remote endpoint.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork-url", value_name = "BLOCK")]
+    #[clap(long, requires = "fork_url", value_name = "BLOCK")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_block_number: Option<u64>,
 
     /// Initial retry backoff on encountering errors.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork-url", value_name = "BACKOFF")]
+    #[clap(long, requires = "fork_url", value_name = "BACKOFF")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_retry_backoff: Option<u64>,
 
@@ -63,7 +63,7 @@ pub struct EvmArgs {
     /// This flag overrides the project's configuration file.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork-url")]
+    #[clap(long, requires = "fork_url")]
     #[serde(skip)]
     pub no_storage_caching: bool,
 
@@ -141,6 +141,12 @@ pub struct EnvArgs {
     #[clap(long, value_name = "GAS_LIMIT")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gas_limit: Option<u64>,
+
+    /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests. By
+    /// default, it is 0x6000 (~25kb).
+    #[clap(long, value_name = "CODE_SIZE")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code_size_limit: Option<usize>,
 
     /// The chain ID.
     #[clap(long, alias = "chain", value_name = "CHAIN_ID")]

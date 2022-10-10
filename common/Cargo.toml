@@ -15,13 +15,14 @@ foundry-config = { path = "../config" }
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-providers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["ethers-solc"] }
 
 # io
 reqwest = { version = "0.11", default-features = false }
 
 # cli
-clap = { version = "3.0.10", features = ["derive", "env", "unicode", "wrap_help"] }
+clap = { version = "4.0", features = ["derive", "env", "unicode", "wrap_help"] }
 comfy-table = "6.0.0"
 tracing = "0.1"
 atty = "0.2.14"
