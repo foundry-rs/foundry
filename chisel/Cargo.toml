@@ -26,3 +26,5 @@ strum = { version = "0.24.1", features = ["derive"] }
 serde = "1.0.145"
 serde_json = "1.0.85"
 semver = "1.0.14"
+eyre = "0.6.8"
+dirs = "4.0.0"

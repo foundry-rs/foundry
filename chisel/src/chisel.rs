@@ -1,19 +1,11 @@
-use crate::env::ChiselEnv;
-use ansi_term::Color::{Green, Red};
-use clap::Parser;
-use cmd::ChiselCommand;
-use env::SolSnippet;
-use rustyline::error::ReadlineError;
 use std::rc::Rc;
+use clap::Parser;
+use ansi_term::Color::{Green, Red};
+use rustyline::error::ReadlineError;
 
-/// REPL env.
-pub mod env;
-
-/// REPL command dispatcher.
-pub mod cmd;
-
-/// A module for highlighting Solidity code within the REPL
-pub mod sol_highlighter;
+use crate::env::ChiselEnv;
+use crate::cmd::ChiselCommand;
+use crate::env::SolSnippet;
 
 /// Prompt arrow slice
 static PROMPT_ARROW: &str = "➜ ";
