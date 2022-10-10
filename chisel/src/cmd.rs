@@ -1,13 +1,25 @@
 use crate::env::ChiselEnv;
-use ansi_term::Color::{Cyan, Green, Red};
+use ansi_term::Color::{Blue, Cyan, Green, Red};
 use std::{error, str::FromStr};
 use strum::{EnumIter, IntoEnumIterator};
 
 /// Custom Chisel commands
 #[derive(Debug, EnumIter)]
 pub enum ChiselCommand {
+    /// Print helpful information about chisel
     Help,
+    /// Print the generated source contract
     Source,
+    /// Flush the current session to cache
+    /// NOTE: This is not necessary as the session will be written to cache automatically
+    Flush,
+    /// Load a previous session from cache
+    /// Requires a session name
+    /// WARNING: This will overwrite the current session (though the current session will be
+    /// optimistically cached)
+    Load(String),
+    /// List all cached sessions
+    ListSessions,
 }
 
 /// A command descriptor type
@@ -16,6 +28,7 @@ type CmdDescriptor = (&'static str, &'static str);
 /// Custom Chisel command implementations
 #[allow(unused)]
 impl ChiselCommand {
+    /// Dispatches the chisel command to the appropriate handler/logic
     pub fn dispatch(&self, args: &[&str], env: &mut ChiselEnv) {
         match self {
             ChiselCommand::Help => {
@@ -25,6 +38,35 @@ impl ChiselCommand {
                     println!("!{} - {}", Green.paint(descriptor.0), descriptor.1);
                 });
             }
+            ChiselCommand::Flush => {
+                env.write();
+            }
+            ChiselCommand::Load(name) => {
+                env.write();
+                let new_env = match name.as_str() {
+                    "latest" => ChiselEnv::latest(),
+                    _ => ChiselEnv::load(name),
+                };
+
+                // WARNING: Overwrites the current session
+                if let Ok(new_env) = new_env {
+                    *env = new_env;
+                } else {
+                    println!("{}: Failed to load session!", Red.paint("⚒️ Chisel Error"));
+                }
+            }
+            ChiselCommand::ListSessions => match ChiselEnv::list_sessions() {
+                Ok(sessions) => {
+                    println!("{}", Cyan.paint("⚒️ Chisel sessions"));
+                    sessions.iter().for_each(|(time, name)| {
+                        println!("{} - {}", Blue.paint(format!("{:?}", time)), name);
+                    });
+                }
+                Err(e) => {
+                    println!("{}", Red.paint("⚒️ Chisel Error: No sessions found."));
+                    println!("!{}", Red.paint(e.to_string()));
+                }
+            },
             ChiselCommand::Source => println!("{}", env.contract_source()),
         }
     }
@@ -38,6 +80,9 @@ impl FromStr for ChiselCommand {
         match s.to_lowercase().as_ref() {
             "help" => Ok(ChiselCommand::Help),
             "source" => Ok(ChiselCommand::Source),
+            "flush" => Ok(ChiselCommand::Flush),
+            "list" => Ok(ChiselCommand::ListSessions),
+            "load" => Ok(ChiselCommand::Load("latest".to_string())),
             _ => Err(Red
                 .paint(format!("Unknown command \"{}\"! See available commands with `!help`.", s))
                 .to_string()
@@ -54,6 +99,9 @@ impl From<ChiselCommand> for CmdDescriptor {
             ChiselCommand::Source => {
                 ("source", "Display the source code of the current REPL session")
             }
+            ChiselCommand::Flush => ("flush", "Flush the current session to cache"),
+            ChiselCommand::Load(_) => ("load", "Load a previous session from cache"),
+            ChiselCommand::ListSessions => ("list", "List all cached sessions"),
         }
     }
 }
