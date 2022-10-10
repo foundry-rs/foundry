@@ -6,7 +6,9 @@ use strum::{EnumIter, IntoEnumIterator};
 /// Custom Chisel commands
 #[derive(Debug, EnumIter)]
 pub enum ChiselCommand {
+    /// Print helpful information about chisel
     Help,
+    /// Print the generated source contract
     Source,
 }
 
@@ -16,6 +18,7 @@ type CmdDescriptor = (&'static str, &'static str);
 /// Custom Chisel command implementations
 #[allow(unused)]
 impl ChiselCommand {
+    /// Dispatches the chisel command to the appropriate handler/logic
     pub fn dispatch(&self, args: &[&str], env: &mut ChiselEnv) {
         match self {
             ChiselCommand::Help => {

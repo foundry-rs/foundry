@@ -1,26 +1,30 @@
 use core::fmt;
-use std::{rc::Rc, path::Path};
+use std::{path::Path, rc::Rc};
 
 use ethers_solc::project_util::TempProject;
 use rustyline::Editor;
-use serde::{Serialize, Deserialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 
 use eyre::Result;
 
 pub use semver::Version;
-use solang_parser::pt::SourceUnitPart;
+use solang_parser::pt::{Import, SourceUnitPart};
 
 /// Represents a parsed snippet of Solidity code.
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub struct SolSnippet {
     /// The parsed source unit
+    #[serde(deserialize_with = "deserialize_source_unit")]
     pub source_unit: (solang_parser::pt::SourceUnit, Vec<solang_parser::pt::Comment>),
     /// The raw source code
+    #[serde(deserialize_with = "deserialize_raw")]
     pub raw: Rc<String>,
 }
 
 /// Deserialize a SourceUnit
-pub fn deserialize_source_unit<'de, D>(deserializer: D) -> Result<(solang_parser::pt::SourceUnit, Vec<solang_parser::pt::Comment>), D::Error>
+pub fn deserialize_source_unit<'de, D>(
+    deserializer: D,
+) -> Result<(solang_parser::pt::SourceUnit, Vec<solang_parser::pt::Comment>), D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -28,8 +32,7 @@ where
     let raw: Box<serde_json::value::RawValue> = match Box::deserialize(deserializer) {
         Ok(v) => v,
         Err(e) => {
-            println!("Failed to deserialize into rawvalue box");
-            return Err(e);
+            return Err(e)
         }
     };
 
@@ -39,7 +42,30 @@ where
     // Parse the json value from string
 
     // Parse the serialized source unit string
-    solang_parser::parse(&raw_str, 0).map_err(|_| serde::de::Error::custom("Failed to parse serialized string as source unit"))
+    solang_parser::parse(raw_str, 0)
+        .map_err(|_| serde::de::Error::custom("Failed to parse serialized string as source unit"))
+}
+
+/// Deserialize the raw source string
+pub fn deserialize_raw<'de, D>(
+    deserializer: D,
+) -> Result<Rc<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    // Grab the raw value
+    let raw: Box<serde_json::value::RawValue> = match Box::deserialize(deserializer) {
+        Ok(v) => v,
+        Err(e) => {
+            return Err(e)
+        }
+    };
+
+    // Parse the string, removing any quotes and adding them back in
+    let raw_str = raw.get().trim_matches('"');
+
+    // Return a new Rc<String>
+    Ok(Rc::new(raw_str.to_string()))
 }
 
 impl Serialize for SolSnippet {
@@ -47,16 +73,14 @@ impl Serialize for SolSnippet {
     where
         S: Serializer,
     {
-        serializer.serialize_str(
-            &format!(
-                r#"{{
+        serializer.serialize_str(&format!(
+            r#"{{
                     "source_unit": "{}",
                     "raw": "{}"
                 }}"#,
-                self.raw.as_str(),
-                self.raw.as_str()
-            )
-        )
+            self.raw.as_str(),
+            self.raw.as_str()
+        ))
     }
 }
 
@@ -68,34 +92,20 @@ impl fmt::Display for SolSnippet {
 }
 
 /// A Chisel REPL environment.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ChiselEnv {
     /// The `TempProject` created for the REPL contract.
-    pub project: TempProject,
-    /// Session solidity version
+    #[serde(skip)]
+    pub project: Option<TempProject>,
+    /// Session solidity version]
     pub solc_version: Version,
     /// The `rustyline` Editor
     #[serde(skip)]
-    pub rl: Editor<()>,
+    pub rl: Option<Editor<()>>,
     /// The current session
     /// A session contains an ordered vector of source units, parsed by the solang-parser,
     /// as well as the raw source.
     pub session: Vec<SolSnippet>,
-}
-
-impl Serialize for ChiselEnv {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        // We can serialize a json string 
-        serializer.serialize_str(r#"{{
-            "project": {},
-            "solc_version": {},
-            "session": {}
-        }}"#
-        )
-    }
 }
 
 /// Chisel REPL environment impl
@@ -115,7 +125,12 @@ impl ChiselEnv {
         let rl = Self::create_rustyline_editor();
 
         // Return initialized ChiselEnv with set solc version
-        Self { solc_version: parsed_solc_version, project, rl, session: Vec::default() }
+        Self {
+            solc_version: parsed_solc_version,
+            project: Some(project),
+            rl: Some(rl),
+            session: Vec::default(),
+        }
     }
 
     /// Create a default `ChiselEnv`.
@@ -123,39 +138,119 @@ impl ChiselEnv {
         Self {
             solc_version: ethers_solc::Solc::svm_global_version()
                 .unwrap_or_else(|| Version::parse("0.8.17").unwrap()),
-            project: Self::create_temp_project(),
-            rl: Self::create_rustyline_editor(),
+            project: Some(Self::create_temp_project()),
+            rl: Some(Self::create_rustyline_editor()),
             session: Vec::default(),
         }
     }
 
     /// Render the full source code for the current session.
-    /// TODO - Render source correctly rather than throwing
-    /// everything into the fallback.
+    ///
+    /// ### Return
+    ///
+    /// Returns the full, flattened source code for the current session.
+    ///
+    /// ### Notes
+    ///
+    /// This function will not panic, but gracefully handles errors.
+    ///
+    /// For source code to render correctly, crafting sol snippets must be done with care to ensure
+    /// correct source unit ordering.
+    ///
+    /// For example, a sol snippet with a variable declaration, followed by an event definition will
+    /// fail to render correctly. This is because the variable declaration is not a "top-level"
+    /// source unit part, so the sol snippet will be placed **entirely** in the contract
+    /// fallback. This will then error since events cannot be defined from within the contract
+    /// fallback function.
     pub fn contract_source(&self) -> String {
         // Extract a pragma definition
         // NOTE: Optimistically uses the first pragma found
-        let pragma_def = self.session.iter().find(|i| i.source_unit.0.0.iter().any(|i| {
-            if let SourceUnitPart::PragmaDirective(_, _, _) = i { true } else { false }
-        }));
+        let pragma_def = self.session.iter().find(|i| {
+            i.source_unit.0 .0.iter().any(|i| matches!(i, SourceUnitPart::PragmaDirective(_, _, _)))
+        });
+
+        // Extract imports
+        let imports = self
+            .session
+            .iter()
+            .flat_map(|i| {
+                i.source_unit
+                    .0
+                    .0
+                    .iter()
+                    .filter(|i| matches!(i, SourceUnitPart::ImportDirective(_)))
+                    .map(|sup| {
+                        if let SourceUnitPart::ImportDirective(sup) = sup {
+                            let string_literal = match sup {
+                                Import::Plain(sl, _) => sl,
+                                Import::GlobalSymbol(sl, _, _) => sl,
+                                Import::Rename(sl, _, _) => sl,
+                            };
+                            string_literal.string.clone()
+                        } else {
+                            unreachable!()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<String>>()
+            .join("\n");
+
+        // TODO: Extract contract definitions
 
         // Consume source units that are top-level
-        let top_level_units = self.session.iter().filter(|unit| {
-            if let Some(def) = unit.source_unit.0.get(0) {
-                match def {
-                    SourceUnitPart::PragmaDirective(_) => false,
+        // We only need to check the first source unit part for each sol snippet
+        // If the first part is not top level, we should throw the sol snippet in the fallback
+        let top_level_units = self
+            .session
+            .iter()
+            .filter(|unit| {
+                if let Some(def) = unit.source_unit.0 .0.get(0) {
+                    match def {
+                        SourceUnitPart::PragmaDirective(_, _, _) => false,
+                        SourceUnitPart::ContractDefinition(_) => false,
+                        SourceUnitPart::ImportDirective(_) => false,
+                        SourceUnitPart::EnumDefinition(_) => true,
+                        SourceUnitPart::StructDefinition(_) => true,
+                        SourceUnitPart::EventDefinition(_) => true,
+                        SourceUnitPart::ErrorDefinition(_) => true,
+                        SourceUnitPart::FunctionDefinition(_) => true,
+                        SourceUnitPart::VariableDefinition(_) => false,
+                        SourceUnitPart::TypeDefinition(_) => true,
+                        SourceUnitPart::Using(_) => true,
+                        SourceUnitPart::StraySemicolon(_) => false,
+                    }
+                } else {
+                    false
                 }
-            }
-            false
-        }).map(|unit|
-            unit.raw.as_str()
-        ).collect::<Vec<&str>>().join("\n\n");
+            })
+            .map(|unit| unit.raw.as_str())
+            .collect::<Vec<&str>>()
+            .join("\n\n");
 
+        // Extract fallback snippets
+        let fallback_snippets = self
+            .session
+            .iter()
+            .filter(|unit| {
+                matches!(unit.source_unit.0 .0.get(0), Some(SourceUnitPart::VariableDefinition(_)))
+            })
+            .map(|unit| unit.raw.as_str())
+            .collect::<Vec<&str>>()
+            .join("\n");
+
+        // Generate the final source
         format!(
             r#"
 // SPDX-License-Identifier: UNLICENSED
 {}
 
+// Imports
+{}
+
+/// @title REPL
+/// @notice Auto-generated by Chisel
+/// @notice See: https://github.com/foundry-rs/foundry/tree/master/chisel
 contract REPL {{
     {}
 
@@ -164,9 +259,12 @@ contract REPL {{
     }}
 }}
         "#,
-            pragma_def.unwrap_or_else(|| format!("pragma solidity {};", self.solc_version))
+            pragma_def
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| format!("pragma solidity {};", self.solc_version)),
+            imports,
             top_level_units,
-            self.session.iter().map(|t| t.to_string()).collect::<Vec<String>>().join("\n")
+            fallback_snippets
         )
     }
 
@@ -179,8 +277,18 @@ contract REPL {{
     /// The Chisel Cache Directory
     pub fn cache_dir() -> Result<String> {
         let home_dir = dirs::home_dir().ok_or(eyre::eyre!("Failed to grab home directory"))?;
-        let home_dir_str = home_dir.to_str().ok_or(eyre::eyre!("Failed to convert home directory to string"))?;
-        Ok(format!("{}/.chisel/", home_dir_str))
+        let home_dir_str =
+            home_dir.to_str().ok_or(eyre::eyre!("Failed to convert home directory to string"))?;
+        Ok(format!("{}/.foundry/cache/chisel/", home_dir_str))
+    }
+
+    /// Create the cache directory if it does not exist
+    pub fn create_cache_dir() -> Result<()> {
+        let cache_dir = Self::cache_dir()?;
+        if !Path::new(&cache_dir).exists() {
+            std::fs::create_dir_all(&cache_dir)?;
+        }
+        Ok(())
     }
 
     /// Gets the most recent chisel session from the cache dir

@@ -11,9 +11,13 @@ repository = "https://github.com/foundry-rs/foundry/tree/main/chisel"
 license = "MIT"
 keywords = ["Rust", "Ethereum", "Foundry", "Chisel", "REPL", "Solidity", "Solang"]
 
+[lib]
+name = "chisel"
+path = "src/lib.rs"
+
 [[bin]]
 name = "chisel"
-path = "src/chisel.rs"
+path = "src/cli.rs"
 
 [dependencies]
 ansi_term = "0.12.1"
@@ -24,7 +28,7 @@ solang-parser = "0.1.18"
 tracing = "0.1.37"
 strum = { version = "0.24.1", features = ["derive"] }
 serde = "1.0.145"
-serde_json = "1.0.85"
+serde_json = { version = "1.0.85", features = ["raw_value"] }
 semver = "1.0.14"
 eyre = "0.6.8"
 dirs = "4.0.0"

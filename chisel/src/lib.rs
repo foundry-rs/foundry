@@ -10,17 +10,10 @@ pub mod env;
 /// REPL command dispatcher.
 pub mod cmd;
 
-/// The main Chisel Module
-pub mod chisel;
-
 /// A Solidity Highlighter module
 pub mod sol_highlighter;
 
 /// Re-export a prelude of relevant chisel items
 pub mod prelude {
-    pub use crate::{
-        env::*,
-        chisel::*,
-        sol_highlighter::*,
-    };
+    pub use crate::{cmd::*, env::*, sol_highlighter::*};
 }
