@@ -31,9 +31,7 @@ where
     // Grab the raw value
     let raw: Box<serde_json::value::RawValue> = match Box::deserialize(deserializer) {
         Ok(v) => v,
-        Err(e) => {
-            return Err(e)
-        }
+        Err(e) => return Err(e),
     };
 
     // Parse the string, removing any quotes and adding them back in
@@ -47,18 +45,14 @@ where
 }
 
 /// Deserialize the raw source string
-pub fn deserialize_raw<'de, D>(
-    deserializer: D,
-) -> Result<Rc<String>, D::Error>
+pub fn deserialize_raw<'de, D>(deserializer: D) -> Result<Rc<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     // Grab the raw value
     let raw: Box<serde_json::value::RawValue> = match Box::deserialize(deserializer) {
         Ok(v) => v,
-        Err(e) => {
-            return Err(e)
-        }
+        Err(e) => return Err(e),
     };
 
     // Parse the string, removing any quotes and adding them back in
@@ -176,7 +170,7 @@ impl ChiselEnv {
             .flat_map(|i| {
                 i.source_unit
                     .0
-                    .0
+                     .0
                     .iter()
                     .filter(|i| matches!(i, SourceUnitPart::ImportDirective(_)))
                     .map(|sup| {
@@ -269,9 +263,57 @@ contract REPL {{
     }
 
     /// Writes the ChiselEnv to a file by serializing it to a JSON string
-    pub fn write() -> Result<()> {
-        // TODO: Write the ChiselEnv to a cache file
-        Ok(())
+    ///
+    /// ### Returns
+    ///
+    /// Returns the path of the new cache file
+    pub fn write(&self) -> Result<String> {
+        // Try to create the cache directory
+        let cache_dir = Self::cache_dir()?;
+        std::fs::create_dir_all(&cache_dir)?;
+
+        // Get the next cached session name
+        let session_name = Self::next_cached_session()?;
+
+        // Write the current ChiselEnv to that file
+        let cache_file_name = format!("{}{}", cache_dir, session_name);
+        let serialized_contents = serde_json::to_string_pretty(self)?;
+        std::fs::write(&cache_file_name, serialized_contents)?;
+
+        // Return the full cache file path
+        // Ex: /home/user/.foundry/cache/chisel/chisel-0.json
+        Ok(cache_file_name)
+    }
+
+    /// Get the next session cache file name
+    pub fn next_cached_session() -> Result<String> {
+        let cache_dir = Self::cache_dir()?;
+        let mut entries = std::fs::read_dir(&cache_dir)?;
+
+        // If there are no existing cached sessions, just create the first one: "chisel-0.json"
+        let mut latest = if let Some(e) = entries.next() {
+            e?
+        } else {
+            return Ok("chisel-0.json".to_string())
+        };
+
+        // Get the latest cached session
+        for entry in entries {
+            let entry = entry?;
+            if entry.metadata()?.modified()? > latest.metadata()?.modified()? {
+                latest = entry;
+            }
+        }
+
+        // Get the latest session cache file name
+        let latest_file_name = latest
+            .file_name()
+            .into_string()
+            .map_err(|e| eyre::eyre!(format!("{}", e.to_string_lossy())))?;
+        let session_num = latest_file_name.trim_end_matches(".json").trim_start_matches("chisel-");
+        let session_num = session_num.parse::<usize>()?;
+
+        Ok(format!("{}/chisel-{}.json", cache_dir, session_num + 1))
     }
 
     /// The Chisel Cache Directory
