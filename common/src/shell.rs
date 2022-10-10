@@ -213,7 +213,7 @@ pub enum ShellOut {
 impl ShellOut {
     /// Creates a new shell that writes to memory
     pub fn memory() -> Self {
-        ShellOut::Write(WriteShellOut(Arc::new(Mutex::new(Box::new(Vec::new())))))
+        ShellOut::Write(WriteShellOut(Arc::new(Mutex::new(Box::new(vec![])))))
     }
 
     /// Write a fragment to stdout

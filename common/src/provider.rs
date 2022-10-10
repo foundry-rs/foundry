@@ -158,13 +158,15 @@ impl ProviderBuilder {
 
         let provider = Http::new_with_client(url, client);
 
+        let http_rate_limit_retry_policy = HttpRateLimitRetryPolicy::default();
+
         let mut provider = Provider::new(
             RetryClientBuilder::default()
                 .initial_backoff(Duration::from_millis(initial_backoff))
                 .rate_limit_retries(max_retry)
                 .timeout_retries(timeout_retry)
                 .compute_units_per_second(compute_units_per_second)
-                .build(provider, Box::new(HttpRateLimitRetryPolicy::default())),
+                .build(provider, Box::new(http_rate_limit_retry_policy)),
         );
 
         if is_local {
