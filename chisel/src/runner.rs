@@ -5,8 +5,12 @@ use revm::{
     Interpreter, Return, SpecId, TransactOut, TransactTo, TxEnv, EVM,
 };
 
+/// The Chisel Runner
+#[derive(Debug)]
 pub struct ChiselRunner {
+    /// The runner database
     pub database: InMemoryDB,
+    /// The revm environment config
     pub revm_env: Env,
 }
 
@@ -17,10 +21,16 @@ impl Default for ChiselRunner {
 }
 
 impl ChiselRunner {
+    /// Returns a mutable reference to the runner's database
     pub fn db_mut(&mut self) -> &mut InMemoryDB {
         &mut self.database
     }
 
+    /// Deploy the REPL contract
+    ///
+    /// ### Returns
+    ///
+    /// The address of the deployed repl contract or an error
     pub fn deploy_repl(&mut self, code: Bytes) -> Result<Address, &str> {
         let mut evm = EVM::new();
         evm.env = self.build_env(

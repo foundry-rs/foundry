@@ -1,19 +1,13 @@
-use crate::env::ChiselEnv;
+use ansi_term::Color::Red;
 use clap::Parser;
-use cmd::ChiselCommand;
-use env::SolSnippet;
 use rustyline::error::ReadlineError;
 use std::rc::Rc;
 use yansi::Paint;
 
-/// REPL env.
-pub mod env;
-
-/// REPL command dispatcher.
-pub mod cmd;
-
-/// A module for highlighting Solidity code within the REPL
-pub mod sol_highlighter;
+use chisel::{
+    cmd::ChiselCommand,
+    env::{ChiselEnv, SolSnippet},
+};
 
 /// The REPL's `Executor`
 pub mod executor;
@@ -61,7 +55,20 @@ fn main() {
             if error { Paint::red(PROMPT_ARROW) } else { Paint::green(PROMPT_ARROW) }
         );
 
-        match env.rl.readline(prompt.as_str()) {
+        // Read the next line
+        let next_string = {
+            let rl = env
+                .rl
+                .as_mut()
+                .ok_or_else(|| {
+                    eprintln!("{}", Red.paint("Failed to initialize readline"));
+                    eyre::eyre!("Failed to initialize readline")
+                })
+                .unwrap();
+            rl.readline(prompt.as_str())
+        };
+
+        match next_string {
             Ok(line) => {
                 // Check if the input is a builtin command.
                 // Commands are denoted with a `!` leading character.
@@ -109,14 +116,25 @@ fn main() {
 
                 // Push the parsed source unit and comments to the environment session
                 env.session.push(SolSnippet { source_unit: parsed, raw: Rc::new(line) });
-                if env.project.add_source("REPL", env.contract_source()).is_ok() {
+
+                // Get a reference to the temp project
+                let temp_project = env
+                    .project
+                    .as_ref()
+                    .ok_or_else(|| {
+                        eprintln!("{}", Red.paint("Fatal: Missing TempProject in the ChiselEnv"));
+                        eyre::eyre!("Fatal: Missing TempProject in the ChiselEnv")
+                    })
+                    .unwrap();
+
+                if temp_project.add_source("REPL", env.contract_source()).is_ok() {
                     if env.run_repl().is_err() {
                         eprintln!("{}", Paint::red("Compilation error"));
 
                         // Remove line that caused the compilation error
                         env.session.pop();
                     }
-                    // println!("{:?}", env.project.sources_path());
+                    // println!("{:?}", temp_project.sources_path());
                 } else {
                     eprintln!("Error writing source file to temp project.");
                 }
