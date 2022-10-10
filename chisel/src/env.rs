@@ -100,7 +100,6 @@ pub struct ChiselEnv {
     /// A session contains an ordered vector of source units, parsed by the solang-parser,
     /// as well as the raw source.
     pub session: Vec<SolSnippet>,
-    #[serde(skip)]
     /// The current session's identifier
     pub id: Option<usize>,
 }
@@ -267,6 +266,26 @@ contract REPL {{
         )
     }
 
+    /// Clears the cache directory
+    ///
+    /// ### WARNING
+    ///
+    /// This will delete all sessions from the cache.
+    /// There is no method of recovering these deleted sessions.
+    pub fn clear_cache() -> Result<()> {
+        let cache_dir = Self::cache_dir()?;
+        for entry in std::fs::read_dir(cache_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                std::fs::remove_dir_all(path)?;
+            } else {
+                std::fs::remove_file(path)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Writes the ChiselEnv to a file by serializing it to a JSON string
     ///
     /// ### Returns
@@ -277,12 +296,16 @@ contract REPL {{
         let cache_dir = Self::cache_dir()?;
         std::fs::create_dir_all(&cache_dir)?;
 
+        // If the id field is set, we don't need to generate a new cache file
+        if let Some(id) = self.id {
+            return Ok(format!("{}chisel-{}.json", cache_dir, id))
+        }
+
         // Get the next cached session name
-        let (id, session_name) = Self::next_cached_session()?;
+        let (id, cache_file_name) = Self::next_cached_session()?;
         self.id = Some(id);
 
         // Write the current ChiselEnv to that file
-        let cache_file_name = format!("{}{}", cache_dir, session_name);
         let serialized_contents = serde_json::to_string_pretty(self)?;
         std::fs::write(&cache_file_name, serialized_contents)?;
 
@@ -300,13 +323,13 @@ contract REPL {{
         let mut latest = if let Some(e) = entries.next() {
             e?
         } else {
-            return Ok((0, "chisel-0.json".to_string()))
+            return Ok((0, format!("{}chisel-0.json", cache_dir)))
         };
 
         // Get the latest cached session
         for entry in entries {
             let entry = entry?;
-            if entry.metadata()?.modified()? > latest.metadata()?.modified()? {
+            if entry.metadata()?.modified()? >= latest.metadata()?.modified()? {
                 latest = entry;
             }
         }
@@ -319,7 +342,7 @@ contract REPL {{
         let session_num = latest_file_name.trim_end_matches(".json").trim_start_matches("chisel-");
         let session_num = session_num.parse::<usize>()?;
 
-        Ok((session_num, format!("{}/chisel-{}.json", cache_dir, session_num + 1)))
+        Ok((session_num + 1, format!("{}chisel-{}.json", cache_dir, session_num + 1)))
     }
 
     /// The Chisel Cache Directory
