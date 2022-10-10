@@ -291,11 +291,8 @@ contract REPL {{
         let mut entries = std::fs::read_dir(&cache_dir)?;
 
         // If there are no existing cached sessions, just create the first one: "chisel-0.json"
-        let mut latest = if let Some(e) = entries.next() {
-            e?
-        } else {
-            return Ok("chisel-0.json".to_string())
-        };
+        let mut latest =
+            if let Some(e) = entries.next() { e? } else { return Ok("chisel-0.json".to_string()) };
 
         // Get the latest cached session
         for entry in entries {
