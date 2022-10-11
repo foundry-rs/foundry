@@ -194,8 +194,18 @@ fn install_commonly_used_solc() {
     if !*is_preinstalled {
         let v0_8_10 = std::thread::spawn(|| Solc::blocking_install(&"0.8.10".parse().unwrap()));
         let v0_8_13 = std::thread::spawn(|| Solc::blocking_install(&"0.8.13".parse().unwrap()));
-        v0_8_10.join().unwrap().unwrap();
-        v0_8_13.join().unwrap().unwrap();
+
+        let wait = |res: std::thread::JoinHandle<_>| {
+            if let Err(err) = res.join().unwrap() {
+                eprintln!("{:?}", err);
+                // there could be another process that's currently installing this version, so we
+                // sleep here for a bit and assume the other process will be finished then
+                std::thread::sleep(std::time::Duration::from_secs(15));
+            }
+        };
+
+        wait(v0_8_10);
+        wait(v0_8_13);
 
         *is_preinstalled = true;
     }
