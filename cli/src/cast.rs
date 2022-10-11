@@ -315,22 +315,22 @@ async fn main() -> eyre::Result<()> {
                 println!("{}", serde_json::json!(receipt));
             }
         }
-        Subcommands::Receipt { hash, field, to_json, rpc_url, cast_async, confirmations } => {
+        Subcommands::Receipt { tx_hash, field, to_json, rpc_url, cast_async, confirmations } => {
             let rpc_url = try_consume_config_rpc_url(rpc_url)?;
             let provider = try_get_http_provider(rpc_url)?;
             println!(
                 "{}",
                 Cast::new(provider)
-                    .receipt(hash, field, confirmations, cast_async, to_json)
+                    .receipt(tx_hash, field, confirmations, cast_async, to_json)
                     .await?
             );
         }
         Subcommands::Run(cmd) => cmd.run()?,
         Subcommands::SendTx(cmd) => cmd.run().await?,
-        Subcommands::Tx { rpc_url, hash, field, to_json } => {
+        Subcommands::Tx { rpc_url, tx_hash, field, to_json } => {
             let rpc_url = try_consume_config_rpc_url(rpc_url)?;
             let provider = try_get_http_provider(rpc_url)?;
-            println!("{}", Cast::new(&provider).transaction(hash, field, to_json).await?)
+            println!("{}", Cast::new(&provider).transaction(tx_hash, field, to_json).await?)
         }
 
         // 4Byte
