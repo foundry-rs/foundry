@@ -4,14 +4,9 @@ use rustyline::error::ReadlineError;
 use std::rc::Rc;
 
 use chisel::{
-    cmd::ChiselCommand,
-    env::{ChiselEnv, SolSnippet},
+    dispatcher::ChiselCommand,
+    session::{ChiselEnv, SolSnippet}, prelude::DispatchResult,
 };
-
-/// Prompt arrow slice
-static PROMPT_ARROW: &str = "➜ ";
-/// Command leader character
-static COMMAND_LEADER: char = '!';
 
 /// Chisel is a fast, utilitarian, and verbose solidity REPL.
 #[derive(Debug, Parser)]
@@ -36,92 +31,40 @@ fn main() {
     // Keeps track of whether or not an interrupt was the last input
     let mut interrupt = false;
 
-    // Keeps track of whether or not the last input resulted in an error
-    // TODO: This will probably best be tracked in the `ChiselEnv`,
-    // just for mocking up the project.
-    let mut error = false;
+    // Create a new rustyline Editor
+    let rl = Editor::<()>::new().unwrap_or_else(|e| {
+        tracing::error!(target: "chisel-env", "Failed to initialize rustyline Editor! {}", e);
+        panic!("failed to create a rustyline Editor for the chisel environment! {e}");
+    });
+
+    // Create a new cli dispatcher
+    let mut dispatcher = ChiselDisptacher::new();
 
     // Begin Rustyline loop
     loop {
-        let prompt =
-            format!("{}", if error { Red.paint(PROMPT_ARROW) } else { Green.paint(PROMPT_ARROW) });
+        // Get the prompt from the dispatcher
+        // Variable based on status of the last entry
+        let prompt = dispatcher.get_prompt();
 
         // Read the next line
-        let next_string = {
-            let rl = env
-                .rl
-                .as_mut()
-                .ok_or_else(|| {
-                    eprintln!("{}", Red.paint("Failed to initialize readline"));
-                    eyre::eyre!("Failed to initialize readline")
-                })
-                .unwrap();
-            rl.readline(prompt.as_str())
-        };
+        let next_string = rl.readline(prompt.as_str());
 
+        // Try to read the string
         match next_string {
             Ok(line) => {
-                // Check if the input is a builtin command.
-                // Commands are denoted with a `!` leading character.
-                if line.starts_with(COMMAND_LEADER) {
-                    let split: Vec<&str> = line.split(' ').collect();
-                    let raw_cmd = &split[0][1..];
-
-                    match raw_cmd.parse::<ChiselCommand>() {
-                        Ok(cmd) => {
-                            // TODO: Move `error` to the `ChiselEnv`, dispatch
-                            // could still result in an error.
-                            error = false;
-                            cmd.dispatch(&split[1..], &mut env);
-                        }
-                        Err(e) => {
-                            error = true;
-                            eprintln!("{}", e);
-                        }
-                    }
-                    continue
-                }
-
-                // Parse the input with [solang-parser](https://docs.rs/solang-parser/latest/solang_parser)
-                // Print dianostics and continue on error
-                // If parsing successful, grab the (source unit, comment) tuple
-                //
-                // TODO: This does check if the line is parsed successfully, but does
-                // not check if the line conflicts with any previous declarations
-                // (i.e. "uint a = 1;" could be declared twice). Should check against
-                // the whole temp file so that previous inputs persist.
-                let parsed = match solang_parser::parse(&line, 0) {
-                    Ok(su) => su,
-                    Err(e) => {
+                interrupt = false;
+                // Dispatch and match results
+                match dispatcher.dispatch(line) {
+                    DispatchResult::Success(Some(msg))
+                    | DispatchResult::CommandSuccess(Some(msg)) => println!("{}", Green.paint(msg)),
+                    DispatchResult::UnrecognizedCommand(e) => eprintln!("{}", e),
+                    DispatchResult::SolangParserFailed(e) => {
                         eprintln!("{}", Red.paint("Compilation error"));
                         eprintln!("{}", Red.paint(format!("{:?}", e)));
-                        error = true;
-                        continue
                     }
-                };
-
-                // Reset interrupt flag
-                interrupt = false;
-                // Reset error flag
-                error = false;
-
-                // Push the parsed source unit and comments to the environment session
-                env.session.push(SolSnippet { source_unit: parsed, raw: Rc::new(line) });
-
-                // Get a reference to the temp project
-                let temp_project = env
-                    .project
-                    .as_ref()
-                    .ok_or_else(|| {
-                        eprintln!("{}", Red.paint("Fatal: Missing TempProject in the ChiselEnv"));
-                        eyre::eyre!("Fatal: Missing TempProject in the ChiselEnv")
-                    })
-                    .unwrap();
-
-                if temp_project.add_source("REPL", env.contract_source()).is_ok() {
-                    println!("{:?}", temp_project.sources_path());
-                } else {
-                    eprintln!("Error writing source file to temp project.");
+                    DispatchResult::Success(None) => { /* Do nothing */ }
+                    DispatchResult::CommandSuccess(_) => { /* Don't need to do anything here */ }
+                    DispatchResult::CommandFailed(msg) => eprintln!("{}", Red.paint(msg)),
                 }
             }
             Err(ReadlineError::Interrupted) => {

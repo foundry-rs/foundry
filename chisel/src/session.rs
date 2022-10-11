@@ -1,112 +1,32 @@
-use core::fmt;
-use std::{path::Path, rc::Rc, time::SystemTime};
+use std::{path::Path, time::SystemTime};
 
 use ethers_solc::project_util::TempProject;
-use rustyline::Editor;
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 
 use eyre::Result;
 
 pub use semver::Version;
 use solang_parser::pt::{Import, SourceUnitPart};
 
-/// Represents a parsed snippet of Solidity code.
-#[derive(Debug, Deserialize)]
-pub struct SolSnippet {
-    /// The parsed source unit
-    #[serde(deserialize_with = "deserialize_source_unit")]
-    pub source_unit: (solang_parser::pt::SourceUnit, Vec<solang_parser::pt::Comment>),
-    /// The raw source code
-    #[serde(deserialize_with = "deserialize_raw")]
-    pub raw: Rc<String>,
-}
+use crate::parser::ParsedSnippet;
 
-/// Deserialize a SourceUnit
-pub fn deserialize_source_unit<'de, D>(
-    deserializer: D,
-) -> Result<(solang_parser::pt::SourceUnit, Vec<solang_parser::pt::Comment>), D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    // Grab the raw value
-    let raw: Box<serde_json::value::RawValue> = match Box::deserialize(deserializer) {
-        Ok(v) => v,
-        Err(e) => return Err(e),
-    };
-
-    // Parse the string, removing any quotes and adding them back in
-    let raw_str = raw.get().trim_matches('"');
-
-    // Parse the json value from string
-
-    // Parse the serialized source unit string
-    solang_parser::parse(raw_str, 0)
-        .map_err(|_| serde::de::Error::custom("Failed to parse serialized string as source unit"))
-}
-
-/// Deserialize the raw source string
-pub fn deserialize_raw<'de, D>(deserializer: D) -> Result<Rc<String>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    // Grab the raw value
-    let raw: Box<serde_json::value::RawValue> = match Box::deserialize(deserializer) {
-        Ok(v) => v,
-        Err(e) => return Err(e),
-    };
-
-    // Parse the string, removing any quotes and adding them back in
-    let raw_str = raw.get().trim_matches('"');
-
-    // Return a new Rc<String>
-    Ok(Rc::new(raw_str.to_string()))
-}
-
-impl Serialize for SolSnippet {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&format!(
-            r#"{{
-                    "source_unit": "{}",
-                    "raw": "{}"
-                }}"#,
-            self.raw.as_str(),
-            self.raw.as_str()
-        ))
-    }
-}
-
-/// Display impl for `SolToken`
-impl fmt::Display for SolSnippet {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.raw)
-    }
-}
-
-/// A Chisel REPL environment.
+/// A Chisel REPL Session
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ChiselEnv {
+pub struct ChiselSession {
     /// The `TempProject` created for the REPL contract.
     #[serde(skip)]
     pub project: Option<TempProject>,
     /// Session solidity version]
     pub solc_version: Version,
-    /// The `rustyline` Editor
-    #[serde(skip)]
-    pub rl: Option<Editor<()>>,
-    /// The current session
-    /// A session contains an ordered vector of source units, parsed by the solang-parser,
-    /// as well as the raw source.
-    pub session: Vec<SolSnippet>,
+    /// Snippets
+    /// This is a list of the raw solidity source code strings and their solang_parser parsed SourceUnits.
+    pub snippets: Vec<ParsedSnippet>,
     /// The current session's identifier
     pub id: Option<usize>,
 }
 
-/// Chisel REPL environment impl
-impl ChiselEnv {
-    /// Create a new `ChiselEnv` with a specified `solc` version.
+impl ChiselSession {
+    /// Create a new `ChiselSession` with a specified `solc` version.
     pub fn new(solc_version: &'static str) -> Self {
         // Create initialized temporary dapptools-style project
         let mut project = Self::create_temp_project();
@@ -117,27 +37,22 @@ impl ChiselEnv {
         // Set project's solc version explicitly
         project.set_solc(solc_version);
 
-        // Create a new rustyline Editor
-        let rl = Self::create_rustyline_editor();
-
-        // Return initialized ChiselEnv with set solc version
+        // Return initialized ChiselSession with set solc version
         Self {
             solc_version: parsed_solc_version,
             project: Some(project),
-            rl: Some(rl),
-            session: Vec::default(),
+            snippets: Vec::default(),
             id: None,
         }
     }
 
-    /// Create a default `ChiselEnv`.
+    /// Create a default `ChiselSession`.
     pub fn default() -> Self {
         Self {
             solc_version: ethers_solc::Solc::svm_global_version()
                 .unwrap_or_else(|| Version::parse("0.8.17").unwrap()),
             project: Some(Self::create_temp_project()),
-            rl: Some(Self::create_rustyline_editor()),
-            session: Vec::default(),
+            snippets: Vec::default(),
             id: None,
         }
     }
@@ -163,18 +78,18 @@ impl ChiselEnv {
     pub fn contract_source(&self) -> String {
         // Extract a pragma definition
         // NOTE: Optimistically uses the first pragma found
-        let pragma_def = self.session.iter().find(|i| {
+        let pragma_def = self.snippets.iter().find(|i| {
             i.source_unit.0 .0.iter().any(|i| matches!(i, SourceUnitPart::PragmaDirective(_, _, _)))
         });
 
         // Extract imports
         let imports = self
-            .session
+            .snippets
             .iter()
             .flat_map(|i| {
                 i.source_unit
                     .0
-                     .0
+                    .0
                     .iter()
                     .filter(|i| matches!(i, SourceUnitPart::ImportDirective(_)))
                     .map(|sup| {
@@ -200,7 +115,7 @@ impl ChiselEnv {
         // We only need to check the first source unit part for each sol snippet
         // If the first part is not top level, we should throw the sol snippet in the fallback
         let top_level_units = self
-            .session
+            .snippets
             .iter()
             .filter(|unit| {
                 if let Some(def) = unit.source_unit.0 .0.get(0) {
@@ -228,7 +143,7 @@ impl ChiselEnv {
 
         // Extract fallback snippets
         let fallback_snippets = self
-            .session
+            .snippets
             .iter()
             .filter(|unit| {
                 matches!(unit.source_unit.0 .0.get(0), Some(SourceUnitPart::VariableDefinition(_)))
@@ -286,7 +201,7 @@ contract REPL {{
         Ok(())
     }
 
-    /// Writes the ChiselEnv to a file by serializing it to a JSON string
+    /// Writes the ChiselSession to a file by serializing it to a JSON string
     ///
     /// ### Returns
     ///
@@ -305,7 +220,7 @@ contract REPL {{
         let (id, cache_file_name) = Self::next_cached_session()?;
         self.id = Some(id);
 
-        // Write the current ChiselEnv to that file
+        // Write the current ChiselSession to that file
         let serialized_contents = serde_json::to_string_pretty(self)?;
         std::fs::write(&cache_file_name, serialized_contents)?;
 
@@ -398,18 +313,18 @@ contract REPL {{
         Ok(latest.path().to_str().ok_or(eyre::eyre!("Failed to get session path!"))?.to_string())
     }
 
-    /// Loads a specific ChiselEnv from the specified cache file
+    /// Loads a specific ChiselSession from the specified cache file
     pub fn load(name: &str) -> Result<Self> {
         let contents = std::fs::read_to_string(Path::new(name))?;
-        let chisel_env: ChiselEnv = serde_json::from_str(&contents)?;
+        let chisel_env: ChiselSession = serde_json::from_str(&contents)?;
         Ok(chisel_env)
     }
 
-    /// Loads the latest ChiselEnv from the cache file
+    /// Loads the latest ChiselSession from the cache file
     pub fn latest() -> Result<Self> {
         let last_session = Self::latest_chached_session()?;
         let last_session_contents = std::fs::read_to_string(Path::new(&last_session))?;
-        let chisel_env: ChiselEnv = serde_json::from_str(&last_session_contents)?;
+        let chisel_env: ChiselSession = serde_json::from_str(&last_session_contents)?;
         Ok(chisel_env)
     }
 
@@ -433,19 +348,7 @@ contract REPL {{
     pub(crate) fn create_temp_project() -> TempProject {
         TempProject::dapptools_init().unwrap_or_else(|e| {
             tracing::error!(target: "chisel-env", "Failed to initialize temporary project! {}", e);
-            panic!("failed to create a temporary project for the chisel environment! {e}");
-        })
-    }
-
-    /// Helper function to create a new rustyline Editor with proper error handling.
-    ///
-    /// ### Panics
-    ///
-    /// Panics if the rustyline Editor cannot be created.
-    pub(crate) fn create_rustyline_editor() -> Editor<()> {
-        Editor::<()>::new().unwrap_or_else(|e| {
-            tracing::error!(target: "chisel-env", "Failed to initialize rustyline Editor! {}", e);
-            panic!("failed to create a rustyline Editor for the chisel environment! {e}");
+            panic!("failed to create a temporary project for the chisel session! {e}");
         })
     }
 }

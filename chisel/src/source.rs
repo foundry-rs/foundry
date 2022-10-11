@@ -7,15 +7,15 @@ use std::{collections::HashMap, path::PathBuf};
 use eyre::Result;
 use ethers_solc::{
     artifacts::{Contract, Source, Sources},
-    CompilerInput, Solc,
+    CompilerInput, Solc, CompilerOutput,
 };
 use serde::{Serialize, Deserialize};
 
 /// A compiled contract
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CompiledContract {
-    /// The compiled contract
-    pub contract: Contract,
+pub struct CompiledOutput {
+    /// The solc compiler output
+    pub output: CompilerOutput,
     /// The source unit parts
     #[serde(skip)]
     pub source_unit_parts: Vec<solang_parser::pt::SourceUnitPart>,
@@ -49,8 +49,8 @@ pub struct SessionSource {
     pub top_level_code: String,
     /// Constructor Code
     pub constructor_code: String,
-    /// Compiled Contracts
-    pub compiled: Vec<CompiledContract>,
+    /// The solc compiler output
+    pub compiled: Option<CompilerOutput>,
 }
 
 impl SessionSource {
@@ -64,7 +64,7 @@ impl SessionSource {
             global_code: Default::default(),
             top_level_code: Default::default(),
             constructor_code: Default::default(),
-            compiled: vec![],
+            compiled: None,
         }
     }
 
@@ -73,21 +73,21 @@ impl SessionSource {
     /// Appends global-level code to the source
     pub fn with_global_code(&mut self, content: &str) -> &mut Self {
         self.global_code.push_str(content);
-        self.compiled = vec![];
+        self.compiled = None;
         self
     }
 
     /// Appends top-level code to the source
     pub fn with_top_level_code(&mut self, content: &str) -> &mut Self {
         self.top_level_code.push_str(content);
-        self.compiled = vec![];
+        self.compiled = None;
         self
     }
 
     /// Appends constructor code to the source
     pub fn with_constructor_code(&mut self, content: &str) -> &mut Self {
         self.constructor_code.push_str(content);
-        self.compiled = vec![];
+        self.compiled = None;
         self
     }
 
@@ -96,21 +96,21 @@ impl SessionSource {
     /// Clears global code from the source
     pub fn drain_global_code(&mut self) -> &mut Self {
         self.global_code = Default::default();
-        self.compiled = vec![];
+        self.compiled = None;
         self
     }
 
     /// Clears top-level code from the source
     pub fn drain_top_level_code(&mut self) -> &mut Self {
         self.top_level_code = Default::default();
-        self.compiled = vec![];
+        self.compiled = None;
         self
     }
 
     /// Clears the constructor code
     pub fn drain_constructor(&mut self) -> &mut Self {
         self.constructor_code = Default::default();
-        self.compiled = vec![];
+        self.compiled = None;
         self
     }
 
@@ -184,6 +184,79 @@ impl SessionSource {
 
         // Return the parts
         Ok((source_unit_parts, contract_parts, statements))
+    }
+
+    /// Parses and decomposes the source
+    pub fn parse_and_decompose(&self) -> Result<(
+        Vec<solang_parser::pt::SourceUnitPart>,
+        Vec<solang_parser::pt::ContractPart>,
+        Vec<solang_parser::pt::Statement>,
+    )> {
+        let parse_tree = self.parse().map_err(|_| eyre::eyre!("Failed to generate SourceUnit from Source"))?;
+        self.decompose(parse_tree)
+    }
+
+    /// Compile the contract
+    pub fn compile(&self) -> Result<CompilerOutput> {
+        // Compile the contract
+        let mut compiled = self.solc.compile_exact(&self.compiler_input())?;
+
+        // Extract compiler errors
+        let errors = compiled
+            .errors
+            .into_iter()
+            .filter(|error| error.severity.is_error())
+            .collect::<Vec<_>>();
+        if !errors.is_empty() {
+            return Err(eyre::eyre!("Compiler errors: {:?}", errors));
+        }
+
+        Ok(compiled)
+
+        // Get all compiled contracts for our file name
+        // let mut contracts_for_file = compiled
+        //     .contracts
+        //     .remove(&self.file_name.display().to_string()).ok_or(eyre::eyre!("Failed to find compiled sources for file name"))?;
+
+        // // Extract the matching contract
+        // contracts_for_file.remove(&self.contract_name).ok_or(eyre::eyre!("Missing compiled source for contract name"))
+    }
+
+    /// Builds the SessionSource from input into the complete CompiledOutput
+    pub fn build(&mut self) -> Result<CompiledOutput> {
+        // Use the cached compiled source if it exists
+        if let Some(cached) = self.compiled.as_ref() {
+            return Ok(cached.clone());
+        }
+
+        // Compile into a Contract
+        let contract = self.compile()?;
+
+        // Parse and decompose into parts
+        let (source_unit_parts, contract_parts, statements) = self.parse_and_decompose().unwrap();
+
+        // Construct variable definitions
+        let mut variable_definitions = HashMap::new();
+        for (key, ty) in contract_parts.iter().flat_map(get_contract_part_definition) {
+            variable_definitions.insert(
+                key.to_string(),
+                (ty.clone(), Some(solang_parser::pt::StorageLocation::Memory(ty.loc()))),
+            );
+        }
+        for (key, ty, storage) in statements.iter().flat_map(get_statement_definitions) {
+            variable_definitions.insert(key.to_string(), (ty.clone(), storage.cloned()));
+        }
+
+        // Construct a Compiled Result
+        let compiled = CompiledOutput {
+            contract,
+            source_unit_parts,
+            contract_parts,
+            statements,
+            variable_definitions,
+        };
+        self.compiled = compiled.clone();
+        Ok(compiled)
     }
 
 }
