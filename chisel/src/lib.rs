@@ -13,7 +13,15 @@ pub mod cmd;
 /// A Solidity Highlighter module
 pub mod sol_highlighter;
 
+/// Session Source
+pub mod source;
+
 /// Re-export a prelude of relevant chisel items
 pub mod prelude {
-    pub use crate::{cmd::*, env::*, sol_highlighter::*};
+    pub use crate::{
+        cmd::*,
+        env::*,
+        source::*,
+        sol_highlighter::*
+    };
 }

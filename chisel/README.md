@@ -1,6 +1,7 @@
 # `chisel`
 
-Chisel is a fast, utilitarian, and verbose solidity REPL.
+Chisel is a fast, utilitarian, and verbose solidity REPL. It is heavily inspired by the incredible work done in [soli](https://github.com/jpopesculian/soli)!
+
 
 ## Why?
 
@@ -14,6 +15,22 @@ Once you finish testing, Chisel even lets you export your code to a new solidity
 
 In this sense, Chisel even serves as a project generator.
 
+
+## Feature Completion
+
+[soli](https://github.com/jpopesculian/soli) provides a great solidity REPL, achieving:
+
+- Statements
+- Custom events, errors, functions, imports
+- Inspecting a variable
+
+Chisel aims to improve upon soli, with native foundry integration by providing feature completion with:
+
+- Fork an existing chain
+- Allow the use of private keys and custom sender
+- More advanced introspection
+- Better error messages and traces
+- ... many more future features!
 
 
 ## Checklist
