@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use chisel::env::ChiselEnv;
+use chisel::session::ChiselSession;
 use semver::Version;
 use serial_test::serial;
 
@@ -9,7 +9,7 @@ use serial_test::serial;
 fn test_cache_directory() {
     // Get the cache dir
     // Should be ~/.foundry/cache/chisel
-    let cache_dir = ChiselEnv::cache_dir().unwrap();
+    let cache_dir = ChiselSession::cache_dir().unwrap();
 
     // Validate the cache directory
     let home_dir = dirs::home_dir().unwrap();
@@ -20,10 +20,10 @@ fn test_cache_directory() {
 #[serial]
 fn test_create_cache_directory() {
     // Get the cache dir
-    let cache_dir = ChiselEnv::cache_dir().unwrap();
+    let cache_dir = ChiselSession::cache_dir().unwrap();
 
     // Create the cache directory
-    ChiselEnv::create_cache_dir().unwrap();
+    ChiselSession::create_cache_dir().unwrap();
 
     // Validate the cache directory
     assert!(Path::new(&cache_dir).exists());
@@ -33,11 +33,11 @@ fn test_create_cache_directory() {
 #[serial]
 fn test_write_session() {
     // Create the cache directory if it doesn't exist
-    let cache_dir = ChiselEnv::cache_dir().unwrap();
-    ChiselEnv::create_cache_dir().unwrap();
+    let cache_dir = ChiselSession::cache_dir().unwrap();
+    ChiselSession::create_cache_dir().unwrap();
 
     // Create a new session
-    let mut env = ChiselEnv::default();
+    let mut env = ChiselSession::default();
 
     // Write the session
     let cached_session_name = env.write().unwrap();
@@ -54,13 +54,13 @@ fn test_write_session() {
 #[serial]
 fn test_clear_cache() {
     // Create a session to validate clearing a non-empty cache directory
-    let cache_dir = ChiselEnv::cache_dir().unwrap();
-    ChiselEnv::create_cache_dir().unwrap();
-    let mut env = ChiselEnv::default();
+    let cache_dir = ChiselSession::cache_dir().unwrap();
+    ChiselSession::create_cache_dir().unwrap();
+    let mut env = ChiselSession::default();
     env.write().unwrap();
 
     // Clear the cache
-    ChiselEnv::clear_cache().unwrap();
+    ChiselSession::clear_cache().unwrap();
 
     // Validate there are no items in the cache dir
     let num_items = std::fs::read_dir(&cache_dir).unwrap().count();
@@ -71,15 +71,15 @@ fn test_clear_cache() {
 #[serial]
 fn test_list_sessions() {
     // Create and clear the cache directory
-    ChiselEnv::create_cache_dir().unwrap();
-    ChiselEnv::clear_cache().unwrap();
+    ChiselSession::create_cache_dir().unwrap();
+    ChiselSession::clear_cache().unwrap();
 
     // Create a new session
-    let mut env = ChiselEnv::default();
+    let mut env = ChiselSession::default();
     env.write().unwrap();
 
     // List the sessions
-    let sessions = ChiselEnv::list_sessions().unwrap();
+    let sessions = ChiselSession::list_sessions().unwrap();
 
     // Validate the sessions
     assert_eq!(sessions.len(), 1);
@@ -90,16 +90,16 @@ fn test_list_sessions() {
 #[serial]
 fn test_load_cache() {
     // Create and clear the cache directory
-    ChiselEnv::create_cache_dir().unwrap();
-    ChiselEnv::clear_cache().unwrap();
+    ChiselSession::create_cache_dir().unwrap();
+    ChiselSession::clear_cache().unwrap();
 
     // Create a new session
-    let mut env = ChiselEnv::default();
+    let mut env = ChiselSession::default();
     env.write().unwrap();
 
     // Load the session
-    let cache_file_name = format!("{}chisel-0.json", ChiselEnv::cache_dir().unwrap());
-    let new_env = ChiselEnv::load(&cache_file_name).unwrap();
+    let cache_file_name = format!("{}chisel-0.json", ChiselSession::cache_dir().unwrap());
+    let new_env = ChiselSession::load(&cache_file_name).unwrap();
 
     // Validate the session
     assert_eq!(new_env.solc_version, Version::parse("0.8.17").unwrap());
@@ -109,37 +109,37 @@ fn test_load_cache() {
 #[serial]
 fn test_write_same_session_multiple_times() {
     // Create and clear the cache directory
-    ChiselEnv::create_cache_dir().unwrap();
-    ChiselEnv::clear_cache().unwrap();
+    ChiselSession::create_cache_dir().unwrap();
+    ChiselSession::clear_cache().unwrap();
 
     // Create a new session
-    let mut env = ChiselEnv::default();
+    let mut env = ChiselSession::default();
     env.write().unwrap();
     env.write().unwrap();
     env.write().unwrap();
     env.write().unwrap();
-    assert_eq!(ChiselEnv::list_sessions().unwrap().len(), 1);
+    assert_eq!(ChiselSession::list_sessions().unwrap().len(), 1);
 }
 
 #[test]
 #[serial]
 fn test_load_latest_cache() {
     // Create and clear the cache directory
-    ChiselEnv::create_cache_dir().unwrap();
-    ChiselEnv::clear_cache().unwrap();
+    ChiselSession::create_cache_dir().unwrap();
+    ChiselSession::clear_cache().unwrap();
 
     // Create sessions
-    let mut env = ChiselEnv::default();
+    let mut env = ChiselSession::default();
     env.write().unwrap();
 
     let wait_time = std::time::Duration::from_millis(100);
     std::thread::sleep(wait_time);
 
-    let mut env2 = ChiselEnv::default();
+    let mut env2 = ChiselSession::default();
     env2.write().unwrap();
 
     // Load the latest session
-    let new_env = ChiselEnv::latest().unwrap();
+    let new_env = ChiselSession::latest().unwrap();
 
     // Validate the session
     assert_eq!(new_env.id.unwrap(), 1);
