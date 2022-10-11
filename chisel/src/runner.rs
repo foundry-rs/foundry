@@ -1,17 +1,25 @@
 use bytes::Bytes;
 use ethers::prelude::{types::U256, Address};
-use revm::{
-    return_ok, BlockEnv, CfgEnv, CreateScheme, Database, EVMData, Env, InMemoryDB, Inspector,
-    Interpreter, Return, SpecId, TransactOut, TransactTo, TxEnv, EVM,
+use crate::{
+    executor::{CallResult, DeployResult, EvmError, Executor, RawCallResult},
+    trace::{CallTraceArena, TraceKind},
+    CALLER,
 };
 
+use revm::{return_ok, Return};
+
 /// The Chisel Runner
+///
+/// Losely based off of foundry's forge cli runner for scripting.
+/// See: [runner](cli::cmd::forge::script::runner.rs)
 #[derive(Debug)]
 pub struct ChiselRunner {
-    /// The runner database
-    pub database: InMemoryDB,
-    /// The revm environment config
-    pub revm_env: Env,
+    /// The Executor
+    pub executor: Executor,
+    /// An initial balance
+    pub initial_balance: U256,
+    /// The sender
+    pub sender: Address,
 }
 
 impl Default for ChiselRunner {
