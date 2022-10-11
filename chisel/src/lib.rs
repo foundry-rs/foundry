@@ -25,5 +25,5 @@ pub mod generator;
 
 /// Re-export a prelude of relevant chisel items
 pub mod prelude {
-    pub use crate::{dispatcher::*, generator::*, session::*, runner::*, sol_highlighter::*};
+    pub use crate::{dispatcher::*, generator::*, runner::*, session::*, sol_highlighter::*};
 }

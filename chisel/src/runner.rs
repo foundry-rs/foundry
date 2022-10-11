@@ -1,10 +1,10 @@
-use bytes::Bytes;
-use ethers::prelude::{types::U256, Address};
 use crate::{
     executor::{CallResult, DeployResult, EvmError, Executor, RawCallResult},
     trace::{CallTraceArena, TraceKind},
     CALLER,
 };
+use bytes::Bytes;
+use ethers::prelude::{types::U256, Address};
 
 use revm::{return_ok, Return};
 

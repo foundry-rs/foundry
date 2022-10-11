@@ -1,7 +1,6 @@
 use std::{path::Path, time::SystemTime};
 
-use ethers_solc::artifacts::CompactContractBytecode;
-use ethers_solc::project_util::TempProject;
+use ethers_solc::{artifacts::CompactContractBytecode, project_util::TempProject};
 use serde::{Deserialize, Serialize};
 
 use eyre::Result;
@@ -9,8 +8,7 @@ use eyre::Result;
 pub use semver::Version;
 use solang_parser::pt::{Import, SourceUnitPart};
 
-use crate::runner::ChiselRunner;
-use crate::parser::ParsedSnippet;
+use crate::{parser::ParsedSnippet, runner::ChiselRunner};
 
 /// A Chisel REPL Session
 #[derive(Debug, Serialize, Deserialize)]
