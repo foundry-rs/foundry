@@ -73,11 +73,11 @@ impl RunArgs {
         let tx = provider
             .get_transaction(tx_hash)
             .await?
-            .ok_or_else(|| eyre::eyre!("tx not found: {}", tx_hash))?;
+            .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
 
         let tx_block_number = tx
             .block_number
-            .ok_or_else(|| eyre::eyre!("tx may still be pending: {}", tx_hash))?
+            .ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?
             .as_u64();
         evm_opts.fork_url = Some(rpc_url);
         // we need to set the fork block to the previous block, because that's the state at

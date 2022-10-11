@@ -566,7 +566,7 @@ where
             .provider
             .get_transaction(tx_hash)
             .await?
-            .ok_or_else(|| eyre::eyre!("tx not found: {}", tx_hash))?;
+            .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
 
         Ok(if let Some(ref field) = field {
             get_pretty_tx_attr(&tx, field)
@@ -611,10 +611,15 @@ where
                 // if the async flag is provided, immediately exit if no tx is found, otherwise try
                 // to poll for it
                 if cast_async {
-                    eyre::bail!("tx not found: {}", tx_hash)
+                    eyre::bail!("tx not found: {:?}", tx_hash)
                 } else {
                     let tx = PendingTransaction::new(tx_hash, self.provider.provider());
-                    tx.confirmations(confs).await?.ok_or_else(|| eyre::eyre!("receipt not found when polling pending tx: the transaction might have been dropped from the mempool"))?
+                    tx.confirmations(confs).await?.ok_or_else(|| {
+                        eyre::eyre!(
+                            "tx not found, might have been dropped from mempool: {:?}",
+                            tx_hash
+                        )
+                    })?
                 }
             }
         };
