@@ -1,4 +1,4 @@
-use crate::{cmd::Cmd, init_progress, update_progress, utils::consume_config_rpc_url};
+use crate::{cmd::Cmd, init_progress, update_progress, utils::try_consume_config_rpc_url};
 use cast::trace::{identifier::SignaturesIdentifier, CallTraceDecoder};
 use clap::Parser;
 use ethers::{
@@ -66,8 +66,8 @@ impl RunArgs {
         let mut evm_opts = figment.extract::<EvmOpts>()?;
         let config = Config::from_provider(figment).sanitized();
 
-        let rpc_url = consume_config_rpc_url(self.rpc_url);
-        let provider = try_get_http_provider(rpc_url.as_str())?;
+        let rpc_url = try_consume_config_rpc_url(self.rpc_url)?;
+        let provider = try_get_http_provider(&rpc_url)?;
 
         if let Some(tx) = provider
             .get_transaction(
