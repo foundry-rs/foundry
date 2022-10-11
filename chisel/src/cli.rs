@@ -1,12 +1,8 @@
 use ansi_term::Color::{Green, Red};
 use clap::Parser;
-use rustyline::error::ReadlineError;
-use std::rc::Rc;
+use rustyline::{error::ReadlineError, Editor};
 
-use chisel::{
-    dispatcher::ChiselCommand,
-    session::{ChiselEnv, SolSnippet}, prelude::DispatchResult,
-};
+use chisel::prelude::{ChiselDisptacher, DispatchResult};
 
 /// Chisel is a fast, utilitarian, and verbose solidity REPL.
 #[derive(Debug, Parser)]
@@ -25,14 +21,11 @@ fn main() {
     // Parse command args
     let _args = ChiselParser::parse();
 
-    // Set up default `ChiselEnv` Configuration
-    let mut env = ChiselEnv::default();
-
     // Keeps track of whether or not an interrupt was the last input
     let mut interrupt = false;
 
     // Create a new rustyline Editor
-    let rl = Editor::<()>::new().unwrap_or_else(|e| {
+    let mut rl = Editor::<()>::new().unwrap_or_else(|e| {
         tracing::error!(target: "chisel-env", "Failed to initialize rustyline Editor! {}", e);
         panic!("failed to create a rustyline Editor for the chisel environment! {e}");
     });
@@ -54,7 +47,7 @@ fn main() {
             Ok(line) => {
                 interrupt = false;
                 // Dispatch and match results
-                match dispatcher.dispatch(line) {
+                match dispatcher.dispatch(&line) {
                     DispatchResult::Success(Some(msg))
                     | DispatchResult::CommandSuccess(Some(msg)) => println!("{}", Green.paint(msg)),
                     DispatchResult::UnrecognizedCommand(e) => eprintln!("{}", e),
@@ -64,7 +57,9 @@ fn main() {
                     }
                     DispatchResult::Success(None) => { /* Do nothing */ }
                     DispatchResult::CommandSuccess(_) => { /* Don't need to do anything here */ }
-                    DispatchResult::CommandFailed(msg) => eprintln!("{}", Red.paint(msg)),
+                    DispatchResult::FileIoError(e) => eprintln!("{}", Red.paint(format!("⚒️ Chisel File IO Error - {}", e))),
+                    DispatchResult::CommandFailed(msg) | DispatchResult::Failure(Some(msg)) => eprintln!("{}", Red.paint(msg)),
+                    DispatchResult::Failure(None) => eprintln!("{}\nPlease Report this bug as a github issue if it persists: https://github.com/foundry-rs/foundry/issues/new/choose", Red.paint("⚒️ Unknown Chisel Error ⚒️")),
                 }
             }
             Err(ReadlineError::Interrupted) => {

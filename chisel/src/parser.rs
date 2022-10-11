@@ -1,8 +1,9 @@
-//! A wrapper around [solang_parser](solang_parser::parse) parser to generate a [solang_parser::ast::SourceUnit](solang_parser::ast::SourceUnit) from a solidity source string.
+//! A wrapper around [solang_parser](solang_parser::parse) parser to generate a
+//! [solang_parser::ast::SourceUnit](solang_parser::ast::SourceUnit) from a solidity source string.
 
 use std::rc::Rc;
 
-use serde::{Deserialize, Serializer, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use solang_parser::diagnostics::Diagnostic;
 
 /// Represents a parsed snippet of Solidity code.
@@ -19,13 +20,11 @@ pub struct ParsedSnippet {
 impl ParsedSnippet {
     /// Creates a new ParsedSnippet from a raw source string
     pub fn new(raw: &str) -> Self {
-        Self {
-            source_unit: None,
-            raw: Rc::new(raw.to_string()),
-        }
+        Self { source_unit: None, raw: Rc::new(raw.to_string()) }
     }
 
-    /// Parses the raw source string into a [solang_parser::pt::SourceUnit](solang_parser::pt::SourceUnit) and comments
+    /// Parses the raw source string into a
+    /// [solang_parser::pt::SourceUnit](solang_parser::pt::SourceUnit) and comments
     pub fn parse(&mut self) -> Result<(), Vec<Diagnostic>> {
         match solang_parser::parse(&self.raw, 0) {
             Ok((source_unit, comments)) => {
@@ -56,7 +55,8 @@ where
     // Parse the json value from string
 
     // Parse the serialized source unit string
-    solang_parser::parse(raw_str, 0).map(|(source_unit, comments)| Some((source_unit, comments)))
+    solang_parser::parse(raw_str, 0)
+        .map(|(source_unit, comments)| Some((source_unit, comments)))
         .map_err(|_| serde::de::Error::custom("Failed to parse serialized string as source unit"))
 }
 

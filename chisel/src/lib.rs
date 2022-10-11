@@ -7,7 +7,8 @@
 /// Chisel Environment Module
 pub mod session;
 
-/// A wrapper around [solang_parser](solang_parser::parse) parser to generate [SourceUnit](solang_parser::ast::SourceUnit)s from a solidity source code strings
+/// A wrapper around [solang_parser](solang_parser::parse) parser to generate
+/// [SourceUnit](solang_parser::ast::SourceUnit)s from a solidity source code strings
 pub mod parser;
 
 /// REPL command dispatcher.
@@ -17,14 +18,9 @@ pub mod dispatcher;
 pub mod sol_highlighter;
 
 /// Session Source
-pub mod source;
+pub mod generator;
 
 /// Re-export a prelude of relevant chisel items
 pub mod prelude {
-    pub use crate::{
-        dispatcher::*,
-        session::*,
-        source::*,
-        sol_highlighter::*
-    };
+    pub use crate::{dispatcher::*, generator::*, session::*, sol_highlighter::*};
 }

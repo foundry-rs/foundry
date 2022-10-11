@@ -19,12 +19,25 @@ pub struct ChiselSession {
     /// Session solidity version]
     pub solc_version: Version,
     /// Snippets
-    /// This is a list of the raw solidity source code strings and their solang_parser parsed SourceUnits.
+    /// This is a list of the raw solidity source code strings and their solang_parser parsed
+    /// SourceUnits.
     pub snippets: Vec<ParsedSnippet>,
     /// The current session's identifier
     pub id: Option<usize>,
 }
 
+impl Default for ChiselSession {
+    fn default() -> Self {
+        Self {
+            project: Some(Self::create_temp_project()),
+            solc_version: Version::new(0, 8, 17),
+            snippets: vec![],
+            id: None,
+        }
+    }
+}
+
+// ChiselSession Common Associated Functions
 impl ChiselSession {
     /// Create a new `ChiselSession` with a specified `solc` version.
     pub fn new(solc_version: &'static str) -> Self {
@@ -46,16 +59,35 @@ impl ChiselSession {
         }
     }
 
-    /// Create a default `ChiselSession`.
-    pub fn default() -> Self {
-        Self {
-            solc_version: ethers_solc::Solc::svm_global_version()
-                .unwrap_or_else(|| Version::parse("0.8.17").unwrap()),
-            project: Some(Self::create_temp_project()),
-            snippets: Vec::default(),
-            id: None,
-        }
+    /// Helper function to parse a solidity version string.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the version string is not a valid semver version.
+    pub fn parse_solc_version(solc_version: &'static str) -> Version {
+        Version::parse(solc_version).unwrap_or_else(|e| {
+            tracing::error!("Error parsing provided solc version: \"{}\"", e);
+            panic!("Error parsing provided solc version: \"{e}\"");
+        })
     }
+
+    /// Helper function to create a new temporary project with proper error handling.
+    ///
+    /// ### Panics
+    ///
+    /// Panics if the temporary project cannot be created.
+    pub(crate) fn create_temp_project() -> TempProject {
+        TempProject::dapptools_init().unwrap_or_else(|e| {
+            tracing::error!(target: "chisel-env", "Failed to initialize temporary project! {}", e);
+            panic!("failed to create a temporary project for the chisel session! {e}");
+        })
+    }
+}
+
+impl ChiselSession {
+    // TODO:::: This should follow soli's pattern of contract generation, for _each_ contract
+    // defined by our sessions's ParsedSnippets TODO:::: We define generation in
+    // [generator.rs](./generator.rs), following soli's pattern.
 
     /// Render the full source code for the current session.
     ///
@@ -79,7 +111,13 @@ impl ChiselSession {
         // Extract a pragma definition
         // NOTE: Optimistically uses the first pragma found
         let pragma_def = self.snippets.iter().find(|i| {
-            i.source_unit.0 .0.iter().any(|i| matches!(i, SourceUnitPart::PragmaDirective(_, _, _)))
+            i.source_unit
+                .as_ref()
+                .unwrap()
+                .0
+                 .0
+                .iter()
+                .any(|i| matches!(i, SourceUnitPart::PragmaDirective(_, _, _)))
         });
 
         // Extract imports
@@ -88,8 +126,10 @@ impl ChiselSession {
             .iter()
             .flat_map(|i| {
                 i.source_unit
+                    .as_ref()
+                    .unwrap()
                     .0
-                    .0
+                     .0
                     .iter()
                     .filter(|i| matches!(i, SourceUnitPart::ImportDirective(_)))
                     .map(|sup| {
@@ -118,7 +158,7 @@ impl ChiselSession {
             .snippets
             .iter()
             .filter(|unit| {
-                if let Some(def) = unit.source_unit.0 .0.get(0) {
+                if let Some(def) = unit.source_unit.as_ref().unwrap().0 .0.get(0) {
                     match def {
                         SourceUnitPart::PragmaDirective(_, _, _) => false,
                         SourceUnitPart::ContractDefinition(_) => false,
@@ -146,7 +186,10 @@ impl ChiselSession {
             .snippets
             .iter()
             .filter(|unit| {
-                matches!(unit.source_unit.0 .0.get(0), Some(SourceUnitPart::VariableDefinition(_)))
+                matches!(
+                    unit.source_unit.as_ref().unwrap().0 .0.get(0),
+                    Some(SourceUnitPart::VariableDefinition(_))
+                )
             })
             .map(|unit| unit.raw.as_str())
             .collect::<Vec<&str>>()
@@ -180,7 +223,10 @@ contract REPL {{
             fallback_snippets
         )
     }
+}
 
+// ChiselSession Cache Functionality
+impl ChiselSession {
     /// Clears the cache directory
     ///
     /// ### WARNING
@@ -326,29 +372,5 @@ contract REPL {{
         let last_session_contents = std::fs::read_to_string(Path::new(&last_session))?;
         let chisel_env: ChiselSession = serde_json::from_str(&last_session_contents)?;
         Ok(chisel_env)
-    }
-
-    /// Helper function to parse a solidity version string.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the version string is not a valid semver version.
-    pub fn parse_solc_version(solc_version: &'static str) -> Version {
-        Version::parse(solc_version).unwrap_or_else(|e| {
-            tracing::error!("Error parsing provided solc version: \"{}\"", e);
-            panic!("Error parsing provided solc version: \"{e}\"");
-        })
-    }
-
-    /// Helper function to create a new temporary project with proper error handling.
-    ///
-    /// ### Panics
-    ///
-    /// Panics if the temporary project cannot be created.
-    pub(crate) fn create_temp_project() -> TempProject {
-        TempProject::dapptools_init().unwrap_or_else(|e| {
-            tracing::error!(target: "chisel-env", "Failed to initialize temporary project! {}", e);
-            panic!("failed to create a temporary project for the chisel session! {e}");
-        })
     }
 }

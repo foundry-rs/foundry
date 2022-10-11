@@ -1,10 +1,9 @@
 use ansi_term::Color::{Blue, Cyan, Green, Red};
 use solang_parser::diagnostics::Diagnostic;
-use std::{error, str::FromStr};
+use std::{error, error::Error, str::FromStr};
 use strum::{EnumIter, IntoEnumIterator};
-use std::error::Error;
 
-use crate::{session::ChiselSession, parser::ParsedSnippet};
+use crate::{parser::ParsedSnippet, session::ChiselSession};
 
 /// Prompt arrow slice
 pub static PROMPT_ARROW: &str = "➜ ";
@@ -12,21 +11,12 @@ pub static PROMPT_ARROW: &str = "➜ ";
 pub static COMMAND_LEADER: char = '!';
 
 /// The Chisel Dispatcher
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ChiselDisptacher {
     /// The status of the previous dispatch
     pub errored: bool,
     /// A Chisel Session
     pub session: ChiselSession,
-}
-
-impl Default for ChiselDisptacher {
-    fn default() -> Self {
-        Self {
-            errored: false,
-            session: ChiselSession::default(),
-        }
-    }
 }
 
 /// A Chisel Dispatch Result
@@ -44,6 +34,8 @@ pub enum DispatchResult {
     SolangParserFailed(Vec<Diagnostic>),
     /// A Command Failed with error message
     CommandFailed(String),
+    /// File IO Error
+    FileIoError(Box<dyn Error>),
 }
 
 impl ChiselDisptacher {
@@ -54,59 +46,77 @@ impl ChiselDisptacher {
 
     /// Returns the prompt given the last input's error status
     pub fn get_prompt(&self) -> String {
-        format!("{}", if self.errored { Red.paint(PROMPT_ARROW) } else { Green.paint(PROMPT_ARROW) })
+        format!(
+            "{}",
+            if self.errored { Red.paint(PROMPT_ARROW) } else { Green.paint(PROMPT_ARROW) }
+        )
     }
 
     /// Dispatches a ChiselCommand
-    pub fn dispatch_command(&mut self, cmd: ChiselCommand, args: &[&str],) -> DispatchResult {
+    pub fn dispatch_command(&mut self, cmd: ChiselCommand, args: &[&str]) -> DispatchResult {
         match cmd {
             ChiselCommand::Help => {
-                return DispatchResult::CommandSuccess(Some(
-                    format!(
-                        "{}\n{}",
-                        Cyan.paint("⚒️ Chisel help"),
-                        ChiselCommand::iter().map(|cmd| {
+                return DispatchResult::CommandSuccess(Some(format!(
+                    "{}\n{}",
+                    Cyan.paint("⚒️ Chisel help"),
+                    ChiselCommand::iter()
+                        .map(|cmd| {
                             let descriptor = CmdDescriptor::from(cmd);
                             format!("!{} - {}", Green.paint(descriptor.0), descriptor.1)
-                        }).collect::<Vec<String>>().join("\n")
-                    )
-                ));
+                        })
+                        .collect::<Vec<String>>()
+                        .join("\n")
+                )))
             }
             ChiselCommand::Flush => {
-                self.session.write();
+                if let Err(e) = self.session.write() {
+                    return DispatchResult::FileIoError(e.into())
+                }
             }
-            ChiselCommand::Load(name) => {
-                self.session.write();
-                let new_session = match name.as_str() {
+            ChiselCommand::Load(_) => {
+                // Use args as the name
+                let name = args[0];
+                if let Err(e) = self.session.write() {
+                    return DispatchResult::FileIoError(e.into())
+                }
+                let new_session = match name {
                     "latest" => ChiselSession::latest(),
-                    _ => ChiselSession::load(&name),
+                    _ => ChiselSession::load(name),
                 };
 
                 // WARNING: Overwrites the current session
                 if let Ok(new_session) = new_session {
                     self.session = new_session;
                 } else {
-                    return DispatchResult::CommandFailed(format!("{}: Failed to load session!", Red.paint("⚒️ Chisel Error")));
+                    return DispatchResult::CommandFailed(format!(
+                        "{}: Failed to load session!",
+                        Red.paint("⚒️ Chisel Error")
+                    ))
                 }
             }
             ChiselCommand::ListSessions => match ChiselSession::list_sessions() {
                 Ok(sessions) => {
-                    return DispatchResult::CommandSuccess(Some(
-                        format!(
-                            "{}\n{}",
-                            Cyan.paint("⚒️ Chisel sessions"),
-                            sessions.iter().map(|(time, name)| {
+                    return DispatchResult::CommandSuccess(Some(format!(
+                        "{}\n{}",
+                        Cyan.paint("⚒️ Chisel sessions"),
+                        sessions
+                            .iter()
+                            .map(|(time, name)| {
                                 format!("{} - {}", Blue.paint(format!("{:?}", time)), name)
-                            }).collect::<Vec<String>>().join("\n")
-                        )
-                    ));
+                            })
+                            .collect::<Vec<String>>()
+                            .join("\n")
+                    )))
                 }
                 Err(_) => {
-                    return DispatchResult::CommandFailed(format!("{}", Red.paint("⚒️ Chisel Error: No sessions found.")));
+                    return DispatchResult::CommandFailed(format!(
+                        "{}",
+                        Red.paint("⚒️ Chisel Error: No sessions found.")
+                    ))
                 }
             },
             ChiselCommand::Source => {
-                return DispatchResult::CommandSuccess(Some(format!("{}", self.session.contract_source())));
+                return DispatchResult::CommandSuccess(Some(self.session.contract_source()))
             }
         }
 
@@ -133,7 +143,7 @@ impl ChiselDisptacher {
                     } else {
                         self.errored = true;
                     }
-                    return command_dispatch;
+                    return command_dispatch
                 }
                 Err(e) => {
                     self.errored = true;
@@ -153,15 +163,17 @@ impl ChiselDisptacher {
         let mut parsed_snippet = ParsedSnippet::new(line);
         if let Err(e) = parsed_snippet.parse() {
             self.errored = true;
-            return DispatchResult::SolangParserFailed(e);
+            return DispatchResult::SolangParserFailed(e)
         }
         self.session.snippets.push(parsed_snippet);
 
         // Get a reference to the temp project
-        let project = match self.session
-            .project
-            .as_ref()
-            .ok_or(DispatchResult::Failure(Some(format!("{}", Red.paint("⚒️ Chisel Error: Missing project configuration."))))) {
+        let project = match self.session.project.as_ref().ok_or_else(|| {
+            DispatchResult::Failure(Some(format!(
+                "{}",
+                Red.paint("⚒️ Chisel Error: Missing project configuration.")
+            )))
+        }) {
             Ok(project) => project,
             Err(e) => return e,
         };
@@ -169,7 +181,10 @@ impl ChiselDisptacher {
         if project.add_source("REPL", self.session.contract_source()).is_ok() {
             DispatchResult::Success(Some(format!("{:?}", project.sources_path())))
         } else {
-            DispatchResult::Failure(Some(format!("{}", Red.paint("⚒️ Chisel Error: Failed writing source file to temp project."))))
+            DispatchResult::Failure(Some(format!(
+                "{}",
+                Red.paint("⚒️ Chisel Error: Failed writing source file to temp project.")
+            )))
         }
     }
 }
