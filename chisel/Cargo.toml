@@ -37,7 +37,6 @@ bytes = "1.2.1"
 revm = "2.1.0"
 eyre = "0.6.8"
 dirs = "4.0.0"
-ansi_term = "0.12.1"
 
 [dev-dependencies]
 serial_test = "0.9.0"

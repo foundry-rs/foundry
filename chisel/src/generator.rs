@@ -3,8 +3,6 @@
 //! This module contains the `Source` struct, which is a concrete source constructed from
 //! solang_parser SolUnit parsed inputs.
 
-use std::{collections::HashMap, path::PathBuf};
-
 use ethers_solc::{
     artifacts::{Source, Sources},
     CompilerInput, CompilerOutput, Solc,
@@ -12,6 +10,7 @@ use ethers_solc::{
 use eyre::Result;
 use serde::{Deserialize, Serialize};
 use solang_parser::pt::CodeLocation;
+use std::{collections::HashMap, path::PathBuf};
 
 /// A compiled contract
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

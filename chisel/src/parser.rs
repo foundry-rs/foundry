@@ -1,10 +1,9 @@
 //! A wrapper around [solang_parser](solang_parser::parse) parser to generate a
 //! [solang_parser::ast::SourceUnit](solang_parser::ast::SourceUnit) from a solidity source string.
 
-use std::rc::Rc;
-
 use serde::{Deserialize, Serialize, Serializer};
 use solang_parser::diagnostics::Diagnostic;
+use std::rc::Rc;
 
 /// Represents a parsed snippet of Solidity code.
 #[derive(Debug, Deserialize)]

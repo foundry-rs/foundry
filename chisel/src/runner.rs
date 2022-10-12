@@ -1,16 +1,20 @@
-use crate::{
-    executor::{CallResult, DeployResult, EvmError, Executor, RawCallResult},
+use ethers::{
+    prelude::{types::U256, Address},
+    signers::LocalWallet,
+    types::{transaction::eip2718::TypedTransaction, Bytes, Log},
+};
+use forge::{
+    debug::DebugArena,
+    executor::{DeployResult, Executor, RawCallResult},
     trace::{CallTraceArena, TraceKind},
     CALLER,
 };
-use bytes::Bytes;
-use ethers::prelude::{types::U256, Address};
-
 use revm::{return_ok, Return};
+use std::collections::{BTreeMap, VecDeque};
 
 /// The Chisel Runner
 ///
-/// Losely based off of foundry's forge cli runner for scripting.
+/// Based off of foundry's forge cli runner for scripting.
 /// See: [runner](cli::cmd::forge::script::runner.rs)
 #[derive(Debug)]
 pub struct ChiselRunner {
@@ -22,106 +26,197 @@ pub struct ChiselRunner {
     pub sender: Address,
 }
 
-impl Default for ChiselRunner {
-    fn default() -> Self {
-        Self { database: InMemoryDB::default(), revm_env: Env::default() }
-    }
+/// Represents the result of a Chisel REPL run
+#[derive(Debug)]
+#[allow(missing_docs)] // TODO
+pub struct ChiselResult {
+    /// Was the run a success?
+    pub success: bool,
+    pub logs: Vec<Log>,
+    pub traces: Vec<(TraceKind, CallTraceArena)>,
+    pub debug: Option<Vec<DebugArena>>,
+    pub gas_used: u64,
+    pub labeled_addresses: BTreeMap<Address, String>,
+    pub transactions: Option<VecDeque<TypedTransaction>>,
+    pub returned: bytes::Bytes,
+    pub address: Option<Address>,
+    pub script_wallets: Vec<LocalWallet>,
 }
 
+/// ChiselRunner implementation
 impl ChiselRunner {
-    /// Returns a mutable reference to the runner's database
-    pub fn db_mut(&mut self) -> &mut InMemoryDB {
-        &mut self.database
+    /// Create a new [ChiselRunner]
+    pub fn new(executor: Executor, initial_balance: U256, sender: Address) -> Self {
+        Self { executor, initial_balance, sender }
     }
 
-    /// Deploy the REPL contract
-    ///
-    /// ### Returns
-    ///
-    /// The address of the deployed repl contract or an error
-    pub fn deploy_repl(&mut self, code: Bytes) -> Result<Address, &str> {
-        let mut evm = EVM::new();
-        evm.env = self.build_env(
-            Address::zero(),
-            TransactTo::Create(CreateScheme::Create),
-            code,
-            U256::zero(),
+    /// Run a contract as a REPL session
+    pub fn run(
+        &mut self,
+        libraries: &[Bytes],
+        bytecode: Bytes,
+    ) -> eyre::Result<(Address, ChiselResult)> {
+        // Give the sender max balance for deployment of libraries and the REPL contract
+        self.executor.set_balance(self.sender, U256::MAX)?;
+
+        // Deploy libraries
+        let mut traces: Vec<(TraceKind, CallTraceArena)> = libraries
+            .iter()
+            .filter_map(|code| {
+                let DeployResult { traces, .. } = self
+                    .executor
+                    .deploy(self.sender, code.0.clone(), 0u32.into(), None)
+                    .expect("couldn't deploy library");
+
+                traces
+            })
+            .map(|traces| (TraceKind::Deployment, traces))
+            .collect();
+
+        // Deploy an instance of the REPL contract
+        #[allow(unused)] // TODO
+        let DeployResult {
+            address,
+            mut logs,
+            traces: constructor_traces,
+            debug: constructor_debug,
+            ..
+        } = self
+            .executor
+            .deploy(self.sender, bytecode.0, 0u32.into(), None)
+            .map_err(|err| eyre::eyre!("Failed to deploy REPL contract:\n{}", err))?;
+
+        traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)).into_iter());
+
+        // Reset the sender's balance
+        self.executor.set_balance(self.sender, self.initial_balance)?;
+
+        // TODO: Extend traces, etc.
+        let call_res = self.call(
+            self.sender,
+            address,
+            Bytes::from([0xc0, 0x40, 0x62, 0x26]),
+            0u32.into(),
+            true,
         );
-        evm.database(self.db_mut());
 
-        // Send our CREATE transaction
-        let result = evm.transact_commit();
+        Ok((address, call_res.unwrap()))
+    }
 
-        // Check if deployment was successful
-        let address = match result.exit_reason {
-            return_ok!() => {
-                if let TransactOut::Create(_, Some(addr)) = result.out {
-                    addr
-                } else {
-                    return Err("Could not deploy contract!")
+    /// Executes the call
+    ///
+    /// This will commit the changes if `commit` is true.
+    ///
+    /// This will return _estimated_ gas instead of the precise gas the call would consume, so it
+    /// can be used as `gas_limit`.
+    ///
+    /// Taken directly from Forge's Script Runner
+    fn call(
+        &mut self,
+        from: Address,
+        to: Address,
+        calldata: Bytes,
+        value: U256,
+        commit: bool,
+    ) -> eyre::Result<ChiselResult> {
+        let fs_commit_changed =
+            if let Some(ref mut cheatcodes) = self.executor.inspector_config_mut().cheatcodes {
+                let original_fs_commit = cheatcodes.fs_commit;
+                cheatcodes.fs_commit = false;
+                original_fs_commit != cheatcodes.fs_commit
+            } else {
+                false
+            };
+
+        let mut res = self.executor.call_raw(from, to, calldata.0.clone(), value)?;
+        let mut gas_used = res.gas_used;
+        if matches!(res.exit_reason, return_ok!()) {
+            // store the current gas limit and reset it later
+            let init_gas_limit = self.executor.env_mut().tx.gas_limit;
+
+            // the executor will return the _exact_ gas value this transaction consumed, setting
+            // this value as gas limit will result in `OutOfGas` so to come up with a
+            // better estimate we search over a possible range we pick a higher gas
+            // limit 3x of a succeeded call should be safe
+            let mut highest_gas_limit = gas_used * 3;
+            let mut lowest_gas_limit = gas_used;
+            let mut last_highest_gas_limit = highest_gas_limit;
+            while (highest_gas_limit - lowest_gas_limit) > 1 {
+                let mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
+                self.executor.env_mut().tx.gas_limit = mid_gas_limit;
+                let res = self.executor.call_raw(from, to, calldata.0.clone(), value)?;
+                match res.exit_reason {
+                    Return::Revert |
+                    Return::OutOfGas |
+                    Return::LackOfFundForGasLimit |
+                    Return::OutOfFund => {
+                        lowest_gas_limit = mid_gas_limit;
+                    }
+                    _ => {
+                        highest_gas_limit = mid_gas_limit;
+                        // if last two successful estimations only vary by 10%, we consider this to
+                        // sufficiently accurate
+                        const ACCURACY: u64 = 10;
+                        if (last_highest_gas_limit - highest_gas_limit) * ACCURACY /
+                            last_highest_gas_limit <
+                            1
+                        {
+                            // update the gas
+                            gas_used = highest_gas_limit;
+                            break
+                        }
+                        last_highest_gas_limit = highest_gas_limit;
+                    }
                 }
             }
-            _ => return Err("Could not deploy contract!"),
-        };
-        Ok(address)
-    }
-
-    /// Call a contract's `run()` function and inspect with the [ChiselInspector]
-    pub fn run(&mut self, address: Address) {
-        let mut evm = EVM::new();
-        evm.env = self.build_env(
-            Address::zero(),
-            TransactTo::Call(address),
-            Bytes::from_static(&[0xc0, 0x40, 0x62, 0x26]), // "run()" selector
-            U256::zero(),
-        );
-        evm.database(self.db_mut());
-
-        let mut chisel_logger = ChiselInspector::default();
-        evm.inspect(&mut chisel_logger);
-        println!("{:?}", chisel_logger.state);
-
-        // TODO
-    }
-
-    /// Build an REVM environment.
-    /// TODO: Configuration
-    fn build_env(&self, caller: Address, to: TransactTo, data: Bytes, value: U256) -> Env {
-        Env {
-            cfg: CfgEnv { chain_id: 1.into(), spec_id: SpecId::LATEST, ..Default::default() },
-            block: BlockEnv { basefee: 0.into(), gas_limit: U256::MAX, ..Default::default() },
-            tx: TxEnv {
-                chain_id: 1.into(),
-                caller,
-                transact_to: to,
-                data,
-                value,
-                ..Default::default()
-            },
+            // reset gas limit in the
+            self.executor.env_mut().tx.gas_limit = init_gas_limit;
         }
-    }
-}
 
-#[derive(Default)]
-struct ChiselInspector {
-    pub state: Option<(revm::Stack, revm::Memory, Return)>,
-}
+        // if we changed `fs_commit` during gas limit search, re-execute the call with original
+        // value
+        if fs_commit_changed {
+            if let Some(ref mut cheatcodes) = self.executor.inspector_config_mut().cheatcodes {
+                cheatcodes.fs_commit = !cheatcodes.fs_commit;
+            }
 
-impl<DB> Inspector<DB> for ChiselInspector
-where
-    DB: Database,
-{
-    fn step_end(
-        &mut self,
-        interp: &mut Interpreter,
-        _: &mut EVMData<'_, DB>,
-        _: bool,
-        eval: Return,
-    ) -> Return {
-        // TODO: Only set final state
-        // Will need to find the program counter of the final instruction within `run()`
-        self.state = Some((interp.stack().clone(), interp.memory.clone(), eval));
+            res = self.executor.call_raw(from, to, calldata.0.clone(), value)?;
+        }
 
-        eval
+        if commit {
+            // if explicitly requested we can now commit the call
+            res = self.executor.call_raw_committing(from, to, calldata.0, value)?;
+        }
+
+        let RawCallResult {
+            result,
+            reverted,
+            logs,
+            traces,
+            labels,
+            debug,
+            transactions,
+            script_wallets,
+            ..
+        } = res;
+
+        Ok(ChiselResult {
+            returned: result,
+            success: !reverted,
+            gas_used,
+            logs,
+            traces: traces
+                .map(|mut traces| {
+                    // Manually adjust gas for the trace to add back the stipend/real used gas
+                    traces.arena[0].trace.gas_cost = gas_used;
+                    vec![(TraceKind::Execution, traces)]
+                })
+                .unwrap_or_default(),
+            debug: vec![debug].into_iter().collect(),
+            labeled_addresses: labels,
+            transactions,
+            address: None,
+            script_wallets,
+        })
     }
 }
