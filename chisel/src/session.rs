@@ -1,16 +1,10 @@
-use std::{path::Path, time::SystemTime};
-
-use ethers::{abi::Address, types::U256};
-use ethers_solc::{artifacts::CompactContractBytecode, project_util::TempProject};
-use forge::executor::{Backend, ExecutorBuilder};
-use serde::{Deserialize, Serialize};
-
+use crate::parser::ParsedSnippet;
+use ethers_solc::project_util::TempProject;
 use eyre::Result;
-
 pub use semver::Version;
+use serde::{Deserialize, Serialize};
 use solang_parser::pt::{Import, SourceUnitPart};
-
-use crate::{parser::ParsedSnippet, prelude::ChiselRunner};
+use std::{path::Path, time::SystemTime};
 
 /// A Chisel REPL Session
 #[derive(Debug, Serialize, Deserialize)]
@@ -73,55 +67,6 @@ impl ChiselSession {
         })
     }
 
-    /// Runs the REPL contract within the executor
-    /// TODO
-    pub fn execute(&self) -> Result<(), &str> {
-        // Recompile the project and ensure no errors occurred.
-        // TODO: This is pretty slow. Need to speed it up.
-        if let Ok(artifacts) = self.project.as_ref().ok_or("Missing Project")?.compile() {
-            if artifacts.has_compiler_errors() {
-                return Err("Failed to compile REPL contract.")
-            }
-
-            if let Some(contract) = artifacts.find_first("REPL") {
-                let CompactContractBytecode { bytecode, .. } =
-                    contract.clone().into_contract_bytecode();
-
-                // let abi = abi.expect("No ABI for contract.");
-                let bytecode =
-                    bytecode.expect("No bytecode for contract.").object.into_bytes().unwrap();
-
-                // Create a new runner
-                let mut runner = self.prepare_runner();
-                // Run w/ no libraries for now
-                let res = runner.run(&[], bytecode);
-                println!("{:?}", res);
-            } else {
-                return Err("Could not find artifact for REPL contract.")
-            }
-
-            Ok(())
-        } else {
-            Err("Failed to compile REPL contract.")
-        }
-    }
-
-    /// Prepare a runner for the Chisel REPL environment
-    pub fn prepare_runner(&self) -> ChiselRunner {
-        // Spawn backend with no fork at the moment
-        // TODO: Make the backend persistent, shouldn't spawn a new one each time.
-        let backend = Backend::spawn(None);
-
-        // Build a new executor
-        // TODO: Configurability, custom inspector for `step_end`
-        let builder = ExecutorBuilder::default()
-            .set_tracing(true)
-            .with_spec(revm::SpecId::LATEST)
-            .with_gas_limit(u64::MAX.into());
-
-        ChiselRunner::new(builder.build(backend), U256::MAX, Address::zero())
-    }
-
     /// Helper function to create a new temporary project with proper error handling.
     ///
     /// ### Panics
@@ -133,9 +78,7 @@ impl ChiselSession {
             panic!("failed to create a temporary project for the chisel session! {e}");
         })
     }
-}
 
-impl ChiselSession {
     // TODO:::: This should follow soli's pattern of contract generation, for _each_ contract
     // defined by our sessions's ParsedSnippets TODO:::: We define generation in
     // [generator.rs](./generator.rs), following soli's pattern.
@@ -276,10 +219,7 @@ contract REPL {{
             fallback_snippets
         )
     }
-}
 
-// ChiselSession Cache Functionality
-impl ChiselSession {
     /// Clears the cache directory
     ///
     /// ### WARNING

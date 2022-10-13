@@ -7,7 +7,6 @@ use forge::{
     debug::DebugArena,
     executor::{DeployResult, Executor, RawCallResult},
     trace::{CallTraceArena, TraceKind},
-    CALLER,
 };
 use revm::{return_ok, Return};
 use std::collections::{BTreeMap, VecDeque};
@@ -41,6 +40,7 @@ pub struct ChiselResult {
     pub returned: bytes::Bytes,
     pub address: Option<Address>,
     pub script_wallets: Vec<LocalWallet>,
+    pub state: Option<(revm::Stack, revm::Memory, revm::Return)>,
 }
 
 /// ChiselRunner implementation
@@ -197,6 +197,7 @@ impl ChiselRunner {
             debug,
             transactions,
             script_wallets,
+            chisel_state,
             ..
         } = res;
 
@@ -217,6 +218,7 @@ impl ChiselRunner {
             transactions,
             address: None,
             script_wallets,
+            state: chisel_state,
         })
     }
 }

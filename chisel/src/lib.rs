@@ -17,6 +17,9 @@ pub mod dispatcher;
 /// The runner
 pub mod runner;
 
+/// The executor
+pub mod executor;
+
 /// A Solidity Highlighter module
 pub mod sol_highlighter;
 
