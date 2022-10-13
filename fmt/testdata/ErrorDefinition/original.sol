@@ -4,6 +4,7 @@ error
   TopLevelCustomError();
   error TopLevelCustomErrorWithArg(uint    x)  ;
 error TopLevelCustomErrorArgWithoutName  (string);
+error Error1(uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256);
 
 contract Errors {
   error

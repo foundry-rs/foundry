@@ -3,7 +3,7 @@ use crate::opts::{cast::parse_name_or_address, EthereumOpts, TransactionOpts, Wa
 use cast::{Cast, TxBuilder};
 use clap::Parser;
 use ethers::{providers::Middleware, types::NameOrAddress};
-use foundry_common::get_http_provider;
+use foundry_common::try_get_http_provider;
 use foundry_config::{Chain, Config};
 use std::sync::Arc;
 
@@ -11,7 +11,7 @@ use std::sync::Arc;
 pub struct SendTxArgs {
     #[clap(
             help = "The destination of the transaction. If not provided, you must use cast send --create.",
-            parse(try_from_str = parse_name_or_address),
+             value_parser = parse_name_or_address,
             value_name = "TO"
         )]
     to: Option<NameOrAddress>,
@@ -80,9 +80,7 @@ impl SendTxArgs {
             command,
         } = self;
         let config = Config::from(&eth);
-        let provider = Arc::new(get_http_provider(
-            &config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
-        ));
+        let provider = Arc::new(try_get_http_provider(config.get_rpc_url_or_localhost_http()?)?);
         let chain: Chain =
             if let Some(chain) = eth.chain { chain } else { provider.get_chainid().await?.into() };
         let mut sig = sig.unwrap_or_default();

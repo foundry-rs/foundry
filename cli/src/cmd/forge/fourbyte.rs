@@ -1,11 +1,13 @@
 use crate::{
     cmd::forge::build::{CoreBuildArgs, ProjectPathsArgs},
-    compile,
     opts::forge::CompilerArgs,
 };
 use clap::Parser;
 use ethers::prelude::artifacts::output_selection::ContractOutputSelection;
-use foundry_utils::selectors::{import_selectors, SelectorImportData};
+use foundry_common::{
+    compile,
+    selectors::{import_selectors, SelectorImportData},
+};
 
 #[derive(Debug, Clone, Parser)]
 pub struct UploadSelectorsArgs {

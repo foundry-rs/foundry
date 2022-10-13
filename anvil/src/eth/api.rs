@@ -33,27 +33,30 @@ use anvil_core::{
         },
         EthRequest,
     },
-    types::{EvmMineOptions, Forking, GethDebugTracingOptions, Index, Work},
+    types::{EvmMineOptions, Forking, Index, Work},
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use ethers::{
     abi::ethereum_types::H64,
-    prelude::TxpoolInspect,
+    prelude::{GethTrace, TxpoolInspect},
     providers::ProviderError,
     types::{
         transaction::{
             eip2930::{AccessList, AccessListWithGasUsed},
             eip712::TypedData,
         },
-        Address, Block, BlockId, BlockNumber, Bytes, FeeHistory, Filter, FilteredParams, Log,
-        Trace, Transaction, TransactionReceipt, TxHash, TxpoolContent, TxpoolInspectSummary,
-        TxpoolStatus, TxpoolTransaction, H256, U256, U64,
+        Address, Block, BlockId, BlockNumber, Bytes, FeeHistory, Filter, FilteredParams,
+        GethDebugTracingOptions, Log, Trace, Transaction, TransactionReceipt, TxHash,
+        TxpoolContent, TxpoolInspectSummary, TxpoolStatus, TxpoolTransaction, H256, U256, U64,
     },
     utils::rlp,
 };
 use forge::{executor::DatabaseRef, revm::BlockEnv};
 use foundry_common::ProviderBuilder;
-use foundry_evm::revm::{return_ok, return_revert, Return};
+use foundry_evm::{
+    executor::backend::DatabaseError,
+    revm::{return_ok, return_revert, Return},
+};
 use futures::channel::mpsc::Receiver;
 use parking_lot::RwLock;
 use std::{sync::Arc, time::Duration};
@@ -147,6 +150,9 @@ impl EthApi {
             EthRequest::EthNetworkId(_) => self.network_id().to_rpc_result(),
             EthRequest::NetListening(_) => self.net_listening().to_rpc_result(),
             EthRequest::EthGasPrice(_) => self.gas_price().to_rpc_result(),
+            EthRequest::EthMaxPriorityFeePerGas(_) => {
+                self.gas_max_priority_fee_per_gas().to_rpc_result()
+            }
             EthRequest::EthAccounts(_) => self.accounts().to_rpc_result(),
             EthRequest::EthBlockNumber(_) => self.block_number().to_rpc_result(),
             EthRequest::EthGetStorageAt(addr, slot, block) => {
@@ -438,6 +444,14 @@ impl EthApi {
     /// Returns the current gas price
     pub fn gas_price(&self) -> Result<U256> {
         Ok(self.backend.gas_price())
+    }
+
+    /// Returns a fee per gas that is an estimate of how much you can pay as a priority fee, or
+    /// 'tip', to get a transaction included in the current block.
+    ///
+    /// Handler for ETH RPC call: `eth_maxPriorityFeePerGas`
+    pub fn gas_max_priority_fee_per_gas(&self) -> Result<U256> {
+        Ok(self.backend.max_priority_fee_per_gas())
     }
 
     /// Returns the block gas limit
@@ -749,7 +763,7 @@ impl EthApi {
         // pre-validate
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
-        let on_chain_nonce = self.backend.current_nonce(*pending_transaction.sender()).await;
+        let on_chain_nonce = self.backend.current_nonce(*pending_transaction.sender()).await?;
         let from = *pending_transaction.sender();
         let nonce = *pending_transaction.transaction.nonce();
         let requires = required_marker(nonce, on_chain_nonce, from);
@@ -784,7 +798,7 @@ impl EthApi {
                 if fork.predates_fork(number.as_u64()) {
                     if overrides.is_some() {
                         return Err(BlockchainError::StateOverrideError(
-                            "not available on past forked blocks".into(),
+                            "not available on past forked blocks".to_string(),
                         ))
                     }
                     return Ok(fork.call(&request, Some(number.into())).await?)
@@ -865,6 +879,7 @@ impl EthApi {
     }
 
     /// Estimate gas needed for execution of given contract.
+    /// If no block parameter is given, it will use the pending block by default
     ///
     /// Handler for ETH RPC call: `eth_estimateGas`
     pub async fn estimate_gas(
@@ -873,7 +888,8 @@ impl EthApi {
         block_number: Option<BlockId>,
     ) -> Result<U256> {
         node_info!("eth_estimateGas");
-        self.do_estimate_gas(request, block_number).await
+        self.do_estimate_gas(request, block_number.or_else(|| Some(BlockNumber::Pending.into())))
+            .await
     }
 
     /// Get transaction by its hash.
@@ -1051,7 +1067,7 @@ impl EthApi {
 
         // highest and lowest block num in the requested range
         let highest = number;
-        let lowest = highest.saturating_sub(block_count);
+        let lowest = highest.saturating_sub(block_count.saturating_sub(1));
 
         // only support ranges that are in cache range
         if lowest < self.backend.best_number().as_u64().saturating_sub(self.fee_history_limit) {
@@ -1069,7 +1085,7 @@ impl EthApi {
 
         let mut rewards = Vec::new();
         // iter over the requested block range
-        for n in lowest..highest + 1 {
+        for n in lowest..=highest {
             // <https://eips.ethereum.org/EIPS/eip-1559>
             if let Some(block) = fee_history.get(&n) {
                 response.base_fee_per_gas.push(U256::from(block.base_fee));
@@ -1200,12 +1216,15 @@ impl EthApi {
     /// Handler for RPC call: `debug_traceTransaction`
     pub async fn debug_trace_transaction(
         &self,
-        _tx_hash: H256,
-        _opts: GethDebugTracingOptions,
-    ) -> Result<Vec<Trace>> {
+        tx_hash: H256,
+        opts: GethDebugTracingOptions,
+    ) -> Result<GethTrace> {
         node_info!("debug_traceTransaction");
-        // return `MethodNotFound` until implemented <https://github.com/foundry-rs/foundry/issues/1737>
-        Err(RpcError::method_not_found().into())
+        if opts.tracer.is_some() {
+            return Err(RpcError::invalid_params("non-default tracer not supported yet").into())
+        }
+
+        self.backend.debug_trace_transaction(tx_hash, opts).await
     }
 
     /// Returns traces for the transaction hash via parity's tracing endpoint
@@ -1233,7 +1252,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `anvil_impersonateAccount`
     pub async fn anvil_impersonate_account(&self, address: Address) -> Result<()> {
         node_info!("anvil_impersonateAccount");
-        self.backend.impersonate(address).await;
+        self.backend.impersonate(address).await?;
         Ok(())
     }
 
@@ -1242,7 +1261,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `anvil_stopImpersonatingAccount`
     pub async fn anvil_stop_impersonating_account(&self, address: Address) -> Result<()> {
         node_info!("anvil_stopImpersonatingAccount");
-        self.backend.stop_impersonating(address).await;
+        self.backend.stop_impersonating(address).await?;
         Ok(())
     }
 
@@ -1334,7 +1353,7 @@ impl EthApi {
     /// Handler for RPC call: `anvil_setBalance`
     pub async fn anvil_set_balance(&self, address: Address, balance: U256) -> Result<()> {
         node_info!("anvil_setBalance");
-        self.backend.set_balance(address, balance).await;
+        self.backend.set_balance(address, balance).await?;
         Ok(())
     }
 
@@ -1343,7 +1362,7 @@ impl EthApi {
     /// Handler for RPC call: `anvil_setCode`
     pub async fn anvil_set_code(&self, address: Address, code: Bytes) -> Result<()> {
         node_info!("anvil_setCode");
-        self.backend.set_code(address, code).await;
+        self.backend.set_code(address, code).await?;
         Ok(())
     }
 
@@ -1352,7 +1371,7 @@ impl EthApi {
     /// Handler for RPC call: `anvil_setNonce`
     pub async fn anvil_set_nonce(&self, address: Address, nonce: U256) -> Result<()> {
         node_info!("anvil_setNonce");
-        self.backend.set_nonce(address, nonce).await;
+        self.backend.set_nonce(address, nonce).await?;
         Ok(())
     }
 
@@ -1366,7 +1385,7 @@ impl EthApi {
         val: H256,
     ) -> Result<bool> {
         node_info!("anvil_setStorageAt");
-        self.backend.set_storage_at(address, slot, val).await;
+        self.backend.set_storage_at(address, slot, val).await?;
         Ok(true)
     }
 
@@ -1718,7 +1737,7 @@ impl EthApi {
         block_env: BlockEnv,
     ) -> Result<U256>
     where
-        D: DatabaseRef,
+        D: DatabaseRef<Error = DatabaseError>,
     {
         // call takes at least this amount
         const MIN_GAS: U256 = U256([21_000, 0, 0, 0]);

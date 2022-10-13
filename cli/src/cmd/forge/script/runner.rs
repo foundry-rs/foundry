@@ -38,7 +38,7 @@ impl ScriptRunner {
         if !is_broadcast {
             if self.sender == Config::DEFAULT_SENDER {
                 // We max out their balance so that they can deploy and make calls.
-                self.executor.set_balance(self.sender, U256::MAX);
+                self.executor.set_balance(self.sender, U256::MAX)?;
             }
 
             if need_create2_deployer {
@@ -46,10 +46,10 @@ impl ScriptRunner {
             }
         }
 
-        self.executor.set_nonce(self.sender, sender_nonce.as_u64());
+        self.executor.set_nonce(self.sender, sender_nonce.as_u64())?;
 
         // We max out their balance so that they can deploy and make calls.
-        self.executor.set_balance(CALLER, U256::MAX);
+        self.executor.set_balance(CALLER, U256::MAX)?;
 
         // Deploy libraries
         let mut traces: Vec<(TraceKind, CallTraceArena)> = libraries
@@ -78,11 +78,19 @@ impl ScriptRunner {
             .map_err(|err| eyre::eyre!("Failed to deploy script:\n{}", err))?;
 
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)).into_iter());
-        self.executor.set_balance(address, self.initial_balance);
+        self.executor.set_balance(address, self.initial_balance)?;
 
         // Optionally call the `setUp` function
-        let (success, gas_used, labeled_addresses, transactions, debug) = if !setup {
-            (true, 0, Default::default(), None, vec![constructor_debug].into_iter().collect())
+        let (success, gas_used, labeled_addresses, transactions, debug, script_wallets) = if !setup
+        {
+            (
+                true,
+                0,
+                Default::default(),
+                None,
+                vec![constructor_debug].into_iter().collect(),
+                vec![],
+            )
         } else {
             match self.executor.setup(Some(self.sender), address) {
                 Ok(CallResult {
@@ -93,6 +101,7 @@ impl ScriptRunner {
                     debug,
                     gas_used,
                     transactions,
+                    script_wallets,
                     ..
                 }) |
                 Err(EvmError::Execution {
@@ -103,6 +112,7 @@ impl ScriptRunner {
                     debug,
                     gas_used,
                     transactions,
+                    script_wallets,
                     ..
                 }) => {
                     traces
@@ -113,8 +123,10 @@ impl ScriptRunner {
                     // any broadcasts, then the EVM cheatcode module hasn't corrected the nonce.
                     // So we have to
                     if transactions.is_none() || transactions.as_ref().unwrap().is_empty() {
-                        self.executor
-                            .set_nonce(self.sender, sender_nonce.as_u64() + libraries.len() as u64);
+                        self.executor.set_nonce(
+                            self.sender,
+                            sender_nonce.as_u64() + libraries.len() as u64,
+                        )?;
                     }
 
                     (
@@ -123,6 +135,7 @@ impl ScriptRunner {
                         labels,
                         transactions,
                         vec![constructor_debug, debug].into_iter().collect(),
+                        script_wallets,
                     )
                 }
                 Err(e) => return Err(e.into()),
@@ -141,6 +154,7 @@ impl ScriptRunner {
                 traces,
                 debug,
                 address: None,
+                script_wallets,
             },
         ))
     }
@@ -194,6 +208,7 @@ impl ScriptRunner {
                 labeled_addresses: Default::default(),
                 transactions: Default::default(),
                 address: Some(address),
+                script_wallets: vec![],
             })
         } else {
             eyre::bail!("ENS not supported.");
@@ -214,6 +229,15 @@ impl ScriptRunner {
         value: U256,
         commit: bool,
     ) -> eyre::Result<ScriptResult> {
+        let fs_commit_changed =
+            if let Some(ref mut cheatcodes) = self.executor.inspector_config_mut().cheatcodes {
+                let original_fs_commit = cheatcodes.fs_commit;
+                cheatcodes.fs_commit = false;
+                original_fs_commit != cheatcodes.fs_commit
+            } else {
+                false
+            };
+
         let mut res = self.executor.call_raw(from, to, calldata.0.clone(), value)?;
         let mut gas_used = res.gas_used;
         if matches!(res.exit_reason, return_ok!()) {
@@ -259,12 +283,32 @@ impl ScriptRunner {
             self.executor.env_mut().tx.gas_limit = init_gas_limit;
         }
 
+        // if we changed `fs_commit` during gas limit search, re-execute the call with original
+        // value
+        if fs_commit_changed {
+            if let Some(ref mut cheatcodes) = self.executor.inspector_config_mut().cheatcodes {
+                cheatcodes.fs_commit = !cheatcodes.fs_commit;
+            }
+
+            res = self.executor.call_raw(from, to, calldata.0.clone(), value)?;
+        }
+
         if commit {
             // if explicitly requested we can now commit the call
             res = self.executor.call_raw_committing(from, to, calldata.0, value)?;
         }
 
-        let RawCallResult { result, reverted, logs, traces, labels, debug, transactions, .. } = res;
+        let RawCallResult {
+            result,
+            reverted,
+            logs,
+            traces,
+            labels,
+            debug,
+            transactions,
+            script_wallets,
+            ..
+        } = res;
 
         Ok(ScriptResult {
             returned: result,
@@ -282,6 +326,7 @@ impl ScriptRunner {
             labeled_addresses: labels,
             transactions,
             address: None,
+            script_wallets,
         })
     }
 }

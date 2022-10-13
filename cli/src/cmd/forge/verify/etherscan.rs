@@ -1,25 +1,32 @@
-use crate::cmd::{retry::RETRY_CHECK_ON_VERIFY, LoadConfig};
+use super::{VerifyArgs, VerifyCheckArgs};
+use crate::cmd::{
+    forge::verify::provider::VerificationProvider, read_constructor_args_file,
+    retry::RETRY_CHECK_ON_VERIFY, LoadConfig,
+};
 use async_trait::async_trait;
 use cast::SimpleCast;
 use ethers::{
+    abi::Function,
     etherscan::{
-        contract::{CodeFormat, VerifyContract},
         utils::lookup_compiler_version,
+        verify::{CodeFormat, VerifyContract},
         Client,
     },
     prelude::artifacts::StandardJsonCompilerInput,
     solc::{
-        artifacts::{BytecodeHash, Source},
+        artifacts::{BytecodeHash, CompactContract, Source},
         cache::CacheEntry,
         AggregatedCompilerOutput, CompilerInput, Project, Solc,
     },
 };
 use eyre::{eyre, Context};
+use foundry_common::abi::encode_args;
 use foundry_config::{Chain, Config, SolcReq};
 use foundry_utils::Retry;
 use futures::FutureExt;
 use once_cell::sync::Lazy;
 use regex::Regex;
+use rustc_hex::ToHex;
 use semver::{BuildMetadata, Version};
 use std::{
     collections::BTreeMap,
@@ -27,11 +34,11 @@ use std::{
 };
 use tracing::{trace, warn};
 
-use super::{VerificationProvider, VerifyArgs, VerifyCheckArgs};
-
 pub static RE_BUILD_COMMIT: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?P<commit>commit\.[0-9,a-f]{8})"#).unwrap());
 
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct EtherscanVerificationProvider;
 
 #[async_trait]
@@ -46,11 +53,15 @@ impl VerificationProvider for EtherscanVerificationProvider {
         let retry: Retry = args.retry.into();
         let resp = retry.run_async(|| {
             async {
-                println!("\nSubmitting verification for [{}] {:?}.", verify_args.contract_name, SimpleCast::checksum_address(&verify_args.address));
+                println!("\nSubmitting verification for [{}] {:?}.", verify_args.contract_name, SimpleCast::to_checksum_address(&verify_args.address));
                 let resp = etherscan
                     .submit_contract_verification(&verify_args)
                     .await
-                    .wrap_err("Failed to submit contract verification")?;
+                    .wrap_err_with(|| {
+                        // valid json
+                        let args = serde_json::to_string(&verify_args).unwrap();
+                        format!("Failed to submit contract verification, payload:\n{}", args)
+                    })?;
 
                 if resp.status == "0" {
                     if resp.result == "Contract source code already verified" {
@@ -170,24 +181,34 @@ impl EtherscanVerificationProvider {
     /// If `--flatten` is set to `true` then this will send with [`CodeFormat::SingleFile`]
     /// otherwise this will use the [`CodeFormat::StandardJsonInput`]
     async fn create_verify_request(&self, args: &VerifyArgs) -> eyre::Result<VerifyContract> {
-        let mut config = args.load_config_emit_warnings();
+        let mut config = args.try_load_config_emit_warnings()?;
         config.libraries.extend(args.libraries.clone());
 
         let project = config.project()?;
 
-        if args.contract.path.is_none() && !config.cache {
-            eyre::bail!(
-                "If cache is disabled, contract info must be provided in the format <path>:<name>"
-            );
+        if !config.cache {
+            if args.contract.path.is_none() {
+                eyre::bail!(
+                    "If cache is disabled, contract info must be provided in the format <path>:<name>"
+                );
+            } else if args.constructor_args_path.is_some() {
+                eyre::bail!(
+                    "Cache must be enabled in order to use the `--constructor-args-path` option"
+                );
+            }
         }
 
         let should_read_cache = args.contract.path.is_none() ||
-            (args.compiler_version.is_none() && config.solc.is_none());
-        let cached_entry = if config.cache && should_read_cache {
+            (args.compiler_version.is_none() && config.solc.is_none()) ||
+            args.constructor_args_path.is_some();
+        let (cached_entry, contract) = if config.cache && should_read_cache {
             let cache = project.read_cache_file()?;
-            Some(crate::cmd::get_cached_entry_by_name(&cache, &args.contract.name)?)
+            let cached_entry = crate::cmd::get_cached_entry_by_name(&cache, &args.contract.name)?;
+            let contract: CompactContract =
+                cache.read_artifact(cached_entry.0.clone(), &args.contract.name)?;
+            (Some(cached_entry), Some(contract))
         } else {
-            None
+            (None, None)
         };
 
         let contract_path = if let Some(ref path) = args.contract.path {
@@ -217,9 +238,31 @@ impl EtherscanVerificationProvider {
 
         let compiler_version = ensure_solc_build_metadata(compiler_version).await?;
         let compiler_version = format!("v{}", compiler_version);
+        let constructor_args = if let Some(ref constructor_args_path) = args.constructor_args_path {
+            let abi = contract.unwrap().abi.ok_or(eyre!("Can't find ABI in cached artifact."))?;
+            let constructor = abi
+                .constructor()
+                .ok_or(eyre!("Can't retrieve constructor info from artifact ABI."))?;
+            #[allow(deprecated)]
+            let func = Function {
+                name: "constructor".to_string(),
+                inputs: constructor.inputs.clone(),
+                outputs: vec![],
+                constant: None,
+                state_mutability: Default::default(),
+            };
+            let encoded_args = encode_args(
+                &func,
+                &read_constructor_args_file(constructor_args_path.to_path_buf())?,
+            )?
+            .to_hex::<String>();
+            Some(encoded_args[8..].into())
+        } else {
+            args.constructor_args.clone()
+        };
         let mut verify_args =
             VerifyContract::new(args.address, contract_name, source, compiler_version)
-                .constructor_arguments(args.constructor_args.clone())
+                .constructor_arguments(constructor_args)
                 .code_format(code_format);
 
         if code_format == CodeFormat::SingleFile {
@@ -391,7 +434,7 @@ To skip this solc dry, pass `--force`.
             .libraries
             .libs
             .into_iter()
-            .map(|(f, libs)| (f.strip_prefix(&project.root()).unwrap_or(&f).to_path_buf(), libs))
+            .map(|(f, libs)| (f.strip_prefix(project.root()).unwrap_or(&f).to_path_buf(), libs))
             .collect();
 
         let source =

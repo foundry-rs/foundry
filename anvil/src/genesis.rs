@@ -1,6 +1,9 @@
 //! Bindings for geth's `genesis.json` format
 use crate::revm::AccountInfo;
-use ethers::types::{serde_helpers::*, Address, Bytes, H256, U256};
+use ethers::{
+    signers::LocalWallet,
+    types::{serde_helpers::*, Address, Bytes, H256, U256},
+};
 use forge::revm::{Bytecode, Env, KECCAK_EMPTY};
 use foundry_common::errors::FsPathError;
 use serde::{Deserialize, Serialize};
@@ -8,7 +11,7 @@ use std::{collections::HashMap, path::Path};
 
 /// Genesis specifies the header fields, state of a genesis block. It also defines hard fork
 /// switch-over blocks through the chain configuration See also: <https://github.com/ethereum/go-ethereum/blob/0ce494b60cd00d70f1f9f2dd0b9bfbd76204168a/core/genesis.go#L47-L66>
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Genesis {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -94,15 +97,20 @@ impl Genesis {
         env.block.difficulty = self.difficulty.into();
         env.block.gas_limit = self.gas_limit.into();
     }
+
+    /// Returns all private keys from the genesis accounts, if they exist
+    pub fn private_keys(&self) -> Vec<LocalWallet> {
+        self.alloc.accounts.values().filter_map(|acc| acc.private_key.clone()).collect()
+    }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 #[serde(transparent)]
 pub struct Alloc {
     pub accounts: HashMap<Address, GenesisAccount>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GenesisAccount {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code: Option<Bytes>,
@@ -116,8 +124,13 @@ pub struct GenesisAccount {
         skip_serializing_if = "Option::is_none"
     )]
     pub nonce: Option<u64>,
-    #[serde(rename = "secretKey", default, skip_serializing_if = "Option::is_none")]
-    pub private_key: Option<Bytes>,
+    #[serde(
+        rename = "secretKey",
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "secret_key"
+    )]
+    pub private_key: Option<LocalWallet>,
 }
 
 impl From<GenesisAccount> for AccountInfo {
@@ -201,6 +214,44 @@ pub struct CliqueConfig {
     pub epoch: u64,
 }
 
+/// serde support for `secretKey` in genesis
+
+pub mod secret_key {
+    use ethers::{core::k256::SecretKey, signers::LocalWallet, types::Bytes};
+    use serde::{
+        de::{self},
+        Deserialize, Deserializer, Serialize, Serializer,
+    };
+
+    pub fn serialize<S>(value: &Option<LocalWallet>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if let Some(wallet) = value {
+            Bytes::from(wallet.signer().to_bytes().as_ref()).serialize(serializer)
+        } else {
+            serializer.serialize_none()
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<LocalWallet>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        if let Some(s) = Option::<Bytes>::deserialize(deserializer)? {
+            if s.is_empty() {
+                return Ok(None)
+            }
+            SecretKey::from_be_bytes(s.as_ref())
+                .map_err(de::Error::custom)
+                .map(Into::into)
+                .map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,7 +277,8 @@ mod tests {
     "coinbase": "0x0000000000000000000000000000000000000000",
     "alloc": {
         "71562b71999873db5b286df957af199ec94617f7": {
-            "balance": "0xffffffffffffffffffffffffff"
+            "balance": "0xffffffffffffffffffffffffff",
+            "secretkey": "0x305b526d493844b63466be6d48a424ab83f5216011eef860acc6db4c1821adc9"
         }
     },
     "number": "0x0",

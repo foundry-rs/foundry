@@ -1,11 +1,13 @@
 use crate::{
     executor::{
-        backend::{diagnostic::RevertDiagnostic, Backend, DatabaseExt, LocalForkId},
+        backend::{
+            diagnostic::RevertDiagnostic, error::DatabaseError, Backend, DatabaseExt, LocalForkId,
+        },
         fork::{CreateFork, ForkId},
     },
     Address,
 };
-use ethers::prelude::{H160, H256, U256};
+use ethers::prelude::{H256, U256};
 use hashbrown::HashMap as Map;
 use revm::{
     db::DatabaseRef, Account, AccountInfo, Bytecode, Database, Env, ExecutionResult, Inspector,
@@ -21,7 +23,7 @@ use tracing::trace;
 /// a clone-on-write `Backend`, where cloning is only necessary if cheatcodes will modify the
 /// `Backend`
 ///
-/// Entire purpose of this type is for fuzzing. A test function fuzzer will repeatedly execute  the
+/// Entire purpose of this type is for fuzzing. A test function fuzzer will repeatedly execute the
 /// function via immutable raw (no state changes) calls.
 ///
 /// **N.B.**: we're assuming cheatcodes that alter the state (like multi fork swapping) are niche.
@@ -48,13 +50,13 @@ impl<'a> FuzzBackendWrapper<'a> {
     /// Executes the configured transaction of the `env` without committing state changes
     pub fn inspect_ref<INSP>(
         &mut self,
-        mut env: Env,
+        env: &mut Env,
         mut inspector: INSP,
     ) -> (ExecutionResult, Map<Address, Account>)
     where
         INSP: Inspector<Self>,
     {
-        revm::evm_inner::<Self, true>(&mut env, self, &mut inspector).transact()
+        revm::evm_inner::<Self, true>(env, self, &mut inspector).transact()
     }
 }
 
@@ -83,6 +85,16 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         self.backend.to_mut().create_fork(fork, journaled_state)
     }
 
+    fn create_fork_at_transaction(
+        &mut self,
+        fork: CreateFork,
+        journaled_state: &JournaledState,
+        transaction: H256,
+    ) -> eyre::Result<LocalForkId> {
+        trace!(?transaction, "fuzz: create fork at");
+        self.backend.to_mut().create_fork_at_transaction(fork, journaled_state, transaction)
+    }
+
     fn select_fork(
         &mut self,
         id: LocalForkId,
@@ -102,6 +114,28 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
     ) -> eyre::Result<()> {
         trace!(?id, ?block_number, "fuzz: roll fork");
         self.backend.to_mut().roll_fork(id, block_number, env, journaled_state)
+    }
+
+    fn roll_fork_to_transaction(
+        &mut self,
+        id: Option<LocalForkId>,
+        transaction: H256,
+        env: &mut Env,
+        journaled_state: &mut JournaledState,
+    ) -> eyre::Result<()> {
+        trace!(?id, ?transaction, "fuzz: roll fork to transaction");
+        self.backend.to_mut().roll_fork_to_transaction(id, transaction, env, journaled_state)
+    }
+
+    fn transact(
+        &mut self,
+        id: Option<LocalForkId>,
+        transaction: H256,
+        env: &mut Env,
+        journaled_state: &mut JournaledState,
+    ) -> eyre::Result<()> {
+        trace!(?id, ?transaction, "fuzz: execute transaction");
+        self.backend.to_mut().transact(id, transaction, env, journaled_state)
     }
 
     fn active_fork_id(&self) -> Option<LocalForkId> {
@@ -135,38 +169,56 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
     fn add_persistent_account(&mut self, account: Address) -> bool {
         self.backend.to_mut().add_persistent_account(account)
     }
+
+    fn allow_cheatcode_access(&mut self, account: Address) -> bool {
+        self.backend.to_mut().allow_cheatcode_access(account)
+    }
+
+    fn revoke_cheatcode_access(&mut self, account: Address) -> bool {
+        self.backend.to_mut().revoke_cheatcode_access(account)
+    }
+
+    fn has_cheatcode_access(&self, account: Address) -> bool {
+        self.backend.has_cheatcode_access(account)
+    }
 }
 
 impl<'a> DatabaseRef for FuzzBackendWrapper<'a> {
-    fn basic(&self, address: H160) -> AccountInfo {
+    type Error = DatabaseError;
+
+    fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         DatabaseRef::basic(self.backend.as_ref(), address)
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> Bytecode {
+    fn code_by_hash(&self, code_hash: H256) -> Result<Bytecode, Self::Error> {
         DatabaseRef::code_by_hash(self.backend.as_ref(), code_hash)
     }
 
-    fn storage(&self, address: H160, index: U256) -> U256 {
+    fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
         DatabaseRef::storage(self.backend.as_ref(), address, index)
     }
 
-    fn block_hash(&self, number: U256) -> H256 {
+    fn block_hash(&self, number: U256) -> Result<H256, Self::Error> {
         DatabaseRef::block_hash(self.backend.as_ref(), number)
     }
 }
 
 impl<'a> Database for FuzzBackendWrapper<'a> {
-    fn basic(&mut self, address: H160) -> AccountInfo {
+    type Error = DatabaseError;
+
+    fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         DatabaseRef::basic(self, address)
     }
-    fn code_by_hash(&mut self, code_hash: H256) -> Bytecode {
+
+    fn code_by_hash(&mut self, code_hash: H256) -> Result<Bytecode, Self::Error> {
         DatabaseRef::code_by_hash(self, code_hash)
     }
-    fn storage(&mut self, address: H160, index: U256) -> U256 {
+
+    fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
         DatabaseRef::storage(self, address, index)
     }
 
-    fn block_hash(&mut self, number: U256) -> H256 {
+    fn block_hash(&mut self, number: U256) -> Result<H256, Self::Error> {
         DatabaseRef::block_hash(self, number)
     }
 }

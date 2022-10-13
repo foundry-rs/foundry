@@ -129,8 +129,38 @@ contract ExpectRevertTest is DSTest {
         Reverter reverter = new Reverter();
         cheats.expectRevert(bytes(""));
         reverter.revertWithoutReason();
+    }
+
+    function testExpectRevertAnyRevert() public {
+        cheats.expectRevert();
+        new ConstructorReverter("hello this is a revert message");
+
+        Reverter reverter = new Reverter();
+        cheats.expectRevert();
+        reverter.revertWithMessage("this is also a revert message");
+
+        cheats.expectRevert();
+        reverter.panic();
+
+        cheats.expectRevert();
+        reverter.revertWithCustomError();
+
+        Reverter reverter2 = new Reverter();
+        cheats.expectRevert();
+        reverter.nestedRevert(reverter2, "this too is a revert message");
+
+        Dummy dummy = new Dummy();
+        cheats.expectRevert();
+        reverter.callThenRevert(dummy, "revert message 4 i ran out of synonims for also");
+
         cheats.expectRevert();
         reverter.revertWithoutReason();
+    }
+
+    function testFailExpectRevertAnyRevertDidNotRevert() public {
+        Reverter reverter = new Reverter();
+        cheats.expectRevert();
+        reverter.doNotRevert();
     }
 
     function testFailExpectRevertDangling() public {

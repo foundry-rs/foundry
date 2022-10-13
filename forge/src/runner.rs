@@ -6,7 +6,7 @@ use ethers::{
     abi::{Abi, Function},
     types::{Address, Bytes, U256},
 };
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     TestFunctionExt,
@@ -14,7 +14,9 @@ use foundry_common::{
 use foundry_evm::{
     executor::{CallResult, DeployResult, EvmError, Executor},
     fuzz::{
-        invariant::{InvariantContract, InvariantExecutor, InvariantFuzzTestResult},
+        invariant::{
+            InvariantContract, InvariantExecutor, InvariantFuzzError, InvariantFuzzTestResult,
+        },
         FuzzedExecutor,
     },
     trace::{load_contracts, TraceKind},
@@ -76,11 +78,11 @@ impl<'a> ContractRunner<'a> {
         trace!(?setup, "Setting test contract");
 
         // We max out their balance so that they can deploy and make calls.
-        self.executor.set_balance(self.sender, U256::MAX);
-        self.executor.set_balance(CALLER, U256::MAX);
+        self.executor.set_balance(self.sender, U256::MAX)?;
+        self.executor.set_balance(CALLER, U256::MAX)?;
 
         // We set the nonce of the deployer accounts to 1 to get the same addresses as DappTools
-        self.executor.set_nonce(self.sender, 1);
+        self.executor.set_nonce(self.sender, 1)?;
 
         // Deploy libraries
         let mut traces = Vec::with_capacity(self.predeploy_libs.len());
@@ -136,9 +138,9 @@ impl<'a> ContractRunner<'a> {
 
         // Now we set the contracts initial balance, and we also reset `self.sender`s and `CALLER`s
         // balance to the initial balance we want
-        self.executor.set_balance(address, self.initial_balance);
-        self.executor.set_balance(self.sender, self.initial_balance);
-        self.executor.set_balance(CALLER, self.initial_balance);
+        self.executor.set_balance(address, self.initial_balance)?;
+        self.executor.set_balance(self.sender, self.initial_balance)?;
+        self.executor.set_balance(CALLER, self.initial_balance)?;
 
         self.executor.deploy_create2_deployer()?;
 
@@ -313,7 +315,7 @@ impl<'a> ContractRunner<'a> {
             results.into_iter().zip(functions.iter()).for_each(|(result, function)| {
                 match result.kind {
                     TestKind::Invariant(ref _cases, _) => {
-                        test_results.insert(function.name.clone(), result);
+                        test_results.insert(function.signature(), result);
                     }
                     _ => unreachable!(),
                 }
@@ -449,29 +451,45 @@ impl<'a> ContractRunner<'a> {
         let invariant_contract =
             InvariantContract { address, invariant_functions: functions, abi: self.contract };
 
-        if let Some(InvariantFuzzTestResult { invariants, cases, reverts }) =
+        if let Some(InvariantFuzzTestResult { invariants, cases, reverts, mut last_call_results }) =
             evm.invariant_fuzz(invariant_contract)?
         {
             let results = invariants
                 .iter()
-                .map(|(_, test_error)| {
+                .map(|(func_name, test_error)| {
                     let mut counterexample = None;
                     let mut logs = logs.clone();
                     let mut traces = traces.clone();
 
-                    if let Some(ref error) = test_error {
-                        if let TestError::Fail(_, _) = &error.test_error {
+                    match test_error {
+                        // If invariants were broken, replay the error to collect logs and traces
+                        Some(
+                            error @ InvariantFuzzError { test_error: TestError::Fail(_, _), .. },
+                        ) => {
                             counterexample = error.replay(
                                 self.executor.clone(),
                                 known_contracts,
                                 identified_contracts.clone(),
                                 &mut logs,
                                 &mut traces,
-                            );
+                            )?;
+                        }
+                        // If invariants ran successfully, collect last call logs and traces
+                        _ => {
+                            if let Some(last_call_result) = last_call_results
+                                .as_mut()
+                                .and_then(|call_results| call_results.remove(func_name))
+                            {
+                                logs.extend(last_call_result.logs);
+
+                                if let Some(last_call_traces) = last_call_result.traces {
+                                    traces.push((TraceKind::Execution, last_call_traces));
+                                }
+                            }
                         }
                     }
 
-                    TestResult {
+                    Ok(TestResult {
                         success: test_error.is_none(),
                         reason: test_error.as_ref().and_then(|err| {
                             (!err.revert_reason.is_empty()).then(|| err.revert_reason.clone())
@@ -482,9 +500,10 @@ impl<'a> ContractRunner<'a> {
                         coverage: None, // todo?
                         traces,
                         labeled_addresses: labeled_addresses.clone(),
-                    }
+                    })
                 })
-                .collect();
+                .collect::<Result<Vec<TestResult>>>()
+                .wrap_err("Failed to replay counter examples")?;
 
             Ok(results)
         } else {
@@ -504,13 +523,10 @@ impl<'a> ContractRunner<'a> {
 
         // Run fuzz test
         let start = Instant::now();
-        let mut result = FuzzedExecutor::new(
-            &self.executor,
-            runner,
-            self.sender,
-            Default::default(),
-        )
-        .fuzz(func, address, should_fail, self.errors);
+        let mut result =
+            FuzzedExecutor::new(&self.executor, runner, self.sender, Default::default())
+                .fuzz(func, address, should_fail, self.errors)
+                .wrap_err("Failed to run fuzz test")?;
 
         // Record logs, labels and traces
         logs.append(&mut result.logs);
@@ -530,8 +546,7 @@ impl<'a> ContractRunner<'a> {
             logs,
             kind: TestKind::Fuzz(result.cases),
             traces,
-            // TODO: Maybe support coverage for fuzz tests
-            coverage: None,
+            coverage: result.coverage,
             labeled_addresses,
         })
     }

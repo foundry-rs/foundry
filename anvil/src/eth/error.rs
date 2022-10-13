@@ -12,7 +12,7 @@ use ethers::{
     types::{Bytes, SignatureError, U256},
 };
 use foundry_common::SELECTOR_LEN;
-use foundry_evm::revm::Return;
+use foundry_evm::{executor::backend::DatabaseError, revm::Return};
 use serde::Serialize;
 use tracing::error;
 
@@ -70,6 +70,8 @@ pub enum BlockchainError {
     StateOverrideError(String),
     #[error("Timestamp error: {0}")]
     TimestampError(String),
+    #[error(transparent)]
+    DatabaseError(#[from] DatabaseError),
 }
 
 impl From<RpcError> for BlockchainError {
@@ -137,6 +139,14 @@ pub enum InvalidTransactionError {
     /// Thrown post London if the transaction's fee is less than the base fee of the block
     #[error("max fee per gas less than block base fee")]
     FeeTooLow,
+
+    /// Thrown when a tx was signed with a different chain_id
+    #[error("invalid chain id for signer")]
+    InvalidChainId,
+
+    /// Thrown when a legacy tx was signed for a different chain
+    #[error("Incompatible EIP-155 transaction, signed for another chain")]
+    IncompatibleEIP155,
 }
 
 /// Returns the revert reason from the `revm::TransactOut` data, if it's an abi encoded String.
@@ -259,6 +269,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 }
                 err @ BlockchainError::TimestampError(_) => {
                     RpcError::invalid_params(err.to_string())
+                }
+                BlockchainError::DatabaseError(err) => {
+                    RpcError::internal_error_with(err.to_string())
                 }
             }
             .into(),

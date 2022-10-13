@@ -1,5 +1,3 @@
-use std::cmp::Ordering;
-
 use crate::eth::utils::enveloped;
 use bytes::Buf;
 use ethers_core::{
@@ -10,8 +8,8 @@ use ethers_core::{
     },
 };
 use fastrlp::{length_of_length, Header, RlpDecodable, RlpEncodable};
-use foundry_evm::revm;
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, RlpEncodable, RlpDecodable)]
 pub struct Log {

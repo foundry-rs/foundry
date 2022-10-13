@@ -35,6 +35,14 @@ pub(crate) const VERSION_MESSAGE: &str = concat!(
     ")"
 );
 
+/// Deterministic fuzzer seed used for gas snapshots and coverage reports.
+///
+/// The keccak256 hash of "foundry rulez"
+pub static STATIC_FUZZ_SEED: [u8; 32] = [
+    0x01, 0x00, 0xfa, 0x69, 0xa5, 0xf1, 0x71, 0x0a, 0x95, 0xcd, 0xef, 0x94, 0x88, 0x9b, 0x02, 0x84,
+    0x5d, 0x64, 0x0b, 0x19, 0xad, 0xf0, 0xe3, 0x57, 0xb8, 0xd4, 0xbe, 0x7d, 0x49, 0xee, 0x70, 0xe6,
+];
+
 /// Useful extensions to [`std::path::Path`].
 pub trait FoundryPathExt {
     /// Returns true if the [`Path`] ends with `.t.sol`
@@ -84,54 +92,20 @@ pub fn evm_spec(evm: &EvmVersion) -> SpecId {
     }
 }
 
-/// Artifact/Contract identifier can take the following form:
-/// `<artifact file name>:<contract name>`, the `artifact file name` is the name of the json file of
-/// the contract's artifact and the contract name is the name of the solidity contract, like
-/// `SafeTransferLibTest.json:SafeTransferLibTest`
-///
-/// This returns the `contract name` part
-///
-/// # Example
-///
-/// ```
-/// use foundry_cli::utils;
-/// assert_eq!(
-///     "SafeTransferLibTest",
-///     utils::get_contract_name("SafeTransferLibTest.json:SafeTransferLibTest")
-/// );
-/// ```
-pub fn get_contract_name(id: &str) -> &str {
-    id.rsplit(':').next().unwrap_or(id)
-}
-
-/// This returns the `file name` part, See [`get_contract_name`]
-///
-/// # Example
-///
-/// ```
-/// use foundry_cli::utils;
-/// assert_eq!(
-///     "SafeTransferLibTest.json",
-///     utils::get_file_name("SafeTransferLibTest.json:SafeTransferLibTest")
-/// );
-/// ```
-pub fn get_file_name(id: &str) -> &str {
-    id.split(':').next().unwrap_or(id)
-}
-
 /// parse a hex str or decimal str as U256
 pub fn parse_u256(s: &str) -> eyre::Result<U256> {
     Ok(if s.starts_with("0x") { U256::from_str(s)? } else { U256::from_dec_str(s)? })
 }
 
-/// Return `rpc-url` cli argument if given, or consume `eth-rpc-url` from foundry.toml. Default to
+/// Returns `rpc-url` cli argument if given, or consume `eth-rpc-url` from foundry.toml. Default to
 /// `localhost:8545`
-pub fn consume_config_rpc_url(rpc_url: Option<String>) -> String {
-    if let Some(rpc_url) = rpc_url {
-        rpc_url
-    } else {
-        Config::load().eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string())
-    }
+///
+/// This also supports rpc aliases and try to load the current foundry.toml file if it exists
+pub fn try_consume_config_rpc_url(rpc_url: Option<String>) -> eyre::Result<String> {
+    let mut config = Config::load();
+    config.eth_rpc_url = rpc_url;
+    let url = config.get_rpc_url_or_localhost_http()?;
+    Ok(url.into_owned())
 }
 
 /// Parses an ether value from a string.

@@ -1,8 +1,9 @@
 use crate::cmd::utils::{Cmd, LoadConfig};
 
-use crate::{cmd::forge::build::CoreBuildArgs, compile};
+use crate::cmd::forge::build::CoreBuildArgs;
 use clap::{Parser, ValueHint};
-use ethers::contract::{ContractFilter, ExcludeContracts, MultiAbigen, SelectContracts};
+use ethers::contract::{Abigen, ContractFilter, ExcludeContracts, MultiAbigen, SelectContracts};
+use foundry_common::{compile, fs::json_files};
 use foundry_config::{
     figment::{
         self,
@@ -129,8 +130,20 @@ impl BindArgs {
 
     /// Instantiate the multi-abigen
     fn get_multi(&self, artifacts: impl AsRef<Path>) -> eyre::Result<MultiAbigen> {
-        let multi =
-            MultiAbigen::from_json_files(artifacts.as_ref())?.with_filter(self.get_filter());
+        let abigens = json_files(artifacts.as_ref())
+            .into_iter()
+            .filter_map(|path| {
+                // we don't want `.metadata.json files
+                let stem = path.file_stem()?;
+                if stem.to_str()?.ends_with(".metadata") {
+                    None
+                } else {
+                    Some(path)
+                }
+            })
+            .map(Abigen::from_file)
+            .collect::<Result<Vec<_>, _>>()?;
+        let multi = MultiAbigen::from_abigens(abigens).with_filter(self.get_filter());
 
         eyre::ensure!(
             !multi.is_empty(),
@@ -188,7 +201,7 @@ impl Cmd for BindArgs {
             compile::compile(&project, false, false)?;
         }
 
-        let artifacts = self.load_config_emit_warnings().out;
+        let artifacts = self.try_load_config_emit_warnings()?.out;
 
         if !self.overwrite && self.bindings_exist(&artifacts) {
             println!("Bindings found. Checking for consistency.");

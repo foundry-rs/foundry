@@ -44,7 +44,8 @@ use ethers::{
     prelude::{BlockNumber, TxHash, H256, U256, U64},
     types::{
         transaction::eip2930::AccessList, Address, Block as EthersBlock, BlockId, Bytes, Filter,
-        FilteredParams, Log, Trace, Transaction, TransactionReceipt,
+        FilteredParams, GethDebugTracingOptions, GethTrace, Log, Trace, Transaction,
+        TransactionReceipt,
     },
     utils::{get_contract_address, keccak256, rlp},
 };
@@ -54,6 +55,7 @@ use forge::{
 };
 use foundry_evm::{
     decode::decode_revert,
+    executor::backend::{DatabaseError, DatabaseResult},
     revm,
     revm::{
         db::CacheDB, Account, CreateScheme, Env, SpecId, TransactOut, TransactTo, TxEnv,
@@ -137,6 +139,7 @@ pub struct Backend {
     new_block_listeners: Arc<Mutex<Vec<UnboundedSender<NewBlockNotification>>>>,
     /// keeps track of active snapshots at a specific block
     active_snapshots: Arc<Mutex<HashMap<U256, (u64, H256)>>>,
+    enable_steps_tracing: bool,
 }
 
 impl Backend {
@@ -147,11 +150,12 @@ impl Backend {
         genesis: GenesisConfig,
         fees: FeeManager,
         fork: Option<ClientFork>,
+        enable_steps_tracing: bool,
     ) -> Self {
         // if this is a fork then adjust the blockchain storage
         let blockchain = if let Some(ref fork) = fork {
             trace!(target: "backend", "using forked blockchain at {}", fork.block_number());
-            Blockchain::forked(fork.block_number(), fork.block_hash())
+            Blockchain::forked(fork.block_number(), fork.block_hash(), fork.total_difficulty())
         } else {
             Blockchain::new(
                 &env.read(),
@@ -174,16 +178,18 @@ impl Backend {
             fees,
             genesis,
             active_snapshots: Arc::new(Mutex::new(Default::default())),
+            enable_steps_tracing,
         };
 
-        backend.apply_genesis().await;
+        // Note: this can only fail in forking mode, in which case we can't recover
+        backend.apply_genesis().await.expect("Failed to create genesis");
         backend
     }
 
     /// Applies the configured genesis settings
     ///
     /// This will fund, create the genesis accounts
-    async fn apply_genesis(&self) {
+    async fn apply_genesis(&self) -> DatabaseResult<()> {
         trace!(target: "backend", "setting genesis balances");
         let mut db = self.db.write().await;
 
@@ -195,7 +201,7 @@ impl Backend {
             fork_genesis_infos.clear();
 
             for address in self.genesis.accounts.iter().copied() {
-                let mut info = db.basic(address);
+                let mut info = db.basic(address)?.unwrap_or_default();
                 info.balance = self.genesis.balance;
                 db.insert_account(address, info.clone());
 
@@ -209,20 +215,21 @@ impl Backend {
         }
 
         // apply the genesis.json alloc
-        self.genesis.apply_genesis_json_alloc(db);
+        self.genesis.apply_genesis_json_alloc(db)?;
+        Ok(())
     }
 
     /// Sets the account to impersonate
     ///
     /// Returns `true` if the account is already impersonated
-    pub async fn impersonate(&self, addr: Address) -> bool {
+    pub async fn impersonate(&self, addr: Address) -> DatabaseResult<bool> {
         if self.cheats.is_impersonated(addr) {
-            return true
+            return Ok(true)
         }
         // need to bypass EIP-3607: Reject transactions from senders with deployed code by setting
         // the code hash to `KECCAK_EMPTY` temporarily and also remove the code itself and add back
         // when we stop impersonating
-        let mut account = self.db.read().await.basic(addr);
+        let mut account = self.get_account(addr).await?;
         let mut code_hash = None;
         let mut code = None;
         if account.code_hash != KECCAK_EMPTY {
@@ -230,20 +237,21 @@ impl Backend {
             code = account.code.take();
             self.db.write().await.insert_account(addr, account);
         }
-        self.cheats.impersonate(addr, code_hash, code)
+        Ok(self.cheats.impersonate(addr, code_hash, code))
     }
 
     /// Removes the account that from the impersonated set
     ///
     /// If the impersonated `addr` is a contract then we also reset the code here
-    pub async fn stop_impersonating(&self, addr: Address) {
+    pub async fn stop_impersonating(&self, addr: Address) -> DatabaseResult<()> {
         if let Some((Some(code_hash), code)) = self.cheats.stop_impersonating(&addr) {
             let mut db = self.db.write().await;
-            let mut account = db.basic(addr);
+            let mut account = db.basic(addr)?.unwrap_or_default();
             account.code_hash = code_hash;
             account.code = code;
             db.insert_account(addr, account)
         }
+        Ok(())
     }
 
     /// Returns the configured fork, if any
@@ -254,6 +262,11 @@ impl Backend {
     /// Returns the database
     pub fn get_db(&self) -> &Arc<AsyncRwLock<dyn Db>> {
         &self.db
+    }
+
+    /// Returns the `AccountInfo` from the database
+    pub async fn get_account(&self, address: Address) -> DatabaseResult<AccountInfo> {
+        Ok(self.db.read().await.basic(address)?.unwrap_or_default())
     }
 
     /// Whether we're forked off some remote client
@@ -294,11 +307,17 @@ impl Backend {
 
                 self.time.reset(env.block.timestamp.as_u64());
                 self.fees.set_base_fee(env.block.basefee);
+
+                // also reset the total difficulty
+                self.blockchain.storage.write().total_difficulty = fork.total_difficulty();
             }
 
             // reset storage
-            *self.blockchain.storage.write() =
-                BlockchainStorage::forked(fork.block_number(), fork.block_hash());
+            *self.blockchain.storage.write() = BlockchainStorage::forked(
+                fork.block_number(),
+                fork.block_hash(),
+                fork.total_difficulty(),
+            );
             self.states.write().clear();
 
             // insert back all genesis accounts, by reusing cached `AccountInfo`s we don't need to
@@ -312,7 +331,7 @@ impl Backend {
             }
 
             // reset the genesis.json alloc
-            self.genesis.apply_genesis_json_alloc(db);
+            self.genesis.apply_genesis_json_alloc(db)?;
 
             Ok(())
         } else {
@@ -368,13 +387,13 @@ impl Backend {
     }
 
     /// Returns balance of the given account.
-    pub async fn current_balance(&self, address: Address) -> U256 {
-        self.db.read().await.basic(address).balance
+    pub async fn current_balance(&self, address: Address) -> DatabaseResult<U256> {
+        Ok(self.get_account(address).await?.balance)
     }
 
     /// Returns balance of the given account.
-    pub async fn current_nonce(&self, address: Address) -> U256 {
-        self.db.read().await.basic(address).nonce.into()
+    pub async fn current_nonce(&self, address: Address) -> DatabaseResult<U256> {
+        Ok(self.get_account(address).await?.nonce.into())
     }
 
     /// Sets the coinbase address
@@ -383,23 +402,28 @@ impl Backend {
     }
 
     /// Sets the nonce of the given address
-    pub async fn set_nonce(&self, address: Address, nonce: U256) {
-        self.db.write().await.set_nonce(address, nonce.try_into().unwrap_or(u64::MAX));
+    pub async fn set_nonce(&self, address: Address, nonce: U256) -> DatabaseResult<()> {
+        self.db.write().await.set_nonce(address, nonce.try_into().unwrap_or(u64::MAX))
     }
 
     /// Sets the balance of the given address
-    pub async fn set_balance(&self, address: Address, balance: U256) {
-        self.db.write().await.set_balance(address, balance);
+    pub async fn set_balance(&self, address: Address, balance: U256) -> DatabaseResult<()> {
+        self.db.write().await.set_balance(address, balance)
     }
 
     /// Sets the code of the given address
-    pub async fn set_code(&self, address: Address, code: Bytes) {
-        self.db.write().await.set_code(address, code);
+    pub async fn set_code(&self, address: Address, code: Bytes) -> DatabaseResult<()> {
+        self.db.write().await.set_code(address, code)
     }
 
     /// Sets the value for the given slot of the given address
-    pub async fn set_storage_at(&self, address: Address, slot: U256, val: H256) {
-        self.db.write().await.set_storage_at(address, slot, val.into_uint());
+    pub async fn set_storage_at(
+        &self,
+        address: Address,
+        slot: U256,
+        val: H256,
+    ) -> DatabaseResult<()> {
+        self.db.write().await.set_storage_at(address, slot, val.into_uint())
     }
 
     /// Returns true for post London
@@ -432,6 +456,11 @@ impl Backend {
         self.fees.gas_price()
     }
 
+    /// Returns the suggested fee cap
+    pub fn max_priority_fee_per_gas(&self) -> U256 {
+        self.fees.max_priority_fee_per_gas()
+    }
+
     /// Sets the gas price
     pub fn set_gas_price(&self, price: U256) {
         self.fees.set_gas_price(price)
@@ -439,6 +468,14 @@ impl Backend {
 
     pub fn elasticity(&self) -> f64 {
         self.fees.elasticity()
+    }
+
+    /// Returns the total difficulty of the chain until this block
+    ///
+    /// Note: this will always be `0` in memory mode
+    /// In forking mode this will always be the total difficulty of the forked block
+    pub fn total_difficulty(&self) -> U256 {
+        self.blockchain.storage.read().total_difficulty
     }
 
     /// Creates a new `evm_snapshot` at the current height
@@ -491,7 +528,7 @@ impl Backend {
         self.db
             .read()
             .await
-            .dump_state()
+            .dump_state()?
             .map(|s| serde_json::to_vec(&s).unwrap_or_default().into())
             .ok_or_else(|| {
                 RpcError::invalid_params(
@@ -506,7 +543,7 @@ impl Backend {
         let state: SerializableState =
             serde_json::from_slice(&buf.0).map_err(|_| BlockchainError::FailedToDecodeStateDump)?;
 
-        if !self.db.write().await.load_state(state) {
+        if !self.db.write().await.load_state(state)? {
             Err(RpcError::invalid_params(
                 "Loading state not supported with the current configuration",
             )
@@ -578,6 +615,7 @@ impl Backend {
             cfg_env: env.cfg,
             parent_hash: storage.best_hash,
             gas_used: U256::zero(),
+            enable_steps_tracing: self.enable_steps_tracing,
         };
 
         // create a new pending block
@@ -627,6 +665,7 @@ impl Backend {
                     cfg_env: env.cfg.clone(),
                     parent_hash: best_hash,
                     gas_used: U256::zero(),
+                    enable_steps_tracing: self.enable_steps_tracing,
                 };
                 let executed_tx = executor.execute();
 
@@ -656,6 +695,7 @@ impl Backend {
             // update block metadata
             storage.best_number = block_number;
             storage.best_hash = block_hash;
+            storage.total_difficulty = storage.total_difficulty.saturating_add(header.difficulty);
 
             storage.blocks.insert(block_hash, block);
             storage.hashes.insert(block_number, block_hash);
@@ -698,6 +738,9 @@ impl Backend {
                 };
                 storage.transactions.insert(mined_tx.info.transaction_hash, mined_tx);
             }
+
+            // we intentionally set the difficulty to `0` for newer blocks
+            env.block.difficulty = U256::zero();
 
             // update env with new values
             *self.env.write() = env;
@@ -800,7 +843,7 @@ impl Backend {
         block_env: BlockEnv,
     ) -> Result<(Return, TransactOut, u64, State), BlockchainError>
     where
-        D: DatabaseRef,
+        D: DatabaseRef<Error = DatabaseError>,
     {
         let mut inspector = Inspector::default();
         let mut evm = revm::EVM::new();
@@ -820,13 +863,15 @@ impl Backend {
         block_env: BlockEnv,
     ) -> Result<(Return, TransactOut, u64, AccessList), BlockchainError>
     where
-        D: DatabaseRef,
+        D: DatabaseRef<Error = DatabaseError>,
     {
         let from = request.from.unwrap_or_default();
-        let to = request.to.unwrap_or_else(|| {
-            let nonce = state.basic(from).nonce;
+        let to = if let Some(to) = request.to {
+            to
+        } else {
+            let nonce = state.basic(from)?.unwrap_or_default().nonce;
             get_contract_address(from, nonce)
-        });
+        };
 
         let mut tracer = AccessListTracer::new(
             AccessList(request.access_list.clone().unwrap_or_default()),
@@ -1022,7 +1067,7 @@ impl Backend {
         Ok(None)
     }
 
-    pub fn mined_block_by_hash(&self, hash: H256) -> Option<EthersBlock<TxHash>> {
+    fn mined_block_by_hash(&self, hash: H256) -> Option<EthersBlock<TxHash>> {
         let block = self.blockchain.storage.read().blocks.get(&hash)?.clone();
         Some(self.convert_block(block))
     }
@@ -1052,7 +1097,10 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.block_by_number(self.convert_block_number(Some(number))).await?)
+            let number = self.convert_block_number(Some(number));
+            if fork.predates_fork_inclusive(number) {
+                return Ok(fork.block_by_number(number).await?)
+            }
         }
 
         Ok(None)
@@ -1068,7 +1116,10 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.block_by_number_full(self.convert_block_number(Some(number))).await?)
+            let number = self.convert_block_number(Some(number));
+            if fork.predates_fork_inclusive(number) {
+                return Ok(fork.block_by_number_full(number).await?)
+            }
         }
 
         Ok(None)
@@ -1094,7 +1145,7 @@ impl Backend {
         self.blockchain.storage.read().blocks.get(&hash).cloned()
     }
 
-    pub fn mined_block_by_number(&self, number: BlockNumber) -> Option<EthersBlock<TxHash>> {
+    fn mined_block_by_number(&self, number: BlockNumber) -> Option<EthersBlock<TxHash>> {
         Some(self.convert_block(self.get_block(number)?))
     }
 
@@ -1146,7 +1197,7 @@ impl Backend {
             logs_bloom: Some(logs_bloom),
             timestamp: timestamp.into(),
             difficulty,
-            total_difficulty: None,
+            total_difficulty: Some(self.total_difficulty()),
             seal_fields: { vec![mix_hash.as_bytes().to_vec().into(), nonce.0.to_vec().into()] },
             uncles: vec![],
             transactions: transactions.into_iter().map(|tx| tx.hash()).collect(),
@@ -1267,7 +1318,7 @@ impl Backend {
     ) -> Result<H256, BlockchainError> {
         self.with_database_at(block_request, |db, _| {
             trace!(target: "backend", "get storage for {:?} at {:?}", address, index);
-            let val = db.storage(address, index);
+            let val = db.storage(address, index)?;
             Ok(u256_to_h256_be(val))
         })
         .await?
@@ -1291,10 +1342,10 @@ impl Backend {
         address: Address,
     ) -> Result<Bytes, BlockchainError>
     where
-        D: DatabaseRef,
+        D: DatabaseRef<Error = DatabaseError>,
     {
         trace!(target: "backend", "get code for {:?}", address);
-        let account = state.basic(address);
+        let account = state.basic(address)?.unwrap_or_default();
         if account.code_hash == KECCAK_EMPTY {
             // if the code hash is `KECCAK_EMPTY`, we check no further
             return Ok(Default::default())
@@ -1302,7 +1353,7 @@ impl Backend {
         let code = if let Some(code) = account.code {
             code
         } else {
-            state.code_by_hash(account.code_hash)
+            state.code_by_hash(account.code_hash)?
         };
         Ok(code.bytes()[..code.len()].to_vec().into())
     }
@@ -1325,10 +1376,10 @@ impl Backend {
         address: Address,
     ) -> Result<U256, BlockchainError>
     where
-        D: DatabaseRef,
+        D: DatabaseRef<Error = DatabaseError>,
     {
         trace!(target: "backend", "get balance for {:?}", address);
-        Ok(state.basic(address).balance)
+        Ok(state.basic(address)?.unwrap_or_default().balance)
     }
 
     /// Returns the nonce of the address
@@ -1341,7 +1392,7 @@ impl Backend {
     ) -> Result<U256, BlockchainError> {
         self.with_database_at(block_request, |db, _| {
             trace!(target: "backend", "get nonce for {:?}", address);
-            Ok(db.basic(address).nonce.into())
+            Ok(db.basic(address)?.unwrap_or_default().nonce.into())
         })
         .await?
     }
@@ -1360,12 +1411,12 @@ impl Backend {
     }
 
     /// Returns the traces for the given transaction
-    pub fn mined_parity_trace_transaction(&self, hash: H256) -> Option<Vec<Trace>> {
+    fn mined_parity_trace_transaction(&self, hash: H256) -> Option<Vec<Trace>> {
         self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.parity_traces())
     }
 
     /// Returns the traces for the given transaction
-    pub fn mined_parity_trace_block(&self, block: u64) -> Option<Vec<Trace>> {
+    fn mined_parity_trace_block(&self, block: u64) -> Option<Vec<Trace>> {
         let block = self.get_block(block)?;
         let mut traces = vec![];
         let storage = self.blockchain.storage.read();
@@ -1373,6 +1424,31 @@ impl Backend {
             traces.extend(storage.transactions.get(&tx.hash())?.parity_traces());
         }
         Some(traces)
+    }
+
+    /// Returns the traces for the given transaction
+    pub async fn debug_trace_transaction(
+        &self,
+        hash: H256,
+        opts: GethDebugTracingOptions,
+    ) -> Result<GethTrace, BlockchainError> {
+        if let Some(traces) = self.mined_geth_trace_transaction(hash, opts.clone()) {
+            return Ok(traces)
+        }
+
+        if let Some(fork) = self.get_fork() {
+            return Ok(fork.debug_trace_transaction(hash, opts).await?)
+        }
+
+        Ok(GethTrace::default())
+    }
+
+    fn mined_geth_trace_transaction(
+        &self,
+        hash: H256,
+        opts: GethDebugTracingOptions,
+    ) -> Option<GethTrace> {
+        self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.geth_trace(opts))
     }
 
     /// Returns the traces for the given block
@@ -1419,7 +1495,7 @@ impl Backend {
     }
 
     /// Returns the transaction receipt for the given hash
-    pub fn mined_transaction_receipt(&self, hash: H256) -> Option<TransactionReceipt> {
+    fn mined_transaction_receipt(&self, hash: H256) -> Option<TransactionReceipt> {
         let MinedTransaction { info, receipt, block_hash, .. } =
             self.blockchain.storage.read().transactions.get(&hash)?.clone();
 
@@ -1506,8 +1582,8 @@ impl Backend {
             return Ok(self.mined_transaction_by_block_hash_and_index(hash, index))
         }
 
-        let number = self.convert_block_number(Some(number));
         if let Some(fork) = self.get_fork() {
+            let number = self.convert_block_number(Some(number));
             if fork.predates_fork(number) {
                 return Ok(fork.transaction_by_block_number_and_index(number, index.into()).await?)
             }
@@ -1532,7 +1608,7 @@ impl Backend {
         Ok(None)
     }
 
-    pub fn mined_transaction_by_block_hash_and_index(
+    fn mined_transaction_by_block_hash_and_index(
         &self,
         block_hash: H256,
         index: Index,
@@ -1565,7 +1641,7 @@ impl Backend {
         Ok(None)
     }
 
-    pub fn mined_transaction_by_hash(&self, hash: H256) -> Option<Transaction> {
+    fn mined_transaction_by_hash(&self, hash: H256) -> Option<Transaction> {
         let (info, block) = {
             let storage = self.blockchain.storage.read_recursive();
             let MinedTransaction { info, block_hash, .. } =
@@ -1671,10 +1747,11 @@ impl TransactionValidator for Backend {
     async fn validate_pool_transaction(
         &self,
         tx: &PendingTransaction,
-    ) -> Result<(), InvalidTransactionError> {
-        let account = self.db.read().await.basic(*tx.sender());
+    ) -> Result<(), BlockchainError> {
+        let address = *tx.sender();
+        let account = self.get_account(address).await?;
         let env = self.next_env();
-        self.validate_pool_transaction_for(tx, &account, &env)
+        Ok(self.validate_pool_transaction_for(tx, &account, &env)?)
     }
 
     fn validate_pool_transaction_for(
@@ -1684,6 +1761,25 @@ impl TransactionValidator for Backend {
         env: &Env,
     ) -> Result<(), InvalidTransactionError> {
         let tx = &pending.transaction;
+
+        if let Some(tx_chain_id) = tx.chain_id() {
+            let chain_id = self.chain_id();
+            if chain_id != tx_chain_id.into() {
+                if let Some(legacy) = tx.as_legacy() {
+                    // <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
+                    if env.cfg.spec_id >= SpecId::SPURIOUS_DRAGON &&
+                        !legacy.meets_eip155(chain_id.as_u64())
+                    {
+                        warn!(target: "backend", ?chain_id, ?tx_chain_id, "incompatible EIP155-based V");
+                        return Err(InvalidTransactionError::IncompatibleEIP155)
+                    }
+                } else {
+                    warn!(target: "backend", ?chain_id, ?tx_chain_id, "invalid chain id");
+                    return Err(InvalidTransactionError::InvalidChainId)
+                }
+            }
+        }
+
         if tx.gas_limit() > env.block.gas_limit {
             warn!(target: "backend", "[{:?}] gas too high", tx.hash());
             return Err(InvalidTransactionError::GasTooHigh)

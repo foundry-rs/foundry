@@ -12,7 +12,7 @@ in `FOUNDRY_PROFILE`. But all custom profiles inherit from the `default` profile
 
 ## foundry.toml
 
-Foundry's tools search for a `foundry.toml`  or the filename in a `FOUNDRY_CONFIG` environment variable starting at the
+Foundry's tools search for a `foundry.toml` or the filename in a `FOUNDRY_CONFIG` environment variable starting at the
 current working directory. If it is not found, the parent directory, its parent directory, and so on are searched until
 the file is found or the root is reached. But the typical location for the global `foundry.toml` would
 be `~/.foundry/foundry.toml`, which is also checked. If the path set in `FOUNDRY_CONFIG` is absolute, no such search
@@ -68,7 +68,7 @@ out = 'out'
 libs = ['lib']
 remappings = []
 # list of libraries to link in the form of `<path to lib>:<lib name>:<address>`: `"src/MyLib.sol:MyLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"`
-# the <path to lib> supports remappings 
+# the <path to lib> supports remappings
 libraries = []
 cache = true
 cache_path = 'cache'
@@ -102,7 +102,9 @@ eth_rpc_url = "https://example.com/"
 # Setting this option enables decoding of error traces from mainnet deployed / verfied contracts via etherscan
 etherscan_api_key = "YOURETHERSCANAPIKEY"
 # ignore solc warnings for missing license and exceeded contract size
-ignored_error_codes = [1878, 5574]
+# known error codes are: ["unreachable", "unused-return", "unused-param", "unused-var", "code-size", "shadowing", "func-mutability", "license", "pragma-solidity", "virtual-interfaces", "same-varname"]
+# additional warnings can be added using their numeric error code: ["license", 1337]
+ignored_error_codes = ["license", "code-size"]
 match_test = "Foo"
 no_match_test = "Bar"
 match_contract = "Foo"
@@ -153,11 +155,20 @@ sparse_mode = false
 build_info = true
 build_info_path = "build-info"
 root = "root"
-
+# Configures permissions for cheatcodes that touch the filesystem like `vm.writeFile`
+# `access` restricts how the `path` can be accessed via cheatcodes
+#    `read-write` | `true`   => `read` + `write` access allowed (`vm.readFile` + `vm.writeFile`)
+#    `none`| `false` => no access
+#    `read` => only read access (`vm.readFile`)
+#    `write` => only write access (`vm.writeFile`)
+# The `allowed_paths` further lists the paths that are considered, e.g. `./` represents the project root directory
+# By default, only read access is granted to the project's out dir, so generated artifacts can be read by default
+# following example enables read-write access for the project dir :
+#       `fs_permissions = [{ access = "read-write", path = "./"}]`
+fs_permissions = [{ access = "read", path = "./out"}]
 [fuzz]
 runs = 256
-max_local_rejects = 1024
-max_global_rejects = 65536
+max_test_rejects = 65536
 seed = '0x3e8'
 dictionary_weight = 40
 include_storage = true
@@ -222,7 +233,7 @@ The `etherscan` value accepts a list of `alias = "{key = "", url? ="", chain?= "
 
 the `key` attribute is always required and should contain the actual API key for that chain or an env var that holds the key in the form `${ENV_VAR}`
 The `chain` attribute is optional if the `alias` is the already the `chain` name, such as in `mainnet = { key = "${ETHERSCAN_MAINNET_KEY}"}`
-The optional `url` attribute can be used to explicitly set the Etherscan API url, this is the recommended setting for chains not natively supported by name. 
+The optional `url` attribute can be used to explicitly set the Etherscan API url, this is the recommended setting for chains not natively supported by name.
 
 ```toml
 [etherscan]

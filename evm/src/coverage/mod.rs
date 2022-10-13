@@ -1,12 +1,13 @@
 pub mod analysis;
 pub mod anchors;
 
-use ethers::types::Address;
+use bytes::Bytes;
+use ethers::types::H256;
 use semver::Version;
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Display,
-    ops::AddAssign,
+    ops::{AddAssign, Deref, DerefMut},
 };
 
 /// A coverage report.
@@ -113,17 +114,51 @@ impl CoverageReport {
 }
 
 /// A collection of [HitMap]s
-pub type HitMaps = HashMap<Address, HitMap>;
+#[derive(Default, Clone, Debug)]
+pub struct HitMaps(pub HashMap<H256, HitMap>);
+
+impl HitMaps {
+    pub fn merge(mut self, other: HitMaps) -> Self {
+        for (code_hash, hit_map) in other.0.into_iter() {
+            if let Some(HitMap { hits: extra_hits, .. }) = self.insert(code_hash, hit_map) {
+                for (pc, hits) in extra_hits.into_iter() {
+                    self.entry(code_hash)
+                        .and_modify(|map| *map.hits.entry(pc).or_default() += hits);
+                }
+            }
+        }
+        self
+    }
+}
+
+impl Deref for HitMaps {
+    type Target = HashMap<H256, HitMap>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for HitMaps {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
 
 /// Hit data for an address.
 ///
 /// Contains low-level data about hit counters for the instructions in the bytecode of a contract.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct HitMap {
-    hits: BTreeMap<usize, u64>,
+    pub bytecode: Bytes,
+    pub hits: BTreeMap<usize, u64>,
 }
 
 impl HitMap {
+    pub fn new(bytecode: Bytes) -> Self {
+        Self { bytecode, hits: BTreeMap::new() }
+    }
+
     /// Increase the hit counter for the given program counter.
     pub fn hit(&mut self, pc: usize) {
         *self.hits.entry(pc).or_default() += 1;

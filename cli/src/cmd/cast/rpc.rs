@@ -1,8 +1,8 @@
-use crate::{cmd::Cmd, utils::consume_config_rpc_url};
+use crate::{cmd::Cmd, utils::try_consume_config_rpc_url};
 use cast::Cast;
 use clap::Parser;
 use eyre::Result;
-use foundry_common::get_http_provider;
+use foundry_common::try_get_http_provider;
 use futures::future::BoxFuture;
 use itertools::Itertools;
 
@@ -52,8 +52,8 @@ impl RpcArgs {
         method: String,
         params: Vec<String>,
     ) -> Result<()> {
-        let rpc_url = consume_config_rpc_url(rpc_url);
-        let provider = get_http_provider(rpc_url);
+        let rpc_url = try_consume_config_rpc_url(rpc_url)?;
+        let provider = try_get_http_provider(rpc_url)?;
         let params = if raw {
             if params.is_empty() {
                 serde_json::Deserializer::from_reader(std::io::stdin())

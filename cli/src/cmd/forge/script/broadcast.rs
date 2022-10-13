@@ -1,9 +1,11 @@
-use super::{
-    sequence::{ScriptSequence, TransactionWithMetadata},
-    *,
-};
+use super::{sequence::ScriptSequence, *};
 use crate::{
-    cmd::{forge::script::receipts::wait_for_receipts, has_batch_support, has_different_gas_calc},
+    cmd::{
+        forge::script::{
+            receipts::wait_for_receipts, transaction::TransactionWithMetadata, verify::VerifyBundle,
+        },
+        has_batch_support, has_different_gas_calc,
+    },
     init_progress,
     opts::WalletType,
     update_progress,
@@ -15,11 +17,11 @@ use ethers::{
     utils::format_units,
 };
 use eyre::{ContextCompat, WrapErr};
-use foundry_common::{get_http_provider, RetryProvider};
+use foundry_common::{estimate_eip1559_fees, try_get_http_provider, RetryProvider};
 use foundry_config::Chain;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::{cmp::min, fmt, sync::Arc};
+use std::{cmp::min, fmt, ops::Mul, sync::Arc};
 
 impl ScriptArgs {
     /// Sends the transactions which haven't been broadcasted yet.
@@ -27,8 +29,9 @@ impl ScriptArgs {
         &self,
         deployment_sequence: &mut ScriptSequence,
         fork_url: &str,
+        script_wallets: Vec<LocalWallet>,
     ) -> eyre::Result<()> {
-        let provider = Arc::new(get_http_provider(fork_url));
+        let provider = Arc::new(try_get_http_provider(fork_url)?);
         let already_broadcasted = deployment_sequence.receipts.len();
 
         if already_broadcasted < deployment_sequence.transactions.len() {
@@ -39,7 +42,8 @@ impl ScriptArgs {
                 .map(|tx| *tx.from().expect("No sender for onchain transaction!"))
                 .collect();
 
-            let local_wallets = self.wallets.find_all(provider.clone(), required_addresses).await?;
+            let local_wallets =
+                self.wallets.find_all(provider.clone(), required_addresses, script_wallets).await?;
             let chain = local_wallets.values().last().wrap_err("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")?.chain_id();
 
             // We only wait for a transaction receipt before sending the next transaction, if there
@@ -55,7 +59,11 @@ impl ScriptArgs {
                         (provider.get_gas_price().await.ok(), None)
                     }
                     TypedTransaction::Eip1559(_) => {
-                        (None, provider.estimate_eip1559_fees(None).await.ok())
+                        let fees = estimate_eip1559_fees(&provider, Some(chain))
+                            .await
+                            .wrap_err("Failed to estimate EIP1559 fees")?;
+
+                        (None, Some(fees))
                     }
                 }
             };
@@ -161,6 +169,24 @@ impl ScriptArgs {
             "\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL. Transaction receipts written to {:?}",
             deployment_sequence.path
         );
+
+        let (total_gas, total_gas_price, total_paid) = deployment_sequence.receipts.iter().fold(
+            (U256::zero(), U256::zero(), U256::zero()),
+            |acc, receipt| {
+                let gas_used = receipt.gas_used.unwrap_or_default();
+                let gas_price = receipt.effective_gas_price.unwrap_or_default();
+                (acc.0 + gas_used, acc.1 + gas_price, acc.2 + gas_used.mul(gas_price))
+            },
+        );
+        let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".into());
+        let avg_gas_price = format_units(total_gas_price / deployment_sequence.receipts.len(), 9)
+            .unwrap_or_else(|_| "N/A".into());
+        println!(
+            "Total Paid: {} ETH ({} gas * avg {} gwei)",
+            paid.trim_end_matches('0'),
+            total_gas,
+            avg_gas_price.trim_end_matches('0').trim_end_matches('.')
+        );
         Ok(())
     }
 
@@ -203,7 +229,7 @@ impl ScriptArgs {
         libraries: Libraries,
         decoder: &mut CallTraceDecoder,
         mut script_config: ScriptConfig,
-        verify: VerifyBundle,
+        mut verify: VerifyBundle,
     ) -> eyre::Result<()> {
         if let Some(txs) = result.transactions {
             if let Some(fork_url) = script_config.evm_opts.fork_url.clone() {
@@ -218,15 +244,15 @@ impl ScriptArgs {
                         &verify.known_contracts,
                     )
                     .await
-                    .map_err(|_| {
-                        eyre::eyre!(
+                    .wrap_err_with(|| {
                             "Transaction failed when running the on-chain simulation. Check the trace above for more information."
-                        )
                     })?
                 };
 
-                let provider = Arc::new(get_http_provider(&fork_url));
+                let provider = Arc::new(try_get_http_provider(&fork_url)?);
                 let chain = provider.get_chainid().await?.as_u64();
+
+                verify.set_chain(&script_config.config, chain.into());
 
                 let returns = self.get_returns(&script_config, &result.returned)?;
 
@@ -237,12 +263,18 @@ impl ScriptArgs {
                     target,
                     &script_config.config,
                     chain,
+                    self.broadcast || self.resume,
                 )?;
 
                 deployment_sequence.add_libraries(libraries);
 
                 if self.broadcast {
-                    self.send_transactions(&mut deployment_sequence, &fork_url).await?;
+                    self.send_transactions(
+                        &mut deployment_sequence,
+                        &fork_url,
+                        result.script_wallets,
+                    )
+                    .await?;
                     if self.verify {
                         deployment_sequence.verify_contracts(verify, chain).await?;
                     }

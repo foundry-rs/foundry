@@ -261,33 +261,6 @@ async fn can_deploy_greeter_on_fork() {
     assert_eq!("Hello World!", greeting);
 }
 
-/// tests that we can deploy from dev account that already has an onchain presence: https://rinkeby.etherscan.io/address/0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266
-#[tokio::test(flavor = "multi_thread")]
-async fn can_deploy_greeter_on_rinkeby_fork() {
-    let (_api, handle) = spawn(
-        NodeConfig::test().with_eth_rpc_url(Some(rpc::next_rinkeby_http_rpc_endpoint())).silent(),
-    )
-    .await;
-    let provider = handle.http_provider();
-    let wallet = handle.dev_wallets().next().unwrap();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
-
-    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
-        .unwrap()
-        .send()
-        .await
-        .unwrap();
-
-    let greeting = greeter_contract.greet().call().await.unwrap();
-    assert_eq!("Hello World!", greeting);
-
-    let greeter_contract =
-        Greeter::deploy(client, "Hello World!".to_string()).unwrap().send().await.unwrap();
-
-    let greeting = greeter_contract.greet().call().await.unwrap();
-    assert_eq!("Hello World!", greeting);
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn can_reset_properly() {
     let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
@@ -327,10 +300,10 @@ async fn can_reset_properly() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_timestamp() {
+    let start = std::time::Instant::now();
+
     let (api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
-
-    let start = std::time::Instant::now();
 
     let block = provider.get_block(BLOCK_NUMBER).await.unwrap().unwrap();
     assert_eq!(block.timestamp.as_u64(), BLOCK_TIMESTAMP);
@@ -339,14 +312,16 @@ async fn test_fork_timestamp() {
     let from = accounts[0].address();
 
     let tx = TransactionRequest::new().to(Address::random()).value(1337u64).from(from);
-    let _tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+    let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+    assert_eq!(tx.status, Some(1u64.into()));
+
+    let elapsed = start.elapsed().as_secs();
 
     let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
 
     // ensure the diff between the new mined block and the original block is within the elapsed time
-    let elapsed = start.elapsed().as_secs() + 1;
     let diff = block.timestamp - BLOCK_TIMESTAMP;
-    assert!(diff <= elapsed.into());
+    assert!(diff <= elapsed.into(), "diff={}, elapsed={}", diff, elapsed);
 
     let start = std::time::Instant::now();
     // reset to check timestamp works after resetting
@@ -362,6 +337,26 @@ async fn test_fork_timestamp() {
     let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
     let elapsed = start.elapsed().as_secs() + 1;
     let diff = block.timestamp - BLOCK_TIMESTAMP;
+    assert!(diff <= elapsed.into());
+
+    // ensure that after setting a timestamp manually, then next block time is correct
+    let start = std::time::Instant::now();
+    api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(BLOCK_NUMBER) }))
+        .await
+        .unwrap();
+    api.evm_set_next_block_timestamp(BLOCK_TIMESTAMP + 1).unwrap();
+    let tx = TransactionRequest::new().to(Address::random()).value(1337u64).from(from);
+    let _tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+
+    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+    assert_eq!(block.timestamp.as_u64(), BLOCK_TIMESTAMP + 1);
+
+    let tx = TransactionRequest::new().to(Address::random()).value(1337u64).from(from);
+    let _tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+
+    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+    let elapsed = start.elapsed().as_secs() + 1;
+    let diff = block.timestamp - (BLOCK_TIMESTAMP + 1);
     assert!(diff <= elapsed.into());
 }
 
@@ -559,12 +554,15 @@ async fn test_reset_fork_on_new_blocks() {
     let provider = Provider::try_from(endpoint).unwrap();
 
     let mut stream = provider.watch_blocks().await.unwrap();
+    // the http watcher may fetch multiple blocks at once, so we set a timeout here to offset edge
+    // cases where the stream immediately returns a block
+    tokio::time::sleep(Chain::Mainnet.average_blocktime_hint().unwrap()).await;
     stream.next().await.unwrap();
     stream.next().await.unwrap();
 
     let next_block = anvil_provider.get_block_number().await.unwrap();
 
-    assert!(next_block > current_block)
+    assert!(next_block > current_block, "nextblock={} currentblock={}", next_block, current_block)
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -738,4 +736,27 @@ async fn can_impersonate_in_fork() {
     api.anvil_stop_impersonating_account(token_holder).await.unwrap();
     let res = provider.send_transaction(tx, None).await;
     res.unwrap_err();
+}
+
+// <https://etherscan.io/block/14608400>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_total_difficulty_fork() {
+    let (api, handle) = spawn(fork_config()).await;
+
+    let total_difficulty: U256 = 46_673_965_560_973_856_260_636u128.into();
+    let difficulty: U256 = 13_680_435_288_526_144u128.into();
+
+    let provider = handle.http_provider();
+    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+    assert_eq!(block.total_difficulty, Some(total_difficulty));
+    assert_eq!(block.difficulty, difficulty);
+
+    api.mine_one().await;
+    api.mine_one().await;
+
+    let next_total_difficulty = total_difficulty + difficulty;
+
+    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+    assert_eq!(block.total_difficulty, Some(next_total_difficulty));
+    assert_eq!(block.difficulty, U256::zero());
 }

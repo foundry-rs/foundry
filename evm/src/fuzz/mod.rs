@@ -1,12 +1,15 @@
 use crate::{
+    coverage::HitMaps,
     decode,
     executor::{Executor, RawCallResult},
     trace::CallTraceArena,
 };
+use error::{FuzzError, ASSUME_MAGIC_RETURN_CODE};
 use ethers::{
     abi::{Abi, Function, Token},
     types::{Address, Bytes, Log},
 };
+use eyre::Result;
 use foundry_common::{calc, contracts::ContractsByAddress};
 use foundry_config::FuzzConfig;
 pub use proptest::test_runner::Reason;
@@ -17,11 +20,10 @@ use strategies::{
     build_initial_state, collect_state_from_call, fuzz_calldata, fuzz_calldata_from_state,
     EvmFuzzState,
 };
+
+pub mod error;
 pub mod invariant;
 pub mod strategies;
-
-/// Magic return code for the `assume` cheatcode
-pub const ASSUME_MAGIC_RETURN_CODE: &[u8] = b"FOUNDRY::ASSUME";
 
 /// Wrapper around an [`Executor`] which provides fuzzing support using [`proptest`](https://docs.rs/proptest/1.0.0/proptest/).
 ///
@@ -61,15 +63,18 @@ impl<'a> FuzzedExecutor<'a> {
         address: Address,
         should_fail: bool,
         errors: Option<&Abi>,
-    ) -> FuzzTestResult {
+    ) -> Result<FuzzTestResult> {
         // Stores the consumed gas and calldata of every successful fuzz call
         let cases: RefCell<Vec<FuzzCase>> = RefCell::default();
 
         // Stores the result and calldata of the last failed call, if any.
         let counterexample: RefCell<(Bytes, RawCallResult)> = RefCell::default();
 
-        // stores the last successful call trace
+        // Stores the last successful call trace
         let traces: RefCell<Option<CallTraceArena>> = RefCell::default();
+
+        // Stores coverage information for all fuzz cases
+        let coverage: RefCell<Option<HitMaps>> = RefCell::default();
 
         // Stores fuzz state for use with [fuzz_calldata_from_state]
         let state: EvmFuzzState = if let Some(fork_db) = self.executor.backend().active_fork_db() {
@@ -95,9 +100,11 @@ impl<'a> FuzzedExecutor<'a> {
             let call = self
                 .executor
                 .call_raw(self.sender, address, calldata.0.clone(), 0.into())
-                .expect("Could not call contract with fuzzed input.");
-            let state_changeset =
-                call.state_changeset.as_ref().expect("We should have a state changeset.");
+                .map_err(|_| TestCaseError::fail(FuzzError::FailedContractCall))?;
+            let state_changeset = call
+                .state_changeset
+                .as_ref()
+                .ok_or_else(|| TestCaseError::fail(FuzzError::EmptyChangeset))?;
 
             // Build fuzzer state
             collect_state_from_call(
@@ -110,7 +117,7 @@ impl<'a> FuzzedExecutor<'a> {
 
             // When assume cheat code is triggered return a special string "FOUNDRY::ASSUME"
             if call.result.as_ref() == ASSUME_MAGIC_RETURN_CODE {
-                return Err(TestCaseError::reject("ASSUME: Too many rejects"))
+                return Err(TestCaseError::reject(FuzzError::AssumeReject))
             }
 
             let success = self.executor.is_success(
@@ -128,6 +135,14 @@ impl<'a> FuzzedExecutor<'a> {
                 });
 
                 traces.replace(call.traces);
+
+                if let Some(prev) = coverage.take() {
+                    // Safety: If `Option::or` evaluates to `Some`, then `call.coverage` must
+                    // necessarily also be `Some`
+                    coverage.replace(Some(prev.merge(call.coverage.unwrap())));
+                } else {
+                    coverage.replace(call.coverage);
+                }
 
                 Ok(())
             } else {
@@ -161,9 +176,18 @@ impl<'a> FuzzedExecutor<'a> {
             logs: call.logs,
             labeled_addresses: call.labels,
             traces: if run_result.is_ok() { traces.into_inner() } else { call.traces.clone() },
+            coverage: coverage.into_inner(),
         };
 
         match run_result {
+            // Currently the only operation that can trigger proptest global rejects is the
+            // `vm.assume` cheatcode, thus we surface this info to the user when the fuzz test
+            // aborts due to too many global rejects, making the error message more actionable.
+            Err(TestError::Abort(reason)) if reason.message() == "Too many global rejects" => {
+                result.reason = Some(
+                    FuzzError::TooManyRejects(self.runner.config().max_global_rejects).to_string(),
+                );
+            }
             Err(TestError::Abort(reason)) => {
                 result.reason = Some(reason.to_string());
             }
@@ -173,7 +197,7 @@ impl<'a> FuzzedExecutor<'a> {
 
                 let args = func
                     .decode_input(&calldata.as_ref()[4..])
-                    .expect("could not decode fuzzer inputs");
+                    .map_err(|_| FuzzError::FailedDecodeInput)?;
 
                 result.counterexample = Some(CounterExample::Single(BaseCounterExample {
                     sender: None,
@@ -188,7 +212,7 @@ impl<'a> FuzzedExecutor<'a> {
             _ => (),
         }
 
-        result
+        Ok(result)
     }
 }
 
@@ -226,18 +250,19 @@ impl BaseCounterExample {
         bytes: &Bytes,
         contracts: &ContractsByAddress,
         traces: Option<CallTraceArena>,
-    ) -> Self {
-        let (name, abi) = &contracts.get(&addr).expect("Couldnt call unknown contract");
+    ) -> Result<Self> {
+        let (name, abi) = &contracts.get(&addr).ok_or(FuzzError::UnknownContract)?;
 
         let func = abi
             .functions()
             .find(|f| f.short_signature() == bytes.0.as_ref()[0..4])
-            .expect("Couldnt find function");
+            .ok_or(FuzzError::UnknownFunction)?;
 
         // skip the function selector when decoding
-        let args = func.decode_input(&bytes.0.as_ref()[4..]).expect("Unable to decode input");
+        let args =
+            func.decode_input(&bytes.0.as_ref()[4..]).map_err(|_| FuzzError::FailedDecodeInput)?;
 
-        BaseCounterExample {
+        Ok(BaseCounterExample {
             sender: Some(sender),
             addr: Some(addr),
             calldata: bytes.clone(),
@@ -245,13 +270,13 @@ impl BaseCounterExample {
             contract_name: Some(name.clone()),
             traces,
             args,
-        }
+        })
     }
 }
 
 impl fmt::Display for BaseCounterExample {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let args = foundry_utils::format_tokens(&self.args).collect::<Vec<_>>().join(", ");
+        let args = foundry_common::abi::format_tokens(&self.args).collect::<Vec<_>>().join(", ");
 
         if let Some(sender) = self.sender {
             write!(f, "sender={:?} addr=", sender)?
@@ -305,6 +330,9 @@ pub struct FuzzTestResult {
     /// **Note** We only store a single trace of a successful fuzz call, otherwise we would get
     /// `num(fuzz_cases)` traces, one for each run, which is neither helpful nor performant.
     pub traces: Option<CallTraceArena>,
+
+    /// Raw coverage info
+    pub coverage: Option<HitMaps>,
 }
 
 /// Container type for all successful test cases

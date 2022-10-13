@@ -205,3 +205,45 @@ contract Contract {
     let msg = err.to_string();
     assert!(msg.contains("execution reverted: RevertStringFooBar"));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_solc_revert_custom_errors() {
+    let prj = TempProject::dapptools().unwrap();
+    prj.add_source(
+        "Contract",
+        r#"
+pragma solidity 0.8.13;
+contract Contract {
+    uint256 public number;
+    error AddressRevert(address);
+
+    function revertAddress() public {
+         revert AddressRevert(address(1));
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let mut compiled = prj.compile().unwrap();
+    assert!(!compiled.has_compiler_errors());
+    let contract = compiled.remove_first("Contract").unwrap();
+    let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    let provider = handle.ws_provider().await;
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
+
+    // deploy successfully
+    let factory =
+        ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), Arc::clone(&client));
+    let contract = factory.deploy(()).unwrap().send().await.unwrap();
+
+    let call = contract.method::<_, ()>("revertAddress", ()).unwrap().gas(150000);
+
+    let resp = call.call().await;
+
+    let _ = resp.unwrap_err();
+}

@@ -27,10 +27,10 @@ For example `Inspector::call` is called wen the EVM is about to execute a call:
 
 the `evm` crate has a variety of inspectors for different use cases, such as
 
-* coverage
-* tracing
-* debugger
-* cheat codes + logging
+-   coverage
+-   tracing
+-   debugger
+-   cheat codes + logging
 
 ## [Cheat code Inspector](../../evm/src/executor/inspector/cheatcodes)
 

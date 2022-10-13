@@ -1,8 +1,12 @@
-use super::{sequence::AdditionalContract, *};
+use super::*;
 use crate::{
     cmd::{
         ensure_clean_constructor,
-        forge::script::{runner::SimulationStage, sequence::TransactionWithMetadata},
+        forge::script::{
+            artifacts::ArtifactInfo,
+            runner::SimulationStage,
+            transaction::{AdditionalContract, TransactionWithMetadata},
+        },
         needs_setup,
     },
     utils,
@@ -61,6 +65,7 @@ impl ScriptArgs {
             result.debug = script_result.debug;
             result.labeled_addresses.extend(script_result.labeled_addresses);
             result.returned = script_result.returned;
+            result.script_wallets.extend(script_result.script_wallets);
 
             match (&mut result.transactions, script_result.transactions) {
                 (Some(txs), Some(new_txs)) => {
@@ -94,14 +99,21 @@ impl ScriptArgs {
             println!("Simulated On-chain Traces:\n");
         }
 
-        let address_to_abi: BTreeMap<Address, (String, &Abi)> = decoder
+        let address_to_abi: BTreeMap<Address, ArtifactInfo> = decoder
             .contracts
             .iter()
             .filter_map(|(addr, contract_id)| {
-                let contract_name = utils::get_contract_name(contract_id);
-                if let Ok(Some((_, (abi, _)))) = contracts.find_by_name_or_identifier(contract_name)
+                let contract_name = get_contract_name(contract_id);
+                if let Ok(Some((_, (abi, code)))) =
+                    contracts.find_by_name_or_identifier(contract_name)
                 {
-                    return Some((*addr, (contract_name.to_string(), abi)))
+                    let info = ArtifactInfo {
+                        contract_name: contract_name.to_string(),
+                        contract_id: contract_id.to_string(),
+                        abi,
+                        code,
+                    };
+                    return Some((*addr, info))
                 }
                 None
             })

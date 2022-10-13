@@ -1,8 +1,9 @@
 use super::{ClapChain, EthereumOpts};
 use crate::{
     cmd::cast::{
-        estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, rpc::RpcArgs,
-        run::RunArgs, send::SendTxArgs, wallet::WalletSubcommands,
+        call::CallArgs, create2::Create2Args, estimate::EstimateArgs, find_block::FindBlockArgs,
+        interface::InterfaceArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs,
+        wallet::WalletSubcommands,
     },
     utils::parse_u256,
 };
@@ -23,9 +24,9 @@ pub struct Opts {
 #[derive(Debug, Subcommand)]
 #[clap(
     about = "Perform Ethereum RPC calls from the comfort of your command line.",
-    after_help = "Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html"
+    after_help = "Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html",
+    next_display_order = None
 )]
-
 pub enum Subcommands {
     #[clap(name = "--max-int")]
     #[clap(visible_aliases = &["max-int", "maxi"])]
@@ -51,13 +52,6 @@ pub enum Subcommands {
     FromUtf8 {
         #[clap(value_name = "TEXT")]
         text: Option<String>,
-    },
-    #[clap(name = "--to-hex")]
-    #[clap(visible_aliases = &["to-hex", "th", "2h"])]
-    #[clap(about = "Convert an integer to hex.")]
-    ToHex {
-        #[clap(value_name = "DECIMAL")]
-        decimal: Option<String>,
     },
     #[clap(name = "--concat-hex")]
     #[clap(visible_aliases = &["concat-hex", "ch"])]
@@ -103,9 +97,9 @@ The input can be:
     #[clap(name = "--from-fix")]
     #[clap(visible_aliases = &["from-fix", "ff"])]
     #[clap(about = "Convert a fixed point number into an integer.")]
-    FromFix {
+    FromFixedPoint {
         #[clap(value_name = "DECIMALS")]
-        decimals: Option<u128>,
+        decimals: Option<String>,
         #[clap(allow_hyphen_values = true, value_name = "VALUE")]
         // negative values not yet supported internally
         value: Option<String>,
@@ -117,21 +111,13 @@ The input can be:
         #[clap(value_name = "BYTES")]
         bytes: Option<String>,
     },
-    #[clap(name = "--to-dec")]
-    #[clap(visible_aliases = &["to-dec", "td", "2d"])]
-    #[clap(about = "Convert hex value into a decimal number.")]
-    ToDec {
-        #[clap(value_name = "HEXVALUE")]
-        hexvalue: Option<String>,
-    },
     #[clap(name = "--to-fix")]
     #[clap(visible_aliases = &["to-fix", "tf", "2f"])]
     #[clap(about = "Convert an integer into a fixed point number.")]
-    ToFix {
+    ToFixedPoint {
         #[clap(value_name = "DECIMALS")]
-        decimals: Option<u128>,
+        decimals: Option<String>,
         #[clap(allow_hyphen_values = true, value_name = "VALUE")]
-        // negative values not yet supported internally
         value: Option<String>,
     },
     #[clap(name = "--to-uint256")]
@@ -155,14 +141,9 @@ The input can be:
         value: String,
         #[clap(value_name = "BITS")]
         bits: String,
-        #[clap(long = "--base-in", help = "The input base")]
+        #[clap(long = "base-in", help = "The input base")]
         base_in: Option<String>,
-        #[clap(
-            long = "--base-out",
-            help = "The output base",
-            default_value = "16",
-            parse(try_from_str = parse_base)
-        )]
+        #[clap(long = "base-out", help = "The output base", default_value = "16")]
         base_out: String,
     },
     #[clap(name = "shr")]
@@ -172,14 +153,9 @@ The input can be:
         value: String,
         #[clap(value_name = "BITS")]
         bits: String,
-        #[clap(long = "--base-in", help = "The input base")]
+        #[clap(long = "base-in", help = "The input base")]
         base_in: Option<String>,
-        #[clap(
-            long = "--base-out",
-            help = "The output base",
-            default_value = "16",
-            parse(try_from_str = parse_base)
-        )]
+        #[clap(long = "base-out", help = "The output base", default_value = "16")]
         base_out: String,
     },
     #[clap(name = "--to-unit")]
@@ -197,6 +173,7 @@ Examples:
     )]
     ToUnit {
         #[clap(value_name = "VALUE")]
+        // negative values not yet supported internally
         value: Option<String>,
         #[clap(
             help = "The unit to convert to (ether, gwei, wei).",
@@ -212,8 +189,8 @@ Examples:
         #[clap(allow_hyphen_values = true, value_name = "VALUE")]
         // negative values not yet supported internally
         value: Option<String>,
-        #[clap(value_name = "UNIT")]
-        unit: Option<String>,
+        #[clap(value_name = "UNIT", default_value = "eth")]
+        unit: String,
     },
     #[clap(name = "--from-wei")]
     #[clap(visible_aliases = &["from-wei", "fw"])]
@@ -222,8 +199,8 @@ Examples:
         #[clap(allow_hyphen_values = true, value_name = "VALUE")]
         // negative values not yet supported internally
         value: Option<String>,
-        #[clap(value_name = "UNIT")]
-        unit: Option<String>,
+        #[clap(value_name = "UNIT", default_value = "eth")]
+        unit: String,
     },
     #[clap(name = "--to-rlp")]
     #[clap(about = "RLP encodes hex data, or an array of hex data")]
@@ -231,11 +208,22 @@ Examples:
     #[clap(name = "--from-rlp")]
     #[clap(about = "Decodes RLP encoded data. Input must be hexadecimal.")]
     FromRlp { value: Option<String> },
+    #[clap(name = "--to-base")]
+    #[clap(visible_aliases = &["--to-radix", "to-radix", "to-base", "tr", "2r", "--to-hex", "to-hex", "th", "2h", "--to-dec", "to-dec", "td", "2d"])]
+    #[clap(about = "Converts a number of one base to another")]
+    ToBase {
+        #[clap(allow_hyphen_values = true, value_name = "VALUE")]
+        value: String,
+        #[clap(value_name = "BASE", help = "The output base")]
+        base_out: String,
+        #[clap(long = "base-in", help = "The input base")]
+        base_in: Option<String>,
+    },
     #[clap(name = "access-list")]
     #[clap(visible_aliases = &["ac", "acl"])]
     #[clap(about = "Create an access list for a transaction.")]
     AccessList {
-        #[clap(help = "The destination of the transaction.", parse(try_from_str = parse_name_or_address), value_name = "ADDRESS")]
+        #[clap(help = "The destination of the transaction.",  value_parser = parse_name_or_address, value_name = "ADDRESS")]
         address: NameOrAddress,
         #[clap(help = "The signature of the function to call.", value_name = "SIG")]
         sig: String,
@@ -246,7 +234,7 @@ Examples:
             short = 'B',
             help = "The block height you want to query at.",
             long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
-            parse(try_from_str = parse_block_id),
+             value_parser = parse_block_id,
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
@@ -263,7 +251,7 @@ Examples:
         #[clap(
             help = "The block height you want to query at.",
             long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
-            parse(try_from_str = parse_block_id),
+             value_parser = parse_block_id,
             value_name = "BLOCK"
         )]
         block: BlockId,
@@ -289,21 +277,11 @@ Examples:
     #[clap(name = "call")]
     #[clap(visible_alias = "c")]
     #[clap(about = "Perform a call on an account without publishing a transaction.")]
-    Call {
-        #[clap(help = "the address you want to query", parse(try_from_str = parse_name_or_address), value_name = "ADDRESS")]
-        address: NameOrAddress,
-        #[clap(value_name = "SIG")]
-        sig: String,
-        #[clap(value_name = "ARGS")]
-        args: Vec<String>,
-        #[clap(long, short, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id), value_name = "BLOCK")]
-        block: Option<BlockId>,
-        #[clap(flatten)]
-        eth: EthereumOpts,
-    },
+    Call(CallArgs),
+    #[clap(name = "calldata")]
     #[clap(visible_alias = "cd")]
     #[clap(about = "ABI-encode a function with arguments.")]
-    Calldata {
+    CalldataEncode {
         #[clap(
             help = "The function signature.",
             long_help = "The function signature in the form <name>(<types...>)",
@@ -314,7 +292,6 @@ Examples:
         args: Vec<String>,
     },
     #[clap(name = "chain")]
-    #[clap(visible_alias = "ch")]
     #[clap(about = "Get the symbolic name of the current chain.")]
     Chain {
         #[clap(long, env = "ETH_RPC_URL", value_name = "URL")]
@@ -342,7 +319,7 @@ Examples:
         rpc_url: Option<String>,
         #[clap(help = "The deployer address.", value_name = "ADDRESS")]
         address: String,
-        #[clap(long, help = "The nonce of the deployer address.", parse(try_from_str = parse_u256), value_name = "NONCE")]
+        #[clap(long, help = "The nonce of the deployer address.", value_parser = parse_u256, value_name = "NONCE")]
         nonce: Option<U256>,
     },
     #[clap(name = "namehash")]
@@ -356,8 +333,8 @@ Examples:
     #[clap(visible_alias = "t")]
     #[clap(about = "Get information about a transaction.")]
     Tx {
-        #[clap(value_name = "HASH")]
-        hash: String,
+        #[clap(value_name = "TX_HASH")]
+        tx_hash: String,
         #[clap(value_name = "FIELD")]
         field: Option<String>,
         #[clap(long = "json", short = 'j', help_heading = "DISPLAY OPTIONS")]
@@ -370,7 +347,7 @@ Examples:
     #[clap(about = "Get the transaction receipt for a transaction.")]
     Receipt {
         #[clap(value_name = "TX_HASH")]
-        hash: String,
+        tx_hash: String,
         #[clap(value_name = "FIELD")]
         field: Option<String>,
         #[clap(
@@ -538,7 +515,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
             short = 'B',
             help = "The block height you want to query at.",
             long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
-            parse(try_from_str = parse_block_id),
+             value_parser = parse_block_id,
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
@@ -554,11 +531,11 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
             short = 'B',
             help = "The block height you want to query at.",
             long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
-            parse(try_from_str = parse_block_id),
+             value_parser = parse_block_id,
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
-        #[clap(help = "The account you want to query", parse(try_from_str = parse_name_or_address), value_name = "WHO")]
+        #[clap(help = "The account you want to query",  value_parser = parse_name_or_address, value_name = "WHO")]
         who: NameOrAddress,
         #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
         rpc_url: Option<String>,
@@ -572,7 +549,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
             short = 'B',
             help = "The block height you want to query at.",
             long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
-            parse(try_from_str = parse_block_id),
+             value_parser = parse_block_id,
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
@@ -588,11 +565,11 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
             short = 'B',
             help = "The block height you want to query at.",
             long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
-            parse(try_from_str = parse_block_id),
+             value_parser = parse_block_id,
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
-        #[clap(help = "The contract address.", parse(try_from_str = parse_name_or_address), value_name = "WHO")]
+        #[clap(help = "The contract address.",  value_parser = parse_name_or_address, value_name = "WHO")]
         who: NameOrAddress,
         #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
         rpc_url: Option<String>,
@@ -643,9 +620,9 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
         about = "Get the raw value of a contract's storage slot."
     )]
     Storage {
-        #[clap(help = "The contract address.", parse(try_from_str = parse_name_or_address), value_name = "ADDRESS")]
+        #[clap(help = "The contract address.",  value_parser = parse_name_or_address, value_name = "ADDRESS")]
         address: NameOrAddress,
-        #[clap(help = "The storage slot number (hex or decimal)", parse(try_from_str = parse_slot), value_name = "SLOT")]
+        #[clap(help = "The storage slot number (hex or decimal)",  value_parser = parse_slot, value_name = "SLOT")]
         slot: H256,
         #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
         rpc_url: Option<String>,
@@ -654,7 +631,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
             short = 'B',
             help = "The block height you want to query at.",
             long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
-            parse(try_from_str = parse_block_id),
+             value_parser = parse_block_id,
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
@@ -665,9 +642,9 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
         about = "Generate a storage proof for a given storage slot."
     )]
     Proof {
-        #[clap(help = "The contract address.", parse(try_from_str = parse_name_or_address), value_name = "ADDRESS")]
+        #[clap(help = "The contract address.",  value_parser = parse_name_or_address, value_name = "ADDRESS")]
         address: NameOrAddress,
-        #[clap(help = "The storage slot numbers (hex or decimal).", parse(try_from_str = parse_slot), value_name = "SLOTS")]
+        #[clap(help = "The storage slot numbers (hex or decimal).",  value_parser = parse_slot, value_name = "SLOTS")]
         slots: Vec<H256>,
         #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
         rpc_url: Option<String>,
@@ -676,7 +653,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
             short = 'B',
             help = "The block height you want to query at.",
             long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
-            parse(try_from_str = parse_block_id),
+             value_parser = parse_block_id,
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
@@ -690,11 +667,11 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
             short = 'B',
             help = "The block height you want to query at.",
             long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
-            parse(try_from_str = parse_block_id),
+             value_parser = parse_block_id,
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
-        #[clap(help = "The address you want to get the nonce for.", parse(try_from_str = parse_name_or_address), value_name = "WHO")]
+        #[clap(help = "The address you want to get the nonce for.",  value_parser = parse_name_or_address, value_name = "WHO")]
         who: NameOrAddress,
         #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
         rpc_url: Option<String>,
@@ -733,6 +710,12 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
         sig: String,
     },
     #[clap(
+        name = "create2",
+        visible_alias = "c2",
+        about = "Generate a deterministic contract address using CREATE2"
+    )]
+    Create2(Create2Args),
+    #[clap(
         name = "find-block",
         visible_alias = "f",
         about = "Get the block number closest to the provided timestamp."
@@ -740,7 +723,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
     FindBlock(FindBlockArgs),
     #[clap(visible_alias = "com", about = "Generate shell completions script")]
     Completions {
-        #[clap(arg_enum)]
+        #[clap(value_enum)]
         shell: clap_complete::Shell,
     },
     #[clap(visible_alias = "fig", about = "Generate Fig autocompletion spec.")]
@@ -771,7 +754,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
 
 pub fn parse_name_or_address(s: &str) -> eyre::Result<NameOrAddress> {
     Ok(if s.starts_with("0x") {
-        NameOrAddress::Address(s.parse::<Address>()?)
+        NameOrAddress::Address(s.parse()?)
     } else {
         NameOrAddress::Name(s.into())
     })
@@ -782,21 +765,13 @@ pub fn parse_block_id(s: &str) -> eyre::Result<BlockId> {
         "earliest" => BlockId::Number(BlockNumber::Earliest),
         "latest" => BlockId::Number(BlockNumber::Latest),
         "pending" => BlockId::Number(BlockNumber::Pending),
-        s if s.starts_with("0x") => BlockId::Hash(H256::from_str(s)?),
-        s => BlockId::Number(BlockNumber::Number(u64::from_str(s)?.into())),
+        s if s.starts_with("0x") => BlockId::Hash(s.parse()?),
+        s => BlockId::Number(BlockNumber::Number(s.parse::<u64>()?.into())),
     })
 }
 
 fn parse_slot(s: &str) -> eyre::Result<H256> {
-    Ok(H256::from_uint(&U256::from(
-        Numeric::from_str(s).map_err(|e| eyre::eyre!("Could not parse slot number: {e}"))?,
-    )))
-}
-
-fn parse_base(s: &str) -> eyre::Result<String> {
-    Ok(match s {
-        "10" | "dec" => "10".to_string(),
-        "16" | "hex" => "16".to_string(),
-        _ => eyre::bail!("Provided base is not a valid."),
-    })
+    Numeric::from_str(s)
+        .map_err(|e| eyre::eyre!("Could not parse slot number: {e}"))
+        .map(|n| H256::from_uint(&n.into()))
 }
