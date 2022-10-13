@@ -97,6 +97,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         },
         no_storage_caching: true,
         bytecode_hash: Default::default(),
+        cbor_metadata: true,
         revert_strings: Some(RevertStrings::Strip),
         sparse_mode: true,
         allow_paths: vec![],

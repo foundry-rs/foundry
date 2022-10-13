@@ -8,6 +8,7 @@ use ethers_solc::{
     artifacts::{
         output_selection::ContractOutputSelection, serde_helpers, BytecodeHash, DebuggingSettings,
         Libraries, ModelCheckerSettings, ModelCheckerTarget, Optimizer, RevertStrings, Settings,
+        SettingsMetadata,
     },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     error::SolcError,
@@ -305,6 +306,11 @@ pub struct Config {
     /// The metadata hash is machine dependent. By default, this is set to [BytecodeHash::None] to allow for deterministic code, See: <https://docs.soliditylang.org/en/latest/metadata.html>
     #[serde(with = "from_str_lowercase")]
     pub bytecode_hash: BytecodeHash,
+    /// Whether to append the metadata hash to the bytecode.
+    ///
+    /// If this is `false` and the `bytecode_hash` option above is not `None` solc will issue a
+    /// warning.
+    pub cbor_metadata: bool,
     /// How to treat revert (and require) reason strings.
     #[serde(with = "serde_helpers::display_from_str_opt")]
     pub revert_strings: Option<RevertStrings>,
@@ -946,7 +952,7 @@ impl Config {
             optimizer,
             evm_version: Some(self.evm_version),
             libraries,
-            metadata: Some(self.bytecode_hash.into()),
+            metadata: Some(SettingsMetadata::new(self.bytecode_hash, self.cbor_metadata)),
             debug: self.revert_strings.map(|revert_strings| DebuggingSettings {
                 revert_strings: Some(revert_strings),
                 debug_info: Vec::new(),
@@ -1719,6 +1725,7 @@ impl Default for Config {
             etherscan: Default::default(),
             no_storage_caching: false,
             bytecode_hash: BytecodeHash::Ipfs,
+            cbor_metadata: true,
             revert_strings: None,
             sparse_mode: false,
             build_info: false,
@@ -3072,6 +3079,7 @@ mod tests {
                 via_ir = true
                 rpc_storage_caching = { chains = [1, "optimism", 999999], endpoints = "all"}
                 bytecode_hash = "ipfs"
+                cbor_metadata = true
                 revert_strings = "strip"
                 allow_paths = ["allow", "paths"]
                 build_info_path = "build-info"
@@ -3104,6 +3112,7 @@ mod tests {
                         endpoints: CachedEndpoints::All
                     },
                     bytecode_hash: BytecodeHash::Ipfs,
+                    cbor_metadata: true,
                     revert_strings: Some(RevertStrings::Strip),
                     allow_paths: vec![PathBuf::from("allow"), PathBuf::from("paths")],
                     rpc_endpoints: RpcEndpoints::new([
@@ -3167,6 +3176,7 @@ mod tests {
                 block_number = 1
                 block_timestamp = 1
                 bytecode_hash = 'ipfs'
+                cbor_metadata = true
                 cache = true
                 cache_path = 'cache'
                 evm_version = 'london'
