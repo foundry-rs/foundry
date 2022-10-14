@@ -437,6 +437,9 @@ To skip this solc dry, pass `--force`.
             .map(|(f, libs)| (f.strip_prefix(project.root()).unwrap_or(&f).to_path_buf(), libs))
             .collect();
 
+        // TODO: make sanitization logic shared between types in ethers
+        let input: StandardJsonCompilerInput = CompilerInput::from(input).sanitized(version).into();
+
         let source =
             serde_json::to_string(&input).wrap_err("Failed to parse standard json input")?;
         let name = format!(
