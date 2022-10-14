@@ -1,18 +1,23 @@
 use crate::{
-    cmd::forge::{build, inspect::print_storage_layout},
+    cmd::forge::build,
     opts::cast::{parse_block_id, parse_name_or_address, parse_slot},
     utils::try_consume_config_rpc_url,
 };
 use cast::Cast;
 use clap::Parser;
-use ethers::{etherscan::Client, prelude::*, solc::artifacts::StorageLayout};
+use comfy_table::Table;
+use ethers::{
+    abi::ethabi::ethereum_types::BigEndianHash, etherscan::Client, prelude::*,
+    solc::artifacts::StorageLayout,
+};
 use eyre::{ContextCompat, Result};
 use foundry_common::{
     abi::find_source,
     compile::{compile, etherscan_project, suppress_compile},
-    try_get_http_provider,
+    try_get_http_provider, RetryProvider,
 };
 use foundry_config::Config;
+use futures::future::join_all;
 use semver::Version;
 
 /// The minimum Solc version for outputting storage layouts.
@@ -101,7 +106,7 @@ impl StorageArgs {
             let artifact =
                 out.artifacts().find(|(_, artifact)| match_code(artifact).unwrap_or_default());
             if let Some((_, artifact)) = artifact {
-                return print_storage_layout(&artifact.storage_layout, true)
+                return fetch_and_print_storage(provider, address, artifact, true).await
             }
         }
 
@@ -122,6 +127,7 @@ impl StorageArgs {
         let version = metadata.compiler_version()?;
         let auto_detect = version < MIN_SOLC;
 
+        // Create a new temp project
         let root = tempfile::tempdir()?;
         let root_path = root.path();
         let project = etherscan_project(metadata, root_path)?;
@@ -131,7 +137,7 @@ impl StorageArgs {
         // Compile
         let mut out = suppress_compile(&project)?;
         let artifact = {
-            let (_, artifact) = out
+            let (_, mut artifact) = out
                 .artifacts()
                 .find(|(name, _)| name == &metadata.contract_name)
                 .ok_or_else(|| eyre::eyre!("Could not find artifact"))?;
@@ -144,30 +150,95 @@ impl StorageArgs {
                 project.auto_detect = false;
                 if let Ok(output) = suppress_compile(&project) {
                     out = output;
-                    let (_, artifact) = out
+                    let (_, new_artifact) = out
                         .artifacts()
                         .find(|(name, _)| name == &metadata.contract_name)
                         .ok_or_else(|| eyre::eyre!("Could not find artifact"))?;
-                    artifact
-                } else {
-                    artifact
+                    artifact = new_artifact;
                 }
-            } else {
-                artifact
             }
-        };
 
-        if is_storage_layout_empty(&artifact.storage_layout) {
-            println!("Storage layout is empty.")
-        } else {
-            print_storage_layout(&artifact.storage_layout, true)?;
-        }
+            artifact
+        };
 
         // Clear temp directory
         root.close()?;
 
-        Ok(())
+        fetch_and_print_storage(provider, address, artifact, true).await
     }
+}
+
+async fn fetch_and_print_storage(
+    provider: RetryProvider,
+    address: Address,
+    artifact: &ConfigurableContractArtifact,
+    pretty: bool,
+) -> Result<()> {
+    if is_storage_layout_empty(&artifact.storage_layout) {
+        println!("Storage layout is empty.");
+        Ok(())
+    } else {
+        let mut layout = artifact.storage_layout.as_ref().unwrap().clone();
+        fetch_storage_values(provider, address, &mut layout).await?;
+        print_storage(layout, pretty)
+    }
+}
+
+/// Overrides the `value` field in [StorageLayout] with the slot's value to avoid creating new data
+/// structures.
+async fn fetch_storage_values(
+    provider: RetryProvider,
+    address: Address,
+    layout: &mut StorageLayout,
+) -> Result<()> {
+    // TODO: Batch request?
+    // TODO: Array values
+    let futures: Vec<_> = layout
+        .storage
+        .iter()
+        .map(|slot| {
+            let slot_h256 = H256::from_uint(&slot.slot.parse::<U256>()?);
+            Ok(provider.get_storage_at(address, slot_h256, None))
+        })
+        .collect::<Result<_, eyre::Report>>()?;
+
+    for (value, slot) in join_all(futures).await.into_iter().zip(layout.storage.iter()) {
+        let value = value?.into_uint();
+        let t = layout.types.get_mut(&slot.storage_type).expect("Bad storage");
+        // TODO: Format value
+        t.value = Some(format!("{:?}", value));
+    }
+
+    Ok(())
+}
+
+fn print_storage(layout: StorageLayout, pretty: bool) -> Result<()> {
+    if !pretty {
+        println!("{}", serde_json::to_string_pretty(&serde_json::to_value(layout)?)?);
+        return Ok(())
+    }
+
+    let mut table = Table::new();
+    table.set_header(vec!["Name", "Type", "Slot", "Offset", "Bytes", "Value", "Contract"]);
+
+    for slot in layout.storage {
+        let storage_type = layout.types.get(&slot.storage_type);
+        table.add_row(vec![
+            slot.label,
+            storage_type.as_ref().map_or("?".to_string(), |t| t.label.clone()),
+            slot.slot,
+            slot.offset.to_string(),
+            storage_type.as_ref().map_or("?".to_string(), |t| t.number_of_bytes.clone()),
+            storage_type
+                .as_ref()
+                .map_or("?".to_string(), |t| t.value.clone().unwrap_or_else(|| "0".to_string())),
+            slot.contract,
+        ]);
+    }
+
+    println!("{}", table);
+
+    Ok(())
 }
 
 fn with_storage_layout_output(mut project: Project) -> Project {
