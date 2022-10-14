@@ -371,13 +371,10 @@ pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> 
 
     let mut settings = metadata.source_code.settings()?.unwrap_or_default();
 
-    // make remappings absolute
+    // make remappings absolute with our root
     for remapping in settings.remappings.iter_mut() {
-        let mut path = Path::new(&remapping.path);
-        if path.is_absolute() {
-            path = path.strip_prefix("/").unwrap_or(path);
-        }
-        let new_path = target_path.join(path);
+        let path = Path::new(remapping.path.trim_start_matches('/'));
+        let new_path = sources_path.join(path);
         remapping.path = new_path.display().to_string();
     }
 
