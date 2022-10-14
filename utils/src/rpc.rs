@@ -58,14 +58,6 @@ pub fn next_http_rpc_endpoint() -> String {
     next_rpc_endpoint("mainnet")
 }
 
-/// Returns the next _rinkeby_ rpc endpoint in inline
-///
-/// This will rotate all available rpc endpoints
-pub fn next_rinkeby_http_rpc_endpoint() -> String {
-    let idx = next() % ALCHEMY_MAINNET_KEYS.len();
-    format!("https://eth-rinkeby.alchemyapi.io/v2/{}", ALCHEMY_MAINNET_KEYS[idx])
-}
-
 pub fn next_rpc_endpoint(network: &str) -> String {
     let idx = next() % num_keys();
     if idx < INFURA_KEYS.len() {

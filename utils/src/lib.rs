@@ -12,6 +12,7 @@ use futures::future::BoxFuture;
 use std::{
     collections::BTreeMap, env::VarError, fmt::Write, path::PathBuf, str::FromStr, time::Duration,
 };
+use tracing::trace;
 
 pub mod abi;
 pub mod rpc;
@@ -140,11 +141,18 @@ pub fn recurse_link<'a>(
 ) {
     // check if we have dependencies
     if let Some(dependencies) = dependency_tree.get(&target) {
+        trace!(?target, target = "forge::link", "linking contract");
         // for each dependency, try to link
         dependencies.iter().for_each(|(next_target, file, key)| {
             // get the dependency
-            let contract = contracts.get(next_target).expect("No target contract").clone();
-            let mut next_target_bytecode = contract.bytecode.expect("No target bytecode");
+            trace!(dependency = next_target, file, key, target = "forge::link", "get dependency");
+            let contract = contracts
+                .get(next_target)
+                .unwrap_or_else(|| panic!("No target contract named {}", next_target))
+                .clone();
+            let mut next_target_bytecode = contract
+                .bytecode
+                .unwrap_or_else(|| panic!("No bytecode for contract {}", next_target));
             let mut next_target_runtime_bytecode = contract
                 .deployed_bytecode
                 .expect("No target runtime bytecode")

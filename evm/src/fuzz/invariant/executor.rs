@@ -95,15 +95,17 @@ impl<'a> InvariantExecutor<'a> {
 
         let blank_executor = RefCell::new(&mut *self.executor);
 
+        let last_call_results = RefCell::new(
+            assert_invariants(
+                &invariant_contract,
+                &blank_executor.borrow(),
+                &[],
+                &mut failures.borrow_mut(),
+            )
+            .ok(),
+        );
         // Make sure invariants are sound even before starting to fuzz
-        if assert_invariants(
-            &invariant_contract,
-            &blank_executor.borrow(),
-            &[],
-            &mut failures.borrow_mut(),
-        )
-        .is_err()
-        {
+        if last_call_results.borrow().is_none() {
             fuzz_cases.borrow_mut().push(FuzzedCases::new(vec![]));
         }
 
@@ -179,16 +181,20 @@ impl<'a> InvariantExecutor<'a> {
                         stipend: call_result.stipend,
                     });
 
-                    if !can_continue(
+                    let (can_continue, call_results) = can_continue(
                         &invariant_contract,
                         call_result,
                         &executor,
                         &inputs,
                         &mut failures.borrow_mut(),
                         self.config.fail_on_revert,
-                    ) {
+                    );
+
+                    if !can_continue {
                         break 'fuzz_run
                     }
+
+                    *last_call_results.borrow_mut() = call_results;
 
                     // Generates the next call from the run using the recently updated
                     // dictionary.
@@ -218,7 +224,12 @@ impl<'a> InvariantExecutor<'a> {
 
         let (reverts, invariants) = failures.into_inner().into_inner();
 
-        Ok(Some(InvariantFuzzTestResult { invariants, cases: fuzz_cases.into_inner(), reverts }))
+        Ok(Some(InvariantFuzzTestResult {
+            invariants,
+            cases: fuzz_cases.into_inner(),
+            reverts,
+            last_call_results: last_call_results.take(),
+        }))
     }
 
     /// Prepares certain structures to execute the invariant tests:
@@ -280,10 +291,6 @@ impl<'a> InvariantExecutor<'a> {
 
         self.executor.inspector_config_mut().fuzzer =
             Some(Fuzzer { call_generator, fuzz_state: fuzz_state.clone(), collect: true });
-
-        // Tracing should be off when running all runs. It will be turned on later for the failure
-        // cases.
-        self.executor.set_tracing(false);
 
         Ok((fuzz_state, targeted_contracts, strat))
     }
@@ -555,6 +562,7 @@ fn collect_data(
 }
 
 /// Verifies that the invariant run execution can continue.
+/// Returns the mapping of (Invariant Function Name -> Call Result) if invariants were asserted.
 fn can_continue(
     invariant_contract: &InvariantContract,
     call_result: RawCallResult,
@@ -562,10 +570,12 @@ fn can_continue(
     calldata: &[BasicTxDetails],
     failures: &mut InvariantFailures,
     fail_on_revert: bool,
-) -> bool {
+) -> (bool, Option<BTreeMap<String, RawCallResult>>) {
+    let mut call_results = None;
     if !call_result.reverted {
-        if assert_invariants(invariant_contract, executor, calldata, failures).is_err() {
-            return false
+        call_results = assert_invariants(invariant_contract, executor, calldata, failures).ok();
+        if call_results.is_none() {
+            return (false, None)
         }
     } else {
         failures.reverts += 1;
@@ -583,10 +593,10 @@ fn can_continue(
                 failures.failed_invariants.insert(invariant.name.clone(), Some(error.clone()));
             }
 
-            return false
+            return (false, None)
         }
     }
-    true
+    (true, call_results)
 }
 
 #[derive(Clone)]

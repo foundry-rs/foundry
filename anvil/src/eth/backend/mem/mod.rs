@@ -140,6 +140,8 @@ pub struct Backend {
     /// keeps track of active snapshots at a specific block
     active_snapshots: Arc<Mutex<HashMap<U256, (u64, H256)>>>,
     enable_steps_tracing: bool,
+    /// Whether to keep history state
+    prune_history: bool,
 }
 
 impl Backend {
@@ -151,6 +153,7 @@ impl Backend {
         fees: FeeManager,
         fork: Option<ClientFork>,
         enable_steps_tracing: bool,
+        prune_history: bool,
     ) -> Self {
         // if this is a fork then adjust the blockchain storage
         let blockchain = if let Some(ref fork) = fork {
@@ -179,6 +182,7 @@ impl Backend {
             genesis,
             active_snapshots: Arc::new(Mutex::new(Default::default())),
             enable_steps_tracing,
+            prune_history,
         };
 
         // Note: this can only fail in forking mode, in which case we can't recover
@@ -651,9 +655,11 @@ impl Backend {
 
             let best_hash = self.blockchain.storage.read().best_hash;
 
-            let db = self.db.read().await.current_state();
-            // store current state before executing all transactions
-            self.states.write().insert(best_hash, db);
+            if !self.prune_history {
+                let db = self.db.read().await.current_state();
+                // store current state before executing all transactions
+                self.states.write().insert(best_hash, db);
+            }
 
             let (executed_tx, block_hash) = {
                 let mut db = self.db.write().await;

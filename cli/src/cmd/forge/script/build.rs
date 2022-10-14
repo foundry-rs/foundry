@@ -185,6 +185,10 @@ impl ScriptArgs {
     ) -> eyre::Result<(Project, ProjectCompileOutput)> {
         let project = script_config.config.project()?;
 
+        if !project.paths.has_input_files() {
+            eyre::bail!("No input files detected.")
+        }
+
         // We received a file path.
         if let Ok(target_contract) = dunce::canonicalize(&self.path) {
             let output = compile::compile_target(

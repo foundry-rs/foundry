@@ -561,30 +561,22 @@ where
         field: Option<String>,
         to_json: bool,
     ) -> Result<String> {
-        let transaction_result = self
+        let tx_hash = H256::from_str(&tx_hash).wrap_err("invalid tx hash")?;
+        let tx = self
             .provider
-            .get_transaction(H256::from_str(&tx_hash)?)
+            .get_transaction(tx_hash)
             .await?
-            .ok_or_else(|| eyre::eyre!("transaction {:?} not found", tx_hash))?;
+            .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
 
-        let transaction = if let Some(ref field) = field {
-            serde_json::to_value(&transaction_result)?
-                .get(field)
-                .cloned()
-                .ok_or_else(|| eyre::eyre!("field {field} not found"))?
-        } else {
-            serde_json::to_value(&transaction_result)?
-        };
-
-        let transaction = if let Some(ref field) = field {
-            get_pretty_tx_attr(&transaction_result, field)
-                .unwrap_or_else(|| format!("{field} is not a valid tx field"))
+        Ok(if let Some(ref field) = field {
+            get_pretty_tx_attr(&tx, field)
+                .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field))?
         } else if to_json {
-            serde_json::to_string(&transaction)?
+            // to_value first to sort json object keys
+            serde_json::to_value(&tx)?.to_string()
         } else {
-            transaction_result.pretty()
-        };
-        Ok(transaction)
+            tx.pretty()
+        })
     }
 
     /// # Example
@@ -611,49 +603,36 @@ where
         cast_async: bool,
         to_json: bool,
     ) -> Result<String> {
-        let tx_hash = H256::from_str(&tx_hash)?;
+        let tx_hash = H256::from_str(&tx_hash).wrap_err("invalid tx hash")?;
 
-        // try to get the receipt
-        let receipt = self.provider.get_transaction_receipt(tx_hash).await?;
-
-        // if the async flag is provided, immediately exit if no tx is found,
-        // otherwise try to poll for it
-        let receipt_result = if cast_async {
-            match receipt {
-                Some(inner) => inner,
-                None => return Ok("receipt not found".to_string()),
-            }
-        } else {
-            match receipt {
-                Some(inner) => inner,
-                None => {
+        let receipt = match self.provider.get_transaction_receipt(tx_hash).await? {
+            Some(r) => r,
+            None => {
+                // if the async flag is provided, immediately exit if no tx is found, otherwise try
+                // to poll for it
+                if cast_async {
+                    eyre::bail!("tx not found: {:?}", tx_hash)
+                } else {
                     let tx = PendingTransaction::new(tx_hash, self.provider.provider());
-                    match tx.confirmations(confs).await? {
-                        Some(inner) => inner,
-                        None => return Ok("receipt not found when polling pending tx. was the transaction dropped from the mempool?".to_string())
-                    }
+                    tx.confirmations(confs).await?.ok_or_else(|| {
+                        eyre::eyre!(
+                            "tx not found, might have been dropped from mempool: {:?}",
+                            tx_hash
+                        )
+                    })?
                 }
             }
         };
 
-        let receipt = if let Some(ref field) = field {
-            serde_json::to_value(&receipt_result)?
-                .get(field)
-                .cloned()
-                .ok_or_else(|| eyre::eyre!("field {field} not found"))?
-        } else {
-            serde_json::to_value(&receipt_result)?
-        };
-
-        let receipt = if let Some(ref field) = field {
-            get_pretty_tx_receipt_attr(&receipt_result, field)
-                .unwrap_or_else(|| format!("{field} is not a valid tx receipt field"))
+        Ok(if let Some(ref field) = field {
+            get_pretty_tx_receipt_attr(&receipt, field)
+                .ok_or_else(|| eyre::eyre!("invalid receipt field: {}", field))?
         } else if to_json {
-            serde_json::to_string(&receipt)?
+            // to_value first to sort json object keys
+            serde_json::to_value(&receipt)?.to_string()
         } else {
-            receipt_result.pretty()
-        };
-        Ok(receipt)
+            receipt.pretty()
+        })
     }
 
     /// Perform a raw JSON-RPC request
