@@ -1,7 +1,7 @@
 use crate::{
     cmd::forge::{build, inspect::print_storage_layout},
     opts::cast::{parse_block_id, parse_name_or_address, parse_slot},
-    utils::consume_config_rpc_url,
+    utils::try_consume_config_rpc_url,
 };
 use cast::Cast;
 use clap::Parser;
@@ -65,7 +65,7 @@ impl StorageArgs {
     pub async fn run(self) -> Result<()> {
         let StorageArgs { address, block, build, rpc_url, slot, chain, etherscan_api_key } = self;
 
-        let rpc_url = consume_config_rpc_url(rpc_url);
+        let rpc_url = try_consume_config_rpc_url(rpc_url)?;
         let provider = try_get_http_provider(rpc_url)?;
 
         let address = match address {
