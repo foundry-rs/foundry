@@ -4,9 +4,10 @@ use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, *};
 use ethers_etherscan::contract::Metadata;
 use ethers_solc::{
     artifacts::{BytecodeObject, ContractBytecodeSome},
+    remappings::Remapping,
     report::NoReporter,
     Artifact, ArtifactId, FileFilter, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
-    Solc,
+    Solc, SolcConfig,
 };
 use eyre::Result;
 use std::{
@@ -365,13 +366,43 @@ pub async fn compile_from_source(
 /// Creates a [Project] from an Etherscan source.
 pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> Result<Project> {
     let target_path = dunce::canonicalize(target_path.as_ref())?;
+    let sources_path = target_path.join(&metadata.contract_name);
     metadata.source_tree().write_to(&target_path)?;
 
-    let paths = ProjectPathsConfig::builder().build_with_root(target_path);
+    let mut settings = metadata.source_code.settings()?.unwrap_or_default();
+
+    // make remappings absolute with our root
+    for remapping in settings.remappings.iter_mut() {
+        let new_path = sources_path.join(remapping.path.trim_start_matches('/'));
+        remapping.path = new_path.display().to_string();
+    }
+
+    // add missing remappings
+    if !settings.remappings.iter().any(|remapping| remapping.name.starts_with("@openzeppelin/")) {
+        let oz = Remapping {
+            name: "@openzeppelin/".into(),
+            path: sources_path.join("@openzeppelin").display().to_string(),
+        };
+        settings.remappings.push(oz);
+    }
+
+    // root/
+    //   ContractName/
+    //     [source code]
+    let paths = ProjectPathsConfig::builder()
+        .sources(sources_path)
+        .remappings(settings.remappings.clone())
+        .build_with_root(target_path);
 
     let v = metadata.compiler_version()?;
     let v = format!("{}.{}.{}", v.major, v.minor, v.patch);
     let solc = Solc::find_or_install_svm_version(v)?;
 
-    Ok(metadata.project_builder()?.paths(paths).solc(solc).ephemeral().no_artifacts().build()?)
+    Ok(Project::builder()
+        .solc_config(SolcConfig::builder().settings(settings).build())
+        .paths(paths)
+        .solc(solc)
+        .ephemeral()
+        .no_artifacts()
+        .build()?)
 }
