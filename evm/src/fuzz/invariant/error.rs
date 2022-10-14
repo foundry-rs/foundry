@@ -14,6 +14,8 @@ use tracing::trace;
 
 #[derive(Debug, Clone)]
 pub struct InvariantFuzzError {
+    pub logs: Vec<Log>,
+    pub traces: Option<CallTraceArena>,
     /// The proptest error occurred as a result of a test case.
     pub test_error: TestError<Vec<BasicTxDetails>>,
     /// The return reason of the offending call.
@@ -47,6 +49,8 @@ impl InvariantFuzzError {
         }
 
         InvariantFuzzError {
+            logs: call_result.logs,
+            traces: call_result.traces,
             test_error: proptest::test_runner::TestError::Fail(
                 format!(
                     "{}, reason: '{}'",
@@ -132,8 +136,6 @@ impl InvariantFuzzError {
                     .expect("bad call to evm");
 
                 if error_call_result.reverted {
-                    logs.extend(error_call_result.logs);
-                    traces.push((TraceKind::Execution, error_call_result.traces.unwrap()));
                     break
                 }
             }
