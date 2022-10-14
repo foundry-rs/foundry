@@ -373,17 +373,18 @@ pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> 
 
     // make remappings absolute with our root
     for remapping in settings.remappings.iter_mut() {
-        let path = Path::new(remapping.path.trim_start_matches('/'));
-        let new_path = sources_path.join(path);
+        let new_path = sources_path.join(remapping.path.trim_start_matches('/'));
         remapping.path = new_path.display().to_string();
     }
 
     // add missing remappings
-    let oz = Remapping {
-        name: "@openzeppelin/".into(),
-        path: sources_path.join("@openzeppelin").display().to_string(),
-    };
-    settings.remappings.push(oz);
+    if !settings.remappings.iter().any(|remapping| remapping.name.starts_with("@openzeppelin/")) {
+        let oz = Remapping {
+            name: "@openzeppelin/".into(),
+            path: sources_path.join("@openzeppelin").display().to_string(),
+        };
+        settings.remappings.push(oz);
+    }
 
     // root/
     //   ContractName/
