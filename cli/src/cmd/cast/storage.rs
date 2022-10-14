@@ -5,7 +5,7 @@ use crate::{
 };
 use cast::Cast;
 use clap::Parser;
-use ethers::{etherscan::Client, prelude::*};
+use ethers::{etherscan::Client, prelude::*, solc::artifacts::StorageLayout};
 use eyre::{ContextCompat, Result};
 use foundry_common::{
     abi::find_source,
@@ -121,9 +121,6 @@ impl StorageArgs {
 
         let version = metadata.compiler_version()?;
         let auto_detect = version < MIN_SOLC;
-        if auto_detect {
-            println!("The requested contract was compiled with {} while the minimum version for storage layouts is {} and as a result the output may be empty.", version, MIN_SOLC);
-        }
 
         let root = tempfile::tempdir()?;
         let root_path = root.path();
@@ -132,11 +129,39 @@ impl StorageArgs {
         project.auto_detect = auto_detect;
 
         // Compile
-        let out = suppress_compile(&project)?;
-        let artifact = out.artifacts().find(|(name, _)| name == &metadata.contract_name);
-        let (_, artifact) = artifact.wrap_err("Artifact not found")?;
+        let mut out = suppress_compile(&project)?;
+        let artifact = {
+            let (_, artifact) = out
+                .artifacts()
+                .find(|(name, _)| name == &metadata.contract_name)
+                .ok_or_else(|| eyre::eyre!("Could not find artifact"))?;
 
-        print_storage_layout(&artifact.storage_layout, true)?;
+            if is_storage_layout_empty(&artifact.storage_layout) && auto_detect {
+                // try recompiling with the minimum version
+                println!("The requested contract was compiled with {} while the minimum version for storage layouts is {} and as a result the output may be empty.", version, MIN_SOLC);
+                let solc = Solc::find_or_install_svm_version(MIN_SOLC.to_string())?;
+                project.solc = solc;
+                project.auto_detect = false;
+                if let Ok(output) = suppress_compile(&project) {
+                    out = output;
+                    let (_, artifact) = out
+                        .artifacts()
+                        .find(|(name, _)| name == &metadata.contract_name)
+                        .ok_or_else(|| eyre::eyre!("Could not find artifact"))?;
+                    artifact
+                } else {
+                    artifact
+                }
+            } else {
+                artifact
+            }
+        };
+
+        if is_storage_layout_empty(&artifact.storage_layout) {
+            println!("Storage layout is empty.")
+        } else {
+            print_storage_layout(&artifact.storage_layout, true)?;
+        }
 
         // Clear temp directory
         root.close()?;
@@ -150,4 +175,12 @@ fn with_storage_layout_output(mut project: Project) -> Project {
     let output_selection = project.artifacts.output_selection();
     project.solc_config.settings = project.solc_config.settings.with_extra_output(output_selection);
     project
+}
+
+fn is_storage_layout_empty(storage_layout: &Option<StorageLayout>) -> bool {
+    if let Some(ref s) = storage_layout {
+        s.storage.is_empty()
+    } else {
+        true
+    }
 }
