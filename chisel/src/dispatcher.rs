@@ -1,4 +1,4 @@
-use crate::{parser::ParsedSnippet, session::ChiselSession};
+use crate::session::ChiselSession;
 use solang_parser::diagnostics::Diagnostic;
 use std::{error, error::Error, str::FromStr};
 use strum::{EnumIter, IntoEnumIterator};
@@ -68,8 +68,18 @@ impl ChiselDisptacher {
                 )))
             }
             ChiselCommand::Clear => {
-                self.session.snippets.clear();
-                println!("{}", Paint::green("Cleared current session!"))
+                if let Some(session_source) = self.session.session_source.as_mut() {
+                    // Drain all source sections
+                    session_source.drain_run();
+                    session_source.drain_global_code();
+                    session_source.drain_top_level_code();
+
+                    return DispatchResult::Success(Some(String::from("Cleared session!")))
+                } else {
+                    return DispatchResult::CommandFailed(
+                        Paint::red("Session source not present!").to_string(),
+                    )
+                }
             }
             ChiselCommand::Flush => {
                 if let Err(e) = self.session.write() {
@@ -159,15 +169,16 @@ impl ChiselDisptacher {
         // not check if the line conflicts with any previous declarations
         // (i.e. "uint a = 1;" could be declared twice). Should check against
         // the whole temp file so that previous inputs persist.
-        let mut parsed_snippet = ParsedSnippet::new(line);
-        if let Err(e) = parsed_snippet.parse() {
-            self.errored = true;
-            return DispatchResult::SolangParserFailed(e)
-        }
-        self.session.snippets.push(parsed_snippet);
+        // let mut parsed_snippet = ParsedSnippet::new(line);
+        // if let Err(e) = parsed_snippet.parse() {
+        //     self.errored = true;
+        //     return DispatchResult::SolangParserFailed(e);
+        // }
+        // self.session.snippets.push(parsed_snippet);
+        //
 
-        // Get a reference to the temp project
-        let project = match self.session.project.as_ref().ok_or_else(|| {
+        // Get a reference to the session source
+        let source = match self.session.session_source.as_mut().ok_or_else(|| {
             DispatchResult::Failure(Some(format!(
                 "{}",
                 Paint::red("⚒️ Chisel Error: Missing project configuration.")
@@ -177,25 +188,30 @@ impl ChiselDisptacher {
             Err(e) => return e,
         };
 
-        if project.add_source("REPL", self.session.contract_source()).is_ok() {
-            match self.session.execute() {
-                Ok(_) => DispatchResult::Success(Some(format!("{:?}", project.sources_path()))),
-                Err(e) => {
-                    let err = DispatchResult::Failure(Some(format!(
-                        "{}",
-                        Paint::red(format!("⚒️ Chisel Error: {}", e))
-                    )));
-                    // Remove the snippet that caused the compilation error
-                    self.session.snippets.pop();
-                    err
-                }
-            }
-        } else {
-            DispatchResult::Failure(Some(format!(
-                "{}",
-                Paint::red("⚒️ Chisel Error: Failed writing source file to temp project.")
-            )))
-        }
+        source.with_run_code(line);
+
+        dbg!(self.session.execute());
+        DispatchResult::Success(Some(String::from("Test")))
+
+        // if project.add_source("REPL", self.session.contract_source()).is_ok() {
+        //     match self.session.execute() {
+        //         Ok(_) => DispatchResult::Success(Some(format!("{:?}", project.sources_path()))),
+        //         Err(e) => {
+        //             let err = DispatchResult::Failure(Some(format!(
+        //                 "{}",
+        //                 Paint::red(format!("⚒️ Chisel Error: {}", e))
+        //             )));
+        //             // Remove the snippet that caused the compilation error
+        //             self.session.snippets.pop();
+        //             err
+        //         }
+        //     }
+        // } else {
+        //     DispatchResult::Failure(Some(format!(
+        //         "{}",
+        //         Paint::red("⚒️ Chisel Error: Failed writing source file to temp project.")
+        //     )))
+        // }
     }
 }
 

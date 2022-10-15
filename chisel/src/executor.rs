@@ -1,62 +1,68 @@
 use crate::prelude::{ChiselRunner, ChiselSession};
 use core::fmt::Debug;
 use ethers::{
-    types::{Address, Bytes, U256},
+    types::{Address, U256},
     utils::hex,
 };
-use ethers_solc::{artifacts::CompactContractBytecode, Artifact};
+use ethers_solc::Artifact;
 use forge::executor::{Backend, ExecutorBuilder};
 use revm::OpCode;
+use solang_parser::pt::CodeLocation;
 
 /// Executor implementation for [ChiselSession]
 impl ChiselSession {
     /// Runs the REPL contract within the executor
     /// TODO - Proper return type, etc.
-    pub fn execute(&self) -> Result<(), &str> {
+    pub fn execute(&mut self) -> Result<(), &str> {
         // Recompile the project and ensure no errors occurred.
-        // TODO: This is pretty slow. Need to speed it up.
-        if let Ok(artifacts) = self.project.as_ref().ok_or("Missing Project")?.compile() {
-            if artifacts.has_compiler_errors() {
-                return Err("Failed to compile REPL contract.")
+        match self.session_source.as_mut().ok_or("Missing Project")?.build() {
+            Ok(compiled) => {
+                if let Some((_, contract)) =
+                    compiled.compiler_output.contracts_into_iter().find(|(name, _)| name.eq("REPL"))
+                {
+                    // This *should* never panic.
+                    let bytecode =
+                        contract.get_bytecode_bytes().expect("No bytecode for contract.");
+
+                    let final_statement = compiled.intermediate.statements.last().unwrap();
+                    let final_pc = {
+                        let source_loc = final_statement.loc();
+                        let offset = source_loc.start();
+                        let length = source_loc.end() - source_loc.start();
+                        contract
+                            .get_source_map_deployed()
+                            .unwrap()
+                            .unwrap()
+                            .into_iter()
+                            .zip(InstructionIter::new(&bytecode))
+                            .filter(|(s, _)| s.offset == offset && s.length == length)
+                            .map(|(_, i)| i.pc)
+                            .max()
+                            .unwrap_or_default()
+                    };
+
+                    dbg!(final_pc);
+
+                    // Create a new runner
+                    let mut runner = self.prepare_runner(final_pc);
+
+                    // Run w/ no libraries for now
+                    let res = runner.run(&[], bytecode.into_owned());
+                    println!("{:?}", &res);
+                    if let Some(state) = res.unwrap().1.state {
+                        dbg!(state.0);
+                    }
+                    Ok(())
+                } else {
+                    Err("Could not find artifact for REPL contract.")
+                }
             }
-
-            if let Some(contract) = artifacts.find_first("REPL") {
-                let CompactContractBytecode { bytecode, .. } =
-                    contract.clone().into_contract_bytecode();
-
-                // let abi = abi.expect("No ABI for contract.");
-                let bytecode =
-                    bytecode.expect("No bytecode for contract.").object.into_bytes().unwrap();
-                let final_pc = {
-                    let source_map = contract.get_source_map().unwrap().unwrap();
-                    let last_source_elem = source_map.last().unwrap();
-                    let offset = last_source_elem.offset;
-                    let length = last_source_elem.length;
-
-                    source_map
-                        .into_iter()
-                        .zip(InstructionIter::new(&bytecode))
-                        .filter(|(s, _)| s.offset == offset && s.length == length)
-                        .map(|(_, i)| i.pc)
-                        .max()
-                        .unwrap_or_default()
-                };
-                dbg!(final_pc);
-
-                // Create a new runner
-                let mut runner = self.prepare_runner(final_pc);
-
-                // Run w/ no libraries for now
-                let res = runner.run(&[], bytecode);
-                println!("{:?}", &res);
-                dbg!(res.unwrap().1.state);
-            } else {
-                return Err("Could not find artifact for REPL contract.")
+            Err(err) => {
+                // TODO: Remove this debug stuff
+                let err = err.to_string();
+                dbg!(err);
+                Err("test")
             }
-
-            Ok(())
-        } else {
-            Err("Failed to compile REPL contract.")
         }
     }
 
@@ -79,8 +85,9 @@ impl ChiselSession {
     }
 }
 
-// [Instruction] & [InstructionIter] ripped from soli
-// ==================================================
+// [Instruction] & [InstructionIter] ripped from
+// [soli](https://github.com/jpopesculian/soli)
+// =============================================
 
 #[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash)]
 struct Instruction {

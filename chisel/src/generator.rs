@@ -59,8 +59,8 @@ pub struct SessionSource {
     /// Top level solidity code
     /// Typically, this is code seen above the contructor
     pub top_level_code: String,
-    /// Constructor Code
-    pub constructor_code: String,
+    /// "run()" Code
+    pub run_code: String,
     /// The solc compiler output
     pub compiled: Option<CompilerOutput>,
     /// The intermediate output
@@ -79,7 +79,7 @@ impl SessionSource {
             solc: solc.clone(),
             global_code: Default::default(),
             top_level_code: Default::default(),
-            constructor_code: Default::default(),
+            run_code: Default::default(),
             compiled: None,
             intermediate: None,
             generated_output: None,
@@ -106,9 +106,9 @@ impl SessionSource {
         self
     }
 
-    /// Appends constructor code to the source
-    pub fn with_constructor_code(&mut self, content: &str) -> &mut Self {
-        self.constructor_code.push_str(content);
+    /// Appends code to the "run()" function
+    pub fn with_run_code(&mut self, content: &str) -> &mut Self {
+        self.run_code.push_str(format!("{}\n", content).as_str());
         self.compiled = None;
         self.intermediate = None;
         self.generated_output = None;
@@ -135,9 +135,9 @@ impl SessionSource {
         self
     }
 
-    /// Clears the constructor code
-    pub fn drain_constructor(&mut self) -> &mut Self {
-        self.constructor_code = Default::default();
+    /// Clears the "run()" function's code
+    pub fn drain_run(&mut self) -> &mut Self {
+        self.run_code = Default::default();
         self.compiled = None;
         self.intermediate = None;
         self.generated_output = None;
@@ -197,15 +197,18 @@ impl SessionSource {
             }?;
 
         // Parse Statements
+        // TODO: Refactor to work with "run()"
         let statements =
             match contract_parts.pop().ok_or(eyre::eyre!("Failed to pop source unit part"))? {
                 solang_parser::pt::ContractPart::FunctionDefinition(func) => {
-                    if !matches!(func.ty, solang_parser::pt::FunctionTy::Constructor) {
-                        return Err(eyre::eyre!("Missing constructor"))
+                    if !matches!(func.ty, solang_parser::pt::FunctionTy::Function) &&
+                        func.name.unwrap().name.eq("REPL")
+                    {
+                        return Err(eyre::eyre!("Missing run() function"))
                     }
-                    match func.body.ok_or(eyre::eyre!("Missing Constructor Function Body"))? {
+                    match func.body.ok_or(eyre::eyre!("Missing run() Function Body"))? {
                         solang_parser::pt::Statement::Block { statements, .. } => Ok(statements),
-                        _ => Err(eyre::eyre!("Invalid constructor function body")),
+                        _ => Err(eyre::eyre!("Invalid run() function body")),
                     }
                 }
                 _ => Err(eyre::eyre!("Contract missing function definition")),
@@ -351,8 +354,8 @@ impl std::fmt::Display for SessionSource {
 
         f.write_fmt(format_args!("contract {} {{\n", self.contract_name))?;
         f.write_str(&self.top_level_code)?;
-        f.write_str("constructor() {\n")?;
-        f.write_str(&self.constructor_code)?;
+        f.write_str("function run() external {\n")?;
+        f.write_str(&self.run_code)?;
         f.write_str("}\n}")?;
         Ok(())
     }
