@@ -1,7 +1,7 @@
 use crate::prelude::{ChiselResult, ChiselRunner, SessionSource};
 use core::fmt::Debug;
 use ethers::{
-    abi::{ethabi, ParamType},
+    abi::{ethabi, ParamType, Token},
     types::{Address, U256},
     utils::hex,
 };
@@ -10,6 +10,7 @@ use eyre::Result;
 use forge::executor::{Backend, ExecutorBuilder};
 use revm::OpCode;
 use solang_parser::pt::{self, CodeLocation};
+use yansi::Paint;
 
 /// Executor implementation for [SessionSource]
 impl SessionSource {
@@ -114,7 +115,7 @@ impl SessionSource {
                             }
                         };
 
-                        Ok(format!("{:?}", token))
+                        Ok(format_token(token))
                     } else {
                         Err(eyre::eyre!("No state present"))
                     }
@@ -144,6 +145,79 @@ impl SessionSource {
     }
 }
 
+/// Formats a [Token] into an inspection message
+/// TODO: Verbosity option
+fn format_token(token: Token) -> String {
+    match token {
+        Token::Address(a) => {
+            format!(
+                "Type: {}\n└ Data: {}",
+                Paint::red("address"),
+                Paint::cyan(format!("0x{:x}", a))
+            )
+        }
+        Token::FixedBytes(b) => {
+            format!(
+                "Type: {}\n└ Data: {}",
+                Paint::red("bytes32"),
+                Paint::cyan(format!("0x{}", hex::encode(b)))
+            )
+        }
+        Token::Int(i) => {
+            format!(
+                "Type: {}\n├ Hex: {}\n└ Decimal: {}",
+                Paint::red("int"),
+                Paint::cyan(format!("0x{:x}", i)),
+                Paint::cyan(i)
+            )
+        }
+        Token::Uint(i) => {
+            format!(
+                "Type: {}\n├ Hex: {}\n└ Decimal: {}",
+                Paint::red("uint"),
+                Paint::cyan(format!("0x{:x}", i)),
+                Paint::cyan(i)
+            )
+        }
+        Token::Bool(b) => {
+            format!("Type: {}\n└ Value: {}", Paint::red("bool"), Paint::cyan(b))
+        }
+        Token::String(_) | Token::Bytes(_) => {
+            let hex = hex::encode(ethers::abi::encode(&[token.clone()]));
+            let s = token.into_string();
+            format!(
+                "Type: {}\n├ UTF-8: {}\n├ Hex (Memory):\n├─ Length ({}): {}\n├─ Contents ({}): {}\n├ Hex (Calldata):\n├─ Pointer ({}): {}\n├─ Length ({}): {}\n└─ Contents ({}): {}\n",
+                Paint::red(if s.is_some() { "string" } else { "dynamic bytes" }),
+                Paint::cyan(s.unwrap_or(String::from("N/A"))),
+                Paint::yellow("[0x00:0x20]"),
+                Paint::cyan(format!("0x{}", &hex[64..128])),
+                Paint::yellow("[0x20:..]"),
+                Paint::cyan(format!("0x{}", &hex[128..])),
+                Paint::yellow(format!("[0x00:0x20]")),
+                Paint::cyan(&hex[..64]),
+                Paint::yellow(format!("[0x20:0x40]")),
+                Paint::cyan(format!("0x{}", &hex[64..128])),
+                Paint::yellow("[0x40:..]"),
+                Paint::cyan(format!("0x{}", &hex[128..])),
+            )
+        }
+        Token::FixedArray(tokens) | Token::Array(tokens) => {
+            let mut out = format!("{}", Paint::red(format!("array[{}]", tokens.len())));
+            out.push_str(" = [");
+            for token in tokens {
+                out.push_str(&"\n  ├ ");
+                out.push_str(&format!("{}", format_token(token).replace('\n', "\n  ")));
+                out.push_str("\n");
+            }
+            out.push(']');
+            out
+        }
+        Token::Tuple(_) => {
+            todo!()
+        }
+    }
+}
+
 // Ripped from
 // [soli](https://github.com/jpopesculian/soli)
 // =============================================
@@ -164,7 +238,7 @@ impl Type {
                 pt::Type::Address | pt::Type::AddressPayable | pt::Type::Payable => {
                     Type::Builtin(ParamType::Address)
                 }
-                pt::Type::Bool => Type::Builtin(ParamType::Bytes),
+                pt::Type::Bool => Type::Builtin(ParamType::Bool),
                 pt::Type::String => Type::Builtin(ParamType::String),
                 pt::Type::Int(size) => Type::Builtin(ParamType::Int(*size as usize)),
                 pt::Type::Uint(size) => Type::Builtin(ParamType::Uint(*size as usize)),
