@@ -30,7 +30,6 @@ where
         if self.final_pc == interp.program_counter() - 1 {
             self.state = Some((interp.stack().clone(), interp.memory.clone(), eval))
         }
-        dbg!("I'm working!", self.final_pc, eval, interp.program_counter());
         // Pass on [revm::Return] from arguments
         eval
     }

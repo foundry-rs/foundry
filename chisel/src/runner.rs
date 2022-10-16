@@ -20,6 +20,7 @@ pub struct ChiselRunner {
     /// The Executor
     pub executor: Executor,
     /// An initial balance
+    /// TODO: can default this to U256::MAX probs.
     pub initial_balance: U256,
     /// The sender
     pub sender: Address,
@@ -56,7 +57,7 @@ impl ChiselRunner {
         libraries: &[Bytes],
         bytecode: Bytes,
     ) -> eyre::Result<(Address, ChiselResult)> {
-        // Give the sender max balance for deployment of libraries and the REPL contract
+        // Set the sender's balance to [U256::MAX] for deployment of the REPL contract.
         self.executor.set_balance(self.sender, U256::MAX)?;
 
         // Deploy libraries
@@ -74,10 +75,9 @@ impl ChiselRunner {
             .collect();
 
         // Deploy an instance of the REPL contract
-        #[allow(unused)] // TODO
         let DeployResult {
             address,
-            mut logs,
+            logs,
             traces: constructor_traces,
             debug: constructor_debug,
             ..
@@ -88,19 +88,28 @@ impl ChiselRunner {
 
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)).into_iter());
 
-        // Reset the sender's balance
+        // Reset the sender's balance to the initial balance for calls.
         self.executor.set_balance(self.sender, self.initial_balance)?;
 
         // TODO: Extend traces, etc.
-        let call_res = self.call(
-            self.sender,
-            address,
-            Bytes::from([0xc0, 0x40, 0x62, 0x26]),
-            0u32.into(),
-            true,
-        );
+        let call_res =
+            self.call(self.sender, address, Bytes::from([0xc0, 0x40, 0x62, 0x26]), 0.into(), true);
 
-        Ok((address, call_res.unwrap()))
+        match call_res {
+            Ok(mut call_res) => {
+                // Extend the traces, logs, and debug information of the call to the REPL contract
+                // with deployment data.
+                // TODO: Might not want to include the deployment traces / logs / debug?
+                call_res.traces.extend(traces);
+                call_res.logs.extend(logs);
+                if let Some(debug) = call_res.debug.as_mut() {
+                    debug.extend(constructor_debug);
+                }
+
+                Ok((address, call_res))
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Executes the call

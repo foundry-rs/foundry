@@ -59,8 +59,8 @@ pub struct SessionSource {
     /// Top level solidity code
     /// Typically, this is code seen above the contructor
     pub top_level_code: String,
-    /// Constructor Code
-    pub constructor_code: String,
+    /// "run()" Code
+    pub run_code: String,
     /// The solc compiler output
     pub compiled: Option<CompilerOutput>,
     /// The intermediate output
@@ -79,10 +79,38 @@ impl SessionSource {
             solc: solc.clone(),
             global_code: Default::default(),
             top_level_code: Default::default(),
-            constructor_code: Default::default(),
+            run_code: Default::default(),
             compiled: None,
             intermediate: None,
             generated_output: None,
+        }
+    }
+
+    /// Clones the [SessionSource] and appends a new line of code. Will return
+    /// an error if the new line fails to be parsed.
+    pub fn clone_with_new_line(&self, mut content: String) -> Result<SessionSource> {
+        let mut new_source = self.clone();
+        if let Some(parsed) = parse_fragment(&new_source.solc, &content)
+            .or_else(|| {
+                content = content.trim_end().to_string();
+                content.push_str(";\n");
+                parse_fragment(&new_source.solc, &content)
+            })
+            .or_else(|| {
+                content = content.trim_end().trim_end_matches(';').to_string();
+                content.push('\n');
+                parse_fragment(&new_source.solc, &content)
+            })
+        {
+            match parsed {
+                ParseTreeFragment::Function(_) => new_source.with_run_code(&content),
+                ParseTreeFragment::Contract(_) => new_source.with_top_level_code(&content),
+                ParseTreeFragment::Source(_) => new_source.with_global_code(&content),
+            };
+
+            Ok(new_source)
+        } else {
+            return Err(eyre::eyre!(content.trim().to_owned()))
         }
     }
 
@@ -106,9 +134,9 @@ impl SessionSource {
         self
     }
 
-    /// Appends constructor code to the source
-    pub fn with_constructor_code(&mut self, content: &str) -> &mut Self {
-        self.constructor_code.push_str(content);
+    /// Appends code to the "run()" function
+    pub fn with_run_code(&mut self, content: &str) -> &mut Self {
+        self.run_code.push_str(format!("{}\n", content).as_str());
         self.compiled = None;
         self.intermediate = None;
         self.generated_output = None;
@@ -135,9 +163,9 @@ impl SessionSource {
         self
     }
 
-    /// Clears the constructor code
-    pub fn drain_constructor(&mut self) -> &mut Self {
-        self.constructor_code = Default::default();
+    /// Clears the "run()" function's code
+    pub fn drain_run(&mut self) -> &mut Self {
+        self.run_code = Default::default();
         self.compiled = None;
         self.intermediate = None;
         self.generated_output = None;
@@ -197,15 +225,18 @@ impl SessionSource {
             }?;
 
         // Parse Statements
+        // TODO: Refactor to work with "run()"
         let statements =
             match contract_parts.pop().ok_or(eyre::eyre!("Failed to pop source unit part"))? {
                 solang_parser::pt::ContractPart::FunctionDefinition(func) => {
-                    if !matches!(func.ty, solang_parser::pt::FunctionTy::Constructor) {
-                        return Err(eyre::eyre!("Missing constructor"))
+                    if !matches!(func.ty, solang_parser::pt::FunctionTy::Function) &&
+                        func.name.unwrap().name.eq("REPL")
+                    {
+                        return Err(eyre::eyre!("Missing run() function"))
                     }
-                    match func.body.ok_or(eyre::eyre!("Missing Constructor Function Body"))? {
+                    match func.body.ok_or(eyre::eyre!("Missing run() Function Body"))? {
                         solang_parser::pt::Statement::Block { statements, .. } => Ok(statements),
-                        _ => Err(eyre::eyre!("Invalid constructor function body")),
+                        _ => Err(eyre::eyre!("Invalid run() function body")),
                     }
                 }
                 _ => Err(eyre::eyre!("Contract missing function definition")),
@@ -237,7 +268,10 @@ impl SessionSource {
         let errors =
             compiled.errors.iter().filter(|error| error.severity.is_error()).collect::<Vec<_>>();
         if !errors.is_empty() {
-            return Err(eyre::eyre!("Compiler errors: {:?}", errors))
+            return Err(eyre::eyre!(
+                "Compiler errors:\n{}",
+                errors.into_iter().map(|err| err.to_string()).collect::<String>()
+            ))
         }
 
         Ok(compiled)
@@ -351,9 +385,45 @@ impl std::fmt::Display for SessionSource {
 
         f.write_fmt(format_args!("contract {} {{\n", self.contract_name))?;
         f.write_str(&self.top_level_code)?;
-        f.write_str("constructor() {\n")?;
-        f.write_str(&self.constructor_code)?;
+        f.write_str("function run() external {\n")?;
+        f.write_str(&self.run_code)?;
         f.write_str("}\n}")?;
         Ok(())
     }
+}
+
+/// A Parse Tree Fragment
+///
+/// Used to determine whether an input will go to the "run()" function,
+/// the top level of the contract, or in global scope.
+#[derive(Debug)]
+pub enum ParseTreeFragment {
+    /// Code for the global scope
+    Source(Vec<solang_parser::pt::SourceUnitPart>),
+    /// Code for the top level of the contract
+    Contract(Vec<solang_parser::pt::ContractPart>),
+    /// Code for the "run()" function
+    Function(Vec<solang_parser::pt::Statement>),
+}
+
+/// Parses a fragment of solidity code with solang_parser and assigns
+/// it a scope.
+pub fn parse_fragment(solc: &Solc, buffer: &str) -> Option<ParseTreeFragment> {
+    let base = SessionSource::new(solc);
+
+    if let Ok((_, _, statements)) = base.clone().with_run_code(buffer).parse_and_decompose() {
+        return Some(ParseTreeFragment::Function(statements))
+    }
+    if let Ok((_, contract_parts, _)) =
+        base.clone().with_top_level_code(buffer).parse_and_decompose()
+    {
+        return Some(ParseTreeFragment::Contract(contract_parts))
+    }
+    if let Ok((source_unit_parts, _, _)) =
+        base.clone().with_global_code(buffer).parse_and_decompose()
+    {
+        return Some(ParseTreeFragment::Source(source_unit_parts))
+    }
+
+    None
 }

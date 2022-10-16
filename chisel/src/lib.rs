@@ -7,12 +7,11 @@
 /// Chisel Environment Module
 pub mod session;
 
-/// A wrapper around [solang_parser](solang_parser::parse) parser to generate
-/// [SourceUnit](solang_parser::ast::SourceUnit)s from a solidity source code strings
-pub mod parser;
-
 /// REPL command dispatcher.
 pub mod dispatcher;
+
+/// Session Source
+pub mod generator;
 
 /// The runner
 pub mod runner;
@@ -22,9 +21,6 @@ pub mod executor;
 
 /// A Solidity Highlighter module
 pub mod sol_highlighter;
-
-/// Session Source
-pub mod generator;
 
 /// Re-export a prelude of relevant chisel items
 pub mod prelude {
