@@ -97,10 +97,6 @@ impl ChiselSession {
         })
     }
 
-    // TODO:::: This should follow soli's pattern of contract generation, for _each_ contract
-    // defined by our sessions's ParsedSnippets TODO:::: We define generation in
-    // [generator.rs](./generator.rs), following soli's pattern.
-
     /// Render the full source code for the current session.
     ///
     /// ### Return

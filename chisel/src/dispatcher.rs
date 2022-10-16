@@ -175,10 +175,10 @@ impl ChiselDisptacher {
         // TODO: Support function calls / expressions
         if let Some(generated_output) = &source.generated_output {
             if generated_output.intermediate.variable_definitions.get(line).is_some() {
-                if let Err(e) = source.inspect(line) {
-                    return DispatchResult::CommandFailed(e.to_string())
+                match source.inspect(line) {
+                    Ok(res) => return DispatchResult::Success(Some(res)),
+                    Err(e) => return DispatchResult::CommandFailed(e.to_string()),
                 }
-                return DispatchResult::Success(None)
             }
         }
 

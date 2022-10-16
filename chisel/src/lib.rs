@@ -11,7 +11,7 @@ pub mod session;
 pub mod dispatcher;
 
 /// Session Source
-pub mod generator;
+pub mod session_source;
 
 /// The runner
 pub mod runner;
@@ -24,5 +24,5 @@ pub mod sol_highlighter;
 
 /// Re-export a prelude of relevant chisel items
 pub mod prelude {
-    pub use crate::{dispatcher::*, generator::*, runner::*, session::*, sol_highlighter::*};
+    pub use crate::{dispatcher::*, runner::*, session::*, session_source::*, sol_highlighter::*};
 }

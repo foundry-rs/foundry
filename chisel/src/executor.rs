@@ -114,8 +114,7 @@ impl SessionSource {
                             }
                         };
 
-                        println!("{:?}", token);
-                        Ok(String::default())
+                        Ok(format!("{:?}", token))
                     } else {
                         Err(eyre::eyre!("No state present"))
                     }
