@@ -46,7 +46,12 @@ impl ChiselDisptacher {
     /// Returns the prompt given the last input's error status
     pub fn get_prompt(&self) -> String {
         format!(
-            "{} ",
+            "{}{} ",
+            if let Some(id) = self.session.id {
+                format!("({}) ", format!("{}: {}", Paint::cyan("ID"), Paint::yellow(id)))
+            } else {
+                String::default()
+            },
             if self.errored { Paint::red(PROMPT_ARROW) } else { Paint::green(PROMPT_ARROW) }
         )
     }
@@ -74,24 +79,36 @@ impl ChiselDisptacher {
                     session_source.drain_global_code();
                     session_source.drain_top_level_code();
 
-                    return DispatchResult::Success(Some(String::from("Cleared session!")))
+                    return DispatchResult::Success(Some(String::from("Cleared session!")));
                 } else {
                     return DispatchResult::CommandFailed(
                         Paint::red("Session source not present!").to_string(),
-                    )
+                    );
                 }
             }
             ChiselCommand::Flush => {
                 if let Err(e) = self.session.write() {
-                    return DispatchResult::FileIoError(e.into())
+                    return DispatchResult::FileIoError(e.into());
                 }
+                return DispatchResult::Success(Some(String::from(format!("Saved session to cache with ID = {}", self.session.id.unwrap()))))
             }
             ChiselCommand::Load(_) => {
+                if args.len() != 1 {
+                    return DispatchResult::CommandFailed(format!("{}", Paint::red("⚒️ Chisel Error: Must supply a session ID as the argument.")))
+                }
+
                 // Use args as the name
                 let name = args[0];
-                if let Err(e) = self.session.write() {
-                    return DispatchResult::FileIoError(e.into())
+                // Try to save the current session before loading another
+                if let Some(session_source) = &self.session.session_source {
+                    // Don't save an empty session
+                    if !session_source.run_code.is_empty() {
+                        if let Err(e) = self.session.write() {
+                            return DispatchResult::FileIoError(e.into());
+                        }
+                    }
                 }
+                // Parse the arguments
                 let new_session = match name {
                     "latest" => ChiselSession::latest(),
                     _ => ChiselSession::load(name),
@@ -100,11 +117,12 @@ impl ChiselDisptacher {
                 // WARNING: Overwrites the current session
                 if let Ok(new_session) = new_session {
                     self.session = new_session;
+                    return DispatchResult::CommandSuccess(Some(format!("Loaded Chisel session! (ID = {})", self.session.id.unwrap())))
                 } else {
                     return DispatchResult::CommandFailed(format!(
                         "{}: Failed to load session!",
                         Paint::red("⚒️ Chisel Error")
-                    ))
+                    ));
                 }
             }
             ChiselCommand::ListSessions => match ChiselSession::list_sessions() {
@@ -124,16 +142,25 @@ impl ChiselDisptacher {
                 Err(_) => {
                     return DispatchResult::CommandFailed(format!(
                         "{}",
-                        Paint::red("⚒️ Chisel Error: No sessions found.")
+                        Paint::red("⚒️ Chisel Error: No sessions found. Use the `!flush` command to save a session.")
                     ))
                 }
             },
             ChiselCommand::Source => {
                 return DispatchResult::CommandSuccess(Some(self.session.contract_source()))
             }
+            ChiselCommand::ClearCache => {
+                match ChiselSession::clear_cache() {
+                    Ok(_) => return DispatchResult::CommandSuccess(Some(String::from("Cleared chisel cache!"))),
+                    Err(_) => {
+                        return DispatchResult::CommandFailed(format!(
+                            "{}",
+                            Paint::red("⚒️ Chisel Error: Failed to clear cache!")
+                        ));
+                    }
+                }
+            }
         }
-
-        DispatchResult::CommandSuccess(None)
     }
 
     /// Dispatches an input to the appropriate chisel handlers
@@ -169,15 +196,24 @@ impl ChiselDisptacher {
             )))
         }) {
             Ok(project) => project,
-            Err(e) => return e,
+            Err(e) => {
+                self.errored = true;
+                return e
+            }
         };
 
         // TODO: Support function calls / expressions
         if let Some(generated_output) = &source.generated_output {
             if generated_output.intermediate.variable_definitions.get(line).is_some() {
                 match source.inspect(line) {
-                    Ok(res) => return DispatchResult::Success(Some(res)),
-                    Err(e) => return DispatchResult::CommandFailed(e.to_string()),
+                    Ok(res) => {
+                        self.errored = false;
+                        return DispatchResult::Success(Some(res))
+                    }
+                    Err(e) => {
+                        self.errored = true;
+                        return DispatchResult::CommandFailed(e.to_string())
+                    }
                 }
             }
         }
@@ -185,16 +221,23 @@ impl ChiselDisptacher {
         // Create new source and parse
         let mut new_source = match source.clone_with_new_line(line.to_string()) {
             Ok(new) => new,
-            Err(e) => return DispatchResult::CommandFailed(e.to_string()),
+            Err(e) => {
+                self.errored = true;
+                return DispatchResult::CommandFailed(e.to_string())
+            }
         };
 
         match new_source.execute() {
             Ok(res) => {
                 let _res = res.1;
                 self.session.session_source = Some(new_source);
+                self.errored = false;
                 DispatchResult::Success(None)
             }
-            Err(e) => DispatchResult::CommandFailed(e.to_string()),
+            Err(e) => {
+                self.errored = true;
+                DispatchResult::CommandFailed(e.to_string())
+            }
         }
     }
 }
@@ -218,6 +261,8 @@ pub enum ChiselCommand {
     Load(String),
     /// List all cached sessions
     ListSessions,
+    /// Clear the cache
+    ClearCache,
 }
 
 /// A command descriptor type
@@ -235,6 +280,7 @@ impl FromStr for ChiselCommand {
             "flush" => Ok(ChiselCommand::Flush),
             "list" => Ok(ChiselCommand::ListSessions),
             "load" => Ok(ChiselCommand::Load("latest".to_string())),
+            "clearcache" => Ok(ChiselCommand::ClearCache),
             _ => Err(Paint::red(format!(
                 "Unknown command \"{}\"! See available commands with `!help`.",
                 s
@@ -257,6 +303,7 @@ impl From<ChiselCommand> for CmdDescriptor {
             ChiselCommand::Flush => ("flush", "Flush the current session to cache"),
             ChiselCommand::Load(_) => ("load", "Load a previous session from cache"),
             ChiselCommand::ListSessions => ("list", "List all cached sessions"),
+            ChiselCommand::ClearCache => ("clearcache", "Clear the chisel cache"),
         }
     }
 }

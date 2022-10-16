@@ -98,8 +98,7 @@ fn test_load_cache() {
     env.write().unwrap();
 
     // Load the session
-    let cache_file_name = format!("{}chisel-0.json", ChiselSession::cache_dir().unwrap());
-    let new_env = ChiselSession::load(&cache_file_name).unwrap();
+    let new_env = ChiselSession::load("0").unwrap();
 
     // Validate the session
     assert_eq!(new_env.solc_version, Version::parse("0.8.17").unwrap());
