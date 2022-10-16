@@ -3,7 +3,10 @@ use ethers_solc::{project_util::TempProject, Solc};
 use eyre::Result;
 pub use semver::Version;
 use serde::{Deserialize, Serialize};
-use std::{path::Path, time::SystemTime};
+use std::{
+    path::{Path, PathBuf},
+    time::SystemTime,
+};
 
 /// A Chisel REPL Session
 #[derive(Debug, Serialize, Deserialize)]
@@ -21,9 +24,21 @@ impl Default for ChiselSession {
     fn default() -> Self {
         // TODO: Fetch latest version rather than hard-coding it (?)
         Self {
-            session_source: Some(SessionSource::new(
-                &Solc::find_or_install_svm_version("0.8.17").unwrap(),
-            )),
+            session_source: Some({
+                let solc = Solc::find_or_install_svm_version("0.8.17").unwrap();
+                assert!(solc.version().is_ok());
+                SessionSource {
+                    file_name: PathBuf::from("ReplContract.sol".to_string()),
+                    contract_name: "REPL".to_string(),
+                    solc,
+                    global_code: Default::default(),
+                    top_level_code: Default::default(),
+                    run_code: Default::default(),
+                    compiled: None,
+                    intermediate: None,
+                    generated_output: None,
+                }
+            }),
             solc_version: Version::new(0, 8, 17),
             id: None,
         }
@@ -43,17 +58,17 @@ impl ChiselSession {
         // Set project's solc version explicitly
         project.set_solc(solc_version);
 
-        let solc = &Solc::find_or_install_svm_version(solc_version);
+        let solc = Solc::find_or_install_svm_version(solc_version);
 
         // TODO: Either handle gracefully or document that this
         // constructor can panic. Also should notify the dev if
-        // we're installing a new solc version.
+        // we're installing a new solc version on their behalf.
         assert!(solc.is_ok());
 
         // Return initialized ChiselSession with set solc version
         Self {
             solc_version: parsed_solc_version,
-            session_source: Some(SessionSource::new(solc.as_ref().unwrap())),
+            session_source: Some(SessionSource::new(&solc.unwrap())),
             id: None,
         }
     }

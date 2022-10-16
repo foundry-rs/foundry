@@ -86,6 +86,34 @@ impl SessionSource {
         }
     }
 
+    /// Clones the [SessionSource] and appends a new line of code. Will return
+    /// an error if the new line fails to be parsed.
+    pub fn clone_with_new_line(&self, mut content: String) -> Result<SessionSource> {
+        let mut new_source = self.clone();
+        if let Some(parsed) = parse_fragment(&new_source.solc, &content)
+            .or_else(|| {
+                content = content.trim_end().to_string();
+                content.push_str(";\n");
+                parse_fragment(&new_source.solc, &content)
+            })
+            .or_else(|| {
+                content = content.trim_end().trim_end_matches(';').to_string();
+                content.push('\n');
+                parse_fragment(&new_source.solc, &content)
+            })
+        {
+            match parsed {
+                ParseTreeFragment::Function(_) => new_source.with_run_code(&content),
+                ParseTreeFragment::Contract(_) => new_source.with_top_level_code(&content),
+                ParseTreeFragment::Source(_) => new_source.with_global_code(&content),
+            };
+
+            Ok(new_source)
+        } else {
+            return Err(eyre::eyre!(content.trim().to_owned()))
+        }
+    }
+
     // Fillers
 
     /// Appends global-level code to the source
@@ -240,7 +268,10 @@ impl SessionSource {
         let errors =
             compiled.errors.iter().filter(|error| error.severity.is_error()).collect::<Vec<_>>();
         if !errors.is_empty() {
-            return Err(eyre::eyre!("Compiler errors: {:?}", errors))
+            return Err(eyre::eyre!(
+                "Compiler errors:\n{}",
+                errors.into_iter().map(|err| err.to_string()).collect::<String>()
+            ))
         }
 
         Ok(compiled)
@@ -359,4 +390,40 @@ impl std::fmt::Display for SessionSource {
         f.write_str("}\n}")?;
         Ok(())
     }
+}
+
+/// A Parse Tree Fragment
+///
+/// Used to determine whether an input will go to the "run()" function,
+/// the top level of the contract, or in global scope.
+#[derive(Debug)]
+pub enum ParseTreeFragment {
+    /// Code for the global scope
+    Source(Vec<solang_parser::pt::SourceUnitPart>),
+    /// Code for the top level of the contract
+    Contract(Vec<solang_parser::pt::ContractPart>),
+    /// Code for the "run()" function
+    Function(Vec<solang_parser::pt::Statement>),
+}
+
+/// Parses a fragment of solidity code with solang_parser and assigns
+/// it a scope.
+pub fn parse_fragment(solc: &Solc, buffer: &str) -> Option<ParseTreeFragment> {
+    let base = SessionSource::new(solc);
+
+    if let Ok((_, _, statements)) = base.clone().with_run_code(buffer).parse_and_decompose() {
+        return Some(ParseTreeFragment::Function(statements))
+    }
+    if let Ok((_, contract_parts, _)) =
+        base.clone().with_top_level_code(buffer).parse_and_decompose()
+    {
+        return Some(ParseTreeFragment::Contract(contract_parts))
+    }
+    if let Ok((source_unit_parts, _, _)) =
+        base.clone().with_global_code(buffer).parse_and_decompose()
+    {
+        return Some(ParseTreeFragment::Source(source_unit_parts))
+    }
+
+    None
 }

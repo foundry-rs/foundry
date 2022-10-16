@@ -161,22 +161,6 @@ impl ChiselDisptacher {
             }
         }
 
-        // Parse the input with [solang-parser](https://docs.rs/solang-parser/latest/solang_parser)
-        // Print dianostics and continue on error
-        // If parsing successful, grab the (source unit, comment) tuple
-
-        // TODO: This does check if the line is parsed successfully, but does
-        // not check if the line conflicts with any previous declarations
-        // (i.e. "uint a = 1;" could be declared twice). Should check against
-        // the whole temp file so that previous inputs persist.
-        // let mut parsed_snippet = ParsedSnippet::new(line);
-        // if let Err(e) = parsed_snippet.parse() {
-        //     self.errored = true;
-        //     return DispatchResult::SolangParserFailed(e);
-        // }
-        // self.session.snippets.push(parsed_snippet);
-        //
-
         // Get a reference to the session source
         let source = match self.session.session_source.as_mut().ok_or_else(|| {
             DispatchResult::Failure(Some(format!(
@@ -188,30 +172,30 @@ impl ChiselDisptacher {
             Err(e) => return e,
         };
 
-        source.with_run_code(line);
+        // TODO: Support function calls / expressions
+        if let Some(generated_output) = &source.generated_output {
+            if generated_output.intermediate.variable_definitions.get(line).is_some() {
+                if let Err(e) = source.inspect(line) {
+                    return DispatchResult::CommandFailed(e.to_string())
+                }
+                return DispatchResult::Success(None)
+            }
+        }
 
-        dbg!(self.session.execute());
-        DispatchResult::Success(Some(String::from("Test")))
+        // Create new source and parse
+        let mut new_source = match source.clone_with_new_line(line.to_string()) {
+            Ok(new) => new,
+            Err(e) => return DispatchResult::CommandFailed(e.to_string()),
+        };
 
-        // if project.add_source("REPL", self.session.contract_source()).is_ok() {
-        //     match self.session.execute() {
-        //         Ok(_) => DispatchResult::Success(Some(format!("{:?}", project.sources_path()))),
-        //         Err(e) => {
-        //             let err = DispatchResult::Failure(Some(format!(
-        //                 "{}",
-        //                 Paint::red(format!("⚒️ Chisel Error: {}", e))
-        //             )));
-        //             // Remove the snippet that caused the compilation error
-        //             self.session.snippets.pop();
-        //             err
-        //         }
-        //     }
-        // } else {
-        //     DispatchResult::Failure(Some(format!(
-        //         "{}",
-        //         Paint::red("⚒️ Chisel Error: Failed writing source file to temp project.")
-        //     )))
-        // }
+        match new_source.execute() {
+            Ok(res) => {
+                let _res = res.1;
+                self.session.session_source = Some(new_source);
+                DispatchResult::Success(None)
+            }
+            Err(e) => DispatchResult::CommandFailed(e.to_string()),
+        }
     }
 }
 
