@@ -132,6 +132,10 @@ impl MaybeHashDatabase for MemDb {
         self.inner.clear_into_snapshot()
     }
 
+    fn clear(&mut self) {
+        self.inner.clear();
+    }
+
     fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
         self.inner.init_from_snapshot(snapshot)
     }

@@ -327,6 +327,10 @@ impl Backend {
             // insert back all genesis accounts, by reusing cached `AccountInfo`s we don't need to
             // fetch the data via RPC again
             let mut db = self.db.write().await;
+
+            // clear database
+            db.clear();
+
             let fork_genesis_infos = self.genesis.fork_genesis_account_infos.lock();
             for (address, info) in
                 self.genesis.accounts.iter().copied().zip(fork_genesis_infos.iter().cloned())
