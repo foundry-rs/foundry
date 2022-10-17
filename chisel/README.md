@@ -2,7 +2,6 @@
 
 Chisel is a fast, utilitarian, and verbose solidity REPL. It is heavily inspired by the incredible work done in [soli](https://github.com/jpopesculian/soli)!
 
-
 ## Why?
 
 Ever wanted to quickly test a small feature in solidity?
@@ -14,7 +13,6 @@ Chisel is your solution. Chisel let's you write, execute, and debug Solidity dir
 Once you finish testing, Chisel even lets you export your code to a new solidity file!
 
 In this sense, Chisel even serves as a project generator.
-
 
 ## Feature Completion
 
@@ -32,28 +30,27 @@ Chisel aims to improve upon soli, with native foundry integration by providing f
 - Better error messages and traces
 - ... many more future features!
 
-
 ## Checklist
 
 - [ ] REPL functionality
-  - [ ] Create temporary REPL contract (in memory, or temp file?).
+  - [x] Create temporary REPL contract (in memory, or temp file?).
     - [ ] Implement `forge-std/Test.sol` so that cheatcodes etc. can be used.
-  - [ ] Utilize foundry's `evm` module for REPL env.
+  - [x] Utilize foundry's `evm` module for REPL env.
     - [ ] Implement network forking.
   - [ ] Import all project files / interfaces into REPL contract automatically.
     - [ ] Optionally disable this functionality with a flag.
-- [ ] Cache REPL History
-  - [ ] Allow a user to save/load sessions from their Chisel history.
+- [x] Cache REPL History
+  - [x] Allow a user to save/load sessions from their Chisel history.
 - [ ] Custom commands / cmd flags
-  - [ ] Inspect variable
-  - [ ] Inspect memory
+  - [x] Inspect variable
+  - [x] Inspect memory
   - [ ] Inspect storage slot
   - [ ] Enable / disable call tracing
-  - [ ] Network forking
-  - [ ] Export to file
+  - [ ] On-the-fly network forking
+  - [x] Export to file
+    - [ ] Export session to script contract if within project.
 - [ ] [Syntax highlighting](https://docs.rs/rustyline/10.0.0/rustyline/highlight/trait.Highlighter.html)
 - [ ] Tests.
-
 
 ## Usage
 
@@ -64,7 +61,6 @@ Chisel aims to improve upon soli, with native foundry integration by providing f
 Simply run `foundryup` to install `chisel`!
 
 If you do not have `foundryup` installed, reference the Foundry [installation guide](../README.md#installation).
-
 
 ### Project Generation
 
@@ -81,7 +77,6 @@ Generated new project "new_erc20"!
 $ ls
 new_erc20
 ```
-
 
 ### Loading a Previous Session
 
