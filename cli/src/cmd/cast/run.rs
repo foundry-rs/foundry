@@ -125,10 +125,14 @@ impl RunArgs {
 
                     if let Some(to) = tx.to {
                         trace!(tx=?tx.hash,?to, "executing previous call transaction");
-                        executor.commit_tx_with_env(env.clone()).unwrap();
+                        executor.commit_tx_with_env(env.clone()).wrap_err_with(|| {
+                            format!("Failed to execute transaction: {:?}", tx.hash())
+                        })?;
                     } else {
                         trace!(tx=?tx.hash, "executing previous create transaction");
-                        executor.deploy_with_env(env.clone(), None).unwrap();
+                        executor.deploy_with_env(env.clone(), None).wrap_err_with(|| {
+                            format!("Failed to deploy transaction: {:?}", tx.hash())
+                        })?;
                     }
 
                     update_progress!(pb, index);
