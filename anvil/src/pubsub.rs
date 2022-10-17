@@ -189,7 +189,7 @@ pub fn filter_logs(
         let receipt: EIP658Receipt = receipt.into();
         let receipt_logs = receipt.logs;
         let transaction_hash: Option<H256> = if !receipt_logs.is_empty() {
-            Some(block.transactions[receipt_index as usize].hash())
+            Some(block.transactions[receipt_index].hash())
         } else {
             None
         };

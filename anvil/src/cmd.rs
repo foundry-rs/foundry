@@ -133,6 +133,9 @@ pub struct NodeArgs {
         visible_alias = "ipcpath"
     )]
     pub ipc: Option<Option<String>>,
+
+    #[clap(long, help = "Don't keep full chain history.")]
+    pub prune_history: bool,
 }
 
 #[cfg(windows)]
@@ -179,6 +182,7 @@ impl NodeArgs {
             .with_steps_tracing(self.evm_opts.steps_tracing)
             .with_ipc(self.ipc)
             .with_code_size_limit(self.evm_opts.code_size_limit)
+            .set_pruned_history(self.prune_history)
     }
 
     fn account_generator(&self) -> AccountGenerator {

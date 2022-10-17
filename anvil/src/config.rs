@@ -141,6 +141,8 @@ pub struct NodeConfig {
     pub enable_steps_tracing: bool,
     /// Configure the code size limit
     pub code_size_limit: Option<usize>,
+    /// If set to true, remove historic state entirely
+    pub prune_history: bool,
 }
 
 impl NodeConfig {
@@ -356,6 +358,7 @@ impl Default for NodeConfig {
             compute_units_per_second: ALCHEMY_FREE_TIER_CUPS,
             ipc_path: None,
             code_size_limit: None,
+            prune_history: false,
         }
     }
 }
@@ -424,6 +427,13 @@ impl NodeConfig {
     #[must_use]
     pub fn with_gas_price<U: Into<U256>>(mut self, gas_price: Option<U>) -> Self {
         self.gas_price = gas_price.map(Into::into);
+        self
+    }
+
+    /// Sets prune history status.
+    #[must_use]
+    pub fn set_pruned_history(mut self, prune_history: bool) -> Self {
+        self.prune_history = prune_history;
         self
     }
 
@@ -887,6 +897,7 @@ impl NodeConfig {
             fees,
             fork,
             self.enable_steps_tracing,
+            self.prune_history,
         )
         .await
     }

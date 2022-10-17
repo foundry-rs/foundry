@@ -108,10 +108,6 @@ pub fn try_consume_config_rpc_url(rpc_url: Option<String>) -> eyre::Result<Strin
     Ok(url.into_owned())
 }
 
-pub fn consume_config_rpc_url(rpc_url: Option<String>) -> String {
-    try_consume_config_rpc_url(rpc_url).expect("Invalid rpc url")
-}
-
 /// Parses an ether value from a string.
 ///
 /// The amount can be tagged with a unit, e.g. "1ether".

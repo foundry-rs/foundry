@@ -197,13 +197,15 @@ impl TestArgs {
                     };
 
                     // Run the debugger
+                    let mut opts = self.opts.clone();
+                    opts.silent = true;
                     let debugger = DebugArgs {
                         path: PathBuf::from(runner.source_paths.get(&id).unwrap()),
                         target_contract: Some(get_contract_name(&id).to_string()),
                         sig,
                         args: Vec::new(),
                         debug: true,
-                        opts: self.opts,
+                        opts,
                         evm_opts: self.evm_opts,
                     };
                     utils::block_on(debugger.debug())?;

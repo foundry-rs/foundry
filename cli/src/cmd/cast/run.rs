@@ -1,4 +1,4 @@
-use crate::{cmd::Cmd, init_progress, update_progress, utils::consume_config_rpc_url};
+use crate::{cmd::Cmd, init_progress, update_progress, utils::try_consume_config_rpc_url};
 use cast::trace::{identifier::SignaturesIdentifier, CallTraceDecoder};
 use clap::Parser;
 use ethers::{
@@ -27,7 +27,7 @@ use yansi::Paint;
 #[derive(Debug, Clone, Parser)]
 pub struct RunArgs {
     #[clap(help = "The transaction hash.", value_name = "TXHASH")]
-    tx: String,
+    tx_hash: String,
     #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
     rpc_url: Option<String>,
     #[clap(long, short = 'd', help = "Debugs the transaction.")]
@@ -66,147 +66,147 @@ impl RunArgs {
         let mut evm_opts = figment.extract::<EvmOpts>()?;
         let config = Config::from_provider(figment).sanitized();
 
-        let rpc_url = consume_config_rpc_url(self.rpc_url);
-        let provider = try_get_http_provider(rpc_url.as_str())?;
+        let rpc_url = try_consume_config_rpc_url(self.rpc_url)?;
+        let provider = try_get_http_provider(&rpc_url)?;
 
-        if let Some(tx) = provider
-            .get_transaction(
-                H256::from_str(&self.tx)
-                    .wrap_err_with(|| format!("invalid tx hash: {:?}", self.tx))?,
-            )
+        let tx_hash = H256::from_str(&self.tx_hash).wrap_err("invalid tx hash")?;
+        let tx = provider
+            .get_transaction(tx_hash)
             .await?
-        {
-            let tx_block_number = tx.block_number.expect("no block number").as_u64();
-            let tx_hash = tx.hash();
-            evm_opts.fork_url = Some(rpc_url);
-            // we need to set the fork block to the previous block, because that's the state at
-            // which we access the data in order to execute the transaction(s)
-            evm_opts.fork_block_number = Some(tx_block_number - 1);
+            .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
 
-            // Set up the execution environment
-            let env = evm_opts.evm_env().await;
-            let db = Backend::spawn(evm_opts.get_fork(&config, env.clone()));
+        let tx_block_number = tx
+            .block_number
+            .ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?
+            .as_u64();
+        evm_opts.fork_url = Some(rpc_url);
+        // we need to set the fork block to the previous block, because that's the state at
+        // which we access the data in order to execute the transaction(s)
+        evm_opts.fork_block_number = Some(tx_block_number - 1);
 
-            // configures a bare version of the evm executor: no cheatcode inspector is enabled,
-            // tracing will be enabled only for the targeted transaction
-            let builder = ExecutorBuilder::default()
-                .with_config(env)
-                .with_spec(crate::utils::evm_spec(&config.evm_version));
+        // Set up the execution environment
+        let env = evm_opts.evm_env().await;
+        let db = Backend::spawn(evm_opts.get_fork(&config, env.clone()));
 
-            let mut executor = builder.build(db);
+        // configures a bare version of the evm executor: no cheatcode inspector is enabled,
+        // tracing will be enabled only for the targeted transaction
+        let builder = ExecutorBuilder::default()
+            .with_config(env)
+            .with_spec(crate::utils::evm_spec(&config.evm_version));
 
-            let mut env = executor.env().clone();
-            env.block.number = tx_block_number.into();
+        let mut executor = builder.build(db);
 
-            let block = provider.get_block_with_txs(tx_block_number).await?;
-            if let Some(ref block) = block {
-                env.block.timestamp = block.timestamp;
-                env.block.coinbase = block.author.unwrap_or_default();
-                env.block.difficulty = block.difficulty;
-                env.block.basefee = block.base_fee_per_gas.unwrap_or_default();
-                env.block.gas_limit = block.gas_limit;
-            }
+        let mut env = executor.env().clone();
+        env.block.number = tx_block_number.into();
 
-            // Set the state to the moment right before the transaction
-            if !self.quick {
-                println!("Executing previous transactions from the block.");
+        let block = provider.get_block_with_txs(tx_block_number).await?;
+        if let Some(ref block) = block {
+            env.block.timestamp = block.timestamp;
+            env.block.coinbase = block.author.unwrap_or_default();
+            env.block.difficulty = block.difficulty;
+            env.block.basefee = block.base_fee_per_gas.unwrap_or_default();
+            env.block.gas_limit = block.gas_limit;
+        }
 
-                if let Some(block) = block {
-                    let pb = init_progress!(block.transactions, "tx");
-                    update_progress!(pb, -1);
+        // Set the state to the moment right before the transaction
+        if !self.quick {
+            println!("Executing previous transactions from the block.");
 
-                    for (index, tx) in block.transactions.into_iter().enumerate() {
-                        if tx.hash().eq(&tx_hash) {
-                            break
-                        }
+            if let Some(block) = block {
+                let pb = init_progress!(block.transactions, "tx");
+                update_progress!(pb, -1);
 
-                        configure_tx_env(&mut env, &tx);
-
-                        if let Some(to) = tx.to {
-                            trace!(tx=?tx.hash,?to, "executing previous call transaction");
-                            executor.commit_tx_with_env(env.clone()).unwrap();
-                        } else {
-                            trace!(tx=?tx.hash, "executing previous create transaction");
-                            executor.deploy_with_env(env.clone(), None).unwrap();
-                        }
-
-                        update_progress!(pb, index);
+                for (index, tx) in block.transactions.into_iter().enumerate() {
+                    if tx.hash().eq(&tx_hash) {
+                        break
                     }
+
+                    configure_tx_env(&mut env, &tx);
+
+                    if let Some(to) = tx.to {
+                        trace!(tx=?tx.hash,?to, "executing previous call transaction");
+                        executor.commit_tx_with_env(env.clone()).unwrap();
+                    } else {
+                        trace!(tx=?tx.hash, "executing previous create transaction");
+                        executor.deploy_with_env(env.clone(), None).unwrap();
+                    }
+
+                    update_progress!(pb, index);
                 }
             }
+        }
 
-            // Execute our transaction
-            let mut result = {
-                executor.set_tracing(true).set_debugger(self.debug);
+        // Execute our transaction
+        let mut result = {
+            executor.set_tracing(true).set_debugger(self.debug);
 
-                configure_tx_env(&mut env, &tx);
+            configure_tx_env(&mut env, &tx);
 
-                if let Some(to) = tx.to {
-                    trace!(tx=?tx.hash,to=?to, "executing call transaction");
-                    let RawCallResult {
-                        reverted,
-                        gas_used: gas,
-                        traces,
-                        debug: run_debug,
-                        exit_reason: _,
-                        ..
-                    } = executor.commit_tx_with_env(env).unwrap();
+            if let Some(to) = tx.to {
+                trace!(tx=?tx.hash,to=?to, "executing call transaction");
+                let RawCallResult {
+                    reverted,
+                    gas_used: gas,
+                    traces,
+                    debug: run_debug,
+                    exit_reason: _,
+                    ..
+                } = executor.commit_tx_with_env(env).unwrap();
 
-                    RunResult {
-                        success: !reverted,
-                        traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
-                        debug: run_debug.unwrap_or_default(),
-                        gas_used: gas,
-                    }
-                } else {
-                    trace!(tx=?tx.hash, "executing create transaction");
-                    let DeployResult { gas_used, traces, debug: run_debug, .. }: DeployResult =
-                        executor.deploy_with_env(env, None).unwrap();
-
-                    RunResult {
-                        success: true,
-                        traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
-                        debug: run_debug.unwrap_or_default(),
-                        gas_used,
-                    }
+                RunResult {
+                    success: !reverted,
+                    traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
+                    debug: run_debug.unwrap_or_default(),
+                    gas_used: gas,
                 }
-            };
-
-            let mut etherscan_identifier =
-                EtherscanIdentifier::new(&config, evm_opts.get_remote_chain_id())?;
-
-            let labeled_addresses: BTreeMap<Address, String> = self
-                .label
-                .iter()
-                .filter_map(|label_str| {
-                    let mut iter = label_str.split(':');
-
-                    if let Some(addr) = iter.next() {
-                        if let (Ok(address), Some(label)) = (Address::from_str(addr), iter.next()) {
-                            return Some((address, label.to_string()))
-                        }
-                    }
-                    None
-                })
-                .collect();
-
-            let mut decoder = CallTraceDecoderBuilder::new().with_labels(labeled_addresses).build();
-
-            decoder.add_signature_identifier(SignaturesIdentifier::new(
-                Config::foundry_cache_dir(),
-                config.offline,
-            )?);
-
-            for (_, trace) in &mut result.traces {
-                decoder.identify(trace, &mut etherscan_identifier);
-            }
-
-            if self.debug {
-                let (sources, bytecode) = etherscan_identifier.get_compiled_contracts().await?;
-                run_debugger(result, decoder, bytecode, sources)?;
             } else {
-                print_traces(&mut result, decoder, self.verbose).await?;
+                trace!(tx=?tx.hash, "executing create transaction");
+                let DeployResult { gas_used, traces, debug: run_debug, .. }: DeployResult =
+                    executor.deploy_with_env(env, None).unwrap();
+
+                RunResult {
+                    success: true,
+                    traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
+                    debug: run_debug.unwrap_or_default(),
+                    gas_used,
+                }
             }
+        };
+
+        let mut etherscan_identifier =
+            EtherscanIdentifier::new(&config, evm_opts.get_remote_chain_id())?;
+
+        let labeled_addresses: BTreeMap<Address, String> = self
+            .label
+            .iter()
+            .filter_map(|label_str| {
+                let mut iter = label_str.split(':');
+
+                if let Some(addr) = iter.next() {
+                    if let (Ok(address), Some(label)) = (Address::from_str(addr), iter.next()) {
+                        return Some((address, label.to_string()))
+                    }
+                }
+                None
+            })
+            .collect();
+
+        let mut decoder = CallTraceDecoderBuilder::new().with_labels(labeled_addresses).build();
+
+        decoder.add_signature_identifier(SignaturesIdentifier::new(
+            Config::foundry_cache_dir(),
+            config.offline,
+        )?);
+
+        for (_, trace) in &mut result.traces {
+            decoder.identify(trace, &mut etherscan_identifier);
+        }
+
+        if self.debug {
+            let (sources, bytecode) = etherscan_identifier.get_compiled_contracts().await?;
+            run_debugger(result, decoder, bytecode, sources)?;
+        } else {
+            print_traces(&mut result, decoder, self.verbose).await?;
         }
         Ok(())
     }

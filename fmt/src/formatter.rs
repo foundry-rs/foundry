@@ -1506,6 +1506,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             loc,
             source_unit.0.iter_mut(),
             |last_unit, unit| match last_unit {
+                SourceUnitPart::PragmaDirective(..) => {
+                    !matches!(unit, SourceUnitPart::PragmaDirective(..))
+                }
                 SourceUnitPart::ImportDirective(_) => {
                     !matches!(unit, SourceUnitPart::ImportDirective(_))
                 }
@@ -3485,4 +3488,5 @@ mod tests {
     test_directory! { FunctionCall }
     test_directory! { TrailingComma }
     test_directory! { SelectorOverride }
+    test_directory! { PragmaDirective }
 }

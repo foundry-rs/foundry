@@ -333,8 +333,8 @@ Examples:
     #[clap(visible_alias = "t")]
     #[clap(about = "Get information about a transaction.")]
     Tx {
-        #[clap(value_name = "HASH")]
-        hash: String,
+        #[clap(value_name = "TX_HASH")]
+        tx_hash: String,
         #[clap(value_name = "FIELD")]
         field: Option<String>,
         #[clap(long = "json", short = 'j', help_heading = "DISPLAY OPTIONS")]
@@ -347,7 +347,7 @@ Examples:
     #[clap(about = "Get the transaction receipt for a transaction.")]
     Receipt {
         #[clap(value_name = "TX_HASH")]
-        hash: String,
+        tx_hash: String,
         #[clap(value_name = "FIELD")]
         field: Option<String>,
         #[clap(

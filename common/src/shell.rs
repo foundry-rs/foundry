@@ -213,7 +213,8 @@ pub enum ShellOut {
 impl ShellOut {
     /// Creates a new shell that writes to memory
     pub fn memory() -> Self {
-        ShellOut::Write(WriteShellOut(Arc::new(Mutex::new(Box::new(vec![])))))
+        #[allow(clippy::box_default)]
+        ShellOut::Write(WriteShellOut(Arc::new(Mutex::new(Box::new(Vec::new())))))
     }
 
     /// Write a fragment to stdout
