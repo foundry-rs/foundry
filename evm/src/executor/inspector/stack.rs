@@ -1,4 +1,4 @@
-use super::{Cheatcodes, Debugger, Fuzzer, LogCollector, Tracer};
+use super::{Cheatcodes, ChiselState, Debugger, Fuzzer, LogCollector, Tracer};
 use crate::{
     coverage::HitMaps,
     debug::DebugArena,
@@ -34,6 +34,7 @@ pub struct InspectorData {
     pub coverage: Option<HitMaps>,
     pub cheatcodes: Option<Cheatcodes>,
     pub script_wallets: Vec<LocalWallet>,
+    pub chisel_state: Option<(revm::Stack, revm::Memory, revm::Return)>,
 }
 
 /// An inspector that calls multiple inspectors in sequence.
@@ -49,6 +50,7 @@ pub struct InspectorStack {
     pub debugger: Option<Debugger>,
     pub fuzzer: Option<Fuzzer>,
     pub coverage: Option<CoverageCollector>,
+    pub chisel_state: Option<ChiselState>,
 }
 
 impl InspectorStack {
@@ -69,6 +71,7 @@ impl InspectorStack {
                 .map(|cheatcodes| cheatcodes.script_wallets.clone())
                 .unwrap_or_default(),
             cheatcodes: self.cheatcodes,
+            chisel_state: self.chisel_state.unwrap_or_default().state,
         }
     }
 }
@@ -162,7 +165,8 @@ where
                 &mut self.debugger,
                 &mut self.tracer,
                 &mut self.logs,
-                &mut self.cheatcodes
+                &mut self.cheatcodes,
+                &mut self.chisel_state
             ],
             {
                 let status = inspector.step_end(interpreter, data, is_static, status);
@@ -318,7 +322,13 @@ where
     fn selfdestruct(&mut self) {
         call_inspectors!(
             inspector,
-            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            [
+                &mut self.debugger,
+                &mut self.tracer,
+                &mut self.logs,
+                &mut self.cheatcodes,
+                &mut self.chisel_state
+            ],
             {
                 Inspector::<DB>::selfdestruct(inspector);
             }

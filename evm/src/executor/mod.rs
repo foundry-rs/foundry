@@ -134,7 +134,7 @@ impl Executor {
         let create2_deployer_account = self
             .backend_mut()
             .basic(DEFAULT_CREATE2_DEPLOYER)?
-            .ok_or(DatabaseError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
+            .ok_or_else(|| DatabaseError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
 
         if create2_deployer_account.code.is_none() ||
             create2_deployer_account.code.as_ref().unwrap().is_empty()
@@ -701,6 +701,8 @@ pub struct RawCallResult {
     pub cheatcodes: Option<Cheatcodes>,
     /// The raw output of the execution
     pub out: TransactOut,
+    /// The chisel state
+    pub chisel_state: Option<(revm::Stack, revm::Memory, revm::Return)>,
 }
 
 impl Default for RawCallResult {
@@ -723,6 +725,7 @@ impl Default for RawCallResult {
             env: Default::default(),
             cheatcodes: Default::default(),
             out: TransactOut::None,
+            chisel_state: None,
         }
     }
 }
@@ -749,8 +752,16 @@ fn convert_executed_result(
         _ => Bytes::default(),
     };
 
-    let InspectorData { logs, labels, traces, coverage, debug, cheatcodes, script_wallets } =
-        inspector.collect_inspector_states();
+    let InspectorData {
+        logs,
+        labels,
+        traces,
+        coverage,
+        debug,
+        cheatcodes,
+        script_wallets,
+        chisel_state,
+    } = inspector.collect_inspector_states();
 
     let transactions = match cheatcodes.as_ref() {
         Some(cheats) if !cheats.broadcastable_transactions.is_empty() => {
@@ -777,6 +788,7 @@ fn convert_executed_result(
         env,
         cheatcodes,
         out,
+        chisel_state,
     })
 }
 

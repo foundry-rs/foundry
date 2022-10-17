@@ -1,37 +1,32 @@
-use std::{path::Path, time::SystemTime};
-
-use ethers_solc::project_util::TempProject;
-use serde::{Deserialize, Serialize};
-
+use crate::prelude::SessionSource;
+use ethers_solc::{project_util::TempProject, Solc};
 use eyre::Result;
-
 pub use semver::Version;
-use solang_parser::pt::{Import, SourceUnitPart};
-
-use crate::parser::ParsedSnippet;
+use serde::{Deserialize, Serialize};
+use std::path::Path;
+use time::{format_description, OffsetDateTime};
 
 /// A Chisel REPL Session
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ChiselSession {
-    /// The `TempProject` created for the REPL contract.
-    #[serde(skip)]
-    pub project: Option<TempProject>,
+    /// The `SessionSource` object that houses the REPL session.
+    pub session_source: Option<SessionSource>,
     /// Session solidity version]
     pub solc_version: Version,
-    /// Snippets
-    /// This is a list of the raw solidity source code strings and their solang_parser parsed
-    /// SourceUnits.
-    pub snippets: Vec<ParsedSnippet>,
     /// The current session's identifier
     pub id: Option<usize>,
 }
 
 impl Default for ChiselSession {
     fn default() -> Self {
+        // TODO: Fetch latest version rather than hard-coding it (?)
         Self {
-            project: Some(Self::create_temp_project()),
+            session_source: Some({
+                let solc = Solc::find_or_install_svm_version("0.8.17").unwrap();
+                assert!(solc.version().is_ok());
+                SessionSource::new(&solc)
+            }),
             solc_version: Version::new(0, 8, 17),
-            snippets: vec![],
             id: None,
         }
     }
@@ -50,11 +45,17 @@ impl ChiselSession {
         // Set project's solc version explicitly
         project.set_solc(solc_version);
 
+        let solc = Solc::find_or_install_svm_version(solc_version);
+
+        // TODO: Either handle gracefully or document that this
+        // constructor can panic. Also should notify the dev if
+        // we're installing a new solc version on their behalf.
+        assert!(solc.is_ok());
+
         // Return initialized ChiselSession with set solc version
         Self {
             solc_version: parsed_solc_version,
-            project: Some(project),
-            snippets: Vec::default(),
+            session_source: Some(SessionSource::new(&solc.unwrap())),
             id: None,
         }
     }
@@ -82,12 +83,6 @@ impl ChiselSession {
             panic!("failed to create a temporary project for the chisel session! {e}");
         })
     }
-}
-
-impl ChiselSession {
-    // TODO:::: This should follow soli's pattern of contract generation, for _each_ contract
-    // defined by our sessions's ParsedSnippets TODO:::: We define generation in
-    // [generator.rs](./generator.rs), following soli's pattern.
 
     /// Render the full source code for the current session.
     ///
@@ -97,136 +92,16 @@ impl ChiselSession {
     ///
     /// ### Notes
     ///
-    /// This function will not panic, but gracefully handles errors.
-    ///
-    /// For source code to render correctly, crafting sol snippets must be done with care to ensure
-    /// correct source unit ordering.
-    ///
-    /// For example, a sol snippet with a variable declaration, followed by an event definition will
-    /// fail to render correctly. This is because the variable declaration is not a "top-level"
-    /// source unit part, so the sol snippet will be placed **entirely** in the contract
-    /// fallback. This will then error since events cannot be defined from within the contract
-    /// fallback function.
+    /// This function will not panic, but will return a blank string if the
+    /// session's [SessionSource] is None.
     pub fn contract_source(&self) -> String {
-        // Extract a pragma definition
-        // NOTE: Optimistically uses the first pragma found
-        let pragma_def = self.snippets.iter().find(|i| {
-            i.source_unit
-                .as_ref()
-                .unwrap()
-                .0
-                 .0
-                .iter()
-                .any(|i| matches!(i, SourceUnitPart::PragmaDirective(_, _, _)))
-        });
-
-        // Extract imports
-        let imports = self
-            .snippets
-            .iter()
-            .flat_map(|i| {
-                i.source_unit
-                    .as_ref()
-                    .unwrap()
-                    .0
-                     .0
-                    .iter()
-                    .filter(|i| matches!(i, SourceUnitPart::ImportDirective(_)))
-                    .map(|sup| {
-                        if let SourceUnitPart::ImportDirective(sup) = sup {
-                            let string_literal = match sup {
-                                Import::Plain(sl, _) => sl,
-                                Import::GlobalSymbol(sl, _, _) => sl,
-                                Import::Rename(sl, _, _) => sl,
-                            };
-                            string_literal.string.clone()
-                        } else {
-                            unreachable!()
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<String>>()
-            .join("\n");
-
-        // TODO: Extract contract definitions
-
-        // Consume source units that are top-level
-        // We only need to check the first source unit part for each sol snippet
-        // If the first part is not top level, we should throw the sol snippet in the fallback
-        let top_level_units = self
-            .snippets
-            .iter()
-            .filter(|unit| {
-                if let Some(def) = unit.source_unit.as_ref().unwrap().0 .0.get(0) {
-                    match def {
-                        SourceUnitPart::PragmaDirective(_, _, _) => false,
-                        SourceUnitPart::ContractDefinition(_) => false,
-                        SourceUnitPart::ImportDirective(_) => false,
-                        SourceUnitPart::EnumDefinition(_) => true,
-                        SourceUnitPart::StructDefinition(_) => true,
-                        SourceUnitPart::EventDefinition(_) => true,
-                        SourceUnitPart::ErrorDefinition(_) => true,
-                        SourceUnitPart::FunctionDefinition(_) => true,
-                        SourceUnitPart::VariableDefinition(_) => false,
-                        SourceUnitPart::TypeDefinition(_) => true,
-                        SourceUnitPart::Using(_) => true,
-                        SourceUnitPart::StraySemicolon(_) => false,
-                    }
-                } else {
-                    false
-                }
-            })
-            .map(|unit| unit.raw.as_str())
-            .collect::<Vec<&str>>()
-            .join("\n\n");
-
-        // Extract fallback snippets
-        let fallback_snippets = self
-            .snippets
-            .iter()
-            .filter(|unit| {
-                matches!(
-                    unit.source_unit.as_ref().unwrap().0 .0.get(0),
-                    Some(SourceUnitPart::VariableDefinition(_))
-                )
-            })
-            .map(|unit| unit.raw.as_str())
-            .collect::<Vec<&str>>()
-            .join("\n");
-
-        // Generate the final source
-        format!(
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-{}
-
-// Imports
-{}
-
-/// @title REPL
-/// @notice Auto-generated by Chisel
-/// @notice See: https://github.com/foundry-rs/foundry/tree/master/chisel
-contract REPL {{
-    {}
-
-    fallback() {{
-        {}
-    }}
-}}
-        "#,
-            pragma_def
-                .map(|p| p.to_string())
-                .unwrap_or_else(|| format!("pragma solidity {};", self.solc_version)),
-            imports,
-            top_level_units,
-            fallback_snippets
-        )
+        if let Some(source) = &self.session_source {
+            source.to_string()
+        } else {
+            String::default()
+        }
     }
-}
 
-// ChiselSession Cache Functionality
-impl ChiselSession {
     /// Clears the cache directory
     ///
     /// ### WARNING
@@ -257,14 +132,20 @@ impl ChiselSession {
         let cache_dir = Self::cache_dir()?;
         std::fs::create_dir_all(&cache_dir)?;
 
-        // If the id field is set, we don't need to generate a new cache file
-        if let Some(id) = self.id {
-            return Ok(format!("{}chisel-{}.json", cache_dir, id))
-        }
-
-        // Get the next cached session name
-        let (id, cache_file_name) = Self::next_cached_session()?;
-        self.id = Some(id);
+        let cache_file_name = match self.id {
+            Some(id) => {
+                // ID is already set- use the existing cache file.
+                format!("{}chisel-{}.json", cache_dir, id)
+            }
+            None => {
+                // Get the next session cache ID / file
+                let next_session = Self::next_cached_session()?;
+                // Set the session's ID
+                self.id = Some(next_session.0);
+                // Return the new session's cache file name
+                next_session.1
+            }
+        };
 
         // Write the current ChiselSession to that file
         let serialized_contents = serde_json::to_string_pretty(self)?;
@@ -324,7 +205,7 @@ impl ChiselSession {
     }
 
     /// Lists all available cached sessions
-    pub fn list_sessions() -> Result<Vec<(SystemTime, String)>> {
+    pub fn list_sessions() -> Result<Vec<(String, String)>> {
         // Read the cache directory entries
         let cache_dir = Self::cache_dir()?;
         let entries = std::fs::read_dir(&cache_dir)?;
@@ -338,11 +219,19 @@ impl ChiselSession {
             let file_name = file_name
                 .into_string()
                 .map_err(|e| eyre::eyre!(format!("{}", e.to_string_lossy())))?;
-            sessions.push((modified_time, file_name));
+            sessions.push((
+                systemtime_strftime(modified_time, "[year]-[month]-[day] [hour]:[minute]:[second]")
+                    .unwrap(),
+                file_name,
+            ));
         }
 
-        // Return the list of sessions and their modified times
-        Ok(sessions)
+        if sessions.is_empty() {
+            return Err(eyre::eyre!("No sessions found!"))
+        } else {
+            // Return the list of sessions and their modified times
+            Ok(sessions)
+        }
     }
 
     /// Gets the most recent chisel session from the cache dir
@@ -360,8 +249,10 @@ impl ChiselSession {
     }
 
     /// Loads a specific ChiselSession from the specified cache file
-    pub fn load(name: &str) -> Result<Self> {
-        let contents = std::fs::read_to_string(Path::new(name))?;
+    pub fn load(id: &str) -> Result<Self> {
+        let cache_dir = ChiselSession::cache_dir()?;
+        let contents =
+            std::fs::read_to_string(Path::new(&format!("{}chisel-{}.json", cache_dir, id)))?;
         let chisel_env: ChiselSession = serde_json::from_str(&contents)?;
         Ok(chisel_env)
     }
@@ -373,4 +264,11 @@ impl ChiselSession {
         let chisel_env: ChiselSession = serde_json::from_str(&last_session_contents)?;
         Ok(chisel_env)
     }
+}
+
+fn systemtime_strftime<T>(dt: T, format: &str) -> Result<String>
+where
+    T: Into<OffsetDateTime>,
+{
+    Ok(dt.into().format(&format_description::parse(format)?)?)
 }

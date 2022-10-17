@@ -9,6 +9,6 @@ struct SolHighlighter {}
 impl Highlighter for SolHighlighter {
     #[allow(unused)]
     fn highlight<'l>(&self, line: &'l str, _pos: usize) -> Cow<'l, str> {
-        Cow::default()
+        todo!()
     }
 }

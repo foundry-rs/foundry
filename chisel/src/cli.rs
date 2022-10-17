@@ -1,8 +1,10 @@
-use ansi_term::Color::{Green, Red};
+use chisel::prelude::{ChiselDisptacher, DispatchResult};
 use clap::Parser;
 use rustyline::{error::ReadlineError, Editor};
+use yansi::Paint;
 
-use chisel::prelude::{ChiselDisptacher, DispatchResult};
+/// The REPL's `Runner`
+pub mod runner;
 
 /// Chisel is a fast, utilitarian, and verbose solidity REPL.
 #[derive(Debug, Parser)]
@@ -49,17 +51,17 @@ fn main() {
                 // Dispatch and match results
                 match dispatcher.dispatch(&line) {
                     DispatchResult::Success(Some(msg))
-                    | DispatchResult::CommandSuccess(Some(msg)) => println!("{}", Green.paint(msg)),
+                    | DispatchResult::CommandSuccess(Some(msg)) => println!("{}", Paint::green(msg)),
                     DispatchResult::UnrecognizedCommand(e) => eprintln!("{}", e),
                     DispatchResult::SolangParserFailed(e) => {
-                        eprintln!("{}", Red.paint("Compilation error"));
-                        eprintln!("{}", Red.paint(format!("{:?}", e)));
+                        eprintln!("{}", Paint::red("Compilation error"));
+                        eprintln!("{}", Paint::red(format!("{:?}", e)));
                     }
                     DispatchResult::Success(None) => { /* Do nothing */ }
                     DispatchResult::CommandSuccess(_) => { /* Don't need to do anything here */ }
-                    DispatchResult::FileIoError(e) => eprintln!("{}", Red.paint(format!("⚒️ Chisel File IO Error - {}", e))),
-                    DispatchResult::CommandFailed(msg) | DispatchResult::Failure(Some(msg)) => eprintln!("{}", Red.paint(msg)),
-                    DispatchResult::Failure(None) => eprintln!("{}\nPlease Report this bug as a github issue if it persists: https://github.com/foundry-rs/foundry/issues/new/choose", Red.paint("⚒️ Unknown Chisel Error ⚒️")),
+                    DispatchResult::FileIoError(e) => eprintln!("{}", Paint::red(format!("⚒️ Chisel File IO Error - {}", e))),
+                    DispatchResult::CommandFailed(msg) | DispatchResult::Failure(Some(msg)) => eprintln!("{}", Paint::red(msg)),
+                    DispatchResult::Failure(None) => eprintln!("{}\nPlease Report this bug as a github issue if it persists: https://github.com/foundry-rs/foundry/issues/new/choose", Paint::red("⚒️ Unknown Chisel Error ⚒️")),
                 }
             }
             Err(ReadlineError::Interrupted) => {
