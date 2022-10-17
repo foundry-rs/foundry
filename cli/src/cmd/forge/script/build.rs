@@ -185,11 +185,9 @@ impl ScriptArgs {
     ) -> eyre::Result<(Project, ProjectCompileOutput)> {
         let project = script_config.config.project()?;
 
-        if !project.paths.has_input_files() {
-            eyre::bail!("No input files detected.")
-        }
-
-        // We received a file path.
+        // We received a valid file path.
+        // If this file does not exist, `dunce::canonicalize` will
+        // result in an error and it will be handled below.
         if let Ok(target_contract) = dunce::canonicalize(&self.path) {
             let output = compile::compile_target(
                 &target_contract,
@@ -198,6 +196,10 @@ impl ScriptArgs {
                 self.verify,
             )?;
             return Ok((project, output))
+        }
+
+        if !project.paths.has_input_files() {
+            eyre::bail!("The project doesn't have any input files. Make sure the `script` directory is configured properly in foundry.toml. Otherwise, provide the path to the file.")
         }
 
         let contract = ContractInfo::from_str(&self.path)?;
