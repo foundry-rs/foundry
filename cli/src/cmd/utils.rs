@@ -164,7 +164,7 @@ macro_rules! update_progress {
 /// True if the network calculates gas costs differently.
 pub fn has_different_gas_calc(chain: u64) -> bool {
     if let ConfigChain::Named(chain) = ConfigChain::from(chain) {
-        return matches!(chain, Chain::Arbitrum | Chain::ArbitrumTestnet)
+        return matches!(chain, Chain::Arbitrum | Chain::ArbitrumTestnet | Chain::ArbitrumGoerli)
     }
     false
 }
@@ -176,6 +176,7 @@ pub fn has_batch_support(chain: u64) -> bool {
             chain,
             Chain::Arbitrum |
                 Chain::ArbitrumTestnet |
+                Chain::ArbitrumGoerli |
                 Chain::Optimism |
                 Chain::OptimismKovan |
                 Chain::OptimismGoerli
