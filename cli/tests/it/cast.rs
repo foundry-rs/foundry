@@ -239,3 +239,31 @@ casttest!(cast_run_succeeds, |_: TestProject, mut cmd: TestCommand| {
     assert!(output.contains("Transaction successfully executed"));
     assert!(!output.contains("Revert"));
 });
+
+// tests that `cast --to-base` commands are working correctly.
+casttest!(cast_to_base, |_: TestProject, mut cmd: TestCommand| {
+    let values = [
+        "1",
+        "100",
+        "100000",
+        "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+        "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "-1",
+        "-100",
+        "-100000",
+        "-57896044618658097711785492504343953926634992332820282019728792003956564819968",
+    ];
+    for value in values {
+        for subcmd in ["--to-base", "--to-hex", "--to-dec"] {
+            if subcmd == "--to-base" {
+                for base in ["bin", "oct", "dec", "hex"] {
+                    cmd.cast_fuse().args([subcmd, value, base]);
+                    assert!(!cmd.stdout_lossy().trim().is_empty());
+                }
+            } else {
+                cmd.cast_fuse().args([subcmd, value]);
+                assert!(!cmd.stdout_lossy().trim().is_empty());
+            }
+        }
+    }
+});
