@@ -324,13 +324,13 @@ impl From<NumberWithBase> for String {
 }
 
 impl NumberWithBase {
-    pub fn new(number: impl Into<U256>, is_nonnegative: bool, base: impl Into<Base>) -> Self {
-        Self { number: number.into(), is_nonnegative, base: base.into() }
+    pub fn new(number: impl Into<U256>, is_nonnegative: bool, base: Base) -> Self {
+        Self { number: number.into(), is_nonnegative, base }
     }
 
     /// Creates a copy of the number with the provided base.
-    pub fn with_base(&self, base: impl Into<Base>) -> Self {
-        Self::new(self.number, self.is_nonnegative, base)
+    pub fn with_base(&self, base: Base) -> Self {
+        Self { number: self.number, is_nonnegative: self.is_nonnegative, base }
     }
 
     /// Parses a string slice into a signed integer. If base is None then it tries to determine base
