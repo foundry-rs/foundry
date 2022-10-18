@@ -38,19 +38,27 @@ Chisel aims to improve upon soli, with native foundry integration by providing f
     - [x] Implement network forking.
   - [ ] Import all project files / interfaces into REPL contract automatically.
     - [ ] Optionally disable this functionality with a flag.
+  - [ ] Expression evaluation / inspection (i.e. the input `0x01 << 0x08` should inspect a `uint` of value `256`)
+  - [ ] Input history.
+  - [ ] Use forge fmt module to format source code when printing via the `!source` command.
 - [x] Cache REPL History
   - [x] Allow a user to save/load sessions from their Chisel history.
 - [ ] Custom commands / cmd flags
   - [x] Inspect variable
-  - [x] Inspect memory
-  - [ ] Inspect storage slot
-  - [ ] Enable / disable call tracing
+    - [ ] Inspect raw stack
+  - [x] Inspect memory vars
+    - [ ] Inspect raw memory
+  - [x] Inspect storage vars
+    - [ ] Inspect raw storage slots
+  - [ ] Inspection verbosity configuration
+  - [ ] Enable / disable call trace printing
     - [ ] Rip trace printing code from another module of foundry.
   - [x] On-the-fly network forking
   - [x] Export to file
     - [ ] Export session to script contract if within project.
 - [x] [Syntax highlighting](https://docs.rs/rustyline/10.0.0/rustyline/highlight/trait.Highlighter.html)
 - [ ] Tests.
+- [ ] Finish README.
 
 ## Usage
 
