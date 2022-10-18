@@ -208,16 +208,22 @@ Examples:
     #[clap(name = "--from-rlp")]
     #[clap(about = "Decodes RLP encoded data. Input must be hexadecimal.")]
     FromRlp { value: Option<String> },
+    #[clap(name = "--to-hex")]
+    #[clap(visible_aliases = &["to-hex", "th", "2h"])]
+    #[clap(about = "Converts a number of one base to another")]
+    ToHex(ToBaseArgs),
+    #[clap(name = "--to-dec")]
+    #[clap(visible_aliases = &["to-dec", "td", "2d"])]
+    #[clap(about = "Converts a number of one base to decimal")]
+    ToDec(ToBaseArgs),
     #[clap(name = "--to-base")]
-    #[clap(visible_aliases = &["--to-radix", "to-radix", "to-base", "tr", "2r", "--to-hex", "to-hex", "th", "2h", "--to-dec", "to-dec", "td", "2d"])]
+    #[clap(visible_aliases = &["to-base", "--to-radix", "to-radix", "tr", "2r"])]
     #[clap(about = "Converts a number of one base to another")]
     ToBase {
-        #[clap(allow_hyphen_values = true, value_name = "VALUE")]
-        value: String,
+        #[clap(flatten)]
+        base: ToBaseArgs,
         #[clap(value_name = "BASE", help = "The output base")]
         base_out: String,
-        #[clap(long = "base-in", help = "The input base")]
-        base_in: Option<String>,
     },
     #[clap(name = "access-list")]
     #[clap(visible_aliases = &["ac", "acl"])]
@@ -750,6 +756,15 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
         #[clap(value_name = "BYTES")]
         bytes: Option<String>,
     },
+}
+
+/// Common args for ToHex, ToDec, ToBase
+#[derive(Debug, Parser)]
+pub struct ToBaseArgs {
+    #[clap(allow_hyphen_values = true, value_name = "VALUE")]
+    pub value: String,
+    #[clap(long = "base-in", short = 'i', help = "The input base")]
+    pub base_in: Option<String>,
 }
 
 pub fn parse_name_or_address(s: &str) -> eyre::Result<NameOrAddress> {

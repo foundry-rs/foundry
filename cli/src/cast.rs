@@ -138,8 +138,14 @@ async fn main() -> eyre::Result<()> {
             let value = unwrap_or_stdin(value)?;
             println!("{}", SimpleCast::to_rlp(&value)?);
         }
-        Subcommands::ToBase { value, base_in, base_out } => {
-            println!("{}", SimpleCast::to_base(&value, base_in, &base_out)?);
+        Subcommands::ToHex(base) => {
+            println!("{}", SimpleCast::to_base(&base.value, base.base_in, "hex")?);
+        }
+        Subcommands::ToDec(base) => {
+            println!("{}", SimpleCast::to_base(&base.value, base.base_in, "dec")?);
+        }
+        Subcommands::ToBase { base, base_out } => {
+            println!("{}", SimpleCast::to_base(&base.value, base.base_in, &base_out)?);
         }
         Subcommands::ToBytes32 { bytes } => {
             let value = unwrap_or_stdin(bytes)?;
