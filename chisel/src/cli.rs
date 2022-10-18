@@ -1,27 +1,35 @@
 use chisel::prelude::{ChiselDisptacher, DispatchResult};
 use clap::Parser;
+use foundry_cli::cmd::{forge::build::BuildArgs, LoadConfig};
+use foundry_common::evm::EvmArgs;
+use foundry_config::{
+    figment::{
+        value::{Dict, Map},
+        Metadata, Profile, Provider,
+    },
+    Config,
+};
 use rustyline::{error::ReadlineError, Editor};
 use yansi::Paint;
 
-/// The REPL's `Runner`
-pub mod runner;
+// Loads project's figment and merges the build cli arguments into it
+foundry_config::merge_impl_figment_convert!(ChiselParser, opts, evm_opts);
 
 /// Chisel is a fast, utilitarian, and verbose solidity REPL.
 #[derive(Debug, Parser)]
 #[clap(name = "chisel", version = "v0.0.1-alpha")]
 pub struct ChiselParser {
-    /// Set the RPC URL to fork.
-    #[clap(long, short)]
-    pub fork_url: Option<String>,
+    #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
+    pub opts: BuildArgs,
 
-    /// Set the solc version that the REPL environment will use.
-    #[clap(long, short)]
-    pub solc: Option<String>,
+    #[clap(flatten, next_help_heading = "EVM OPTIONS")]
+    pub evm_opts: EvmArgs,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     // Parse command args
-    let _args = ChiselParser::parse();
+    let args = ChiselParser::parse();
 
     // Keeps track of whether or not an interrupt was the last input
     let mut interrupt = false;
@@ -32,8 +40,14 @@ fn main() {
         panic!("failed to create a rustyline Editor for the chisel environment! {e}");
     });
 
+    let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
+
     // Create a new cli dispatcher
-    let mut dispatcher = ChiselDisptacher::new();
+    let mut dispatcher = ChiselDisptacher::new(&chisel::session_source::SessionSourceConfig {
+        config,
+        evm_opts,
+        backend: None,
+    });
 
     // Begin Rustyline loop
     loop {
@@ -49,7 +63,7 @@ fn main() {
             Ok(line) => {
                 interrupt = false;
                 // Dispatch and match results
-                match dispatcher.dispatch(&line) {
+                match dispatcher.dispatch(&line).await {
                     DispatchResult::Success(Some(msg))
                     | DispatchResult::CommandSuccess(Some(msg)) => println!("{}", Paint::green(msg)),
                     DispatchResult::UnrecognizedCommand(e) => eprintln!("{}", e),
@@ -78,5 +92,15 @@ fn main() {
                 break
             }
         }
+    }
+}
+
+impl Provider for ChiselParser {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Script Args Provider")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, foundry_config::figment::Error> {
+        Ok(Map::from([(Config::selected_profile(), Dict::default())]))
     }
 }

@@ -1,5 +1,5 @@
-use crate::prelude::SessionSource;
-use ethers_solc::{project_util::TempProject, Solc};
+use crate::{prelude::SessionSource, session_source::SessionSourceConfig};
+use ethers_solc::Solc;
 use eyre::Result;
 pub use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -11,41 +11,16 @@ use time::{format_description, OffsetDateTime};
 pub struct ChiselSession {
     /// The `SessionSource` object that houses the REPL session.
     pub session_source: Option<SessionSource>,
-    /// Session solidity version]
-    pub solc_version: Version,
     /// The current session's identifier
     pub id: Option<usize>,
 }
 
-impl Default for ChiselSession {
-    fn default() -> Self {
-        // TODO: Fetch latest version rather than hard-coding it (?)
-        Self {
-            session_source: Some({
-                let solc = Solc::find_or_install_svm_version("0.8.17").unwrap();
-                assert!(solc.version().is_ok());
-                SessionSource::new(&solc)
-            }),
-            solc_version: Version::new(0, 8, 17),
-            id: None,
-        }
-    }
-}
-
 // ChiselSession Common Associated Functions
 impl ChiselSession {
-    /// Create a new `ChiselSession` with a specified `solc` version.
-    pub fn new(solc_version: &'static str) -> Self {
-        // Create initialized temporary dapptools-style project
-        let mut project = Self::create_temp_project();
-
-        // Parse the solc version
-        let parsed_solc_version = Self::parse_solc_version(solc_version);
-
-        // Set project's solc version explicitly
-        project.set_solc(solc_version);
-
-        let solc = Solc::find_or_install_svm_version(solc_version);
+    /// Create a new `ChiselSession` with a specified `solc` version and configuration.
+    pub fn new(config: &SessionSourceConfig) -> Self {
+        // TODO: Don't hard code
+        let solc = Solc::find_or_install_svm_version("0.8.17");
 
         // TODO: Either handle gracefully or document that this
         // constructor can panic. Also should notify the dev if
@@ -53,11 +28,7 @@ impl ChiselSession {
         assert!(solc.is_ok());
 
         // Return initialized ChiselSession with set solc version
-        Self {
-            solc_version: parsed_solc_version,
-            session_source: Some(SessionSource::new(&solc.unwrap())),
-            id: None,
-        }
+        Self { session_source: Some(SessionSource::new(&solc.unwrap(), config)), id: None }
     }
 
     /// Helper function to parse a solidity version string.
@@ -69,18 +40,6 @@ impl ChiselSession {
         Version::parse(solc_version).unwrap_or_else(|e| {
             tracing::error!("Error parsing provided solc version: \"{}\"", e);
             panic!("Error parsing provided solc version: \"{e}\"");
-        })
-    }
-
-    /// Helper function to create a new temporary project with proper error handling.
-    ///
-    /// ### Panics
-    ///
-    /// Panics if the temporary project cannot be created.
-    pub(crate) fn create_temp_project() -> TempProject {
-        TempProject::dapptools_init().unwrap_or_else(|e| {
-            tracing::error!(target: "chisel-env", "Failed to initialize temporary project! {}", e);
-            panic!("failed to create a temporary project for the chisel session! {e}");
         })
     }
 

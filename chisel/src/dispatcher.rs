@@ -1,4 +1,4 @@
-use crate::session::ChiselSession;
+use crate::{session::ChiselSession, session_source::SessionSourceConfig};
 use solang_parser::diagnostics::Diagnostic;
 use std::{error, error::Error, str::FromStr};
 use strum::{EnumIter, IntoEnumIterator};
@@ -10,7 +10,7 @@ static PROMPT_ARROW: char = '➜';
 static COMMAND_LEADER: char = '!';
 
 /// The Chisel Dispatcher
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ChiselDisptacher {
     /// The status of the previous dispatch
     pub errored: bool,
@@ -39,8 +39,8 @@ pub enum DispatchResult {
 
 impl ChiselDisptacher {
     /// Associated public function to create a new Dispatcher instance
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(config: &SessionSourceConfig) -> Self {
+        ChiselDisptacher { errored: false, session: ChiselSession::new(config) }
     }
 
     /// Returns the prompt given the last input's error status
@@ -92,7 +92,7 @@ impl ChiselDisptacher {
                 }
                 return DispatchResult::Success(Some(String::from(format!("Saved session to cache with ID = {}", self.session.id.unwrap()))))
             }
-            ChiselCommand::Load(_) => {
+            ChiselCommand::Load => {
                 if args.len() != 1 {
                     return DispatchResult::CommandFailed(format!("{}", Paint::red("⚒️ Chisel Error: Must supply a session ID as the argument.")))
                 }
@@ -160,6 +160,26 @@ impl ChiselDisptacher {
                     }
                 }
             }
+            ChiselCommand::Fork => {
+                if let Some(session_source) = self.session.session_source.as_mut() {
+                    if args.len() == 0 {
+                        session_source.config.evm_opts.fork_url = None;
+                        return DispatchResult::Success(Some(String::from("Now using local environment.")))
+                    } else if args.len() != 1 {
+                        return DispatchResult::CommandFailed(format!("{}", Paint::red("⚒️ Chisel Error: Must supply a session ID as the argument.")))
+                    }
+
+                    // Set the fork URL in the current session source to the first argument
+                    session_source.config.evm_opts.fork_url = Some(args[0].to_owned());
+                    // Clear the backend so that it is re-instantiated with the new fork
+                    // upon the next execution of the session source.
+                    session_source.config.backend = None;
+
+                    DispatchResult::Success(Some(format!("Successfully forked {}", args[0])))
+                } else {
+                    DispatchResult::CommandFailed(format!("{}", Paint::red("⚒️ Chisel Error: Must supply a session ID as the argument.")))
+                }
+            }
         }
     }
 
@@ -168,7 +188,7 @@ impl ChiselDisptacher {
     /// ### Returns
     ///
     /// A DispatchResult
-    pub fn dispatch(&mut self, line: &str) -> DispatchResult {
+    pub async fn dispatch(&mut self, line: &str) -> DispatchResult {
         // Check if the input is a builtin command.
         // Commands are denoted with a `!` leading character.
         if line.starts_with(COMMAND_LEADER) {
@@ -205,7 +225,7 @@ impl ChiselDisptacher {
         // TODO: Support function calls / expressions
         if let Some(generated_output) = &source.generated_output {
             if generated_output.intermediate.variable_definitions.get(line).is_some() {
-                match source.inspect(line) {
+                match source.inspect(line).await {
                     Ok(res) => {
                         self.errored = false;
                         return DispatchResult::Success(Some(res))
@@ -227,7 +247,7 @@ impl ChiselDisptacher {
             }
         };
 
-        match new_source.execute() {
+        match new_source.execute().await {
             Ok(res) => {
                 let _res = res.1;
                 self.session.session_source = Some(new_source);
@@ -258,11 +278,13 @@ pub enum ChiselCommand {
     /// Requires a session name
     /// WARNING: This will overwrite the current session (though the current session will be
     /// optimistically cached)
-    Load(String),
+    Load,
     /// List all cached sessions
     ListSessions,
     /// Clear the cache
     ClearCache,
+    /// Fork an RPC
+    Fork,
 }
 
 /// A command descriptor type
@@ -279,8 +301,9 @@ impl FromStr for ChiselCommand {
             "source" => Ok(ChiselCommand::Source),
             "flush" => Ok(ChiselCommand::Flush),
             "list" => Ok(ChiselCommand::ListSessions),
-            "load" => Ok(ChiselCommand::Load("latest".to_string())),
+            "load" => Ok(ChiselCommand::Load),
             "clearcache" => Ok(ChiselCommand::ClearCache),
+            "fork" => Ok(ChiselCommand::Fork),
             _ => Err(Paint::red(format!(
                 "Unknown command \"{}\"! See available commands with `!help`.",
                 s
@@ -301,9 +324,12 @@ impl From<ChiselCommand> for CmdDescriptor {
                 ("source", "Display the source code of the current REPL session")
             }
             ChiselCommand::Flush => ("flush", "Flush the current session to cache"),
-            ChiselCommand::Load(_) => ("load", "Load a previous session from cache"),
+            ChiselCommand::Load => ("load", "Load a previous session from cache"),
             ChiselCommand::ListSessions => ("list", "List all cached sessions"),
             ChiselCommand::ClearCache => ("clearcache", "Clear the chisel cache"),
+            ChiselCommand::Fork => {
+                ("fork", "Fork an RPC on-the-fly. Supply 0 arguments to return to a local network.")
+            }
         }
     }
 }

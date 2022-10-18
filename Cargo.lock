@@ -726,6 +726,9 @@ dependencies = [
  "ethers-solc",
  "eyre",
  "forge",
+ "foundry-cli",
+ "foundry-common",
+ "foundry-config",
  "foundry-evm",
  "revm",
  "rustyline",
@@ -736,6 +739,7 @@ dependencies = [
  "solang-parser",
  "strum",
  "time 0.3.15",
+ "tokio",
  "tracing",
  "yansi",
 ]
@@ -5749,9 +5753,9 @@ checksum = "cda74da7e1a664f795bb1f8a87ec406fb89a02522cf6e50620d016add6dbbf5c"
 
 [[package]]
 name = "tokio"
-version = "1.21.0"
+version = "1.21.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89797afd69d206ccd11fb0ea560a44bbb87731d020670e79416d442919257d42"
+checksum = "a9e03c497dc955702ba729190dc4aac6f2a0ce97f913e5b1b5912fc5039d9099"
 dependencies = [
  "autocfg",
  "bytes",
@@ -5759,7 +5763,6 @@ dependencies = [
  "memchr",
  "mio 0.8.4",
  "num_cpus",
- "once_cell",
  "parking_lot 0.12.0",
  "pin-project-lite",
  "signal-hook-registry",

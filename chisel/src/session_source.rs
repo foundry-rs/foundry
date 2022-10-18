@@ -8,6 +8,8 @@ use ethers_solc::{
     CompilerInput, CompilerOutput, Solc,
 };
 use eyre::Result;
+use forge::executor::{opts::EvmOpts, Backend};
+use foundry_config::Config;
 use serde::{Deserialize, Serialize};
 use solang_parser::pt::CodeLocation;
 use std::{collections::HashMap, path::PathBuf};
@@ -41,10 +43,22 @@ pub struct GeneratedOutput {
     pub compiler_output: CompilerOutput,
 }
 
+/// Configuration for the SessionSource
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSourceConfig {
+    /// Foundry configuration
+    pub config: Config,
+    /// EVM Options
+    pub evm_opts: EvmOpts,
+    #[serde(skip)]
+    /// Backend
+    pub backend: Option<Backend>,
+}
+
 /// A Session Source
 ///
 /// Heavily based on soli's [`ConstructedSource`](https://github.com/jpopesculian/soli/blob/master/src/main.rs#L166)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSource {
     /// The file name
     pub file_name: PathBuf,
@@ -67,11 +81,13 @@ pub struct SessionSource {
     pub intermediate: Option<IntermediateOutput>,
     /// The generated output
     pub generated_output: Option<GeneratedOutput>,
+    /// Session Source configuration
+    pub config: SessionSourceConfig,
 }
 
 impl SessionSource {
     /// Creates a new source given a solidity compiler version
-    pub fn new(solc: &Solc) -> Self {
+    pub fn new(solc: &Solc, config: &SessionSourceConfig) -> Self {
         assert!(solc.version().is_ok());
         Self {
             file_name: PathBuf::from("ReplContract.sol".to_string()),
@@ -83,6 +99,7 @@ impl SessionSource {
             compiled: None,
             intermediate: None,
             generated_output: None,
+            config: config.clone(),
         }
     }
 
@@ -90,16 +107,16 @@ impl SessionSource {
     /// an error if the new line fails to be parsed.
     pub fn clone_with_new_line(&self, mut content: String) -> Result<SessionSource> {
         let mut new_source = self.clone();
-        if let Some(parsed) = parse_fragment(&new_source.solc, &content)
+        if let Some(parsed) = parse_fragment(&new_source.solc, &self.config, &content)
             .or_else(|| {
                 content = content.trim_end().to_string();
                 content.push_str(";\n");
-                parse_fragment(&new_source.solc, &content)
+                parse_fragment(&new_source.solc, &self.config, &content)
             })
             .or_else(|| {
                 content = content.trim_end().trim_end_matches(';').to_string();
                 content.push('\n');
-                parse_fragment(&new_source.solc, &content)
+                parse_fragment(&new_source.solc, &self.config, &content)
             })
         {
             match parsed {
@@ -408,8 +425,12 @@ pub enum ParseTreeFragment {
 
 /// Parses a fragment of solidity code with solang_parser and assigns
 /// it a scope.
-pub fn parse_fragment(solc: &Solc, buffer: &str) -> Option<ParseTreeFragment> {
-    let base = SessionSource::new(solc);
+pub fn parse_fragment(
+    solc: &Solc,
+    config: &SessionSourceConfig,
+    buffer: &str,
+) -> Option<ParseTreeFragment> {
+    let base = SessionSource::new(solc, config);
 
     if let Ok((_, _, statements)) = base.clone().with_run_code(buffer).parse_and_decompose() {
         return Some(ParseTreeFragment::Function(statements))

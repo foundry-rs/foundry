@@ -7,7 +7,7 @@ use ethers::{
 };
 use ethers_solc::Artifact;
 use eyre::Result;
-use forge::executor::{Backend, ExecutorBuilder};
+use forge::executor::{inspector::CheatsConfig, Backend, ExecutorBuilder};
 use revm::OpCode;
 use solang_parser::pt::{self, CodeLocation};
 use yansi::Paint;
@@ -15,7 +15,7 @@ use yansi::Paint;
 /// Executor implementation for [SessionSource]
 impl SessionSource {
     /// Runs the source with the [ChiselRunner]
-    pub fn execute(&mut self) -> Result<(Address, ChiselResult)> {
+    pub async fn execute(&mut self) -> Result<(Address, ChiselResult)> {
         // Recompile the project and ensure no errors occurred.
         match self.build() {
             Ok(compiled) => {
@@ -48,10 +48,10 @@ impl SessionSource {
                     };
 
                     // Create a new runner
-                    let mut runner = self.prepare_runner(final_pc);
+                    let runner = self.prepare_runner(final_pc);
 
                     // Run w/ no libraries for now
-                    let res = runner.run(&[], bytecode.into_owned());
+                    let res = runner.await.run(&[], bytecode.into_owned());
 
                     // Return [ChiselResult] or bubble up error
                     match res {
@@ -67,9 +67,9 @@ impl SessionSource {
     }
 
     /// Inspect a contract element inside of the current session
-    pub fn inspect(&mut self, item: &str) -> Result<String> {
+    pub async fn inspect(&mut self, item: &str) -> Result<String> {
         match self.clone_with_new_line(format!("bytes memory inspectoor = abi.encode({item})")) {
-            Ok(mut source) => match source.execute() {
+            Ok(mut source) => match source.execute().await {
                 Ok(res) => {
                     let res = res.1;
 
@@ -127,18 +127,25 @@ impl SessionSource {
     }
 
     /// Prepare a runner for the Chisel REPL environment
-    fn prepare_runner(&self, final_pc: usize) -> ChiselRunner {
-        // Spawn backend with no fork at the moment
-        // TODO: Make the backend persistent, shouldn't need to spawn a new one each time.
-        let backend = Backend::spawn(None);
+    async fn prepare_runner(&mut self, final_pc: usize) -> ChiselRunner {
+        let env = self.config.evm_opts.evm_env().await;
+
+        // Create an in-memory backend
+        let backend = self.config.backend.take().unwrap_or_else(|| {
+            let backend =
+                Backend::spawn(self.config.evm_opts.get_fork(&self.config.config, env.clone()));
+            self.config.backend = Some(backend.clone());
+            backend
+        });
 
         // Build a new executor
-        // TODO: Configurability
         let executor = ExecutorBuilder::default()
+            .with_config(env)
             .with_chisel_state(final_pc)
             .set_tracing(true)
-            .with_spec(revm::SpecId::LATEST)
-            .with_gas_limit(u64::MAX.into())
+            .with_spec(foundry_cli::utils::evm_spec(&self.config.config.evm_version))
+            .with_gas_limit(self.config.evm_opts.gas_limit())
+            .with_cheatcodes(CheatsConfig::new(&self.config.config, &self.config.evm_opts))
             .build(backend);
 
         ChiselRunner::new(executor, U256::MAX, Address::zero())
