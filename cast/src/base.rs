@@ -152,7 +152,12 @@ impl Base {
             },
             _ if s.starts_with("0x") => match U256::from_str_radix(s, 16) {
                 Ok(_) => Ok(Self::Hexadecimal),
-                Err(e) => Err(eyre::eyre!("could not parse hex value: {}", e)),
+                Err(e) => match e.kind() {
+                    FromStrRadixErrKind::InvalidLength => {
+                        Err(eyre::eyre!("number must be less than U256::MAX ({})", U256::MAX))
+                    }
+                    _ => Err(eyre::eyre!("could not parse hexadecimal value: {}", e)),
+                },
             },
             // No prefix => first try parsing as decimal
             _ => match U256::from_str_radix(s, 10) {
@@ -166,10 +171,15 @@ impl Base {
                 }
                 Err(_) => match U256::from_str_radix(s, 16) {
                     Ok(_) => Ok(Self::Hexadecimal),
-                    Err(e) => Err(eyre::eyre!(
-                        "could not autodetect base neither as decimal nor as hexadecimal: {}",
-                        e
-                    )),
+                    Err(e) => match e.kind() {
+                        FromStrRadixErrKind::InvalidLength => {
+                            Err(eyre::eyre!("number must be less than U256::MAX ({})", U256::MAX))
+                        }
+                        _ => Err(eyre::eyre!(
+                            "could not autodetect base as neither decimal or hexadecimal: {}",
+                            e
+                        )),
+                    },
                 },
             },
         }
