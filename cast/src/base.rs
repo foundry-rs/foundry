@@ -5,7 +5,7 @@ use ethers_core::{
 use eyre::Result;
 use std::{
     convert::{Infallible, TryFrom, TryInto},
-    fmt::{Binary, Debug, Display, Formatter, LowerHex, Octal, Result as FmtResult},
+    fmt::{Binary, Debug, Display, Formatter, LowerHex, Octal, Result as FmtResult, UpperHex},
     iter::FromIterator,
     num::IntErrorKind,
     str::FromStr,
@@ -13,7 +13,6 @@ use std::{
 
 /* -------------------------------------------- Base -------------------------------------------- */
 
-// TODO: Split Hexadecimal into UpperHex and LowerHex and implement formatting
 /// Represents a number's [radix] or base. Currently it supports the same bases that [std::fmt]
 /// supports.
 ///
@@ -153,7 +152,12 @@ impl Base {
             },
             _ if s.starts_with("0x") => match U256::from_str_radix(s, 16) {
                 Ok(_) => Ok(Self::Hexadecimal),
-                Err(e) => Err(eyre::eyre!("could not parse hex value: {}", e)),
+                Err(e) => match e.kind() {
+                    FromStrRadixErrKind::InvalidLength => {
+                        Err(eyre::eyre!("number must be less than U256::MAX ({})", U256::MAX))
+                    }
+                    _ => Err(eyre::eyre!("could not parse hexadecimal value: {}", e)),
+                },
             },
             // No prefix => first try parsing as decimal
             _ => match U256::from_str_radix(s, 10) {
@@ -167,10 +171,15 @@ impl Base {
                 }
                 Err(_) => match U256::from_str_radix(s, 16) {
                     Ok(_) => Ok(Self::Hexadecimal),
-                    Err(e) => Err(eyre::eyre!(
-                        "could not autodetect base neither as decimal nor as hexadecimal: {}",
-                        e
-                    )),
+                    Err(e) => match e.kind() {
+                        FromStrRadixErrKind::InvalidLength => {
+                            Err(eyre::eyre!("number must be less than U256::MAX ({})", U256::MAX))
+                        }
+                        _ => Err(eyre::eyre!(
+                            "could not autodetect base as neither decimal or hexadecimal: {}",
+                            e
+                        )),
+                    },
                 },
             },
         }
@@ -275,6 +284,13 @@ impl LowerHex for NumberWithBase {
     }
 }
 
+impl UpperHex for NumberWithBase {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        let n = format!("{:X}", self.number);
+        f.pad_integral(true, Base::Hexadecimal.prefix(), &n)
+    }
+}
+
 impl FromStr for NumberWithBase {
     type Err = eyre::Report;
 
@@ -318,13 +334,13 @@ impl From<NumberWithBase> for String {
 }
 
 impl NumberWithBase {
-    pub fn new(number: impl Into<U256>, is_nonnegative: bool, base: impl Into<Base>) -> Self {
-        Self { number: number.into(), is_nonnegative, base: base.into() }
+    pub fn new(number: impl Into<U256>, is_nonnegative: bool, base: Base) -> Self {
+        Self { number: number.into(), is_nonnegative, base }
     }
 
     /// Creates a copy of the number with the provided base.
-    pub fn with_base(&self, base: impl Into<Base>) -> Self {
-        Self::new(self.number, self.is_nonnegative, base)
+    pub fn with_base(&self, base: Base) -> Self {
+        Self { number: self.number, is_nonnegative: self.is_nonnegative, base }
     }
 
     /// Parses a string slice into a signed integer. If base is None then it tries to determine base
@@ -677,9 +693,8 @@ mod tests {
 
         assert_eq!(Base::detect("0123456789abcdef").unwrap(), Hexadecimal);
 
-        // See Base::detect comments
-        // Base::detect("0b234abc").unwrap_err();
-        // Base::detect("0o89cba").unwrap_err();
+        let _ = Base::detect("0b234abc").unwrap_err();
+        let _ = Base::detect("0o89cba").unwrap_err();
         let _ = Base::detect("0123456789abcdefg").unwrap_err();
         let _ = Base::detect("0x123abclpmk").unwrap_err();
         let _ = Base::detect("hello world").unwrap_err();
@@ -691,7 +706,7 @@ mod tests {
         let expected_8: Vec<_> = POS_NUM.iter().map(|n| format!("{:o}", n)).collect();
         let expected_10: Vec<_> = POS_NUM.iter().map(|n| format!("{:}", n)).collect();
         let expected_l16: Vec<_> = POS_NUM.iter().map(|n| format!("{:x}", n)).collect();
-        // let expected_u16: Vec<_> = POS_NUM.iter().map(|n| format!("{:X}", n)).collect();
+        let expected_u16: Vec<_> = POS_NUM.iter().map(|n| format!("{:X}", n)).collect();
 
         for (i, n) in POS_NUM.into_iter().enumerate() {
             let mut num: NumberWithBase = I256::from(n).into();
@@ -700,23 +715,22 @@ mod tests {
             assert_eq!(num.set_base(Octal).format(), expected_8[i]);
             assert_eq!(num.set_base(Decimal).format(), expected_10[i]);
             assert_eq!(num.set_base(Hexadecimal).format(), expected_l16[i]);
+            assert_eq!(num.set_base(Hexadecimal).format().to_uppercase(), expected_u16[i]);
         }
     }
 
+    // TODO: test for octal
     #[test]
     fn test_format_neg() {
         // underlying is 256 bits so we have to pad left manually
 
         let expected_2: Vec<_> = NEG_NUM.iter().map(|n| format!("{:1>256b}", n)).collect();
-
-        // TODO: create expected for octal
         // let expected_8: Vec<_> = NEG_NUM.iter().map(|n| format!("1{:7>85o}", n)).collect();
-
         // Sign not included, see NumberWithBase::format
         let expected_10: Vec<_> =
             NEG_NUM.iter().map(|n| format!("{:}", n).trim_matches('-').to_string()).collect();
-
-        let expected_16: Vec<_> = NEG_NUM.iter().map(|n| format!("{:f>64x}", n)).collect();
+        let expected_l16: Vec<_> = NEG_NUM.iter().map(|n| format!("{:f>64x}", n)).collect();
+        let expected_u16: Vec<_> = NEG_NUM.iter().map(|n| format!("{:F>64X}", n)).collect();
 
         for (i, n) in NEG_NUM.into_iter().enumerate() {
             let mut num: NumberWithBase = I256::from(n).into();
@@ -724,7 +738,8 @@ mod tests {
             assert_eq!(num.set_base(Binary).format(), expected_2[i]);
             // assert_eq!(num.set_base(Octal).format(), expected_8[i]);
             assert_eq!(num.set_base(Decimal).format(), expected_10[i]);
-            assert_eq!(num.set_base(Hexadecimal).format(), expected_16[i]);
+            assert_eq!(num.set_base(Hexadecimal).format(), expected_l16[i]);
+            assert_eq!(num.set_base(Hexadecimal).format().to_uppercase(), expected_u16[i]);
         }
     }
 
@@ -739,8 +754,10 @@ mod tests {
         let actual_8_alt: Vec<_> = nums.iter().map(|n| format!("{:#o}", n)).collect();
         let actual_10: Vec<_> = nums.iter().map(|n| format!("{:}", n)).collect();
         let actual_10_alt: Vec<_> = nums.iter().map(|n| format!("{:#}", n)).collect();
-        let actual_16: Vec<_> = nums.iter().map(|n| format!("{:x}", n)).collect();
-        let actual_16_alt: Vec<_> = nums.iter().map(|n| format!("{:#x}", n)).collect();
+        let actual_l16: Vec<_> = nums.iter().map(|n| format!("{:x}", n)).collect();
+        let actual_l16_alt: Vec<_> = nums.iter().map(|n| format!("{:#x}", n)).collect();
+        let actual_u16: Vec<_> = nums.iter().map(|n| format!("{:X}", n)).collect();
+        let actual_u16_alt: Vec<_> = nums.iter().map(|n| format!("{:#X}", n)).collect();
 
         let expected_2: Vec<_> = POS_NUM.iter().map(|n| format!("{:b}", n)).collect();
         let expected_2_alt: Vec<_> = POS_NUM.iter().map(|n| format!("{:#b}", n)).collect();
@@ -748,8 +765,10 @@ mod tests {
         let expected_8_alt: Vec<_> = POS_NUM.iter().map(|n| format!("{:#o}", n)).collect();
         let expected_10: Vec<_> = POS_NUM.iter().map(|n| format!("{:}", n)).collect();
         let expected_10_alt: Vec<_> = POS_NUM.iter().map(|n| format!("{:#}", n)).collect();
-        let expected_16: Vec<_> = POS_NUM.iter().map(|n| format!("{:x}", n)).collect();
-        let expected_16_alt: Vec<_> = POS_NUM.iter().map(|n| format!("{:#x}", n)).collect();
+        let expected_l16: Vec<_> = POS_NUM.iter().map(|n| format!("{:x}", n)).collect();
+        let expected_l16_alt: Vec<_> = POS_NUM.iter().map(|n| format!("{:#x}", n)).collect();
+        let expected_u16: Vec<_> = POS_NUM.iter().map(|n| format!("{:X}", n)).collect();
+        let expected_u16_alt: Vec<_> = POS_NUM.iter().map(|n| format!("{:#X}", n)).collect();
 
         for (i, _) in POS_NUM.iter().enumerate() {
             assert_eq!(actual_2[i], expected_2[i]);
@@ -761,8 +780,11 @@ mod tests {
             assert_eq!(actual_10[i], expected_10[i]);
             assert_eq!(actual_10_alt[i], expected_10_alt[i]);
 
-            assert_eq!(actual_16[i], expected_16[i]);
-            assert_eq!(actual_16_alt[i], expected_16_alt[i]);
+            assert_eq!(actual_l16[i], expected_l16[i]);
+            assert_eq!(actual_l16_alt[i], expected_l16_alt[i]);
+
+            assert_eq!(actual_u16[i], expected_u16[i]);
+            assert_eq!(actual_u16_alt[i], expected_u16_alt[i]);
         }
     }
 }
