@@ -19,10 +19,10 @@ pub mod runner;
 /// The executor
 pub mod executor;
 
-/// A Solidity Highlighter module
-pub mod sol_highlighter;
+/// A Solidity Helper module
+pub mod solidity_helper;
 
 /// Re-export a prelude of relevant chisel items
 pub mod prelude {
-    pub use crate::{dispatcher::*, runner::*, session::*, session_source::*, sol_highlighter::*};
+    pub use crate::{dispatcher::*, runner::*, session::*, session_source::*, solidity_helper::*};
 }

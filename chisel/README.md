@@ -25,7 +25,6 @@ In this sense, Chisel even serves as a project generator.
 Chisel aims to improve upon soli, with native foundry integration by providing feature completion with:
 
 - Fork an existing chain
-- Allow the use of private keys and custom sender
 - More advanced introspection
 - Better error messages and traces
 - ... many more future features!
@@ -36,7 +35,7 @@ Chisel aims to improve upon soli, with native foundry integration by providing f
   - [x] Create temporary REPL contract (in memory, or temp file?).
     - [ ] Implement `forge-std/Test.sol` so that cheatcodes etc. can be used.
   - [x] Utilize foundry's `evm` module for REPL env.
-    - [ ] Implement network forking.
+    - [x] Implement network forking.
   - [ ] Import all project files / interfaces into REPL contract automatically.
     - [ ] Optionally disable this functionality with a flag.
 - [x] Cache REPL History
@@ -46,10 +45,11 @@ Chisel aims to improve upon soli, with native foundry integration by providing f
   - [x] Inspect memory
   - [ ] Inspect storage slot
   - [ ] Enable / disable call tracing
-  - [ ] On-the-fly network forking
+    - [ ] Rip trace printing code from another module of foundry.
+  - [x] On-the-fly network forking
   - [x] Export to file
     - [ ] Export session to script contract if within project.
-- [ ] [Syntax highlighting](https://docs.rs/rustyline/10.0.0/rustyline/highlight/trait.Highlighter.html)
+- [x] [Syntax highlighting](https://docs.rs/rustyline/10.0.0/rustyline/highlight/trait.Highlighter.html)
 - [ ] Tests.
 
 ## Usage

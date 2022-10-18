@@ -1,4 +1,7 @@
-use chisel::prelude::{ChiselDisptacher, DispatchResult};
+use chisel::{
+    prelude::{ChiselDisptacher, DispatchResult},
+    solidity_helper::SolidityHelper,
+};
 use clap::Parser;
 use foundry_cli::cmd::{forge::build::BuildArgs, LoadConfig};
 use foundry_common::evm::EvmArgs;
@@ -35,10 +38,11 @@ async fn main() {
     let mut interrupt = false;
 
     // Create a new rustyline Editor
-    let mut rl = Editor::<()>::new().unwrap_or_else(|e| {
+    let mut rl = Editor::<SolidityHelper>::new().unwrap_or_else(|e| {
         tracing::error!(target: "chisel-env", "Failed to initialize rustyline Editor! {}", e);
         panic!("failed to create a rustyline Editor for the chisel environment! {e}");
     });
+    rl.set_helper(Some(SolidityHelper));
 
     let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
 

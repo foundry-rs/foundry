@@ -1,4 +1,4 @@
-use crate::{session::ChiselSession, session_source::SessionSourceConfig};
+use crate::{prelude::SolidityHelper, session::ChiselSession, session_source::SessionSourceConfig};
 use solang_parser::diagnostics::Diagnostic;
 use std::{error, error::Error, str::FromStr};
 use strum::{EnumIter, IntoEnumIterator};
@@ -147,7 +147,7 @@ impl ChiselDisptacher {
                 }
             },
             ChiselCommand::Source => {
-                return DispatchResult::CommandSuccess(Some(self.session.contract_source()))
+                return DispatchResult::CommandSuccess(Some(SolidityHelper::highlight(&self.session.contract_source())))
             }
             ChiselCommand::ClearCache => {
                 match ChiselSession::clear_cache() {
