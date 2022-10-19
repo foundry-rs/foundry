@@ -45,4 +45,40 @@ contract HelloWorld {
         s = w * h;
         p = 2 * (w + h);
     }
+
+    /**
+     * @notice Here is my comment
+     *       - item 1
+     *       - item 2
+     * Some equations:
+     *     y = mx + b
+     */
+    function anotherExample() external {}
+
+    /**
+     * contract A {
+     *     function foo() public {
+     *         // does nothing.
+     *     }
+     * }
+     */
+    function multilineIndent() external {}
+
+    /**
+     * contract A {
+     * function foo() public {
+     *             // does nothing.
+     *   }
+     * }
+     */
+    function multilineMalformedIndent() external {}
 }
+
+/**
+ * contract A {
+ *     function foo() public {
+ *         // does nothing.
+ *     }
+ * }
+ */
+function freeFloatingMultilineIndent() {}

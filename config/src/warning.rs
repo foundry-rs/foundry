@@ -38,6 +38,14 @@ pub enum Warning {
         /// The error message that occured
         err: String,
     },
+    /// Deprecated key.
+    DeprecatedKey {
+        /// The key being deprecated
+        old: String,
+        /// The new key replacing the deprecated one if not empty, otherwise, meaning the old one
+        /// is being removed completely without replacement
+        new: String,
+    },
 }
 
 impl fmt::Display for Warning {
@@ -62,6 +70,12 @@ impl fmt::Display for Warning {
                 profile,
                 path.display(),
                 err
+            )),
+            Self::DeprecatedKey { old, new } if new.is_empty() => f.write_fmt(format_args!(
+                "Key `{old}` is being deprecated and will be removed in future versions.",
+            )),
+            Self::DeprecatedKey { old, new } => f.write_fmt(format_args!(
+                "Key `{old}` is being deprecated in favor of `{new}`. It will be removed in future versions.",
             )),
         }
     }

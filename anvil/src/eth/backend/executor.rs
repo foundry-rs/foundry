@@ -17,10 +17,12 @@ use ethers::{
     types::{Bloom, H256, U256},
     utils::rlp,
 };
+use forge::revm::ExecutionResult;
 use foundry_evm::{
+    executor::backend::DatabaseError,
     revm,
     revm::{BlockEnv, CfgEnv, Env, Return, SpecId, TransactOut},
-    trace::node::CallTraceNode,
+    trace::{node::CallTraceNode, CallTraceArena},
 };
 use std::sync::Arc;
 use tracing::{trace, warn};
@@ -28,9 +30,9 @@ use tracing::{trace, warn};
 /// Represents an executed transaction (transacted on the DB)
 pub struct ExecutedTransaction {
     transaction: Arc<PoolTransaction>,
-    exit: Return,
+    exit_reason: Return,
     out: TransactOut,
-    gas: u64,
+    gas_used: u64,
     logs: Vec<Log>,
     traces: Vec<CallTraceNode>,
 }
@@ -40,13 +42,13 @@ pub struct ExecutedTransaction {
 impl ExecutedTransaction {
     /// Creates the receipt for the transaction
     fn create_receipt(&self) -> TypedReceipt {
-        let used_gas: U256 = self.gas.into();
+        let used_gas: U256 = self.gas_used.into();
         let mut bloom = Bloom::default();
         logs_bloom(self.logs.clone(), &mut bloom);
         let logs = self.logs.clone();
 
         // successful return see [Return]
-        let status_code: u8 = if self.exit as u8 <= Return::SelfDestruct as u8 { 1 } else { 0 };
+        let status_code = u8::from(self.exit_reason as u8 <= Return::SelfDestruct as u8);
         match &self.transaction.pending_transaction.transaction {
             TypedTransaction::Legacy(_) => TypedReceipt::Legacy(EIP658Receipt {
                 status_code,
@@ -95,6 +97,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, Validator: TransactionValidator> 
     pub parent_hash: H256,
     /// Cumulative gas used by all executed transactions
     pub gas_used: U256,
+    pub enable_steps_tracing: bool,
 }
 
 impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'a, DB, Validator> {
@@ -119,7 +122,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
             None
         };
 
-        for (idx, tx) in self.enumerate() {
+        for tx in self.into_iter() {
             let tx = match tx {
                 TransactionExecutionOutcome::Executed(tx) => {
                     included.push(tx.transaction.clone());
@@ -130,10 +133,16 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                     invalid.push(tx);
                     continue
                 }
+                TransactionExecutionOutcome::DatabaseError(_, err) => {
+                    // Note: this is only possible in forking mode, if for example a rpc request
+                    // failed
+                    trace!(target: "backend", ?err,  "Failed to execute transaction due to database error");
+                    continue
+                }
             };
             let receipt = tx.create_receipt();
             cumulative_gas_used = cumulative_gas_used.saturating_add(receipt.gas_used());
-            let ExecutedTransaction { transaction, logs, out, traces, exit, .. } = tx;
+            let ExecutedTransaction { transaction, logs, out, traces, exit_reason: exit, .. } = tx;
             logs_bloom(logs.clone(), &mut bloom);
 
             let contract_address = if let TransactOut::Create(_, contract_address) = out {
@@ -142,15 +151,17 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
             } else {
                 None
             };
+
+            let transaction_index = transaction_infos.len() as u32;
             let info = TransactionInfo {
                 transaction_hash: *transaction.hash(),
-                transaction_index: idx as u32,
+                transaction_index,
                 from: *transaction.pending_transaction.sender(),
                 to: transaction.pending_transaction.transaction.to().copied(),
                 contract_address,
                 logs,
                 logs_bloom: *receipt.logs_bloom(),
-                traces,
+                traces: CallTraceArena { arena: traces },
                 exit,
                 out: match out {
                     TransactOut::Call(b) => Some(b.into()),
@@ -202,6 +213,8 @@ pub enum TransactionExecutionOutcome {
     Invalid(Arc<PoolTransaction>, InvalidTransactionError),
     /// Execution skipped because could exceed gas limit
     Exhausted(Arc<PoolTransaction>),
+    /// When an error occurred during execution
+    DatabaseError(Arc<PoolTransaction>, DatabaseError),
 }
 
 impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
@@ -211,7 +224,11 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
 
     fn next(&mut self) -> Option<Self::Item> {
         let transaction = self.pending.next()?;
-        let account = self.db.basic(*transaction.pending_transaction.sender());
+        let sender = *transaction.pending_transaction.sender();
+        let account = match self.db.basic(sender).map(|acc| acc.unwrap_or_default()) {
+            Ok(account) => account,
+            Err(err) => return Some(TransactionExecutionOutcome::DatabaseError(transaction, err)),
+        };
         let env = self.env_for(&transaction.pending_transaction);
         // check that we comply with the block's gas limit
         let max_gas = self.gas_used.saturating_add(U256::from(env.tx.gas_limit));
@@ -233,30 +250,34 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         evm.env = env;
         evm.database(&mut self.db);
 
-        // records all call traces
+        // records all call and step traces
         let mut inspector = Inspector::default().with_tracing();
+        if self.enable_steps_tracing {
+            inspector = inspector.with_steps_tracing();
+        }
 
         trace!(target: "backend", "[{:?}] executing", transaction.hash());
         // transact and commit the transaction
-        let (exit, out, gas, logs) = evm.inspect_commit(&mut inspector);
+        let ExecutionResult { exit_reason, out, gas_used, logs, .. } =
+            evm.inspect_commit(&mut inspector);
         inspector.print_logs();
 
-        if exit == Return::OutOfGas {
+        if exit_reason == Return::OutOfGas {
             // this currently useful for debugging estimations
             warn!(target: "backend", "[{:?}] executed with out of gas", transaction.hash())
         }
 
-        trace!(target: "backend", "[{:?}] executed with out={:?}, gas ={}", transaction.hash(), out, gas);
+        trace!(target: "backend", ?exit_reason, ?gas_used, "[{:?}] executed with out={:?}", transaction.hash(), out);
 
-        self.gas_used.saturating_add(U256::from(gas));
+        self.gas_used.saturating_add(U256::from(gas_used));
 
-        trace!(target: "backend::executor", "transacted [{:?}], result: {:?} gas {}", transaction.hash(), exit, gas);
+        trace!(target: "backend::executor", "transacted [{:?}], result: {:?} gas {}", transaction.hash(), exit_reason, gas_used);
 
         let tx = ExecutedTransaction {
             transaction,
-            exit,
+            exit_reason,
             out,
-            gas,
+            gas_used,
             logs: logs.into_iter().map(Into::into).collect(),
             traces: inspector.tracer.unwrap_or_default().traces.arena,
         };

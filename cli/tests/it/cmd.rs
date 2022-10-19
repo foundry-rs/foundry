@@ -1,5 +1,7 @@
 //! Contains various tests for checking forge's commands
+
 use crate::constants::*;
+use clap::CommandFactory;
 use ethers::{
     prelude::remappings::Remapping,
     solc::{
@@ -7,10 +9,11 @@ use ethers::{
         ConfigurableContractArtifact,
     },
 };
+use foundry_cli::opts::forge::Opts;
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
     forgetest, forgetest_init,
-    util::{read_string, OutputExt, TestCommand, TestProject},
+    util::{pretty_err, read_string, OutputExt, TestCommand, TestProject},
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
 use std::{env, fs, path::PathBuf, str::FromStr};
@@ -19,6 +22,15 @@ use std::{env, fs, path::PathBuf, str::FromStr};
 forgetest!(print_help, |_: TestProject, mut cmd: TestCommand| {
     cmd.arg("--help");
     cmd.assert_non_empty_stdout();
+});
+
+// tests `--help` is printed to std out for all subcommands
+forgetest!(print_forge_subcommand_help, |_: TestProject, mut cmd: TestCommand| {
+    let forge = Opts::command();
+    for sub_command in forge.get_subcommands() {
+        cmd.forge_fuse().args([sub_command.get_name(), "--help"]);
+        cmd.assert_non_empty_stdout();
+    }
 });
 
 // checks that `clean` can be invoked even if out and cache don't exist
@@ -816,7 +828,17 @@ forgetest!(can_reinstall_after_manual_remove, |prj: TestProject, mut cmd: TestCo
     install(&mut cmd);
 });
 
-// Tests that forge update doesn't break a working depencency by recursively updating nested
+// test that we can repeatedly install the same dependency without changes
+forgetest!(can_install_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {
+    cmd.git_init();
+
+    cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]);
+    for _ in 0..3 {
+        cmd.assert_success();
+    }
+});
+
+// Tests that forge update doesn't break a working dependency by recursively updating nested
 // dependencies
 forgetest!(
     can_update_library_with_outdated_nested_dependency,
@@ -1308,4 +1330,141 @@ forgetest_init!(can_use_absolute_imports, |prj: TestProject, mut cmd: TestComman
     cmd.arg("build");
     let stdout = cmd.stdout_lossy();
     assert!(stdout.contains("Compiler run successful"));
+});
+
+// <https://github.com/foundry-rs/foundry/issues/3440>
+forgetest_init!(
+    can_use_absolute_imports_from_test_and_script,
+    |prj: TestProject, mut cmd: TestCommand| {
+        prj.inner()
+            .add_script(
+                "IMyScript.sol",
+                r#"
+    pragma solidity ^0.8.10;
+
+    interface IMyScript {}
+   "#,
+            )
+            .unwrap();
+
+        prj.inner()
+            .add_script(
+                "MyScript.sol",
+                r#"
+    pragma solidity ^0.8.10;
+    import "script/IMyScript.sol";
+
+    contract MyScript is IMyScript {}
+   "#,
+            )
+            .unwrap();
+
+        prj.inner()
+            .add_test(
+                "IMyTest.sol",
+                r#"
+    pragma solidity ^0.8.10;
+
+    interface IMyTest {}
+   "#,
+            )
+            .unwrap();
+
+        prj.inner()
+            .add_test(
+                "MyTest.sol",
+                r#"
+    pragma solidity ^0.8.10;
+    import "test/IMyTest.sol";
+
+    contract MyTest is IMyTest {}
+   "#,
+            )
+            .unwrap();
+
+        cmd.arg("build");
+        let stdout = cmd.stdout_lossy();
+        assert!(stdout.contains("Compiler run successful"));
+    }
+);
+
+// checks forge bind works correctly on the default project
+forgetest_init!(can_bind, |_prj: TestProject, mut cmd: TestCommand| {
+    cmd.arg("bind");
+    cmd.assert_non_empty_stdout();
+});
+
+// checks missing dependencies are auto installed
+forgetest_init!(can_install_missing_deps_test, |prj: TestProject, mut cmd: TestCommand| {
+    // wipe forge-std
+    let forge_std_dir = prj.root().join("lib/forge-std");
+    pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
+
+    cmd.arg("test");
+
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("Missing dependencies found. Installing now"), "{}", output);
+    assert!(output.contains("[PASS]"), "{}", output);
+});
+
+// checks missing dependencies are auto installed
+forgetest_init!(can_install_missing_deps_build, |prj: TestProject, mut cmd: TestCommand| {
+    // wipe forge-std
+    let forge_std_dir = prj.root().join("lib/forge-std");
+    pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
+
+    cmd.arg("build");
+
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("Missing dependencies found. Installing now"), "{}", output);
+    assert!(output.contains("Compiler run successful"), "{}", output);
+});
+
+// checks that extra output works
+forgetest_init!(can_build_skip_contracts, |prj: TestProject, mut cmd: TestCommand| {
+    // explicitly set to run with 0.8.17 for consistent output
+    let config = Config { solc: Some("0.8.17".into()), ..Default::default() };
+    prj.write_config(config);
+
+    // only builds the single template contract `src/*`
+    cmd.args(["build", "--skip", "tests", "--skip", "scripts"]);
+
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_build_skip_contracts.stdout"),
+    );
+    // re-run command
+    let out = cmd.stdout();
+
+    // unchanged
+    assert!(out.trim().contains("No files changed, compilation skipped"), "{}", out);
+});
+
+// checks that build --sizes includes all contracts even if unchanged
+forgetest_init!(can_build_sizes_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {
+    cmd.args(["build", "--sizes"]);
+    let out = cmd.stdout();
+
+    // contains: Counter    ┆ 0.247     ┆ 24.329
+    assert!(out.contains(TEMPLATE_CONTRACT));
+
+    // get the entire table
+    let table = out.split("Compiler run successful").nth(1).unwrap().trim();
+
+    let unchanged = cmd.stdout();
+    assert!(unchanged.contains(&table), "{}", table);
+});
+
+// checks that build --names includes all contracts even if unchanged
+forgetest_init!(can_build_names_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {
+    cmd.args(["build", "--names"]);
+    let out = cmd.stdout();
+
+    assert!(out.contains(TEMPLATE_CONTRACT));
+
+    // get the entire list
+    let list = out.split("Compiler run successful").nth(1).unwrap().trim();
+
+    let unchanged = cmd.stdout();
+    assert!(unchanged.contains(&list), "{}", list);
 });

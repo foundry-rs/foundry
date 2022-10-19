@@ -1,9 +1,9 @@
 //! Fuzzing support abstracted over the [`Evm`](crate::Evm) used
 use crate::{fuzz::*, CALLER};
 mod error;
-use error::*;
+pub use error::InvariantFuzzError;
 mod filters;
-pub use filters::ArtifactFilters;
+pub use filters::{ArtifactFilters, SenderFilters};
 mod call_override;
 pub use call_override::{set_up_inner_replay, RandomCallGenerator};
 mod executor;
@@ -34,26 +34,15 @@ pub struct InvariantContract<'a> {
     pub abi: &'a Abi,
 }
 
-/// Metadata on how to run invariant tests
-#[derive(Debug, Clone, Copy, Default)]
-pub struct InvariantTestOptions {
-    /// The number of calls executed to attempt to break invariants in one run.
-    pub depth: u32,
-    /// Fails the invariant fuzzing if a revert occurs
-    pub fail_on_revert: bool,
-    /// Allows overriding an unsafe external call when running invariant tests. eg. reetrancy
-    /// checks
-    pub call_override: bool,
-}
-
 /// Given the executor state, asserts that no invariant has been broken. Otherwise, it fills the
 /// external `invariant_failures.failed_invariant` map and returns a generic error.
+/// Returns the mapping of (Invariant Function Name -> Call Result).
 pub fn assert_invariants(
     invariant_contract: &InvariantContract,
     executor: &Executor,
     calldata: &[BasicTxDetails],
     invariant_failures: &mut InvariantFailures,
-) -> eyre::Result<()> {
+) -> eyre::Result<BTreeMap<String, RawCallResult>> {
     let mut found_case = false;
     let mut inner_sequence = vec![];
 
@@ -63,6 +52,7 @@ pub fn assert_invariants(
         }
     }
 
+    let mut call_results = BTreeMap::new();
     for func in &invariant_contract.invariant_functions {
         let mut call_result = executor
             .call_raw(
@@ -108,7 +98,11 @@ pub fn assert_invariants(
                     )),
                 );
                 found_case = true;
+            } else {
+                call_results.insert(func.name.clone(), call_result);
             }
+        } else {
+            call_results.insert(func.name.clone(), call_result);
         }
     }
 
@@ -126,7 +120,8 @@ pub fn assert_invariants(
             invariant_failures.broken_invariants_count - before
         );
     }
-    Ok(())
+
+    Ok(call_results)
 }
 
 /// The outcome of an invariant fuzz test
@@ -137,4 +132,6 @@ pub struct InvariantFuzzTestResult {
     pub cases: Vec<FuzzedCases>,
     /// Number of reverted fuzz calls
     pub reverts: usize,
+
+    pub last_call_results: Option<BTreeMap<String, RawCallResult>>,
 }

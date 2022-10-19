@@ -1,6 +1,7 @@
 use crate::{abi::HEVM_ABI, CallKind};
 use ethers::types::{Address, U256};
 use revm::{Memory, OpCode};
+use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 
 /// An arena of [DebugNode]s
@@ -151,7 +152,7 @@ impl DebugStep {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Instruction {
     OpCode(u8),
     Cheatcode([u8; 4]),

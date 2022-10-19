@@ -61,9 +61,12 @@ async fn can_impersonate_account() {
     let impersonate = Address::random();
     let to = Address::random();
     let val = 1337u64;
-
+    let funding = U256::from(1e18 as u64);
     // fund the impersonated account
-    api.anvil_set_balance(impersonate, U256::from(1e18 as u64)).await.unwrap();
+    api.anvil_set_balance(impersonate, funding).await.unwrap();
+
+    let balance = api.balance(impersonate, None).await.unwrap();
+    assert_eq!(balance, funding);
 
     let tx = TransactionRequest::new().from(impersonate).to(to).value(val);
 

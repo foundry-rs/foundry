@@ -32,7 +32,9 @@ contract RevertStatement {
         revert(
             string.concat(
                 message,
-                someVeryLongFunctionNameToGetDynamicErrorMessageString( /* comment12 */ )
+                someVeryLongFunctionNameToGetDynamicErrorMessageString(
+                    /* comment12 */
+                )
             )
         );
 

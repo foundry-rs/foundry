@@ -4,16 +4,14 @@ use crate::{
         forge::{build::CoreBuildArgs, test::Filter},
         Cmd, LoadConfig,
     },
-    compile::ProjectCompiler,
-    utils::{self, p_println},
+    utils::{self, p_println, STATIC_FUZZ_SEED},
 };
-use cast::trace::identifier::TraceIdentifier;
-use clap::{AppSettings, ArgEnum, Parser};
+use clap::{Parser, ValueEnum};
 use ethers::{
     abi::Address,
     prelude::{
         artifacts::{Ast, CompactBytecode, CompactDeployedBytecode},
-        Artifact, Bytes, Project, ProjectCompileOutput,
+        Artifact, Bytes, Project, ProjectCompileOutput, U256,
     },
     solc::{artifacts::contract::CompactContractBytecode, sourcemap::SourceMap},
 };
@@ -26,25 +24,24 @@ use forge::{
     executor::{inspector::CheatsConfig, opts::EvmOpts},
     result::SuiteResult,
     revm::SpecId,
-    trace::identifier::LocalTraceIdentifier,
     utils::{build_ic_pc_map, ICPCMap},
     MultiContractRunnerBuilder, TestOptions,
 };
-use foundry_common::{evm::EvmArgs, fs};
+use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, ContractsByArtifact};
 use foundry_config::Config;
 use semver::Version;
 use std::{collections::HashMap, sync::mpsc::channel, thread};
+use tracing::trace;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(CoverageArgs, opts, evm_opts);
 
 /// Generate coverage reports for your tests.
 #[derive(Debug, Clone, Parser)]
-#[clap(global_setting = AppSettings::DeriveDisplayOrder)]
 pub struct CoverageArgs {
     #[clap(
         long,
-        arg_enum,
+        value_enum,
         default_value = "summary",
         help = "The report type to use for coverage."
     )]
@@ -71,7 +68,11 @@ impl Cmd for CoverageArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let (config, evm_opts) = self.configure()?;
+        let (mut config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
+
+        // Set fuzz seed so coverage reports are deterministic
+        config.fuzz.seed = Some(U256::from_big_endian(&STATIC_FUZZ_SEED));
+
         let (project, output) = self.build(&config)?;
         p_println!(!self.opts.silent => "Analysing contracts...");
         let report = self.prepare(&config, output.clone())?;
@@ -86,17 +87,6 @@ type SourceMaps = HashMap<ContractId, (SourceMap, SourceMap)>;
 
 // The main flow of the command itself
 impl CoverageArgs {
-    /// Collects and adjusts configuration.
-    fn configure(&self) -> eyre::Result<(Config, EvmOpts)> {
-        // Merge all configs
-        let (config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
-
-        // We always want traces
-        evm_opts.verbosity = 3;
-
-        Ok((config, evm_opts))
-    }
-
     /// Builds the project.
     fn build(&self, config: &Config) -> eyre::Result<(Project, ProjectCompileOutput)> {
         // Set up the project
@@ -105,6 +95,7 @@ impl CoverageArgs {
 
             // Disable the optimizer for more accurate source maps
             project.solc_config.settings.optimizer.disable();
+            project.solc_config.settings.via_ir = Some(false);
 
             project
         };
@@ -117,6 +108,7 @@ impl CoverageArgs {
     }
 
     /// Builds the coverage report.
+    #[tracing::instrument(name = "prepare coverage", skip_all)]
     fn prepare(
         &self,
         config: &Config,
@@ -142,9 +134,13 @@ impl CoverageArgs {
                     .entry(version.clone())
                     .or_default()
                     .insert(source_file.id as usize, ast);
+
+                let file = project_paths.root.join(&path);
+                trace!(root=?project_paths.root, ?file, "reading source file");
+
                 versioned_sources.entry(version.clone()).or_default().insert(
                     source_file.id as usize,
-                    fs::read_to_string(&path)
+                    fs::read_to_string(&file)
                         .wrap_err("Could not read source code for analysis")?,
                 );
                 report.add_source(version, source_file.id as usize, path);
@@ -262,59 +258,49 @@ impl CoverageArgs {
 
         // Build the contract runner
         let evm_spec = utils::evm_spec(&config.evm_version);
-        let env = evm_opts.evm_env_blocking();
+        let env = evm_opts.evm_env_blocking()?;
         let mut runner = MultiContractRunnerBuilder::default()
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(evm_spec)
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_cheats_config(CheatsConfig::new(&config, &evm_opts))
-            .with_test_options(TestOptions {
-                fuzz_runs: config.fuzz_runs,
-                fuzz_max_local_rejects: config.fuzz_max_local_rejects,
-                fuzz_max_global_rejects: config.fuzz_max_global_rejects,
-                ..Default::default()
-            })
+            .with_test_options(TestOptions { fuzz: config.fuzz, ..Default::default() })
             .set_coverage(true)
             .build(root.clone(), output, env, evm_opts)?;
 
-        // Set up identifier
-        let local_identifier = LocalTraceIdentifier::new(&runner.known_contracts);
-
         // Run tests
+        let known_contracts = ContractsByArtifact(runner.known_contracts.clone());
         let (tx, rx) = channel::<(String, SuiteResult)>();
         let handle =
             thread::spawn(move || runner.test(&self.filter, Some(tx), Default::default()).unwrap());
 
         // Add hit data to the coverage report
-        for (hit_map, traces) in rx
+        for (artifact_id, hits) in rx
             .into_iter()
             .flat_map(|(_, suite)| suite.test_results.into_values())
-            .flat_map(|mut result| Some((result.coverage.take()?, result.traces)))
-        {
-            let hits = traces
-                .into_iter()
-                .flat_map(|(_, trace)| {
-                    local_identifier.identify_addresses(trace.addresses().into_iter().collect())
+            .filter_map(|mut result| result.coverage.take())
+            .flat_map(|hit_maps| {
+                hit_maps.0.into_values().filter_map(|map| {
+                    Some((known_contracts.find_by_code(map.bytecode.as_ref())?.0, map))
                 })
-                .flat_map(|identity| identity.artifact_id.zip(hit_map.get(&identity.address)));
-            // TODO: Coverage for fuzz tests
+            })
+        {
             // TODO: Note down failing tests
-            for (artifact_id, hits) in hits {
-                if let Some(source_id) = report.get_source_id(
-                    artifact_id.version.clone(),
-                    artifact_id.source.to_string_lossy().to_string(),
-                ) {
-                    // TODO: Distinguish between creation/runtime in a smart way
-                    report.add_hit_map(
-                        &ContractId {
-                            version: artifact_id.version,
-                            source_id: *source_id,
-                            contract_name: artifact_id.name,
-                        },
-                        hits,
-                    );
-                }
+            if let Some(source_id) = report.get_source_id(
+                artifact_id.version.clone(),
+                artifact_id.source.to_string_lossy().to_string(),
+            ) {
+                let source_id = *source_id;
+                // TODO: Distinguish between creation/runtime in a smart way
+                report.add_hit_map(
+                    &ContractId {
+                        version: artifact_id.version.clone(),
+                        source_id,
+                        contract_name: artifact_id.name.clone(),
+                    },
+                    &hits,
+                );
             }
         }
 
@@ -334,7 +320,7 @@ impl CoverageArgs {
 }
 
 // TODO: HTML
-#[derive(Debug, Clone, ArgEnum)]
+#[derive(Debug, Clone, ValueEnum)]
 pub enum CoverageReportKind {
     Summary,
     Lcov,
@@ -345,7 +331,7 @@ pub enum CoverageReportKind {
 ///
 /// This is needed in order to analyze the bytecode for contracts that use libraries.
 fn dummy_link_bytecode(mut obj: CompactBytecode) -> Option<Bytes> {
-    let link_references = std::mem::take(&mut obj.link_references);
+    let link_references = obj.link_references.clone();
     for (file, libraries) in link_references {
         for library in libraries.keys() {
             obj.link(&file, library, Address::zero());

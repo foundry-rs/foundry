@@ -36,7 +36,7 @@ contract DSTest {
     event log_named_string(string key, string val);
 
     bool public IS_TEST = true;
-    bool public failed;
+    bool public _failed;
 
     address constant HEVM_ADDRESS = address(bytes20(uint160(uint256(keccak256("hevm cheat code")))));
 
@@ -48,8 +48,42 @@ contract DSTest {
         _;
     }
 
+    function failed() public returns (bool) {
+        if (_failed) {
+            return _failed;
+        } else {
+            bool globalFailed = false;
+            if (hasHEVMContext()) {
+                (, bytes memory retdata) = HEVM_ADDRESS.call(
+                    abi.encodePacked(
+                        bytes4(keccak256("load(address,bytes32)")), abi.encode(HEVM_ADDRESS, bytes32("failed"))
+                    )
+                );
+                globalFailed = abi.decode(retdata, (bool));
+            }
+            return globalFailed;
+        }
+    }
+
     function fail() internal {
-        failed = true;
+        if (hasHEVMContext()) {
+            (bool status,) = HEVM_ADDRESS.call(
+                abi.encodePacked(
+                    bytes4(keccak256("store(address,bytes32,bytes32)")),
+                    abi.encode(HEVM_ADDRESS, bytes32("failed"), bytes32(uint256(0x01)))
+                )
+            );
+            status; // Silence compiler warnings
+        }
+        _failed = true;
+    }
+
+    function hasHEVMContext() internal view returns (bool) {
+        uint256 hevmCodeSize = 0;
+        assembly {
+            hevmCodeSize := extcodesize(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D)
+        }
+        return hevmCodeSize > 0;
     }
 
     modifier logs_gas() {
@@ -475,6 +509,23 @@ contract DSTest {
         if (!checkEq0(a, b)) {
             emit log_named_string("Error", err);
             assertEq0(a, b);
+        }
+    }
+
+    function assertEq(bytes memory a, bytes memory b) internal {
+        assertEq0(a, b);
+    }
+
+    function assertEq(bytes memory a, bytes memory b, string memory err) internal {
+        assertEq0(a, b, err);
+    }
+
+    function assertEq(bool a, bool b) internal {
+        if (a != b) {
+            emit log("Error: a == b not satisfied [bool]");
+            emit log_named_string("  Expected", b ? "true" : "false");
+            emit log_named_string("    Actual", a ? "true" : "false");
+            fail();
         }
     }
 }

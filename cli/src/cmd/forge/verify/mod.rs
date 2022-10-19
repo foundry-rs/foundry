@@ -1,33 +1,41 @@
 //! Verify contract source
 
 use crate::cmd::retry::RetryArgs;
-use async_trait::async_trait;
 use clap::{Parser, ValueHint};
 use ethers::{abi::Address, solc::info::ContractInfo};
-use foundry_config::{impl_figment_convert_basic, Chain};
-use std::{
-    fmt::{Display, Formatter},
-    path::PathBuf,
-    str::FromStr,
-};
-
-use etherscan::EtherscanVerificationProvider;
-use sourcify::SourcifyVerificationProvider;
+use foundry_config::{figment, impl_figment_convert, Chain, Config};
+use provider::VerificationProviderType;
+use std::path::PathBuf;
 
 mod etherscan;
+pub mod provider;
 mod sourcify;
 
 /// Verification provider arguments
 #[derive(Debug, Clone, Parser)]
-pub struct VerifierArg {
+pub struct VerifierArgs {
     #[clap(
-        arg_enum,
+        value_enum,
         long = "verifier",
         help_heading = "Verification Provider",
         help = "Contract verification provider to use `etherscan`, `sourcify` or `blockscout`",
         default_value = "etherscan"
     )]
     pub verifier: VerificationProviderType,
+
+    #[clap(
+        long,
+        env = "VERIFIER_URL",
+        help = "The verifier URL, if using a custom provider",
+        value_name = "VERIFIER_URL"
+    )]
+    verifier_url: Option<String>,
+}
+
+impl Default for VerifierArgs {
+    fn default() -> Self {
+        VerifierArgs { verifier: VerificationProviderType::Etherscan, verifier_url: None }
+    }
 }
 
 /// Verification arguments
@@ -42,8 +50,24 @@ pub struct VerifyArgs {
     )]
     pub contract: ContractInfo,
 
-    #[clap(long, help = "the encoded constructor arguments", value_name = "ARGS")]
+    #[clap(
+        long,
+        help = "The ABI-encoded constructor arguments.",
+        name = "constructor_args",
+        conflicts_with = "constructor_args_path",
+        value_name = "ARGS"
+    )]
     pub constructor_args: Option<String>,
+
+    #[clap(
+        long,
+        help = "The path to a file containing the constructor arguments.",
+        value_hint = ValueHint::FilePath,
+        name = "constructor_args_path",
+        conflicts_with = "constructor_args",
+        value_name = "FILE"
+    )]
+    pub constructor_args_path: Option<PathBuf>,
 
     #[clap(
         long,
@@ -112,10 +136,32 @@ pub struct VerifyArgs {
     pub root: Option<PathBuf>,
 
     #[clap(flatten)]
-    pub verifier: VerifierArg,
+    pub verifier: VerifierArgs,
 }
 
-impl_figment_convert_basic!(VerifyArgs);
+impl_figment_convert!(VerifyArgs);
+
+impl figment::Provider for VerifyArgs {
+    fn metadata(&self) -> figment::Metadata {
+        figment::Metadata::named(stringify!($name))
+    }
+    fn data(
+        &self,
+    ) -> Result<figment::value::Map<figment::Profile, figment::value::Dict>, figment::Error> {
+        let mut dict = figment::value::Dict::new();
+        if let Some(root) = self.root.as_ref() {
+            dict.insert("root".to_string(), figment::value::Value::serialize(root)?);
+        }
+        if let Some(optimizer_runs) = self.num_of_optimizations {
+            dict.insert("optimizer".to_string(), figment::value::Value::serialize(true)?);
+            dict.insert(
+                "optimizer_runs".to_string(),
+                figment::value::Value::serialize(optimizer_runs)?,
+            );
+        }
+        Ok(figment::value::Map::from([(Config::selected_profile(), dict)]))
+    }
+}
 
 impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
@@ -155,70 +201,12 @@ pub struct VerifyCheckArgs {
     etherscan_key: Option<String>,
 
     #[clap(flatten)]
-    pub verifier: VerifierArg,
+    verifier: VerifierArgs,
 }
 
 impl VerifyCheckArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(self) -> eyre::Result<()> {
         self.verifier.verifier.client(&self.etherscan_key)?.check(self).await
-    }
-}
-
-#[derive(clap::ArgEnum, Debug, Clone)]
-pub enum VerificationProviderType {
-    Etherscan,
-    Sourcify,
-    Blockscout,
-}
-
-impl VerificationProviderType {
-    fn client(&self, key: &Option<String>) -> eyre::Result<Box<dyn VerificationProvider>> {
-        match self {
-            VerificationProviderType::Etherscan => {
-                if key.as_ref().map_or(true, |key| key.is_empty()) {
-                    eyre::bail!("ETHERSCAN_API_KEY must be set")
-                }
-                Ok(Box::new(EtherscanVerificationProvider))
-            }
-            VerificationProviderType::Sourcify => Ok(Box::new(SourcifyVerificationProvider)),
-            VerificationProviderType::Blockscout => Ok(Box::new(EtherscanVerificationProvider)),
-        }
-    }
-}
-
-#[async_trait]
-pub trait VerificationProvider {
-    async fn verify(&self, args: VerifyArgs) -> eyre::Result<()>;
-    async fn check(&self, args: VerifyCheckArgs) -> eyre::Result<()>;
-}
-
-impl FromStr for VerificationProviderType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "e" | "etherscan" => Ok(VerificationProviderType::Etherscan),
-            "s" | "sourcify" => Ok(VerificationProviderType::Sourcify),
-            "b" | "blockscout" => Ok(VerificationProviderType::Blockscout),
-            _ => Err(format!("Unknown field: {s}")),
-        }
-    }
-}
-
-impl Display for VerificationProviderType {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            VerificationProviderType::Etherscan => {
-                write!(f, "etherscan")?;
-            }
-            VerificationProviderType::Sourcify => {
-                write!(f, "sourcify")?;
-            }
-            VerificationProviderType::Blockscout => {
-                write!(f, "blockscout")?;
-            }
-        };
-        Ok(())
     }
 }

@@ -108,7 +108,12 @@ pub struct CoreBuildArgs {
     #[serde(skip)]
     pub silent: bool,
 
-    #[clap(help_heading = "PROJECT OPTIONS", help = "Generate build info files.", long)]
+    #[clap(
+        long,
+        name = "build_info",
+        help_heading = "PROJECT OPTIONS",
+        help = "Generate build info files."
+    )]
     #[serde(skip)]
     pub build_info: bool,
 
@@ -118,7 +123,7 @@ pub struct CoreBuildArgs {
         long,
         value_hint = ValueHint::DirPath,
         value_name = "PATH",
-        requires = "build-info"
+        requires = "build_info"
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_info_path: Option<PathBuf>,
@@ -131,7 +136,7 @@ impl CoreBuildArgs {
     /// [`utils::find_project_root_path`] and merges the cli `BuildArgs` into it before returning
     /// [`foundry_config::Config::project()`]
     pub fn project(&self) -> eyre::Result<Project> {
-        let config = self.load_config_emit_warnings();
+        let config = self.try_load_config_emit_warnings()?;
         Ok(config.project()?)
     }
 

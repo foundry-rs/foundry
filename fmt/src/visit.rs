@@ -195,6 +195,7 @@ pub trait Visitor {
         _cond: &mut Expression,
         _if_branch: &mut Box<Statement>,
         _else_branch: &mut Option<Box<Statement>>,
+        _is_first_stmt: bool,
     ) -> Result<(), Self::Error> {
         self.visit_source(loc)
     }
@@ -424,6 +425,33 @@ where
     }
 }
 
+impl<T> Visitable for Box<T>
+where
+    T: Visitable,
+{
+    fn visit<V>(&mut self, v: &mut V) -> Result<(), V::Error>
+    where
+        V: Visitor,
+    {
+        T::visit(self, v)
+    }
+}
+
+impl<T> Visitable for Vec<T>
+where
+    T: Visitable,
+{
+    fn visit<V>(&mut self, v: &mut V) -> Result<(), V::Error>
+    where
+        V: Visitor,
+    {
+        for item in self.iter_mut() {
+            item.visit(v)?;
+        }
+        Ok(())
+    }
+}
+
 impl Visitable for SourceUnitPart {
     fn visit<V>(&mut self, v: &mut V) -> Result<(), V::Error>
     where
@@ -494,7 +522,7 @@ impl Visitable for Statement {
             }
             Statement::Args(loc, args) => v.visit_args(*loc, args),
             Statement::If(loc, cond, if_branch, else_branch) => {
-                v.visit_if(*loc, cond, if_branch, else_branch)
+                v.visit_if(*loc, cond, if_branch, else_branch, true)
             }
             Statement::While(loc, cond, body) => v.visit_while(*loc, cond, body),
             Statement::Expression(loc, expr) => {

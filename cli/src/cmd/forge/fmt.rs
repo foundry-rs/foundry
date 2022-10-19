@@ -1,12 +1,11 @@
 use crate::{
     cmd::{Cmd, LoadConfig},
-    term::cli_warn,
     utils::FoundryPathExt,
 };
 use clap::{Parser, ValueHint};
 use console::{style, Style};
 use forge_fmt::{format, parse};
-use foundry_common::fs;
+use foundry_common::{fs, term::cli_warn};
 use foundry_config::{impl_figment_convert_basic, Config};
 use rayon::prelude::*;
 use similar::{ChangeTag, TextDiff};
@@ -25,7 +24,7 @@ pub struct FmtArgs {
         conflicts_with = "root",
         value_hint = ValueHint::FilePath,
         value_name = "PATH",
-        multiple = true
+        num_args(1..)
     )]
     paths: Vec<PathBuf>,
     #[clap(
@@ -88,8 +87,38 @@ impl Cmd for FmtArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let config = self.load_config_emit_warnings();
-        let inputs = self.inputs(&config);
+        let config = self.try_load_config_emit_warnings()?;
+
+        // collect ignore paths first
+        let mut ignored = vec![];
+        let expanded = config
+            .fmt
+            .ignore
+            .iter()
+            .map(|pattern| glob::glob(&config.__root.0.join(pattern).display().to_string()));
+        for res in expanded {
+            match res {
+                Ok(paths) => ignored.extend(paths.into_iter().collect::<Result<Vec<_>, _>>()?),
+                Err(err) => {
+                    eyre::bail!("failed to parse ignore glob pattern: {err}")
+                }
+            }
+        }
+
+        let cwd = std::env::current_dir()?;
+        let mut inputs = vec![];
+        for input in self.inputs(&config) {
+            match input {
+                Input::Path(p) => {
+                    if (p.is_absolute() && !ignored.contains(&p)) ||
+                        !ignored.contains(&cwd.join(&p))
+                    {
+                        inputs.push(Input::Path(p));
+                    }
+                }
+                other => inputs.push(other),
+            };
+        }
 
         if inputs.is_empty() {
             cli_warn!("Nothing to format.\nHINT: If you are working outside of the project, try providing paths to your source files: `forge fmt <paths>`");
@@ -100,7 +129,7 @@ impl Cmd for FmtArgs {
             .par_iter()
             .map(|input| {
                 let source = match input {
-                    Input::Path(path) => fs::read_to_string(&path)?,
+                    Input::Path(path) => fs::read_to_string(path)?,
                     Input::Stdin(source) => source.to_string()
                 };
 
@@ -217,6 +246,7 @@ impl Cmd for FmtArgs {
 
 struct Line(Option<usize>);
 
+#[derive(Debug)]
 enum Input {
     Path(PathBuf),
     Stdin(String),

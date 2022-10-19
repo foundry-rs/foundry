@@ -1,18 +1,25 @@
 use super::{AddressIdentity, TraceIdentifier};
 use ethers::{
-    abi::{Abi, Address},
+    abi::Address,
     etherscan,
-    prelude::{contract::ContractMetadata, errors::EtherscanError},
+    etherscan::contract::Metadata,
+    prelude::{
+        artifacts::ContractBytecodeSome, contract::ContractMetadata, errors::EtherscanError,
+        ArtifactId,
+    },
     solc::utils::RuntimeOrHandle,
+    types::H160,
 };
+use foundry_common::compile;
 use foundry_config::{Chain, Config};
 use futures::{
-    future::Future,
+    future::{join_all, Future},
     stream::{FuturesUnordered, Stream, StreamExt},
     task::{Context, Poll},
 };
 use std::{
     borrow::Cow,
+    collections::BTreeMap,
     pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -32,6 +39,8 @@ pub struct EtherscanIdentifier {
     /// After the first [EtherscanError::InvalidApiKey] this will get set to true, so we can
     /// prevent any further attempts
     invalid_api_key: Arc<AtomicBool>,
+    pub contracts: BTreeMap<H160, Metadata>,
+    pub sources: BTreeMap<u32, String>,
 }
 
 impl EtherscanIdentifier {
@@ -42,16 +51,56 @@ impl EtherscanIdentifier {
             Ok(Self {
                 client: Some(Arc::new(config.into_client()?)),
                 invalid_api_key: Arc::new(Default::default()),
+                contracts: BTreeMap::new(),
+                sources: BTreeMap::new(),
             })
         } else {
             Ok(Default::default())
         }
     }
+
+    /// Goes over the list of contracts we have pulled from the traces, clones their source from
+    /// Etherscan and compiles them locally, for usage in the debugger.
+    pub async fn get_compiled_contracts(
+        &self,
+    ) -> eyre::Result<(BTreeMap<ArtifactId, String>, BTreeMap<ArtifactId, ContractBytecodeSome>)>
+    {
+        let mut compiled_contracts = BTreeMap::new();
+        let mut sources = BTreeMap::new();
+
+        // TODO: Add caching so we dont double-fetch contracts.
+        let contracts_iter = self
+            .contracts
+            .iter()
+            // filter out vyper files
+            .filter(|(_, metadata)| !metadata.is_vyper());
+
+        let outputs_fut = contracts_iter
+            .clone()
+            .map(|(address, metadata)| {
+                println!("Compiling: {} {:?}", metadata.contract_name, address);
+                compile::compile_from_source(metadata)
+            })
+            .collect::<Vec<_>>();
+
+        // poll all the futures concurrently
+        let artifacts = join_all(outputs_fut).await;
+
+        // construct the map
+        for (results, (_, metadata)) in artifacts.into_iter().zip(contracts_iter) {
+            // get the inner type
+            let (artifact_id, bytecode) = results?;
+            compiled_contracts.insert(artifact_id.clone(), bytecode);
+            sources.insert(artifact_id, metadata.source_code());
+        }
+
+        Ok((sources, compiled_contracts))
+    }
 }
 
 impl TraceIdentifier for EtherscanIdentifier {
     fn identify_addresses(
-        &self,
+        &mut self,
         addresses: Vec<(&Address, Option<&Vec<u8>>)>,
     ) -> Vec<AddressIdentity> {
         trace!(target: "etherscanidentifier", "identify {} addresses", addresses.len());
@@ -70,16 +119,24 @@ impl TraceIdentifier for EtherscanIdentifier {
             );
 
             for (addr, _) in addresses {
-                fetcher.push(*addr);
+                if !self.contracts.contains_key(addr) {
+                    fetcher.push(*addr);
+                }
             }
 
             let fut = fetcher
-                .map(|(address, label, abi)| AddressIdentity {
-                    address,
-                    label: Some(label.clone()),
-                    contract: Some(label),
-                    abi: Some(Cow::Owned(abi)),
-                    artifact_id: None,
+                .map(|(address, metadata)| {
+                    let label = metadata.contract_name.clone();
+                    let abi = metadata.abi().ok().map(Cow::Owned);
+                    self.contracts.insert(address, metadata);
+
+                    AddressIdentity {
+                        address,
+                        label: Some(label.clone()),
+                        contract: Some(label),
+                        abi,
+                        artifact_id: None,
+                    }
                 })
                 .collect();
 
@@ -150,7 +207,7 @@ impl EtherscanFetcher {
 }
 
 impl Stream for EtherscanFetcher {
-    type Item = (Address, String, Abi);
+    type Item = (Address, Metadata);
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let pin = self.get_mut();
@@ -174,9 +231,7 @@ impl Stream for EtherscanFetcher {
                     match res {
                         Ok(mut metadata) => {
                             if let Some(item) = metadata.items.pop() {
-                                if let Ok(abi) = serde_json::from_str(&item.abi) {
-                                    return Poll::Ready(Some((addr, item.contract_name, abi)))
-                                }
+                                return Poll::Ready(Some((addr, item)))
                             }
                         }
                         Err(EtherscanError::RateLimitExceeded) => {
@@ -187,7 +242,13 @@ impl Stream for EtherscanFetcher {
                         Err(EtherscanError::InvalidApiKey) => {
                             warn!(target: "etherscanidentifier", "invalid api key");
                             // mark key as invalid
-                            pin.invalid_api_key.store(false, Ordering::Relaxed);
+                            pin.invalid_api_key.store(true, Ordering::Relaxed);
+                            return Poll::Ready(None)
+                        }
+                        Err(EtherscanError::BlockedByCloudflare) => {
+                            warn!(target: "etherscanidentifier", "blocked by cloudflare");
+                            // mark key as invalid
+                            pin.invalid_api_key.store(true, Ordering::Relaxed);
                             return Poll::Ready(None)
                         }
                         Err(err) => {

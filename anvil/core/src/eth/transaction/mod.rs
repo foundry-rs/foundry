@@ -1,7 +1,5 @@
 //! transaction related data
 
-use std::cmp::Ordering;
-
 use crate::eth::{
     receipt::Log,
     utils::{enveloped, to_access_list},
@@ -18,11 +16,12 @@ use ethers_core::{
     },
 };
 use fastrlp::{length_of_length, Header, RlpDecodable, RlpEncodable};
-use foundry_evm::{
-    revm::{CreateScheme, Return, TransactTo, TxEnv},
-    trace::node::CallTraceNode,
-};
+use foundry_evm::trace::CallTraceArena;
+use revm::{CreateScheme, Return, TransactTo, TxEnv};
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
+
+/// compatibility with `ethers-rs` types
 mod ethers_compat;
 
 /// Container type for various Ethereum transaction requests
@@ -206,6 +205,7 @@ impl fastrlp::Decodable for TransactionKind {
     fn decode(buf: &mut &[u8]) -> Result<Self, fastrlp::DecodeError> {
         if let Some(&first) = buf.first() {
             if first == 0x80 {
+                buf.advance(1);
                 Ok(TransactionKind::Create)
             } else {
                 let addr = <Address as fastrlp::Decodable>::decode(buf)?;
@@ -491,6 +491,23 @@ impl TypedTransaction {
         }
     }
 
+    pub fn as_legacy(&self) -> Option<&LegacyTransaction> {
+        match self {
+            TypedTransaction::Legacy(tx) => Some(tx),
+            _ => None,
+        }
+    }
+
+    /// Returns true whether this tx is a legacy transaction
+    pub fn is_legacy(&self) -> bool {
+        matches!(self, TypedTransaction::Legacy(_))
+    }
+
+    /// Returns true whether this tx is a EIP1559 transaction
+    pub fn is_eip1559(&self) -> bool {
+        matches!(self, TypedTransaction::EIP1559(_))
+    }
+
     pub fn hash(&self) -> H256 {
         match self {
             TypedTransaction::Legacy(t) => t.hash(),
@@ -627,6 +644,16 @@ impl fastrlp::Decodable for TypedTransaction {
         match first.cmp(&fastrlp::EMPTY_LIST_CODE) {
             Ordering::Less => {
                 // strip out the string header
+                // NOTE: typed transaction encodings either contain a "rlp header" which contains
+                // the type of the payload and its length, or they do not contain a header and
+                // start with the tx type byte.
+                //
+                // This line works for both types of encodings because byte slices starting with
+                // 0x01 and 0x02 return a Header { list: false, payload_length: 1 } when input to
+                // Header::decode.
+                // If the encoding includes a header, the header will be properly decoded and
+                // consumed.
+                // Otherwise, header decoding will succeed but nothing is consumed.
                 let _header = Header::decode(buf)?;
                 let tx_type = *buf.first().ok_or(fastrlp::DecodeError::Custom(
                     "typed tx cannot be decoded from an empty slice",
@@ -684,6 +711,16 @@ impl LegacyTransaction {
         } else {
             None
         }
+    }
+
+    /// See <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
+    /// > If you do, then the v of the signature MUST be set to {0,1} + CHAIN_ID * 2 + 35 where
+    /// > {0,1} is the parity of the y value of the curve point for which r is the x-value in the
+    /// > secp256k1 signing process.
+    pub fn meets_eip155(&self, chain_id: u64) -> bool {
+        let double_chain_id = chain_id.saturating_mul(2);
+        let v = self.signature.v;
+        v == double_chain_id + 35 || v == double_chain_id + 36
     }
 }
 
@@ -1043,7 +1080,7 @@ pub struct TransactionInfo {
     pub contract_address: Option<Address>,
     pub logs: Vec<Log>,
     pub logs_bloom: Bloom,
-    pub traces: Vec<CallTraceNode>,
+    pub traces: CallTraceArena,
     pub exit: Return,
     pub out: Option<Bytes>,
 }
@@ -1065,11 +1102,11 @@ impl TransactionInfo {
             return vec![]
         }
         let mut graph = vec![];
-        let mut node = &self.traces[idx];
+        let mut node = &self.traces.arena[idx];
         while let Some(parent) = node.parent {
             // the index of the child call in the arena
             let child_idx = node.idx;
-            node = &self.traces[parent];
+            node = &self.traces.arena[parent];
             // find the index of the child call in the parent node
             let call_idx = node
                 .children
@@ -1088,8 +1125,9 @@ mod tests {
     use std::str::FromStr;
 
     use super::*;
+    use bytes::BytesMut;
     use ethers_core::utils::hex;
-    use fastrlp::Decodable;
+    use fastrlp::{Decodable, Encodable};
 
     #[test]
     fn can_recover_sender() {
@@ -1114,6 +1152,62 @@ mod tests {
             tx.recover().unwrap(),
             "0f65fe9276bc9a24ae7083ae28e2660ef72df99e".parse().unwrap()
         );
+    }
+
+    #[test]
+    fn test_decode_fastrlp_create() {
+        // tests that a contract creation tx encodes and decodes properly
+        let tx = TypedTransaction::EIP2930(EIP2930Transaction {
+            chain_id: 1u64,
+            nonce: U256::from(0),
+            gas_price: U256::from(1),
+            gas_limit: U256::from(2),
+            kind: TransactionKind::Create,
+            value: U256::from(3),
+            input: Bytes::from(vec![1, 2]),
+            odd_y_parity: true,
+            r: H256::default(),
+            s: H256::default(),
+            access_list: vec![].into(),
+        });
+
+        let mut encoded = BytesMut::new();
+        tx.encode(&mut encoded);
+
+        let decoded = TypedTransaction::decode(&mut &*encoded).unwrap();
+        assert_eq!(decoded, tx);
+    }
+
+    #[test]
+    fn test_decode_fastrlp_create_goerli() {
+        // test that an example create tx from goerli decodes properly
+        let tx_bytes =
+              hex::decode("02f901ee05228459682f008459682f11830209bf8080b90195608060405234801561001057600080fd5b50610175806100206000396000f3fe608060405234801561001057600080fd5b506004361061002b5760003560e01c80630c49c36c14610030575b600080fd5b61003861004e565b604051610045919061011d565b60405180910390f35b60606020600052600f6020527f68656c6c6f2073746174656d696e64000000000000000000000000000000000060405260406000f35b600081519050919050565b600082825260208201905092915050565b60005b838110156100be5780820151818401526020810190506100a3565b838111156100cd576000848401525b50505050565b6000601f19601f8301169050919050565b60006100ef82610084565b6100f9818561008f565b93506101098185602086016100a0565b610112816100d3565b840191505092915050565b6000602082019050818103600083015261013781846100e4565b90509291505056fea264697066735822122051449585839a4ea5ac23cae4552ef8a96b64ff59d0668f76bfac3796b2bdbb3664736f6c63430008090033c080a0136ebffaa8fc8b9fda9124de9ccb0b1f64e90fbd44251b4c4ac2501e60b104f9a07eb2999eec6d185ef57e91ed099afb0a926c5b536f0155dd67e537c7476e1471")
+                  .unwrap();
+        let _decoded = TypedTransaction::decode(&mut &tx_bytes[..]).unwrap();
+    }
+
+    #[test]
+    fn test_decode_fastrlp_call() {
+        let tx = TypedTransaction::EIP2930(EIP2930Transaction {
+            chain_id: 1u64,
+            nonce: U256::from(0),
+            gas_price: U256::from(1),
+            gas_limit: U256::from(2),
+            kind: TransactionKind::Call(Address::default()),
+            value: U256::from(3),
+            input: Bytes::from(vec![1, 2]),
+            odd_y_parity: true,
+            r: H256::default(),
+            s: H256::default(),
+            access_list: vec![].into(),
+        });
+
+        let mut encoded = BytesMut::new();
+        tx.encode(&mut encoded);
+
+        let decoded = TypedTransaction::decode(&mut &*encoded).unwrap();
+        assert_eq!(decoded, tx);
     }
 
     #[test]
@@ -1246,5 +1340,16 @@ mod tests {
             },
         });
         assert_eq!(expected, TypedTransaction::decode(bytes_fifth).unwrap());
+    }
+
+    // <https://github.com/gakonst/ethers-rs/issues/1732>
+    #[test]
+    fn test_recover_legacy_tx() {
+        let raw_tx = "f9015482078b8505d21dba0083022ef1947a250d5630b4cf539739df2c5dacb4c659f2488d880c46549a521b13d8b8e47ff36ab50000000000000000000000000000000000000000000066ab5a608bd00a23f2fe000000000000000000000000000000000000000000000000000000000000008000000000000000000000000048c04ed5691981c42154c6167398f95e8f38a7ff00000000000000000000000000000000000000000000000000000000632ceac70000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20000000000000000000000006c6ee5e31d828de241282b9606c8e98ea48526e225a0c9077369501641a92ef7399ff81c21639ed4fd8fc69cb793cfa1dbfab342e10aa0615facb2f1bcf3274a354cfe384a38d0cc008a11c2dd23a69111bc6930ba27a8";
+
+        let tx: TypedTransaction = rlp::decode(&hex::decode(raw_tx).unwrap()).unwrap();
+        let recovered = tx.recover().unwrap();
+        let expected: Address = "0xa12e1462d0ced572f396f58b6e2d03894cd7c8a4".parse().unwrap();
+        assert_eq!(expected, recovered);
     }
 }

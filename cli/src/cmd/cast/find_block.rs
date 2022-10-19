@@ -1,11 +1,11 @@
 //! cast find-block subcommand
 
-use crate::{cmd::Cmd, utils::consume_config_rpc_url};
+use crate::{cmd::Cmd, utils::try_consume_config_rpc_url};
 use cast::Cast;
 use clap::Parser;
 use ethers::prelude::*;
 use eyre::Result;
-use foundry_common::get_http_provider;
+use foundry_common::try_get_http_provider;
 use futures::{future::BoxFuture, join};
 
 #[derive(Debug, Clone, Parser)]
@@ -28,9 +28,9 @@ impl Cmd for FindBlockArgs {
 impl FindBlockArgs {
     async fn query_block(timestamp: u64, rpc_url: Option<String>) -> Result<()> {
         let ts_target = U256::from(timestamp);
-        let rpc_url = consume_config_rpc_url(rpc_url);
+        let rpc_url = try_consume_config_rpc_url(rpc_url)?;
 
-        let provider = get_http_provider(rpc_url);
+        let provider = try_get_http_provider(rpc_url)?;
         let last_block_num = provider.get_block_number().await?;
         let cast_provider = Cast::new(provider);
 
