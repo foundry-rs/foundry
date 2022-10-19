@@ -144,9 +144,9 @@ impl From<Hardfork> for SpecId {
 impl<T: Into<BlockNumber>> From<T> for Hardfork {
     fn from(block: T) -> Hardfork {
         let num = match block.into() {
-            BlockNumber::Pending | BlockNumber::Latest => u64::MAX,
             BlockNumber::Earliest => 0,
             BlockNumber::Number(num) => num.as_u64(),
+            _ => u64::MAX,
         };
 
         match num {

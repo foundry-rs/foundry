@@ -1140,11 +1140,26 @@ impl Backend {
             BlockId::Hash(hash) => hash,
             BlockId::Number(number) => {
                 let storage = self.blockchain.storage.read();
+                let slots_in_an_epoch = U64::from(32u64);
                 match number {
                     BlockNumber::Latest => storage.best_hash,
                     BlockNumber::Earliest => storage.genesis_hash,
                     BlockNumber::Pending => return None,
                     BlockNumber::Number(num) => *storage.hashes.get(&num)?,
+                    BlockNumber::Safe => {
+                        if storage.best_number > (slots_in_an_epoch) {
+                            *storage.hashes.get(&(storage.best_number - (slots_in_an_epoch)))?
+                        } else {
+                            storage.genesis_hash // treat the genesis block as safe "by definition"
+                        }
+                    }
+                    BlockNumber::Finalized => {
+                        if storage.best_number > (slots_in_an_epoch * 2) {
+                            *storage.hashes.get(&(storage.best_number - (slots_in_an_epoch * 2)))?
+                        } else {
+                            storage.genesis_hash
+                        }
+                    }
                 }
             }
         };
@@ -1229,6 +1244,7 @@ impl Backend {
         block_id: Option<T>,
     ) -> Result<u64, BlockchainError> {
         let current = self.best_number().as_u64();
+        let slots_in_an_epoch = 32u64;
         let requested =
             match block_id.map(Into::into).unwrap_or(BlockId::Number(BlockNumber::Latest)) {
                 BlockId::Hash(hash) => self
@@ -1242,6 +1258,8 @@ impl Backend {
                     BlockNumber::Latest | BlockNumber::Pending => self.best_number().as_u64(),
                     BlockNumber::Earliest => 0,
                     BlockNumber::Number(num) => num.as_u64(),
+                    BlockNumber::Safe => current.saturating_sub(slots_in_an_epoch),
+                    BlockNumber::Finalized => current.saturating_sub(slots_in_an_epoch * 2),
                 },
             };
 
@@ -1253,10 +1271,14 @@ impl Backend {
     }
 
     pub fn convert_block_number(&self, block: Option<BlockNumber>) -> u64 {
+        let current = self.best_number().as_u64();
+        let slots_in_an_epoch = 32u64;
         match block.unwrap_or(BlockNumber::Latest) {
-            BlockNumber::Latest | BlockNumber::Pending => self.best_number().as_u64(),
+            BlockNumber::Latest | BlockNumber::Pending => current,
             BlockNumber::Earliest => 0,
             BlockNumber::Number(num) => num.as_u64(),
+            BlockNumber::Safe => current.saturating_sub(slots_in_an_epoch),
+            BlockNumber::Finalized => current.saturating_sub(slots_in_an_epoch * 2),
         }
     }
 

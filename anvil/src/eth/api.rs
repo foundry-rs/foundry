@@ -1039,10 +1039,15 @@ impl EthApi {
         node_info!("eth_feeHistory");
         // max number of blocks in the requested range
 
+        let current = self.backend.best_number().as_u64();
+        let slots_in_an_epoch = 32u64;
+
         let number = match newest_block {
-            BlockNumber::Latest | BlockNumber::Pending => self.backend.best_number().as_u64(),
+            BlockNumber::Latest | BlockNumber::Pending => current,
             BlockNumber::Earliest => 0,
             BlockNumber::Number(n) => n.as_u64(),
+            BlockNumber::Safe => current.saturating_sub(slots_in_an_epoch),
+            BlockNumber::Finalized => current.saturating_sub(slots_in_an_epoch * 2),
         };
 
         // check if the number predates the fork, if in fork mode
