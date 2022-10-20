@@ -48,6 +48,8 @@ async fn main() {
 
     // Create a new cli dispatcher
     let mut dispatcher = ChiselDisptacher::new(&chisel::session_source::SessionSourceConfig {
+        // Enable traces if any level of verbosity was passed
+        traces: config.verbosity > 0,
         config,
         evm_opts,
         backend: None,
