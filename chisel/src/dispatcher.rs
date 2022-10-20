@@ -171,6 +171,7 @@ impl ChiselDisptacher {
             }
             ChiselCommand::ClearCache => match ChiselSession::clear_cache() {
                 Ok(_) => {
+                    self.session.id = None;
                     return DispatchResult::CommandSuccess(Some(String::from(
                         "Cleared chisel cache!",
                     )))
