@@ -2,7 +2,7 @@ use crate::prelude::{ChiselResult, ChiselRunner, SessionSource};
 use core::fmt::Debug;
 use ethers::{
     abi::{ethabi, ParamType, Token},
-    types::{Address, U256},
+    types::{Address, I256, U256},
     utils::hex,
 };
 use ethers_solc::Artifact;
@@ -179,7 +179,7 @@ fn format_token(token: Token) -> String {
                 "Type: {}\n├ Hex: {}\n└ Decimal: {}",
                 Paint::red("int"),
                 Paint::cyan(format!("0x{:x}", i)),
-                Paint::cyan(i)
+                Paint::cyan(I256::from_raw(i))
             )
         }
         Token::Uint(i) => {
