@@ -29,34 +29,38 @@ impl SessionSource {
                         .get_deployed_bytecode_bytes()
                         .expect("No deployed bytecode for contract.");
 
-                    let final_statement = compiled.intermediate.statements.last().unwrap();
+                    // Find the last statement within the "run()" method.
+                    if let Some(final_statement) = compiled.intermediate.statements.last() {
+                        let final_pc = {
+                            let source_loc = final_statement.loc();
+                            let offset = source_loc.start();
+                            let length = source_loc.end() - source_loc.start();
+                            contract
+                                .get_source_map_deployed()
+                                .unwrap()
+                                .unwrap()
+                                .into_iter()
+                                .zip(InstructionIter::new(&deployed_bytecode))
+                                .filter(|(s, _)| s.offset == offset && s.length == length)
+                                .map(|(_, i)| i.pc)
+                                .max()
+                                .unwrap_or_default()
+                        };
 
-                    let final_pc = {
-                        let source_loc = final_statement.loc();
-                        let offset = source_loc.start();
-                        let length = source_loc.end() - source_loc.start();
-                        contract
-                            .get_source_map_deployed()
-                            .unwrap()
-                            .unwrap()
-                            .into_iter()
-                            .zip(InstructionIter::new(&deployed_bytecode))
-                            .filter(|(s, _)| s.offset == offset && s.length == length)
-                            .map(|(_, i)| i.pc)
-                            .max()
-                            .unwrap_or_default()
-                    };
+                        // Create a new runner
+                        let runner = self.prepare_runner(final_pc);
 
-                    // Create a new runner
-                    let runner = self.prepare_runner(final_pc);
+                        // Run w/ no libraries for now
+                        let res = runner.await.run(bytecode.into_owned());
 
-                    // Run w/ no libraries for now
-                    let res = runner.await.run(&[], bytecode.into_owned());
-
-                    // Return [ChiselResult] or bubble up error
-                    match res {
-                        Ok(res) => Ok(res),
-                        Err(e) => Err(e),
+                        // Return [ChiselResult] or bubble up error
+                        match res {
+                            Ok(res) => Ok(res),
+                            Err(e) => Err(e),
+                        }
+                    } else {
+                        // Return a default result if no statements are present.
+                        Ok((Address::zero(), ChiselResult::default()))
                     }
                 } else {
                     Err(eyre::eyre!("Failed to find REPL contract!"))

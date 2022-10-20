@@ -27,7 +27,7 @@ pub struct ChiselRunner {
 }
 
 /// Represents the result of a Chisel REPL run
-#[derive(Debug)]
+#[derive(Debug, Default)]
 #[allow(missing_docs)] // TODO
 pub struct ChiselResult {
     /// Was the run a success?
@@ -52,62 +52,26 @@ impl ChiselRunner {
     }
 
     /// Run a contract as a REPL session
-    pub fn run(
-        &mut self,
-        libraries: &[Bytes],
-        bytecode: Bytes,
-    ) -> eyre::Result<(Address, ChiselResult)> {
+    pub fn run(&mut self, bytecode: Bytes) -> eyre::Result<(Address, ChiselResult)> {
         // Set the sender's balance to [U256::MAX] for deployment of the REPL contract.
         self.executor.set_balance(self.sender, U256::MAX)?;
 
-        // Deploy libraries
-        let mut traces: Vec<(TraceKind, CallTraceArena)> = libraries
-            .iter()
-            .filter_map(|code| {
-                let DeployResult { traces, .. } = self
-                    .executor
-                    .deploy(self.sender, code.0.clone(), 0u32.into(), None)
-                    .expect("couldn't deploy library");
-
-                traces
-            })
-            .map(|traces| (TraceKind::Deployment, traces))
-            .collect();
-
         // Deploy an instance of the REPL contract
-        let DeployResult {
-            address,
-            logs,
-            traces: constructor_traces,
-            debug: constructor_debug,
-            ..
-        } = self
+        // We don't care about deployment traces / logs here
+        let DeployResult { address, .. } = self
             .executor
-            .deploy(self.sender, bytecode.0, 0u32.into(), None)
+            .deploy(self.sender, bytecode.0, 0.into(), None)
             .map_err(|err| eyre::eyre!("Failed to deploy REPL contract:\n{}", err))?;
-
-        traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)).into_iter());
 
         // Reset the sender's balance to the initial balance for calls.
         self.executor.set_balance(self.sender, self.initial_balance)?;
 
-        // TODO: Extend traces, etc.
+        // Call the "run()" function of the REPL contract
         let call_res =
             self.call(self.sender, address, Bytes::from([0xc0, 0x40, 0x62, 0x26]), 0.into(), true);
 
         match call_res {
-            Ok(mut call_res) => {
-                // Extend the traces, logs, and debug information of the call to the REPL contract
-                // with deployment data.
-                // TODO: Might not want to include the deployment traces / logs / debug?
-                call_res.traces.extend(traces);
-                call_res.logs.extend(logs);
-                if let Some(debug) = call_res.debug.as_mut() {
-                    debug.extend(constructor_debug);
-                }
-
-                Ok((address, call_res))
-            }
+            Ok(call_res) => Ok((address, call_res)),
             Err(e) => Err(e),
         }
     }

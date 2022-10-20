@@ -51,6 +51,7 @@ async fn main() {
         config,
         evm_opts,
         backend: None,
+        traces: false,
     });
 
     // Begin Rustyline loop

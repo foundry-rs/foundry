@@ -53,6 +53,8 @@ pub struct SessionSourceConfig {
     #[serde(skip)]
     /// Backend
     pub backend: Option<Backend>,
+    /// Show traces?
+    pub traces: bool,
 }
 
 /// A Session Source
@@ -242,13 +244,10 @@ impl SessionSource {
             }?;
 
         // Parse Statements
-        // TODO: Refactor to work with "run()"
         let statements =
             match contract_parts.pop().ok_or(eyre::eyre!("Failed to pop source unit part"))? {
                 solang_parser::pt::ContractPart::FunctionDefinition(func) => {
-                    if !matches!(func.ty, solang_parser::pt::FunctionTy::Function) &&
-                        func.name.unwrap().name.eq("REPL")
-                    {
+                    if !matches!(func.ty, solang_parser::pt::FunctionTy::Function) {
                         return Err(eyre::eyre!("Missing run() function"))
                     }
                     match func.body.ok_or(eyre::eyre!("Missing run() Function Body"))? {
@@ -292,16 +291,6 @@ impl SessionSource {
         }
 
         Ok(compiled)
-
-        // Get all compiled contracts for our file name
-        // let mut contracts_for_file = compiled
-        //     .contracts
-        //     .remove(&self.file_name.display().to_string()).ok_or(eyre::eyre!("Failed to find
-        // compiled sources for file name"))?;
-
-        // // Extract the matching contract
-        // contracts_for_file.remove(&self.contract_name).ok_or(eyre::eyre!("Missing compiled source
-        // for contract name"))
     }
 
     /// Builds the SessionSource from input into the complete CompiledOutput
