@@ -51,8 +51,8 @@ Chisel aims to improve upon soli, with native foundry integration by providing f
   - [x] Inspect storage vars
     - [ ] Inspect raw storage slots
   - [ ] Inspection verbosity configuration
-  - [ ] Enable / disable call trace printing
-    - [ ] Rip trace printing code from another module of foundry.
+  - [x] Enable / disable call trace printing
+    - [x] Rip trace printing code from another module of foundry.
   - [x] On-the-fly network forking
   - [x] Export to file
     - [ ] Export session to script contract if within project.
