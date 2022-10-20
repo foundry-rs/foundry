@@ -6,7 +6,7 @@ use clap::Parser;
 use ethers::{
     core::rand::thread_rng,
     types::{Address, Bytes, H256, U256},
-    utils::get_create2_address_from_hash,
+    utils::{get_create2_address_from_hash, keccak256},
 };
 use eyre::{Result, WrapErr};
 use rayon::prelude::*;
@@ -45,6 +45,13 @@ pub struct Create2Args {
         default_value = ""
     )]
     init_code: String,
+    #[clap(
+        alias = "ch",
+        long,
+        help = "Init code hash the contract to be deployed.",
+        value_name = "HEX"
+    )]
+    init_code_hash: Option<String>,
 }
 
 impl Cmd for Create2Args {
@@ -57,8 +64,15 @@ impl Cmd for Create2Args {
 
 impl Create2Args {
     fn generate_address(self) -> Result<()> {
-        let Create2Args { starts_with, ends_with, matching, case_sensitive, deployer, init_code } =
-            self;
+        let Create2Args {
+            starts_with,
+            ends_with,
+            matching,
+            case_sensitive,
+            deployer,
+            init_code,
+            init_code_hash,
+        } = self;
 
         let mut regexs = vec![];
 
@@ -98,7 +112,16 @@ impl Create2Args {
 
         let regex = RegexSetBuilder::new(regexs).case_insensitive(!case_sensitive).build()?;
 
-        let init_code = Bytes::from(init_code.into_bytes());
+        let init_code_hash = if let Some(init_code_hash) = init_code_hash {
+            let mut a: [u8; 32] = Default::default();
+            let init_code_hash = init_code_hash.strip_prefix("0x").unwrap_or(&init_code_hash);
+            assert!(init_code_hash.len() == 64, "init code hash should be 32 bytes long"); // 32 bytes * 2
+            a.copy_from_slice(&hex::decode(init_code_hash)?[..64]);
+            a
+        } else {
+            let init_code = init_code.strip_prefix("0x").unwrap_or(&init_code);
+            keccak256(hex::decode(init_code)?)
+        };
 
         println!("Starting to generate deterministic contract address...");
         let timer = Instant::now();
@@ -108,12 +131,10 @@ impl Create2Args {
                 let salt = H256::random_using(&mut thread_rng());
                 let salt = Bytes::from(salt.to_fixed_bytes());
 
-                let init_code = init_code.clone();
-
                 let addr = SimpleCast::to_checksum_address(&get_create2_address_from_hash(
                     deployer,
                     salt.clone(),
-                    init_code,
+                    init_code_hash,
                 ));
 
                 (salt, addr)
