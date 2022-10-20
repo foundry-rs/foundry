@@ -76,8 +76,8 @@ impl SolidityHelper {
             let split: Vec<&str> = input.split(' ').into_iter().collect();
             let cmd = ChiselCommand::from_str(&split[0][1..]);
             out = format!(
-                "{} {}",
-                if cmd.is_ok() { Paint::cyan(split[0]) } else { Paint::red(split[0]) },
+                "!{} {}",
+                if cmd.is_ok() { Paint::green(&split[0][1..]) } else { Paint::red(&split[0][1..]) },
                 split[1..].join(" ")
             );
         } else {
