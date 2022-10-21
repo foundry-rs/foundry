@@ -1,15 +1,13 @@
 use ethers::{
     prelude::{types::U256, Address},
-    signers::LocalWallet,
-    types::{transaction::eip2718::TypedTransaction, Bytes, Log},
+    types::{Bytes, Log},
 };
 use forge::{
-    debug::DebugArena,
     executor::{DeployResult, Executor, RawCallResult},
     trace::{CallTraceArena, TraceKind},
 };
 use revm::{return_ok, Return};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 
 /// The Chisel Runner
 ///
@@ -20,7 +18,6 @@ pub struct ChiselRunner {
     /// The Executor
     pub executor: Executor,
     /// An initial balance
-    /// TODO: can default this to U256::MAX probs.
     pub initial_balance: U256,
     /// The sender
     pub sender: Address,
@@ -32,15 +29,19 @@ pub struct ChiselRunner {
 pub struct ChiselResult {
     /// Was the run a success?
     pub success: bool,
+    /// Transaction logs
     pub logs: Vec<Log>,
+    /// Call traces
     pub traces: Vec<(TraceKind, CallTraceArena)>,
-    pub debug: Option<Vec<DebugArena>>,
+    /// Amount of gas used in the transaction
     pub gas_used: u64,
+    /// Map of addresses to their labels
     pub labeled_addresses: BTreeMap<Address, String>,
-    pub transactions: Option<VecDeque<TypedTransaction>>,
+    /// Return data
     pub returned: bytes::Bytes,
+    /// Called address
     pub address: Option<Address>,
-    pub script_wallets: Vec<LocalWallet>,
+    /// EVM State at the final instruction of the "run()" function
     pub state: Option<(revm::Stack, revm::Memory, revm::Return)>,
 }
 
@@ -161,18 +162,7 @@ impl ChiselRunner {
             res = self.executor.call_raw_committing(from, to, calldata.0, value)?;
         }
 
-        let RawCallResult {
-            result,
-            reverted,
-            logs,
-            traces,
-            labels,
-            debug,
-            transactions,
-            script_wallets,
-            chisel_state,
-            ..
-        } = res;
+        let RawCallResult { result, reverted, logs, traces, labels, chisel_state, .. } = res;
 
         Ok(ChiselResult {
             returned: result,
@@ -182,15 +172,13 @@ impl ChiselRunner {
             traces: traces
                 .map(|mut traces| {
                     // Manually adjust gas for the trace to add back the stipend/real used gas
+                    // TODO: For chisel, we may not want to perform this adjustment.
                     traces.arena[0].trace.gas_cost = gas_used;
                     vec![(TraceKind::Execution, traces)]
                 })
                 .unwrap_or_default(),
-            debug: vec![debug].into_iter().collect(),
             labeled_addresses: labels,
-            transactions,
             address: None,
-            script_wallets,
             state: chisel_state,
         })
     }
