@@ -2588,7 +2588,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             VariableAttribute::Constant(_) => Some("constant".to_string()),
             VariableAttribute::Immutable(_) => Some("immutable".to_string()),
             VariableAttribute::Override(loc, idents) => {
-                self.visit_list("override", idents, Some(loc.start()), Some(loc.end()), false)?;
+                write_chunk!(self, loc.start(), "override")?;
+                if !idents.is_empty() && self.config.variable_override_spacing {
+                    self.write_whitespace_separator(false)?;
+                }
+                self.visit_list("", idents, Some(loc.start()), Some(loc.end()), false)?;
                 None
             }
         };
