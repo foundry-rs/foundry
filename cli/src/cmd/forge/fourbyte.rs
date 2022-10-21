@@ -1,6 +1,7 @@
 use crate::{
     cmd::forge::build::{CoreBuildArgs, ProjectPathsArgs},
     opts::forge::CompilerArgs,
+    utils::FoundryPathExt,
 };
 use clap::Parser;
 use ethers::prelude::artifacts::output_selection::ContractOutputSelection;
@@ -47,16 +48,14 @@ impl UploadSelectorsArgs {
         let artifacts = if all {
             outcome
                 .into_artifacts_with_files()
-                .filter_map(|(file, contract, artifact)| {
-                    if project_paths.contracts.as_ref().map_or(true, |contracts| {
-                        let contracts = contracts.to_string_lossy().to_string();
-                        file.starts_with(&contracts)
-                    }) {
-                        Some((contract, artifact))
-                    } else {
-                        None
-                    }
+                .filter(|(file, _, _)| {
+                    let is_sources_path =
+                        file.starts_with(&project.paths.sources.to_string_lossy().to_string());
+                    let is_test = file.is_sol_test();
+
+                    is_sources_path && !is_test
                 })
+                .map(|(_, contract, artifact)| (contract, artifact))
                 .collect()
         } else {
             let contract = contract.unwrap();
