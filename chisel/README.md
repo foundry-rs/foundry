@@ -12,7 +12,7 @@ Chisel is your solution. Chisel let's you write, execute, and debug Solidity dir
 
 Once you finish testing, Chisel even lets you export your code to a new solidity file!
 
-In this sense, Chisel even serves as a project generator.
+In this sense, Chisel even serves as a Foundry script generator.
 
 ## Feature Completion
 
@@ -33,7 +33,7 @@ Chisel aims to improve upon soli, with native foundry integration by providing f
 
 - [ ] REPL functionality
   - [x] Create temporary REPL contract (in memory, or temp file?).
-    - [ ] Implement `forge-std/Test.sol` so that cheatcodes etc. can be used.
+    - [x] Implement `forge-std/Test.sol` so that cheatcodes, etc. can be used.
   - [x] Utilize foundry's `evm` module for REPL env.
     - [x] Implement network forking.
   - [ ] Import all project files / interfaces into REPL contract automatically.
@@ -43,6 +43,7 @@ Chisel aims to improve upon soli, with native foundry integration by providing f
   - [ ] Use forge fmt module to format source code when printing via the `!source` command.
 - [x] Cache REPL History
   - [x] Allow a user to save/load sessions from their Chisel history.
+    - [ ] Fix session loading bug wrt non-serializable `IntermediateOutput` component.
 - [ ] Custom commands / cmd flags
   - [x] Inspect variable
     - [ ] Inspect raw stack

@@ -7,22 +7,22 @@
 /// Chisel Environment Module
 pub mod session;
 
-/// REPL command dispatcher.
+/// REPL input dispatcher module
 pub mod dispatcher;
 
-/// Session Source
+/// Chisel Session Source wrapper
 pub mod session_source;
 
-/// The runner
+/// REPL contract runner
 pub mod runner;
 
-/// The executor
+/// REPL contract executor
 pub mod executor;
 
-/// A Solidity Helper module
+/// A Solidity Helper module for rustyline
 pub mod solidity_helper;
 
-/// Re-export a prelude of relevant chisel items
+/// Prelude of all chisel modules
 pub mod prelude {
     pub use crate::{dispatcher::*, runner::*, session::*, session_source::*, solidity_helper::*};
 }

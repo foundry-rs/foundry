@@ -1,3 +1,8 @@
+//! ChiselSession
+//!
+//! This module contains the `ChiselSession` struct, which is the top-level
+//! wrapper for a serializable REPL session.
+
 use crate::{prelude::SessionSource, session_source::SessionSourceConfig};
 use ethers_solc::Solc;
 use eyre::Result;

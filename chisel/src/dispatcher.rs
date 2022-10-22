@@ -1,3 +1,8 @@
+//! Dispatcher
+//!
+//! This module contains the `ChiselDispatcher` struct, which handles the dispatching
+//! of both builtin commands and Solidity snippets.
+
 use crate::{
     prelude::SolidityHelper, runner::ChiselResult, session::ChiselSession,
     session_source::SessionSourceConfig,
@@ -19,7 +24,7 @@ static COMMAND_LEADER: char = '!';
 /// Chisel character
 static CHISEL_CHAR: &str = "⚒️";
 
-/// The Chisel Dispatcher
+/// Chisel input dispatcher
 #[derive(Debug)]
 pub struct ChiselDisptacher {
     /// The status of the previous dispatch
@@ -28,7 +33,7 @@ pub struct ChiselDisptacher {
     pub session: ChiselSession,
 }
 
-/// A Chisel Dispatch Result
+/// Chisel dispatch result variants
 #[derive(Debug)]
 pub enum DispatchResult {
     /// A Generic Dispatch Success
@@ -66,7 +71,7 @@ impl ChiselDisptacher {
         )
     }
 
-    /// Dispatches a ChiselCommand
+    /// Dispatches a [ChiselCommand]
     pub fn dispatch_command(&mut self, cmd: ChiselCommand, args: &[&str]) -> DispatchResult {
         match cmd {
             ChiselCommand::Help => {
@@ -218,16 +223,12 @@ impl ChiselDisptacher {
         }
     }
 
-    /// Dispatches an input to the appropriate chisel handlers
-    ///
-    /// ### Returns
-    ///
-    /// A [DispatchResult]
-    pub async fn dispatch(&mut self, line: &str) -> DispatchResult {
+    /// Dispatches an input as a command via [Self::dispatch_command] or as a Solidity snippet.
+    pub async fn dispatch(&mut self, input: &str) -> DispatchResult {
         // Check if the input is a builtin command.
         // Commands are denoted with a `!` leading character.
-        if line.starts_with(COMMAND_LEADER) {
-            let split: Vec<&str> = line.split(' ').collect();
+        if input.starts_with(COMMAND_LEADER) {
+            let split: Vec<&str> = input.split(' ').collect();
             let raw_cmd = &split[0][1..];
 
             return match raw_cmd.parse::<ChiselCommand>() {
@@ -256,8 +257,8 @@ impl ChiselDisptacher {
 
         // TODO: Support function calls / expressions
         if let Some(generated_output) = &source.generated_output {
-            if generated_output.intermediate.variable_definitions.get(line).is_some() {
-                match source.inspect(line).await {
+            if generated_output.intermediate.variable_definitions.get(input).is_some() {
+                match source.inspect(input).await {
                     Ok(res) => {
                         self.errored = false;
                         return DispatchResult::Success(Some(res))
@@ -271,7 +272,7 @@ impl ChiselDisptacher {
         }
 
         // Create new source and parse
-        let mut new_source = match source.clone_with_new_line(line.to_string()) {
+        let mut new_source = match source.clone_with_new_line(input.to_string()) {
             Ok(new) => new,
             Err(e) => {
                 self.errored = true;
@@ -283,27 +284,40 @@ impl ChiselDisptacher {
 
         match new_source.execute().await {
             Ok(mut res) => {
-                // If traces are enabled, display them.
-                if new_source.config.traces {
-                    let decoder = self.decode_traces(&new_source.config, &mut res.1);
-                    if self
-                        .show_traces(&new_source.config, &decoder.unwrap(), &mut res.1)
-                        .await
-                        .is_err()
-                    {
-                        self.errored = true;
-                        return DispatchResult::CommandFailed("Failed to display traces".to_owned())
-                    };
+                let failed = !res.1.success;
+
+                // If traces are enabled or there was an error in execution, show the execution
+                // traces.
+                if new_source.config.traces || failed {
+                    if let Ok(decoder) = self.decode_traces(&new_source.config, &mut res.1) {
+                        if self.show_traces(&decoder, &mut res.1).await.is_err() {
+                            self.errored = true;
+                            return DispatchResult::CommandFailed(
+                                "Failed to display traces".to_owned(),
+                            )
+                        };
+
+                        // If the contract execution failed, continue on without adding the new line
+                        // to the source.
+                        if failed {
+                            self.errored = true;
+                            return DispatchResult::Failure(Some(Self::make_error(
+                                "Failed to execute REPL contract!",
+                            )))
+                        }
+                    }
                 }
 
+                // Replace the old session source with the new version
                 self.session.session_source = Some(new_source);
+                // Clear any outstanding errors
                 self.errored = false;
 
                 DispatchResult::Success(None)
             }
             Err(e) => {
                 self.errored = true;
-                DispatchResult::CommandFailed(e.to_string())
+                DispatchResult::Failure(Some(e.to_string()))
             }
         }
     }
@@ -336,10 +350,9 @@ impl ChiselDisptacher {
         Ok(decoder)
     }
 
-    /// Display the gathered traces of a REPL execution
+    /// Display the gathered traces of a REPL execution.
     pub async fn show_traces(
         &self,
-        _: &SessionSourceConfig,
         decoder: &CallTraceDecoder,
         result: &mut ChiselResult,
     ) -> eyre::Result<()> {
@@ -361,10 +374,6 @@ impl ChiselDisptacher {
             }
         }
 
-        // if script_config.evm_opts.fork_url.is_none() {
-        //     println!("{}: {}", Paint::green("Gas used"), result.gas_used);
-        // }
-
         Ok(())
     }
 
@@ -374,30 +383,29 @@ impl ChiselDisptacher {
     }
 }
 
-/// Custom Chisel commands
+/// Builtin chisel command variants
 #[derive(Debug, EnumIter)]
 pub enum ChiselCommand {
     /// Print helpful information about chisel
     Help,
-    /// Clear the current session
+    /// Clear the current session source
     Clear,
     /// Print the generated source contract
     Source,
-    /// Flush the current session to cache
-    /// NOTE: This is not necessary as the session will be written to cache automatically
+    /// Flush the current session to the cache
     Flush,
     /// Load a previous session from cache
-    /// Requires a session name
+    /// Requires a session id as the first argument
     /// WARNING: This will overwrite the current session (though the current session will be
     /// optimistically cached)
     Load,
     /// List all cached sessions
     ListSessions,
-    /// Clear the cache
+    /// Clear the cache of all stored sessions
     ClearCache,
-    /// Fork an RPC
+    /// Fork an RPC in the current session
     Fork,
-    /// Enable / disable traces
+    /// Enable / disable traces for the current session
     Traces,
 }
 
@@ -436,16 +444,16 @@ impl From<ChiselCommand> for CmdDescriptor {
             ChiselCommand::Help => ("help", "Display all commands"),
             ChiselCommand::Clear => ("clear", "Clear current session"),
             ChiselCommand::Source => {
-                ("source", "Display the source code of the current REPL session")
+                ("source", "Display the source code of the current session")
             }
             ChiselCommand::Flush => ("flush", "Flush the current session to cache"),
-            ChiselCommand::Load => ("load", "Load a previous session from cache"),
+            ChiselCommand::Load => ("load", "Load a previous session ID from cache"),
             ChiselCommand::ListSessions => ("list", "List all cached sessions"),
-            ChiselCommand::ClearCache => ("clearcache", "Clear the chisel cache"),
+            ChiselCommand::ClearCache => ("clearcache", "Clear the chisel cache of all stored sessions"),
             ChiselCommand::Fork => {
-                ("fork", "Fork an RPC on-the-fly. Supply 0 arguments to return to a local network.")
+                ("fork", "Fork an RPC for the current session. Supply 0 arguments to return to a local network.")
             }
-            ChiselCommand::Traces => ("traces", "Enable / disable traces"),
+            ChiselCommand::Traces => ("traces", "Enable / disable traces for the current session"),
         }
     }
 }

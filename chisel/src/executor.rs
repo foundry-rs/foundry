@@ -1,3 +1,7 @@
+//! Executor
+//!
+//! This module contains the execution logic for the [SessionSource].
+
 use crate::prelude::{ChiselResult, ChiselRunner, SessionSource};
 use core::fmt::Debug;
 use ethers::{
@@ -152,6 +156,8 @@ impl SessionSource {
             .with_cheatcodes(CheatsConfig::new(&self.config.config, &self.config.evm_opts))
             .build(backend);
 
+        // Create a [ChiselRunner] with a default balance of [U256::MAX] and
+        // the sender [Address::zero].
         ChiselRunner::new(executor, U256::MAX, Address::zero())
     }
 }

@@ -1,7 +1,8 @@
-//! A Session Source
+//! Session Source
 //!
-//! This module contains the `Source` struct, which is a concrete source constructed from
-//! solang_parser SolUnit parsed inputs.
+//! This module contains the `SessionSource` struct, which is a minimal wrapper around
+//! the REPL contract's source code. It provides simple compilation, parsing, and
+//! execution helpers.
 
 use ethers_solc::{
     artifacts::{Source, Sources},
@@ -20,7 +21,7 @@ lazy_static! {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/lib/forge-std/src/Script.sol");
 }
 
-/// A compiled contract
+/// Intermediate output for the compiled [SessionSource]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IntermediateOutput {
     /// The source unit parts
@@ -40,16 +41,16 @@ pub struct IntermediateOutput {
     >,
 }
 
-/// GeneratedOutput
+/// Full compilation output for the [SessionSource]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GeneratedOutput {
-    /// The intermediate output
+    /// The [IntermediateOutput] component
     pub intermediate: IntermediateOutput,
-    /// The CompilerOutput
+    /// The [CompilerOutput] component
     pub compiler_output: CompilerOutput,
 }
 
-/// Configuration for the SessionSource
+/// Configuration for the [SessionSource]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSourceConfig {
     /// Foundry configuration
@@ -57,13 +58,13 @@ pub struct SessionSourceConfig {
     /// EVM Options
     pub evm_opts: EvmOpts,
     #[serde(skip)]
-    /// Backend
+    /// In-memory REVM db for the session's runner.
     pub backend: Option<Backend>,
-    /// Show traces?
+    /// Optionally enable traces for the REPL contract execution
     pub traces: bool,
 }
 
-/// A Session Source
+/// REPL Session Source wrapper
 ///
 /// Heavily based on soli's [`ConstructedSource`](https://github.com/jpopesculian/soli/blob/master/src/main.rs#L166)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,18 +76,16 @@ pub struct SessionSource {
     /// The solidity compiler version
     pub solc: Solc,
     /// Global level solidity code
+    ///
     /// Typically, global-level code is present between the contract definition and the first
     /// function (usually constructor)
     pub global_code: String,
     /// Top level solidity code
+    ///
     /// Typically, this is code seen above the contructor
     pub top_level_code: String,
-    /// "run()" Code
+    /// Code existing within the "run()" function's scope
     pub run_code: String,
-    /// The solc compiler output
-    pub compiled: Option<CompilerOutput>,
-    /// The intermediate output
-    pub intermediate: Option<IntermediateOutput>,
     /// The generated output
     pub generated_output: Option<GeneratedOutput>,
     /// Session Source configuration
@@ -104,15 +103,13 @@ impl SessionSource {
             global_code: Default::default(),
             top_level_code: Default::default(),
             run_code: Default::default(),
-            compiled: None,
-            intermediate: None,
             generated_output: None,
             config: config.clone(),
         }
     }
 
     /// Clones the [SessionSource] and appends a new line of code. Will return
-    /// an error if the new line fails to be parsed.
+    /// an error result if the new line fails to be parsed.
     pub fn clone_with_new_line(&self, mut content: String) -> Result<SessionSource> {
         let mut new_source = self.clone();
         if let Some(parsed) = parse_fragment(&new_source.solc, &self.config, &content)
@@ -144,8 +141,6 @@ impl SessionSource {
     /// Appends global-level code to the source
     pub fn with_global_code(&mut self, content: &str) -> &mut Self {
         self.global_code.push_str(format!("{}\n", content.trim()).as_str());
-        self.compiled = None;
-        self.intermediate = None;
         self.generated_output = None;
         self
     }
@@ -153,8 +148,6 @@ impl SessionSource {
     /// Appends top-level code to the source
     pub fn with_top_level_code(&mut self, content: &str) -> &mut Self {
         self.top_level_code.push_str(format!("\t{}\n", content.trim()).as_str());
-        self.compiled = None;
-        self.intermediate = None;
         self.generated_output = None;
         self
     }
@@ -162,8 +155,6 @@ impl SessionSource {
     /// Appends code to the "run()" function
     pub fn with_run_code(&mut self, content: &str) -> &mut Self {
         self.run_code.push_str(format!("\t\t{}\n", content.trim()).as_str());
-        self.compiled = None;
-        self.intermediate = None;
         self.generated_output = None;
         self
     }
@@ -173,8 +164,6 @@ impl SessionSource {
     /// Clears global code from the source
     pub fn drain_global_code(&mut self) -> &mut Self {
         self.global_code = Default::default();
-        self.compiled = None;
-        self.intermediate = None;
         self.generated_output = None;
         self
     }
@@ -182,8 +171,6 @@ impl SessionSource {
     /// Clears top-level code from the source
     pub fn drain_top_level_code(&mut self) -> &mut Self {
         self.top_level_code = Default::default();
-        self.compiled = None;
-        self.intermediate = None;
         self.generated_output = None;
         self
     }
@@ -191,8 +178,6 @@ impl SessionSource {
     /// Clears the "run()" function's code
     pub fn drain_run(&mut self) -> &mut Self {
         self.run_code = Default::default();
-        self.compiled = None;
-        self.intermediate = None;
         self.generated_output = None;
         self
     }
@@ -307,7 +292,7 @@ impl SessionSource {
     pub fn build(&mut self) -> Result<GeneratedOutput> {
         // Use the cached compiled source if it exists
         if let Some(generated_output) = self.generated_output.as_ref() {
-            return Ok(generated_output.clone());
+            return Ok(generated_output.clone())
         }
 
         // Compile
@@ -428,8 +413,8 @@ pub enum ParseTreeFragment {
 }
 
 /// Parses a fragment of solidity code with solang_parser and assigns
-/// it a scope.
-pub fn parse_fragment(
+/// it a scope within the [SessionSource].
+fn parse_fragment(
     solc: &Solc,
     config: &SessionSourceConfig,
     buffer: &str,
@@ -437,17 +422,17 @@ pub fn parse_fragment(
     let base = SessionSource::new(solc, config);
 
     if let Ok((_, _, statements)) = base.clone().with_run_code(buffer).parse_and_decompose() {
-        return Some(ParseTreeFragment::Function(statements));
+        return Some(ParseTreeFragment::Function(statements))
     }
     if let Ok((_, contract_parts, _)) =
         base.clone().with_top_level_code(buffer).parse_and_decompose()
     {
-        return Some(ParseTreeFragment::Contract(contract_parts));
+        return Some(ParseTreeFragment::Contract(contract_parts))
     }
     if let Ok((source_unit_parts, _, _)) =
         base.clone().with_global_code(buffer).parse_and_decompose()
     {
-        return Some(ParseTreeFragment::Source(source_unit_parts));
+        return Some(ParseTreeFragment::Source(source_unit_parts))
     }
 
     None

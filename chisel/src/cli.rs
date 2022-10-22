@@ -1,3 +1,8 @@
+//! Chisel CLI
+//!
+//! This module contains the core readline loop for the Chisel CLI as well as the
+//! executable's `main` function.
+
 use chisel::{
     prelude::{ChiselDisptacher, DispatchResult},
     solidity_helper::SolidityHelper,
@@ -40,11 +45,14 @@ async fn main() {
     // Create a new rustyline Editor
     let mut rl = Editor::<SolidityHelper>::new().unwrap_or_else(|e| {
         tracing::error!(target: "chisel-env", "Failed to initialize rustyline Editor! {}", e);
-        panic!("failed to create a rustyline Editor for the chisel environment! {e}");
+        panic!("Failed to create a rustyline Editor for the chisel environment! {e}");
     });
     rl.set_helper(Some(SolidityHelper));
 
-    let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
+    let (config, evm_opts) = args.load_config_and_evm_opts().unwrap_or_else(|e| {
+        tracing::error!(target: "chisel-env", "Failed to load Foundry config! {}", e);
+        panic!("Failed to load foundry config! {}", e)
+    });
 
     // Create a new cli dispatcher
     let mut dispatcher = ChiselDisptacher::new(&chisel::session_source::SessionSourceConfig {
@@ -77,8 +85,7 @@ async fn main() {
                         eprintln!("{}", Paint::red("Compilation error"));
                         eprintln!("{}", Paint::red(format!("{:?}", e)));
                     }
-                    DispatchResult::Success(None) => { /* Do nothing */ }
-                    DispatchResult::CommandSuccess(_) => { /* Do nothing */ }
+                    DispatchResult::Success(None) | DispatchResult::CommandSuccess(None) => { /* Do nothing */ }
                     DispatchResult::FileIoError(e) => eprintln!("{}", Paint::red(format!("⚒️ Chisel File IO Error - {}", e))),
                     DispatchResult::CommandFailed(msg) | DispatchResult::Failure(Some(msg)) => eprintln!("{}", Paint::red(msg)),
                     DispatchResult::Failure(None) => eprintln!("{}\nPlease Report this bug as a github issue if it persists: https://github.com/foundry-rs/foundry/issues/new/choose", Paint::red("⚒️ Unknown Chisel Error ⚒️")),

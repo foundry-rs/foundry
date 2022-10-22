@@ -1,3 +1,8 @@
+//! ChiselRunner
+//!
+//! This module contains the `ChiselRunner` struct, which assists with deploying
+//! and calling the REPL contract on a in-memory REVM instance.
+
 use ethers::{
     prelude::{types::U256, Address},
     types::{Bytes, Log},
@@ -25,7 +30,6 @@ pub struct ChiselRunner {
 
 /// Represents the result of a Chisel REPL run
 #[derive(Debug, Default)]
-#[allow(missing_docs)] // TODO
 pub struct ChiselResult {
     /// Was the run a success?
     pub success: bool,
@@ -84,7 +88,7 @@ impl ChiselRunner {
     /// This will return _estimated_ gas instead of the precise gas the call would consume, so it
     /// can be used as `gas_limit`.
     ///
-    /// Taken directly from Forge's Script Runner
+    /// Taken from [Forge's Script Runner](https://github.com/foundry-rs/foundry/blob/master/cli/src/cmd/forge/script/runner.rs)
     fn call(
         &mut self,
         from: Address,
@@ -170,10 +174,10 @@ impl ChiselRunner {
             gas_used,
             logs,
             traces: traces
-                .map(|mut traces| {
+                .map(|traces| {
                     // Manually adjust gas for the trace to add back the stipend/real used gas
                     // TODO: For chisel, we may not want to perform this adjustment.
-                    traces.arena[0].trace.gas_cost = gas_used;
+                    // traces.arena[0].trace.gas_cost = gas_used;
                     vec![(TraceKind::Execution, traces)]
                 })
                 .unwrap_or_default(),
