@@ -1,5 +1,7 @@
 contract Contract {
     bytes32 constant private BYTES;
+    bytes32 private constant override (Base1) BYTES;
+    bytes32 private constant override (Base1, Base2) BYTES;
     bytes32 private constant override immutable BYTES;
     bytes32 private constant override immutable BYTES_VERY_VERY_VERY_LONG;
     bytes32 private constant override(Base1, Base2, SomeLongBaseContract, AndAnotherVeryLongBaseContract, Imported.Contract) BYTES_OVERRIDDEN;
