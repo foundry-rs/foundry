@@ -186,7 +186,7 @@ impl ChiselSession {
         }
 
         if sessions.is_empty() {
-            return Err(eyre::eyre!("No sessions found!"))
+            eyre::bail!("No sessions found!")
         } else {
             // Return the list of sessions and their modified times
             Ok(sessions)

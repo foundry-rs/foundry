@@ -78,7 +78,7 @@ async fn main() {
                         eprintln!("{}", Paint::red(format!("{:?}", e)));
                     }
                     DispatchResult::Success(None) => { /* Do nothing */ }
-                    DispatchResult::CommandSuccess(_) => { /* Don't need to do anything here */ }
+                    DispatchResult::CommandSuccess(_) => { /* Do nothing */ }
                     DispatchResult::FileIoError(e) => eprintln!("{}", Paint::red(format!("⚒️ Chisel File IO Error - {}", e))),
                     DispatchResult::CommandFailed(msg) | DispatchResult::Failure(Some(msg)) => eprintln!("{}", Paint::red(msg)),
                     DispatchResult::Failure(None) => eprintln!("{}\nPlease Report this bug as a github issue if it persists: https://github.com/foundry-rs/foundry/issues/new/choose", Paint::red("⚒️ Unknown Chisel Error ⚒️")),
