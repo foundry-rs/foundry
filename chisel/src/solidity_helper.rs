@@ -1,3 +1,8 @@
+//! SolidityHelper
+//!
+//! This module contains the `SolidityHelper`, a [rustyline::Helper] implementation for
+//! usage in Chisel. It is ported from [soli](https://github.com/jpopesculian/soli/blob/master/src/main.rs).
+
 use crate::dispatcher::ChiselCommand;
 use rustyline::{
     completion::Completer,
@@ -14,7 +19,6 @@ use std::{borrow::Cow, str::FromStr};
 use yansi::{Color, Paint, Style};
 
 /// A rustyline helper for Solidity code
-#[allow(dead_code)]
 pub struct SolidityHelper;
 
 /// Highlighter implementation for `SolHighlighter`
@@ -28,7 +32,7 @@ impl Highlighter for SolidityHelper {
     }
 }
 
-/// Reused from [soli](https://github.com/jpopesculian/soli/blob/master/src/main.rs)
+/// Ported from [soli](https://github.com/jpopesculian/soli/blob/master/src/main.rs)
 impl SolidityHelper {
     /// Get styles for a solidity source string
     pub fn get_styles(input: &str) -> Vec<(usize, Style, usize)> {

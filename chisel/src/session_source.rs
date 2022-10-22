@@ -1,7 +1,8 @@
-//! A Session Source
+//! Session Source
 //!
-//! This module contains the `Source` struct, which is a concrete source constructed from
-//! solang_parser SolUnit parsed inputs.
+//! This module contains the `SessionSource` struct, which is a minimal wrapper around
+//! the REPL contract's source code. It provides simple compilation, parsing, and
+//! execution helpers.
 
 use ethers_solc::{
     artifacts::{Source, Sources},
@@ -10,11 +11,17 @@ use ethers_solc::{
 use eyre::Result;
 use forge::executor::{opts::EvmOpts, Backend};
 use foundry_config::Config;
+use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use solang_parser::pt::CodeLocation;
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, fs, path::PathBuf};
 
-/// A compiled contract
+lazy_static! {
+    static ref SCRIPT_PATH: PathBuf =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/lib/forge-std/src/Script.sol");
+}
+
+/// Intermediate output for the compiled [SessionSource]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IntermediateOutput {
     /// The source unit parts
@@ -34,16 +41,16 @@ pub struct IntermediateOutput {
     >,
 }
 
-/// GeneratedOutput
+/// Full compilation output for the [SessionSource]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GeneratedOutput {
-    /// The intermediate output
+    /// The [IntermediateOutput] component
     pub intermediate: IntermediateOutput,
-    /// The CompilerOutput
+    /// The [CompilerOutput] component
     pub compiler_output: CompilerOutput,
 }
 
-/// Configuration for the SessionSource
+/// Configuration for the [SessionSource]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSourceConfig {
     /// Foundry configuration
@@ -51,13 +58,13 @@ pub struct SessionSourceConfig {
     /// EVM Options
     pub evm_opts: EvmOpts,
     #[serde(skip)]
-    /// Backend
+    /// In-memory REVM db for the session's runner.
     pub backend: Option<Backend>,
-    /// Show traces?
+    /// Optionally enable traces for the REPL contract execution
     pub traces: bool,
 }
 
-/// A Session Source
+/// REPL Session Source wrapper
 ///
 /// Heavily based on soli's [`ConstructedSource`](https://github.com/jpopesculian/soli/blob/master/src/main.rs#L166)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,18 +76,16 @@ pub struct SessionSource {
     /// The solidity compiler version
     pub solc: Solc,
     /// Global level solidity code
+    ///
     /// Typically, global-level code is present between the contract definition and the first
     /// function (usually constructor)
     pub global_code: String,
     /// Top level solidity code
+    ///
     /// Typically, this is code seen above the contructor
     pub top_level_code: String,
-    /// "run()" Code
+    /// Code existing within the "run()" function's scope
     pub run_code: String,
-    /// The solc compiler output
-    pub compiled: Option<CompilerOutput>,
-    /// The intermediate output
-    pub intermediate: Option<IntermediateOutput>,
     /// The generated output
     pub generated_output: Option<GeneratedOutput>,
     /// Session Source configuration
@@ -98,15 +103,13 @@ impl SessionSource {
             global_code: Default::default(),
             top_level_code: Default::default(),
             run_code: Default::default(),
-            compiled: None,
-            intermediate: None,
             generated_output: None,
             config: config.clone(),
         }
     }
 
     /// Clones the [SessionSource] and appends a new line of code. Will return
-    /// an error if the new line fails to be parsed.
+    /// an error result if the new line fails to be parsed.
     pub fn clone_with_new_line(&self, mut content: String) -> Result<SessionSource> {
         let mut new_source = self.clone();
         if let Some(parsed) = parse_fragment(&new_source.solc, &self.config, &content)
@@ -118,7 +121,7 @@ impl SessionSource {
             .or_else(|| {
                 content = content.trim_end().trim_end_matches(';').to_string();
                 content.push('\n');
-                parse_fragment(&new_source.solc, &self.config, &content)
+                parse_fragment(&new_source.solc, &self.config, &format!("\t{}", content))
             })
         {
             match parsed {
@@ -129,7 +132,7 @@ impl SessionSource {
 
             Ok(new_source)
         } else {
-            return Err(eyre::eyre!(content.trim().to_owned()))
+            eyre::bail!(content.trim().to_owned());
         }
     }
 
@@ -137,27 +140,21 @@ impl SessionSource {
 
     /// Appends global-level code to the source
     pub fn with_global_code(&mut self, content: &str) -> &mut Self {
-        self.global_code.push_str(content);
-        self.compiled = None;
-        self.intermediate = None;
+        self.global_code.push_str(format!("{}\n", content.trim()).as_str());
         self.generated_output = None;
         self
     }
 
     /// Appends top-level code to the source
     pub fn with_top_level_code(&mut self, content: &str) -> &mut Self {
-        self.top_level_code.push_str(content);
-        self.compiled = None;
-        self.intermediate = None;
+        self.top_level_code.push_str(format!("\t{}\n", content.trim()).as_str());
         self.generated_output = None;
         self
     }
 
     /// Appends code to the "run()" function
     pub fn with_run_code(&mut self, content: &str) -> &mut Self {
-        self.run_code.push_str(format!("{}\n", content).as_str());
-        self.compiled = None;
-        self.intermediate = None;
+        self.run_code.push_str(format!("\t\t{}\n", content.trim()).as_str());
         self.generated_output = None;
         self
     }
@@ -167,8 +164,6 @@ impl SessionSource {
     /// Clears global code from the source
     pub fn drain_global_code(&mut self) -> &mut Self {
         self.global_code = Default::default();
-        self.compiled = None;
-        self.intermediate = None;
         self.generated_output = None;
         self
     }
@@ -176,8 +171,6 @@ impl SessionSource {
     /// Clears top-level code from the source
     pub fn drain_top_level_code(&mut self) -> &mut Self {
         self.top_level_code = Default::default();
-        self.compiled = None;
-        self.intermediate = None;
         self.generated_output = None;
         self
     }
@@ -185,8 +178,6 @@ impl SessionSource {
     /// Clears the "run()" function's code
     pub fn drain_run(&mut self) -> &mut Self {
         self.run_code = Default::default();
-        self.compiled = None;
-        self.intermediate = None;
         self.generated_output = None;
         self
     }
@@ -195,6 +186,10 @@ impl SessionSource {
     pub fn compiler_input(&self) -> CompilerInput {
         let mut sources = Sources::new();
         sources.insert(self.file_name.clone(), Source { content: self.to_string() });
+        sources.insert(
+            SCRIPT_PATH.clone(),
+            Source { content: fs::read_to_string(SCRIPT_PATH.clone()).unwrap() },
+        );
         CompilerInput::with_sources(sources).pop().unwrap()
     }
 
@@ -226,7 +221,7 @@ impl SessionSource {
             source_unit_parts.get(0),
             Some(solang_parser::pt::SourceUnitPart::PragmaDirective(..))
         ) {
-            return Err(eyre::eyre!("Missing pragma directive"))
+            eyre::bail!("Missing pragma directive");
         }
         source_unit_parts.remove(0);
 
@@ -248,7 +243,7 @@ impl SessionSource {
             match contract_parts.pop().ok_or(eyre::eyre!("Failed to pop source unit part"))? {
                 solang_parser::pt::ContractPart::FunctionDefinition(func) => {
                     if !matches!(func.ty, solang_parser::pt::FunctionTy::Function) {
-                        return Err(eyre::eyre!("Missing run() function"))
+                        eyre::bail!("Missing run() function");
                     }
                     match func.body.ok_or(eyre::eyre!("Missing run() Function Body"))? {
                         solang_parser::pt::Statement::Block { statements, .. } => Ok(statements),
@@ -284,10 +279,10 @@ impl SessionSource {
         let errors =
             compiled.errors.iter().filter(|error| error.severity.is_error()).collect::<Vec<_>>();
         if !errors.is_empty() {
-            return Err(eyre::eyre!(
+            eyre::bail!(
                 "Compiler errors:\n{}",
                 errors.into_iter().map(|err| err.to_string()).collect::<String>()
-            ))
+            );
         }
 
         Ok(compiled)
@@ -383,17 +378,22 @@ impl std::fmt::Display for SessionSource {
         // Write the license and solidity pragma version
         f.write_str("// SPDX-License-Identifier: UNLICENSED\n")?;
         let semver::Version { major, minor, patch, .. } = self.solc.version().unwrap();
-        f.write_fmt(format_args!("pragma solidity ^{major}.{minor}.{patch};\n",))?;
-        f.write_str("\n")?;
+        f.write_fmt(format_args!("pragma solidity ^{major}.{minor}.{patch};\n\n",))?;
+        f.write_fmt(format_args!(
+            "import {{Script}} from \"{}\";\n",
+            SCRIPT_PATH.to_str().unwrap()
+        ))?;
 
         // Global imports and definitions
         f.write_str(&self.global_code)?;
+        f.write_str("\n")?;
 
-        f.write_fmt(format_args!("contract {} {{\n", self.contract_name))?;
+        f.write_fmt(format_args!("contract {} is Script {{\n", self.contract_name))?;
         f.write_str(&self.top_level_code)?;
-        f.write_str("function run() external {\n")?;
+        f.write_str("\n")?;
+        f.write_str("\tfunction run() external {\n")?;
         f.write_str(&self.run_code)?;
-        f.write_str("}\n}")?;
+        f.write_str("\t}\n}")?;
         Ok(())
     }
 }
@@ -413,8 +413,8 @@ pub enum ParseTreeFragment {
 }
 
 /// Parses a fragment of solidity code with solang_parser and assigns
-/// it a scope.
-pub fn parse_fragment(
+/// it a scope within the [SessionSource].
+fn parse_fragment(
     solc: &Solc,
     config: &SessionSourceConfig,
     buffer: &str,

@@ -1,3 +1,7 @@
+//! Executor
+//!
+//! This module contains the execution logic for the [SessionSource].
+
 use crate::prelude::{ChiselResult, ChiselRunner, SessionSource};
 use core::fmt::Debug;
 use ethers::{
@@ -63,7 +67,7 @@ impl SessionSource {
                         Ok((Address::zero(), ChiselResult::default()))
                     }
                 } else {
-                    Err(eyre::eyre!("Failed to find REPL contract!"))
+                    eyre::bail!("Failed to find REPL contract!")
                 }
             }
             Err(e) => Err(e),
@@ -88,22 +92,22 @@ impl SessionSource {
                         {
                             def
                         } else {
-                            return Err(eyre::eyre!("Error: `{item}` could not be found"))
+                            eyre::bail!("Error: `{item}` could not be found");
                         };
                         let ty = if let Some(ty) =
                             Type::from_expression(ty).and_then(|ty| ty.as_ethabi())
                         {
                             ty
                         } else {
-                            return Err(eyre::eyre!("Error: Identifer type currently not supported"))
+                            eyre::bail!("Error: Identifer type currently not supported");
                         };
                         let memory_offset = if let Some(offset) = stack.data().last() {
                             offset.as_usize()
                         } else {
-                            return Err(eyre::eyre!("Error: No result found"))
+                            eyre::bail!("Error: No result found");
                         };
                         if memory_offset + 32 > memory.len() {
-                            return Err(eyre::eyre!("Error: Memory size insufficient"))
+                            eyre::bail!("Error: Memory size insufficient");
                         }
                         let data = &memory.data()[memory_offset + 32..];
                         let token = match ethabi::decode(&[ty], data) {
@@ -111,17 +115,17 @@ impl SessionSource {
                                 if let Some(token) = tokens.pop() {
                                     token
                                 } else {
-                                    return Err(eyre::eyre!("Error: No tokens decoded"))
+                                    eyre::bail!("Error: No tokens decoded");
                                 }
                             }
                             Err(err) => {
-                                return Err(eyre::eyre!("Error: Could not decode ABI: {err}"))
+                                eyre::bail!("Error: Could not decode ABI: {err}")
                             }
                         };
 
                         Ok(format_token(token))
                     } else {
-                        Err(eyre::eyre!("No state present"))
+                        eyre::bail!("No state present")
                     }
                 }
                 Err(e) => Err(e),
@@ -152,6 +156,8 @@ impl SessionSource {
             .with_cheatcodes(CheatsConfig::new(&self.config.config, &self.config.evm_opts))
             .build(backend);
 
+        // Create a [ChiselRunner] with a default balance of [U256::MAX] and
+        // the sender [Address::zero].
         ChiselRunner::new(executor, U256::MAX, Address::zero())
     }
 }

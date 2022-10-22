@@ -1,3 +1,8 @@
+//! ChiselSession
+//!
+//! This module contains the `ChiselSession` struct, which is the top-level
+//! wrapper for a serializable REPL session.
+
 use crate::{prelude::SessionSource, session_source::SessionSourceConfig};
 use ethers_solc::Solc;
 use eyre::Result;
@@ -186,7 +191,7 @@ impl ChiselSession {
         }
 
         if sessions.is_empty() {
-            return Err(eyre::eyre!("No sessions found!"))
+            eyre::bail!("No sessions found!")
         } else {
             // Return the list of sessions and their modified times
             Ok(sessions)
