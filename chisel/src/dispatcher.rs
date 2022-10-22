@@ -7,6 +7,7 @@ use crate::{
     prelude::SolidityHelper, runner::ChiselResult, session::ChiselSession,
     session_source::SessionSourceConfig,
 };
+use ethers::utils::hex;
 use forge::trace::{
     identifier::{EtherscanIdentifier, SignaturesIdentifier},
     CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
@@ -72,7 +73,7 @@ impl ChiselDisptacher {
     }
 
     /// Dispatches a [ChiselCommand]
-    pub fn dispatch_command(&mut self, cmd: ChiselCommand, args: &[&str]) -> DispatchResult {
+    pub async fn dispatch_command(&mut self, cmd: ChiselCommand, args: &[&str]) -> DispatchResult {
         match cmd {
             ChiselCommand::Help => {
                 return DispatchResult::CommandSuccess(Some(format!(
@@ -198,13 +199,24 @@ impl ChiselDisptacher {
                         ))
                     }
 
-                    // Set the fork URL in the current session source to the first argument
-                    session_source.config.evm_opts.fork_url = Some(args[0].to_owned());
+                    let fork_url = if let Some(fork_url) =
+                        session_source.config.config.rpc_endpoints.get(args[0])
+                    {
+                        fork_url.as_url().unwrap()
+                    } else {
+                        args[0]
+                    };
+
+                    session_source.config.evm_opts.fork_url = Some(fork_url.to_owned());
+
                     // Clear the backend so that it is re-instantiated with the new fork
                     // upon the next execution of the session source.
                     session_source.config.backend = None;
 
-                    DispatchResult::CommandSuccess(Some(format!("Successfully forked {}", args[0])))
+                    DispatchResult::CommandSuccess(Some(format!(
+                        "Set fork URL to {}",
+                        Paint::yellow(fork_url)
+                    )))
                 } else {
                     DispatchResult::CommandFailed(Self::make_error("Session not present."))
                 }
@@ -216,6 +228,50 @@ impl ChiselDisptacher {
                         "Successfully {} traces!",
                         if session_source.config.traces { "enabled" } else { "disabled" }
                     )))
+                } else {
+                    DispatchResult::CommandFailed(Self::make_error("Session not present."))
+                }
+            }
+            ChiselCommand::MemDump | ChiselCommand::StackDump => {
+                if let Some(session_source) = self.session.session_source.as_mut() {
+                    match session_source.execute().await {
+                        Ok((_, res)) => {
+                            if let Some(state) = res.state.as_ref() {
+                                if matches!(cmd, ChiselCommand::MemDump) {
+                                    let mem = state.1.data();
+                                    (0..mem.len()).step_by(32).for_each(|i| {
+                                        println!(
+                                            "{}: {}",
+                                            Paint::yellow(format!(
+                                                "[0x{:02x}:0x{:02x}]",
+                                                i,
+                                                i + 32
+                                            )),
+                                            Paint::cyan(format!(
+                                                "0x{}",
+                                                hex::encode(&mem[i..i + 32])
+                                            ))
+                                        );
+                                    });
+                                } else {
+                                    let stack = state.0.data();
+                                    (0..stack.len()).rev().for_each(|i| {
+                                        println!(
+                                            "{}: {}",
+                                            Paint::yellow(format!("[{}]", stack.len() - i - 1)),
+                                            Paint::cyan(format!("0x{}", stack[i]))
+                                        );
+                                    });
+                                }
+                                DispatchResult::Success(None)
+                            } else {
+                                DispatchResult::CommandFailed(Self::make_error(
+                                    "State not present.",
+                                ))
+                            }
+                        }
+                        Err(e) => DispatchResult::CommandFailed(Self::make_error(e.to_string())),
+                    }
                 } else {
                     DispatchResult::CommandFailed(Self::make_error("Session not present."))
                 }
@@ -233,7 +289,7 @@ impl ChiselDisptacher {
 
             return match raw_cmd.parse::<ChiselCommand>() {
                 Ok(cmd) => {
-                    let command_dispatch = self.dispatch_command(cmd, &split[1..]);
+                    let command_dispatch = self.dispatch_command(cmd, &split[1..]).await;
                     self.errored = !matches!(command_dispatch, DispatchResult::CommandSuccess(_));
                     return command_dispatch
                 }
@@ -407,6 +463,10 @@ pub enum ChiselCommand {
     Fork,
     /// Enable / disable traces for the current session
     Traces,
+    /// Dump the raw memory
+    MemDump,
+    /// Dump the raw stack
+    StackDump,
 }
 
 /// A command descriptor type
@@ -427,6 +487,8 @@ impl FromStr for ChiselCommand {
             "clearcache" => Ok(ChiselCommand::ClearCache),
             "fork" => Ok(ChiselCommand::Fork),
             "traces" => Ok(ChiselCommand::Traces),
+            "memdump" => Ok(ChiselCommand::MemDump),
+            "stackdump" => Ok(ChiselCommand::StackDump),
             _ => Err(ChiselDisptacher::make_error(&format!(
                 "Unknown command \"{}\"! See available commands with `!help`.",
                 s
@@ -454,6 +516,8 @@ impl From<ChiselCommand> for CmdDescriptor {
                 ("fork", "Fork an RPC for the current session. Supply 0 arguments to return to a local network.")
             }
             ChiselCommand::Traces => ("traces", "Enable / disable traces for the current session"),
+            ChiselCommand::MemDump => ("memdump", "Dump the raw memory of the current state"),
+            ChiselCommand::StackDump => ("stackdump", "Dump the raw stack of the current state"),
         }
     }
 }

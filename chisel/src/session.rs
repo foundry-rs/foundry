@@ -6,10 +6,12 @@
 use crate::{prelude::SessionSource, session_source::SessionSourceConfig};
 use ethers_solc::Solc;
 use eyre::Result;
+use foundry_config::SolcReq;
 pub use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use time::{format_description, OffsetDateTime};
+use yansi::Paint;
 
 /// A Chisel REPL Session
 #[derive(Debug, Serialize, Deserialize)]
@@ -23,17 +25,47 @@ pub struct ChiselSession {
 // ChiselSession Common Associated Functions
 impl ChiselSession {
     /// Create a new `ChiselSession` with a specified `solc` version and configuration.
+    ///
+    /// # Panics
+    ///
+    /// Panics if there is a failure to install the requested Solc version.
     pub fn new(config: &SessionSourceConfig) -> Self {
-        // TODO: Don't hard code
-        let solc = Solc::find_or_install_svm_version("0.8.17");
-
-        // TODO: Either handle gracefully or document that this
-        // constructor can panic. Also should notify the dev if
-        // we're installing a new solc version on their behalf.
-        assert!(solc.is_ok());
+        // Solc version precidence
+        // - Foundry configuration / `--use` flag
+        // - Latest installed version via SVM
+        // - Default: 0.8.17
+        let solc = Solc::find_or_install_svm_version(
+            if let Some(SolcReq::Version(version)) = config.config.solc.as_ref() {
+                let version = format!("{}.{}.{}", version.major, version.minor, version.patch);
+                if let Ok(None) = Solc::find_svm_installed_version(&version) {
+                    println!(
+                        "{}",
+                        Paint::green(format!("Installing solidity version {}...", &version))
+                    );
+                }
+                version
+            } else {
+                // If no version was explicitly set, use the latest SVM version.
+                if let Some(version) = Solc::installed_versions().into_iter().max() {
+                    version.to_string()
+                } else {
+                    println!(
+                        "{}",
+                        Paint::green(
+                            "No solidity versions installed! Installing solidity version 0.8.17..."
+                        )
+                    );
+                    String::from("0.8.17")
+                }
+            },
+        );
 
         // Return initialized ChiselSession with set solc version
-        Self { session_source: Some(SessionSource::new(&solc.unwrap(), config)), id: None }
+        if let Ok(solc) = solc {
+            Self { session_source: Some(SessionSource::new(&solc, config)), id: None }
+        } else {
+            panic!("Failed to install solidity via svm!");
+        }
     }
 
     /// Helper function to parse a solidity version string.

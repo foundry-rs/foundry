@@ -4,6 +4,15 @@
 #![forbid(unsafe_code)]
 #![forbid(where_clauses_object_safety)]
 
+use lazy_static::lazy_static;
+use std::path::PathBuf;
+
+lazy_static! {
+    /// The path to `forge-std`'s `Script.sol` in `testdata`
+    pub static ref SCRIPT_PATH: PathBuf =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/lib/forge-std/src/Script.sol");
+}
+
 /// Chisel Environment Module
 pub mod session;
 

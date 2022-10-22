@@ -4,6 +4,7 @@
 //! the REPL contract's source code. It provides simple compilation, parsing, and
 //! execution helpers.
 
+use crate::SCRIPT_PATH;
 use ethers_solc::{
     artifacts::{Source, Sources},
     CompilerInput, CompilerOutput, Solc,
@@ -11,15 +12,9 @@ use ethers_solc::{
 use eyre::Result;
 use forge::executor::{opts::EvmOpts, Backend};
 use foundry_config::Config;
-use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use solang_parser::pt::CodeLocation;
 use std::{collections::HashMap, fs, path::PathBuf};
-
-lazy_static! {
-    static ref SCRIPT_PATH: PathBuf =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/lib/forge-std/src/Script.sol");
-}
 
 /// Intermediate output for the compiled [SessionSource]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -188,7 +183,7 @@ impl SessionSource {
         sources.insert(self.file_name.clone(), Source { content: self.to_string() });
         sources.insert(
             SCRIPT_PATH.clone(),
-            Source { content: fs::read_to_string(SCRIPT_PATH.clone()).unwrap() },
+            Source { content: fs::read_to_string(SCRIPT_PATH.as_path()).unwrap() },
         );
         CompilerInput::with_sources(sources).pop().unwrap()
     }
