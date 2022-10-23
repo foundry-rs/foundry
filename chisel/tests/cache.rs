@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use chisel::session::ChiselSession;
-use semver::Version;
+use forge::executor::opts::EvmOpts;
+use foundry_config::Config;
 use serial_test::serial;
 
 #[test]
@@ -37,7 +38,12 @@ fn test_write_session() {
     ChiselSession::create_cache_dir().unwrap();
 
     // Create a new session
-    let mut env = ChiselSession::default();
+    let mut env = ChiselSession::new(&chisel::session_source::SessionSourceConfig {
+        config: Config::default(),
+        evm_opts: EvmOpts::default(),
+        backend: None,
+        traces: false,
+    });
 
     // Write the session
     let cached_session_name = env.write().unwrap();
@@ -56,7 +62,12 @@ fn test_clear_cache() {
     // Create a session to validate clearing a non-empty cache directory
     let cache_dir = ChiselSession::cache_dir().unwrap();
     ChiselSession::create_cache_dir().unwrap();
-    let mut env = ChiselSession::default();
+    let mut env = ChiselSession::new(&chisel::session_source::SessionSourceConfig {
+        config: Config::default(),
+        evm_opts: EvmOpts::default(),
+        backend: None,
+        traces: false,
+    });
     env.write().unwrap();
 
     // Clear the cache
@@ -75,7 +86,13 @@ fn test_list_sessions() {
     ChiselSession::clear_cache().unwrap();
 
     // Create a new session
-    let mut env = ChiselSession::default();
+    let mut env = ChiselSession::new(&chisel::session_source::SessionSourceConfig {
+        config: Config::default(),
+        evm_opts: EvmOpts::default(),
+        backend: None,
+        traces: false,
+    });
+
     env.write().unwrap();
 
     // List the sessions
@@ -94,14 +111,25 @@ fn test_load_cache() {
     ChiselSession::clear_cache().unwrap();
 
     // Create a new session
-    let mut env = ChiselSession::default();
+    let mut env = ChiselSession::new(&chisel::session_source::SessionSourceConfig {
+        config: Config::default(),
+        evm_opts: EvmOpts::default(),
+        backend: None,
+        traces: false,
+    });
     env.write().unwrap();
 
     // Load the session
-    let new_env = ChiselSession::load("0").unwrap();
+    let new_env = ChiselSession::load("0");
 
     // Validate the session
-    assert_eq!(new_env.solc_version, Version::parse("0.8.17").unwrap());
+    assert!(new_env.is_ok());
+    let new_env = new_env.unwrap();
+    assert_eq!(new_env.id.unwrap(), 0);
+    assert_eq!(
+        new_env.session_source.unwrap().to_string(),
+        env.session_source.unwrap().to_string()
+    );
 }
 
 #[test]
@@ -112,7 +140,12 @@ fn test_write_same_session_multiple_times() {
     ChiselSession::clear_cache().unwrap();
 
     // Create a new session
-    let mut env = ChiselSession::default();
+    let mut env = ChiselSession::new(&chisel::session_source::SessionSourceConfig {
+        config: Config::default(),
+        evm_opts: EvmOpts::default(),
+        backend: None,
+        traces: false,
+    });
     env.write().unwrap();
     env.write().unwrap();
     env.write().unwrap();
@@ -128,13 +161,23 @@ fn test_load_latest_cache() {
     ChiselSession::clear_cache().unwrap();
 
     // Create sessions
-    let mut env = ChiselSession::default();
+    let mut env = ChiselSession::new(&chisel::session_source::SessionSourceConfig {
+        config: Config::default(),
+        evm_opts: EvmOpts::default(),
+        backend: None,
+        traces: false,
+    });
     env.write().unwrap();
 
     let wait_time = std::time::Duration::from_millis(100);
     std::thread::sleep(wait_time);
 
-    let mut env2 = ChiselSession::default();
+    let mut env2 = ChiselSession::new(&chisel::session_source::SessionSourceConfig {
+        config: Config::default(),
+        evm_opts: EvmOpts::default(),
+        backend: None,
+        traces: false,
+    });
     env2.write().unwrap();
 
     // Load the latest session
@@ -142,5 +185,8 @@ fn test_load_latest_cache() {
 
     // Validate the session
     assert_eq!(new_env.id.unwrap(), 1);
-    assert_eq!(new_env.solc_version, Version::parse("0.8.17").unwrap());
+    assert_eq!(
+        new_env.session_source.unwrap().to_string(),
+        env.session_source.unwrap().to_string()
+    );
 }

@@ -39,18 +39,18 @@ Chisel aims to improve upon soli, with native foundry integration by providing f
   - [ ] Import all project files / interfaces into REPL contract automatically.
     - [ ] Optionally disable this functionality with a flag.
   - [ ] Expression evaluation / inspection (i.e. the input `0x01 << 0x08` should inspect a `uint` of value `256`)
-  - [ ] Input history.
-  - [ ] Use forge fmt module to format source code when printing via the `!source` command.
+  - [x] Input history.
+  - [ ] Use forge fmt module to format source code when printing via the `!source` command. (?)
 - [x] Cache REPL History
   - [x] Allow a user to save/load sessions from their Chisel history.
-    - [ ] Fix session loading bug wrt non-serializable `IntermediateOutput` component.
+    - [x] Fix session loading bug wrt non-serializable `IntermediateOutput` component.
 - [ ] Custom commands / cmd flags
   - [x] Inspect variable
-    - [ ] Inspect raw stack
+    - [x] Inspect raw stack
   - [x] Inspect memory vars
-    - [ ] Inspect raw memory
+    - [x] Inspect raw memory
   - [x] Inspect storage vars
-    - [ ] Inspect raw storage slots
+    - [ ] Inspect raw storage slots / storage layout
   - [ ] Inspection verbosity configuration
   - [x] Enable / disable call trace printing
     - [x] Rip trace printing code from another module of foundry.
@@ -59,6 +59,8 @@ Chisel aims to improve upon soli, with native foundry integration by providing f
     - [ ] Export session to script contract if within project.
 - [x] [Syntax highlighting](https://docs.rs/rustyline/10.0.0/rustyline/highlight/trait.Highlighter.html)
 - [ ] Tests.
+- [ ] Optimizations.
+  - [ ] Speed up REPL execution time.
 - [ ] Finish README.
 
 ## Usage
@@ -71,49 +73,89 @@ Simply run `foundryup` to install `chisel`!
 
 If you do not have `foundryup` installed, reference the Foundry [installation guide](../README.md#installation).
 
-### Project Generation
+### Cache Session
 
-Below is an example of how to use `chisel` to generate a new project.
+While chisel sessions are not persistent by default, they can be saved to the cache via the builtin `flush` command from within the REPL.
 
 ```bash
 $ chisel
-chisel > constructor() ERC20("NewProject", "NEWP", 18) {}
-Compilation Successful!
-chisel > exit
-$ chisel generate --name new_erc20
-Exporting...
-Generated new project "new_erc20"!
-$ ls
-new_erc20
+➜ uint a = 1;
+➜ uint b = a << 0x08;
+➜ !flush
+Saved session to cache with ID = 0.
 ```
 
 ### Loading a Previous Session
 
 Chisel allows you to load a previous session from your history.
 
-To view your history, you can run `chisel history`. This will print a list of your previous sessions, identifiable by their index.
+To view your history, you can run `chisel list` or `!list`. This will print a list of your previous sessions, identifiable by their index.
 
-You can also run `chisel view <index>` to view the contents of a specific session.
+You can also run `chisel view <id>` or `!view <id>` to view the contents of a specific session.
 
-To load a session, run `chisel load <index>` where `<index>` is a valid session index (eg 2 in the example below).
+To load a session, run `chisel load <id>` or use the `!load <id>` where `<id>` is a valid session index (eg 2 in the example below).
 
 ```bash
 $ chisel history
-1. 2022-05-06 15:04:32
-2. 2022-02-23 07:43:12
+1. 2022-05-06 15:04:32 - chisel-0.json
+2. 2022-02-23 07:43:12 - chisel-1.json
 $ chisel view 2
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.3;
+pragma solidity 0.8.17;
 
 contract REPL {
     event KeccakEvent(bytes32 hash);
 
-    constructor() ERC20("Mock ERC20", "MERC", 18) {}
-
-    function testFunction() public {
+    function run() public {
       emit KeccakEvent(keccak256(abi.encode("Hello, world!")));
     }
 }
 $ chisel load 2
-chisel > ...
+➜ ...
 ```
+
+### Clearing the Cache
+
+To clear Chisel's cache (stored in `~/.foundry/cache/chisel`), use the `chisel clearcache` or `!clearcache` commands.
+
+```bash
+➜ !clearcache
+Cleared chisel cache!
+```
+
+### Toggling Traces
+
+By default, traces will only be shown if an input causes the call to the REPL contract to revert. To turn traces on
+regardless of the call result, use the `!traces` command or pass in a verbosity option of any level (`-v<vvvv>`) to
+the chisel binary.
+
+```bash
+➜ uint a
+➜ contract Test {
+    function get() external view returns (uint) {
+       return 256;
+    }
+}
+➜ Test t = new Test()
+➜ !traces
+Successfully enabled traces!
+➜ a = t.get()
+Traces:
+  [69808] 0xBd770416a3345F91E4B34576cb804a576fa48EB1::run()
+    ├─ [36687] → new <Unknown>@0xf4D9599aFd90B5038b18e3B551Bc21a97ed21c37
+    │   └─ ← 183 bytes of code
+    ├─ [315] 0xf4D9599aFd90B5038b18e3B551Bc21a97ed21c37::get() [staticcall]
+    │   └─ ← 0x0000000000000000000000000000000000000000000000000000000000000100
+    └─ ← ()
+
+➜ a
+Type: uint
+├ Hex: 0x100
+└ Decimal: 256
+```
+
+### Forking a Network
+
+To fork a network within your chisel session, use the `!fork <rpc-url>` command or supply a `--fork-url <rpc-url>` flag
+to the chisel binary. The `!fork` command also accepts aliases from the `[rpc_endpoints]` section of your `foundry.toml`,
+if chisel was launched in the root of a foundry project (ex. `!fork mainnet`).

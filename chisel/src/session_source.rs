@@ -105,7 +105,7 @@ impl SessionSource {
 
     /// Clones the [SessionSource] and appends a new line of code. Will return
     /// an error result if the new line fails to be parsed.
-    pub fn clone_with_new_line(&self, mut content: String) -> Result<SessionSource> {
+    pub fn clone_with_new_line(&self, mut content: String) -> Result<(SessionSource, bool)> {
         let mut new_source = self.clone();
         if let Some(parsed) = parse_fragment(&new_source.solc, &self.config, &content)
             .or_else(|| {
@@ -119,13 +119,19 @@ impl SessionSource {
                 parse_fragment(&new_source.solc, &self.config, &format!("\t{}", content))
             })
         {
+            // Flag that tells the dispatcher whether to build or execute the session
+            // source based on the scope of the new code.
+            let mut do_execute = false;
             match parsed {
-                ParseTreeFragment::Function(_) => new_source.with_run_code(&content),
+                ParseTreeFragment::Function(_) => {
+                    do_execute = true;
+                    new_source.with_run_code(&content)
+                }
                 ParseTreeFragment::Contract(_) => new_source.with_top_level_code(&content),
                 ParseTreeFragment::Source(_) => new_source.with_global_code(&content),
             };
 
-            Ok(new_source)
+            Ok((new_source, do_execute))
         } else {
             eyre::bail!(content.trim().to_owned());
         }
@@ -285,11 +291,6 @@ impl SessionSource {
 
     /// Builds the SessionSource from input into the complete CompiledOutput
     pub fn build(&mut self) -> Result<GeneratedOutput> {
-        // Use the cached compiled source if it exists
-        if let Some(generated_output) = self.generated_output.as_ref() {
-            return Ok(generated_output.clone())
-        }
-
         // Compile
         let compiler_output = self.compile()?;
 

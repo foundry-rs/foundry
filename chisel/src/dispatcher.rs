@@ -138,7 +138,12 @@ impl ChiselDisptacher {
                 };
 
                 // WARNING: Overwrites the current session
-                if let Ok(new_session) = new_session {
+                if let Ok(mut new_session) = new_session {
+                    // Regenerate [IntermediateOutput]
+                    // Should never panic due to the checks performed when the session was created
+                    // in the first place.
+                    new_session.session_source.as_mut().unwrap().build().unwrap();
+
                     self.session = new_session;
                     return DispatchResult::CommandSuccess(Some(format!(
                         "Loaded Chisel session! (ID = {})",
@@ -199,6 +204,9 @@ impl ChiselDisptacher {
                         ))
                     }
 
+                    // If the argument is an RPC alias designated in the
+                    // `[rpc_endpoints]` section of the `foundry.toml` within
+                    // the pwd, use the URL matched to the key.
                     let fork_url = if let Some(fork_url) =
                         session_source.config.config.rpc_endpoints.get(args[0])
                     {
@@ -259,7 +267,7 @@ impl ChiselDisptacher {
                                         println!(
                                             "{}: {}",
                                             Paint::yellow(format!("[{}]", stack.len() - i - 1)),
-                                            Paint::cyan(format!("0x{}", stack[i]))
+                                            Paint::cyan(format!("0x{:02x}", stack[i]))
                                         );
                                     });
                                 }
@@ -328,7 +336,7 @@ impl ChiselDisptacher {
         }
 
         // Create new source and parse
-        let mut new_source = match source.clone_with_new_line(input.to_string()) {
+        let (mut new_source, do_execute) = match source.clone_with_new_line(input.to_string()) {
             Ok(new) => new,
             Err(e) => {
                 self.errored = true;
@@ -338,42 +346,53 @@ impl ChiselDisptacher {
             }
         };
 
-        match new_source.execute().await {
-            Ok(mut res) => {
-                let failed = !res.1.success;
+        if do_execute {
+            match new_source.execute().await {
+                Ok(mut res) => {
+                    let failed = !res.1.success;
 
-                // If traces are enabled or there was an error in execution, show the execution
-                // traces.
-                if new_source.config.traces || failed {
-                    if let Ok(decoder) = self.decode_traces(&new_source.config, &mut res.1) {
-                        if self.show_traces(&decoder, &mut res.1).await.is_err() {
-                            self.errored = true;
-                            return DispatchResult::CommandFailed(
-                                "Failed to display traces".to_owned(),
-                            )
-                        };
+                    // If traces are enabled or there was an error in execution, show the execution
+                    // traces.
+                    if new_source.config.traces || failed {
+                        if let Ok(decoder) = self.decode_traces(&new_source.config, &mut res.1) {
+                            if self.show_traces(&decoder, &mut res.1).await.is_err() {
+                                self.errored = true;
+                                return DispatchResult::CommandFailed(
+                                    "Failed to display traces".to_owned(),
+                                )
+                            };
 
-                        // If the contract execution failed, continue on without adding the new line
-                        // to the source.
-                        if failed {
-                            self.errored = true;
-                            return DispatchResult::Failure(Some(Self::make_error(
-                                "Failed to execute REPL contract!",
-                            )))
+                            // If the contract execution failed, continue on without adding the new
+                            // line to the source.
+                            if failed {
+                                self.errored = true;
+                                return DispatchResult::Failure(Some(Self::make_error(
+                                    "Failed to execute REPL contract!",
+                                )))
+                            }
                         }
                     }
+
+                    // Replace the old session source with the new version
+                    self.session.session_source = Some(new_source);
+                    // Clear any outstanding errors
+                    self.errored = false;
+
+                    DispatchResult::Success(None)
                 }
-
-                // Replace the old session source with the new version
-                self.session.session_source = Some(new_source);
-                // Clear any outstanding errors
-                self.errored = false;
-
-                DispatchResult::Success(None)
+                Err(e) => {
+                    self.errored = true;
+                    DispatchResult::Failure(Some(e.to_string()))
+                }
             }
-            Err(e) => {
-                self.errored = true;
-                DispatchResult::Failure(Some(e.to_string()))
+        } else {
+            match new_source.build() {
+                Ok(_) => {
+                    self.session.session_source = Some(new_source);
+                    self.errored = false;
+                    DispatchResult::Success(None)
+                }
+                Err(e) => DispatchResult::Failure(Some(e.to_string())),
             }
         }
     }

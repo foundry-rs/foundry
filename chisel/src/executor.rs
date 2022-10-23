@@ -77,7 +77,7 @@ impl SessionSource {
     /// Inspect a contract element inside of the current session
     pub async fn inspect(&mut self, item: &str) -> Result<String> {
         match self.clone_with_new_line(format!("bytes memory inspectoor = abi.encode({item})")) {
-            Ok(mut source) => match source.execute().await {
+            Ok((mut source, _)) => match source.execute().await {
                 Ok(res) => {
                     let res = res.1;
 

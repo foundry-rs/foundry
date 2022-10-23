@@ -75,7 +75,12 @@ async fn main() {
         // Try to read the string
         match next_string {
             Ok(line) => {
+                // Clear interrupt flag
                 interrupt = false;
+
+                // Add line to history
+                rl.add_history_entry(&line);
+
                 // Dispatch and match results
                 match dispatcher.dispatch(&line).await {
                     DispatchResult::Success(Some(msg))
