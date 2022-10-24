@@ -4,7 +4,7 @@
 //! executable's `main` function.
 
 use chisel::{
-    prelude::{ChiselDisptacher, DispatchResult},
+    prelude::{ChiselCommand, ChiselDisptacher, DispatchResult},
     solidity_helper::SolidityHelper,
 };
 use clap::Parser;
@@ -32,6 +32,17 @@ pub struct ChiselParser {
 
     #[clap(flatten, next_help_heading = "EVM OPTIONS")]
     pub evm_opts: EvmArgs,
+
+    #[command(subcommand)]
+    pub sub: Option<ChiselParserSub>,
+}
+
+#[derive(clap::Subcommand, Debug)]
+pub enum ChiselParserSub {
+    List,
+    Load { id: String },
+    View { id: String },
+    ClearCache,
 }
 
 #[tokio::main]
@@ -62,6 +73,52 @@ async fn main() {
         evm_opts,
         backend: None,
     });
+
+    // Check for chisel subcommands
+    match &args.sub {
+        Some(ChiselParserSub::List) => {
+            let sessions = dispatcher.dispatch_command(ChiselCommand::ListSessions, &[]).await;
+            match sessions {
+                DispatchResult::CommandSuccess(Some(session_list)) => {
+                    println!("{}", session_list);
+                }
+                DispatchResult::CommandFailed(error) => eprintln!("{}", error),
+                _ => panic!("Unexpected result: Please report this bug."),
+            }
+            return
+        }
+        Some(ChiselParserSub::Load { id }) | Some(ChiselParserSub::View { id }) => {
+            // For both of these subcommands, we need to attempt to load the session from cache
+            match dispatcher.dispatch_command(ChiselCommand::Load, &[&id]).await {
+                DispatchResult::CommandSuccess(_) => { /* Continue */ }
+                DispatchResult::CommandFailed(error) => {
+                    eprintln!("{}", error);
+                    return
+                }
+                _ => panic!("Unexpected result! Please report this bug."),
+            }
+
+            // If the subcommand was `view`, print the source and exit.
+            if matches!(args.sub, Some(ChiselParserSub::View { .. })) {
+                match dispatcher.dispatch_command(ChiselCommand::Source, &[]).await {
+                    DispatchResult::CommandSuccess(Some(source)) => {
+                        println!("{}", source);
+                    }
+                    _ => panic!("Unexpected result! Please report this bug."),
+                }
+                return
+            }
+        }
+        Some(ChiselParserSub::ClearCache) => {
+            match dispatcher.dispatch_command(ChiselCommand::ClearCache, &[]).await {
+                DispatchResult::CommandSuccess(Some(msg)) => println!("{}", Paint::green(msg)),
+                DispatchResult::CommandFailed(error) => eprintln!("{}", error),
+                _ => panic!("Unexpected result! Please report this bug."),
+            }
+            return
+        }
+        None => { /* No chisel subcommand present; Continue */ }
+    }
 
     // Begin Rustyline loop
     loop {
