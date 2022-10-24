@@ -11,6 +11,7 @@ use ethers_solc::{
 use eyre::Result;
 use forge::executor::{opts::EvmOpts, Backend};
 use foundry_config::Config;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use solang_parser::pt::CodeLocation;
 use std::{collections::HashMap, path::PathBuf};
@@ -388,7 +389,7 @@ impl std::fmt::Display for SessionSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Write the license and solidity pragma version
         f.write_str("// SPDX-License-Identifier: UNLICENSED\n")?;
-        let semver::Version { major, minor, patch, .. } = self.solc.version().unwrap();
+        let Version { major, minor, patch, .. } = self.solc.version().unwrap();
         f.write_fmt(format_args!("pragma solidity ^{major}.{minor}.{patch};\n\n",))?;
         f.write_str("import {Script} from \"./Script.sol\";")?;
 

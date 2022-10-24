@@ -60,11 +60,13 @@ Chisel aims to improve upon soli, with native foundry integration by providing f
 - [x] [Syntax highlighting](https://docs.rs/rustyline/10.0.0/rustyline/highlight/trait.Highlighter.html)
 - [ ] Binary subcommands
 - [ ] Tests.
-  - [ ] Cache
-- [ ] Benchmarks.
-  - [ ] Session Source
-    - [ ] Executor
-    - [ ] Cloning
+  - [x] Cache
+- [x] Benchmarks.
+  - [x] Session Source
+    - [x] Building
+    - [x] Executor
+    - [x] Inspection
+    - [x] Cloning
 - [ ] Optimizations.
   - [ ] Speed up REPL execution time.
 - [ ] Finish README.

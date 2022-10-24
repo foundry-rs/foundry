@@ -14,7 +14,7 @@ use forge::trace::{
 };
 use foundry_config::Config;
 use solang_parser::diagnostics::Diagnostic;
-use std::{error, error::Error, str::FromStr};
+use std::{error::Error, str::FromStr};
 use strum::{EnumIter, IntoEnumIterator};
 use yansi::Paint;
 
@@ -493,7 +493,7 @@ type CmdDescriptor = (&'static str, &'static str);
 
 /// Attempt to convert a string slice to a `ChiselCommand`
 impl FromStr for ChiselCommand {
-    type Err = Box<dyn error::Error>;
+    type Err = Box<dyn Error>;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_ref() {
