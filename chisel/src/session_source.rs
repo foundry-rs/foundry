@@ -205,7 +205,10 @@ impl SessionSource {
         let mut sources = Sources::new();
         sources.insert(self.file_name.clone(), Source { content: self.to_string() });
         for (name, source) in SOURCES {
-            sources.insert(PathBuf::from(name), Source { content: source.to_owned() });
+            sources.insert(
+                PathBuf::from(format!("forge-std/{}", name)),
+                Source { content: source.to_owned() },
+            );
         }
         CompilerInput::with_sources(sources).pop().unwrap()
     }
@@ -387,14 +390,31 @@ impl SessionSource {
 
 impl std::fmt::Display for SessionSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Fill remappings
+        // TODO: Not a very clean soln. Should retain remapped import when displaying
+        // via `!source` or exporting to a script file.
+        let remappings = &self.config.config.remappings;
+        let global_code = {
+            let mut content = self.global_code.clone();
+            for remapping in remappings {
+                // Replace remapped path with true path
+                if content.contains(&remapping.name) {
+                    content =
+                        content.replace(&remapping.name, remapping.path.path.to_str().unwrap());
+                    break
+                }
+            }
+            content
+        };
+
         // Write the license and solidity pragma version
         f.write_str("// SPDX-License-Identifier: UNLICENSED\n")?;
         let Version { major, minor, patch, .. } = self.solc.version().unwrap();
         f.write_fmt(format_args!("pragma solidity ^{major}.{minor}.{patch};\n\n",))?;
-        f.write_str("import {Script} from \"./Script.sol\";")?;
+        f.write_str("import {Script} from \"forge-std/Script.sol\";\n")?;
 
         // Global imports and definitions
-        f.write_str(&self.global_code)?;
+        f.write_str(&global_code)?;
         f.write_str("\n")?;
 
         f.write_fmt(format_args!("contract {} is Script {{\n", self.contract_name))?;

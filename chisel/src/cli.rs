@@ -37,6 +37,7 @@ pub struct ChiselParser {
     pub sub: Option<ChiselParserSub>,
 }
 
+/// Chisel binary subcommands
 #[derive(clap::Subcommand, Debug)]
 pub enum ChiselParserSub {
     List,
