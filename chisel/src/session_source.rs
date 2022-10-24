@@ -4,7 +4,6 @@
 //! the REPL contract's source code. It provides simple compilation, parsing, and
 //! execution helpers.
 
-use crate::SCRIPT_PATH;
 use ethers_solc::{
     artifacts::{Source, Sources},
     CompilerInput, CompilerOutput, Solc,
@@ -14,7 +13,24 @@ use forge::executor::{opts::EvmOpts, Backend};
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
 use solang_parser::pt::CodeLocation;
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf};
+
+/// Solidity source for the `Script` contract in [forge-std](https://github.com/foundry-rs/forge-std)
+static SCRIPT_SOURCE: &'static str = include_str!("../../testdata/lib/forge-std/src/Script.sol");
+/// Solidity source for the `Vm` interface in [forge-std](https://github.com/foundry-rs/forge-std)
+static VM_SOURCE: &'static str = include_str!("../../testdata/lib/forge-std/src/Vm.sol");
+/// Solidity source for the `console` contract in [forge-std](https://github.com/foundry-rs/forge-std)
+static CONSOLE_SOURCE: &'static str = include_str!("../../testdata/lib/forge-std/src/console.sol");
+/// Solidity source for the `console2` contract in [forge-std](https://github.com/foundry-rs/forge-std)
+static CONSOLE_2_SOURCE: &'static str =
+    include_str!("../../testdata/lib/forge-std/src/console2.sol");
+/// Array of forge-std contract file names paired with their source code
+static SOURCES: [(&'static str, &'static str); 4] = [
+    ("Script.sol", SCRIPT_SOURCE),
+    ("Vm.sol", VM_SOURCE),
+    ("console.sol", CONSOLE_SOURCE),
+    ("console2.sol", CONSOLE_2_SOURCE),
+];
 
 /// Intermediate output for the compiled [SessionSource]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -187,10 +203,9 @@ impl SessionSource {
     pub fn compiler_input(&self) -> CompilerInput {
         let mut sources = Sources::new();
         sources.insert(self.file_name.clone(), Source { content: self.to_string() });
-        sources.insert(
-            SCRIPT_PATH.clone(),
-            Source { content: fs::read_to_string(SCRIPT_PATH.as_path()).unwrap() },
-        );
+        for (name, source) in SOURCES {
+            sources.insert(PathBuf::from(name), Source { content: source.to_owned() });
+        }
         CompilerInput::with_sources(sources).pop().unwrap()
     }
 
@@ -375,10 +390,7 @@ impl std::fmt::Display for SessionSource {
         f.write_str("// SPDX-License-Identifier: UNLICENSED\n")?;
         let semver::Version { major, minor, patch, .. } = self.solc.version().unwrap();
         f.write_fmt(format_args!("pragma solidity ^{major}.{minor}.{patch};\n\n",))?;
-        f.write_fmt(format_args!(
-            "import {{Script}} from \"{}\";\n",
-            SCRIPT_PATH.to_str().unwrap()
-        ))?;
+        f.write_str("import {Script} from \"./Script.sol\";")?;
 
         // Global imports and definitions
         f.write_str(&self.global_code)?;

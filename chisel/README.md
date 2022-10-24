@@ -58,7 +58,13 @@ Chisel aims to improve upon soli, with native foundry integration by providing f
   - [x] Export to file
     - [ ] Export session to script contract if within project.
 - [x] [Syntax highlighting](https://docs.rs/rustyline/10.0.0/rustyline/highlight/trait.Highlighter.html)
+- [ ] Binary subcommands
 - [ ] Tests.
+  - [ ] Cache
+- [ ] Benchmarks.
+  - [ ] Session Source
+    - [ ] Executor
+    - [ ] Cloning
 - [ ] Optimizations.
   - [ ] Speed up REPL execution time.
 - [ ] Finish README.
