@@ -21,7 +21,7 @@ use foundry_common::{estimate_eip1559_fees, try_get_http_provider, RetryProvider
 use foundry_config::Chain;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::{cmp::min, fmt, ops::Mul, sync::Arc};
+use std::{cmp::min, ops::Mul, sync::Arc};
 
 impl ScriptArgs {
     /// Sends the transactions which haven't been broadcasted yet.
@@ -196,20 +196,18 @@ impl ScriptArgs {
         signer: &WalletType,
         sequential_broadcast: bool,
         fork_url: &str,
-    ) -> Result<TxHash, BroadcastError> {
+    ) -> eyre::Result<TxHash> {
         let from = tx.from().expect("no sender");
 
         if sequential_broadcast {
-            let nonce = foundry_utils::next_nonce(*from, fork_url, None).await.map_err(|_| {
-                BroadcastError::Simple("Not able to query the EOA nonce.".to_string())
-            })?;
+            let nonce = foundry_utils::next_nonce(*from, fork_url, None)
+                .await
+                .map_err(|_| eyre::eyre!("Not able to query the EOA nonce."))?;
 
             let tx_nonce = tx.nonce().expect("no nonce");
 
             if nonce != *tx_nonce {
-                return Err(BroadcastError::Simple(
-                    "EOA nonce changed unexpectedly while sending transactions.".to_string(),
-                ))
+                eyre::bail!("EOA nonce changed unexpectedly while sending transactions.")
             }
         }
 
@@ -349,14 +347,14 @@ impl ScriptArgs {
     }
     /// Uses the signer to submit a transaction to the network. If it fails, it tries to retrieve
     /// the transaction hash that can be used on a later run with `--resume`.
-    async fn broadcast<T, U>(
+    async fn broadcast<T, S>(
         &self,
-        signer: &SignerMiddleware<T, U>,
+        signer: &SignerMiddleware<T, S>,
         mut legacy_or_1559: TypedTransaction,
-    ) -> Result<TxHash, BroadcastError>
+    ) -> eyre::Result<TxHash>
     where
-        T: Middleware,
-        U: Signer,
+        T: Middleware + 'static,
+        S: Signer + 'static,
     {
         tracing::debug!("sending transaction: {:?}", legacy_or_1559);
 
@@ -377,14 +375,11 @@ impl ScriptArgs {
                 *legacy_or_1559.from().expect("Tx should have a `from`."),
             )
             .await
-            .map_err(|err| BroadcastError::Simple(err.to_string()))?;
+            .wrap_err_with(|| "Failed to sign transaction")?;
 
         // Submit the raw transaction
-        let pending = signer
-            .provider()
-            .send_raw_transaction(legacy_or_1559.rlp_signed(&signature))
-            .await
-            .map_err(|err| BroadcastError::Simple(err.to_string()))?;
+        let pending =
+            signer.provider().send_raw_transaction(legacy_or_1559.rlp_signed(&signature)).await?;
 
         Ok(pending.tx_hash())
     }
@@ -393,7 +388,7 @@ impl ScriptArgs {
         &self,
         tx: &mut TypedTransaction,
         provider: &Provider<T>,
-    ) -> Result<(), BroadcastError>
+    ) -> eyre::Result<()>
     where
         T: JsonRpcClient,
     {
@@ -401,28 +396,10 @@ impl ScriptArgs {
             provider
                 .estimate_gas(tx, None)
                 .await
-                .wrap_err_with(|| format!("Failed to estimate gas for tx: {}", tx.sighash()))
-                .map_err(|err| BroadcastError::Simple(err.to_string()))? *
+                .wrap_err_with(|| format!("Failed to estimate gas for tx: {:?}", tx.sighash()))? *
                 self.gas_estimate_multiplier /
                 100,
         );
         Ok(())
-    }
-}
-
-#[derive(thiserror::Error, Debug, Clone)]
-pub enum BroadcastError {
-    Simple(String),
-    ErrorWithTxHash(String, TxHash),
-}
-
-impl fmt::Display for BroadcastError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            BroadcastError::Simple(err) => write!(f, "{err}"),
-            BroadcastError::ErrorWithTxHash(err, tx_hash) => {
-                write!(f, "\nFailed to wait for transaction {tx_hash:?}:\n{err}")
-            }
-        }
     }
 }
