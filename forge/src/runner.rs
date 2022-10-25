@@ -12,6 +12,7 @@ use foundry_common::{
     TestFunctionExt,
 };
 use foundry_evm::{
+    decode::decode_console_logs,
     executor::{CallResult, DeployResult, EvmError, Executor},
     fuzz::{
         invariant::{
@@ -216,6 +217,7 @@ impl<'a> ContractRunner<'a> {
                         reason: Some("Multiple setUp functions".to_string()),
                         counterexample: None,
                         logs: vec![],
+                        decoded_logs: vec![],
                         kind: TestKind::Standard(0),
                         traces: vec![],
                         coverage: None,
@@ -249,6 +251,7 @@ impl<'a> ContractRunner<'a> {
                         success: false,
                         reason: setup.reason,
                         counterexample: None,
+                        decoded_logs: decode_console_logs(&setup.logs),
                         logs: setup.logs,
                         kind: TestKind::Standard(0),
                         traces: setup.traces,
@@ -417,6 +420,7 @@ impl<'a> ContractRunner<'a> {
             success,
             reason,
             counterexample: None,
+            decoded_logs: decode_console_logs(&logs),
             logs,
             kind: TestKind::Standard(gas.overflowing_sub(stipend).0),
             traces,
@@ -495,6 +499,7 @@ impl<'a> ContractRunner<'a> {
                             (!err.revert_reason.is_empty()).then(|| err.revert_reason.clone())
                         }),
                         counterexample,
+                        decoded_logs: decode_console_logs(&logs),
                         logs,
                         kind: TestKind::Invariant(cases.clone(), reverts),
                         coverage: None, // todo?
@@ -543,6 +548,7 @@ impl<'a> ContractRunner<'a> {
             success: result.success,
             reason: result.reason,
             counterexample: result.counterexample,
+            decoded_logs: decode_console_logs(&logs),
             logs,
             kind: TestKind::Fuzz(result.cases),
             traces,
