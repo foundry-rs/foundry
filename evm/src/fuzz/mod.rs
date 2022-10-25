@@ -1,6 +1,6 @@
 use crate::{
     coverage::HitMaps,
-    decode,
+    decode::{self, decode_console_logs},
     executor::{Executor, RawCallResult},
     trace::CallTraceArena,
 };
@@ -173,6 +173,7 @@ impl<'a> FuzzedExecutor<'a> {
             success: run_result.is_ok(),
             reason: None,
             counterexample: None,
+            decoded_logs: decode_console_logs(&call.logs),
             logs: call.logs,
             labeled_addresses: call.labels,
             traces: if run_result.is_ok() { traces.into_inner() } else { call.traces.clone() },
@@ -321,6 +322,9 @@ pub struct FuzzTestResult {
     /// Any captured & parsed as strings logs along the test's execution which should
     /// be printed to the user.
     pub logs: Vec<Log>,
+
+    /// The decoded DSTest logging events and Hardhat's `console.log` from [logs](Self::logs).
+    pub decoded_logs: Vec<String>,
 
     /// Labeled addresses
     pub labeled_addresses: BTreeMap<Address, String>,
