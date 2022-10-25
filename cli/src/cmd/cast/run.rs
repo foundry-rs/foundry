@@ -258,7 +258,7 @@ async fn print_traces(
         if !verbose {
             println!("{trace}");
         } else {
-            println!("{:#}", trace);
+            println!("{trace:#}");
         }
     }
     println!();

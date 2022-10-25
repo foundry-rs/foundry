@@ -113,7 +113,7 @@ impl ScriptArgs {
             sender,
             nonce,
             &mut extra_info,
-            |file, key| (format!("{}.json:{}", key, key), file, key),
+            |file, key| (format!("{key}.json:{key}"), file, key),
             |post_link_input| {
                 let PostLinkInput {
                     contract,
@@ -208,7 +208,7 @@ impl ScriptArgs {
         // We received `contract_path:contract_name`
         if let Some(path) = contract.path {
             let path =
-                dunce::canonicalize(&path).wrap_err("Could not canonicalize the target path")?;
+                dunce::canonicalize(path).wrap_err("Could not canonicalize the target path")?;
             let output =
                 compile::compile_target(&path, &project, self.opts.args.silent, self.verify)?;
             self.path = path.to_string_lossy().to_string();
@@ -279,7 +279,7 @@ pub fn filter_sources_and_artifacts(
                 Some((
                     id,
                     fs::read_to_string(&resolved).unwrap_or_else(|_| {
-                        panic!("Something went wrong reading the source file: {:?}", path)
+                        panic!("Something went wrong reading the source file: {path:?}")
                     }),
                 ))
             }

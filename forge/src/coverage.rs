@@ -86,14 +86,14 @@ impl<'a> CoverageReporter for LcovReporter<'a> {
             });
 
             writeln!(self.destination, "TN:")?;
-            writeln!(self.destination, "SF:{}", file)?;
+            writeln!(self.destination, "SF:{file}")?;
 
             for item in items {
                 let line = item.loc.line;
                 let hits = item.hits;
                 match item.kind {
                     CoverageItemKind::Function { name } => {
-                        let name = format!("{}.{}", item.loc.contract_name, name);
+                        let name = format!("{}.{name}", item.loc.contract_name);
                         writeln!(self.destination, "FN:{line},{name}")?;
                         writeln!(self.destination, "FNDA:{hits},{name}")?;
                     }
@@ -152,7 +152,7 @@ impl CoverageReporter for DebugReporter {
         for (contract_id, anchors) in report.anchors {
             println!("Anchors for {contract_id}:");
             anchors.iter().for_each(|anchor| {
-                println!("- {}", anchor);
+                println!("- {anchor}");
                 println!(
                     "  - Refers to item: {}",
                     report

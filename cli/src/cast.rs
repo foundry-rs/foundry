@@ -300,7 +300,7 @@ async fn main() -> eyre::Result<()> {
 
             let provider = try_get_http_provider(rpc_url)?;
             let value = provider.get_storage_at(address, slot, block).await?;
-            println!("{:?}", value);
+            println!("{value:?}");
         }
 
         // Calls & transactions
@@ -314,7 +314,7 @@ async fn main() -> eyre::Result<()> {
             let tx_hash = *pending_tx;
 
             if cast_async {
-                println!("{:?}", pending_tx);
+                println!("{pending_tx:?}");
             } else {
                 let receipt =
                     pending_tx.await?.ok_or_else(|| eyre::eyre!("tx {tx_hash} not found"))?;
@@ -342,12 +342,12 @@ async fn main() -> eyre::Result<()> {
         // 4Byte
         Subcommands::FourByte { selector } => {
             let sigs = decode_function_selector(&selector).await?;
-            sigs.iter().for_each(|sig| println!("{}", sig));
+            sigs.iter().for_each(|sig| println!("{sig}"));
         }
         Subcommands::FourByteDecode { calldata } => {
             let calldata = unwrap_or_stdin(calldata)?;
             let sigs = decode_calldata(&calldata).await?;
-            sigs.iter().enumerate().for_each(|(i, sig)| println!("{}) \"{}\"", i + 1, sig));
+            sigs.iter().enumerate().for_each(|(i, sig)| println!("{}) \"{sig}\"", i + 1));
 
             let sig = match sigs.len() {
                 0 => Err(eyre::eyre!("No signatures found")),
@@ -369,7 +369,7 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::FourByteEvent { topic } => {
             let sigs = decode_event_topic(&topic).await?;
-            sigs.iter().for_each(|sig| println!("{}", sig));
+            sigs.iter().for_each(|sig| println!("{sig}"));
         }
         Subcommands::UploadSignature { signatures } => {
             let ParsedSignatures { signatures, abis } = parse_signatures(signatures);

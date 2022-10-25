@@ -792,7 +792,7 @@ async fn test_tx_access_list() {
             })
             .collect::<Vec<_>>();
 
-        format!("{:?}", a)
+        format!("{a:?}")
     }
 
     /// asserts that the two access lists are equal, by comparing their sorted

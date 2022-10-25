@@ -86,7 +86,7 @@ impl EvmOpts {
         )
         .await
         .wrap_err_with(|| {
-            format!("Could not instantiate forked environment with fork url: {}", fork_url)
+            format!("Could not instantiate forked environment with fork url: {fork_url}")
         })
     }
 

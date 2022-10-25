@@ -98,7 +98,7 @@ pub fn get_cached_entry_by_name(
         return Ok(entry)
     }
 
-    let mut err = format!("could not find artifact: `{}`", name);
+    let mut err = format!("could not find artifact: `{name}`");
     if let Some(suggestion) = suggestions::did_you_mean(name, &alternatives).pop() {
         err = format!(
             r#"{}

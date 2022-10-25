@@ -408,11 +408,11 @@ fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> eyre::Result<()> {
 fn fmt_pct_change(change: f64) -> String {
     let change_pct = change * 100.0;
     match change.partial_cmp(&0.0).unwrap_or(Ordering::Equal) {
-        Ordering::Less => Paint::green(format!("{:.3}%", change_pct)).to_string(),
+        Ordering::Less => Paint::green(format!("{change_pct:.3}%")).to_string(),
         Ordering::Equal => {
-            format!("{:.3}%", change_pct)
+            format!("{change_pct:.3}%")
         }
-        Ordering::Greater => Paint::red(format!("{:.3}%", change_pct)).to_string(),
+        Ordering::Greater => Paint::red(format!("{change_pct:.3}%")).to_string(),
     }
 }
 

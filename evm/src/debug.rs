@@ -171,7 +171,7 @@ impl Display for Instruction {
                 f,
                 "{}",
                 OpCode::try_from_u8(*op).map_or_else(
-                    || format!("UNDEFINED(0x{:02x})", op),
+                    || format!("UNDEFINED(0x{op:02x})"),
                     |opcode| opcode.as_str().to_string(),
                 )
             ),

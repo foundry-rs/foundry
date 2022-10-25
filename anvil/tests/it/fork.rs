@@ -321,7 +321,7 @@ async fn test_fork_timestamp() {
 
     // ensure the diff between the new mined block and the original block is within the elapsed time
     let diff = block.timestamp - BLOCK_TIMESTAMP;
-    assert!(diff <= elapsed.into(), "diff={}, elapsed={}", diff, elapsed);
+    assert!(diff <= elapsed.into(), "diff={diff}, elapsed={elapsed}");
 
     let start = std::time::Instant::now();
     // reset to check timestamp works after resetting
@@ -562,7 +562,7 @@ async fn test_reset_fork_on_new_blocks() {
 
     let next_block = anvil_provider.get_block_number().await.unwrap();
 
-    assert!(next_block > current_block, "nextblock={} currentblock={}", next_block, current_block)
+    assert!(next_block > current_block, "nextblock={next_block} currentblock={current_block}")
 }
 
 #[tokio::test(flavor = "multi_thread")]

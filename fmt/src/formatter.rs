@@ -454,7 +454,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                         let line = line.trim().trim_start_matches('*');
                         let needs_space =
                             line.chars().next().map_or(false, |ch| !ch.is_whitespace());
-                        writeln!(self.buf(), " *{}{}", if needs_space { " " } else { "" }, line)?;
+                        writeln!(self.buf(), " *{}{line}", if needs_space { " " } else { "" })?;
                     } else {
                         let curr_indent = self.buf.current_indent_len();
 
@@ -650,7 +650,7 @@ impl<'a, W: Write> Formatter<'a, W> {
 
             // add separator
             if chunks.peek().is_some() {
-                write!(self.buf(), "{}", separator)?;
+                write!(self.buf(), "{separator}")?;
                 self.write_comments(&postfixes)?;
                 if multiline && !self.is_beginning_of_line() {
                     writeln!(self.buf())?;
@@ -2421,7 +2421,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             let byte_offset = event.fields.first().unwrap().loc.start();
             let first_chunk = self.chunk_to_string(&name)?;
             self.surrounded(
-                SurroundingChunk::new(&first_chunk, Some(byte_offset), None),
+                SurroundingChunk::new(first_chunk, Some(byte_offset), None),
                 SurroundingChunk::new(last_chunk, None, Some(event.loc.end())),
                 |fmt, multiline| {
                     let params = fmt.items_to_chunks(
@@ -2848,7 +2848,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         self.indented_if(multiline, 1, |fmt| fmt.write_chunks_separated(&chunks, ",", multiline))?;
 
         let prefix = if multiline && !self.is_beginning_of_line() { "\n" } else { "" };
-        let closing_bracket = format!("{}{}", prefix, "}");
+        let closing_bracket = format!("{prefix}{}", "}");
         let closing_bracket_loc = args.last().unwrap().loc.end();
         write_chunk_spaced!(self, closing_bracket_loc, Some(false), "{closing_bracket}")?;
 
@@ -3055,7 +3055,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 } else {
                     "\n"
                 };
-                let chunk_str = format!("{}{}", prefix, chunk_str);
+                let chunk_str = format!("{prefix}{chunk_str}");
                 write!(fmt.buf(), "{chunk_str}")?;
                 Ok(())
             })?;

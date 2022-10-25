@@ -171,7 +171,7 @@ pub fn try_setup_forge_remote(
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
-            .wrap_err_with(|| format!("Failed to execute {:?}", addon))?;
+            .wrap_err_with(|| format!("Failed to execute {addon:?}"))?;
         eyre::ensure!(status.success(), "Failed to execute command {:?}", addon);
     }
 
@@ -197,7 +197,7 @@ fn install_commonly_used_solc() {
 
         let wait = |res: std::thread::JoinHandle<_>| {
             if let Err(err) = res.join().unwrap() {
-                eprintln!("{:?}", err);
+                eprintln!("{err:?}");
                 // there could be another process that's currently installing this version, so we
                 // sleep here for a bit and assume the other process will be finished then
                 std::thread::sleep(std::time::Duration::from_secs(15));
@@ -448,7 +448,7 @@ fn config_paths_exist(paths: &ProjectPathsConfig, cached: bool) {
 pub fn pretty_err<T, E: std::error::Error>(path: impl AsRef<Path>, res: Result<T, E>) -> T {
     match res {
         Ok(t) => t,
-        Err(err) => panic!("{}: {:?}", path.as_ref().display(), err),
+        Err(err) => panic!("{}: {err:?}", path.as_ref().display()),
     }
 }
 
@@ -571,7 +571,7 @@ impl TestCommand {
         match stdout.parse::<String>() {
             Ok(t) => t.replace("\r\n", "\n"),
             Err(err) => {
-                panic!("could not convert from string: {:?}\n\n{}", err, stdout);
+                panic!("could not convert from string: {err:?}\n\n{stdout}");
             }
         }
     }
@@ -809,7 +809,7 @@ pub fn tty_fixture_path(path: impl AsRef<Path>) -> PathBuf {
     let path = path.as_ref();
     if *IS_TTY {
         return if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-            path.with_extension(format!("tty.{}", ext))
+            path.with_extension(format!("tty.{ext}"))
         } else {
             path.with_extension("tty")
         }

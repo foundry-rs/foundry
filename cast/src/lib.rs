@@ -170,7 +170,7 @@ where
                 if !al.storage_keys.is_empty() {
                     s.push("  keys:".to_string());
                     for key in al.storage_keys {
-                        s.push(format!("    {:?}", key));
+                        s.push(format!("    {key:?}"));
                     }
                 }
             }
@@ -740,7 +740,7 @@ impl SimpleCast {
             Err(_) => Units::try_from(decimals)?,
         };
         let n: NumberWithBase = parse_units(value, units.as_num())?.into();
-        Ok(format!("{}", n))
+        Ok(format!("{n}"))
     }
 
     /// Converts integers with specified decimals into fixed point numbers
@@ -769,7 +769,7 @@ impl SimpleCast {
         let (sign, mut value, value_len) = {
             let number = NumberWithBase::parse_int(value, None)?;
             let sign = if number.is_nonnegative() { "" } else { "-" };
-            let value = format!("{:#}", number);
+            let value = format!("{number:#}");
             let value_stripped = value.strip_prefix('-').unwrap_or(&value).to_string();
             let value_len = value_stripped.len();
             (sign, value_stripped, value_len)
@@ -778,14 +778,14 @@ impl SimpleCast {
 
         let value = if decimals >= value_len {
             // Add "0." and pad with 0s
-            format!("0.{:0>1$}", value, decimals)
+            format!("0.{value:0>decimals$}")
         } else {
             // Insert decimal at -idx (i.e 1 => decimal idx = -1)
             value.insert(value_len - decimals, '.');
             value
         };
 
-        Ok(format!("{}{}", sign, value))
+        Ok(format!("{sign}{value}"))
     }
 
     /// Concatencates hex strings
@@ -855,7 +855,7 @@ impl SimpleCast {
     /// ```
     pub fn to_uint256(value: &str) -> Result<String> {
         let n = NumberWithBase::parse_uint(value, None)?;
-        Ok(format!("{:#066x}", n))
+        Ok(format!("{n:#066x}"))
     }
 
     /// Converts a number into int256 hex string with 0x prefix
@@ -885,7 +885,7 @@ impl SimpleCast {
     /// ```
     pub fn to_int256(value: &str) -> Result<String> {
         let n = NumberWithBase::parse_int(value, None)?;
-        Ok(format!("{:#066x}", n))
+        Ok(format!("{n:#066x}"))
     }
 
     /// Converts an eth amount into a specified unit
@@ -990,7 +990,7 @@ impl SimpleCast {
         let striped_value = strip_0x(value);
         let bytes = hex::decode(striped_value).expect("Could not decode hex");
         let item = rlp::decode::<Item>(&bytes).expect("Could not decode rlp");
-        Ok(format!("{}", item))
+        Ok(format!("{item}"))
     }
 
     /// Encodes hex data or list of hex data to hexadecimal rlp
@@ -1046,7 +1046,7 @@ impl SimpleCast {
         n.set_base(base_out);
 
         // Use Debug fmt
-        Ok(format!("{:#?}", n))
+        Ok(format!("{n:#?}"))
     }
 
     /// Converts hexdata into bytes32 value
@@ -1074,7 +1074,7 @@ impl SimpleCast {
             eyre::bail!("string >32 bytes");
         }
 
-        let padded = format!("{:0<64}", s);
+        let padded = format!("{s:0<64}");
         // need to use the Debug implementation
         Ok(format!("{:?}", H256::from_str(&padded)?))
     }
@@ -1219,7 +1219,7 @@ impl SimpleCast {
     ) -> Result<Vec<InterfaceSource>> {
         let (contract_abis, contract_names): (Vec<RawAbi>, Vec<String>) = match address_or_path {
             InterfacePath::Local { path, name } => {
-                let file = std::fs::read_to_string(&path).wrap_err("unable to read abi file")?;
+                let file = std::fs::read_to_string(path).wrap_err("unable to read abi file")?;
 
                 let mut json: serde_json::Value = serde_json::from_str(&file)?;
                 let json = if !json["abi"].is_null() { json["abi"].take() } else { json };

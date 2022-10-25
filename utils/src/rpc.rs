@@ -61,10 +61,10 @@ pub fn next_http_rpc_endpoint() -> String {
 pub fn next_rpc_endpoint(network: &str) -> String {
     let idx = next() % num_keys();
     if idx < INFURA_KEYS.len() {
-        format!("https://{}.infura.io/v3/{}", network, INFURA_KEYS[idx])
+        format!("https://{network}.infura.io/v3/{}", INFURA_KEYS[idx])
     } else {
         let idx = idx - INFURA_KEYS.len();
-        format!("https://eth-{}.alchemyapi.io/v2/{}", network, ALCHEMY_MAINNET_KEYS[idx])
+        format!("https://eth-{network}.alchemyapi.io/v2/{}", ALCHEMY_MAINNET_KEYS[idx])
     }
 }
 

@@ -694,7 +694,7 @@ impl Config {
     /// ```
     pub fn project_paths(&self) -> ProjectPathsConfig {
         let mut builder = ProjectPathsConfig::builder()
-            .cache(&self.cache_path.join(SOLIDITY_FILES_CACHE_FILENAME))
+            .cache(self.cache_path.join(SOLIDITY_FILES_CACHE_FILENAME))
             .sources(&self.src)
             .tests(&self.test)
             .scripts(&self.script)
@@ -2356,9 +2356,9 @@ impl BasicConfig {
         let s = toml::to_string_pretty(self)?;
         Ok(format!(
             r#"[profile.{}]
-{}
+{s}
 # See more config options https://github.com/foundry-rs/foundry/tree/master/config"#,
-            self.profile, s
+            self.profile
         ))
     }
 }
@@ -3546,7 +3546,7 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             let addr = Address::random();
             jail.set_env("DAPP_TEST_NUMBER", 1337);
-            jail.set_env("DAPP_TEST_ADDRESS", format!("{:?}", addr));
+            jail.set_env("DAPP_TEST_ADDRESS", format!("{addr:?}"));
             jail.set_env("DAPP_TEST_FUZZ_RUNS", 420);
             jail.set_env("DAPP_TEST_DEPTH", 20);
             jail.set_env("DAPP_FORK_BLOCK", 100);

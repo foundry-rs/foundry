@@ -78,11 +78,11 @@ impl Cmd for GeigerArgs {
                 Ok(metrics) => {
                     let printer = SolFileMetricsPrinter { metrics: &metrics, root: &root };
                     if self.full || printer.metrics.cheatcodes.has_unsafe() {
-                        eprint!("{}", printer);
+                        eprint!("{printer}");
                     }
                 }
                 Err(err) => {
-                    eprintln!("{}", err);
+                    eprintln!("{err}");
                 }
             };
         });

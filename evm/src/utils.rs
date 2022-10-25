@@ -92,5 +92,5 @@ pub fn get_function(
         .into_iter()
         .find(|func| func.short_signature().as_slice() == selector.as_slice())
         .cloned()
-        .wrap_err(format!("{contract_name} does not have the selector {:?}", selector))
+        .wrap_err(format!("{contract_name} does not have the selector {selector:?}"))
 }
