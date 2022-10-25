@@ -57,8 +57,8 @@ impl Cmd for RemoveArgs {
             }
 
             println!(
-                "Removing {} in {:?}, (url: {:?}, tag: {:?})",
-                dep.name, dep_path, dep.url, dep.tag
+                "Removing {} in {dep_path:?}, (url: {:?}, tag: {:?})",
+                dep.name, dep.url, dep.tag
             );
 
             // remove submodule entry from .git/config

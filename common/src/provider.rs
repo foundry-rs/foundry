@@ -61,9 +61,9 @@ impl ProviderBuilder {
         if url_str.starts_with("localhost:") {
             // invalid url: non-prefixed URL scheme is not allowed, so we prepend the default http
             // prefix
-            return Self::new(format!("http://{}", url_str))
+            return Self::new(format!("http://{url_str}"))
         }
-        let err = format!("Invalid provider url: {}", url_str);
+        let err = format!("Invalid provider url: {url_str}");
         Self {
             url: url.into_url().wrap_err(err),
             chain: Chain::Mainnet,

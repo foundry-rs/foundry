@@ -373,7 +373,7 @@ impl TestOutcome {
             }
 
             let term = if failures > 1 { "tests" } else { "test" };
-            println!("Encountered {} failing {} in {}", failures, term, suite_name);
+            println!("Encountered {failures} failing {term} in {suite_name}");
             for (name, result) in suite.failures() {
                 short_test_result(name, result);
             }
@@ -437,7 +437,7 @@ fn short_test_result(name: &str, result: &TestResult) {
         Paint::red(format!("[FAIL. {reason}{counterexample}"))
     };
 
-    println!("{} {} {}", status, name, result.kind.report());
+    println!("{status} {name} {}", result.kind.report());
 }
 
 /// Lists all matching tests
@@ -448,9 +448,9 @@ fn list(runner: MultiContractRunner, filter: Filter, json: bool) -> eyre::Result
         println!("{}", serde_json::to_string(&results)?);
     } else {
         for (file, contracts) in results.iter() {
-            println!("{}", file);
+            println!("{file}");
             for (contract, tests) in contracts.iter() {
-                println!("  {}", contract);
+                println!("  {contract}");
                 println!("    {}\n", tests.join("\n    "));
             }
         }
@@ -479,13 +479,13 @@ fn test(
             );
         } else {
             println!("\nNo tests match the provided pattern:");
-            println!("{}", filter_str);
+            println!("{filter_str}");
             // Try to suggest a test when there's no match
             if let Some(ref test_pattern) = filter.test_pattern {
                 let test_name = test_pattern.as_str();
                 let candidates = runner.get_tests(&filter);
-                if let Some(suggestion) = suggestions::did_you_mean(test_name, &candidates).pop() {
-                    println!("\nDid you mean `{}`?", suggestion);
+                if let Some(suggestion) = suggestions::did_you_mean(test_name, candidates).pop() {
+                    println!("\nDid you mean `{suggestion}`?");
                 }
             }
         }
@@ -517,11 +517,11 @@ fn test(
             let mut tests = suite_result.test_results.clone();
             println!();
             for warning in suite_result.warnings.iter() {
-                eprintln!("{} {}", Paint::yellow("Warning:").bold(), warning);
+                eprintln!("{} {warning}", Paint::yellow("Warning:").bold());
             }
             if !tests.is_empty() {
                 let term = if tests.len() > 1 { "tests" } else { "test" };
-                println!("Running {} {} for {}", tests.len(), term, contract_name);
+                println!("Running {} {term} for {contract_name}", tests.len());
             }
             for (name, result) in &mut tests {
                 short_test_result(name, result);

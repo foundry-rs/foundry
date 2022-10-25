@@ -433,7 +433,7 @@ impl Executor {
             }
             _ => {
                 let reason = decode::decode_revert(result.as_ref(), abi, Some(exit_reason))
-                    .unwrap_or_else(|_| format!("{:?}", exit_reason));
+                    .unwrap_or_else(|_| format!("{exit_reason:?}"));
                 return Err(EvmError::Execution {
                     reverted: true,
                     reason,
@@ -826,7 +826,7 @@ fn convert_call_result<D: Detokenize>(
         }
         _ => {
             let reason = decode::decode_revert(result.as_ref(), abi, Some(status))
-                .unwrap_or_else(|_| format!("{:?}", status));
+                .unwrap_or_else(|_| format!("{status:?}"));
             Err(EvmError::Execution {
                 reverted,
                 reason,

@@ -15,7 +15,7 @@ fn test_cheats_fork_revert() {
             &Filter::new(
                 "testNonExistingContractRevert",
                 ".*",
-                &format!(".*cheats{}Fork", RE_PATH_SEPARATOR),
+                &format!(".*cheats{RE_PATH_SEPARATOR}Fork"),
             ),
             None,
             TEST_OPTS,
@@ -36,7 +36,7 @@ fn test_cheats_fork_revert() {
 /// Executes all non-reverting fork cheatcodes
 #[test]
 fn test_cheats_fork() {
-    let filter = Filter::new(".*", ".*", &format!(".*cheats{}Fork", RE_PATH_SEPARATOR))
+    let filter = Filter::new(".*", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}Fork"))
         .exclude_tests(".*Revert");
     TestConfig::filter(filter).run();
 }
@@ -46,13 +46,13 @@ fn test_cheats_fork() {
 fn test_launch_fork() {
     let rpc_url = foundry_utils::rpc::next_http_archive_rpc_endpoint();
     let runner = forked_runner(&rpc_url);
-    let filter = Filter::new(".*", ".*", &format!(".*fork{}Launch", RE_PATH_SEPARATOR));
+    let filter = Filter::new(".*", ".*", &format!(".*fork{RE_PATH_SEPARATOR}Launch"));
     TestConfig::with_filter(runner, filter).run();
 }
 
 /// Tests that we can transact transactions in forking mode
 #[test]
 fn test_transact_fork() {
-    let filter = Filter::new(".*", ".*", &format!(".*fork{}Transact", RE_PATH_SEPARATOR));
+    let filter = Filter::new(".*", ".*", &format!(".*fork{RE_PATH_SEPARATOR}Transact"));
     TestConfig::filter(filter).run();
 }

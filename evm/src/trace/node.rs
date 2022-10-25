@@ -161,7 +161,7 @@ impl CallTraceNode {
                     decode::decode_revert(bytes, Some(errors), Some(self.trace.status))
                 {
                     self.trace.output =
-                        RawOrDecodedReturnData::Decoded(format!(r#""{}""#, decoded_error));
+                        RawOrDecodedReturnData::Decoded(format!(r#""{decoded_error}""#));
                 }
             }
         }

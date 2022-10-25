@@ -108,7 +108,7 @@ contract Contract {
     .unwrap();
 
     let mut compiled = prj.compile().unwrap();
-    println!("{}", compiled);
+    println!("{compiled}");
     assert!(!compiled.has_compiler_errors());
 
     let contract = compiled.remove_first("Contract").unwrap();

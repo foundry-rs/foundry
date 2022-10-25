@@ -102,7 +102,7 @@ impl VerifyBundle {
                     address: contract_address,
                     contract,
                     compiler_version: Some(version.to_string()),
-                    constructor_args: Some(hex::encode(&constructor_args)),
+                    constructor_args: Some(hex::encode(constructor_args)),
                     constructor_args_path: None,
                     num_of_optimizations: self.num_of_optimizations,
                     chain: self.chain,

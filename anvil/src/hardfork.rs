@@ -108,7 +108,7 @@ impl FromStr for Hardfork {
             "arrowglacier" | "13" => Hardfork::ArrowGlacier,
             "grayglacier" => Hardfork::GrayGlacier,
             "latest" | "14" => Hardfork::Latest,
-            _ => return Err(format!("Unknown hardfork {}", s)),
+            _ => return Err(format!("Unknown hardfork {s}")),
         };
         Ok(hardfork)
     }

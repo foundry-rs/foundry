@@ -16,7 +16,7 @@ pub fn label(token: &Token, labels: &HashMap<Address, String>) -> String {
     match token {
         Token::Address(addr) => {
             if let Some(label) = labels.get(addr) {
-                format!("{}: [{}]", label, to_checksum(addr, None))
+                format!("{label}: [{}]", to_checksum(addr, None))
             } else {
                 format_token(token)
             }

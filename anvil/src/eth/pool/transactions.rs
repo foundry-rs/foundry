@@ -57,7 +57,7 @@ impl FromStr for TransactionOrder {
         let order = match s.as_str() {
             "fees" => TransactionOrder::Fees,
             "fifo" => TransactionOrder::Fifo,
-            _ => return Err(format!("Unknown TransactionOrder: `{}`", s)),
+            _ => return Err(format!("Unknown TransactionOrder: `{s}`")),
         };
         Ok(order)
     }

@@ -520,7 +520,7 @@ impl SourceAnalyzer {
                     self.contracts
                         .get(contract_id)
                         .unwrap_or_else(|| {
-                            panic!("We should have the AST of contract: {:?}", contract_id)
+                            panic!("We should have the AST of contract: {contract_id:?}")
                         })
                         .clone(),
                 )?;

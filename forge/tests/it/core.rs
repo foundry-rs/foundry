@@ -691,7 +691,7 @@ fn test_trace() {
                 "Test {} did not have exactly 1 deployment trace.",
                 test_name
             );
-            assert!(setup_traces.count() <= 1, "Test {} had more than 1 setup trace.", test_name);
+            assert!(setup_traces.count() <= 1, "Test {test_name} had more than 1 setup trace.");
             assert_eq!(
                 execution_traces.count(),
                 1,

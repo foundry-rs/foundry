@@ -280,15 +280,15 @@ impl fmt::Display for BaseCounterExample {
         let args = foundry_common::abi::format_tokens(&self.args).collect::<Vec<_>>().join(", ");
 
         if let Some(sender) = self.sender {
-            write!(f, "sender={:?} addr=", sender)?
+            write!(f, "sender={sender:?} addr=")?
         }
 
         if let Some(name) = &self.contract_name {
-            write!(f, "[{}]", name)?
+            write!(f, "[{name}]")?
         }
 
         if let Some(addr) = &self.addr {
-            write!(f, "{:?} ", addr)?
+            write!(f, "{addr:?} ")?
         }
 
         if let Some(sig) = &self.signature {
@@ -297,7 +297,7 @@ impl fmt::Display for BaseCounterExample {
             write!(f, "calldata=0x{}", hex::encode(&self.calldata))?
         }
 
-        write!(f, ", args=[{}]", args)
+        write!(f, ", args=[{args}]")
     }
 }
 
