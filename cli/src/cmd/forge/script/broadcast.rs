@@ -22,6 +22,7 @@ use foundry_config::Chain;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::{cmp::min, ops::Mul, sync::Arc};
+use tracing::{instrument, trace};
 
 impl ScriptArgs {
     /// Sends the transactions which haven't been broadcasted yet.
@@ -290,6 +291,7 @@ impl ScriptArgs {
 
     /// Modify each transaction according to the specific chain requirements (transaction type
     /// and/or gas calculations).
+    #[instrument(skip_all, fields(%chain))]
     async fn handle_chain_requirements(
         &self,
         txes: VecDeque<TransactionWithMetadata>,
@@ -310,6 +312,7 @@ impl ScriptArgs {
                 let typed_tx = tx.typed_tx_mut();
 
                 if has_different_gas_calc(chain) {
+                    trace!("estimating with different gas calculation");
                     self.estimate_gas(typed_tx, &provider).await?;
                 }
 
@@ -361,10 +364,6 @@ impl ScriptArgs {
         // Chains which use `eth_estimateGas` are being sent sequentially and require their gas to
         // be re-estimated right before broadcasting.
         if has_different_gas_calc(signer.signer().chain_id()) || self.skip_simulation {
-            // if already set, some RPC endpoints might simply return the gas value that is already
-            // set in the request and omit the estimate altogether, so we remove it here
-            let _ = legacy_or_1559.gas_mut().take();
-
             self.estimate_gas(&mut legacy_or_1559, signer.provider()).await?;
         }
 
@@ -392,6 +391,10 @@ impl ScriptArgs {
     where
         T: JsonRpcClient,
     {
+        // if already set, some RPC endpoints might simply return the gas value that is already
+        // set in the request and omit the estimate altogether, so we remove it here
+        let _ = tx.gas_mut().take();
+
         tx.set_gas(
             provider
                 .estimate_gas(tx, None)
