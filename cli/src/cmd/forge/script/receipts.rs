@@ -58,11 +58,10 @@ pub async fn wait_for_receipts(
                     receipts.push(receipt)
                 }
                 Ok(None) => {
-                    errors.push(format!("Received an empty receipt for {:?}", tx_hash));
+                    errors.push(format!("Received an empty receipt for {tx_hash:?}"));
                 }
                 Err(err) => {
-                    errors
-                        .push(format!("Failure on receiving a receipt for {:?}:\n{err}", tx_hash));
+                    errors.push(format!("Failure on receiving a receipt for {tx_hash:?}:\n{err}"));
                 }
             }
             update_progress!(pb, index);

@@ -356,7 +356,7 @@ mod tests {
         assert_eq!(tokens, vec![Token::Uint(100u64.into())]);
 
         let val: U256 = 100u64.into();
-        let hex_val = format!("0x{:x}", val);
+        let hex_val = format!("0x{val:x}");
         let tokens = parse_tokens(std::iter::once((&param, hex_val.as_str())), true).unwrap();
         assert_eq!(tokens, vec![Token::Uint(100u64.into())]);
     }

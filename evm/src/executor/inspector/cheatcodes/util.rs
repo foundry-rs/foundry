@@ -91,11 +91,8 @@ fn sign(private_key: U256, digest: H256, chain_id: U256) -> Result<Bytes, Bytes>
 }
 
 fn derive_key(mnemonic: &str, path: &str, index: u32) -> Result<Bytes, Bytes> {
-    let derivation_path = if path.ends_with('/') {
-        format!("{}{}", path, index)
-    } else {
-        format!("{}/{}", path, index)
-    };
+    let derivation_path =
+        if path.ends_with('/') { format!("{path}{index}") } else { format!("{path}/{index}") };
 
     let wallet = MnemonicBuilder::<English>::default()
         .phrase(mnemonic)
@@ -124,7 +121,7 @@ fn parse(
     is_array: bool,
 ) -> Result<Bytes, Bytes> {
     let msg = format!("Failed to parse `{}` as type `{}`", &val[0].as_ref(), &r#type);
-    value_to_abi(val, r#type, is_array).map_err(|e| format!("{}: {}", msg, e).encode().into())
+    value_to_abi(val, r#type, is_array).map_err(|e| format!("{msg}: {e}").encode().into())
 }
 
 pub fn apply<DB: Database>(
@@ -287,7 +284,7 @@ pub fn value_to_abi(
             }
             ParamType::String => parse_string(v).map(Token::String).map_err(|_| "".to_string()),
             ParamType::Bytes => parse_bytes(v).map(Token::Bytes).map_err(|e| e.to_string()),
-            _ => Err(format!("{} is not a supported type", r#type)),
+            _ => Err(format!("{type} is not a supported type")),
         })
         .collect::<Result<Vec<Token>, String>>()
         .map(|mut tokens| {
@@ -341,8 +338,7 @@ mod tests {
     #[test]
     fn test_int_env() {
         let val = U256::from(100u64);
-        let parsed =
-            value_to_abi(vec![format!("0x{:x}", val)], ParamType::Int(256), false).unwrap();
+        let parsed = value_to_abi(vec![format!("0x{val:x}")], ParamType::Int(256), false).unwrap();
         let decoded = I256::decode(parsed).unwrap();
         assert_eq!(val, decoded.try_into().unwrap());
 

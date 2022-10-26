@@ -60,7 +60,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     .wrap_err_with(|| {
                         // valid json
                         let args = serde_json::to_string(&verify_args).unwrap();
-                        format!("Failed to submit contract verification, payload:\n{}", args)
+                        format!("Failed to submit contract verification, payload:\n{args}")
                     })?;
 
                 if resp.status == "0" {
@@ -237,7 +237,7 @@ impl EtherscanVerificationProvider {
         };
 
         let compiler_version = ensure_solc_build_metadata(compiler_version).await?;
-        let compiler_version = format!("v{}", compiler_version);
+        let compiler_version = format!("v{compiler_version}");
         let constructor_args = if let Some(ref constructor_args_path) = args.constructor_args_path {
             let abi = contract.unwrap().abi.ok_or(eyre!("Can't find ABI in cached artifact."))?;
             let constructor = abi

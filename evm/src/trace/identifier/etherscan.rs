@@ -78,7 +78,7 @@ impl EtherscanIdentifier {
         let outputs_fut = contracts_iter
             .clone()
             .map(|(address, metadata)| {
-                println!("Compiling: {} {:?}", metadata.contract_name, address);
+                println!("Compiling: {} {address:?}", metadata.contract_name);
                 compile::compile_from_source(metadata)
             })
             .collect::<Vec<_>>();

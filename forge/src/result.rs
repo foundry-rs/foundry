@@ -75,6 +75,9 @@ pub struct TestResult {
     /// be printed to the user.
     pub logs: Vec<Log>,
 
+    /// The decoded DSTest logging events and Hardhat's `console.log` from [logs](Self::logs).
+    pub decoded_logs: Vec<String>,
+
     /// What kind of test this was
     pub kind: TestKind,
 
@@ -108,13 +111,13 @@ impl fmt::Display for TestKindReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             TestKindReport::Standard { gas } => {
-                write!(f, "(gas: {})", gas)
+                write!(f, "(gas: {gas})")
             }
             TestKindReport::Fuzz { runs, mean_gas, median_gas } => {
-                write!(f, "(runs: {}, μ: {}, ~: {})", runs, mean_gas, median_gas)
+                write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas})")
             }
             TestKindReport::Invariant { runs, calls, reverts } => {
-                write!(f, "(runs: {}, calls: {}, reverts: {})", runs, calls, reverts)
+                write!(f, "(runs: {runs}, calls: {calls}, reverts: {reverts})")
             }
         }
     }
