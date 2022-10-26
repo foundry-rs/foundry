@@ -8,7 +8,7 @@ Ever wanted to quickly test a small feature in solidity?
 
 Perhaps to test how custom errors work, or how to write inline assembly?
 
-Chisel is your solution. Chisel let's you write, execute, and debug Solidity directly in the command line.
+Chisel is a fully-functional Solidity REPL, allowing you to write, execute, and debug Solidity directly in the command line.
 
 Once you finish testing, Chisel even lets you export your code to a new solidity file!
 
@@ -68,7 +68,9 @@ Chisel aims to improve upon soli, with native foundry integration by providing f
     - [x] Cloning
 - [ ] Optimizations.
   - [ ] Speed up REPL execution time.
-- [ ] Finish README.
+- [x] Finish README.
+- [ ] First review.
+  - [ ] *add requested changes here*
 
 ## Usage
 
