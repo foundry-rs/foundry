@@ -1675,7 +1675,7 @@ impl Backend {
 
     fn mined_transaction_by_hash(&self, hash: H256) -> Option<Transaction> {
         let (info, block) = {
-            let storage = self.blockchain.storage.read_recursive();
+            let storage = self.blockchain.storage.read();
             let MinedTransaction { info, block_hash, .. } =
                 storage.transactions.get(&hash)?.clone();
             let block = storage.blocks.get(&block_hash).cloned()?;
