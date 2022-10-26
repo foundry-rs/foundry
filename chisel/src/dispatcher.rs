@@ -81,8 +81,8 @@ impl ChiselDisptacher {
                     Paint::cyan(format!("{} Chisel help", CHISEL_CHAR)),
                     ChiselCommand::iter()
                         .map(|cmd| {
-                            let descriptor = CmdDescriptor::from(cmd);
-                            format!("!{} - {}", Paint::green(descriptor.0), descriptor.1)
+                            let (cmd, desc) = CmdDescriptor::from(cmd);
+                            format!("!{} - {}", Paint::green(cmd), desc)
                         })
                         .collect::<Vec<String>>()
                         .join("\n")
@@ -139,7 +139,9 @@ impl ChiselDisptacher {
 
                 // WARNING: Overwrites the current session
                 if let Ok(mut new_session) = new_session {
-                    // Regenerate [IntermediateOutput]
+                    // Regenerate [IntermediateOutput]; It cannot be serialized.
+                    //
+                    // SAFETY
                     // Should never panic due to the checks performed when the session was created
                     // in the first place.
                     new_session.session_source.as_mut().unwrap().build().unwrap();
@@ -215,6 +217,8 @@ impl ChiselDisptacher {
                         args[0]
                     };
 
+                    // Update the fork_url inside of the [SessionSourceConfig]'s [EvmOpts]
+                    // field
                     session_source.config.evm_opts.fork_url = Some(fork_url.to_owned());
 
                     // Clear the backend so that it is re-instantiated with the new fork
@@ -343,7 +347,7 @@ impl ChiselDisptacher {
             }
         };
 
-        // TODO: Support function calls / expressions
+        // TODO: Support expressions with ambiguous types / no variable declaration
         if let Some(generated_output) = &source.generated_output {
             if generated_output.intermediate.variable_definitions.get(input).is_some() {
                 match source.inspect(input).await {
@@ -372,14 +376,14 @@ impl ChiselDisptacher {
 
         if do_execute {
             match new_source.execute().await {
-                Ok(mut res) => {
-                    let failed = !res.1.success;
+                Ok((_, mut res)) => {
+                    let failed = !res.success;
 
                     // If traces are enabled or there was an error in execution, show the execution
                     // traces.
                     if new_source.config.traces || failed {
-                        if let Ok(decoder) = self.decode_traces(&new_source.config, &mut res.1) {
-                            if self.show_traces(&decoder, &mut res.1).await.is_err() {
+                        if let Ok(decoder) = self.decode_traces(&new_source.config, &mut res) {
+                            if self.show_traces(&decoder, &mut res).await.is_err() {
                                 self.errored = true;
                                 return DispatchResult::CommandFailed(
                                     "Failed to display traces".to_owned(),

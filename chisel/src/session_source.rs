@@ -234,7 +234,7 @@ impl SessionSource {
         Vec<solang_parser::pt::Statement>,
     )> {
         // Extract the SourceUnitParts from the source_unit
-        let mut source_unit_parts = source_unit.0;
+        let solang_parser::pt::SourceUnit(mut source_unit_parts) = source_unit;
 
         // The first item in the source unit should be the pragma directive
         if !matches!(

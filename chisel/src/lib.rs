@@ -4,11 +4,11 @@
 #![forbid(unsafe_code)]
 #![forbid(where_clauses_object_safety)]
 
-/// Chisel Environment Module
-pub mod session;
-
 /// REPL input dispatcher module
 pub mod dispatcher;
+
+/// Chisel Environment Module
+pub mod session;
 
 /// Chisel Session Source wrapper
 pub mod session_source;
