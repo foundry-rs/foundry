@@ -207,3 +207,27 @@ async fn test_subscriptions() {
 
     assert_eq!(blocks, vec![1, 2, 3])
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_sub_new_heads_fast() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    let provider = handle.ws_provider().await;
+
+    let blocks = provider.subscribe_blocks().await.unwrap();
+
+    let num = 1_000u64;
+    let mine_api = api.clone();
+    tokio::task::spawn(async move {
+        for _ in 0..num {
+            mine_api.mine_one().await;
+        }
+    });
+
+    // collect all the blocks
+    let blocks = blocks.take(num as usize).collect::<Vec<_>>().await;
+    let block_numbers = blocks.into_iter().map(|b| b.number.unwrap().as_u64()).collect::<Vec<_>>();
+
+    let numbers = (1..=num).collect::<Vec<_>>();
+    assert_eq!(block_numbers, numbers);
+}

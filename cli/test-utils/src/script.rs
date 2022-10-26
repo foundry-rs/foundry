@@ -183,7 +183,7 @@ impl ScriptTester {
             if expected.is_err() { self.cmd.stderr_lossy() } else { self.cmd.stdout_lossy() };
 
         if !output.contains(expected.as_str()) {
-            panic!("OUTPUT: {}\n\nEXPECTED: {}", output, expected.as_str());
+            panic!("OUTPUT: {output}\n\nEXPECTED: {}", expected.as_str());
         }
         self
     }

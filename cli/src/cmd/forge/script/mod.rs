@@ -286,7 +286,7 @@ impl ScriptArgs {
                         } else {
                             index.to_string()
                         };
-                        println!("{}: {} {}", label.trim_end(), internal_type, format_token(token));
+                        println!("{}: {internal_type} {}", label.trim_end(), format_token(token));
                     }
                 }
                 Err(_) => {
@@ -299,13 +299,13 @@ impl ScriptArgs {
         if !console_logs.is_empty() {
             println!("\n== Logs ==");
             for log in console_logs {
-                println!("  {}", log);
+                println!("  {log}");
             }
         }
 
         if !result.success {
             let revert_msg = decode::decode_revert(&result.returned[..], None, None)
-                .map(|err| format!("{}\n", err))
+                .map(|err| format!("{err}\n"))
                 .unwrap_or_else(|_| "Script failed.\n".to_string());
 
             eyre::bail!("{}", Paint::red(revert_msg));
@@ -324,7 +324,7 @@ impl ScriptArgs {
         let console_logs = decode_console_logs(&result.logs);
         let output = JsonResult { logs: console_logs, gas_used: result.gas_used, returns };
         let j = serde_json::to_string(&output)?;
-        println!("{}", j);
+        println!("{j}");
 
         Ok(())
     }
@@ -506,7 +506,7 @@ impl ScriptArgs {
                 if let RawOrDecodedReturnData::Raw(ref deployed_code) = node.trace.output {
                     // Only push if it was not present already
                     if !bytecodes.iter().any(|(_, b, _)| b == init_code) {
-                        bytecodes.push((format!("Unknown{}", unknown_c), init_code, deployed_code));
+                        bytecodes.push((format!("Unknown{unknown_c}"), init_code, deployed_code));
                         unknown_c += 1;
                     }
                     continue

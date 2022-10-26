@@ -721,6 +721,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "clap 4.0.1",
+ "criterion",
  "dirs 4.0.0",
  "ethers",
  "ethers-solc",
@@ -730,7 +731,6 @@ dependencies = [
  "foundry-common",
  "foundry-config",
  "foundry-evm",
- "lazy_static",
  "revm",
  "rustyline",
  "semver",

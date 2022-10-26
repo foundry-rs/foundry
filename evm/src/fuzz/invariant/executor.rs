@@ -389,7 +389,7 @@ impl<'a> InvariantExecutor<'a> {
                 abi.functions()
                     .into_iter()
                     .find(|func| func.short_signature().as_slice() == selector.as_slice())
-                    .wrap_err(format!("{contract} does not have the selector {:?}", selector))?;
+                    .wrap_err(format!("{contract} does not have the selector {selector:?}"))?;
             }
 
             return Ok(artifact.identifier())

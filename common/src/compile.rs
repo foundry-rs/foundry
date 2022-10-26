@@ -197,7 +197,7 @@ impl Display for SizeReport {
             ]);
         }
 
-        writeln!(f, "{}", table)?;
+        writeln!(f, "{table}")?;
         Ok(())
     }
 }

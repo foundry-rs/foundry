@@ -69,6 +69,6 @@ async fn can_get_random_account_proofs() {
         let _ = api
             .get_proof(acc, Vec::new(), None)
             .await
-            .unwrap_or_else(|_| panic!("Failed to get proof for {:?}", acc));
+            .unwrap_or_else(|_| panic!("Failed to get proof for {acc:?}"));
     }
 }

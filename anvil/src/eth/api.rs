@@ -683,7 +683,7 @@ impl EthApi {
         node_info!("eth_signTypedData_v4");
         let signer = self.get_signer(address).ok_or(BlockchainError::NoSignerAvailable)?;
         let signature = signer.sign_typed_data(address, data).await?;
-        Ok(format!("0x{}", signature))
+        Ok(format!("0x{signature}"))
     }
 
     /// The sign method calculates an Ethereum specific signature
@@ -693,7 +693,7 @@ impl EthApi {
         node_info!("eth_sign");
         let signer = self.get_signer(address).ok_or(BlockchainError::NoSignerAvailable)?;
         let signature = signer.sign(address, content.as_ref()).await?;
-        Ok(format!("0x{}", signature))
+        Ok(format!("0x{signature}"))
     }
 
     /// Sends a transaction
@@ -1570,7 +1570,7 @@ impl EthApi {
                     .initial_backoff(1000)
                     .build()
                     .map_err(|_| {
-                        ProviderError::CustomError(format!("Failed to parse invalid url {}", url))
+                        ProviderError::CustomError(format!("Failed to parse invalid url {url}"))
                     })?
                     .interval(interval),
             );

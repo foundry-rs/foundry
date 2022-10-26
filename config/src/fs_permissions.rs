@@ -177,7 +177,7 @@ impl FromStr for FsAccessPermission {
             "false" | "none" => Ok(FsAccessPermission::None),
             "read" => Ok(FsAccessPermission::Read),
             "write" => Ok(FsAccessPermission::Write),
-            _ => Err(format!("Unknown variant {}", s)),
+            _ => Err(format!("Unknown variant {s}")),
         }
     }
 }

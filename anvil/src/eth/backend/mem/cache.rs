@@ -32,7 +32,7 @@ impl DiskStateCache {
             }
         }
         if let Some(ref temp_dir) = self.temp_dir {
-            let path = temp_dir.path().join(format!("{:?}.json", hash));
+            let path = temp_dir.path().join(format!("{hash:?}.json"));
             Some(f(path))
         } else {
             None

@@ -106,7 +106,7 @@ impl CreateArgs {
                     .link_references
                     .iter()
                     .flat_map(|(path, names)| {
-                        names.keys().map(move |name| format!("\t{}: {}", name, path))
+                        names.keys().map(move |name| format!("\t{name}: {path}"))
                     })
                     .collect::<Vec<String>>()
                     .join("\n");

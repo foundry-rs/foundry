@@ -489,9 +489,9 @@ impl ToBase for NumberWithBase {
     fn to_base(&self, base: Base, add_prefix: bool) -> Result<String, Self::Err> {
         let n = self.with_base(base);
         if add_prefix {
-            Ok(format!("{:#?}", n))
+            Ok(format!("{n:#?}"))
         } else {
-            Ok(format!("{:?}", n))
+            Ok(format!("{n:?}"))
         }
     }
 }
@@ -502,9 +502,9 @@ impl ToBase for I256 {
     fn to_base(&self, base: Base, add_prefix: bool) -> Result<String, Self::Err> {
         let n = NumberWithBase::from(*self).with_base(base);
         if add_prefix {
-            Ok(format!("{:#?}", n))
+            Ok(format!("{n:#?}"))
         } else {
-            Ok(format!("{:?}", n))
+            Ok(format!("{n:?}"))
         }
     }
 }
@@ -515,9 +515,9 @@ impl ToBase for U256 {
     fn to_base(&self, base: Base, add_prefix: bool) -> Result<String, Self::Err> {
         let n = NumberWithBase::from(*self).with_base(base);
         if add_prefix {
-            Ok(format!("{:#?}", n))
+            Ok(format!("{n:#?}"))
         } else {
-            Ok(format!("{:?}", n))
+            Ok(format!("{n:?}"))
         }
     }
 }
@@ -536,9 +536,9 @@ impl ToBase for str {
     fn to_base(&self, base: Base, add_prefix: bool) -> Result<String, Self::Err> {
         let n = NumberWithBase::from_str(self)?.with_base(base);
         if add_prefix {
-            Ok(format!("{:#?}", n))
+            Ok(format!("{n:#?}"))
         } else {
-            Ok(format!("{:?}", n))
+            Ok(format!("{n:?}"))
         }
     }
 }
@@ -702,11 +702,11 @@ mod tests {
 
     #[test]
     fn test_format_pos() {
-        let expected_2: Vec<_> = POS_NUM.iter().map(|n| format!("{:b}", n)).collect();
-        let expected_8: Vec<_> = POS_NUM.iter().map(|n| format!("{:o}", n)).collect();
-        let expected_10: Vec<_> = POS_NUM.iter().map(|n| format!("{:}", n)).collect();
-        let expected_l16: Vec<_> = POS_NUM.iter().map(|n| format!("{:x}", n)).collect();
-        let expected_u16: Vec<_> = POS_NUM.iter().map(|n| format!("{:X}", n)).collect();
+        let expected_2: Vec<_> = POS_NUM.iter().map(|n| format!("{n:b}")).collect();
+        let expected_8: Vec<_> = POS_NUM.iter().map(|n| format!("{n:o}")).collect();
+        let expected_10: Vec<_> = POS_NUM.iter().map(|n| format!("{n:}")).collect();
+        let expected_l16: Vec<_> = POS_NUM.iter().map(|n| format!("{n:x}")).collect();
+        let expected_u16: Vec<_> = POS_NUM.iter().map(|n| format!("{n:X}")).collect();
 
         for (i, n) in POS_NUM.into_iter().enumerate() {
             let mut num: NumberWithBase = I256::from(n).into();
@@ -724,13 +724,13 @@ mod tests {
     fn test_format_neg() {
         // underlying is 256 bits so we have to pad left manually
 
-        let expected_2: Vec<_> = NEG_NUM.iter().map(|n| format!("{:1>256b}", n)).collect();
+        let expected_2: Vec<_> = NEG_NUM.iter().map(|n| format!("{n:1>256b}")).collect();
         // let expected_8: Vec<_> = NEG_NUM.iter().map(|n| format!("1{:7>85o}", n)).collect();
         // Sign not included, see NumberWithBase::format
         let expected_10: Vec<_> =
-            NEG_NUM.iter().map(|n| format!("{:}", n).trim_matches('-').to_string()).collect();
-        let expected_l16: Vec<_> = NEG_NUM.iter().map(|n| format!("{:f>64x}", n)).collect();
-        let expected_u16: Vec<_> = NEG_NUM.iter().map(|n| format!("{:F>64X}", n)).collect();
+            NEG_NUM.iter().map(|n| format!("{n:}").trim_matches('-').to_string()).collect();
+        let expected_l16: Vec<_> = NEG_NUM.iter().map(|n| format!("{n:f>64x}")).collect();
+        let expected_u16: Vec<_> = NEG_NUM.iter().map(|n| format!("{n:F>64X}")).collect();
 
         for (i, n) in NEG_NUM.into_iter().enumerate() {
             let mut num: NumberWithBase = I256::from(n).into();
@@ -748,27 +748,27 @@ mod tests {
         let nums: Vec<_> =
             POS_NUM.into_iter().map(|n| NumberWithBase::from(I256::from(n))).collect();
 
-        let actual_2: Vec<_> = nums.iter().map(|n| format!("{:b}", n)).collect();
-        let actual_2_alt: Vec<_> = nums.iter().map(|n| format!("{:#b}", n)).collect();
-        let actual_8: Vec<_> = nums.iter().map(|n| format!("{:o}", n)).collect();
-        let actual_8_alt: Vec<_> = nums.iter().map(|n| format!("{:#o}", n)).collect();
-        let actual_10: Vec<_> = nums.iter().map(|n| format!("{:}", n)).collect();
-        let actual_10_alt: Vec<_> = nums.iter().map(|n| format!("{:#}", n)).collect();
-        let actual_l16: Vec<_> = nums.iter().map(|n| format!("{:x}", n)).collect();
-        let actual_l16_alt: Vec<_> = nums.iter().map(|n| format!("{:#x}", n)).collect();
-        let actual_u16: Vec<_> = nums.iter().map(|n| format!("{:X}", n)).collect();
-        let actual_u16_alt: Vec<_> = nums.iter().map(|n| format!("{:#X}", n)).collect();
+        let actual_2: Vec<_> = nums.iter().map(|n| format!("{n:b}")).collect();
+        let actual_2_alt: Vec<_> = nums.iter().map(|n| format!("{n:#b}")).collect();
+        let actual_8: Vec<_> = nums.iter().map(|n| format!("{n:o}")).collect();
+        let actual_8_alt: Vec<_> = nums.iter().map(|n| format!("{n:#o}")).collect();
+        let actual_10: Vec<_> = nums.iter().map(|n| format!("{n:}")).collect();
+        let actual_10_alt: Vec<_> = nums.iter().map(|n| format!("{n:#}")).collect();
+        let actual_l16: Vec<_> = nums.iter().map(|n| format!("{n:x}")).collect();
+        let actual_l16_alt: Vec<_> = nums.iter().map(|n| format!("{n:#x}")).collect();
+        let actual_u16: Vec<_> = nums.iter().map(|n| format!("{n:X}")).collect();
+        let actual_u16_alt: Vec<_> = nums.iter().map(|n| format!("{n:#X}")).collect();
 
-        let expected_2: Vec<_> = POS_NUM.iter().map(|n| format!("{:b}", n)).collect();
-        let expected_2_alt: Vec<_> = POS_NUM.iter().map(|n| format!("{:#b}", n)).collect();
-        let expected_8: Vec<_> = POS_NUM.iter().map(|n| format!("{:o}", n)).collect();
-        let expected_8_alt: Vec<_> = POS_NUM.iter().map(|n| format!("{:#o}", n)).collect();
-        let expected_10: Vec<_> = POS_NUM.iter().map(|n| format!("{:}", n)).collect();
-        let expected_10_alt: Vec<_> = POS_NUM.iter().map(|n| format!("{:#}", n)).collect();
-        let expected_l16: Vec<_> = POS_NUM.iter().map(|n| format!("{:x}", n)).collect();
-        let expected_l16_alt: Vec<_> = POS_NUM.iter().map(|n| format!("{:#x}", n)).collect();
-        let expected_u16: Vec<_> = POS_NUM.iter().map(|n| format!("{:X}", n)).collect();
-        let expected_u16_alt: Vec<_> = POS_NUM.iter().map(|n| format!("{:#X}", n)).collect();
+        let expected_2: Vec<_> = POS_NUM.iter().map(|n| format!("{n:b}")).collect();
+        let expected_2_alt: Vec<_> = POS_NUM.iter().map(|n| format!("{n:#b}")).collect();
+        let expected_8: Vec<_> = POS_NUM.iter().map(|n| format!("{n:o}")).collect();
+        let expected_8_alt: Vec<_> = POS_NUM.iter().map(|n| format!("{n:#o}")).collect();
+        let expected_10: Vec<_> = POS_NUM.iter().map(|n| format!("{n:}")).collect();
+        let expected_10_alt: Vec<_> = POS_NUM.iter().map(|n| format!("{n:#}")).collect();
+        let expected_l16: Vec<_> = POS_NUM.iter().map(|n| format!("{n:x}")).collect();
+        let expected_l16_alt: Vec<_> = POS_NUM.iter().map(|n| format!("{n:#x}")).collect();
+        let expected_u16: Vec<_> = POS_NUM.iter().map(|n| format!("{n:X}")).collect();
+        let expected_u16_alt: Vec<_> = POS_NUM.iter().map(|n| format!("{n:#X}")).collect();
 
         for (i, _) in POS_NUM.iter().enumerate() {
             assert_eq!(actual_2[i], expected_2[i]);

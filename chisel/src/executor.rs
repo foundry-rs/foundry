@@ -78,9 +78,7 @@ impl SessionSource {
     pub async fn inspect(&mut self, item: &str) -> Result<String> {
         match self.clone_with_new_line(format!("bytes memory inspectoor = abi.encode({item})")) {
             Ok((mut source, _)) => match source.execute().await {
-                Ok(res) => {
-                    let res = res.1;
-
+                Ok((_, res)) => {
                     if let Some((stack, memory, _)) = res.state {
                         let (ty, _) = if let Some(def) = source
                             .generated_output
@@ -92,7 +90,7 @@ impl SessionSource {
                         {
                             def
                         } else {
-                            eyre::bail!("Error: `{item}` could not be found");
+                            eyre::bail!("Error: `{item}` definition could not be found");
                         };
                         let ty = if let Some(ty) =
                             Type::from_expression(ty).and_then(|ty| ty.as_ethabi())

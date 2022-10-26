@@ -14,6 +14,9 @@ use forge::{
 use revm::{return_ok, Return};
 use std::collections::BTreeMap;
 
+/// The function selector of the REPL contract's entrypoint, the `run()` function.
+static RUN_SELECTOR: [u8; 4] = [0xc0, 0x40, 0x62, 0x26];
+
 /// The Chisel Runner
 ///
 /// Based off of foundry's forge cli runner for scripting.
@@ -45,7 +48,7 @@ pub struct ChiselResult {
     pub returned: bytes::Bytes,
     /// Called address
     pub address: Option<Address>,
-    /// EVM State at the final instruction of the "run()" function
+    /// EVM State at the final instruction of the `run()` function
     pub state: Option<(revm::Stack, revm::Memory, revm::Return)>,
 }
 
@@ -72,8 +75,7 @@ impl ChiselRunner {
         self.executor.set_balance(self.sender, self.initial_balance)?;
 
         // Call the "run()" function of the REPL contract
-        let call_res =
-            self.call(self.sender, address, Bytes::from([0xc0, 0x40, 0x62, 0x26]), 0.into(), true);
+        let call_res = self.call(self.sender, address, Bytes::from(RUN_SELECTOR), 0.into(), true);
 
         match call_res {
             Ok(call_res) => Ok((address, call_res)),

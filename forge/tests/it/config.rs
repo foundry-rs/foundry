@@ -193,6 +193,7 @@ pub fn rpc_endpoints() -> RpcEndpoints {
 
 /// A helper to assert the outcome of multiple tests with helpful assert messages
 #[track_caller]
+#[allow(clippy::type_complexity)]
 pub fn assert_multiple(
     actuals: &BTreeMap<String, SuiteResult>,
     expecteds: BTreeMap<
@@ -215,7 +216,7 @@ pub fn assert_multiple(
             contract_name
         );
         for (test_name, should_pass, reason, expected_logs, expected_warning_count) in tests {
-            let logs = decode_console_logs(&actuals[*contract_name].test_results[*test_name].logs);
+            let logs = &actuals[*contract_name].test_results[*test_name].decoded_logs;
 
             let warnings_count = &actuals[*contract_name].warnings.len();
 

@@ -7,7 +7,6 @@ use crate::{prelude::SessionSource, session_source::SessionSourceConfig};
 use ethers_solc::Solc;
 use eyre::Result;
 use foundry_config::SolcReq;
-pub use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use time::{format_description, OffsetDateTime};
@@ -66,18 +65,6 @@ impl ChiselSession {
         } else {
             panic!("Failed to install solidity via svm!");
         }
-    }
-
-    /// Helper function to parse a solidity version string.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the version string is not a valid semver version.
-    pub fn parse_solc_version(solc_version: &'static str) -> Version {
-        Version::parse(solc_version).unwrap_or_else(|e| {
-            tracing::error!("Error parsing provided solc version: \"{}\"", e);
-            panic!("Error parsing provided solc version: \"{e}\"");
-        })
     }
 
     /// Render the full source code for the current session.
@@ -262,6 +249,8 @@ impl ChiselSession {
     }
 }
 
+/// Generic helper function that attempts to convert a type that has
+/// an [Into<OffsetDateTime>] implementation into a formatted date string.
 fn systemtime_strftime<T>(dt: T, format: &str) -> Result<String>
 where
     T: Into<OffsetDateTime>,

@@ -9,9 +9,9 @@ use futures::StreamExt;
 pub fn rand_ipc_endpoint() -> String {
     let num: u64 = rand::Rng::gen(&mut rand::thread_rng());
     if cfg!(windows) {
-        format!(r"\\.\pipe\anvil-ipc-{}", num)
+        format!(r"\\.\pipe\anvil-ipc-{num}")
     } else {
-        format!(r"/tmp/anvil-ipc-{}", num)
+        format!(r"/tmp/anvil-ipc-{num}")
     }
 }
 

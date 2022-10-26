@@ -4,7 +4,6 @@
 //! the REPL contract's source code. It provides simple compilation, parsing, and
 //! execution helpers.
 
-use crate::SCRIPT_PATH;
 use ethers_solc::{
     artifacts::{Source, Sources},
     CompilerInput, CompilerOutput, Solc,
@@ -12,9 +11,27 @@ use ethers_solc::{
 use eyre::Result;
 use forge::executor::{opts::EvmOpts, Backend};
 use foundry_config::Config;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use solang_parser::pt::CodeLocation;
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf};
+
+/// Solidity source for the `Script` contract in [forge-std](https://github.com/foundry-rs/forge-std)
+static SCRIPT_SOURCE: &'static str = include_str!("../../testdata/lib/forge-std/src/Script.sol");
+/// Solidity source for the `Vm` interface in [forge-std](https://github.com/foundry-rs/forge-std)
+static VM_SOURCE: &'static str = include_str!("../../testdata/lib/forge-std/src/Vm.sol");
+/// Solidity source for the `console` contract in [forge-std](https://github.com/foundry-rs/forge-std)
+static CONSOLE_SOURCE: &'static str = include_str!("../../testdata/lib/forge-std/src/console.sol");
+/// Solidity source for the `console2` contract in [forge-std](https://github.com/foundry-rs/forge-std)
+static CONSOLE_2_SOURCE: &'static str =
+    include_str!("../../testdata/lib/forge-std/src/console2.sol");
+/// Array of forge-std contract file names paired with their source code
+static SOURCES: [(&'static str, &'static str); 4] = [
+    ("Script.sol", SCRIPT_SOURCE),
+    ("Vm.sol", VM_SOURCE),
+    ("console.sol", CONSOLE_SOURCE),
+    ("console2.sol", CONSOLE_2_SOURCE),
+];
 
 /// Intermediate output for the compiled [SessionSource]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -187,10 +204,12 @@ impl SessionSource {
     pub fn compiler_input(&self) -> CompilerInput {
         let mut sources = Sources::new();
         sources.insert(self.file_name.clone(), Source { content: self.to_string() });
-        sources.insert(
-            SCRIPT_PATH.clone(),
-            Source { content: fs::read_to_string(SCRIPT_PATH.as_path()).unwrap() },
-        );
+        for (name, source) in SOURCES {
+            sources.insert(
+                PathBuf::from(format!("forge-std/{}", name)),
+                Source { content: source.to_owned() },
+            );
+        }
         CompilerInput::with_sources(sources).pop().unwrap()
     }
 
@@ -215,7 +234,7 @@ impl SessionSource {
         Vec<solang_parser::pt::Statement>,
     )> {
         // Extract the SourceUnitParts from the source_unit
-        let mut source_unit_parts = source_unit.0;
+        let solang_parser::pt::SourceUnit(mut source_unit_parts) = source_unit;
 
         // The first item in the source unit should be the pragma directive
         if !matches!(
@@ -361,27 +380,41 @@ impl SessionSource {
                         })
                         .collect()
                 } else {
-                    vec![]
+                    Vec::default()
                 }
             }
-            _ => vec![],
+            _ => Vec::default(),
         }
     }
 }
 
 impl std::fmt::Display for SessionSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Fill remappings
+        // TODO: Not a very clean soln. Should retain remapped import when displaying
+        // via `!source` or exporting to a script file.
+        let remappings = &self.config.config.remappings;
+        let global_code = {
+            let mut content = self.global_code.clone();
+            for remapping in remappings {
+                // Replace remapped path with true path
+                if content.contains(&remapping.name) {
+                    content =
+                        content.replace(&remapping.name, remapping.path.path.to_str().unwrap());
+                    break
+                }
+            }
+            content
+        };
+
         // Write the license and solidity pragma version
         f.write_str("// SPDX-License-Identifier: UNLICENSED\n")?;
-        let semver::Version { major, minor, patch, .. } = self.solc.version().unwrap();
+        let Version { major, minor, patch, .. } = self.solc.version().unwrap();
         f.write_fmt(format_args!("pragma solidity ^{major}.{minor}.{patch};\n\n",))?;
-        f.write_fmt(format_args!(
-            "import {{Script}} from \"{}\";\n",
-            SCRIPT_PATH.to_str().unwrap()
-        ))?;
+        f.write_str("import {Script} from \"forge-std/Script.sol\";\n")?;
 
         // Global imports and definitions
-        f.write_str(&self.global_code)?;
+        f.write_str(&global_code)?;
         f.write_str("\n")?;
 
         f.write_fmt(format_args!("contract {} is Script {{\n", self.contract_name))?;

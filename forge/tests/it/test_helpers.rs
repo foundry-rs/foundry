@@ -45,7 +45,7 @@ pub static LIBS_PROJECT: Lazy<Project> = Lazy::new(|| {
 pub static COMPILED: Lazy<ProjectCompileOutput> = Lazy::new(|| {
     let out = (*PROJECT).compile().unwrap();
     if out.has_compiler_errors() {
-        eprintln!("{}", out);
+        eprintln!("{out}");
         panic!("Compiled with errors");
     }
     out
@@ -54,7 +54,7 @@ pub static COMPILED: Lazy<ProjectCompileOutput> = Lazy::new(|| {
 pub static COMPILED_WITH_LIBS: Lazy<ProjectCompileOutput> = Lazy::new(|| {
     let out = (*LIBS_PROJECT).compile().unwrap();
     if out.has_compiler_errors() {
-        eprintln!("{}", out);
+        eprintln!("{out}");
         panic!("Compiled with errors");
     }
     out
@@ -106,12 +106,12 @@ pub mod filter {
         pub fn new(test_pattern: &str, contract_pattern: &str, path_pattern: &str) -> Self {
             Filter {
                 test_regex: Regex::new(test_pattern)
-                    .unwrap_or_else(|_| panic!("Failed to parse test pattern: `{}`", test_pattern)),
+                    .unwrap_or_else(|_| panic!("Failed to parse test pattern: `{test_pattern}`")),
                 contract_regex: Regex::new(contract_pattern).unwrap_or_else(|_| {
-                    panic!("Failed to parse contract pattern: `{}`", contract_pattern)
+                    panic!("Failed to parse contract pattern: `{contract_pattern}`")
                 }),
                 path_regex: Regex::new(path_pattern)
-                    .unwrap_or_else(|_| panic!("Failed to parse path pattern: `{}`", path_pattern)),
+                    .unwrap_or_else(|_| panic!("Failed to parse path pattern: `{path_pattern}`")),
                 exclude_tests: None,
                 exclude_paths: None,
             }

@@ -14,7 +14,7 @@ use forge::trace::{
 };
 use foundry_config::Config;
 use solang_parser::diagnostics::Diagnostic;
-use std::{error, error::Error, str::FromStr};
+use std::{error::Error, path::PathBuf, str::FromStr};
 use strum::{EnumIter, IntoEnumIterator};
 use yansi::Paint;
 
@@ -81,8 +81,8 @@ impl ChiselDisptacher {
                     Paint::cyan(format!("{} Chisel help", CHISEL_CHAR)),
                     ChiselCommand::iter()
                         .map(|cmd| {
-                            let descriptor = CmdDescriptor::from(cmd);
-                            format!("!{} - {}", Paint::green(descriptor.0), descriptor.1)
+                            let (cmd, desc) = CmdDescriptor::from(cmd);
+                            format!("!{} - {}", Paint::green(cmd), desc)
                         })
                         .collect::<Vec<String>>()
                         .join("\n")
@@ -139,7 +139,9 @@ impl ChiselDisptacher {
 
                 // WARNING: Overwrites the current session
                 if let Ok(mut new_session) = new_session {
-                    // Regenerate [IntermediateOutput]
+                    // Regenerate [IntermediateOutput]; It cannot be serialized.
+                    //
+                    // SAFETY
                     // Should never panic due to the checks performed when the session was created
                     // in the first place.
                     new_session.session_source.as_mut().unwrap().build().unwrap();
@@ -215,6 +217,8 @@ impl ChiselDisptacher {
                         args[0]
                     };
 
+                    // Update the fork_url inside of the [SessionSourceConfig]'s [EvmOpts]
+                    // field
                     session_source.config.evm_opts.fork_url = Some(fork_url.to_owned());
 
                     // Clear the backend so that it is re-instantiated with the new fork
@@ -244,9 +248,8 @@ impl ChiselDisptacher {
                 if let Some(session_source) = self.session.session_source.as_mut() {
                     match session_source.execute().await {
                         Ok((_, res)) => {
-                            if let Some(state) = res.state.as_ref() {
+                            if let Some((stack, mem, _)) = res.state.as_ref() {
                                 if matches!(cmd, ChiselCommand::MemDump) {
-                                    let mem = state.1.data();
                                     (0..mem.len()).step_by(32).for_each(|i| {
                                         println!(
                                             "{}: {}",
@@ -257,21 +260,20 @@ impl ChiselDisptacher {
                                             )),
                                             Paint::cyan(format!(
                                                 "0x{}",
-                                                hex::encode(&mem[i..i + 32])
+                                                hex::encode(&mem.data()[i..i + 32])
                                             ))
                                         );
                                     });
                                 } else {
-                                    let stack = state.0.data();
                                     (0..stack.len()).rev().for_each(|i| {
                                         println!(
                                             "{}: {}",
                                             Paint::yellow(format!("[{}]", stack.len() - i - 1)),
-                                            Paint::cyan(format!("0x{:02x}", stack[i]))
+                                            Paint::cyan(format!("0x{:02x}", stack.data()[i]))
                                         );
                                     });
                                 }
-                                DispatchResult::Success(None)
+                                DispatchResult::CommandSuccess(None)
                             } else {
                                 DispatchResult::CommandFailed(Self::make_error(
                                     "State not present.",
@@ -282,6 +284,32 @@ impl ChiselDisptacher {
                     }
                 } else {
                     DispatchResult::CommandFailed(Self::make_error("Session not present."))
+                }
+            }
+            ChiselCommand::Export => {
+                // Check if the pwd is a foundry project
+                if PathBuf::from("foundry.toml").exists() {
+                    // Create "script" dir if it does not already exist.
+                    if !PathBuf::from("script").exists() {
+                        if let Err(e) = std::fs::create_dir_all("script") {
+                            return DispatchResult::CommandFailed(Self::make_error(e.to_string()))
+                        }
+                    }
+                    // Write session source to `script/REPL`
+                    if let Err(e) = std::fs::write(
+                        PathBuf::from("script/REPL.sol"),
+                        self.session.session_source.as_ref().unwrap().to_string(),
+                    ) {
+                        return DispatchResult::CommandFailed(Self::make_error(e.to_string()))
+                    }
+
+                    DispatchResult::CommandSuccess(Some(String::from(
+                        "Exported session source to script/REPL.sol!",
+                    )))
+                } else {
+                    DispatchResult::CommandFailed(Self::make_error(
+                        "Must be in a foundry project to export source to script.",
+                    ))
                 }
             }
         }
@@ -319,7 +347,7 @@ impl ChiselDisptacher {
             }
         };
 
-        // TODO: Support function calls / expressions
+        // TODO: Support expressions with ambiguous types / no variable declaration
         if let Some(generated_output) = &source.generated_output {
             if generated_output.intermediate.variable_definitions.get(input).is_some() {
                 match source.inspect(input).await {
@@ -348,14 +376,14 @@ impl ChiselDisptacher {
 
         if do_execute {
             match new_source.execute().await {
-                Ok(mut res) => {
-                    let failed = !res.1.success;
+                Ok((_, mut res)) => {
+                    let failed = !res.success;
 
                     // If traces are enabled or there was an error in execution, show the execution
                     // traces.
                     if new_source.config.traces || failed {
-                        if let Ok(decoder) = self.decode_traces(&new_source.config, &mut res.1) {
-                            if self.show_traces(&decoder, &mut res.1).await.is_err() {
+                        if let Ok(decoder) = self.decode_traces(&new_source.config, &mut res) {
+                            if self.show_traces(&decoder, &mut res).await.is_err() {
                                 self.errored = true;
                                 return DispatchResult::CommandFailed(
                                     "Failed to display traces".to_owned(),
@@ -486,6 +514,8 @@ pub enum ChiselCommand {
     MemDump,
     /// Dump the raw stack
     StackDump,
+    /// Export the current REPL session source to a Script file
+    Export,
 }
 
 /// A command descriptor type
@@ -493,7 +523,7 @@ type CmdDescriptor = (&'static str, &'static str);
 
 /// Attempt to convert a string slice to a `ChiselCommand`
 impl FromStr for ChiselCommand {
-    type Err = Box<dyn error::Error>;
+    type Err = Box<dyn Error>;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_ref() {
@@ -508,6 +538,7 @@ impl FromStr for ChiselCommand {
             "traces" => Ok(ChiselCommand::Traces),
             "memdump" => Ok(ChiselCommand::MemDump),
             "stackdump" => Ok(ChiselCommand::StackDump),
+            "export" => Ok(ChiselCommand::Export),
             _ => Err(ChiselDisptacher::make_error(&format!(
                 "Unknown command \"{}\"! See available commands with `!help`.",
                 s
@@ -537,6 +568,7 @@ impl From<ChiselCommand> for CmdDescriptor {
             ChiselCommand::Traces => ("traces", "Enable / disable traces for the current session"),
             ChiselCommand::MemDump => ("memdump", "Dump the raw memory of the current state"),
             ChiselCommand::StackDump => ("stackdump", "Dump the raw stack of the current state"),
+            ChiselCommand::Export => ("export", "Export the current session source to a script file"),
         }
     }
 }
