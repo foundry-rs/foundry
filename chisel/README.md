@@ -36,9 +36,8 @@ Chisel aims to improve upon soli, with native foundry integration by providing f
     - [x] Implement `forge-std/Test.sol` so that cheatcodes, etc. can be used.
   - [x] Utilize foundry's `evm` module for REPL env.
     - [x] Implement network forking.
-  - [ ] Import all project files / interfaces into REPL contract automatically.
-    - [ ] Optionally disable this functionality with a flag.
-  - [ ] Expression evaluation / inspection (i.e. the input `0x01 << 0x08` should inspect a `uint` of value `256`)
+  - [ ] ~~Expression evaluation / inspection (i.e. the input `0x01 << 0x08` should inspect a `uint` of value `256`)~~
+    - Nixed due to type ambiguity. If displaying bytes is sufficient, we can still do this.
   - [x] Input history.
   - [ ] Use forge fmt module to format source code when printing via the `!source` command. (?)
 - [x] Cache REPL History
@@ -56,10 +55,10 @@ Chisel aims to improve upon soli, with native foundry integration by providing f
     - [x] Rip trace printing code from another module of foundry.
   - [x] On-the-fly network forking
   - [x] Export to file
-    - [ ] Export session to script contract if within project.
+    - [x] Export session to script contract if within project.
 - [x] [Syntax highlighting](https://docs.rs/rustyline/10.0.0/rustyline/highlight/trait.Highlighter.html)
 - [x] Binary subcommands
-- [ ] Tests.
+- [x] Tests.
   - [x] Cache
 - [x] Benchmarks.
   - [x] Session Source

@@ -380,10 +380,10 @@ impl SessionSource {
                         })
                         .collect()
                 } else {
-                    vec![]
+                    Vec::default()
                 }
             }
-            _ => vec![],
+            _ => Vec::default(),
         }
     }
 }
