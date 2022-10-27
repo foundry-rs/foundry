@@ -6,7 +6,7 @@ use ethers_core::{
     utils::rlp,
 };
 use fastrlp::{RlpDecodable, RlpEncodable};
-use foundry_evm::revm::KECCAK_EMPTY;
+use revm::KECCAK_EMPTY;
 // reexport for convenience
 pub use ethers_core::types::{EIP1186ProofResponse as AccountProof, StorageProof};
 

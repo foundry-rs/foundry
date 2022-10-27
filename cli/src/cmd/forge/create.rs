@@ -16,8 +16,7 @@ use ethers::{
     types::{transaction::eip2718::TypedTransaction, Chain},
 };
 use eyre::Context;
-use foundry_common::{compile, get_http_provider};
-use foundry_utils::parse_tokens;
+use foundry_common::{abi::parse_tokens, compile, estimate_eip1559_fees, try_get_http_provider};
 use rustc_hex::ToHex;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
@@ -33,7 +32,7 @@ pub struct CreateArgs {
 
     #[clap(
         long,
-        multiple_values = true,
+        num_args(1..),
         help = "The constructor arguments.",
         name = "constructor_args",
         conflicts_with = "constructor_args_path",
@@ -107,7 +106,7 @@ impl CreateArgs {
                     .link_references
                     .iter()
                     .flat_map(|(path, names)| {
-                        names.keys().map(move |name| format!("\t{}: {}", name, path))
+                        names.keys().map(move |name| format!("\t{name}: {path}"))
                     })
                     .collect::<Vec<String>>()
                     .join("\n");
@@ -117,7 +116,7 @@ impl CreateArgs {
 
         // Add arguments to constructor
         let config = self.eth.try_load_config_emit_warnings()?;
-        let provider = Arc::new(get_http_provider(config.get_rpc_url_or_localhost_http()?));
+        let provider = Arc::new(try_get_http_provider(config.get_rpc_url_or_localhost_http()?)?);
         let params = match abi.constructor {
             Some(ref v) => {
                 let constructor_args =
@@ -193,9 +192,21 @@ impl CreateArgs {
         // will fail and create will fail
         provider.fill_transaction(&mut deployer.tx, None).await?;
 
+        // the max
+        let mut priority_fee = self.tx.priority_gas_price;
+
         // set gas price if specified
         if let Some(gas_price) = self.tx.gas_price {
             deployer.tx.set_gas_price(gas_price);
+        } else if !is_legacy {
+            // estimate EIP1559 fees
+            let (max_fee, max_priority_fee) = estimate_eip1559_fees(&provider, Some(chain))
+                .await
+                .wrap_err("Failed to estimate EIP1559 fees")?;
+            deployer.tx.set_gas_price(max_fee);
+            if priority_fee.is_none() {
+                priority_fee = Some(max_priority_fee);
+            }
         }
 
         // set gas limit if specified
@@ -209,9 +220,9 @@ impl CreateArgs {
         }
 
         // set priority fee if specified
-        if let Some(priority_fee) = self.tx.priority_gas_price {
+        if let Some(priority_fee) = priority_fee {
             if is_legacy {
-                panic!("there is no priority fee for legacy txs");
+                eyre::bail!("there is no priority fee for legacy txs");
             }
             deployer.tx = match deployer.tx {
                 TypedTransaction::Eip1559(eip1559_tx_request) => TypedTransaction::Eip1559(

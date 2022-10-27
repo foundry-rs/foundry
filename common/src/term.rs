@@ -196,14 +196,14 @@ impl Reporter for SpinnerReporter {
     ) {
         self.solc_io_report.log_compiler_output(output, version);
         self.send_msg(format!(
-            "Solc {}.{}.{} finished in {:.2?}",
-            version.major, version.minor, version.patch, duration
+            "Solc {}.{}.{} finished in {duration:.2?}",
+            version.major, version.minor, version.patch
         ));
     }
 
     /// Invoked before a new [`Solc`] bin is installed
     fn on_solc_installation_start(&self, version: &Version) {
-        self.send_msg(format!("installing solc version \"{version}\""));
+        self.send_msg(format!("Installing solc version {version}"));
     }
 
     /// Invoked before a new [`Solc`] bin was successfully installed

@@ -139,13 +139,17 @@ pub struct NodeConfig {
     pub ipc_path: Option<Option<String>>,
     /// Enable transaction/call steps tracing for debug calls returning geth-style traces
     pub enable_steps_tracing: bool,
+    /// Configure the code size limit
+    pub code_size_limit: Option<usize>,
+    /// If set to true, remove historic state entirely
+    pub prune_history: bool,
 }
 
 impl NodeConfig {
     fn as_string(&self, fork: Option<&ClientFork>) -> String {
         let mut config_string: String = "".to_owned();
         let _ = write!(config_string, "\n{}", Paint::green(BANNER));
-        let _ = write!(config_string, "\n    {}", VERSION_MESSAGE);
+        let _ = write!(config_string, "\n    {VERSION_MESSAGE}");
         let _ = write!(
             config_string,
             "\n    {}",
@@ -162,7 +166,7 @@ Available Accounts
         );
         let balance = format_ether(self.genesis_balance);
         for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
-            let _ = write!(config_string, "\n({}) {:?} ({} ETH)", idx, wallet.address(), balance);
+            let _ = write!(config_string, "\n({idx}) {:?} ({balance} ETH)", wallet.address());
         }
 
         let _ = write!(
@@ -176,7 +180,7 @@ Private Keys
 
         for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
             let hex = hex::encode(wallet.signer().to_bytes());
-            let _ = write!(config_string, "\n({}) 0x{}", idx, hex);
+            let _ = write!(config_string, "\n({idx}) 0x{hex}");
         }
 
         if let Some(ref gen) = self.account_generator {
@@ -353,6 +357,8 @@ impl Default for NodeConfig {
             // alchemy max cpus <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
             compute_units_per_second: ALCHEMY_FREE_TIER_CUPS,
             ipc_path: None,
+            code_size_limit: None,
+            prune_history: false,
         }
     }
 }
@@ -373,6 +379,13 @@ impl NodeConfig {
     /// Returns the base fee to use
     pub fn get_hardfork(&self) -> Hardfork {
         self.hardfork.unwrap_or_default()
+    }
+
+    /// Sets a custom code size limit
+    #[must_use]
+    pub fn with_code_size_limit(mut self, code_size_limit: Option<usize>) -> Self {
+        self.code_size_limit = code_size_limit;
+        self
     }
 
     /// Sets the chain ID
@@ -414,6 +427,13 @@ impl NodeConfig {
     #[must_use]
     pub fn with_gas_price<U: Into<U256>>(mut self, gas_price: Option<U>) -> Self {
         self.gas_price = gas_price.map(Into::into);
+        self
+    }
+
+    /// Sets prune history status.
+    #[must_use]
+    pub fn set_pruned_history(mut self, prune_history: bool) -> Self {
+        self.prune_history = prune_history;
         self
     }
 
@@ -682,7 +702,7 @@ impl NodeConfig {
             cfg: CfgEnv {
                 spec_id: self.get_hardfork().into(),
                 chain_id: self.get_chain_id().into(),
-                limit_contract_code_size: Some(usize::MAX),
+                limit_contract_code_size: self.code_size_limit,
                 ..Default::default()
             },
             block: BlockEnv {
@@ -753,7 +773,7 @@ impl NodeConfig {
                             fork_block_number, latest_block
                         );
                     }
-                    panic!("Failed to get block for block number: {}", fork_block_number)
+                    panic!("Failed to get block for block number: {fork_block_number}")
                 };
 
                 // we only use the gas limit value of the block if it is non-zero, since there are networks where this is not used and is always `0x0` which would inevitably result in `OutOfGas` errors as soon as the evm is about to record gas, See also <https://github.com/foundry-rs/foundry/issues/3247>
@@ -877,6 +897,7 @@ impl NodeConfig {
             fees,
             fork,
             self.enable_steps_tracing,
+            self.prune_history,
         )
         .await
     }
@@ -945,7 +966,7 @@ impl AccountGenerator {
 
         for idx in 0..self.amount {
             let builder =
-                builder.clone().derivation_path(&format!("{}{}", derivation_path, idx)).unwrap();
+                builder.clone().derivation_path(&format!("{derivation_path}{idx}")).unwrap();
             let wallet = builder.build().unwrap().with_chain_id(self.chain_id);
             wallets.push(wallet)
         }

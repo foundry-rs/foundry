@@ -36,7 +36,7 @@ impl SurroundingChunk {
         before: Option<usize>,
         next: Option<usize>,
     ) -> Self {
-        SurroundingChunk { before, next, content: format!("{}", content) }
+        SurroundingChunk { before, next, content: format!("{content}") }
     }
 
     pub fn loc_before(&self) -> usize {

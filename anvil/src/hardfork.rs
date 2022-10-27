@@ -108,7 +108,7 @@ impl FromStr for Hardfork {
             "arrowglacier" | "13" => Hardfork::ArrowGlacier,
             "grayglacier" => Hardfork::GrayGlacier,
             "latest" | "14" => Hardfork::Latest,
-            _ => return Err(format!("Unknown hardfork {}", s)),
+            _ => return Err(format!("Unknown hardfork {s}")),
         };
         Ok(hardfork)
     }
@@ -144,9 +144,9 @@ impl From<Hardfork> for SpecId {
 impl<T: Into<BlockNumber>> From<T> for Hardfork {
     fn from(block: T) -> Hardfork {
         let num = match block.into() {
-            BlockNumber::Pending | BlockNumber::Latest => u64::MAX,
             BlockNumber::Earliest => 0,
             BlockNumber::Number(num) => num.as_u64(),
+            _ => u64::MAX,
         };
 
         match num {

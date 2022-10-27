@@ -17,7 +17,7 @@ use std::{
     process::Command,
     str,
 };
-use tracing::trace;
+use tracing::{trace, warn};
 use yansi::Paint;
 
 static DEPENDENCY_VERSION_TAG_REGEX: Lazy<Regex> =
@@ -91,7 +91,7 @@ pub fn install_missing_dependencies(config: &mut Config, project: &Project, quie
     // try to auto install missing submodules in the default install dir but only if git is
     // installed
     if which::which("git").is_ok() &&
-        has_missing_dependencies(project.root(), &config.install_lib_dir())
+        has_missing_dependencies(project.root(), config.install_lib_dir())
     {
         // The extra newline is needed, otherwise the compiler output will overwrite the
         // message
@@ -236,8 +236,20 @@ fn install_as_submodule(
         } else {
             format!("forge install: {target_dir}")
         };
+        trace!(?libs, ?message, "git commit -m");
 
-        Command::new("git").args(["commit", "-m", &message]).current_dir(libs).exec()?;
+        let output =
+            Command::new("git").args(["commit", "-m", &message]).current_dir(libs).output()?;
+
+        if !&output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            warn!(?stdout, ?stderr, "git commit -m");
+
+            if !stdout.contains("nothing to commit") {
+                eyre::bail!("Failed to commit `{message}`:\n{stdout}\n{stderr}");
+            }
+        }
     }
 
     Ok(tag)
@@ -437,7 +449,7 @@ fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String
     candidates.insert(0, String::from("SKIP AND USE ORIGINAL TAG"));
     println!("There are multiple matching tags:");
     for (i, candidate) in candidates.iter().enumerate() {
-        println!("[{}] {}", i, candidate);
+        println!("[{i}] {candidate}");
     }
 
     let n_candidates = candidates.len();
@@ -455,7 +467,7 @@ fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String
         match input.trim().parse::<usize>() {
             Ok(i) if i == 0 => return Ok(tag.into()),
             Ok(i) if (1..=n_candidates).contains(&i) => {
-                println!("[{}] {} selected", i, candidates[i]);
+                println!("[{i}] {} selected", candidates[i]);
                 return Ok(candidates[i].clone())
             }
             _ => continue,
@@ -495,7 +507,7 @@ fn match_branch(tag: &str, libs: &Path, target_dir: &str) -> eyre::Result<Option
     // only one candidate, ask whether the user wants to accept or not
     if candidates.len() == 1 {
         let matched_tag = candidates[0].clone();
-        print!("Found a similar branch: {}, do you want to use this instead? ([y]/n)", matched_tag);
+        print!("Found a similar branch: {matched_tag}, do you want to use this instead? ([y]/n)");
         stdout().flush()?;
         let mut input = String::new();
         stdin().read_line(&mut input)?;
@@ -508,10 +520,10 @@ fn match_branch(tag: &str, libs: &Path, target_dir: &str) -> eyre::Result<Option
     }
 
     // multiple candidates, ask the user to choose one or skip
-    candidates.insert(0, format!("{} (original branch)", tag));
+    candidates.insert(0, format!("{tag} (original branch)"));
     println!("There are multiple matching branches:");
     for (i, candidate) in candidates.iter().enumerate() {
-        println!("[{}] {}", i, candidate);
+        println!("[{i}] {candidate}");
     }
 
     let n_candidates = candidates.len();
@@ -531,7 +543,7 @@ fn match_branch(tag: &str, libs: &Path, target_dir: &str) -> eyre::Result<Option
     match input.parse::<usize>() {
         Ok(i) if i == 0 => Ok(Some(tag.to_string())),
         Ok(i) if (1..=n_candidates).contains(&i) => {
-            println!("[{}] {} selected", i, candidates[i]);
+            println!("[{i}] {} selected", candidates[i]);
             Ok(Some(candidates.remove(i)))
         }
         _ => Ok(None),

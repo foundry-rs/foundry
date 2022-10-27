@@ -21,6 +21,10 @@ pub struct FormatterConfig {
     pub number_underscore: NumberUnderscore,
     /// Style of single line blocks in statements
     pub single_line_statement_blocks: SingleLineBlockStyle,
+    /// Print space in variable `override` definition
+    pub variable_override_spacing: bool,
+    /// Globs to ignore
+    pub ignore: Vec<String>,
 }
 
 /// Style of uint/int256 types
@@ -107,6 +111,8 @@ impl Default for FormatterConfig {
             quote_style: QuoteStyle::Double,
             number_underscore: NumberUnderscore::Preserve,
             single_line_statement_blocks: SingleLineBlockStyle::Preserve,
+            variable_override_spacing: true,
+            ignore: vec![],
         }
     }
 }

@@ -6,9 +6,10 @@ import "../src/Counter.sol";
 
 contract CounterTest is Test {
     Counter public counter;
+
     function setUp() public {
-       counter = new Counter();
-       counter.setNumber(0);
+        counter = new Counter();
+        counter.setNumber(0);
     }
 
     function testIncrement() public {

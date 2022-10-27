@@ -121,7 +121,7 @@ impl Shell {
     pub fn print_json<T: serde::ser::Serialize>(&self, obj: &T) -> serde_json::Result<()> {
         if self.verbosity.is_json() {
             let json = serde_json::to_string(&obj)?;
-            let _ = self.output.with_stdout(|out| writeln!(out, "{}", json));
+            let _ = self.output.with_stdout(|out| writeln!(out, "{json}"));
         }
         Ok(())
     }
@@ -129,7 +129,7 @@ impl Shell {
     pub fn pretty_print_json<T: serde::ser::Serialize>(&self, obj: &T) -> serde_json::Result<()> {
         if self.verbosity.is_json() {
             let json = serde_json::to_string_pretty(&obj)?;
-            let _ = self.output.with_stdout(|out| writeln!(out, "{}", json));
+            let _ = self.output.with_stdout(|out| writeln!(out, "{json}"));
         }
         Ok(())
     }
@@ -175,7 +175,7 @@ unsafe impl Sync for WriteShellOut {}
 impl ShellWrite for WriteShellOut {
     fn write(&self, fragment: impl fmt::Display) -> io::Result<()> {
         if let Ok(mut lock) = self.0.lock() {
-            write!(lock, "{}", fragment)?;
+            write!(lock, "{fragment}")?;
         }
         Ok(())
     }
@@ -213,6 +213,7 @@ pub enum ShellOut {
 impl ShellOut {
     /// Creates a new shell that writes to memory
     pub fn memory() -> Self {
+        #[allow(clippy::box_default)]
         ShellOut::Write(WriteShellOut(Arc::new(Mutex::new(Box::new(Vec::new())))))
     }
 
@@ -222,7 +223,7 @@ impl ShellOut {
             ShellOut::Stream => {
                 let stdout = io::stdout();
                 let mut handle = stdout.lock();
-                write!(handle, "{}", fragment)?;
+                write!(handle, "{fragment}")?;
             }
             ShellOut::Write(ref w) => {
                 w.write(fragment)?;
@@ -237,7 +238,7 @@ impl ShellOut {
             ShellOut::Stream => {
                 let stderr = io::stderr();
                 let mut handle = stderr.lock();
-                write!(handle, "{}", fragment)?;
+                write!(handle, "{fragment}")?;
             }
             ShellOut::Write(ref w) => {
                 w.write(fragment)?;

@@ -51,20 +51,20 @@ pub fn fmt(src: &str) -> Result<String, FormatterError> {
     Ok(output)
 }
 
-/// Converts the offset of a `Loc` to `(line, col)`
-pub fn offset_to_line_column(content: &str, start: usize, end: usize) -> (usize, usize) {
-    let mut line_num = 0;
-    let mut offset = 0;
-    let mut col = 0;
-    for (idx, line) in content.lines().enumerate() {
-        let next_offset = offset + line.len();
-        if start < next_offset {
-            col = if next_offset > end { end - offset } else { end - next_offset };
-            // we let line count from 1
-            line_num = idx + 1;
-            break
+/// Converts the start offset of a `Loc` to `(line, col)`
+pub fn offset_to_line_column(content: &str, start: usize) -> (usize, usize) {
+    debug_assert!(content.len() > start);
+
+    // first line is `1`
+    let mut line_counter = 1;
+    for (offset, c) in content.chars().enumerate() {
+        if c == '\n' {
+            line_counter += 1;
         }
-        offset = next_offset;
+        if offset > start {
+            return (line_counter, offset - start)
+        }
     }
-    (line_num, col)
+
+    unreachable!("content.len() > start")
 }

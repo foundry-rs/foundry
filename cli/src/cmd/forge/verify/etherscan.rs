@@ -1,3 +1,4 @@
+use super::{VerifyArgs, VerifyCheckArgs};
 use crate::cmd::{
     forge::verify::provider::VerificationProvider, read_constructor_args_file,
     retry::RETRY_CHECK_ON_VERIFY, LoadConfig,
@@ -7,8 +8,8 @@ use cast::SimpleCast;
 use ethers::{
     abi::Function,
     etherscan::{
-        contract::{CodeFormat, VerifyContract},
         utils::lookup_compiler_version,
+        verify::{CodeFormat, VerifyContract},
         Client,
     },
     prelude::artifacts::StandardJsonCompilerInput,
@@ -19,8 +20,9 @@ use ethers::{
     },
 };
 use eyre::{eyre, Context};
+use foundry_common::abi::encode_args;
 use foundry_config::{Chain, Config, SolcReq};
-use foundry_utils::{encode_args, Retry};
+use foundry_utils::Retry;
 use futures::FutureExt;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -32,11 +34,11 @@ use std::{
 };
 use tracing::{trace, warn};
 
-use super::{VerifyArgs, VerifyCheckArgs};
-
 pub static RE_BUILD_COMMIT: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?P<commit>commit\.[0-9,a-f]{8})"#).unwrap());
 
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct EtherscanVerificationProvider;
 
 #[async_trait]
@@ -58,7 +60,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     .wrap_err_with(|| {
                         // valid json
                         let args = serde_json::to_string(&verify_args).unwrap();
-                        format!("Failed to submit contract verification, payload:\n{}", args)
+                        format!("Failed to submit contract verification, payload:\n{args}")
                     })?;
 
                 if resp.status == "0" {
@@ -235,7 +237,7 @@ impl EtherscanVerificationProvider {
         };
 
         let compiler_version = ensure_solc_build_metadata(compiler_version).await?;
-        let compiler_version = format!("v{}", compiler_version);
+        let compiler_version = format!("v{compiler_version}");
         let constructor_args = if let Some(ref constructor_args_path) = args.constructor_args_path {
             let abi = contract.unwrap().abi.ok_or(eyre!("Can't find ABI in cached artifact."))?;
             let constructor = abi
@@ -434,6 +436,9 @@ To skip this solc dry, pass `--force`.
             .into_iter()
             .map(|(f, libs)| (f.strip_prefix(project.root()).unwrap_or(&f).to_path_buf(), libs))
             .collect();
+
+        // TODO: make sanitization logic shared between types in ethers
+        let input: StandardJsonCompilerInput = CompilerInput::from(input).sanitized(version).into();
 
         let source =
             serde_json::to_string(&input).wrap_err("Failed to parse standard json input")?;

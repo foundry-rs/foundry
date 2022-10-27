@@ -140,6 +140,8 @@ pub struct Backend {
     /// keeps track of active snapshots at a specific block
     active_snapshots: Arc<Mutex<HashMap<U256, (u64, H256)>>>,
     enable_steps_tracing: bool,
+    /// Whether to keep history state
+    prune_history: bool,
 }
 
 impl Backend {
@@ -151,6 +153,7 @@ impl Backend {
         fees: FeeManager,
         fork: Option<ClientFork>,
         enable_steps_tracing: bool,
+        prune_history: bool,
     ) -> Self {
         // if this is a fork then adjust the blockchain storage
         let blockchain = if let Some(ref fork) = fork {
@@ -179,6 +182,7 @@ impl Backend {
             genesis,
             active_snapshots: Arc::new(Mutex::new(Default::default())),
             enable_steps_tracing,
+            prune_history,
         };
 
         // Note: this can only fail in forking mode, in which case we can't recover
@@ -323,6 +327,10 @@ impl Backend {
             // insert back all genesis accounts, by reusing cached `AccountInfo`s we don't need to
             // fetch the data via RPC again
             let mut db = self.db.write().await;
+
+            // clear database
+            db.clear();
+
             let fork_genesis_infos = self.genesis.fork_genesis_account_infos.lock();
             for (address, info) in
                 self.genesis.accounts.iter().copied().zip(fork_genesis_infos.iter().cloned())
@@ -454,6 +462,11 @@ impl Backend {
     /// Returns the current gas price
     pub fn gas_price(&self) -> U256 {
         self.fees.gas_price()
+    }
+
+    /// Returns the suggested fee cap
+    pub fn max_priority_fee_per_gas(&self) -> U256 {
+        self.fees.max_priority_fee_per_gas()
     }
 
     /// Sets the gas price
@@ -646,9 +659,11 @@ impl Backend {
 
             let best_hash = self.blockchain.storage.read().best_hash;
 
-            let db = self.db.read().await.current_state();
-            // store current state before executing all transactions
-            self.states.write().insert(best_hash, db);
+            if !self.prune_history {
+                let db = self.db.read().await.current_state();
+                // store current state before executing all transactions
+                self.states.write().insert(best_hash, db);
+            }
 
             let (executed_tx, block_hash) = {
                 let mut db = self.db.write().await;
@@ -1125,11 +1140,26 @@ impl Backend {
             BlockId::Hash(hash) => hash,
             BlockId::Number(number) => {
                 let storage = self.blockchain.storage.read();
+                let slots_in_an_epoch = U64::from(32u64);
                 match number {
                     BlockNumber::Latest => storage.best_hash,
                     BlockNumber::Earliest => storage.genesis_hash,
                     BlockNumber::Pending => return None,
                     BlockNumber::Number(num) => *storage.hashes.get(&num)?,
+                    BlockNumber::Safe => {
+                        if storage.best_number > (slots_in_an_epoch) {
+                            *storage.hashes.get(&(storage.best_number - (slots_in_an_epoch)))?
+                        } else {
+                            storage.genesis_hash // treat the genesis block as safe "by definition"
+                        }
+                    }
+                    BlockNumber::Finalized => {
+                        if storage.best_number > (slots_in_an_epoch * 2) {
+                            *storage.hashes.get(&(storage.best_number - (slots_in_an_epoch * 2)))?
+                        } else {
+                            storage.genesis_hash
+                        }
+                    }
                 }
             }
         };
@@ -1214,6 +1244,7 @@ impl Backend {
         block_id: Option<T>,
     ) -> Result<u64, BlockchainError> {
         let current = self.best_number().as_u64();
+        let slots_in_an_epoch = 32u64;
         let requested =
             match block_id.map(Into::into).unwrap_or(BlockId::Number(BlockNumber::Latest)) {
                 BlockId::Hash(hash) => self
@@ -1227,6 +1258,8 @@ impl Backend {
                     BlockNumber::Latest | BlockNumber::Pending => self.best_number().as_u64(),
                     BlockNumber::Earliest => 0,
                     BlockNumber::Number(num) => num.as_u64(),
+                    BlockNumber::Safe => current.saturating_sub(slots_in_an_epoch),
+                    BlockNumber::Finalized => current.saturating_sub(slots_in_an_epoch * 2),
                 },
             };
 
@@ -1238,10 +1271,14 @@ impl Backend {
     }
 
     pub fn convert_block_number(&self, block: Option<BlockNumber>) -> u64 {
+        let current = self.best_number().as_u64();
+        let slots_in_an_epoch = 32u64;
         match block.unwrap_or(BlockNumber::Latest) {
-            BlockNumber::Latest | BlockNumber::Pending => self.best_number().as_u64(),
+            BlockNumber::Latest | BlockNumber::Pending => current,
             BlockNumber::Earliest => 0,
             BlockNumber::Number(num) => num.as_u64(),
+            BlockNumber::Safe => current.saturating_sub(slots_in_an_epoch),
+            BlockNumber::Finalized => current.saturating_sub(slots_in_an_epoch * 2),
         }
     }
 
@@ -1638,7 +1675,7 @@ impl Backend {
 
     fn mined_transaction_by_hash(&self, hash: H256) -> Option<Transaction> {
         let (info, block) = {
-            let storage = self.blockchain.storage.read_recursive();
+            let storage = self.blockchain.storage.read();
             let MinedTransaction { info, block_hash, .. } =
                 storage.transactions.get(&hash)?.clone();
             let block = storage.blocks.get(&block_hash).cloned()?;

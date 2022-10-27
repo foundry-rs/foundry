@@ -150,6 +150,9 @@ impl EthApi {
             EthRequest::EthNetworkId(_) => self.network_id().to_rpc_result(),
             EthRequest::NetListening(_) => self.net_listening().to_rpc_result(),
             EthRequest::EthGasPrice(_) => self.gas_price().to_rpc_result(),
+            EthRequest::EthMaxPriorityFeePerGas(_) => {
+                self.gas_max_priority_fee_per_gas().to_rpc_result()
+            }
             EthRequest::EthAccounts(_) => self.accounts().to_rpc_result(),
             EthRequest::EthBlockNumber(_) => self.block_number().to_rpc_result(),
             EthRequest::EthGetStorageAt(addr, slot, block) => {
@@ -443,6 +446,14 @@ impl EthApi {
         Ok(self.backend.gas_price())
     }
 
+    /// Returns a fee per gas that is an estimate of how much you can pay as a priority fee, or
+    /// 'tip', to get a transaction included in the current block.
+    ///
+    /// Handler for ETH RPC call: `eth_maxPriorityFeePerGas`
+    pub fn gas_max_priority_fee_per_gas(&self) -> Result<U256> {
+        Ok(self.backend.max_priority_fee_per_gas())
+    }
+
     /// Returns the block gas limit
     pub fn gas_limit(&self) -> U256 {
         self.backend.gas_limit()
@@ -672,7 +683,7 @@ impl EthApi {
         node_info!("eth_signTypedData_v4");
         let signer = self.get_signer(address).ok_or(BlockchainError::NoSignerAvailable)?;
         let signature = signer.sign_typed_data(address, data).await?;
-        Ok(format!("0x{}", signature))
+        Ok(format!("0x{signature}"))
     }
 
     /// The sign method calculates an Ethereum specific signature
@@ -682,7 +693,7 @@ impl EthApi {
         node_info!("eth_sign");
         let signer = self.get_signer(address).ok_or(BlockchainError::NoSignerAvailable)?;
         let signature = signer.sign(address, content.as_ref()).await?;
-        Ok(format!("0x{}", signature))
+        Ok(format!("0x{signature}"))
     }
 
     /// Sends a transaction
@@ -1028,10 +1039,15 @@ impl EthApi {
         node_info!("eth_feeHistory");
         // max number of blocks in the requested range
 
+        let current = self.backend.best_number().as_u64();
+        let slots_in_an_epoch = 32u64;
+
         let number = match newest_block {
-            BlockNumber::Latest | BlockNumber::Pending => self.backend.best_number().as_u64(),
+            BlockNumber::Latest | BlockNumber::Pending => current,
             BlockNumber::Earliest => 0,
             BlockNumber::Number(n) => n.as_u64(),
+            BlockNumber::Safe => current.saturating_sub(slots_in_an_epoch),
+            BlockNumber::Finalized => current.saturating_sub(slots_in_an_epoch * 2),
         };
 
         // check if the number predates the fork, if in fork mode
@@ -1554,7 +1570,7 @@ impl EthApi {
                     .initial_backoff(1000)
                     .build()
                     .map_err(|_| {
-                        ProviderError::CustomError(format!("Failed to parse invalid url {}", url))
+                        ProviderError::CustomError(format!("Failed to parse invalid url {url}"))
                     })?
                     .interval(interval),
             );

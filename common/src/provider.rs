@@ -1,7 +1,8 @@
 //! Commonly used helpers to construct `Provider`s
 
 use crate::{ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT};
-use ethers_core::types::Chain;
+use ethers_core::types::{Chain, U256};
+use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};
 use ethers_providers::{
     is_local_endpoint, Http, HttpRateLimitRetryPolicy, Middleware, Provider, RetryClient,
     RetryClientBuilder, DEFAULT_LOCAL_POLL_INTERVAL,
@@ -41,7 +42,7 @@ pub fn try_get_http_provider(builder: impl Into<ProviderBuilder>) -> eyre::Resul
 #[derive(Debug)]
 pub struct ProviderBuilder {
     // Note: this is a result, so we can easily chain builder calls
-    url: reqwest::Result<Url>,
+    url: eyre::Result<Url>,
     chain: Chain,
     max_retry: u32,
     timeout_retry: u32,
@@ -60,11 +61,11 @@ impl ProviderBuilder {
         if url_str.starts_with("localhost:") {
             // invalid url: non-prefixed URL scheme is not allowed, so we prepend the default http
             // prefix
-            return Self::new(format!("http://{}", url_str))
+            return Self::new(format!("http://{url_str}"))
         }
-
+        let err = format!("Invalid provider url: {url_str}");
         Self {
-            url: url.into_url(),
+            url: url.into_url().wrap_err(err),
             chain: Chain::Mainnet,
             max_retry: 100,
             timeout_retry: 5,
@@ -150,13 +151,14 @@ impl ProviderBuilder {
             timeout,
             compute_units_per_second,
         } = self;
-        let url = url.wrap_err("Invalid provider url")?;
+        let url = url?;
 
         let client = reqwest::Client::builder().timeout(timeout).build()?;
         let is_local = is_local_endpoint(url.as_str());
 
         let provider = Http::new_with_client(url, client);
 
+        #[allow(clippy::box_default)]
         let mut provider = Provider::new(
             RetryClientBuilder::default()
                 .initial_backoff(Duration::from_millis(initial_backoff))
@@ -197,6 +199,38 @@ impl<'a> From<Cow<'a, str>> for ProviderBuilder {
     fn from(url: Cow<'a, str>) -> Self {
         url.as_ref().into()
     }
+}
+
+/// Estimates EIP1559 fees depending on the chain
+///
+/// Uses custom gas oracles for
+///   - polygon
+///
+/// Fallback is the default [`Provider::estimate_eip1559_fees`] implementation
+pub async fn estimate_eip1559_fees<M: Middleware>(
+    provider: &M,
+    chain: Option<u64>,
+) -> eyre::Result<(U256, U256)>
+where
+    M::Error: 'static,
+{
+    let chain = if let Some(chain) = chain {
+        chain
+    } else {
+        provider.get_chainid().await.wrap_err("Failed to get chain id")?.as_u64()
+    };
+
+    if let Ok(chain) = Chain::try_from(chain) {
+        // handle chains that deviate from `eth_feeHistory` and have their own oracle
+        match chain {
+            Chain::Polygon | Chain::PolygonMumbai => {
+                let estimator = Polygon::new(chain)?.category(GasCategory::Standard);
+                return Ok(estimator.estimate_eip1559_fees().await?)
+            }
+            _ => {}
+        }
+    }
+    provider.estimate_eip1559_fees(None).await.wrap_err("Failed fetch EIP1559 fees")
 }
 
 #[cfg(test)]

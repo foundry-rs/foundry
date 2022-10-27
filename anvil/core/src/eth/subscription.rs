@@ -48,7 +48,7 @@ impl<'a> Deserialize<'a> for SubscriptionParams {
         }
 
         let filter: Filter = serde_json::from_value(val)
-            .map_err(|e| D::Error::custom(format!("Invalid Subscription parameters: {}", e)))?;
+            .map_err(|e| D::Error::custom(format!("Invalid Subscription parameters: {e}")))?;
         Ok(SubscriptionParams { filter: Some(filter) })
     }
 }
@@ -119,7 +119,7 @@ impl HexIdProvider {
         let id: String =
             (&mut thread_rng()).sample_iter(Alphanumeric).map(char::from).take(self.len).collect();
         let out = hex::encode(id);
-        format!("0x{}", out)
+        format!("0x{out}")
     }
 }
 

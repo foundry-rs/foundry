@@ -44,16 +44,15 @@ fn ffi(state: &Cheatcodes, args: &[String]) -> Result<Bytes, Bytes> {
     let output = cmd
         .current_dir(&state.config.root)
         .output()
-        .map_err(|err| error::encode_error(format!("Failed to execute command: {}", err)))?;
+        .map_err(|err| error::encode_error(format!("Failed to execute command: {err}")))?;
 
     if !output.stderr.is_empty() {
         let err = String::from_utf8_lossy(&output.stderr);
         error!(?err, "stderr");
     }
 
-    let output = String::from_utf8(output.stdout).map_err(|err| {
-        error::encode_error(format!("Failed to decode non utf-8 output: {}", err))
-    })?;
+    let output = String::from_utf8(output.stdout)
+        .map_err(|err| error::encode_error(format!("Failed to decode non utf-8 output: {err}")))?;
 
     let trim_out = output.trim();
     if let Ok(hex_decoded) = hex::decode(trim_out.strip_prefix("0x").unwrap_or(trim_out)) {
@@ -127,7 +126,7 @@ fn get_deployed_code(state: &Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
 fn read_bytecode(state: &Cheatcodes, path: &str) -> Result<ArtifactBytecode, Bytes> {
     let path = get_artifact_path(&state.config.paths, path);
     let path =
-        state.config.ensure_path_allowed(&path, FsAccessKind::Read).map_err(error::encode_error)?;
+        state.config.ensure_path_allowed(path, FsAccessKind::Read).map_err(error::encode_error)?;
 
     let data = fs::read_to_string(path).map_err(error::encode_error)?;
     serde_json::from_str::<ArtifactBytecode>(&data).map_err(error::encode_error)
@@ -157,15 +156,15 @@ fn set_env(key: &str, val: &str) -> Result<Bytes, Bytes> {
 }
 
 fn get_env(key: &str, r#type: ParamType, delim: Option<&str>) -> Result<Bytes, Bytes> {
-    let msg = format!("Failed to get environment variable `{}` as type `{}`", key, &r#type);
-    let val = env::var(key).map_err::<Bytes, _>(|e| format!("{}: {}", msg, e).encode().into())?;
+    let msg = format!("Failed to get environment variable `{key}` as type `{}`", &r#type);
+    let val = env::var(key).map_err::<Bytes, _>(|e| format!("{msg}: {e}").encode().into())?;
     let val = if let Some(d) = delim {
         val.split(d).map(|v| v.trim().to_string()).collect()
     } else {
         vec![val]
     };
     let is_array: bool = delim.is_some();
-    util::value_to_abi(val, r#type, is_array).map_err(|e| format!("{}: {}", msg, e).encode().into())
+    util::value_to_abi(val, r#type, is_array).map_err(|e| format!("{msg}: {e}").encode().into())
 }
 
 fn project_root(state: &Cheatcodes) -> Result<Bytes, Bytes> {
@@ -181,6 +180,15 @@ fn read_file(state: &Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes>
     let data = fs::read_to_string(path).map_err(error::encode_error)?;
 
     Ok(abi::encode(&[Token::String(data)]).into())
+}
+
+fn read_file_binary(state: &Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
+    let path =
+        state.config.ensure_path_allowed(&path, FsAccessKind::Read).map_err(error::encode_error)?;
+
+    let data = fs::read(path).map_err(error::encode_error)?;
+
+    Ok(abi::encode(&[Token::Bytes(data)]).into())
 }
 
 fn read_line(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
@@ -215,7 +223,11 @@ fn read_line(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, By
 ///
 /// Caution: writing files is only allowed if the targeted path is allowed, (inside `<root>/` by
 /// default)
-fn write_file(state: &Cheatcodes, path: impl AsRef<Path>, content: &str) -> Result<Bytes, Bytes> {
+fn write_file(
+    state: &Cheatcodes,
+    path: impl AsRef<Path>,
+    content: impl AsRef<[u8]>,
+) -> Result<Bytes, Bytes> {
     let path = state
         .config
         .ensure_path_allowed(&path, FsAccessKind::Write)
@@ -224,7 +236,7 @@ fn write_file(state: &Cheatcodes, path: impl AsRef<Path>, content: &str) -> Resu
     state.config.ensure_not_foundry_toml(&path).map_err(error::encode_error)?;
 
     if state.fs_commit {
-        fs::write(path, content).map_err(error::encode_error)?;
+        fs::write(path, content.as_ref()).map_err(error::encode_error)?;
     }
 
     Ok(Bytes::new())
@@ -305,7 +317,7 @@ fn value_to_token(value: &Value) -> eyre::Result<Token> {
                 })
             } else {
                 // If incorrect length, pad 0 at the beginning
-                let arr = format!("0{}", val);
+                let arr = format!("0{val}");
                 Ok(Token::Bytes(Vec::from_hex(arr).unwrap()))
             }
         } else {
@@ -341,7 +353,7 @@ fn parse_json(_state: &mut Cheatcodes, json: &str, key: &str) -> Result<Bytes, B
         .iter()
         .map(|inner| {
             value_to_token(inner).map_err(|err| {
-                error::encode_error(err.wrap_err(format!("Failed to parse key {}", key)))
+                error::encode_error(err.wrap_err(format!("Failed to parse key {key}")))
             })
         })
         .collect::<Result<Vec<Token>, Bytes>>();
@@ -384,8 +396,10 @@ pub fn apply(
         HEVMCalls::EnvBytes1(inner) => get_env(&inner.0, ParamType::Bytes, Some(&inner.1)),
         HEVMCalls::ProjectRoot(_) => project_root(state),
         HEVMCalls::ReadFile(inner) => read_file(state, &inner.0),
+        HEVMCalls::ReadFileBinary(inner) => read_file_binary(state, &inner.0),
         HEVMCalls::ReadLine(inner) => read_line(state, &inner.0),
         HEVMCalls::WriteFile(inner) => write_file(state, &inner.0, &inner.1),
+        HEVMCalls::WriteFileBinary(inner) => write_file(state, &inner.0, &inner.1),
         HEVMCalls::WriteLine(inner) => write_line(state, &inner.0, &inner.1),
         HEVMCalls::CloseFile(inner) => close_file(state, &inner.0),
         HEVMCalls::RemoveFile(inner) => remove_file(state, &inner.0),

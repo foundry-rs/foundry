@@ -387,7 +387,7 @@ mod tests {
             EtherscanConfig {
                 chain: Some(Mainnet.into()),
                 url: Some("https://api.etherscan.io/api".to_string()),
-                key: EtherscanApiKey::Env(format!("${{{}}}", env)),
+                key: EtherscanApiKey::Env(format!("${{{env}}}")),
             },
         );
 

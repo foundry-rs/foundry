@@ -28,9 +28,10 @@ use forge::{
     },
     CallKind,
 };
-use foundry_common::{evm::EvmArgs, ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN};
+use foundry_common::{
+    abi::format_token, evm::EvmArgs, ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN,
+};
 use foundry_config::{figment, Config};
-use foundry_utils::{encode_args, format_token};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -40,7 +41,7 @@ use yansi::Paint;
 
 mod build;
 use build::{filter_sources_and_artifacts, BuildOutput};
-use foundry_common::{contracts::get_contract_name, errors::UnlinkedByteCode};
+use foundry_common::{abi::encode_args, contracts::get_contract_name, errors::UnlinkedByteCode};
 use foundry_config::figment::{
     value::{Dict, Map},
     Metadata, Profile, Provider,
@@ -160,7 +161,7 @@ pub struct ScriptArgs {
         long,
         help = "Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.",
         env = "ETH_GAS_PRICE",
-        parse(try_from_str = parse_ether_value),
+        value_parser = parse_ether_value,
         value_name = "PRICE"
     )]
     pub with_gas_price: Option<U256>,
@@ -187,7 +188,10 @@ impl ScriptArgs {
         let mut decoder =
             CallTraceDecoderBuilder::new().with_labels(result.labeled_addresses.clone()).build();
 
-        decoder.add_signature_identifier(SignaturesIdentifier::new(Config::foundry_cache_dir())?);
+        decoder.add_signature_identifier(SignaturesIdentifier::new(
+            Config::foundry_cache_dir(),
+            script_config.config.offline,
+        )?);
 
         for (_, trace) in &mut result.traces {
             decoder.identify(trace, &mut local_identifier);
@@ -282,7 +286,7 @@ impl ScriptArgs {
                         } else {
                             index.to_string()
                         };
-                        println!("{}: {} {}", label.trim_end(), internal_type, format_token(token));
+                        println!("{}: {internal_type} {}", label.trim_end(), format_token(token));
                     }
                 }
                 Err(_) => {
@@ -295,13 +299,13 @@ impl ScriptArgs {
         if !console_logs.is_empty() {
             println!("\n== Logs ==");
             for log in console_logs {
-                println!("  {}", log);
+                println!("  {log}");
             }
         }
 
         if !result.success {
             let revert_msg = decode::decode_revert(&result.returned[..], None, None)
-                .map(|err| format!("{}\n", err))
+                .map(|err| format!("{err}\n"))
                 .unwrap_or_else(|_| "Script failed.\n".to_string());
 
             eyre::bail!("{}", Paint::red(revert_msg));
@@ -320,7 +324,7 @@ impl ScriptArgs {
         let console_logs = decode_console_logs(&result.logs);
         let output = JsonResult { logs: console_logs, gas_used: result.gas_used, returns };
         let j = serde_json::to_string(&output)?;
-        println!("{}", j);
+        println!("{j}");
 
         Ok(())
     }
@@ -502,7 +506,7 @@ impl ScriptArgs {
                 if let RawOrDecodedReturnData::Raw(ref deployed_code) = node.trace.output {
                     // Only push if it was not present already
                     if !bytecodes.iter().any(|(_, b, _)| b == init_code) {
-                        bytecodes.push((format!("Unknown{}", unknown_c), init_code, deployed_code));
+                        bytecodes.push((format!("Unknown{unknown_c}"), init_code, deployed_code));
                         unknown_c += 1;
                     }
                     continue
@@ -615,6 +619,7 @@ mod tests {
     use super::*;
     use crate::cmd::LoadConfig;
     use foundry_cli_test_utils::tempfile::tempdir;
+    use foundry_config::UnresolvedEnvVarError;
     use std::fs;
 
     #[test]
@@ -670,5 +675,128 @@ mod tests {
         let config = args.load_config();
         let mumbai = config.get_etherscan_api_key(Some(ethers::types::Chain::PolygonMumbai));
         assert_eq!(mumbai, Some("https://etherscan-mumbai.com/".to_string()));
+    }
+
+    #[test]
+    fn can_extract_script_rpc_alias() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+
+        let config = r#"
+                [profile.default]
+
+                [rpc_endpoints]
+                polygonMumbai = "https://polygon-mumbai.g.alchemy.com/v2/${_CAN_EXTRACT_RPC_ALIAS}"
+            "#;
+
+        let toml_file = root.join(Config::FILE_NAME);
+        fs::write(toml_file, config).unwrap();
+        let args: ScriptArgs = ScriptArgs::parse_from([
+            "foundry-cli",
+            "DeployV1",
+            "--rpc-url",
+            "polygonMumbai",
+            "--root",
+            root.as_os_str().to_str().unwrap(),
+        ]);
+
+        let err = args.load_config_and_evm_opts().unwrap_err();
+
+        assert!(err.downcast::<UnresolvedEnvVarError>().is_ok());
+
+        std::env::set_var("_CAN_EXTRACT_RPC_ALIAS", "123456");
+        let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
+        assert_eq!(config.eth_rpc_url, Some("polygonMumbai".to_string()));
+        assert_eq!(
+            evm_opts.fork_url,
+            Some("https://polygon-mumbai.g.alchemy.com/v2/123456".to_string())
+        );
+    }
+
+    #[test]
+    fn can_extract_script_rpc_and_etherscan_alias() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+
+        let config = r#"
+                [profile.default]
+
+               [rpc_endpoints]
+                mumbai = "https://polygon-mumbai.g.alchemy.com/v2/${_EXTRACT_RPC_ALIAS}"
+
+                [etherscan]
+                mumbai = { key = "${_POLYSCAN_API_KEY}", chain = 80001, url = "https://api-testnet.polygonscan.com/" }
+            "#;
+
+        let toml_file = root.join(Config::FILE_NAME);
+        fs::write(toml_file, config).unwrap();
+        let args: ScriptArgs = ScriptArgs::parse_from([
+            "foundry-cli",
+            "DeployV1",
+            "--rpc-url",
+            "mumbai",
+            "--etherscan-api-key",
+            "mumbai",
+            "--root",
+            root.as_os_str().to_str().unwrap(),
+        ]);
+        let err = args.load_config_and_evm_opts().unwrap_err();
+
+        assert!(err.downcast::<UnresolvedEnvVarError>().is_ok());
+
+        std::env::set_var("_EXTRACT_RPC_ALIAS", "123456");
+        std::env::set_var("_POLYSCAN_API_KEY", "polygonkey");
+        let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
+        assert_eq!(config.eth_rpc_url, Some("mumbai".to_string()));
+        assert_eq!(
+            evm_opts.fork_url,
+            Some("https://polygon-mumbai.g.alchemy.com/v2/123456".to_string())
+        );
+        let etherscan = config.get_etherscan_api_key(Some(80001u64));
+        assert_eq!(etherscan, Some("polygonkey".to_string()));
+        let etherscan = config.get_etherscan_api_key(Option::<u64>::None);
+        assert_eq!(etherscan, Some("polygonkey".to_string()));
+    }
+
+    #[test]
+    fn can_extract_script_rpc_and_sole_etherscan_alias() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+
+        let config = r#"
+                [profile.default]
+
+               [rpc_endpoints]
+                mumbai = "https://polygon-mumbai.g.alchemy.com/v2/${_SOLE_EXTRACT_RPC_ALIAS}"
+
+                [etherscan]
+                mumbai = { key = "${_SOLE_POLYSCAN_API_KEY}" }
+            "#;
+
+        let toml_file = root.join(Config::FILE_NAME);
+        fs::write(toml_file, config).unwrap();
+        let args: ScriptArgs = ScriptArgs::parse_from([
+            "foundry-cli",
+            "DeployV1",
+            "--rpc-url",
+            "mumbai",
+            "--root",
+            root.as_os_str().to_str().unwrap(),
+        ]);
+        let err = args.load_config_and_evm_opts().unwrap_err();
+
+        assert!(err.downcast::<UnresolvedEnvVarError>().is_ok());
+
+        std::env::set_var("_SOLE_EXTRACT_RPC_ALIAS", "123456");
+        std::env::set_var("_SOLE_POLYSCAN_API_KEY", "polygonkey");
+        let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
+        assert_eq!(
+            evm_opts.fork_url,
+            Some("https://polygon-mumbai.g.alchemy.com/v2/123456".to_string())
+        );
+        let etherscan = config.get_etherscan_api_key(Some(80001u64));
+        assert_eq!(etherscan, Some("polygonkey".to_string()));
+        let etherscan = config.get_etherscan_api_key(Option::<u64>::None);
+        assert_eq!(etherscan, Some("polygonkey".to_string()));
     }
 }

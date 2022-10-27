@@ -1,14 +1,14 @@
 //! Cast
 //!
 //! Contains core function implementation for `cast`
+
 use crate::rlp_converter::Item;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
-use ethers_contract::RawAbi;
 use ethers_core::{
     abi::{
         token::{LenientTokenizer, Tokenizer},
-        Function, HumanReadableParser, Token,
+        Function, HumanReadableParser, RawAbi, Token,
     },
     types::{Chain, *},
     utils::{
@@ -16,18 +16,18 @@ use ethers_core::{
         parse_bytes32_string, parse_units, rlp, Units,
     },
 };
-use ethers_etherscan::Client;
+use ethers_etherscan::{errors::EtherscanError, Client};
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
-use foundry_common::fmt::*;
+use foundry_common::{abi::encode_args, fmt::*};
 pub use foundry_evm::*;
-use foundry_utils::encode_args;
 use rustc_hex::{FromHexIter, ToHex};
 use std::{path::PathBuf, str::FromStr};
 pub use tx::TxBuilder;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
 
 pub mod base;
+pub mod errors;
 mod rlp_converter;
 mod tx;
 
@@ -170,7 +170,7 @@ where
                 if !al.storage_keys.is_empty() {
                     s.push("  keys:".to_string());
                     for key in al.storage_keys {
-                        s.push(format!("    {:?}", key));
+                        s.push(format!("    {key:?}"));
                     }
                 }
             }
@@ -561,30 +561,22 @@ where
         field: Option<String>,
         to_json: bool,
     ) -> Result<String> {
-        let transaction_result = self
+        let tx_hash = H256::from_str(&tx_hash).wrap_err("invalid tx hash")?;
+        let tx = self
             .provider
-            .get_transaction(H256::from_str(&tx_hash)?)
+            .get_transaction(tx_hash)
             .await?
-            .ok_or_else(|| eyre::eyre!("transaction {:?} not found", tx_hash))?;
+            .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
 
-        let transaction = if let Some(ref field) = field {
-            serde_json::to_value(&transaction_result)?
-                .get(field)
-                .cloned()
-                .ok_or_else(|| eyre::eyre!("field {field} not found"))?
-        } else {
-            serde_json::to_value(&transaction_result)?
-        };
-
-        let transaction = if let Some(ref field) = field {
-            get_pretty_tx_attr(&transaction_result, field)
-                .unwrap_or_else(|| format!("{field} is not a valid tx field"))
+        Ok(if let Some(ref field) = field {
+            get_pretty_tx_attr(&tx, field)
+                .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field))?
         } else if to_json {
-            serde_json::to_string(&transaction)?
+            // to_value first to sort json object keys
+            serde_json::to_value(&tx)?.to_string()
         } else {
-            transaction_result.pretty()
-        };
-        Ok(transaction)
+            tx.pretty()
+        })
     }
 
     /// # Example
@@ -611,49 +603,36 @@ where
         cast_async: bool,
         to_json: bool,
     ) -> Result<String> {
-        let tx_hash = H256::from_str(&tx_hash)?;
+        let tx_hash = H256::from_str(&tx_hash).wrap_err("invalid tx hash")?;
 
-        // try to get the receipt
-        let receipt = self.provider.get_transaction_receipt(tx_hash).await?;
-
-        // if the async flag is provided, immediately exit if no tx is found,
-        // otherwise try to poll for it
-        let receipt_result = if cast_async {
-            match receipt {
-                Some(inner) => inner,
-                None => return Ok("receipt not found".to_string()),
-            }
-        } else {
-            match receipt {
-                Some(inner) => inner,
-                None => {
+        let receipt = match self.provider.get_transaction_receipt(tx_hash).await? {
+            Some(r) => r,
+            None => {
+                // if the async flag is provided, immediately exit if no tx is found, otherwise try
+                // to poll for it
+                if cast_async {
+                    eyre::bail!("tx not found: {:?}", tx_hash)
+                } else {
                     let tx = PendingTransaction::new(tx_hash, self.provider.provider());
-                    match tx.confirmations(confs).await? {
-                        Some(inner) => inner,
-                        None => return Ok("receipt not found when polling pending tx. was the transaction dropped from the mempool?".to_string())
-                    }
+                    tx.confirmations(confs).await?.ok_or_else(|| {
+                        eyre::eyre!(
+                            "tx not found, might have been dropped from mempool: {:?}",
+                            tx_hash
+                        )
+                    })?
                 }
             }
         };
 
-        let receipt = if let Some(ref field) = field {
-            serde_json::to_value(&receipt_result)?
-                .get(field)
-                .cloned()
-                .ok_or_else(|| eyre::eyre!("field {field} not found"))?
-        } else {
-            serde_json::to_value(&receipt_result)?
-        };
-
-        let receipt = if let Some(ref field) = field {
-            get_pretty_tx_receipt_attr(&receipt_result, field)
-                .unwrap_or_else(|| format!("{field} is not a valid tx receipt field"))
+        Ok(if let Some(ref field) = field {
+            get_pretty_tx_receipt_attr(&receipt, field)
+                .ok_or_else(|| eyre::eyre!("invalid receipt field: {}", field))?
         } else if to_json {
-            serde_json::to_string(&receipt)?
+            // to_value first to sort json object keys
+            serde_json::to_value(&receipt)?.to_string()
         } else {
-            receipt_result.pretty()
-        };
-        Ok(receipt)
+            receipt.pretty()
+        })
     }
 
     /// Perform a raw JSON-RPC request
@@ -761,7 +740,7 @@ impl SimpleCast {
             Err(_) => Units::try_from(decimals)?,
         };
         let n: NumberWithBase = parse_units(value, units.as_num())?.into();
-        Ok(format!("{}", n))
+        Ok(format!("{n}"))
     }
 
     /// Converts integers with specified decimals into fixed point numbers
@@ -790,7 +769,7 @@ impl SimpleCast {
         let (sign, mut value, value_len) = {
             let number = NumberWithBase::parse_int(value, None)?;
             let sign = if number.is_nonnegative() { "" } else { "-" };
-            let value = format!("{:#}", number);
+            let value = format!("{number:#}");
             let value_stripped = value.strip_prefix('-').unwrap_or(&value).to_string();
             let value_len = value_stripped.len();
             (sign, value_stripped, value_len)
@@ -799,14 +778,14 @@ impl SimpleCast {
 
         let value = if decimals >= value_len {
             // Add "0." and pad with 0s
-            format!("0.{:0>1$}", value, decimals)
+            format!("0.{value:0>decimals$}")
         } else {
             // Insert decimal at -idx (i.e 1 => decimal idx = -1)
             value.insert(value_len - decimals, '.');
             value
         };
 
-        Ok(format!("{}{}", sign, value))
+        Ok(format!("{sign}{value}"))
     }
 
     /// Concatencates hex strings
@@ -876,7 +855,7 @@ impl SimpleCast {
     /// ```
     pub fn to_uint256(value: &str) -> Result<String> {
         let n = NumberWithBase::parse_uint(value, None)?;
-        Ok(format!("{:#066x}", n))
+        Ok(format!("{n:#066x}"))
     }
 
     /// Converts a number into int256 hex string with 0x prefix
@@ -906,7 +885,7 @@ impl SimpleCast {
     /// ```
     pub fn to_int256(value: &str) -> Result<String> {
         let n = NumberWithBase::parse_int(value, None)?;
-        Ok(format!("{:#066x}", n))
+        Ok(format!("{n:#066x}"))
     }
 
     /// Converts an eth amount into a specified unit
@@ -1011,7 +990,7 @@ impl SimpleCast {
         let striped_value = strip_0x(value);
         let bytes = hex::decode(striped_value).expect("Could not decode hex");
         let item = rlp::decode::<Item>(&bytes).expect("Could not decode rlp");
-        Ok(format!("{}", item))
+        Ok(format!("{item}"))
     }
 
     /// Encodes hex data or list of hex data to hexadecimal rlp
@@ -1067,7 +1046,7 @@ impl SimpleCast {
         n.set_base(base_out);
 
         // Use Debug fmt
-        Ok(format!("{:#?}", n))
+        Ok(format!("{n:#?}"))
     }
 
     /// Converts hexdata into bytes32 value
@@ -1095,7 +1074,7 @@ impl SimpleCast {
             eyre::bail!("string >32 bytes");
         }
 
-        let padded = format!("{:0<64}", s);
+        let padded = format!("{s:0<64}");
         // need to use the Debug implementation
         Ok(format!("{:?}", H256::from_str(&padded)?))
     }
@@ -1151,7 +1130,7 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
-        foundry_utils::abi_decode(sig, calldata, input)
+        foundry_common::abi::abi_decode(sig, calldata, input)
     }
 
     /// Performs ABI encoding based off of the function signature. Does not include
@@ -1240,7 +1219,7 @@ impl SimpleCast {
     ) -> Result<Vec<InterfaceSource>> {
         let (contract_abis, contract_names): (Vec<RawAbi>, Vec<String>) = match address_or_path {
             InterfacePath::Local { path, name } => {
-                let file = std::fs::read_to_string(&path).wrap_err("unable to read abi file")?;
+                let file = std::fs::read_to_string(path).wrap_err("unable to read abi file")?;
 
                 let mut json: serde_json::Value = serde_json::from_str(&file)?;
                 let json = if !json["abi"].is_null() { json["abi"].take() } else { json };
@@ -1254,45 +1233,36 @@ impl SimpleCast {
                 let client = Client::new(chain, api_key)?;
 
                 // get the source
-                let contract_source = match client.contract_source_code(address).await {
-                    Ok(src) => src,
-                    Err(ethers_etherscan::errors::EtherscanError::InvalidApiKey) => {
-                        eyre::bail!("Invalid Etherscan API key. Did you set it correctly? You may be using an API key for another Etherscan API chain (e.g. Ethereum API key for Polygonscan).")
+                let source = match client.contract_source_code(address).await {
+                    Ok(source) => source,
+                    Err(EtherscanError::InvalidApiKey) => {
+                        eyre::bail!("Invalid Etherscan API key. Did you set it correctly? You may be using an API key for another Etherscan API chain (e.g. Etherscan API key for Polygonscan).")
+                    }
+                    Err(EtherscanError::ContractCodeNotVerified(address)) => {
+                        eyre::bail!("Contract source code at {:?} on {} not verified. Maybe you have selected the wrong chain?", address, chain)
                     }
                     Err(err) => {
                         eyre::bail!(err)
                     }
                 };
 
-                if contract_source
-                    .items
-                    .iter()
-                    .any(|item| item.abi == "Contract source code not verified")
-                {
-                    eyre::bail!("Contract source code at {:?} on {} not verified. Maybe you have selected the wrong chain?", address, chain)
-                }
-
-                let contract_source_names = contract_source
+                let names = source
                     .items
                     .iter()
                     .map(|item| item.contract_name.clone())
                     .collect::<Vec<String>>();
 
-                let mut abis = Vec::with_capacity(contract_source.items.len());
-                for item in &contract_source.items {
-                    abis.push(serde_json::from_str(&item.abi)?);
-                }
+                let abis = source.raw_abis()?;
 
-                (abis, contract_source_names)
+                (abis, names)
             }
         };
         contract_abis
             .iter()
-            .zip(&contract_names)
-            .map(|(contract_abi, contract_name)| {
-                let interface_source =
-                    foundry_utils::abi::abi_to_solidity(contract_abi, contract_name)?;
-                Ok(InterfaceSource { name: contract_name.to_owned(), source: interface_source })
+            .zip(contract_names)
+            .map(|(contract_abi, name)| {
+                let source = foundry_utils::abi::abi_to_solidity(contract_abi, &name)?;
+                Ok(InterfaceSource { name, source })
             })
             .collect::<Result<Vec<InterfaceSource>>>()
     }
@@ -1471,14 +1441,8 @@ impl SimpleCast {
         etherscan_api_key: String,
     ) -> Result<String> {
         let client = Client::new(chain, etherscan_api_key)?;
-        let meta = client.contract_source_code(contract_address.parse()?).await?;
-        let code = meta.source_code();
-
-        if code.is_empty() {
-            return Err(eyre::eyre!("unverified contract"))
-        }
-
-        Ok(code)
+        let metadata = client.contract_source_code(contract_address.parse()?).await?;
+        Ok(metadata.source_code())
     }
 
     /// Fetches the source code of verified contracts from etherscan and expands the resulting
@@ -1504,7 +1468,7 @@ impl SimpleCast {
     ) -> eyre::Result<()> {
         let client = Client::new(chain, etherscan_api_key)?;
         let meta = client.contract_source_code(contract_address.parse()?).await?;
-        let source_tree = meta.source_tree()?;
+        let source_tree = meta.source_tree();
         source_tree.write_to(&output_directory)?;
         Ok(())
     }

@@ -128,9 +128,8 @@ impl ScriptSequence {
             .libs
             .iter()
             .flat_map(|(file, libs)| {
-                libs.iter().map(|(name, address)| {
-                    format!("{}:{}:{}", file.to_string_lossy(), name, address)
-                })
+                libs.iter()
+                    .map(|(name, address)| format!("{}:{name}:{address}", file.to_string_lossy()))
             })
             .collect();
     }

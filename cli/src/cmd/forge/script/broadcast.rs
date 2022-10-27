@@ -17,11 +17,12 @@ use ethers::{
     utils::format_units,
 };
 use eyre::{ContextCompat, WrapErr};
-use foundry_common::{get_http_provider, RetryProvider};
+use foundry_common::{estimate_eip1559_fees, try_get_http_provider, RetryProvider};
 use foundry_config::Chain;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::{cmp::min, fmt, ops::Mul, sync::Arc};
+use std::{cmp::min, ops::Mul, sync::Arc};
+use tracing::{instrument, trace};
 
 impl ScriptArgs {
     /// Sends the transactions which haven't been broadcasted yet.
@@ -31,7 +32,7 @@ impl ScriptArgs {
         fork_url: &str,
         script_wallets: Vec<LocalWallet>,
     ) -> eyre::Result<()> {
-        let provider = Arc::new(get_http_provider(fork_url));
+        let provider = Arc::new(try_get_http_provider(fork_url)?);
         let already_broadcasted = deployment_sequence.receipts.len();
 
         if already_broadcasted < deployment_sequence.transactions.len() {
@@ -59,7 +60,11 @@ impl ScriptArgs {
                         (provider.get_gas_price().await.ok(), None)
                     }
                     TypedTransaction::Eip1559(_) => {
-                        (None, provider.estimate_eip1559_fees(None).await.ok())
+                        let fees = estimate_eip1559_fees(&provider, Some(chain))
+                            .await
+                            .wrap_err("Failed to estimate EIP1559 fees")?;
+
+                        (None, Some(fees))
                     }
                 }
             };
@@ -192,20 +197,18 @@ impl ScriptArgs {
         signer: &WalletType,
         sequential_broadcast: bool,
         fork_url: &str,
-    ) -> Result<TxHash, BroadcastError> {
+    ) -> eyre::Result<TxHash> {
         let from = tx.from().expect("no sender");
 
         if sequential_broadcast {
-            let nonce = foundry_utils::next_nonce(*from, fork_url, None).await.map_err(|_| {
-                BroadcastError::Simple("Not able to query the EOA nonce.".to_string())
-            })?;
+            let nonce = foundry_utils::next_nonce(*from, fork_url, None)
+                .await
+                .map_err(|_| eyre::eyre!("Not able to query the EOA nonce."))?;
 
             let tx_nonce = tx.nonce().expect("no nonce");
 
             if nonce != *tx_nonce {
-                return Err(BroadcastError::Simple(
-                    "EOA nonce changed unexpectedly while sending transactions.".to_string(),
-                ))
+                eyre::bail!("EOA nonce changed unexpectedly while sending transactions.")
             }
         }
 
@@ -245,7 +248,7 @@ impl ScriptArgs {
                     })?
                 };
 
-                let provider = Arc::new(get_http_provider(&fork_url));
+                let provider = Arc::new(try_get_http_provider(&fork_url)?);
                 let chain = provider.get_chainid().await?.as_u64();
 
                 verify.set_chain(&script_config.config, chain.into());
@@ -288,6 +291,7 @@ impl ScriptArgs {
 
     /// Modify each transaction according to the specific chain requirements (transaction type
     /// and/or gas calculations).
+    #[instrument(skip_all, fields(%chain))]
     async fn handle_chain_requirements(
         &self,
         txes: VecDeque<TransactionWithMetadata>,
@@ -308,6 +312,7 @@ impl ScriptArgs {
                 let typed_tx = tx.typed_tx_mut();
 
                 if has_different_gas_calc(chain) {
+                    trace!("estimating with different gas calculation");
                     self.estimate_gas(typed_tx, &provider).await?;
                 }
 
@@ -332,7 +337,7 @@ impl ScriptArgs {
             };
 
             println!("\n==========================");
-            println!("\nEstimated total gas used for script: {}", total_gas);
+            println!("\nEstimated total gas used for script: {total_gas}");
             println!(
                 "\nEstimated amount required: {} ETH",
                 format_units(total_gas.saturating_mul(per_gas), 18)
@@ -345,24 +350,20 @@ impl ScriptArgs {
     }
     /// Uses the signer to submit a transaction to the network. If it fails, it tries to retrieve
     /// the transaction hash that can be used on a later run with `--resume`.
-    async fn broadcast<T, U>(
+    async fn broadcast<T, S>(
         &self,
-        signer: &SignerMiddleware<T, U>,
+        signer: &SignerMiddleware<T, S>,
         mut legacy_or_1559: TypedTransaction,
-    ) -> Result<TxHash, BroadcastError>
+    ) -> eyre::Result<TxHash>
     where
-        T: Middleware,
-        U: Signer,
+        T: Middleware + 'static,
+        S: Signer + 'static,
     {
         tracing::debug!("sending transaction: {:?}", legacy_or_1559);
 
         // Chains which use `eth_estimateGas` are being sent sequentially and require their gas to
         // be re-estimated right before broadcasting.
         if has_different_gas_calc(signer.signer().chain_id()) || self.skip_simulation {
-            // if already set, some RPC endpoints might simply return the gas value that is already
-            // set in the request and omit the estimate altogether, so we remove it here
-            let _ = legacy_or_1559.gas_mut().take();
-
             self.estimate_gas(&mut legacy_or_1559, signer.provider()).await?;
         }
 
@@ -373,14 +374,11 @@ impl ScriptArgs {
                 *legacy_or_1559.from().expect("Tx should have a `from`."),
             )
             .await
-            .map_err(|err| BroadcastError::Simple(err.to_string()))?;
+            .wrap_err_with(|| "Failed to sign transaction")?;
 
         // Submit the raw transaction
-        let pending = signer
-            .provider()
-            .send_raw_transaction(legacy_or_1559.rlp_signed(&signature))
-            .await
-            .map_err(|err| BroadcastError::Simple(err.to_string()))?;
+        let pending =
+            signer.provider().send_raw_transaction(legacy_or_1559.rlp_signed(&signature)).await?;
 
         Ok(pending.tx_hash())
     }
@@ -389,36 +387,22 @@ impl ScriptArgs {
         &self,
         tx: &mut TypedTransaction,
         provider: &Provider<T>,
-    ) -> Result<(), BroadcastError>
+    ) -> eyre::Result<()>
     where
         T: JsonRpcClient,
     {
+        // if already set, some RPC endpoints might simply return the gas value that is already
+        // set in the request and omit the estimate altogether, so we remove it here
+        let _ = tx.gas_mut().take();
+
         tx.set_gas(
             provider
                 .estimate_gas(tx, None)
                 .await
-                .wrap_err_with(|| format!("Failed to estimate gas for tx: {}", tx.sighash()))
-                .map_err(|err| BroadcastError::Simple(err.to_string()))? *
+                .wrap_err_with(|| format!("Failed to estimate gas for tx: {:?}", tx.sighash()))? *
                 self.gas_estimate_multiplier /
                 100,
         );
         Ok(())
-    }
-}
-
-#[derive(thiserror::Error, Debug, Clone)]
-pub enum BroadcastError {
-    Simple(String),
-    ErrorWithTxHash(String, TxHash),
-}
-
-impl fmt::Display for BroadcastError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            BroadcastError::Simple(err) => write!(f, "{err}"),
-            BroadcastError::ErrorWithTxHash(err, tx_hash) => {
-                write!(f, "\nFailed to wait for transaction {tx_hash:?}:\n{err}")
-            }
-        }
     }
 }

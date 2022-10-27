@@ -171,7 +171,7 @@ pub fn try_setup_forge_remote(
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
-            .wrap_err_with(|| format!("Failed to execute {:?}", addon))?;
+            .wrap_err_with(|| format!("Failed to execute {addon:?}"))?;
         eyre::ensure!(status.success(), "Failed to execute command {:?}", addon);
     }
 
@@ -194,8 +194,18 @@ fn install_commonly_used_solc() {
     if !*is_preinstalled {
         let v0_8_10 = std::thread::spawn(|| Solc::blocking_install(&"0.8.10".parse().unwrap()));
         let v0_8_13 = std::thread::spawn(|| Solc::blocking_install(&"0.8.13".parse().unwrap()));
-        v0_8_10.join().unwrap().unwrap();
-        v0_8_13.join().unwrap().unwrap();
+
+        let wait = |res: std::thread::JoinHandle<_>| {
+            if let Err(err) = res.join().unwrap() {
+                eprintln!("{err:?}");
+                // there could be another process that's currently installing this version, so we
+                // sleep here for a bit and assume the other process will be finished then
+                std::thread::sleep(std::time::Duration::from_secs(15));
+            }
+        };
+
+        wait(v0_8_10);
+        wait(v0_8_13);
 
         *is_preinstalled = true;
     }
@@ -438,7 +448,7 @@ fn config_paths_exist(paths: &ProjectPathsConfig, cached: bool) {
 pub fn pretty_err<T, E: std::error::Error>(path: impl AsRef<Path>, res: Result<T, E>) -> T {
     match res {
         Ok(t) => t,
-        Err(err) => panic!("{}: {:?}", path.as_ref().display(), err),
+        Err(err) => panic!("{}: {err:?}", path.as_ref().display()),
     }
 }
 
@@ -561,7 +571,7 @@ impl TestCommand {
         match stdout.parse::<String>() {
             Ok(t) => t.replace("\r\n", "\n"),
             Err(err) => {
-                panic!("could not convert from string: {:?}\n\n{}", err, stdout);
+                panic!("could not convert from string: {err:?}\n\n{stdout}");
             }
         }
     }
@@ -586,6 +596,11 @@ impl TestCommand {
     pub fn output(&mut self) -> process::Output {
         let output = self.execute();
         self.expect_success(output)
+    }
+
+    /// Runs the command and asserts that it resulted in success
+    pub fn assert_success(&mut self) {
+        self.output();
     }
 
     /// Executes command, applies stdin function and returns output
@@ -759,7 +774,7 @@ pub trait OutputExt {
 ///
 /// This should strip everything that can vary from run to run, like elapsed time, file paths
 static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(\r|finished in (.*)?s|-->(.*).sol|Location(.|\n)*\.rs(.|\n)*Backtrace|installing solc version(.*?)\n|Successfully installed solc(.*?)\n|runs: \d+, μ: \d+, ~: \d+)").unwrap()
+    Regex::new(r"(\r|finished in (.*)?s|-->(.*).sol|Location(.|\n)*\.rs(.|\n)*Backtrace|Installing solc version(.*?)\n|Successfully installed solc(.*?)\n|runs: \d+, μ: \d+, ~: \d+)").unwrap()
 });
 
 impl OutputExt for process::Output {
@@ -794,7 +809,7 @@ pub fn tty_fixture_path(path: impl AsRef<Path>) -> PathBuf {
     let path = path.as_ref();
     if *IS_TTY {
         return if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-            path.with_extension(format!("tty.{}", ext))
+            path.with_extension(format!("tty.{ext}"))
         } else {
             path.with_extension("tty")
         }

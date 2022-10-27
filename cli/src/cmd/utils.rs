@@ -15,6 +15,7 @@ use forge::executor::opts::EvmOpts;
 use foundry_common::{cli_warn, fs, TestFunctionExt};
 use foundry_config::{error::ExtractConfigError, figment::Figment, Chain as ConfigChain, Config};
 use std::path::PathBuf;
+use tracing::trace;
 use yansi::Paint;
 
 /// Common trait for all cli commands
@@ -97,7 +98,7 @@ pub fn get_cached_entry_by_name(
         return Ok(entry)
     }
 
-    let mut err = format!("could not find artifact: `{}`", name);
+    let mut err = format!("could not find artifact: `{name}`");
     if let Some(suggestion) = suggestions::did_you_mean(name, &alternatives).pop() {
         err = format!(
             r#"{}
@@ -107,17 +108,6 @@ pub fn get_cached_entry_by_name(
         );
     }
     eyre::bail!(err)
-}
-
-pub fn u32_validator(min: u32, max: u32) -> impl FnMut(&str) -> eyre::Result<()> {
-    move |v: &str| -> eyre::Result<()> {
-        let v = v.parse::<u32>()?;
-        if v >= min && v <= max {
-            Ok(())
-        } else {
-            Err(eyre::eyre!("Expected between {} and {} inclusive.", min, max))
-        }
-    }
 }
 
 /// Returns error if constructor has arguments.
@@ -174,7 +164,7 @@ macro_rules! update_progress {
 /// True if the network calculates gas costs differently.
 pub fn has_different_gas_calc(chain: u64) -> bool {
     if let ConfigChain::Named(chain) = ConfigChain::from(chain) {
-        return matches!(chain, Chain::Arbitrum | Chain::ArbitrumTestnet)
+        return matches!(chain, Chain::Arbitrum | Chain::ArbitrumTestnet | Chain::ArbitrumGoerli)
     }
     false
 }
@@ -186,6 +176,7 @@ pub fn has_batch_support(chain: u64) -> bool {
             chain,
             Chain::Arbitrum |
                 Chain::ArbitrumTestnet |
+                Chain::ArbitrumGoerli |
                 Chain::Optimism |
                 Chain::OptimismKovan |
                 Chain::OptimismGoerli
@@ -250,6 +241,7 @@ where
 
         // update the fork url if it was an alias
         if let Some(fork_url) = config.get_rpc_url() {
+            trace!(target: "forge::config", ?fork_url, "Update EvmOpts fork url");
             evm_opts.fork_url = Some(fork_url?.into_owned());
         }
 

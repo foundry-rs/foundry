@@ -73,6 +73,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         fork_block_number: Some(200),
         chain_id: Some(9999.into()),
         gas_limit: 99_000_000u64.into(),
+        code_size_limit: Some(100000),
         gas_price: Some(999),
         block_base_fee_per_gas: 10,
         block_coinbase: Address::random(),
@@ -96,6 +97,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         },
         no_storage_caching: true,
         bytecode_hash: Default::default(),
+        cbor_metadata: true,
         revert_strings: Some(RevertStrings::Strip),
         sparse_mode: true,
         allow_paths: vec![],
@@ -117,9 +119,10 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
 forgetest!(
     #[serial_test::serial]
     can_show_config,
-    |_prj: TestProject, mut cmd: TestCommand| {
+    |prj: TestProject, mut cmd: TestCommand| {
         cmd.arg("config");
-        let expected = Config::load().to_string_pretty().unwrap().trim().to_string();
+        let expected =
+            Config::load_with_root(prj.root()).to_string_pretty().unwrap().trim().to_string();
         assert_eq!(expected, cmd.stdout().trim().to_string());
     }
 );

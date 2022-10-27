@@ -56,7 +56,7 @@ impl<'a, 'b> fmt::Display for SolFileMetricsPrinter<'a, 'b> {
                         let mut iter = metrics.cheatcodes.$field.iter().peekable();
                         while let Some(loc) = iter.next() {
                             let function_call = &metrics.content.as_bytes()[loc.start().. loc.end()];
-                            let (line, col) = offset_to_line_column(&metrics.content, loc.start(), loc.end());
+                            let (line, col) = offset_to_line_column(&metrics.content, loc.start());
                             let pos = format!("  --> {}:{}:{}", file.display(),  line, col);
                             writeln!(f,"{}", Paint::red(pos))?;
                             let content = String::from_utf8_lossy(function_call);

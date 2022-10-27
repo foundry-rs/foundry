@@ -8,6 +8,7 @@ use ethers_solc::{
     artifacts::{
         output_selection::ContractOutputSelection, serde_helpers, BytecodeHash, DebuggingSettings,
         Libraries, ModelCheckerSettings, ModelCheckerTarget, Optimizer, RevertStrings, Settings,
+        SettingsMetadata,
     },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     error::SolcError,
@@ -46,6 +47,7 @@ pub use endpoints::{ResolvedRpcEndpoints, RpcEndpoint, RpcEndpoints};
 
 mod etherscan;
 mod resolve;
+pub use resolve::UnresolvedEnvVarError;
 
 pub mod cache;
 use cache::{Cache, ChainCache};
@@ -70,6 +72,7 @@ pub mod fix;
 
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use figment;
+use tracing::warn;
 
 mod providers;
 use crate::{
@@ -82,7 +85,7 @@ mod fuzz;
 pub use fuzz::FuzzConfig;
 
 mod invariant;
-use crate::resolve::UnresolvedEnvVarError;
+use crate::fs_permissions::PathPermission;
 pub use invariant::InvariantConfig;
 use providers::remappings::RemappingsProvider;
 
@@ -238,6 +241,8 @@ pub struct Config {
     pub chain_id: Option<Chain>,
     /// Block gas limit
     pub gas_limit: GasLimit,
+    /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests.
+    pub code_size_limit: Option<usize>,
     /// `tx.gasprice` value during EVM execution"
     ///
     /// This is an Option, so we can determine in fork mode whether to use the config's gas price
@@ -301,6 +306,11 @@ pub struct Config {
     /// The metadata hash is machine dependent. By default, this is set to [BytecodeHash::None] to allow for deterministic code, See: <https://docs.soliditylang.org/en/latest/metadata.html>
     #[serde(with = "from_str_lowercase")]
     pub bytecode_hash: BytecodeHash,
+    /// Whether to append the metadata hash to the bytecode.
+    ///
+    /// If this is `false` and the `bytecode_hash` option above is not `None` solc will issue a
+    /// warning.
+    pub cbor_metadata: bool,
     /// How to treat revert (and require) reason strings.
     #[serde(with = "serde_helpers::display_from_str_opt")]
     pub revert_strings: Option<RevertStrings>,
@@ -684,7 +694,7 @@ impl Config {
     /// ```
     pub fn project_paths(&self) -> ProjectPathsConfig {
         let mut builder = ProjectPathsConfig::builder()
-            .cache(&self.cache_path.join(SOLIDITY_FILES_CACHE_FILENAME))
+            .cache(self.cache_path.join(SOLIDITY_FILES_CACHE_FILENAME))
             .sources(&self.src)
             .tests(&self.test)
             .scripts(&self.script)
@@ -738,12 +748,12 @@ impl Config {
     /// # }
     /// ```
     pub fn get_rpc_url(&self) -> Option<Result<Cow<str>, UnresolvedEnvVarError>> {
-        let eth_rpc_url = self.eth_rpc_url.as_ref()?;
+        let maybe_alias = self.eth_rpc_url.as_ref().or(self.etherscan_api_key.as_ref())?;
         let mut endpoints = self.rpc_endpoints.clone().resolved();
-        if let Some(alias) = endpoints.remove(eth_rpc_url) {
+        if let Some(alias) = endpoints.remove(maybe_alias) {
             Some(alias.map(Cow::Owned))
         } else {
-            Some(Ok(Cow::Borrowed(eth_rpc_url.as_str())))
+            Some(Ok(Cow::Borrowed(self.eth_rpc_url.as_deref()?)))
         }
     }
 
@@ -807,7 +817,7 @@ impl Config {
     pub fn get_etherscan_config(
         &self,
     ) -> Option<Result<ResolvedEtherscanConfig, EtherscanConfigError>> {
-        let maybe_alias = self.etherscan_api_key.as_ref()?;
+        let maybe_alias = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref())?;
         if self.etherscan.contains_key(maybe_alias) {
             // etherscan points to an alias in the `etherscan` table, so we try to resolve
             // that
@@ -817,7 +827,9 @@ impl Config {
         // we treat the `etherscan_api_key` as actual API key
         // if no chain provided, we assume mainnet
         let chain = self.chain_id.unwrap_or_else(|| Mainnet.into());
-        ResolvedEtherscanConfig::create(maybe_alias, chain).map(Ok)
+
+        let api_key = self.etherscan_api_key.as_ref()?;
+        ResolvedEtherscanConfig::create(api_key, chain).map(Ok)
     }
 
     /// Same as [`Self::get_etherscan_config()`] but optionally updates the config with the given
@@ -830,7 +842,7 @@ impl Config {
         chain: Option<impl Into<Chain>>,
     ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
         let chain = chain.map(Into::into);
-        if let Some(maybe_alias) = self.etherscan_api_key.as_ref() {
+        if let Some(maybe_alias) = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref()) {
             if self.etherscan.contains_key(maybe_alias) {
                 let mut resolved = self.etherscan.clone().resolved();
                 return resolved.remove(maybe_alias).transpose()
@@ -940,7 +952,7 @@ impl Config {
             optimizer,
             evm_version: Some(self.evm_version),
             libraries,
-            metadata: Some(self.bytecode_hash.into()),
+            metadata: Some(SettingsMetadata::new(self.bytecode_hash, self.cbor_metadata)),
             debug: self.revert_strings.map(|revert_strings| DebuggingSettings {
                 revert_strings: Some(revert_strings),
                 debug_info: Vec::new(),
@@ -1019,6 +1031,7 @@ impl Config {
                 .into_iter()
                 .map(|r| RelativeRemapping::new(r, &root))
                 .collect(),
+            fs_permissions: FsPermissions::new([PathPermission::read(paths.artifacts)]),
             ..Config::default()
         }
     }
@@ -1343,7 +1356,10 @@ impl Config {
     pub fn list_foundry_chain_cache(chain: Chain) -> eyre::Result<ChainCache> {
         let block_explorer_data_size = match Config::foundry_etherscan_chain_cache_dir(chain) {
             Some(cache_dir) => Self::get_cached_block_explorer_data(&cache_dir)?,
-            None => eyre::bail!("failed to access foundry_etherscan_chain_cache_dir"),
+            None => {
+                warn!("failed to access foundry_etherscan_chain_cache_dir");
+                0
+            }
         };
 
         if let Some(cache_dir) = Config::foundry_chain_cache_dir(chain) {
@@ -1642,6 +1658,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             profile: Self::DEFAULT_PROFILE,
+            fs_permissions: FsPermissions::new([PathPermission::read("out")]),
             __root: Default::default(),
             src: "src".into(),
             test: "test".into(),
@@ -1684,6 +1701,7 @@ impl Default for Config {
             fork_block_number: None,
             chain_id: None,
             gas_limit: i64::MAX.into(),
+            code_size_limit: None,
             gas_price: None,
             block_base_fee_per_gas: 0,
             block_coinbase: Address::zero(),
@@ -1707,12 +1725,12 @@ impl Default for Config {
             etherscan: Default::default(),
             no_storage_caching: false,
             bytecode_hash: BytecodeHash::Ipfs,
+            cbor_metadata: true,
             revert_strings: None,
             sparse_mode: false,
             build_info: false,
             build_info_path: None,
             fmt: Default::default(),
-            fs_permissions: Default::default(),
             __non_exhaustive: (),
             __warnings: vec![],
         }
@@ -1885,7 +1903,8 @@ impl Provider for TomlFileProvider {
     }
 }
 
-/// A Provider that ensures all keys are snake case
+/// A Provider that ensures all keys are snake case if they're not standalone sections, See
+/// `Config::STANDALONE_SECTIONS`
 struct ForcedSnakeCaseData<P>(P);
 
 impl<P: Provider> Provider for ForcedSnakeCaseData<P> {
@@ -1896,6 +1915,11 @@ impl<P: Provider> Provider for ForcedSnakeCaseData<P> {
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let mut map = Map::new();
         for (profile, dict) in self.0.data()? {
+            if Config::STANDALONE_SECTIONS.contains(&profile.as_ref()) {
+                // don't force snake case for keys in standalone sections
+                map.insert(profile, dict);
+                continue
+            }
             map.insert(profile, dict.into_iter().map(|(k, v)| (k.to_snake_case(), v)).collect());
         }
         Ok(map)
@@ -2332,9 +2356,9 @@ impl BasicConfig {
         let s = toml::to_string_pretty(self)?;
         Ok(format!(
             r#"[profile.{}]
-{}
+{s}
 # See more config options https://github.com/foundry-rs/foundry/tree/master/config"#,
-            self.profile, s
+            self.profile
         ))
     }
 }
@@ -2852,6 +2876,54 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_rpc_url_if_etherscan_set() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                etherscan_api_key = "dummy"
+                [rpc_endpoints]
+                optimism = "https://example.com/"
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!("http://localhost:8545", config.get_rpc_url_or_localhost_http().unwrap());
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_resolve_rpc_url_alias() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                [rpc_endpoints]
+                polygonMumbai = "https://polygon-mumbai.g.alchemy.com/v2/${_RESOLVE_RPC_ALIAS}"
+            "#,
+            )?;
+            let mut config = Config::load();
+            config.eth_rpc_url = Some("polygonMumbai".to_string());
+            assert!(config.get_rpc_url().unwrap().is_err());
+
+            jail.set_env("_RESOLVE_RPC_ALIAS", "123455");
+
+            let mut config = Config::load();
+            config.eth_rpc_url = Some("polygonMumbai".to_string());
+            assert_eq!(
+                "https://polygon-mumbai.g.alchemy.com/v2/123455",
+                config.get_rpc_url().unwrap().unwrap()
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
     fn test_resolve_endpoints() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
@@ -2963,6 +3035,35 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_etherscan_config_by_chain_and_alias() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                eth_rpc_url = "mumbai"
+
+                [etherscan]
+                mumbai = { key = "https://etherscan-mumbai.com/" }
+
+                [rpc_endpoints]
+                mumbai = "https://polygon-mumbai.g.alchemy.com/v2/mumbai"
+            "#,
+            )?;
+
+            let config = Config::load();
+
+            let mumbai =
+                config.get_etherscan_config_with_chain(Option::<u64>::None).unwrap().unwrap();
+            assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
+
+            let mumbai_rpc = config.get_rpc_url().unwrap().unwrap();
+            assert_eq!(mumbai_rpc, "https://polygon-mumbai.g.alchemy.com/v2/mumbai");
+            Ok(())
+        });
+    }
+
+    #[test]
     fn test_toml_file() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
@@ -2978,6 +3079,7 @@ mod tests {
                 via_ir = true
                 rpc_storage_caching = { chains = [1, "optimism", 999999], endpoints = "all"}
                 bytecode_hash = "ipfs"
+                cbor_metadata = true
                 revert_strings = "strip"
                 allow_paths = ["allow", "paths"]
                 build_info_path = "build-info"
@@ -3010,6 +3112,7 @@ mod tests {
                         endpoints: CachedEndpoints::All
                     },
                     bytecode_hash: BytecodeHash::Ipfs,
+                    cbor_metadata: true,
                     revert_strings: Some(RevertStrings::Strip),
                     allow_paths: vec![PathBuf::from("allow"), PathBuf::from("paths")],
                     rpc_endpoints: RpcEndpoints::new([
@@ -3073,6 +3176,7 @@ mod tests {
                 block_number = 1
                 block_timestamp = 1
                 bytecode_hash = 'ipfs'
+                cbor_metadata = true
                 cache = true
                 cache_path = 'cache'
                 evm_version = 'london'
@@ -3442,7 +3546,7 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             let addr = Address::random();
             jail.set_env("DAPP_TEST_NUMBER", 1337);
-            jail.set_env("DAPP_TEST_ADDRESS", format!("{:?}", addr));
+            jail.set_env("DAPP_TEST_ADDRESS", format!("{addr:?}"));
             jail.set_env("DAPP_TEST_FUZZ_RUNS", 420);
             jail.set_env("DAPP_TEST_DEPTH", 20);
             jail.set_env("DAPP_FORK_BLOCK", 100);

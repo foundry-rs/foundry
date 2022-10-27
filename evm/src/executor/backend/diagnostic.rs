@@ -40,9 +40,9 @@ impl RevertDiagnostic {
             RevertDiagnostic::ContractDoesNotExist { contract, persistent, .. } => {
                 let contract_label = get_label(contract);
                 if *persistent {
-                    format!("Contract {} does not exist", contract_label)
+                    format!("Contract {contract_label} does not exist")
                 } else {
-                    format!("Contract {} does not exist and is not marked as persistent, see `vm.makePersistent()`", contract_label)
+                    format!("Contract {contract_label} does not exist and is not marked as persistent, see `vm.makePersistent()`")
                 }
             }
         }

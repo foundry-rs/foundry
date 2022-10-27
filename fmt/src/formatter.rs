@@ -190,16 +190,16 @@ impl<'a, W: Write> Formatter<'a, W> {
             return false
         }
         match last_char {
-            '{' | '[' => match next_char {
+            '{' => match next_char {
                 '{' | '[' | '(' => false,
                 '/' => true,
                 _ => self.config.bracket_spacing,
             },
-            '(' | '.' => matches!(next_char, '/'),
+            '(' | '.' | '[' => matches!(next_char, '/'),
             '/' => true,
             _ => match next_char {
-                '}' | ']' => self.config.bracket_spacing,
-                ')' | ',' | '.' | ';' => false,
+                '}' => self.config.bracket_spacing,
+                ')' | ',' | '.' | ';' | ']' => false,
                 _ => true,
             },
         }
@@ -450,9 +450,23 @@ impl<'a, W: Write> Formatter<'a, W> {
                 let lines = content.lines();
                 writeln!(self.buf(), "/**")?;
                 for line in lines {
-                    let line = line.trim().trim_start_matches('*');
-                    let needs_space = line.chars().next().map_or(false, |ch| !ch.is_whitespace());
-                    writeln!(self.buf(), " *{}{}", if needs_space { " " } else { "" }, line)?;
+                    if line.trim().starts_with('*') {
+                        let line = line.trim().trim_start_matches('*');
+                        let needs_space =
+                            line.chars().next().map_or(false, |ch| !ch.is_whitespace());
+                        writeln!(self.buf(), " *{}{line}", if needs_space { " " } else { "" })?;
+                    } else {
+                        let curr_indent = self.buf.current_indent_len();
+
+                        let indent_whitespace_count = line
+                            .char_indices()
+                            .take_while(|(idx, ch)| ch.is_whitespace() && *idx <= curr_indent)
+                            .count();
+                        let to_skip = indent_whitespace_count -
+                            indent_whitespace_count % self.config.tab_width;
+
+                        writeln!(self.buf(), " * {}", &line[to_skip..])?;
+                    }
                 }
                 write!(self.buf(), " */")?;
             } else {
@@ -636,7 +650,7 @@ impl<'a, W: Write> Formatter<'a, W> {
 
             // add separator
             if chunks.peek().is_some() {
-                write!(self.buf(), "{}", separator)?;
+                write!(self.buf(), "{separator}")?;
                 self.write_comments(&postfixes)?;
                 if multiline && !self.is_beginning_of_line() {
                     writeln!(self.buf())?;
@@ -1492,6 +1506,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             loc,
             source_unit.0.iter_mut(),
             |last_unit, unit| match last_unit {
+                SourceUnitPart::PragmaDirective(..) => {
+                    !matches!(unit, SourceUnitPart::PragmaDirective(..))
+                }
                 SourceUnitPart::ImportDirective(_) => {
                     !matches!(unit, SourceUnitPart::ImportDirective(_))
                 }
@@ -1865,10 +1882,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     |fmt, _| expr.visit(fmt),
                 )?;
             }
-            Expression::ArraySubscript(_, ty_exp, size_exp) => {
+            Expression::ArraySubscript(_, ty_exp, index_expr) => {
                 ty_exp.visit(self)?;
                 write!(self.buf(), "[")?;
-                size_exp.as_mut().map(|size| size.visit(self)).transpose()?;
+                index_expr.as_mut().map(|index| index.visit(self)).transpose()?;
                 write!(self.buf(), "]")?;
             }
             Expression::ArraySlice(loc, expr, start, end) => {
@@ -2404,7 +2421,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             let byte_offset = event.fields.first().unwrap().loc.start();
             let first_chunk = self.chunk_to_string(&name)?;
             self.surrounded(
-                SurroundingChunk::new(&first_chunk, Some(byte_offset), None),
+                SurroundingChunk::new(first_chunk, Some(byte_offset), None),
                 SurroundingChunk::new(last_chunk, None, Some(event.loc.end())),
                 |fmt, multiline| {
                     let params = fmt.items_to_chunks(
@@ -2571,7 +2588,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             VariableAttribute::Constant(_) => Some("constant".to_string()),
             VariableAttribute::Immutable(_) => Some("immutable".to_string()),
             VariableAttribute::Override(loc, idents) => {
-                self.visit_list("override", idents, Some(loc.start()), Some(loc.end()), false)?;
+                write_chunk!(self, loc.start(), "override")?;
+                if !idents.is_empty() && self.config.variable_override_spacing {
+                    self.write_whitespace_separator(false)?;
+                }
+                self.visit_list("", idents, Some(loc.start()), Some(loc.end()), false)?;
                 None
             }
         };
@@ -2827,7 +2848,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         self.indented_if(multiline, 1, |fmt| fmt.write_chunks_separated(&chunks, ",", multiline))?;
 
         let prefix = if multiline && !self.is_beginning_of_line() { "\n" } else { "" };
-        let closing_bracket = format!("{}{}", prefix, "}");
+        let closing_bracket = format!("{prefix}{}", "}");
         let closing_bracket_loc = args.last().unwrap().loc.end();
         write_chunk_spaced!(self, closing_bracket_loc, Some(false), "{closing_bracket}")?;
 
@@ -3034,7 +3055,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 } else {
                     "\n"
                 };
-                let chunk_str = format!("{}{}", prefix, chunk_str);
+                let chunk_str = format!("{prefix}{chunk_str}");
                 write!(fmt.buf(), "{chunk_str}")?;
                 Ok(())
             })?;
@@ -3471,4 +3492,5 @@ mod tests {
     test_directory! { FunctionCall }
     test_directory! { TrailingComma }
     test_directory! { SelectorOverride }
+    test_directory! { PragmaDirective }
 }

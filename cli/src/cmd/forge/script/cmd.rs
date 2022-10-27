@@ -4,7 +4,7 @@ use ethers::{
     prelude::{Middleware, Signer},
     types::{transaction::eip2718::TypedTransaction, U256},
 };
-use foundry_common::{contracts::flatten_contracts, get_http_provider};
+use foundry_common::{contracts::flatten_contracts, try_get_http_provider};
 use std::sync::Arc;
 use tracing::trace;
 
@@ -67,7 +67,7 @@ impl ScriptArgs {
                 .clone()
                 .ok_or_else(|| eyre::eyre!("You must provide an RPC URL (see --fork-url)."))?;
 
-            let provider = Arc::new(get_http_provider(&fork_url));
+            let provider = Arc::new(try_get_http_provider(&fork_url)?);
             let chain = provider.get_chainid().await?.as_u64();
 
             verify.set_chain(&script_config.config, chain.into());

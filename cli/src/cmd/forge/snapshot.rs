@@ -6,11 +6,11 @@ use crate::{
             test,
             test::{Test, TestOutcome},
         },
-        u32_validator, Cmd,
+        Cmd,
     },
     utils::STATIC_FUZZ_SEED,
 };
-use clap::{Parser, ValueHint};
+use clap::{builder::RangedU64ValueParser, Parser, ValueHint};
 use ethers::types::U256;
 use eyre::Context;
 use forge::result::TestKindReport;
@@ -83,7 +83,7 @@ pub struct SnapshotArgs {
     #[clap(
         help = "Tolerates gas deviations up to the specified percentage.",
         long,
-        validator = u32_validator(0, 100),
+        value_parser = RangedU64ValueParser::<u32>::new().range(0..100),
         value_name = "SNAPSHOT_THRESHOLD"
     )]
     tolerance: Option<u32>,
@@ -408,11 +408,11 @@ fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> eyre::Result<()> {
 fn fmt_pct_change(change: f64) -> String {
     let change_pct = change * 100.0;
     match change.partial_cmp(&0.0).unwrap_or(Ordering::Equal) {
-        Ordering::Less => Paint::green(format!("{:.3}%", change_pct)).to_string(),
+        Ordering::Less => Paint::green(format!("{change_pct:.3}%")).to_string(),
         Ordering::Equal => {
-            format!("{:.3}%", change_pct)
+            format!("{change_pct:.3}%")
         }
-        Ordering::Greater => Paint::red(format!("{:.3}%", change_pct)).to_string(),
+        Ordering::Greater => Paint::red(format!("{change_pct:.3}%")).to_string(),
     }
 }
 

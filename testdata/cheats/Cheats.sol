@@ -129,6 +129,8 @@ interface Cheats {
     function stopBroadcast() external;
     // Reads the entire content of file to string. Path is relative to the project root. (path) => (data)
     function readFile(string calldata) external returns (string memory);
+    // Reads the entire content of file as binary. Path is relative to the project root. (path) => (data)
+    function readFileBinary(string calldata) external returns (bytes memory);
     // Get the path of the current project root
     function projectRoot() external returns (string memory);
     // Reads next line of file to string, (path) => (line)
@@ -136,6 +138,9 @@ interface Cheats {
     // Writes data to file, creating a file if it does not exist, and entirely replacing its contents if it does.
     // Path is relative to the project root. (path, data) => ()
     function writeFile(string calldata, string calldata) external;
+    // Writes binary data to a file, creating a file if it does not exist, and entirely replacing its contents if it does.
+    // Path is relative to the project root. (path, data) => ()
+    function writeFileBinary(string calldata, bytes calldata) external;
     // Writes line to file, creating a file if it does not exist.
     // Path is relative to the project root. (path, data) => ()
     function writeLine(string calldata, string calldata) external;
@@ -185,6 +190,10 @@ interface Cheats {
     function createSelectFork(string calldata) external returns (uint256);
     // Takes a fork identifier created by `createFork` and sets the corresponding forked state as active.
     function selectFork(uint256) external;
+    // Fetches the given transaction from the active fork and executes it on the current state
+    function transact(bytes32) external;
+    // Fetches the given transaction from the given fork and executes it on the current state
+    function transact(uint256, bytes32) external;
     // Returns the currently active fork
     // Reverts if no fork is currently active
     function activeFork() external returns (uint256);

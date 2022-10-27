@@ -1,11 +1,11 @@
 //! Convert a json abi into solidity inerface
 
-use ethers_contract::{InternalStructs, RawAbi};
+use ethers_contract::InternalStructs;
 use ethers_core::{
     abi,
     abi::{
         struct_def::{FieldType, StructFieldType},
-        Contract as Abi, Event, EventParam, Function, Param, ParamType, SolStruct,
+        Contract as Abi, Event, EventParam, Function, Param, ParamType, RawAbi, SolStruct,
     },
 };
 use std::collections::BTreeMap;
@@ -45,7 +45,7 @@ pub fn abi_to_solidity(contract_abi: &RawAbi, mut contract_name: &str) -> eyre::
             .collect::<eyre::Result<Vec<String>>>()?
             .join(", ");
 
-        let event_final = format!("event {}({})", event.name, inputs);
+        let event_final = format!("event {}({inputs})", event.name);
 
         events.push(format!("{event_final};"));
     }
@@ -73,7 +73,7 @@ pub fn abi_to_solidity(contract_abi: &RawAbi, mut contract_name: &str) -> eyre::
             _ => "",
         };
 
-        let mut func = format!("function {}({})", function.name, inputs);
+        let mut func = format!("function {}({inputs})", function.name);
         if !mutability.is_empty() {
             func = format!("{func} {mutability}");
         }
@@ -146,11 +146,11 @@ fn expand_input_param_type(
     match kind {
         ParamType::Array(ty) => {
             let ty = expand_input_param_type(fun, param, ty, structs)?;
-            Ok(format!("{}[]", ty))
+            Ok(format!("{ty}[]"))
         }
         ParamType::FixedArray(ty, size) => {
             let ty = expand_input_param_type(fun, param, ty, structs)?;
-            Ok(format!("{}[{}]", ty, *size))
+            Ok(format!("{ty}[{}]", *size))
         }
         ParamType::Tuple(_) => {
             let ty = if let Some(struct_name) =
@@ -175,21 +175,28 @@ fn expand_output_param_type(
     match kind {
         ParamType::Array(ty) => {
             let ty = expand_output_param_type(fun, param, ty, structs)?;
-            Ok(format!("{}[]", ty))
+            Ok(format!("{ty}[]"))
         }
         ParamType::FixedArray(ty, size) => {
             let ty = expand_output_param_type(fun, param, ty, structs)?;
-            Ok(format!("{}[{}]", ty, *size))
+            Ok(format!("{ty}[{}]", *size))
         }
         ParamType::Tuple(_) => {
-            let ty = if let Some(struct_name) = structs
-                .get_function_output_struct_type(&fun.name, param.internal_type.as_ref().unwrap())
-            {
-                struct_name.to_string()
+            if param.internal_type.is_none() {
+                let result =
+                    kind.to_string().trim_start_matches('(').trim_end_matches(')').to_string();
+                Ok(result)
             } else {
-                kind.to_string()
-            };
-            Ok(ty)
+                let ty = if let Some(struct_name) = structs.get_function_output_struct_type(
+                    &fun.name,
+                    param.internal_type.as_ref().unwrap(),
+                ) {
+                    struct_name.to_string()
+                } else {
+                    kind.to_string()
+                };
+                Ok(ty)
+            }
         }
         _ => Ok(kind.to_string()),
     }
@@ -219,20 +226,21 @@ fn format_function_output_param(
 
 fn format_param(param: &Param, kind: String) -> String {
     // add `memory` if required (not needed for events, only for functions)
-    let is_memory = matches!(
-        param.kind,
+    let is_memory = match param.kind {
         ParamType::Array(_) |
-            ParamType::Bytes |
-            ParamType::String |
-            ParamType::FixedArray(_, _) |
-            ParamType::Tuple(_),
-    );
+        ParamType::Bytes |
+        ParamType::String |
+        ParamType::FixedArray(_, _) => true,
+        ParamType::Tuple(_) => param.internal_type.is_some(),
+        _ => false,
+    };
+
     let kind = if is_memory { format!("{kind} memory") } else { kind };
 
     if param.name.is_empty() {
         kind
     } else {
-        format!("{} {}", kind, param.name)
+        format!("{kind} {}", param.name)
     }
 }
 
@@ -246,11 +254,11 @@ fn expand_event_param_type(
     match kind {
         ParamType::Array(ty) => {
             let ty = expand_event_param_type(event, ty, idx, structs)?;
-            Ok(format!("{}[]", ty))
+            Ok(format!("{ty}[]"))
         }
         ParamType::FixedArray(ty, size) => {
             let ty = expand_event_param_type(event, ty, idx, structs)?;
-            Ok(format!("{}[{}]", ty, *size))
+            Ok(format!("{ty}[{}]", *size))
         }
         ParamType::Tuple(_) => {
             let ty =
@@ -275,9 +283,9 @@ fn format_event_params(
     let ty = if param.name.is_empty() {
         kind
     } else if param.indexed {
-        format!("{} indexed {}", kind, param.name)
+        format!("{kind} indexed {}", param.name)
     } else {
-        format!("{} {}", kind, param.name)
+        format!("{kind} {}", param.name)
     };
     Ok(ty)
 }
@@ -297,7 +305,7 @@ fn format_struct_types(structs: &InternalStructs) -> String {
 fn format_struct_field(name: &str, sol_struct: &SolStruct) -> String {
     // strip member access if any
     let name = name.split('.').last().unwrap();
-    let mut def = format!("struct {} {{\n", name);
+    let mut def = format!("struct {name} {{\n");
     for field in sol_struct.fields.iter() {
         let ty = match &field.ty {
             FieldType::Elementary(ty) => ty.to_string(),
@@ -307,7 +315,7 @@ fn format_struct_field(name: &str, sol_struct: &SolStruct) -> String {
             }
         };
 
-        def.push_str(&format!("{} {};\n", ty, field.name));
+        def.push_str(&format!("{ty} {};\n", field.name));
     }
 
     def.push('}');
@@ -331,8 +339,6 @@ fn struct_field_to_type(ty: &StructFieldType) -> String {
 mod tests {
     use super::*;
 
-    use ethers_contract::RawAbi;
-
     #[test]
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn abi2solidity() {
@@ -351,7 +357,32 @@ mod tests {
             abi_to_solidity(&contract_abi, "").unwrap()
         );
     }
-
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn abi2solidity_gaugecontroller() {
+        let contract_abi: RawAbi = serde_json::from_str(include_str!(
+            "../../testdata/fixtures/SolidityGeneration/GaugeController.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            include_str!("../../testdata/fixtures/SolidityGeneration/GeneratedGaugeController.sol"),
+            abi_to_solidity(&contract_abi, "test").unwrap()
+        );
+    }
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn abi2dolidity_liquiditygauge() {
+        let contract_abi: RawAbi = serde_json::from_str(include_str!(
+            "../../testdata/fixtures/SolidityGeneration/LiquidityGaugeV4.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            include_str!(
+                "../../testdata/fixtures/SolidityGeneration/GeneratedLiquidityGaugeV4.sol"
+            ),
+            abi_to_solidity(&contract_abi, "test").unwrap()
+        );
+    }
     #[test]
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn abi2solidity_fastlane() {

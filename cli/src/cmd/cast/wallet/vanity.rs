@@ -2,7 +2,7 @@
 
 use crate::cmd::Cmd;
 use cast::SimpleCast;
-use clap::Parser;
+use clap::{builder::TypedValueParser, Parser};
 use ethers::{
     core::{k256::ecdsa::SigningKey, rand::thread_rng},
     prelude::{LocalWallet, Signer},
@@ -21,12 +21,12 @@ pub struct VanityArgs {
     #[clap(
         long,
         help = "Prefix for the vanity address.",
-        required_unless_present = "ends-with",
-        validator = hex_address_validator(),
+        required_unless_present = "ends_with",
+        value_parser = HexAddressValidator::default(),
         value_name = "HEX"
     )]
     pub starts_with: Option<String>,
-    #[clap(long, help = "Suffix for the vanity address.", validator = hex_address_validator(), value_name = "HEX")]
+    #[clap(long, help = "Suffix for the vanity address.", value_parser = HexAddressValidator::default(), value_name = "HEX")]
     pub ends_with: Option<String>,
     #[clap(
         long,
@@ -50,7 +50,7 @@ impl Cmd for VanityArgs {
             if let Ok(decoded) = hex::decode(prefix.as_bytes()) {
                 left_exact_hex = Some(decoded)
             } else {
-                left_regex = Some(Regex::new(&format!(r"^{}", prefix))?);
+                left_regex = Some(Regex::new(&format!(r"^{prefix}"))?);
             }
         }
 
@@ -58,7 +58,7 @@ impl Cmd for VanityArgs {
             if let Ok(decoded) = hex::decode(suffix.as_bytes()) {
                 right_exact_hex = Some(decoded)
             } else {
-                right_regex = Some(Regex::new(&format!(r"{}$", suffix))?);
+                right_regex = Some(Regex::new(&format!(r"{suffix}$"))?);
             }
         }
 
@@ -280,13 +280,30 @@ impl VanityMatcher for RegexMatcher {
     }
 }
 
-/// Validates an address from cli args.
-pub fn hex_address_validator() -> impl FnMut(&str) -> eyre::Result<()> {
-    move |v: &str| -> eyre::Result<()> {
-        if v.len() > 40 {
-            eyre::bail!("vanity patterns length exceeded. cannot be more than 40 characters")
+/// Parse 40 byte addresses
+#[derive(Copy, Clone, Debug, Default)]
+#[non_exhaustive]
+pub struct HexAddressValidator;
+
+impl TypedValueParser for HexAddressValidator {
+    type Value = String;
+
+    fn parse_ref(
+        &self,
+        _cmd: &clap::Command,
+        _arg: Option<&clap::Arg>,
+        value: &std::ffi::OsStr,
+    ) -> Result<Self::Value, clap::Error> {
+        if value.len() > 40 {
+            return Err(clap::Error::raw(
+                clap::error::ErrorKind::InvalidValue,
+                "vanity patterns length exceeded. cannot be more than 40 characters",
+            ))
         }
-        Ok(())
+        let value = value.to_str().ok_or_else(|| {
+            clap::Error::raw(clap::error::ErrorKind::InvalidUtf8, "address must be valid utf8")
+        })?;
+        Ok(value.to_string())
     }
 }
 

@@ -12,12 +12,12 @@ use ethers::{
     providers::Middleware,
     types::{BlockId, NameOrAddress, U256},
 };
-use foundry_common::get_http_provider;
+use foundry_common::try_get_http_provider;
 use foundry_config::{Chain, Config};
 
 #[derive(Debug, Parser)]
 pub struct CallArgs {
-    #[clap(help = "The destination of the transaction.", parse(try_from_str = parse_name_or_address), value_name = "TO")]
+    #[clap(help = "The destination of the transaction.", value_parser = parse_name_or_address, value_name = "TO")]
     to: Option<NameOrAddress>,
     #[clap(help = "The signature of the function to call.", value_name = "SIG")]
     sig: Option<String>,
@@ -28,7 +28,7 @@ pub struct CallArgs {
     #[clap(flatten)]
     // TODO: We only need RPC URL and Etherscan API key here.
     eth: EthereumOpts,
-    #[clap(long, short, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id), value_name = "BLOCK")]
+    #[clap(long, short, help = "the block you want to query, can also be earliest/latest/pending", value_parser = parse_block_id, value_name = "BLOCK")]
     block: Option<BlockId>,
     #[clap(subcommand)]
     command: Option<CallSubcommands>,
@@ -50,7 +50,7 @@ pub enum CallSubcommands {
             long_help = r#"Ether to send in the transaction, either specified in wei, or as a string with a unit type.
 
 Examples: 1ether, 10gwei, 0.01ether"#,
-            parse(try_from_str = parse_ether_value),
+            value_parser = parse_ether_value,
             value_name = "VALUE"
         )]
         value: Option<U256>,
@@ -60,7 +60,7 @@ impl CallArgs {
     pub async fn run(self) -> eyre::Result<()> {
         let CallArgs { to, sig, args, tx, eth, command, block } = self;
         let config = Config::from(&eth);
-        let provider = get_http_provider(config.get_rpc_url_or_localhost_http()?);
+        let provider = try_get_http_provider(config.get_rpc_url_or_localhost_http()?)?;
 
         let chain: Chain =
             if let Some(chain) = eth.chain { chain } else { provider.get_chainid().await?.into() };
