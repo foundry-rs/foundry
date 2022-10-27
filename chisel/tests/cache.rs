@@ -58,6 +58,29 @@ fn test_write_session() {
 
 #[test]
 #[serial]
+fn test_write_session_with_name() {
+    // Create the cache directory if it doesn't exist
+    let cache_dir = ChiselSession::cache_dir().unwrap();
+    ChiselSession::create_cache_dir().unwrap();
+
+    // Create a new session
+    let mut env = ChiselSession::new(&chisel::session_source::SessionSourceConfig {
+        config: Config::default(),
+        evm_opts: EvmOpts::default(),
+        backend: None,
+        traces: false,
+    });
+    env.id = Some(String::from("test"));
+
+    // Write the session
+    let cached_session_name = env.write().unwrap();
+
+    // Validate the session
+    assert_eq!(cached_session_name, format!("{}chisel-test.json", cache_dir));
+}
+
+#[test]
+#[serial]
 fn test_clear_cache() {
     // Create a session to validate clearing a non-empty cache directory
     let cache_dir = ChiselSession::cache_dir().unwrap();
@@ -125,7 +148,7 @@ fn test_load_cache() {
     // Validate the session
     assert!(new_env.is_ok());
     let new_env = new_env.unwrap();
-    assert_eq!(new_env.id.unwrap(), 0);
+    assert_eq!(new_env.id.unwrap(), String::from("0"));
     assert_eq!(
         new_env.session_source.unwrap().to_string(),
         env.session_source.unwrap().to_string()
@@ -184,7 +207,7 @@ fn test_load_latest_cache() {
     let new_env = ChiselSession::latest().unwrap();
 
     // Validate the session
-    assert_eq!(new_env.id.unwrap(), 1);
+    assert_eq!(new_env.id.unwrap(), "1");
     assert_eq!(
         new_env.session_source.unwrap().to_string(),
         env.session_source.unwrap().to_string()

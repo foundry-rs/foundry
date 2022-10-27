@@ -12,7 +12,7 @@ use forge::trace::{
     identifier::{EtherscanIdentifier, SignaturesIdentifier},
     CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
 };
-use foundry_config::Config;
+use foundry_config::{Config, RpcEndpoint};
 use solang_parser::diagnostics::Diagnostic;
 use std::{error::Error, path::PathBuf, str::FromStr};
 use strum::{EnumIter, IntoEnumIterator};
@@ -63,7 +63,7 @@ impl ChiselDisptacher {
     pub fn get_prompt(&self) -> String {
         format!(
             "{}{} ",
-            if let Some(id) = self.session.id {
+            if let Some(id) = self.session.id.as_ref() {
                 format!("({}) ", format!("{}: {}", Paint::cyan("ID"), Paint::yellow(id)))
             } else {
                 String::default()
@@ -102,14 +102,25 @@ impl ChiselDisptacher {
                     )
                 }
             }
-            ChiselCommand::Flush => {
-                if let Err(e) = self.session.write() {
-                    return DispatchResult::FileIoError(e.into())
+            ChiselCommand::Save => {
+                if args.len() <= 1 {
+                    // If a new name was supplied, overwrite the ID of the current session.
+                    if args.len() == 1 {
+                        // TODO: Should we delete the old cache file if the id of the session
+                        // changes?
+                        self.session.id = Some(args[0].to_owned());
+                    }
+
+                    if let Err(e) = self.session.write() {
+                        return DispatchResult::FileIoError(e.into())
+                    }
+                    return DispatchResult::CommandSuccess(Some(String::from(format!(
+                        "Saved session to cache with ID = {}",
+                        self.session.id.as_ref().unwrap()
+                    ))))
+                } else {
+                    DispatchResult::CommandFailed(Self::make_error("Too many arguments supplied!"))
                 }
-                return DispatchResult::CommandSuccess(Some(String::from(format!(
-                    "Saved session to cache with ID = {}",
-                    self.session.id.unwrap()
-                ))))
             }
             ChiselCommand::Load => {
                 if args.len() != 1 {
@@ -149,7 +160,7 @@ impl ChiselDisptacher {
                     self.session = new_session;
                     return DispatchResult::CommandSuccess(Some(format!(
                         "Loaded Chisel session! (ID = {})",
-                        self.session.id.unwrap()
+                        self.session.id.as_ref().unwrap()
                     )))
                 } else {
                     return DispatchResult::CommandFailed(Self::make_error(
@@ -173,7 +184,7 @@ impl ChiselDisptacher {
                 }
                 Err(_) => {
                     return DispatchResult::CommandFailed(Self::make_error(
-                        "No sessions found. Use the `!flush` command to save a session.",
+                        "No sessions found. Use the `!save` command to save a session.",
                     ))
                 }
             },
@@ -209,17 +220,26 @@ impl ChiselDisptacher {
                     // If the argument is an RPC alias designated in the
                     // `[rpc_endpoints]` section of the `foundry.toml` within
                     // the pwd, use the URL matched to the key.
-                    let fork_url = if let Some(fork_url) =
+                    let endpoint = if let Some(endpoint) =
                         session_source.config.config.rpc_endpoints.get(args[0])
                     {
-                        fork_url.as_url().unwrap()
+                        endpoint.clone()
                     } else {
-                        args[0]
+                        RpcEndpoint::Env(args[0].to_owned())
+                    };
+                    let fork_url = match endpoint.resolve() {
+                        Ok(fork_url) => fork_url,
+                        Err(e) => {
+                            return DispatchResult::CommandFailed(Self::make_error(format!(
+                                "\"{}\" ENV Variable not set!",
+                                e.var
+                            )))
+                        }
                     };
 
                     // Update the fork_url inside of the [SessionSourceConfig]'s [EvmOpts]
                     // field
-                    session_source.config.evm_opts.fork_url = Some(fork_url.to_owned());
+                    session_source.config.evm_opts.fork_url = Some(fork_url.clone());
 
                     // Clear the backend so that it is re-instantiated with the new fork
                     // upon the next execution of the session source.
@@ -495,8 +515,8 @@ pub enum ChiselCommand {
     Clear,
     /// Print the generated source contract
     Source,
-    /// Flush the current session to the cache
-    Flush,
+    /// Save the current session to the cache
+    Save,
     /// Load a previous session from cache
     /// Requires a session id as the first argument
     /// WARNING: This will overwrite the current session (though the current session will be
@@ -530,7 +550,7 @@ impl FromStr for ChiselCommand {
             "help" => Ok(ChiselCommand::Help),
             "clear" => Ok(ChiselCommand::Clear),
             "source" => Ok(ChiselCommand::Source),
-            "flush" => Ok(ChiselCommand::Flush),
+            "save" => Ok(ChiselCommand::Save),
             "list" => Ok(ChiselCommand::ListSessions),
             "load" => Ok(ChiselCommand::Load),
             "clearcache" => Ok(ChiselCommand::ClearCache),
@@ -558,8 +578,8 @@ impl From<ChiselCommand> for CmdDescriptor {
             ChiselCommand::Source => {
                 ("source", "Display the source code of the current session")
             }
-            ChiselCommand::Flush => ("flush", "Flush the current session to cache"),
-            ChiselCommand::Load => ("load", "Load a previous session ID from cache"),
+            ChiselCommand::Save => ("save [id]", "Save the current session to cache"),
+            ChiselCommand::Load => ("load <id>", "Load a previous session ID from cache"),
             ChiselCommand::ListSessions => ("list", "List all cached sessions"),
             ChiselCommand::ClearCache => ("clearcache", "Clear the chisel cache of all stored sessions"),
             ChiselCommand::Fork => {

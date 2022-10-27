@@ -18,7 +18,7 @@ pub struct ChiselSession {
     /// The `SessionSource` object that houses the REPL session.
     pub session_source: Option<SessionSource>,
     /// The current session's identifier
-    pub id: Option<usize>,
+    pub id: Option<String>,
 }
 
 // ChiselSession Common Associated Functions
@@ -115,18 +115,18 @@ impl ChiselSession {
         let cache_dir = Self::cache_dir()?;
         std::fs::create_dir_all(&cache_dir)?;
 
-        let cache_file_name = match self.id {
+        let cache_file_name = match self.id.as_ref() {
             Some(id) => {
                 // ID is already set- use the existing cache file.
                 format!("{}chisel-{}.json", cache_dir, id)
             }
             None => {
                 // Get the next session cache ID / file
-                let next_session = Self::next_cached_session()?;
+                let (id, file_name) = Self::next_cached_session()?;
                 // Set the session's ID
-                self.id = Some(next_session.0);
+                self.id = Some(id);
                 // Return the new session's cache file name
-                next_session.1
+                file_name
             }
         };
 
@@ -139,8 +139,8 @@ impl ChiselSession {
         Ok(cache_file_name)
     }
 
-    /// Get the next session cache file name
-    pub fn next_cached_session() -> Result<(usize, String)> {
+    /// Get the next default session cache file name
+    pub fn next_cached_session() -> Result<(String, String)> {
         let cache_dir = Self::cache_dir()?;
         let mut entries = std::fs::read_dir(&cache_dir)?;
 
@@ -148,26 +148,22 @@ impl ChiselSession {
         let mut latest = if let Some(e) = entries.next() {
             e?
         } else {
-            return Ok((0, format!("{}chisel-0.json", cache_dir)))
+            return Ok((String::from("0"), format!("{}chisel-0.json", cache_dir)))
         };
 
+        let mut session_num = 1;
         // Get the latest cached session
         for entry in entries {
             let entry = entry?;
             if entry.metadata()?.modified()? >= latest.metadata()?.modified()? {
                 latest = entry;
             }
+
+            // Increase session_num counter rather than cloning the iterator and using `.count`
+            session_num += 1;
         }
 
-        // Get the latest session cache file name
-        let latest_file_name = latest
-            .file_name()
-            .into_string()
-            .map_err(|e| eyre::eyre!(format!("{}", e.to_string_lossy())))?;
-        let session_num = latest_file_name.trim_end_matches(".json").trim_start_matches("chisel-");
-        let session_num = session_num.parse::<usize>()?;
-
-        Ok((session_num + 1, format!("{}chisel-{}.json", cache_dir, session_num + 1)))
+        Ok((format!("{}", session_num), format!("{}chisel-{}.json", cache_dir, session_num)))
     }
 
     /// The Chisel Cache Directory

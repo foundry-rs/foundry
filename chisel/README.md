@@ -84,13 +84,13 @@ If you do not have `foundryup` installed, reference the Foundry [installation gu
 
 ### Cache Session
 
-While chisel sessions are not persistent by default, they can be saved to the cache via the builtin `flush` command from within the REPL.
+While chisel sessions are not persistent by default, they can be saved to the cache via the builtin `save` command from within the REPL.
 
 ```bash
 $ chisel
 ➜ uint a = 1;
 ➜ uint b = a << 0x08;
-➜ !flush
+➜ !save
 Saved session to cache with ID = 0.
 ```
 
@@ -165,6 +165,7 @@ Type: uint
 
 ### Forking a Network
 
-To fork a network within your chisel session, use the `!fork <rpc-url>` command or supply a `--fork-url <rpc-url>` flag
-to the chisel binary. The `!fork` command also accepts aliases from the `[rpc_endpoints]` section of your `foundry.toml`,
-if chisel was launched in the root of a foundry project (ex. `!fork mainnet`).
+To fork a network within your chisel session, use the `!fork <rpc-url>` command or supply a `--fork-url <url>` flag
+to the chisel binary. The `!fork` command also accepts aliases from the `[rpc_endpoints]` section of your `foundry.toml`
+if chisel was launched in the root of a foundry project (ex. `!fork mainnet`), as well as interpolated environment variables
+(ex. `!fork https://https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}`).
