@@ -22,7 +22,6 @@ impl<'a> DocFormat for DocOutput<'a> {
     }
 }
 
-// TODO: change to return DocOutput
 impl DocFormat for String {
     fn doc(&self) -> String {
         self.to_owned()

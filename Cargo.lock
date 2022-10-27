@@ -790,7 +790,9 @@ dependencies = [
  "once_cell",
  "strsim",
  "termcolor",
+ "terminal_size 0.1.17",
  "textwrap",
+ "unicase",
 ]
 
 [[package]]
@@ -2127,7 +2129,7 @@ dependencies = [
 name = "forge-doc"
 version = "0.1.0"
 dependencies = [
- "clap",
+ "clap 3.2.16",
  "ethers-solc",
  "eyre",
  "forge-fmt",
@@ -5561,6 +5563,10 @@ name = "textwrap"
 version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1141d4d61095b28419e22cb0bbf02755f5e54e0526f97f1e3d1d160e60885fb"
+dependencies = [
+ "terminal_size 0.1.17",
+ "unicode-width",
+]
 
 [[package]]
 name = "thiserror"

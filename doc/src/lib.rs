@@ -1,5 +1,4 @@
 use forge_fmt::{Visitable, Visitor};
-use itertools::Itertools;
 use solang_parser::{
     doccomment::{parse_doccomments, DocComment, DocCommentTag},
     pt::{
@@ -29,15 +28,9 @@ struct SolidityDoc {
     context: DocContext,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct DocContext {
     parent: Option<SolidityDocPart>,
-}
-
-impl Default for DocContext {
-    fn default() -> Self {
-        Self { parent: None }
-    }
 }
 
 #[derive(Debug, PartialEq)]

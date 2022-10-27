@@ -114,7 +114,7 @@ impl AsCode for FunctionAttribute {
             Self::Override(_, idents) => {
                 format!("override({})", idents.iter().map(AsCode::as_code).join(", "))
             }
-            Self::BaseOrModifier(_, base) => "".to_owned(), // TODO:
+            Self::BaseOrModifier(_, _base) => "".to_owned(), // TODO:
             Self::NameValue(..) => unreachable!(),
         }
     }
@@ -128,7 +128,7 @@ impl AsCode for Parameter {
             self.name.as_ref().map(|name| name.name.clone()),
         ]
         .into_iter()
-        .filter_map(|p| p)
+        .flatten()
         .join(" ")
     }
 }

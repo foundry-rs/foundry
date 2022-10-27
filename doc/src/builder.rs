@@ -3,7 +3,7 @@ use forge_fmt::Visitable;
 use itertools::Itertools;
 use rayon::prelude::*;
 use solang_parser::{
-    doccomment::{DocComment, DocCommentTag},
+    doccomment::DocCommentTag,
     pt::{Base, ContractTy, Identifier, Parameter},
 };
 use std::{
