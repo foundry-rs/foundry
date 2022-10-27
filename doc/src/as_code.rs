@@ -6,7 +6,10 @@ use solang_parser::pt::{
     VariableDefinition,
 };
 
-pub trait AsCode {
+/// Display Solidity parse tree unit as code string.
+/// [AsCode::as_code] formats the unit into
+/// a valid Solidity code block.
+pub(crate) trait AsCode {
     fn as_code(&self) -> String;
 }
 

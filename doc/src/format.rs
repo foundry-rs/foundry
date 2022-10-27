@@ -5,7 +5,8 @@ use solang_parser::{
     pt::{Base, EventDefinition, FunctionDefinition, StructDefinition, VariableDefinition},
 };
 
-pub trait DocFormat {
+/// TODO:
+pub(crate) trait DocFormat {
     fn doc(&self) -> String;
 }
 

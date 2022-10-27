@@ -1,3 +1,4 @@
+use ethers_solc::utils::source_files_iter;
 use eyre;
 use forge_fmt::Visitable;
 use itertools::Itertools;
@@ -15,59 +16,42 @@ use std::{
 };
 
 use crate::{
-    as_code::AsCode, format::DocFormat, helpers::*, macros::*, output::DocOutput, SolidityDoc,
-    SolidityDocPart, SolidityDocPartElement,
+    as_code::AsCode,
+    config::DocConfig,
+    format::DocFormat,
+    helpers::*,
+    macros::*,
+    output::DocOutput,
+    parser::{DocElement, DocParser, DocPart},
 };
 
+/// Build Solidity documentation for a project from natspec comments.
+/// The builder parses the source files using [DocParser],
+/// then formats and writes the elements as the output.
+#[derive(Debug)]
 pub struct DocBuilder {
     config: DocConfig,
 }
 
-// TODO: move & merge w/ Figment
-#[derive(Debug)]
-pub struct DocConfig {
-    pub root: PathBuf,
-    pub sources: PathBuf,
-    pub out: PathBuf,
-    pub title: String,
-}
-
-impl DocConfig {
-    pub fn new(root: &Path) -> Self {
-        DocConfig { root: root.to_owned(), ..Default::default() }
-    }
-
-    fn out_dir(&self) -> PathBuf {
-        self.root.join(&self.out)
-    }
-}
-
-impl Default for DocConfig {
-    fn default() -> Self {
-        DocConfig {
-            root: PathBuf::new(),
-            sources: PathBuf::new(),
-            out: PathBuf::from("docs"),
-            title: "".to_owned(),
-        }
-    }
-}
-
 impl DocBuilder {
+    /// Construct a new builder with default configuration.
     pub fn new() -> Self {
         DocBuilder { config: DocConfig::default() }
     }
 
+    /// Construct a new builder with provided configuration
     pub fn from_config(config: DocConfig) -> Self {
         DocBuilder { config }
     }
 
+    /// Get the output directory for generated doc files.
     pub fn out_dir_src(&self) -> PathBuf {
         self.config.out_dir().join("src")
     }
 
+    /// Parse the sources and build the documentation.
     pub fn build(self) -> eyre::Result<()> {
-        let sources: Vec<_> = ethers_solc::utils::source_files_iter(&self.config.sources).collect();
+        let sources: Vec<_> = source_files_iter(&self.config.sources).collect();
         let docs = sources
             .par_iter()
             .enumerate()
@@ -81,7 +65,7 @@ impl DocBuilder {
                             diags
                         )
                     })?;
-                let mut doc = SolidityDoc::new(comments);
+                let mut doc = DocParser::new(comments);
                 source_unit.visit(&mut doc)?;
 
                 Ok((path.clone(), doc.parts))
@@ -98,7 +82,7 @@ impl DocBuilder {
         for (path, doc) in docs.as_ref() {
             for part in doc.iter() {
                 // TODO: other top level elements
-                if let SolidityDocPartElement::Contract(ref contract) = part.element {
+                if let DocElement::Contract(ref contract) = part.element {
                     let mut doc_file = String::new();
                     writeln_doc!(doc_file, DocOutput::H1(&contract.name.name))?;
 
@@ -131,16 +115,10 @@ impl DocBuilder {
                     for child in part.children.iter() {
                         // TODO: remove `clone`s
                         match &child.element {
-                            SolidityDocPartElement::Function(func) => {
-                                funcs.push((func, &child.comments))
-                            }
-                            SolidityDocPartElement::Variable(var) => {
-                                attributes.push((var, &child.comments))
-                            }
-                            SolidityDocPartElement::Event(event) => {
-                                events.push((event, &child.comments))
-                            }
-                            SolidityDocPartElement::Struct(structure) => {
+                            DocElement::Function(func) => funcs.push((func, &child.comments)),
+                            DocElement::Variable(var) => attributes.push((var, &child.comments)),
+                            DocElement::Event(event) => events.push((event, &child.comments)),
+                            DocElement::Struct(structure) => {
                                 structs.push((structure, &child.comments))
                             }
                             _ => (),
@@ -404,12 +382,12 @@ impl DocBuilder {
 
     fn lookup_contract_base<'a>(
         &self,
-        docs: &[(PathBuf, Vec<SolidityDocPart>)],
+        docs: &[(PathBuf, Vec<DocPart>)],
         base: &Base,
     ) -> eyre::Result<Option<String>> {
         for (base_path, base_doc) in docs {
             for base_part in base_doc.iter() {
-                if let SolidityDocPartElement::Contract(base_contract) = &base_part.element {
+                if let DocElement::Contract(base_contract) = &base_part.element {
                     if base.name.identifiers.last().unwrap().name == base_contract.name.name {
                         let path = PathBuf::from("/").join(
                             base_path

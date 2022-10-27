@@ -1,6 +1,6 @@
 use crate::cmd::Cmd;
 use clap::{Parser, ValueHint};
-use forge_doc::builder::{DocBuilder, DocConfig};
+use forge_doc::{DocBuilder, DocConfig};
 use foundry_config::{find_project_root_path, load_config_with_root};
 use std::path::PathBuf;
 

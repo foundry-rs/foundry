@@ -1,6 +1,6 @@
 use crate::format::DocFormat;
 
-pub enum DocOutput<'a> {
+pub(crate) enum DocOutput<'a> {
     H1(&'a str),
     H2(&'a str),
     H3(&'a str),
