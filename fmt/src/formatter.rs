@@ -3,7 +3,9 @@
 use crate::{
     buffer::*,
     chunk::*,
-    comments::{CommentState, CommentStringExt, CommentWithMetadata, Comments},
+    comments::{
+        CommentPosition, CommentState, CommentStringExt, CommentType, CommentWithMetadata, Comments,
+    },
     macros::*,
     solang_ext::*,
     string::{QuoteState, QuotedStringExt},
@@ -244,6 +246,14 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
+    /// Write new line with preserved `last_indent_group_skipped` flag
+    fn write_preserved_line(&mut self) -> Result<()> {
+        let last_indent_group_skipped = self.last_indent_group_skipped();
+        writeln!(self.buf())?;
+        self.set_last_indent_group_skipped(last_indent_group_skipped);
+        Ok(())
+    }
+
     /// Returns number of blank lines in source between two byte indexes
     fn blank_lines(&self, start: usize, end: usize) -> usize {
         self.source[start..end].trim_comments().matches('\n').count()
@@ -425,80 +435,116 @@ impl<'a, W: Write> Formatter<'a, W> {
             return self.write_raw_comment(comment)
         }
 
-        if comment.is_prefix() {
-            let last_indent_group_skipped = self.last_indent_group_skipped();
-            let write_preserved_ln = |fmt: &mut Self| -> Result<()> {
-                writeln!(fmt.buf())?;
-                fmt.set_last_indent_group_skipped(last_indent_group_skipped);
-                Ok(())
-            };
-            if !self.is_beginning_of_line() {
-                write_preserved_ln(self)?;
-            }
-            if !is_first && comment.has_newline_before {
-                write_preserved_ln(self)?;
-            }
-            if comment.is_doc_block() {
-                let content = comment
-                    .comment
-                    .trim()
-                    .strip_prefix("/**")
-                    .unwrap()
-                    .strip_suffix("*/")
-                    .unwrap()
-                    .trim();
-                let lines = content.lines();
-                writeln!(self.buf(), "/**")?;
-                for line in lines {
-                    if line.trim().starts_with('*') {
-                        let line = line.trim().trim_start_matches('*');
-                        let needs_space =
-                            line.chars().next().map_or(false, |ch| !ch.is_whitespace());
-                        writeln!(self.buf(), " *{}{line}", if needs_space { " " } else { "" })?;
-                    } else {
-                        let curr_indent = self.buf.current_indent_len();
+        match comment.position {
+            CommentPosition::Prefix => self.write_prefix_comment(comment, is_first),
+            CommentPosition::Postfix => self.write_postfix_comment(comment),
+        }
+    }
 
-                        let indent_whitespace_count = line
-                            .char_indices()
-                            .take_while(|(idx, ch)| ch.is_whitespace() && *idx <= curr_indent)
-                            .count();
-                        let to_skip = indent_whitespace_count -
-                            indent_whitespace_count % self.config.tab_width;
+    /// TODO:
+    fn write_prefix_comment(
+        &mut self,
+        comment: &CommentWithMetadata,
+        is_first: bool,
+    ) -> Result<()> {
+        if !self.is_beginning_of_line() {
+            self.write_preserved_line()?;
+        }
+        if !is_first && comment.has_newline_before {
+            self.write_preserved_line()?;
+        }
 
-                        writeln!(self.buf(), " * {}", &line[to_skip..])?;
-                    }
-                }
-                write!(self.buf(), " */")?;
-            } else {
-                let mut lines = comment.comment.splitn(2, '\n');
-                write!(self.buf(), "{}", lines.next().unwrap())?;
-                if let Some(line) = lines.next() {
-                    write_preserved_ln(self)?;
-                    self.write_raw(line)?;
-                }
-            }
-            if self.find_next_line(comment.loc.end()).is_some() {
-                write_preserved_ln(self)?;
-            }
+        if matches!(comment.ty, CommentType::DocBlock) {
+            let lines = comment.contents().trim().lines();
+            writeln!(self.buf(), "{}", comment.start_token())?;
+            lines.map(|l| self.write_doc_block_line(l)).collect::<Result<_>>()?;
+            write!(self.buf(), " {}", comment.end_token().unwrap())?; // TODO:
+            self.write_preserved_line()?;
             return Ok(())
         }
 
+        let mut lines = comment.comment.splitn(2, '\n');
+        write!(self.buf(), "{}", lines.next().unwrap())?;
+        if let Some(line) = lines.next() {
+            self.write_preserved_line()?;
+            self.write_raw(line)?;
+        }
+        if self.find_next_line(comment.loc.end()).is_some() {
+            self.write_preserved_line()?;
+        }
+
+        Ok(())
+    }
+
+    /// TODO:
+    fn write_postfix_comment(&mut self, comment: &CommentWithMetadata) -> Result<()> {
         let indented = self.is_beginning_of_line();
         self.indented_if(indented, 1, |fmt| {
             if !indented && fmt.next_char_needs_space('/') {
                 write!(fmt.buf(), " ")?;
             }
-            let mut lines = comment.comment.splitn(2, '\n');
-            write!(fmt.buf(), "{}", lines.next().unwrap())?;
-            if let Some(line) = lines.next() {
-                writeln!(fmt.buf())?;
-                fmt.write_raw(line)?;
+            write!(fmt.buf(), "{} ", comment.start_token())?;
+            let mut lines = comment.contents().trim().split('\n').peekable();
+
+            while let Some(line) = lines.next() {
+                fmt.write_comment_line(comment, line)?;
+                // TODO: fmt.write_raw(line)?;
+                if lines.peek().is_some() {
+                    fmt.write_whitespace_separator(true)?;
+                }
+            }
+            if let Some(end) = comment.end_token() {
+                write!(fmt.buf(), " {end}")?;
             }
             if comment.is_line() {
-                writeln!(fmt.buf())?;
+                fmt.write_whitespace_separator(true)?;
             }
             Ok(())
         })
+    }
+
+    /// TODO:
+    /// Write a comment line that might potentially overflow
+    fn write_comment_line(&mut self, comment: &CommentWithMetadata, line: &str) -> Result<()> {
+        if self.current_line_len() + line.len() <= self.config.line_length {
+            write!(self.buf(), "{line}")?;
+            return Ok(())
+        }
+
+        let mut words = line.split(' ').peekable();
+        while let Some(word) = words.next() {
+            self.write_raw(word)?;
+
+            if let Some(next) = words.peek() {
+                if self.current_line_len() + next.len() > self.config.line_length {
+                    self.write_whitespace_separator(true)?;
+                    if comment.is_line() {
+                        write!(self.buf(), "{} ", comment.start_token())?;
+                    }
+                    self.write_comment_line(comment, &words.join(" "))?; // TODO:
+                } else {
+                    self.write_whitespace_separator(false)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Write the line of a doc block comment
+    fn write_doc_block_line(&mut self, line: &str) -> Result<()> {
+        if line.trim().starts_with('*') {
+            let line = line.trim().trim_start_matches('*');
+            let needs_space = line.chars().next().map_or(false, |ch| !ch.is_whitespace());
+            writeln!(self.buf(), " *{}{}", if needs_space { " " } else { "" }, line)?;
+        } else {
+            let indent_whitespace_count = line
+                .char_indices()
+                .take_while(|(idx, ch)| ch.is_whitespace() && *idx <= self.buf.current_indent_len())
+                .count();
+            let to_skip = indent_whitespace_count - indent_whitespace_count % self.config.tab_width;
+            writeln!(self.buf(), " * {}", &line[to_skip..])?;
+        }
+        Ok(())
     }
 
     /// Write a raw comment. This is like [`write_comment`] but won't do any formatting or worry

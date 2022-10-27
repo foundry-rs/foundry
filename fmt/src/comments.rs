@@ -52,7 +52,7 @@ impl Ord for CommentWithMetadata {
 }
 
 impl CommentWithMetadata {
-    fn new(
+    pub fn new(
         comment: Comment,
         position: CommentPosition,
         has_newline_before: bool,
@@ -161,18 +161,19 @@ impl CommentWithMetadata {
 
         Self::new(comment, position, has_newline_before, indent_len)
     }
+
     pub fn is_line(&self) -> bool {
         matches!(self.ty, CommentType::Line | CommentType::DocLine)
     }
-    pub fn is_doc_block(&self) -> bool {
-        matches!(self.ty, CommentType::DocBlock)
-    }
+
     pub fn is_prefix(&self) -> bool {
         matches!(self.position, CommentPosition::Prefix)
     }
+
     pub fn is_before(&self, byte: usize) -> bool {
         self.loc.start() < byte
     }
+
     pub fn contents(&self) -> &str {
         match self.ty {
             CommentType::Line => self.comment.strip_prefix("//"),
@@ -185,6 +186,22 @@ impl CommentWithMetadata {
             }
         }
         .unwrap_or(&self.comment)
+    }
+
+    pub fn start_token(&self) -> &str {
+        match self.ty {
+            CommentType::Line => "//",
+            CommentType::Block => "/*",
+            CommentType::DocLine => "///",
+            CommentType::DocBlock => "/**",
+        }
+    }
+
+    pub fn end_token(&self) -> Option<&str> {
+        match self.ty {
+            CommentType::Line | CommentType::DocLine => None,
+            CommentType::Block | CommentType::DocBlock => Some("*/"),
+        }
     }
 }
 
