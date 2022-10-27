@@ -3,7 +3,7 @@ use solang_parser::{
     doccomment::{parse_doccomments, DocComment, DocCommentTag},
     pt::{
         Comment, ContractDefinition, EventDefinition, FunctionDefinition, Loc, SourceUnit,
-        SourceUnitPart, VariableDefinition,
+        SourceUnitPart, StructDefinition, VariableDefinition,
     },
 };
 use thiserror::Error;
@@ -16,7 +16,7 @@ mod macros;
 mod output;
 
 #[derive(Error, Debug)]
-enum DocError {} // TODO:
+enum DocError {}
 
 type Result<T, E = DocError> = std::result::Result<T, E>;
 
@@ -87,6 +87,7 @@ enum SolidityDocPartElement {
     Function(FunctionDefinition),
     Variable(VariableDefinition),
     Event(EventDefinition),
+    Struct(StructDefinition),
 }
 
 impl Visitor for SolidityDoc {
@@ -134,7 +135,13 @@ impl Visitor for SolidityDoc {
         Ok(())
     }
 
-    // TODO: structs
+    fn visit_struct(&mut self, structure: &mut StructDefinition) -> Result<()> {
+        self.add_element_to_parent(
+            SolidityDocPartElement::Struct(structure.clone()),
+            structure.loc,
+        );
+        Ok(())
+    }
 }
 
 #[cfg(test)]

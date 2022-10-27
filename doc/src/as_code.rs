@@ -2,7 +2,8 @@ use forge_fmt::solang_ext::AttrSortKeyIteratorExt;
 use itertools::Itertools;
 use solang_parser::pt::{
     EventDefinition, EventParameter, Expression, FunctionAttribute, FunctionDefinition,
-    IdentifierPath, Loc, Parameter, Type, VariableAttribute, VariableDefinition,
+    IdentifierPath, Loc, Parameter, StructDefinition, Type, VariableAttribute, VariableDeclaration,
+    VariableDefinition,
 };
 
 pub trait AsCode {
@@ -174,5 +175,18 @@ impl AsCode for Vec<EventParameter> {
 impl AsCode for IdentifierPath {
     fn as_code(&self) -> String {
         self.identifiers.iter().map(|ident| ident.name.to_owned()).join(".")
+    }
+}
+
+impl AsCode for StructDefinition {
+    fn as_code(&self) -> String {
+        let fields = self.fields.iter().map(AsCode::as_code).join(";\n\t");
+        format!("struct {} {{\n\t{};\n}}", self.name.name, fields)
+    }
+}
+
+impl AsCode for VariableDeclaration {
+    fn as_code(&self) -> String {
+        format!("{} {}", self.ty.as_code(), self.name.name)
     }
 }

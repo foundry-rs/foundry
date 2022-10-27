@@ -97,6 +97,7 @@ impl DocBuilder {
         let mut filenames = vec![];
         for (path, doc) in docs.as_ref() {
             for part in doc.iter() {
+                // TODO: other top level elements
                 if let SolidityDocPartElement::Contract(ref contract) = part.element {
                     let mut doc_file = String::new();
                     writeln_doc!(doc_file, DocOutput::H1(&contract.name.name))?;
@@ -125,6 +126,7 @@ impl DocBuilder {
                     let mut attributes = vec![];
                     let mut funcs = vec![];
                     let mut events = vec![];
+                    let mut structs = vec![];
 
                     for child in part.children.iter() {
                         // TODO: remove `clone`s
@@ -138,7 +140,10 @@ impl DocBuilder {
                             SolidityDocPartElement::Event(event) => {
                                 events.push((event, &child.comments))
                             }
-                            _ => {}
+                            SolidityDocPartElement::Struct(structure) => {
+                                structs.push((structure, &child.comments))
+                            }
+                            _ => (),
                         }
                     }
 
@@ -203,6 +208,15 @@ impl DocBuilder {
                         for (ev, comments) in events {
                             writeln_doc!(doc_file, "{}\n{}\n", ev, comments)?;
                             writeln_code!(doc_file, "{}", ev)?;
+                            writeln!(doc_file)?;
+                        }
+                    }
+
+                    if !structs.is_empty() {
+                        writeln_doc!(doc_file, DocOutput::H2("Structs"))?;
+                        for (structure, comments) in structs {
+                            writeln_doc!(doc_file, "{}\n{}\n", structure, comments)?;
+                            writeln_code!(doc_file, "{}", structure)?;
                             writeln!(doc_file)?;
                         }
                     }
