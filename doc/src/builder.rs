@@ -110,7 +110,9 @@ impl DocBuilder {
                     let mut attributes = vec![];
                     let mut funcs = vec![];
                     let mut events = vec![];
+                    let mut errors = vec![];
                     let mut structs = vec![];
+                    let mut enumerables = vec![];
 
                     for child in part.children.iter() {
                         // TODO: remove `clone`s
@@ -118,9 +120,11 @@ impl DocBuilder {
                             DocElement::Function(func) => funcs.push((func, &child.comments)),
                             DocElement::Variable(var) => attributes.push((var, &child.comments)),
                             DocElement::Event(event) => events.push((event, &child.comments)),
+                            DocElement::Error(error) => errors.push((error, &child.comments)),
                             DocElement::Struct(structure) => {
                                 structs.push((structure, &child.comments))
-                            }
+                            },
+                            DocElement::Enum(enumerable) => enumerables.push((enumerable, &child.comments)),
                             _ => (),
                         }
                     }
@@ -190,11 +194,29 @@ impl DocBuilder {
                         }
                     }
 
+                    if !errors.is_empty() {
+                        writeln_doc!(doc_file, DocOutput::H2("Errors"))?;
+                        for (err, comments) in errors {
+                            writeln_doc!(doc_file, "{}\n{}\n", err, comments)?;
+                            writeln_code!(doc_file, "{}", err)?;
+                            writeln!(doc_file)?;
+                        }
+                    }
+
                     if !structs.is_empty() {
                         writeln_doc!(doc_file, DocOutput::H2("Structs"))?;
                         for (structure, comments) in structs {
                             writeln_doc!(doc_file, "{}\n{}\n", structure, comments)?;
                             writeln_code!(doc_file, "{}", structure)?;
+                            writeln!(doc_file)?;
+                        }
+                    }
+
+                    if !enumerables.is_empty() {
+                        writeln_doc!(doc_file, DocOutput::H2("Enums"))?;
+                        for (enumerable, comments) in enumerables {
+                            writeln_doc!(doc_file, "{}\n{}\n", enumerable, comments)?;
+                            writeln_code!(doc_file, "{}", enumerable)?;
                             writeln!(doc_file)?;
                         }
                     }
