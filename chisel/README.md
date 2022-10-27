@@ -36,10 +36,9 @@ Chisel aims to improve upon soli, with native foundry integration by providing f
     - [x] Implement `forge-std/Test.sol` so that cheatcodes, etc. can be used.
   - [x] Utilize foundry's `evm` module for REPL env.
     - [x] Implement network forking.
-  - [ ] ~~Expression evaluation / inspection (i.e. the input `0x01 << 0x08` should inspect a `uint` of value `256`)~~
-    - Nixed due to type ambiguity. If displaying bytes is sufficient, we can still do this.
+  - [ ] Expression evaluation / inspection (i.e. the input `0x01 << 0x08` should inspect a `uint` of value `256`)
   - [x] Input history.
-  - [ ] Use forge fmt module to format source code when printing via the `!source` command. (?)
+  - [ ] Use forge fmt module to format source code when printing via the `!source` command or exporting to a Script file (?)
 - [x] Cache REPL History
   - [x] Allow a user to save/load sessions from their Chisel history.
     - [x] Fix session loading bug wrt non-serializable `IntermediateOutput` component.
@@ -51,6 +50,10 @@ Chisel aims to improve upon soli, with native foundry integration by providing f
   - [x] Inspect storage vars
     - [ ] Inspect raw storage slots / storage layout
   - [ ] Inspection verbosity configuration
+  - [ ] Undo
+  - [ ] Inspect bytecode / mnenomic of local or remote contracts.
+  - [ ] Fetch contract interface from Etherscan ABI
+  - [ ] Import remote sources from GitHub
   - [x] Enable / disable call trace printing
     - [x] Rip trace printing code from another module of foundry.
   - [x] On-the-fly network forking
@@ -68,9 +71,14 @@ Chisel aims to improve upon soli, with native foundry integration by providing f
     - [x] Cloning
 - [ ] Optimizations.
   - [ ] Speed up REPL execution time.
-- [x] Finish README.
+- [ ] Finish README.
+  - [ ] Examples
+
 - [ ] First review.
-  - [ ] *add requested changes here*
+  - [x] Support ENV var interpolation in fork urls
+  - [x] Allow named sessions
+  - [x] Rename `!flush` to `!save`
+  - [ ] ...
 
 ## Usage
 
@@ -85,6 +93,8 @@ If you do not have `foundryup` installed, reference the Foundry [installation gu
 ### Cache Session
 
 While chisel sessions are not persistent by default, they can be saved to the cache via the builtin `save` command from within the REPL.
+
+Sessions can also be named by supplying a single argument to the `save` command, i.e. `!save my_session`.
 
 ```bash
 $ chisel
