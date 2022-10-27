@@ -228,6 +228,122 @@ impl DocBuilder {
                     fs::write(self.out_dir_src().join(&new_path), doc_file)?;
                     filenames.push((contract.name.clone(), contract.ty.clone(), new_path));
                 }
+
+                if let DocElement::Error(ref error) = part.element {
+                    let mut doc_file = String::new();
+                    writeln_doc!(doc_file, DocOutput::H1("Error"))?;
+
+                    writeln_doc!(doc_file, "{}\n{}\n", error, part.comments)?;
+                    writeln_code!(doc_file, "{}", error)?;
+                    writeln!(doc_file)?;
+
+                    let new_path = path.strip_prefix(&self.config.root)?.to_owned();
+                    fs::create_dir_all(self.out_dir_src().join(&new_path))?;
+                    let new_path = new_path.join(&format!("error.{}.md", error.name));
+
+                    fs::write(self.out_dir_src().join(&new_path), doc_file)?;
+                    // TODO: save new `filenames` for book_config?
+                }
+
+                if let DocElement::Event(ref event) = part.element {
+                    let mut doc_file = String::new();
+                    writeln_doc!(doc_file, DocOutput::H1("Event"))?;
+
+                    writeln_doc!(doc_file, "{}\n{}\n", event, part.comments)?;
+                    writeln_code!(doc_file, "{}", event)?;
+                    writeln!(doc_file)?;
+
+                    let new_path = path.strip_prefix(&self.config.root)?.to_owned();
+                    fs::create_dir_all(self.out_dir_src().join(&new_path))?;
+                    let new_path = new_path.join(&format!("event.{}.md", event.name));
+
+                    fs::write(self.out_dir_src().join(&new_path), doc_file)?;
+                    // TODO: save new `filenames` for book_config?
+                }
+
+                if let DocElement::Struct(ref structure) = part.element {
+                    let mut doc_file = String::new();
+                    writeln_doc!(doc_file, DocOutput::H1("Struct"))?;
+
+                    writeln_doc!(doc_file, "{}\n{}\n", structure, part.comments)?;
+                    writeln_code!(doc_file, "{}", structure)?;
+                    writeln!(doc_file)?;
+
+                    let new_path = path.strip_prefix(&self.config.root)?.to_owned();
+                    fs::create_dir_all(self.out_dir_src().join(&new_path))?;
+                    let new_path = new_path.join(&format!("struct.{}.md", structure.name));
+
+                    fs::write(self.out_dir_src().join(&new_path), doc_file)?;
+                    // TODO: save new `filenames` for book_config?
+                }
+
+                if let DocElement::Enum(ref enumerable) = part.element {
+                    let mut doc_file = String::new();
+                    writeln_doc!(doc_file, DocOutput::H1("Enum"))?;
+
+                    writeln_doc!(doc_file, "{}\n{}\n", enumerable, part.comments)?;
+                    writeln_code!(doc_file, "{}", enumerable)?;
+                    writeln!(doc_file)?;
+
+                    let new_path = path.strip_prefix(&self.config.root)?.to_owned();
+                    fs::create_dir_all(self.out_dir_src().join(&new_path))?;
+                    let new_path = new_path.join(&format!("enum.{}.md", enumerable.name));
+
+                    fs::write(self.out_dir_src().join(&new_path), doc_file)?;
+                    // TODO: save new `filenames` for book_config?
+                }
+
+                if let DocElement::Function(ref func) = part.element {
+                    let mut doc_file = String::new();
+                    writeln_doc!(doc_file, DocOutput::H1("Function"))?;
+
+                    writeln_doc!(doc_file, "{}\n", func)?;
+                    writeln_doc!(
+                        doc_file,
+                        "{}\n",
+                        filter_comments_without_tags(&part.comments, vec!["param", "return"])
+                    )?;
+                    writeln_code!(doc_file, "{}", func)?;
+
+                    let params: Vec<_> =
+                        func.params.iter().filter_map(|p| p.1.as_ref()).collect();
+                    let param_comments = filter_comments_by_tag(&part.comments, "param");
+                    if !params.is_empty() && !param_comments.is_empty() {
+                        writeln_doc!(
+                            doc_file,
+                            "{}\n{}",
+                            DocOutput::H3("Parameters"),
+                            self.format_comment_table(
+                                &["Name", "Type", "Description"],
+                                &params,
+                                &param_comments
+                            )?
+                        )?;
+                    }
+
+                    let returns: Vec<_> =
+                        func.returns.iter().filter_map(|p| p.1.as_ref()).collect();
+                    let returns_comments = filter_comments_by_tag(&part.comments, "return");
+                    if !returns.is_empty() && !returns_comments.is_empty() {
+                        writeln_doc!(
+                            doc_file,
+                            "{}\n{}",
+                            DocOutput::H3("Returns"),
+                            self.format_comment_table(
+                                &["Name", "Type", "Description"],
+                                &params,
+                                &returns_comments
+                            )?
+                        )?;
+                    }
+                    writeln!(doc_file)?;
+                    let new_path = path.strip_prefix(&self.config.root)?.to_owned();
+                    fs::create_dir_all(self.out_dir_src().join(&new_path))?;
+                    let new_path = new_path.join(&format!("function.{}.md", func.name.as_ref().map(|name| name.name.to_owned()).unwrap_or_default()));
+
+                    fs::write(self.out_dir_src().join(&new_path), doc_file)?;
+                    // TODO: save new `filenames` for book_config?
+                }
             }
         }
 
