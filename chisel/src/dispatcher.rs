@@ -13,6 +13,7 @@ use forge::trace::{
     CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
 };
 use foundry_config::{Config, RpcEndpoint};
+use serde::{Deserialize, Serialize};
 use solang_parser::diagnostics::Diagnostic;
 use std::{error::Error, path::PathBuf, str::FromStr};
 use strum::{EnumIter, IntoEnumIterator};
@@ -51,6 +52,18 @@ pub enum DispatchResult {
     CommandFailed(String),
     /// File IO Error
     FileIoError(Box<dyn Error>),
+}
+
+/// A response from the Etherscan API's `getabi` action
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EtherscanABIResponse {
+    /// The status of the response
+    /// "1" = success | "0" = failure
+    pub status: String,
+    /// The message supplied by the API
+    pub message: String,
+    /// The result returned by the API. Will be `None` if the request failed.
+    pub result: Option<String>,
 }
 
 impl ChiselDisptacher {
@@ -332,6 +345,153 @@ impl ChiselDisptacher {
                     ))
                 }
             }
+            ChiselCommand::Fetch => {
+                if args.len() != 2 {
+                    return DispatchResult::CommandFailed(Self::make_error(
+                        "Incorrect number of arguments supplied. Expected: <address> <name>",
+                    ))
+                }
+
+                // TODO: Use Etherscan API key if it is present in the configuration
+                let request_url = format!(
+                    "https://api.etherscan.io/api?module=contract&action=getabi&address={}",
+                    args[0]
+                );
+
+                // TODO: Not the cleanest method of building a solidity interface from
+                // the ABI, but does the trick. Might want to pull this logic elsewhere
+                // and/or refactor at some point.
+                match reqwest::get(&request_url).await {
+                    Ok(response) => {
+                        let json = response.json::<EtherscanABIResponse>().await.unwrap();
+                        if let Some(abi) = json.result {
+                            if let Ok(abi) = ethers::abi::Abi::load(abi.as_bytes()) {
+                                let mut interface = format!(
+                                    "// Interface of {}\ninterface {} {{\n",
+                                    args[0], args[1]
+                                );
+
+                                // Add error definitions
+                                abi.errors().for_each(|err| {
+                                    interface.push_str(&format!(
+                                        "\terror {}({});\n",
+                                        err.name,
+                                        err.inputs
+                                            .iter()
+                                            .map(|input| format!(
+                                                "{}{}",
+                                                input.kind,
+                                                if input.kind.is_dynamic() {
+                                                    " memory"
+                                                } else {
+                                                    ""
+                                                }
+                                            ))
+                                            .collect::<Vec<_>>()
+                                            .join(",")
+                                    ));
+                                });
+                                // Add event definitions
+                                abi.events().for_each(|event| {
+                                    interface.push_str(&format!(
+                                        "\tevent {}({});\n",
+                                        event.name,
+                                        event
+                                            .inputs
+                                            .iter()
+                                            .map(|input| format!(
+                                                "{}{}{}",
+                                                input.kind,
+                                                if input.kind.is_dynamic() {
+                                                    " memory"
+                                                } else {
+                                                    ""
+                                                },
+                                                if input.indexed { " indexed" } else { "" }
+                                            ))
+                                            .collect::<Vec<_>>()
+                                            .join(",")
+                                    ));
+                                });
+                                // Add function definitions
+                                abi.functions().for_each(|func| {
+                                    interface.push_str(&format!(
+                                        "\tfunction {}({}) external{}{};\n",
+                                        func.name,
+                                        func.inputs
+                                            .iter()
+                                            .map(|input| format!(
+                                                "{}{}",
+                                                input.kind,
+                                                if input.kind.is_dynamic() {
+                                                    " memory"
+                                                } else {
+                                                    ""
+                                                }
+                                            ))
+                                            .collect::<Vec<_>>()
+                                            .join(","),
+                                        match func.state_mutability {
+                                            ethers::abi::StateMutability::Pure => " pure",
+                                            ethers::abi::StateMutability::View => " view",
+                                            ethers::abi::StateMutability::Payable => " payable",
+                                            _ => "",
+                                        },
+                                        if func.outputs.is_empty() {
+                                            String::default()
+                                        } else {
+                                            format!(
+                                                " returns ({})",
+                                                func.outputs
+                                                    .iter()
+                                                    .map(|output| format!(
+                                                        "{}{}",
+                                                        output.kind,
+                                                        if output.kind.is_dynamic() {
+                                                            " memory"
+                                                        } else {
+                                                            ""
+                                                        }
+                                                    ))
+                                                    .collect::<Vec<_>>()
+                                                    .join(",")
+                                            )
+                                        }
+                                    ));
+                                });
+                                // Close interface definition
+                                interface.push_str("}");
+
+                                // Add the interface to the source outright - no need to verify
+                                // syntax via compilation and/or
+                                // parsing.
+                                self.session
+                                    .session_source
+                                    .as_mut()
+                                    .unwrap()
+                                    .with_global_code(&interface);
+
+                                DispatchResult::CommandSuccess(Some(format!(
+                                    "Added {}'s interface to source as `{}`",
+                                    args[0], args[1]
+                                )))
+                            } else {
+                                return DispatchResult::CommandFailed(Self::make_error(
+                                    "Contract is not verified!",
+                                ))
+                            }
+                        } else {
+                            return DispatchResult::CommandFailed(Self::make_error(format!(
+                                "Coult not fetch interface - \"{}\"",
+                                json.message
+                            )))
+                        }
+                    }
+                    Err(_) => DispatchResult::CommandFailed(Self::make_error(
+                        "Failed to communicate with Etherscan API; Are you offline?",
+                    )),
+                }
+            }
         }
     }
 
@@ -536,6 +696,8 @@ pub enum ChiselCommand {
     StackDump,
     /// Export the current REPL session source to a Script file
     Export,
+    /// Fetch an interface of a verified contract on Etherscan
+    Fetch,
 }
 
 /// A command descriptor type
@@ -559,6 +721,7 @@ impl FromStr for ChiselCommand {
             "memdump" => Ok(ChiselCommand::MemDump),
             "stackdump" => Ok(ChiselCommand::StackDump),
             "export" => Ok(ChiselCommand::Export),
+            "fetch" => Ok(ChiselCommand::Fetch),
             _ => Err(ChiselDisptacher::make_error(&format!(
                 "Unknown command \"{}\"! See available commands with `!help`.",
                 s
@@ -589,6 +752,7 @@ impl From<ChiselCommand> for CmdDescriptor {
             ChiselCommand::MemDump => ("memdump", "Dump the raw memory of the current state"),
             ChiselCommand::StackDump => ("stackdump", "Dump the raw stack of the current state"),
             ChiselCommand::Export => ("export", "Export the current session source to a script file"),
+            ChiselCommand::Fetch => ("fetch <addr> <name>", "Fetch the interface of a verified contract on Etherscan"),
         }
     }
 }

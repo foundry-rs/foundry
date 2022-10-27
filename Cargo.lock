@@ -731,6 +731,7 @@ dependencies = [
  "foundry-common",
  "foundry-config",
  "foundry-evm",
+ "reqwest",
  "revm",
  "rustyline",
  "semver",
