@@ -39,7 +39,7 @@ fn test_write_session() {
 
     // Create a new session
     let mut env = ChiselSession::new(&chisel::session_source::SessionSourceConfig {
-        config: Config::default(),
+        foundry_config: Config::default(),
         evm_opts: EvmOpts::default(),
         backend: None,
         traces: false,

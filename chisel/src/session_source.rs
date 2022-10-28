@@ -66,7 +66,7 @@ pub struct GeneratedOutput {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SessionSourceConfig {
     /// Foundry configuration
-    pub config: Config,
+    pub foundry_config: Config,
     /// EVM Options
     pub evm_opts: EvmOpts,
     #[serde(skip)]
@@ -400,7 +400,7 @@ impl std::fmt::Display for SessionSource {
         // Fill remappings
         // TODO: Not a very clean soln. Should retain remapped import when displaying
         // via `!source` or exporting to a script file.
-        let remappings = &self.config.config.remappings;
+        let remappings = &self.config.foundry_config.remappings;
         let global_code = {
             let mut content = self.global_code.clone();
             for remapping in remappings {

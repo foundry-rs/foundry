@@ -73,7 +73,7 @@ async fn main() {
     let mut dispatcher = ChiselDisptacher::new(&chisel::session_source::SessionSourceConfig {
         // Enable traces if any level of verbosity was passed
         traces: config.verbosity > 0,
-        config,
+        foundry_config: config,
         evm_opts,
         backend: None,
         script: args.script,

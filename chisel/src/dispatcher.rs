@@ -7,7 +7,7 @@ use crate::{
     prelude::SolidityHelper, runner::ChiselResult, session::ChiselSession,
     session_source::SessionSourceConfig,
 };
-use ethers::utils::hex;
+use ethers::{abi::ParamType, utils::hex};
 use forge::{
     decode::decode_console_logs,
     trace::{
@@ -16,6 +16,7 @@ use forge::{
     },
 };
 use foundry_config::{Config, RpcEndpoint};
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use solang_parser::diagnostics::Diagnostic;
 use std::{error::Error, path::PathBuf, str::FromStr};
@@ -69,6 +70,26 @@ pub struct EtherscanABIResponse {
     pub result: Option<String>,
 }
 
+/// Used to format ABI parameters into valid solidity function / error / event param syntax
+/// TODO: Smarter resolution of storage location, defaults to "memory" for all types
+/// that cannot be stored on the stack.
+macro_rules! format_param {
+    ($param:expr) => {{
+        let param = $param;
+        format!(
+            "{}{}",
+            param.kind,
+            if param.kind.is_dynamic() ||
+                matches!(param.kind, ParamType::FixedArray(_, _) | ParamType::Tuple(_))
+            {
+                " memory"
+            } else {
+                ""
+            }
+        )
+    }};
+}
+
 impl ChiselDisptacher {
     /// Associated public function to create a new Dispatcher instance
     pub fn new(config: &SessionSourceConfig) -> Self {
@@ -114,9 +135,12 @@ impl ChiselDisptacher {
                                 Paint::magenta(cat),
                                 cat_cmds
                                     .into_iter()
-                                    .map(|(cmd, desc, _)| format!(
-                                        "\t!{} - {}",
-                                        Paint::green(cmd),
+                                    .map(|(cmds, desc, _)| format!(
+                                        "\t{} - {}",
+                                        cmds.into_iter()
+                                            .map(|cmd| format!("!{}", Paint::green(cmd)))
+                                            .collect::<Vec<_>>()
+                                            .join(" | "),
                                         desc
                                     ))
                                     .collect::<Vec<String>>()
@@ -250,7 +274,7 @@ impl ChiselDisptacher {
                         return DispatchResult::CommandSuccess(Some(String::from(
                             "Now using local environment.",
                         )))
-                    } else if args.len() != 1 {
+                    } else if args.len() != 1 || args[0].trim().is_empty() {
                         return DispatchResult::CommandFailed(Self::make_error(
                             "Must supply a session ID as the argument.",
                         ))
@@ -260,7 +284,7 @@ impl ChiselDisptacher {
                     // `[rpc_endpoints]` section of the `foundry.toml` within
                     // the pwd, use the URL matched to the key.
                     let endpoint = if let Some(endpoint) =
-                        session_source.config.config.rpc_endpoints.get(args[0])
+                        session_source.config.foundry_config.rpc_endpoints.get(args[0])
                     {
                         endpoint.clone()
                     } else {
@@ -276,18 +300,23 @@ impl ChiselDisptacher {
                         }
                     };
 
+                    // Check validity of URL
+                    if Url::parse(&fork_url).is_err() {
+                        return DispatchResult::CommandFailed(Self::make_error("Invalid fork URL!"))
+                    }
+
+                    // Create success message before moving the fork_url
+                    let success_msg = format!("Set fork URL to {}", Paint::yellow(&fork_url));
+
                     // Update the fork_url inside of the [SessionSourceConfig]'s [EvmOpts]
                     // field
-                    session_source.config.evm_opts.fork_url = Some(fork_url.clone());
+                    session_source.config.evm_opts.fork_url = Some(fork_url);
 
                     // Clear the backend so that it is re-instantiated with the new fork
                     // upon the next execution of the session source.
                     session_source.config.backend = None;
 
-                    DispatchResult::CommandSuccess(Some(format!(
-                        "Set fork URL to {}",
-                        Paint::yellow(fork_url)
-                    )))
+                    DispatchResult::CommandSuccess(Some(success_msg))
                 } else {
                     DispatchResult::CommandFailed(Self::make_error("Session not present."))
                 }
@@ -296,8 +325,8 @@ impl ChiselDisptacher {
                 if let Some(session_source) = self.session.session_source.as_mut() {
                     session_source.config.traces = !session_source.config.traces;
                     DispatchResult::CommandSuccess(Some(format!(
-                        "Successfully {} traces!",
-                        if session_source.config.traces { "enabled" } else { "disabled" }
+                        "{} traces!",
+                        if session_source.config.traces { "Enabled" } else { "Disabled" }
                     )))
                 } else {
                     DispatchResult::CommandFailed(Self::make_error("Session not present."))
@@ -309,6 +338,7 @@ impl ChiselDisptacher {
                         Ok((_, res)) => {
                             if let Some((stack, mem, _)) = res.state.as_ref() {
                                 if matches!(cmd, ChiselCommand::MemDump) {
+                                    // Print memory by word
                                     (0..mem.len()).step_by(32).for_each(|i| {
                                         println!(
                                             "{}: {}",
@@ -324,6 +354,7 @@ impl ChiselDisptacher {
                                         );
                                     });
                                 } else {
+                                    // Print all stack items
                                     (0..stack.len()).rev().for_each(|i| {
                                         println!(
                                             "{}: {}",
@@ -391,10 +422,23 @@ impl ChiselDisptacher {
                     ))
                 }
 
-                // TODO: Use Etherscan API key if it is present in the configuration
                 let request_url = format!(
-                    "https://api.etherscan.io/api?module=contract&action=getabi&address={}",
-                    args[0]
+                    "https://api.etherscan.io/api?module=contract&action=getabi&address={}{}",
+                    args[0],
+                    if let Some(api_key) = self
+                        .session
+                        .session_source
+                        .as_ref()
+                        .unwrap()
+                        .config
+                        .foundry_config
+                        .etherscan_api_key
+                        .as_ref()
+                    {
+                        format!("&apikey={}", api_key)
+                    } else {
+                        String::default()
+                    }
                 );
 
                 // TODO: Not the cleanest method of building a solidity interface from
@@ -417,15 +461,7 @@ impl ChiselDisptacher {
                                         err.name,
                                         err.inputs
                                             .iter()
-                                            .map(|input| format!(
-                                                "{}{}",
-                                                input.kind,
-                                                if input.kind.is_dynamic() {
-                                                    " memory"
-                                                } else {
-                                                    ""
-                                                }
-                                            ))
+                                            .map(|input| format_param!(input))
                                             .collect::<Vec<_>>()
                                             .join(",")
                                     ));
@@ -438,16 +474,13 @@ impl ChiselDisptacher {
                                         event
                                             .inputs
                                             .iter()
-                                            .map(|input| format!(
-                                                "{}{}{}",
-                                                input.kind,
-                                                if input.kind.is_dynamic() {
-                                                    " memory"
-                                                } else {
-                                                    ""
-                                                },
-                                                if input.indexed { " indexed" } else { "" }
-                                            ))
+                                            .map(|input| {
+                                                let mut formatted = format_param!(input);
+                                                if input.indexed {
+                                                    formatted.push_str(" indexed");
+                                                }
+                                                formatted
+                                            })
                                             .collect::<Vec<_>>()
                                             .join(",")
                                     ));
@@ -459,15 +492,7 @@ impl ChiselDisptacher {
                                         func.name,
                                         func.inputs
                                             .iter()
-                                            .map(|input| format!(
-                                                "{}{}",
-                                                input.kind,
-                                                if input.kind.is_dynamic() {
-                                                    " memory"
-                                                } else {
-                                                    ""
-                                                }
-                                            ))
+                                            .map(|input| format_param!(input))
                                             .collect::<Vec<_>>()
                                             .join(","),
                                         match func.state_mutability {
@@ -483,15 +508,7 @@ impl ChiselDisptacher {
                                                 " returns ({})",
                                                 func.outputs
                                                     .iter()
-                                                    .map(|output| format!(
-                                                        "{}{}",
-                                                        output.kind,
-                                                        if output.kind.is_dynamic() {
-                                                            " memory"
-                                                        } else {
-                                                            ""
-                                                        }
-                                                    ))
+                                                    .map(|output| format_param!(output))
                                                     .collect::<Vec<_>>()
                                                     .join(",")
                                             )
@@ -621,7 +638,7 @@ impl ChiselDisptacher {
                                 )
                             };
 
-                            // Show console logs
+                            // Show console logs, if there are any
                             let decoded_logs = decode_console_logs(&res.logs);
                             if !decoded_logs.is_empty() {
                                 println!("{}", Paint::green("Logs:"));
@@ -674,7 +691,7 @@ impl ChiselDisptacher {
         // known_contracts: &ContractsByArtifact,
     ) -> eyre::Result<CallTraceDecoder> {
         let mut etherscan_identifier = EtherscanIdentifier::new(
-            &session_config.config,
+            &session_config.foundry_config,
             session_config.evm_opts.get_remote_chain_id(),
         )?;
 
@@ -683,7 +700,7 @@ impl ChiselDisptacher {
 
         decoder.add_signature_identifier(SignaturesIdentifier::new(
             Config::foundry_cache_dir(),
-            session_config.config.offline,
+            session_config.foundry_config.offline,
         )?);
 
         for (_, trace) in &mut result.traces {
@@ -762,6 +779,36 @@ pub enum ChiselCommand {
     Script,
 }
 
+/// Attempt to convert a string slice to a `ChiselCommand`
+impl FromStr for ChiselCommand {
+    type Err = Box<dyn Error>;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_ref() {
+            "help" | "h" => Ok(ChiselCommand::Help),
+            "clear" | "c" => Ok(ChiselCommand::Clear),
+            "source" | "so" => Ok(ChiselCommand::Source),
+            "save" | "s" => Ok(ChiselCommand::Save),
+            "list" => Ok(ChiselCommand::ListSessions),
+            "load" | "l" => Ok(ChiselCommand::Load),
+            "clearcache" => Ok(ChiselCommand::ClearCache),
+            "fork" | "f" => Ok(ChiselCommand::Fork),
+            "traces" | "t" => Ok(ChiselCommand::Traces),
+            "memdump" => Ok(ChiselCommand::MemDump),
+            "stackdump" => Ok(ChiselCommand::StackDump),
+            "export" => Ok(ChiselCommand::Export),
+            "fetch" => Ok(ChiselCommand::Fetch),
+            "script" => Ok(ChiselCommand::Script),
+            _ => Err(ChiselDisptacher::make_error(&format!(
+                "Unknown command \"{}\"! See available commands with `!help`.",
+                s
+            ))
+            .to_string()
+            .into()),
+        }
+    }
+}
+
 /// A category for [ChiselCommand]s
 #[derive(Debug, EnumIter)]
 pub enum CmdCategory {
@@ -788,60 +835,30 @@ impl core::fmt::Display for CmdCategory {
 }
 
 /// A command descriptor type
-type CmdDescriptor = (&'static str, &'static str, CmdCategory);
-
-/// Attempt to convert a string slice to a `ChiselCommand`
-impl FromStr for ChiselCommand {
-    type Err = Box<dyn Error>;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_ref() {
-            "help" => Ok(ChiselCommand::Help),
-            "clear" => Ok(ChiselCommand::Clear),
-            "source" => Ok(ChiselCommand::Source),
-            "save" => Ok(ChiselCommand::Save),
-            "list" => Ok(ChiselCommand::ListSessions),
-            "load" => Ok(ChiselCommand::Load),
-            "clearcache" => Ok(ChiselCommand::ClearCache),
-            "fork" => Ok(ChiselCommand::Fork),
-            "traces" => Ok(ChiselCommand::Traces),
-            "memdump" => Ok(ChiselCommand::MemDump),
-            "stackdump" => Ok(ChiselCommand::StackDump),
-            "export" => Ok(ChiselCommand::Export),
-            "fetch" => Ok(ChiselCommand::Fetch),
-            "script" => Ok(ChiselCommand::Script),
-            _ => Err(ChiselDisptacher::make_error(&format!(
-                "Unknown command \"{}\"! See available commands with `!help`.",
-                s
-            ))
-            .to_string()
-            .into()),
-        }
-    }
-}
+type CmdDescriptor = (&'static [&'static str], &'static str, CmdCategory);
 
 /// Convert a `ChiselCommand` into a `CmdDescriptor` tuple
 impl From<ChiselCommand> for CmdDescriptor {
     fn from(cmd: ChiselCommand) -> Self {
         match cmd {
             // General
-            ChiselCommand::Help => ("help", "Display all commands", CmdCategory::General),
+            ChiselCommand::Help => (&["help", "h"], "Display all commands", CmdCategory::General),
             // Session
-            ChiselCommand::Clear => ("clear", "Clear current session source", CmdCategory::Session),
-            ChiselCommand::Source => ("source", "Display the source code of the current session", CmdCategory::Session),
-            ChiselCommand::Save => ("save [id]", "Save the current session to cache", CmdCategory::Session),
-            ChiselCommand::Load => ("load <id>", "Load a previous session ID from cache", CmdCategory::Session),
-            ChiselCommand::ListSessions => ("list", "List all cached sessions", CmdCategory::Session),
-            ChiselCommand::ClearCache => ("clearcache", "Clear the chisel cache of all stored sessions", CmdCategory::Session),
-            ChiselCommand::Export => ("export", "Export the current session source to a script file", CmdCategory::Session),
-            ChiselCommand::Fetch => ("fetch <addr> <name>", "Fetch the interface of a verified contract on Etherscan", CmdCategory::Session),
-            ChiselCommand::Script => ("script", "Enable or disable the inheritance of forge-std/Script.sol", CmdCategory::Session),
+            ChiselCommand::Clear => (&["clear", "c"], "Clear current session source", CmdCategory::Session),
+            ChiselCommand::Source => (&["source", "so"], "Display the source code of the current session", CmdCategory::Session),
+            ChiselCommand::Save => (&["save [id]", "s [id]"], "Save the current session to cache", CmdCategory::Session),
+            ChiselCommand::Load => (&["load <id>", "l <id>"], "Load a previous session ID from cache", CmdCategory::Session),
+            ChiselCommand::ListSessions => (&["list"], "List all cached sessions", CmdCategory::Session),
+            ChiselCommand::ClearCache => (&["clearcache"], "Clear the chisel cache of all stored sessions", CmdCategory::Session),
+            ChiselCommand::Export => (&["export"], "Export the current session source to a script file", CmdCategory::Session),
+            ChiselCommand::Fetch => (&["fetch <addr> <name>"], "Fetch the interface of a verified contract on Etherscan", CmdCategory::Session),
+            ChiselCommand::Script => (&["script"], "Enable or disable the inheritance of forge-std/Script.sol", CmdCategory::Session),
             // Environment
-            ChiselCommand::Fork => ("fork", "Fork an RPC for the current session. Supply 0 arguments to return to a local network", CmdCategory::Env),
-            ChiselCommand::Traces => ("traces", "Enable / disable traces for the current session", CmdCategory::Env),
+            ChiselCommand::Fork => (&["fork <url>", "f <url>"], "Fork an RPC for the current session. Supply 0 arguments to return to a local network", CmdCategory::Env),
+            ChiselCommand::Traces => (&["traces", "t"], "Enable / disable traces for the current session", CmdCategory::Env),
             // Debug
-            ChiselCommand::MemDump => ("memdump", "Dump the raw memory of the current state", CmdCategory::Debug),
-            ChiselCommand::StackDump => ("stackdump", "Dump the raw stack of the current state", CmdCategory::Debug),
+            ChiselCommand::MemDump => (&["memdump"], "Dump the raw memory of the current state", CmdCategory::Debug),
+            ChiselCommand::StackDump => (&["stackdump"], "Dump the raw stack of the current state", CmdCategory::Debug),
         }
     }
 }

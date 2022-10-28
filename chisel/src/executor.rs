@@ -135,8 +135,9 @@ impl SessionSource {
 
         // Create an in-memory backend
         let backend = self.config.backend.take().unwrap_or_else(|| {
-            let backend =
-                Backend::spawn(self.config.evm_opts.get_fork(&self.config.config, env.clone()));
+            let backend = Backend::spawn(
+                self.config.evm_opts.get_fork(&self.config.foundry_config, env.clone()),
+            );
             self.config.backend = Some(backend.clone());
             backend
         });
@@ -146,9 +147,9 @@ impl SessionSource {
             .with_config(env)
             .with_chisel_state(final_pc)
             .set_tracing(true)
-            .with_spec(foundry_cli::utils::evm_spec(&self.config.config.evm_version))
+            .with_spec(foundry_cli::utils::evm_spec(&self.config.foundry_config.evm_version))
             .with_gas_limit(self.config.evm_opts.gas_limit())
-            .with_cheatcodes(CheatsConfig::new(&self.config.config, &self.config.evm_opts))
+            .with_cheatcodes(CheatsConfig::new(&self.config.foundry_config, &self.config.evm_opts))
             .build(backend);
 
         // Create a [ChiselRunner] with a default balance of [U256::MAX] and

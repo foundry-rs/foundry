@@ -14,6 +14,7 @@ Chisel is a fast, utilitarian, and verbose solidity REPL. It is heavily inspired
   - [ ] Expression evaluation / inspection (i.e. the input `0x01 << 0x08` should inspect a `uint` of value `256`)
   - [x] Input history.
   - [ ] Use forge fmt module to format source code when printing via the `!source` command or exporting to a Script file (?)
+  - [ ] Link libraries on deployment if script inheritance is enabled.
 - [x] Cache REPL History
   - [x] Allow a user to save/load sessions from their Chisel history.
     - [x] Fix session loading bug wrt non-serializable `IntermediateOutput` component.
@@ -54,6 +55,8 @@ Chisel is a fast, utilitarian, and verbose solidity REPL. It is heavily inspired
   - [x] Support ENV var interpolation in fork urls
   - [x] Allow named sessions
   - [x] Rename `!flush` to `!save`
+  - [x] Check fork URL validity
+  - [x] Add builtin command shorthands
   - [ ] ...
 
 ## Why?

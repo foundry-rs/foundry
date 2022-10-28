@@ -34,7 +34,7 @@ impl ChiselSession {
         // - Latest installed version via SVM
         // - Default: 0.8.17
         let solc = Solc::find_or_install_svm_version(
-            if let Some(SolcReq::Version(version)) = config.config.solc.as_ref() {
+            if let Some(SolcReq::Version(version)) = config.foundry_config.solc.as_ref() {
                 let version = format!("{}.{}.{}", version.major, version.minor, version.patch);
                 if let Ok(None) = Solc::find_svm_installed_version(&version) {
                     println!(
