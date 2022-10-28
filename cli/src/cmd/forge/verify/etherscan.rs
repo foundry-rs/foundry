@@ -127,24 +127,29 @@ impl VerificationProvider for EtherscanVerificationProvider {
                         .await
                         .wrap_err("Failed to request verification status")?;
 
+                    eprintln!(
+                        "Contract verification status:\nResponse: `{}`\nDetails: `{}`",
+                        resp.message, resp.result
+                    );
+
+                    if resp.result == "Pending in queue" {
+                        return Err(eyre!("Verification is still pending...",))
+                    }
+
+                    if resp.result == "Unable to verify" {
+                        return Err(eyre!("Unable to verify.",))
+                    }
+
+                    if resp.result == "Already Verified" {
+                        println!("Contract source code already verified");
+                        return Ok(())
+                    }
+
                     if resp.status == "0" {
-                        if resp.result == "Already Verified" {
-                            println!("Contract source code already verified");
-                            return Ok(())
-                        }
-
-                        if resp.result == "Pending in queue" {
-                            return Err(eyre!("Verification is still pending...",))
-                        }
-
-                        eprintln!(
-                            "Contract verification failed:\nResponse: `{}`\nDetails: `{}`",
-                            resp.message, resp.result
-                        );
+                        println!("Contract failed to verify.");
                         std::process::exit(1);
                     }
 
-                    println!("Contract successfully verified");
                     Ok(())
                 }
                 .boxed()
