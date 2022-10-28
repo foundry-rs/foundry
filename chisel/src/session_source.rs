@@ -63,7 +63,7 @@ pub struct GeneratedOutput {
 }
 
 /// Configuration for the [SessionSource]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SessionSourceConfig {
     /// Foundry configuration
     pub config: Config,
@@ -74,6 +74,8 @@ pub struct SessionSourceConfig {
     pub backend: Option<Backend>,
     /// Optionally enable traces for the REPL contract execution
     pub traces: bool,
+    /// Optionally inherit `forge-std`'s Script.sol
+    pub script: bool,
 }
 
 /// REPL Session Source wrapper
@@ -203,13 +205,18 @@ impl SessionSource {
     /// Generates and ethers_solc::CompilerInput from the source
     pub fn compiler_input(&self) -> CompilerInput {
         let mut sources = Sources::new();
-        sources.insert(self.file_name.clone(), Source { content: self.to_string() });
-        for (name, source) in SOURCES {
-            sources.insert(
-                PathBuf::from(format!("forge-std/{}", name)),
-                Source { content: source.to_owned() },
-            );
+
+        // If Script inheritance is enabled, add `Script.sol`'s sources.
+        if self.config.script {
+            for (name, source) in SOURCES {
+                sources.insert(
+                    PathBuf::from(format!("forge-std/{}", name)),
+                    Source { content: source.to_owned() },
+                );
+            }
         }
+
+        sources.insert(self.file_name.clone(), Source { content: self.to_string() });
         CompilerInput::with_sources(sources).pop().unwrap()
     }
 
@@ -411,13 +418,19 @@ impl std::fmt::Display for SessionSource {
         f.write_str("// SPDX-License-Identifier: UNLICENSED\n")?;
         let Version { major, minor, patch, .. } = self.solc.version().unwrap();
         f.write_fmt(format_args!("pragma solidity ^{major}.{minor}.{patch};\n\n",))?;
-        f.write_str("import {Script} from \"forge-std/Script.sol\";\n")?;
+        if self.config.script {
+            f.write_str("import {Script} from \"forge-std/Script.sol\";\n")?;
+        }
 
         // Global imports and definitions
         f.write_str(&global_code)?;
         f.write_str("\n")?;
 
-        f.write_fmt(format_args!("contract {} is Script {{\n", self.contract_name))?;
+        f.write_fmt(format_args!(
+            "contract {} {}{{\n",
+            self.contract_name,
+            if self.config.script { "is Script " } else { "" }
+        ))?;
         f.write_str(&self.top_level_code)?;
         f.write_str("\n")?;
         f.write_str("\tfunction run() external {\n")?;

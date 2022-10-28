@@ -8,9 +8,12 @@ use crate::{
     session_source::SessionSourceConfig,
 };
 use ethers::utils::hex;
-use forge::trace::{
-    identifier::{EtherscanIdentifier, SignaturesIdentifier},
-    CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
+use forge::{
+    decode::decode_console_logs,
+    trace::{
+        identifier::{EtherscanIdentifier, SignaturesIdentifier},
+        CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
+    },
 };
 use foundry_config::{Config, RpcEndpoint};
 use serde::{Deserialize, Serialize};
@@ -89,13 +92,36 @@ impl ChiselDisptacher {
     pub async fn dispatch_command(&mut self, cmd: ChiselCommand, args: &[&str]) -> DispatchResult {
         match cmd {
             ChiselCommand::Help => {
+                let all_descriptors = ChiselCommand::iter()
+                    .map(|cmd| CmdDescriptor::from(cmd))
+                    .collect::<Vec<CmdDescriptor>>();
                 return DispatchResult::CommandSuccess(Some(format!(
                     "{}\n{}",
-                    Paint::cyan(format!("{} Chisel help", CHISEL_CHAR)),
-                    ChiselCommand::iter()
-                        .map(|cmd| {
-                            let (cmd, desc) = CmdDescriptor::from(cmd);
-                            format!("!{} - {}", Paint::green(cmd), desc)
+                    Paint::cyan(format!("{} Chisel help\n=============", CHISEL_CHAR)),
+                    CmdCategory::iter()
+                        .map(|cat| {
+                            // Get commands in the current category
+                            let cat_cmds = &all_descriptors
+                                .iter()
+                                .filter(|(_, _, c)| {
+                                    std::mem::discriminant(c) == std::mem::discriminant(&cat)
+                                })
+                                .collect::<Vec<&CmdDescriptor>>();
+
+                            // Format the help menu for the current category
+                            format!(
+                                "{}\n{}\n",
+                                Paint::magenta(cat),
+                                cat_cmds
+                                    .into_iter()
+                                    .map(|(cmd, desc, _)| format!(
+                                        "\t!{} - {}",
+                                        Paint::green(cmd),
+                                        desc
+                                    ))
+                                    .collect::<Vec<String>>()
+                                    .join("\n")
+                            )
                         })
                         .collect::<Vec<String>>()
                         .join("\n")
@@ -320,29 +346,42 @@ impl ChiselDisptacher {
                 }
             }
             ChiselCommand::Export => {
-                // Check if the pwd is a foundry project
-                if PathBuf::from("foundry.toml").exists() {
-                    // Create "script" dir if it does not already exist.
-                    if !PathBuf::from("script").exists() {
-                        if let Err(e) = std::fs::create_dir_all("script") {
-                            return DispatchResult::CommandFailed(Self::make_error(e.to_string()))
-                        }
-                    }
-                    // Write session source to `script/REPL`
-                    if let Err(e) = std::fs::write(
-                        PathBuf::from("script/REPL.sol"),
-                        self.session.session_source.as_ref().unwrap().to_string(),
-                    ) {
-                        return DispatchResult::CommandFailed(Self::make_error(e.to_string()))
+                // Check if the current session inherits `Script.sol` before exporting
+                if let Some(session_source) = self.session.session_source.as_ref() {
+                    if !session_source.config.script {
+                        return DispatchResult::CommandFailed(Self::make_error(
+                            "The current REPL session is not a script!",
+                        ))
                     }
 
-                    DispatchResult::CommandSuccess(Some(String::from(
-                        "Exported session source to script/REPL.sol!",
-                    )))
+                    // Check if the pwd is a foundry project
+                    if PathBuf::from("foundry.toml").exists() {
+                        // Create "script" dir if it does not already exist.
+                        if !PathBuf::from("script").exists() {
+                            if let Err(e) = std::fs::create_dir_all("script") {
+                                return DispatchResult::CommandFailed(Self::make_error(
+                                    e.to_string(),
+                                ))
+                            }
+                        }
+                        // Write session source to `script/REPL`
+                        if let Err(e) = std::fs::write(
+                            PathBuf::from("script/REPL.s.sol"),
+                            self.session.session_source.as_ref().unwrap().to_string(),
+                        ) {
+                            return DispatchResult::CommandFailed(Self::make_error(e.to_string()))
+                        }
+
+                        DispatchResult::CommandSuccess(Some(String::from(
+                            "Exported session source to script/REPL.s.sol!",
+                        )))
+                    } else {
+                        DispatchResult::CommandFailed(Self::make_error(
+                            "Must be in a foundry project to export source to script.",
+                        ))
+                    }
                 } else {
-                    DispatchResult::CommandFailed(Self::make_error(
-                        "Must be in a foundry project to export source to script.",
-                    ))
+                    DispatchResult::CommandFailed(Self::make_error("Session not present."))
                 }
             }
             ChiselCommand::Fetch => {
@@ -492,6 +531,18 @@ impl ChiselDisptacher {
                     )),
                 }
             }
+            ChiselCommand::Script => {
+                if let Some(session_source) = self.session.session_source.as_mut() {
+                    let script_opt = &mut session_source.config.script;
+                    *script_opt = !*script_opt;
+                    DispatchResult::CommandSuccess(Some(format!(
+                        "Set Script inheritance to {}",
+                        script_opt
+                    )))
+                } else {
+                    DispatchResult::CommandFailed(Self::make_error("Session not present."))
+                }
+            }
         }
     }
 
@@ -569,6 +620,15 @@ impl ChiselDisptacher {
                                     "Failed to display traces".to_owned(),
                                 )
                             };
+
+                            // Show console logs
+                            let decoded_logs = decode_console_logs(&res.logs);
+                            if !decoded_logs.is_empty() {
+                                println!("{}", Paint::green("Logs:"));
+                                for log in decoded_logs {
+                                    println!("  {log}");
+                                }
+                            }
 
                             // If the contract execution failed, continue on without adding the new
                             // line to the source.
@@ -698,10 +758,37 @@ pub enum ChiselCommand {
     Export,
     /// Fetch an interface of a verified contract on Etherscan
     Fetch,
+    /// Enable/disable inheritance of forge-std/Script.sol
+    Script,
+}
+
+/// A category for [ChiselCommand]s
+#[derive(Debug, EnumIter)]
+pub enum CmdCategory {
+    /// General category
+    General,
+    /// Session category
+    Session,
+    /// Environment category
+    Env,
+    /// Debug category
+    Debug,
+}
+
+impl core::fmt::Display for CmdCategory {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let string = match self {
+            CmdCategory::General => "General",
+            CmdCategory::Session => "Session",
+            CmdCategory::Env => "Environment",
+            CmdCategory::Debug => "Debug",
+        };
+        f.write_str(string)
+    }
 }
 
 /// A command descriptor type
-type CmdDescriptor = (&'static str, &'static str);
+type CmdDescriptor = (&'static str, &'static str, CmdCategory);
 
 /// Attempt to convert a string slice to a `ChiselCommand`
 impl FromStr for ChiselCommand {
@@ -722,6 +809,7 @@ impl FromStr for ChiselCommand {
             "stackdump" => Ok(ChiselCommand::StackDump),
             "export" => Ok(ChiselCommand::Export),
             "fetch" => Ok(ChiselCommand::Fetch),
+            "script" => Ok(ChiselCommand::Script),
             _ => Err(ChiselDisptacher::make_error(&format!(
                 "Unknown command \"{}\"! See available commands with `!help`.",
                 s
@@ -736,23 +824,24 @@ impl FromStr for ChiselCommand {
 impl From<ChiselCommand> for CmdDescriptor {
     fn from(cmd: ChiselCommand) -> Self {
         match cmd {
-            ChiselCommand::Help => ("help", "Display all commands"),
-            ChiselCommand::Clear => ("clear", "Clear current session"),
-            ChiselCommand::Source => {
-                ("source", "Display the source code of the current session")
-            }
-            ChiselCommand::Save => ("save [id]", "Save the current session to cache"),
-            ChiselCommand::Load => ("load <id>", "Load a previous session ID from cache"),
-            ChiselCommand::ListSessions => ("list", "List all cached sessions"),
-            ChiselCommand::ClearCache => ("clearcache", "Clear the chisel cache of all stored sessions"),
-            ChiselCommand::Fork => {
-                ("fork", "Fork an RPC for the current session. Supply 0 arguments to return to a local network.")
-            }
-            ChiselCommand::Traces => ("traces", "Enable / disable traces for the current session"),
-            ChiselCommand::MemDump => ("memdump", "Dump the raw memory of the current state"),
-            ChiselCommand::StackDump => ("stackdump", "Dump the raw stack of the current state"),
-            ChiselCommand::Export => ("export", "Export the current session source to a script file"),
-            ChiselCommand::Fetch => ("fetch <addr> <name>", "Fetch the interface of a verified contract on Etherscan"),
+            // General
+            ChiselCommand::Help => ("help", "Display all commands", CmdCategory::General),
+            // Session
+            ChiselCommand::Clear => ("clear", "Clear current session source", CmdCategory::Session),
+            ChiselCommand::Source => ("source", "Display the source code of the current session", CmdCategory::Session),
+            ChiselCommand::Save => ("save [id]", "Save the current session to cache", CmdCategory::Session),
+            ChiselCommand::Load => ("load <id>", "Load a previous session ID from cache", CmdCategory::Session),
+            ChiselCommand::ListSessions => ("list", "List all cached sessions", CmdCategory::Session),
+            ChiselCommand::ClearCache => ("clearcache", "Clear the chisel cache of all stored sessions", CmdCategory::Session),
+            ChiselCommand::Export => ("export", "Export the current session source to a script file", CmdCategory::Session),
+            ChiselCommand::Fetch => ("fetch <addr> <name>", "Fetch the interface of a verified contract on Etherscan", CmdCategory::Session),
+            ChiselCommand::Script => ("script", "Enable or disable the inheritance of forge-std/Script.sol", CmdCategory::Session),
+            // Environment
+            ChiselCommand::Fork => ("fork", "Fork an RPC for the current session. Supply 0 arguments to return to a local network", CmdCategory::Env),
+            ChiselCommand::Traces => ("traces", "Enable / disable traces for the current session", CmdCategory::Env),
+            // Debug
+            ChiselCommand::MemDump => ("memdump", "Dump the raw memory of the current state", CmdCategory::Debug),
+            ChiselCommand::StackDump => ("stackdump", "Dump the raw stack of the current state", CmdCategory::Debug),
         }
     }
 }

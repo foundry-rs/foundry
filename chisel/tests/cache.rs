@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use chisel::session::ChiselSession;
+use chisel::{session::ChiselSession, session_source::SessionSourceConfig};
 use forge::executor::opts::EvmOpts;
 use foundry_config::Config;
 use serial_test::serial;
@@ -43,6 +43,7 @@ fn test_write_session() {
         evm_opts: EvmOpts::default(),
         backend: None,
         traces: false,
+        script: false,
     });
 
     // Write the session
@@ -64,12 +65,7 @@ fn test_write_session_with_name() {
     ChiselSession::create_cache_dir().unwrap();
 
     // Create a new session
-    let mut env = ChiselSession::new(&chisel::session_source::SessionSourceConfig {
-        config: Config::default(),
-        evm_opts: EvmOpts::default(),
-        backend: None,
-        traces: false,
-    });
+    let mut env = ChiselSession::new(&chisel::session_source::SessionSourceConfig::default());
     env.id = Some(String::from("test"));
 
     // Write the session
@@ -85,12 +81,7 @@ fn test_clear_cache() {
     // Create a session to validate clearing a non-empty cache directory
     let cache_dir = ChiselSession::cache_dir().unwrap();
     ChiselSession::create_cache_dir().unwrap();
-    let mut env = ChiselSession::new(&chisel::session_source::SessionSourceConfig {
-        config: Config::default(),
-        evm_opts: EvmOpts::default(),
-        backend: None,
-        traces: false,
-    });
+    let mut env = ChiselSession::new(&SessionSourceConfig::default());
     env.write().unwrap();
 
     // Clear the cache
@@ -109,12 +100,7 @@ fn test_list_sessions() {
     ChiselSession::clear_cache().unwrap();
 
     // Create a new session
-    let mut env = ChiselSession::new(&chisel::session_source::SessionSourceConfig {
-        config: Config::default(),
-        evm_opts: EvmOpts::default(),
-        backend: None,
-        traces: false,
-    });
+    let mut env = ChiselSession::new(&SessionSourceConfig::default());
 
     env.write().unwrap();
 
@@ -134,12 +120,7 @@ fn test_load_cache() {
     ChiselSession::clear_cache().unwrap();
 
     // Create a new session
-    let mut env = ChiselSession::new(&chisel::session_source::SessionSourceConfig {
-        config: Config::default(),
-        evm_opts: EvmOpts::default(),
-        backend: None,
-        traces: false,
-    });
+    let mut env = ChiselSession::new(&SessionSourceConfig::default());
     env.write().unwrap();
 
     // Load the session
@@ -163,12 +144,7 @@ fn test_write_same_session_multiple_times() {
     ChiselSession::clear_cache().unwrap();
 
     // Create a new session
-    let mut env = ChiselSession::new(&chisel::session_source::SessionSourceConfig {
-        config: Config::default(),
-        evm_opts: EvmOpts::default(),
-        backend: None,
-        traces: false,
-    });
+    let mut env = ChiselSession::new(&SessionSourceConfig::default());
     env.write().unwrap();
     env.write().unwrap();
     env.write().unwrap();
@@ -184,23 +160,13 @@ fn test_load_latest_cache() {
     ChiselSession::clear_cache().unwrap();
 
     // Create sessions
-    let mut env = ChiselSession::new(&chisel::session_source::SessionSourceConfig {
-        config: Config::default(),
-        evm_opts: EvmOpts::default(),
-        backend: None,
-        traces: false,
-    });
+    let mut env = ChiselSession::new(&SessionSourceConfig::default());
     env.write().unwrap();
 
     let wait_time = std::time::Duration::from_millis(100);
     std::thread::sleep(wait_time);
 
-    let mut env2 = ChiselSession::new(&chisel::session_source::SessionSourceConfig {
-        config: Config::default(),
-        evm_opts: EvmOpts::default(),
-        backend: None,
-        traces: false,
-    });
+    let mut env2 = ChiselSession::new(&SessionSourceConfig::default());
     env2.write().unwrap();
 
     // Load the latest session

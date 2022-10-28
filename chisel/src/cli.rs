@@ -33,6 +33,9 @@ pub struct ChiselParser {
     #[clap(flatten, next_help_heading = "EVM OPTIONS")]
     pub evm_opts: EvmArgs,
 
+    #[arg(short, long, help = "Include forge-std/Script.sol in the REPL contract")]
+    pub script: bool,
+
     #[command(subcommand)]
     pub sub: Option<ChiselParserSub>,
 }
@@ -73,6 +76,7 @@ async fn main() {
         config,
         evm_opts,
         backend: None,
+        script: args.script,
     });
 
     // Check for chisel subcommands

@@ -52,13 +52,10 @@ impl SessionSource {
                         };
 
                         // Create a new runner
-                        let runner = self.prepare_runner(final_pc);
-
-                        // Run w/ no libraries for now
-                        let res = runner.await.run(bytecode.into_owned());
+                        let mut runner = self.prepare_runner(final_pc).await;
 
                         // Return [ChiselResult] or bubble up error
-                        match res {
+                        match runner.run(bytecode.into_owned()) {
                             Ok(res) => Ok(res),
                             Err(e) => Err(e),
                         }
@@ -90,22 +87,22 @@ impl SessionSource {
                         {
                             def
                         } else {
-                            eyre::bail!("Error: `{item}` definition could not be found");
+                            eyre::bail!("`{item}` definition could not be found");
                         };
                         let ty = if let Some(ty) =
                             Type::from_expression(ty).and_then(|ty| ty.as_ethabi())
                         {
                             ty
                         } else {
-                            eyre::bail!("Error: Identifer type currently not supported");
+                            eyre::bail!("Identifer type currently not supported");
                         };
                         let memory_offset = if let Some(offset) = stack.data().last() {
                             offset.as_usize()
                         } else {
-                            eyre::bail!("Error: No result found");
+                            eyre::bail!("No result found");
                         };
                         if memory_offset + 32 > memory.len() {
-                            eyre::bail!("Error: Memory size insufficient");
+                            eyre::bail!("Memory size insufficient");
                         }
                         let data = &memory.data()[memory_offset + 32..];
                         let token = match ethabi::decode(&[ty], data) {
@@ -113,11 +110,11 @@ impl SessionSource {
                                 if let Some(token) = tokens.pop() {
                                     token
                                 } else {
-                                    eyre::bail!("Error: No tokens decoded");
+                                    eyre::bail!("No tokens decoded");
                                 }
                             }
                             Err(err) => {
-                                eyre::bail!("Error: Could not decode ABI: {err}")
+                                eyre::bail!("Could not decode ABI: {err}")
                             }
                         };
 

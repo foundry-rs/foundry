@@ -1,33 +1,8 @@
 # `chisel`
 
-Chisel is a fast, utilitarian, and verbose solidity REPL. It is heavily inspired by the incredible work done in [soli](https://github.com/jpopesculian/soli)!
+Chisel is a fast, utilitarian, and verbose solidity REPL. It is heavily inspired by the incredible work done in [soli](https://github.com/jpopesculian/soli) and [solidity-shell](https://github.com/tintinweb/solidity-shell)!
 
-## Why?
-
-Ever wanted to quickly test a small feature in solidity?
-
-Perhaps to test how custom errors work, or how to write inline assembly?
-
-Chisel is a fully-functional Solidity REPL, allowing you to write, execute, and debug Solidity directly in the command line.
-
-Once you finish testing, Chisel even lets you export your code to a new solidity file!
-
-In this sense, Chisel even serves as a Foundry script generator.
-
-## Feature Completion
-
-[soli](https://github.com/jpopesculian/soli) provides a great solidity REPL, achieving:
-
-- Statements
-- Custom events, errors, functions, imports
-- Inspecting a variable
-
-Chisel aims to improve upon soli, with native foundry integration by providing feature completion with:
-
-- Fork an existing chain
-- More advanced introspection
-- Better error messages and traces
-- ... many more future features!
+![preview](./assets/preview.gif)
 
 ## Checklist
 
@@ -52,7 +27,7 @@ Chisel aims to improve upon soli, with native foundry integration by providing f
   - [ ] Inspection verbosity configuration
   - [ ] Undo
   - [ ] Inspect bytecode / mnenomic of local or remote contracts.
-  - [ ] Fetch contract interface from Etherscan ABI
+  - [x] Fetch contract interface from Etherscan ABI
   - [ ] Import remote sources from GitHub
   - [x] Enable / disable call trace printing
     - [x] Rip trace printing code from another module of foundry.
@@ -71,6 +46,7 @@ Chisel aims to improve upon soli, with native foundry integration by providing f
     - [x] Cloning
 - [ ] Optimizations.
   - [ ] Speed up REPL execution time.
+    - [x] Don't inherit `Script.sol` by default. (`!script` to enable / disable inheritance.)
 - [ ] Finish README.
   - [ ] Examples
 
@@ -80,15 +56,75 @@ Chisel aims to improve upon soli, with native foundry integration by providing f
   - [x] Rename `!flush` to `!save`
   - [ ] ...
 
-## Usage
+## Why?
 
-### Installation
+Ever wanted to quickly test a small feature in solidity?
+
+Perhaps to test how custom errors work, or how to write inline assembly?
+
+Chisel is a fully-functional Solidity REPL, allowing you to write, execute, and debug Solidity directly in the command line.
+
+Once you finish testing, Chisel even lets you export your code to a new solidity file!
+
+In this sense, Chisel even serves as a Foundry script generator.
+
+## Feature Completion
+
+[soli](https://github.com/jpopesculian/soli) and [solidity-shell](https://github.com/tintinweb/solidity-shell) both provide a great solidity REPL, achieving:
+
+- Statement support
+- Custom events, errors, functions, imports
+- Inspecting variables
+- Forking remote chains
+- Session caching
+
+Chisel aims to improve upon existing Solidity REPLs by integrating with foundry as well as offering additional functionality:
+
+- More verbose variable / state inspection
+- Improved error messages
+- Foundry-style call traces
+- In-depth environment configuration
+- ... and many more future features!
+
+### Migrating from [soli](https://github.com/jpopesculian/soli) or [solidity-shell](https://github.com/tintinweb/solidity-shell)
+*TODO*
+
+## Installation
 
 `chisel` is installed alongside Foundry cli commands!
 
 Simply run `foundryup` to install `chisel`!
 
 If you do not have `foundryup` installed, reference the Foundry [installation guide](../README.md#installation).
+
+## Usage
+
+### REPL Commands
+```
+⚒️ Chisel help
+=============
+General
+        !help - Display all commands
+
+Session
+        !clear - Clear current session source
+        !source - Display the source code of the current session
+        !save [id] - Save the current session to cache
+        !load <id> - Load a previous session ID from cache
+        !list - List all cached sessions
+        !clearcache - Clear the chisel cache of all stored sessions
+        !export - Export the current session source to a script file
+        !fetch <addr> <name> - Fetch the interface of a verified contract on Etherscan
+        !script - Enable or disable the inheritance of forge-std/Script.sol
+
+Environment
+        !fork - Fork an RPC for the current session. Supply 0 arguments to return to a local network
+        !traces - Enable / disable traces for the current session
+
+Debug
+        !memdump - Dump the raw memory of the current state
+        !stackdump - Dump the raw stack of the current state
+```
 
 ### Cache Session
 
@@ -115,10 +151,11 @@ You can also run `chisel view <id>` or `!view <id>` to view the contents of a sp
 To load a session, run `chisel load <id>` or use the `!load <id>` where `<id>` is a valid session index (eg 2 in the example below).
 
 ```bash
-$ chisel history
-1. 2022-05-06 15:04:32 - chisel-0.json
-2. 2022-02-23 07:43:12 - chisel-1.json
-$ chisel view 2
+$ chisel list
+⚒️ Chisel Sessions
+"2022-10-27 14:46:29" - chisel-0.json
+"2022-10-27 14:46:29" - chisel-1.json
+$ chisel view 1
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.17;
 
@@ -129,18 +166,23 @@ contract REPL {
       emit KeccakEvent(keccak256(abi.encode("Hello, world!")));
     }
 }
-$ chisel load 2
+$ chisel load 1
 ➜ ...
 ```
 
 ### Clearing the Cache
 
-To clear Chisel's cache (stored in `~/.foundry/cache/chisel`), use the `chisel clearcache` or `!clearcache` commands.
+To clear Chisel's cache (stored in `~/.foundry/cache/chisel`), use the `chisel clear-cache` or `!clearcache` command.
 
 ```bash
 ➜ !clearcache
 Cleared chisel cache!
 ```
+
+### Inheriting `Script.sol`
+
+The REPL contract is bare by default to speed up compilation time, however Script inheritance can be toggled via the
+`script` command or the `-s` flag in order to utilize cheatcodes and other helper functions within `Script`.
 
 ### Toggling Traces
 
