@@ -33,8 +33,8 @@ contract SimpleComments {
     }
 
     function test4() public view {
-        uint256 abc; // really long comment that exceeds line width. the comment should be split and carried over to
-            // the next line
+        uint256 abc; // really long comment that exceeds line width. the comment
+            // should be split and carried over to the next line
         uint256 abc2; // reallylongsinglewordcommentthatexceedslinewidththecommentshouldbesplitandcarriedovertothenextline
     }
 }

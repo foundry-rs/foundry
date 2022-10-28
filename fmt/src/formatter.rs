@@ -487,7 +487,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             let mut lines = comment.contents().trim().split('\n').peekable();
 
             while let Some(line) = lines.next() {
-                fmt.write_comment_line(comment, line)?;
+                fmt.grouped(|fmt| fmt.write_comment_line(comment, line))?;
                 // TODO: fmt.write_raw(line)?;
                 if lines.peek().is_some() {
                     fmt.write_whitespace_separator(true)?;
@@ -506,17 +506,22 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// TODO:
     /// Write a comment line that might potentially overflow
     fn write_comment_line(&mut self, comment: &CommentWithMetadata, line: &str) -> Result<()> {
-        if self.current_line_len() + line.len() <= self.config.line_length {
+        if self.will_it_fit(line) {
             write!(self.buf(), "{line}")?;
             return Ok(())
         }
+        // if self.current_line_len() + line.len() <= self.config.line_length {
+        //     write!(self.buf(), "{line}")?;
+        //     return Ok(())
+        // }
 
         let mut words = line.split(' ').peekable();
         while let Some(word) = words.next() {
             self.write_raw(word)?;
 
             if let Some(next) = words.peek() {
-                if self.current_line_len() + next.len() > self.config.line_length {
+                //self.current_line_len() + next.len() > self.config.line_length
+                if !self.will_it_fit(next) {
                     self.write_whitespace_separator(true)?;
                     if comment.is_line() {
                         write!(self.buf(), "{} ", comment.start_token())?;
@@ -552,9 +557,7 @@ impl<'a, W: Write> Formatter<'a, W> {
     fn write_raw_comment(&mut self, comment: &CommentWithMetadata) -> Result<()> {
         self.write_raw(&comment.comment)?;
         if comment.is_line() {
-            let last_indent_group_skipped = self.last_indent_group_skipped();
-            writeln!(self.buf())?;
-            self.set_last_indent_group_skipped(last_indent_group_skipped);
+            self.write_preserved_line()?;
         }
         Ok(())
     }
