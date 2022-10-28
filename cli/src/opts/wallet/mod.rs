@@ -5,7 +5,7 @@ use ethers::{
     signers::{coins_bip39::English, Ledger, LocalWallet, MnemonicBuilder, Trezor},
     types::Address,
 };
-use eyre::{eyre, Result};
+use eyre::{bail, eyre, Result, WrapErr};
 use foundry_common::{fs, RetryProvider};
 use serde::Serialize;
 use std::{path::Path, str::FromStr, sync::Arc};
@@ -233,9 +233,27 @@ pub trait WalletTrait {
         keystore_path: Option<&String>,
         keystore_password: Option<&String>,
     ) -> Result<Option<LocalWallet>> {
+        fn ensure_keystore_file(f: impl AsRef<Path>) -> Result<()> {
+            let f = f.as_ref();
+            if !f.is_file() {
+                if f.is_dir() {
+                    bail!("Expected keystore file but got directory: `{f:?}`")
+                }
+                bail!("Keystore file `{f:?}` does not exist")
+            }
+            Ok(())
+        }
+
         Ok(match (keystore_path, keystore_password) {
-            (Some(path), Some(password)) => Some(LocalWallet::decrypt_keystore(path, password)?),
+            (Some(path), Some(password)) => {
+                ensure_keystore_file(path)?;
+                Some(
+                    LocalWallet::decrypt_keystore(path, password)
+                        .wrap_err_with(|| format!("Failed to decrypt keystore {path}"))?,
+                )
+            }
             (Some(path), None) => {
+                ensure_keystore_file(path)?;
                 let password = rpassword::prompt_password("Enter keystore password:")?;
                 Some(LocalWallet::decrypt_keystore(path, password)?)
             }
