@@ -33,7 +33,8 @@ impl SessionSource {
                         .get_deployed_bytecode_bytes()
                         .expect("No deployed bytecode for contract.");
 
-                    // Find the last statement within the "run()" method.
+                    // Find the last statement within the "run()" method and get the program
+                    // counter via the source map.
                     if let Some(final_statement) = compiled.intermediate.statements.last() {
                         let final_pc = {
                             let source_loc = final_statement.loc();
@@ -72,29 +73,30 @@ impl SessionSource {
     }
 
     /// Inspect a contract element inside of the current session
-    pub async fn inspect(&mut self, item: &str) -> Result<String> {
+    pub async fn inspect(&mut self, item: &str) -> Result<Option<String>> {
         match self.clone_with_new_line(format!("bytes memory inspectoor = abi.encode({item})")) {
             Ok((mut source, _)) => match source.execute().await {
                 Ok((_, res)) => {
-                    if let Some((stack, memory, _)) = res.state {
-                        let (ty, _) = if let Some(def) = source
+                    if let Some((stack, memory, _)) = &res.state {
+                        let def = source
                             .generated_output
                             .as_ref()
                             .unwrap()
                             .intermediate
                             .variable_definitions
-                            .get(item)
-                        {
-                            def
+                            .get(item);
+                        // If the expression is a variable declaration, use its type- otherwise,
+                        // attempt to infer the type.
+                        let ty_opt = if let Some((expr, _)) = def {
+                            Type::from_expression(expr)
                         } else {
-                            eyre::bail!("`{item}` definition could not be found");
+                            self.assign_inner_expr_type(source)
                         };
-                        let ty = if let Some(ty) =
-                            Type::from_expression(ty).and_then(|ty| ty.as_ethabi())
-                        {
+
+                        let ty = if let Some(ty) = ty_opt.and_then(|ty| ty.as_ethabi()) {
                             ty
                         } else {
-                            eyre::bail!("Identifer type currently not supported");
+                            eyre::bail!("Expression type not supported! Please assign this value to a variable before inspecting.");
                         };
                         let memory_offset = if let Some(offset) = stack.data().last() {
                             offset.as_usize()
@@ -118,14 +120,34 @@ impl SessionSource {
                             }
                         };
 
-                        Ok(format_token(token))
+                        Ok(Some(format_token(token)))
                     } else {
                         eyre::bail!("No state present")
                     }
                 }
                 Err(e) => Err(e),
             },
-            Err(e) => Err(e),
+            // Failed to parse the item inside of an `abi.encode` call. Move on gracefully.
+            Err(_) => Ok(None),
+        }
+    }
+
+    /// Gracefully attempts to extract the expression within the `abi.encode(...)`
+    /// call inserted by the inspect function and attempts to assign it a type.
+    fn assign_inner_expr_type(&mut self, source: SessionSource) -> Option<Type> {
+        if let Some(pt::Statement::VariableDefinition(
+            _,
+            _,
+            Some(pt::Expression::FunctionCall(_, _, expressions)),
+        )) = source.generated_output.unwrap().intermediate.statements.last()
+        {
+            if expressions.len() != 1 {
+                return None
+            }
+
+            Type::from_expression(expressions.first().unwrap())
+        } else {
+            None
         }
     }
 
@@ -172,7 +194,7 @@ fn format_token(token: Token) -> String {
         Token::FixedBytes(b) => {
             format!(
                 "Type: {}\n└ Data: {}",
-                Paint::red("bytes32"),
+                Paint::red(format!("bytes{}", b.len())),
                 Paint::cyan(format!("0x{}", hex::encode(b)))
             )
         }
@@ -249,22 +271,23 @@ impl Type {
         Some(match expr {
             pt::Expression::Type(_, ty) => match ty {
                 pt::Type::Address | pt::Type::AddressPayable | pt::Type::Payable => {
-                    Type::Builtin(ParamType::Address)
+                    Self::Builtin(ParamType::Address)
                 }
-                pt::Type::Bool => Type::Builtin(ParamType::Bool),
-                pt::Type::String => Type::Builtin(ParamType::String),
-                pt::Type::Int(size) => Type::Builtin(ParamType::Int(*size as usize)),
-                pt::Type::Uint(size) => Type::Builtin(ParamType::Uint(*size as usize)),
-                pt::Type::Bytes(size) => Type::Builtin(ParamType::FixedBytes(*size as usize)),
-                pt::Type::DynamicBytes => Type::Builtin(ParamType::Bytes),
+                pt::Type::Bool => Self::Builtin(ParamType::Bool),
+                pt::Type::String => Self::Builtin(ParamType::String),
+                pt::Type::Int(size) => Self::Builtin(ParamType::Int(*size as usize)),
+                pt::Type::Uint(size) => Self::Builtin(ParamType::Uint(*size as usize)),
+                pt::Type::Bytes(size) => Self::Builtin(ParamType::FixedBytes(*size as usize)),
+                pt::Type::DynamicBytes => Self::Builtin(ParamType::Bytes),
                 pt::Type::Mapping(_, left, right) => Self::Map(
-                    Box::new(Type::from_expression(left)?),
-                    Box::new(Type::from_expression(right)?),
+                    Box::new(Self::from_expression(left)?),
+                    Box::new(Self::from_expression(right)?),
                 ),
-                pt::Type::Function { .. } => Type::Custom(vec!["[Function]".to_string()]),
-                pt::Type::Rational => Type::Custom(vec!["[Rational]".to_string()]),
+                // TODO: These are unsupported in `as_ethabi` atm.
+                pt::Type::Function { .. } => Self::Custom(vec!["[Function]".to_string()]),
+                pt::Type::Rational => Self::Custom(vec!["[Rational]".to_string()]),
             },
-            pt::Expression::Variable(ident) => Type::Custom(vec![ident.name.clone()]),
+            // pt::Expression::Variable(ident) => Self::Custom(vec![ident.name.clone()]),
             pt::Expression::ArraySubscript(_, expr, num) => {
                 let num = num.as_ref().and_then(|num| {
                     if let pt::Expression::NumberLiteral(_, num, exp) = num.as_ref() {
@@ -275,7 +298,7 @@ impl Type {
                         None
                     }
                 });
-                let ty = Type::from_expression(expr)?;
+                let ty = Self::from_expression(expr)?;
                 if let Some(num) = num {
                     Self::FixedArray(Box::new(ty), num)
                 } else {
@@ -292,8 +315,37 @@ impl Type {
                 if let pt::Expression::Variable(ident) = cur_expr.as_ref() {
                     out.insert(0, ident.name.clone());
                 }
-                Type::Custom(out)
+                Self::Custom(out)
             }
+            // Expression inspection matching
+            pt::Expression::Add(_, _, _) |
+            pt::Expression::Subtract(_, _, _) |
+            pt::Expression::Multiply(_, _, _) |
+            pt::Expression::Divide(_, _, _) |
+            pt::Expression::Modulo(_, _, _) |
+            pt::Expression::Power(_, _, _) |
+            pt::Expression::Complement(_, _) |
+            pt::Expression::BitwiseOr(_, _, _) |
+            pt::Expression::BitwiseAnd(_, _, _) |
+            pt::Expression::BitwiseXor(_, _, _) |
+            pt::Expression::ShiftRight(_, _, _) |
+            pt::Expression::ShiftLeft(_, _, _) |
+            pt::Expression::NumberLiteral(_, _, _) |
+            pt::Expression::HexNumberLiteral(_, _) => Self::Builtin(ParamType::Uint(256)),
+            pt::Expression::And(_, _, _) |
+            pt::Expression::Or(_, _, _) |
+            pt::Expression::Equal(_, _, _) |
+            pt::Expression::NotEqual(_, _, _) |
+            pt::Expression::Less(_, _, _) |
+            pt::Expression::LessEqual(_, _, _) |
+            pt::Expression::More(_, _, _) |
+            pt::Expression::MoreEqual(_, _, _) |
+            pt::Expression::Not(_, _) => Self::Builtin(ParamType::Bool),
+            pt::Expression::StringLiteral(_) => Self::Builtin(ParamType::String),
+            pt::Expression::HexLiteral(_) => Self::Builtin(ParamType::Bytes),
+            // TODO: Cover all cases- this does not allow for inspection of internal or external
+            // function call expressions, just `address(0)` etc.
+            pt::Expression::FunctionCall(_, outer_expr, _) => Self::from_expression(outer_expr)?,
             _ => return None,
         })
     }
@@ -304,6 +356,43 @@ impl Type {
             Self::Array(inner) => inner.as_ethabi().map(|inner| ParamType::Array(Box::new(inner))),
             Self::FixedArray(inner, size) => {
                 inner.as_ethabi().map(|inner| ParamType::FixedArray(Box::new(inner), *size))
+            }
+            Self::Custom(types) => {
+                if let Some(first) = types.get(0) {
+                    if let Some(second) = types.get(1) {
+                        match first.as_str() {
+                            "block" => match second.as_str() {
+                                "coinbase" => Some(ParamType::Address),
+                                _ => Some(ParamType::Uint(256)),
+                            },
+                            "msg" => match second.as_str() {
+                                "data" => Some(ParamType::Bytes),
+                                "sender" => Some(ParamType::Address),
+                                "sig" => Some(ParamType::FixedBytes(4)),
+                                "value" => Some(ParamType::Uint(256)),
+                                _ => None,
+                            },
+                            "tx" => match second.as_str() {
+                                "gasprice" => Some(ParamType::Uint(256)),
+                                "origin" => Some(ParamType::Address),
+                                _ => None,
+                            },
+                            "abi" => {
+                                if second.as_str().starts_with("decode") {
+                                    Some(ParamType::Tuple(Vec::default()))
+                                } else {
+                                    Some(ParamType::Bytes)
+                                }
+                            }
+                            // TODO: Other member access cases use this!
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
             }
             _ => None,
         }

@@ -152,7 +152,7 @@ impl SessionSource {
 
             Ok((new_source, do_execute))
         } else {
-            eyre::bail!(content.trim().to_owned());
+            eyre::bail!("\"{}\"", content.trim().to_owned());
         }
     }
 
@@ -456,7 +456,7 @@ pub enum ParseTreeFragment {
 
 /// Parses a fragment of solidity code with solang_parser and assigns
 /// it a scope within the [SessionSource].
-fn parse_fragment(
+pub fn parse_fragment(
     solc: &Solc,
     config: &SessionSourceConfig,
     buffer: &str,

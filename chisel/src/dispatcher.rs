@@ -595,19 +595,19 @@ impl ChiselDisptacher {
             }
         };
 
-        // TODO: Support expressions with ambiguous types / no variable declaration
-        if let Some(generated_output) = &source.generated_output {
-            if generated_output.intermediate.variable_definitions.get(input).is_some() {
-                match source.inspect(input).await {
-                    Ok(res) => {
-                        self.errored = false;
-                        return DispatchResult::Success(Some(res))
-                    }
-                    Err(e) => {
-                        self.errored = true;
-                        return DispatchResult::CommandFailed(e.to_string())
-                    }
+        // TODO: Cloning / parsing the session source twice on non-inspected inputs sucks.
+        // Should change up how this works.
+        match source.inspect(input).await {
+            Ok(res) => {
+                // If the input was inspected, hault here.
+                if let Some(res) = res {
+                    self.errored = false;
+                    return DispatchResult::Success(Some(res))
                 }
+            }
+            Err(e) => {
+                self.errored = true;
+                return DispatchResult::CommandFailed(e.to_string())
             }
         }
 
