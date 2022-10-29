@@ -430,6 +430,7 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Write a comment to the buffer formatted.
     /// WARNING: This may introduce a newline if the comment is a Line comment
+    /// or if the comment are wrapped
     fn write_comment(&mut self, comment: &CommentWithMetadata, is_first: bool) -> Result<()> {
         if self.inline_config.is_disabled(comment.loc) {
             return self.write_raw_comment(comment)
@@ -441,7 +442,23 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
     }
 
-    /// TODO:
+    /// Write the comment start token
+    fn write_comment_start_token(
+        &mut self,
+        comment: &CommentWithMetadata,
+        first_line: Option<impl AsRef<str>>,
+    ) -> Result<()> {
+        write!(self.buf(), "{}", comment.start_token())?;
+        let first_line_not_empty = first_line.map(|l| !l.as_ref().is_empty()).unwrap_or_default();
+        let multiline =
+            self.find_next_line(comment.loc.start()).unwrap_or_default() <= comment.loc.end();
+        if (comment.is_line() && first_line_not_empty) || !multiline {
+            self.write_whitespace_separator(false)?;
+        }
+        Ok(())
+    }
+
+    /// Write a comment with position [CommentPosition::Prefix]
     fn write_prefix_comment(
         &mut self,
         comment: &CommentWithMetadata,
@@ -454,20 +471,28 @@ impl<'a, W: Write> Formatter<'a, W> {
             self.write_preserved_line()?;
         }
 
+        // TODO: add tests for doc blocks in the postfix position
         if matches!(comment.ty, CommentType::DocBlock) {
             let lines = comment.contents().trim().lines();
             writeln!(self.buf(), "{}", comment.start_token())?;
             lines.map(|l| self.write_doc_block_line(l)).collect::<Result<_>>()?;
-            write!(self.buf(), " {}", comment.end_token().unwrap())?; // TODO:
+            write!(self.buf(), " {}", comment.end_token().unwrap())?;
             self.write_preserved_line()?;
             return Ok(())
         }
 
-        let mut lines = comment.comment.splitn(2, '\n');
-        write!(self.buf(), "{}", lines.next().unwrap())?;
-        if let Some(line) = lines.next() {
-            self.write_preserved_line()?;
-            self.write_raw(line)?;
+        let mut lines = comment.contents().trim_start_matches(' ').lines().peekable();
+        self.write_comment_start_token(comment, lines.peek())?;
+
+        while let Some(line) = lines.next() {
+            self.write_comment_line(comment, line)?;
+            if lines.peek().is_some() {
+                self.write_preserved_line()?;
+            }
+        }
+
+        if let Some(end) = comment.end_token() {
+            write!(self.buf(), "{end}")?;
         }
         if self.find_next_line(comment.loc.end()).is_some() {
             self.write_preserved_line()?;
@@ -476,26 +501,39 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
-    /// TODO:
+    /// Write a comment with position [CommentPosition::Postfix]
     fn write_postfix_comment(&mut self, comment: &CommentWithMetadata) -> Result<()> {
         let indented = self.is_beginning_of_line();
         self.indented_if(indented, 1, |fmt| {
             if !indented && fmt.next_char_needs_space('/') {
-                write!(fmt.buf(), " ")?;
+                fmt.write_whitespace_separator(false)?;
             }
-            write!(fmt.buf(), "{} ", comment.start_token())?;
-            let mut lines = comment.contents().trim().split('\n').peekable();
 
-            while let Some(line) = lines.next() {
-                fmt.grouped(|fmt| fmt.write_comment_line(comment, line))?;
-                // TODO: fmt.write_raw(line)?;
-                if lines.peek().is_some() {
+            let mut lines = comment.contents().trim_matches(' ').lines().peekable();
+            fmt.write_comment_start_token(comment, lines.peek())?;
+
+            fmt.grouped(|fmt| {
+                while let Some(line) = lines.next() {
+                    fmt.write_comment_line(comment, line)?;
+                    if lines.peek().is_some() {
+                        fmt.write_whitespace_separator(true)?;
+                    }
+                }
+
+                // TODO:
+                let multiline = fmt.find_next_line(comment.loc.start()).unwrap_or_default() <=
+                    comment.loc.end();
+                if !comment.is_line() && multiline {
                     fmt.write_whitespace_separator(true)?;
                 }
-            }
-            if let Some(end) = comment.end_token() {
-                write!(fmt.buf(), " {end}")?;
-            }
+
+                if let Some(end) = comment.end_token() {
+                    let space = if !fmt.is_beginning_of_line() { " " } else { "" };
+                    write!(fmt.buf(), "{space}{end}")?;
+                }
+                Ok(())
+            })?;
+
             if comment.is_line() {
                 fmt.write_whitespace_separator(true)?;
             }
@@ -503,33 +541,44 @@ impl<'a, W: Write> Formatter<'a, W> {
         })
     }
 
-    /// TODO:
-    /// Write a comment line that might potentially overflow
+    /// Write a comment line that might potentially overflow the maximum line length
+    /// and, if configured, will be wrapped to the next line
     fn write_comment_line(&mut self, comment: &CommentWithMetadata, line: &str) -> Result<()> {
-        if self.will_it_fit(line) {
-            write!(self.buf(), "{line}")?;
+        if self.will_it_fit(line) || !self.config.wrap_comments {
+            if !self.is_beginning_of_line() {
+                write!(self.buf(), "{line}")?;
+                return Ok(())
+            }
+
+            // if this is the beginning of the line,
+            // the comment should start with at least an indent
+            let indent = self.buf.current_indent_len();
+            let mut chars = line
+                .char_indices()
+                .skip_while(|(idx, ch)| ch.is_whitespace() && *idx < indent)
+                .map(|(_, ch)| ch);
+            let padded = format!("{}{}", " ".repeat(indent), chars.join(""));
+            self.write_raw(padded)?;
             return Ok(())
         }
-        // if self.current_line_len() + line.len() <= self.config.line_length {
-        //     write!(self.buf(), "{line}")?;
-        //     return Ok(())
-        // }
 
         let mut words = line.split(' ').peekable();
         while let Some(word) = words.next() {
             self.write_raw(word)?;
 
             if let Some(next) = words.peek() {
-                //self.current_line_len() + next.len() > self.config.line_length
                 if !self.will_it_fit(next) {
                     self.write_whitespace_separator(true)?;
                     if comment.is_line() {
                         write!(self.buf(), "{} ", comment.start_token())?;
                     }
-                    self.write_comment_line(comment, &words.join(" "))?; // TODO:
-                } else {
-                    self.write_whitespace_separator(false)?;
+                    // the next word doesn't fit on this line, write remaining
+                    // words on the next
+                    self.write_comment_line(comment, &words.join(" "))?;
+                    return Ok(())
                 }
+
+                self.write_whitespace_separator(false)?;
             }
         }
         Ok(())
@@ -541,14 +590,15 @@ impl<'a, W: Write> Formatter<'a, W> {
             let line = line.trim().trim_start_matches('*');
             let needs_space = line.chars().next().map_or(false, |ch| !ch.is_whitespace());
             writeln!(self.buf(), " *{}{}", if needs_space { " " } else { "" }, line)?;
-        } else {
-            let indent_whitespace_count = line
-                .char_indices()
-                .take_while(|(idx, ch)| ch.is_whitespace() && *idx <= self.buf.current_indent_len())
-                .count();
-            let to_skip = indent_whitespace_count - indent_whitespace_count % self.config.tab_width;
-            writeln!(self.buf(), " * {}", &line[to_skip..])?;
+            return Ok(())
         }
+
+        let indent_whitespace_count = line
+            .char_indices()
+            .take_while(|(idx, ch)| ch.is_whitespace() && *idx <= self.buf.current_indent_len())
+            .count();
+        let to_skip = indent_whitespace_count - indent_whitespace_count % self.config.tab_width;
+        writeln!(self.buf(), " * {}", &line[to_skip..])?;
         Ok(())
     }
 

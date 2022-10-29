@@ -69,7 +69,7 @@ contract Yul {
             }
 
             // ************
-            /* 
+            /*
                 calls pair.swap(
                     tokenOutNo == 0 ? amountOut : 0,
                     tokenOutNo == 1 ? amountOut : 0,

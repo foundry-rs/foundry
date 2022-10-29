@@ -23,6 +23,8 @@ pub struct FormatterConfig {
     pub single_line_statement_blocks: SingleLineBlockStyle,
     /// Print space in variable `override` definition
     pub variable_override_spacing: bool,
+    /// Wrap comments on `line_length` reached
+    pub wrap_comments: bool,
     /// Globs to ignore
     pub ignore: Vec<String>,
 }
@@ -112,6 +114,7 @@ impl Default for FormatterConfig {
             number_underscore: NumberUnderscore::Preserve,
             single_line_statement_blocks: SingleLineBlockStyle::Preserve,
             variable_override_spacing: true,
+            wrap_comments: false,
             ignore: vec![],
         }
     }

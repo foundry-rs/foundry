@@ -188,6 +188,7 @@ impl CommentWithMetadata {
         .unwrap_or(&self.comment)
     }
 
+    /// The start token of the comment
     pub fn start_token(&self) -> &str {
         match self.ty {
             CommentType::Line => "//",
@@ -197,6 +198,7 @@ impl CommentWithMetadata {
         }
     }
 
+    /// The end token of the comment
     pub fn end_token(&self) -> Option<&str> {
         match self.ty {
             CommentType::Line | CommentType::DocLine => None,
