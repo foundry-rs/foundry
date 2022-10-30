@@ -790,3 +790,30 @@ fn parse_slot(s: &str) -> eyre::Result<H256> {
         .map_err(|e| eyre::eyre!("Could not parse slot number: {e}"))
         .map(|n| H256::from_uint(&n.into()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_call_data() {
+        let args: Opts = Opts::parse_from([
+            "foundry-cli",
+            "calldata",
+            "f()",
+            "5c9d55b78febcc2061715ba4f57ecf8ea2711f2c",
+            "2",
+        ]);
+        match args.sub {
+            Subcommands::CalldataEncode { sig, args } => {
+                assert_eq!(
+                    args,
+                    vec!["5c9d55b78febcc2061715ba4f57ecf8ea2711f2c".to_string(), "2".to_string()]
+                )
+            }
+            _ => {
+                unreachable!()
+            }
+        };
+    }
+}
