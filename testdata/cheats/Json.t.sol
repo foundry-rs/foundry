@@ -98,3 +98,34 @@ contract ParseJson is DSTest {
         assertEq(whole.strArray[1], "there");
     }
 }
+
+
+contract WriteJson is DSTest {
+
+    Cheats constant vm = Cheats(HEVM_ADDRESS);
+
+    Serializer serializer1;
+    Serializer serializer2;
+
+    string json1;
+    string json2;
+
+    function setUp() public {
+        json1 = "example";
+        json2 = "example2";
+        serializer1 = new Serializer(json1);
+        serializer2 = new Serializer(json2);
+    }
+
+    function test_writeJson() public {
+
+        serializer1.serialize("key1", uint(254));
+        serializer2.serialize("boolean", true);
+        serializer1.serialize("key2", -234);
+        serializer2.serialize("deploy", uint(254));
+        string memory data = serializer1.serialize("boolean", true);
+        serializer2.serializeStruct("json1", data);
+        emit log(data);
+
+    }
+}

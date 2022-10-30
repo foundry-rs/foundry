@@ -226,4 +226,49 @@ interface Cheats {
     function rpcUrls() external returns (string[2][] memory);
     function parseJson(string calldata, string calldata) external returns (bytes memory);
     function parseJson(string calldata) external returns (bytes memory);
+    function serializeBool(string calldata, string calldata, bool) external returns(string memory);
+    function serializeUint(string calldata, string calldata, uint256) external returns(string memory);
+    function serializeInt(string calldata, string calldata, int256) external returns(string memory);
+    function serializeAddress(string calldata, string calldata, address) external returns(string memory);
+    function serializeBytes32(string calldata, string calldata, bytes32) external returns(string memory);
+    function serializeString(string calldata, string calldata, string calldata) external returns(string memory);
+    function serializeBytes(string calldata, string calldata, bytes calldata) external returns(string memory);
+    function serializeStruct(string calldata, string calldata, string calldata) external returns(string memory);
+}
+
+
+contract Serializer {
+
+    string jsonKey;
+
+    address constant HEVM_ADDRESS = address(bytes20(uint160(uint256(keccak256("hevm cheat code")))));
+
+    Cheats vm = Cheats(HEVM_ADDRESS);
+
+    constructor(string memory key){
+        jsonKey = key;
+    }
+
+    function serialize(string calldata key, bool value) external returns(string memory){
+        return vm.serializeBool(jsonKey, key, value);
+    }
+
+
+    function serialize(string calldata key, uint256 value)external returns(string memory){
+        return vm.serializeUint(jsonKey, key, value);
+    }
+
+
+    function serialize(string calldata key, int256 value)external returns(string memory){
+        return vm.serializeInt(jsonKey, key, value);
+    }
+
+    function serialize(string calldata key, string memory value)external returns(string memory){
+        return vm.serializeString(jsonKey, key, value);
+    }
+
+    function serializeStruct(string calldata key, string memory value)external returns(string memory){
+        return vm.serializeStruct(jsonKey, key, value);
+    }
+
 }
