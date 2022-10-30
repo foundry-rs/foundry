@@ -61,11 +61,11 @@ function test2() {}
 // forgefmt: disable-end
 
 contract Constructors is Ownable, Changeable {
-    // forgefmt: disable-next-item
+    //forgefmt: disable-next-item
     function Constructors(variable1) public Changeable(variable1) Ownable() onlyOwner {
     }
 
-    // forgefmt: disable-next-item
+    //forgefmt: disable-next-item
     constructor(variable1, variable2, variable3, variable4, variable5, variable6, variable7) public Changeable(variable1, variable2, variable3, variable4, variable5, variable6, variable7) Ownable() onlyOwner {}
 }
 
@@ -102,7 +102,7 @@ function testParams(uint256   num, bytes32 data  ,    address receiver)
 {}
 
 function testDoWhile() external {
-    // forgefmt: disable-start
+    //forgefmt: disable-start
     uint256 i;
     do { "test"; } while (i != 0);
 
@@ -125,7 +125,7 @@ someVeryVeryLongCondition);
 }
 
 function forStatement() {
-    // forgefmt: disable-start
+    //forgefmt: disable-start
         for
     (uint256 i1
         ; i1 < 10;      i1++)
@@ -157,7 +157,7 @@ function forStatement() {
 }
 
 function callArgTest() {
-    // forgefmt: disable-start
+    //forgefmt: disable-start
         target.run{ gas: gasleft(), value: 1 wei };
 
         target.run{gas:1,value:0x00}();

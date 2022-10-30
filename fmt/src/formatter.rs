@@ -442,25 +442,6 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
     }
 
-    /// Write the comment start token
-    fn write_comment_start_token(
-        &mut self,
-        comment: &CommentWithMetadata,
-        first_line: Option<impl AsRef<str>>,
-    ) -> Result<usize> {
-        write!(self.buf(), "{}", comment.start_token())?;
-
-        let start_token_pos = self.current_line_len();
-        let first_line_needs_space = first_line
-            .as_ref()
-            .and_then(|l| l.as_ref().chars().next().map(|ch| !ch.is_whitespace()))
-            .unwrap_or_default();
-        if comment.is_line() && first_line_needs_space {
-            self.write_whitespace_separator(false)?;
-        }
-        Ok(start_token_pos)
-    }
-
     /// Write the comment end token
     fn write_comment_end_token(
         &mut self,
@@ -499,7 +480,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
 
         let mut lines = comment.contents().lines().peekable();
-        self.write_comment_start_token(comment, lines.peek())?;
+        write!(self.buf(), "{}", comment.start_token())?;
 
         while let Some(line) = lines.next() {
             self.write_comment_line(comment, line)?;
@@ -528,7 +509,7 @@ impl<'a, W: Write> Formatter<'a, W> {
 
             let mut lines = comment.contents().lines().peekable();
 
-            fmt.write_comment_start_token(comment, lines.peek())?;
+            write!(fmt.buf(), "{}", comment.start_token())?;
             let start_token_pos = fmt.current_line_len();
 
             fmt.grouped(|fmt| {
