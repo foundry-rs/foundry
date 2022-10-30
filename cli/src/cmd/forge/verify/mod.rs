@@ -141,7 +141,8 @@ pub struct VerifyArgs {
     #[clap(
         help = "Prints the standard json compiler input.",
         long,
-        long_help = "The standard json compiler input can be used to manually submit contract verification in the browser."
+        long_help = "The standard json compiler input can be used to manually submit contract verification in the browser.",
+        conflicts_with = "flatten"
     )]
     pub show_standard_json_input: bool,
 }
