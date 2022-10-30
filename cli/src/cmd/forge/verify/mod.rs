@@ -1,6 +1,6 @@
 //! Verify contract source
 
-use crate::cmd::retry::RetryArgs;
+use crate::cmd::{forge::verify::etherscan::EtherscanVerificationProvider, retry::RetryArgs};
 use clap::{Parser, ValueHint};
 use ethers::{abi::Address, solc::info::ContractInfo};
 use foundry_config::{figment, impl_figment_convert, Chain, Config};
@@ -137,6 +137,14 @@ pub struct VerifyArgs {
 
     #[clap(flatten)]
     pub verifier: VerifierArgs,
+
+    #[clap(
+        help = "Prints the standard json compiler input.",
+        long,
+        long_help = "The standard json compiler input can be used to manually submit contract verification in the browser.",
+        conflicts_with = "flatten"
+    )]
+    pub show_standard_json_input: bool,
 }
 
 impl_figment_convert!(VerifyArgs);
@@ -166,6 +174,13 @@ impl figment::Provider for VerifyArgs {
 impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(self) -> eyre::Result<()> {
+        if self.show_standard_json_input {
+            let args =
+                EtherscanVerificationProvider::default().create_verify_request(&self).await?;
+            println!("{}", args.source);
+            return Ok(())
+        }
+
         println!("Start verifying contract `{:?}` deployed on {}", self.address, self.chain);
         self.verifier.verifier.client(&self.etherscan_key)?.verify(self).await
     }
