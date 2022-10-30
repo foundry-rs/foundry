@@ -442,21 +442,6 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
     }
 
-    /// Write the comment end token
-    fn write_comment_end_token(
-        &mut self,
-        comment: &CommentWithMetadata,
-        start_pos: usize,
-    ) -> Result<()> {
-        if let Some(end) = comment.end_token() {
-            // If comment is not multiline, end token has to be aligned with the start
-            let space =
-                if self.is_beginning_of_line() { " ".repeat(start_pos) } else { "".to_owned() };
-            write!(self.buf(), "{space}{end}")?;
-        }
-        Ok(())
-    }
-
     /// Write a comment with position [CommentPosition::Prefix]
     fn write_prefix_comment(
         &mut self,
@@ -479,9 +464,9 @@ impl<'a, W: Write> Formatter<'a, W> {
             return Ok(())
         }
 
-        let mut lines = comment.contents().lines().peekable();
         write!(self.buf(), "{}", comment.start_token())?;
 
+        let mut lines = comment.contents().lines().peekable();
         while let Some(line) = lines.next() {
             self.write_comment_line(comment, line)?;
             if lines.peek().is_some() {
@@ -507,11 +492,10 @@ impl<'a, W: Write> Formatter<'a, W> {
                 fmt.write_whitespace_separator(false)?;
             }
 
-            let mut lines = comment.contents().lines().peekable();
-
             write!(fmt.buf(), "{}", comment.start_token())?;
             let start_token_pos = fmt.current_line_len();
 
+            let mut lines = comment.contents().lines().peekable();
             fmt.grouped(|fmt| {
                 while let Some(line) = lines.next() {
                     fmt.write_comment_line(comment, line)?;
@@ -522,7 +506,14 @@ impl<'a, W: Write> Formatter<'a, W> {
                 Ok(())
             })?;
 
-            fmt.write_comment_end_token(comment, start_token_pos)?;
+            if let Some(end) = comment.end_token() {
+                // If comment is not multiline, end token has to be aligned with the start
+                if fmt.is_beginning_of_line() {
+                    write!(fmt.buf(), "{}{}", " ".repeat(start_token_pos), end)?;
+                } else {
+                    write!(fmt.buf(), "{end}")?;
+                }
+            }
 
             if comment.is_line() {
                 fmt.write_whitespace_separator(true)?;

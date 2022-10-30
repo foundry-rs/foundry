@@ -52,7 +52,7 @@ impl Ord for CommentWithMetadata {
 }
 
 impl CommentWithMetadata {
-    pub fn new(
+    fn new(
         comment: Comment,
         position: CommentPosition,
         has_newline_before: bool,
