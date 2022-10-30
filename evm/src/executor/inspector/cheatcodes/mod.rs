@@ -24,6 +24,7 @@ use revm::{
     opcode, BlockEnv, CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return,
     TransactTo,
 };
+use serde_json::Value;
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     fs::File,
@@ -135,6 +136,8 @@ pub struct Cheatcodes {
     // Commit FS changes such as file creations, writes and deletes.
     // Used to prevent duplicate changes file executing non-committing calls.
     pub fs_commit: bool,
+
+    pub serialized_jsons: HashMap<String, HashMap<String, Value>>,
 }
 
 impl Cheatcodes {

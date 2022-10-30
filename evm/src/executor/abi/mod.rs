@@ -129,6 +129,14 @@ ethers::contract::abigen!(
             parseJson(string, string)(bytes)
             parseJson(string)(bytes)
             allowCheatcodes(address)
+            serializeBool(string,string,bool)(string)
+            serializeUint(string,string,uint256)(string)
+            serializeInt(string,string,int256)(string)
+            serializeAddress(string,string,address)(string)
+            serializeBytes32(string,string,bytes32)(string)
+            serializeString(string,string,string)(string)
+            serializeBytes(string,string,bytes)(string)
+            serializeStruct(string,string,string)(string)
     ]"#,
 );
 pub use hevm::{HEVMCalls, HEVM_ABI};
