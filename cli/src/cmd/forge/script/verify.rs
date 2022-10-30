@@ -114,6 +114,7 @@ impl VerifyBundle {
                     libraries: libraries.to_vec(),
                     root: None,
                     verifier: self.verifier.clone(),
+                    show_standard_json_input: false,
                 };
 
                 return Some(verify)
