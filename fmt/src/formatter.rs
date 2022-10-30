@@ -447,13 +447,32 @@ impl<'a, W: Write> Formatter<'a, W> {
         &mut self,
         comment: &CommentWithMetadata,
         first_line: Option<impl AsRef<str>>,
-    ) -> Result<()> {
+    ) -> Result<usize> {
         write!(self.buf(), "{}", comment.start_token())?;
-        let first_line_not_empty = first_line.map(|l| !l.as_ref().is_empty()).unwrap_or_default();
-        let multiline =
-            self.find_next_line(comment.loc.start()).unwrap_or_default() <= comment.loc.end();
-        if (comment.is_line() && first_line_not_empty) || !multiline {
+
+        let first_line_needs_space = first_line
+            .as_ref()
+            .map(|l| l.as_ref().chars().next().map(|ch| !ch.is_whitespace()))
+            .flatten()
+            .unwrap_or_default();
+        let start_token_pos = self.current_line_len();
+        if comment.is_line() && first_line_needs_space {
             self.write_whitespace_separator(false)?;
+        }
+        Ok(start_token_pos)
+    }
+
+    /// Write the comment end token
+    fn write_comment_end_token(
+        &mut self,
+        comment: &CommentWithMetadata,
+        start_pos: usize,
+    ) -> Result<()> {
+        if let Some(end) = comment.end_token() {
+            // If comment is not multiline, end token has to be aligned with the start
+            let space =
+                if self.is_beginning_of_line() { " ".repeat(start_pos) } else { "".to_owned() };
+            write!(self.buf(), "{space}{end}")?;
         }
         Ok(())
     }
@@ -481,7 +500,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             return Ok(())
         }
 
-        let mut lines = comment.contents().trim_start_matches(' ').lines().peekable();
+        let mut lines = comment.contents().lines().peekable();
         self.write_comment_start_token(comment, lines.peek())?;
 
         while let Some(line) = lines.next() {
@@ -509,8 +528,10 @@ impl<'a, W: Write> Formatter<'a, W> {
                 fmt.write_whitespace_separator(false)?;
             }
 
-            let mut lines = comment.contents().trim_matches(' ').lines().peekable();
+            let mut lines = comment.contents().lines().peekable();
+
             fmt.write_comment_start_token(comment, lines.peek())?;
+            let start_token_pos = fmt.current_line_len();
 
             fmt.grouped(|fmt| {
                 while let Some(line) = lines.next() {
@@ -527,12 +548,10 @@ impl<'a, W: Write> Formatter<'a, W> {
                     fmt.write_whitespace_separator(true)?;
                 }
 
-                if let Some(end) = comment.end_token() {
-                    let space = if !fmt.is_beginning_of_line() { " " } else { "" };
-                    write!(fmt.buf(), "{space}{end}")?;
-                }
                 Ok(())
             })?;
+
+            fmt.write_comment_end_token(comment, start_token_pos)?;
 
             if comment.is_line() {
                 fmt.write_whitespace_separator(true)?;
@@ -544,6 +563,11 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// Write a comment line that might potentially overflow the maximum line length
     /// and, if configured, will be wrapped to the next line
     fn write_comment_line(&mut self, comment: &CommentWithMetadata, line: &str) -> Result<()> {
+        // TODO:
+        // if line.trim().is_empty() {
+        //     return Ok(())
+        // }
+
         if self.will_it_fit(line) || !self.config.wrap_comments {
             if !self.is_beginning_of_line() {
                 write!(self.buf(), "{line}")?;
@@ -567,7 +591,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             self.write_raw(word)?;
 
             if let Some(next) = words.peek() {
-                if !self.will_it_fit(next) {
+                if !word.is_empty() && !self.will_it_fit(next) {
                     self.write_whitespace_separator(true)?;
                     if comment.is_line() {
                         write!(self.buf(), "{} ", comment.start_token())?;
