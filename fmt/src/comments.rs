@@ -175,17 +175,10 @@ impl CommentWithMetadata {
     }
 
     pub fn contents(&self) -> &str {
-        match self.ty {
-            CommentType::Line => self.comment.strip_prefix("//"),
-            CommentType::Block => {
-                self.comment.strip_prefix("/*").and_then(|comment| comment.strip_suffix("*/"))
-            }
-            CommentType::DocLine => self.comment.strip_prefix("///"),
-            CommentType::DocBlock => {
-                self.comment.strip_prefix("/**").and_then(|comment| comment.strip_suffix("*/"))
-            }
-        }
-        .unwrap_or(&self.comment)
+        self.comment
+            .strip_prefix(self.start_token())
+            .map(|c| self.end_token().and_then(|end| c.strip_suffix(end)).unwrap_or(c))
+            .unwrap_or(&self.comment)
     }
 
     /// The start token of the comment
