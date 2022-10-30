@@ -453,8 +453,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         let start_token_pos = self.current_line_len();
         let first_line_needs_space = first_line
             .as_ref()
-            .map(|l| l.as_ref().chars().next().map(|ch| !ch.is_whitespace()))
-            .flatten()
+            .and_then(|l| l.as_ref().chars().next().map(|ch| !ch.is_whitespace()))
             .unwrap_or_default();
         if comment.is_line() && first_line_needs_space {
             self.write_whitespace_separator(false)?;
@@ -491,9 +490,9 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
 
         if matches!(comment.ty, CommentType::DocBlock) {
-            let lines = comment.contents().trim().lines();
+            let mut lines = comment.contents().trim().lines();
             writeln!(self.buf(), "{}", comment.start_token())?;
-            lines.map(|l| self.write_doc_block_line(comment, l)).collect::<Result<_>>()?;
+            lines.try_for_each(|l| self.write_doc_block_line(comment, l))?;
             write!(self.buf(), " {}", comment.end_token().unwrap())?;
             self.write_preserved_line()?;
             return Ok(())
