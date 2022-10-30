@@ -1,4 +1,5 @@
 //! Contains various tests related to forge script
+use crate::constants::TEMPLATE_CONTRACT;
 use anvil::{spawn, NodeConfig};
 use cast::SimpleCast;
 use ethers::abi::Address;
@@ -7,6 +8,7 @@ use foundry_cli_test_utils::{
     util::{OutputExt, TestCommand, TestProject},
     ScriptOutcome, ScriptTester,
 };
+use foundry_config::Config;
 use foundry_utils::rpc;
 use regex::Regex;
 use serde_json::Value;
@@ -796,3 +798,33 @@ contract Script0 is Script {
         );
     }
 );
+
+// checks that skipping build
+forgetest_init!(can_execute_script_and_skip_contracts, |prj: TestProject, mut cmd: TestCommand| {
+    // explicitly set to run with 0.8.17 for consistent output
+    let config = Config { solc: Some("0.8.17".into()), ..Default::default() };
+    prj.write_config(config);
+
+    let script = prj
+        .inner()
+        .add_source(
+            "Foo",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.17;
+contract Demo {
+    event log_string(string);
+    function run() external returns (uint256 result, uint8) {
+        emit log_string("script ran");
+        return (255, 3);
+    }
+}"#,
+        )
+        .unwrap();
+    cmd.arg("script").arg(script).args(["--skip", "tests", "--skip", TEMPLATE_CONTRACT]);
+
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_execute_script_and_skip_contracts.stdout"),
+    );
+});

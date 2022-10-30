@@ -185,15 +185,17 @@ impl ScriptArgs {
     ) -> eyre::Result<(Project, ProjectCompileOutput)> {
         let project = script_config.config.project()?;
 
+        let filters = self.opts.skip.clone().unwrap_or_default();
         // We received a valid file path.
         // If this file does not exist, `dunce::canonicalize` will
         // result in an error and it will be handled below.
         if let Ok(target_contract) = dunce::canonicalize(&self.path) {
-            let output = compile::compile_target(
+            let output = compile::compile_target_with_filter(
                 &target_contract,
                 &project,
                 self.opts.args.silent,
                 self.verify,
+                filters,
             )?;
             return Ok((project, output))
         }
@@ -209,8 +211,13 @@ impl ScriptArgs {
         if let Some(path) = contract.path {
             let path =
                 dunce::canonicalize(path).wrap_err("Could not canonicalize the target path")?;
-            let output =
-                compile::compile_target(&path, &project, self.opts.args.silent, self.verify)?;
+            let output = compile::compile_target_with_filter(
+                &path,
+                &project,
+                self.opts.args.silent,
+                self.verify,
+                filters,
+            )?;
             self.path = path.to_string_lossy().to_string();
             return Ok((project, output))
         }

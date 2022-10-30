@@ -805,7 +805,7 @@ mod tests {
             "2",
         ]);
         match args.sub {
-            Subcommands::CalldataEncode { sig, args } => {
+            Subcommands::CalldataEncode { args, .. } => {
                 assert_eq!(
                     args,
                     vec!["5c9d55b78febcc2061715ba4f57ecf8ea2711f2c".to_string(), "2".to_string()]
