@@ -180,6 +180,7 @@ impl VerifyArgs {
             return Ok(())
         }
 
+        println!("Start verifying contract `{:?}` deployed on {}", self.address, self.chain);
         self.verifier.verifier.client(&self.etherscan_key)?.verify(self).await
     }
 }
@@ -221,6 +222,7 @@ pub struct VerifyCheckArgs {
 impl VerifyCheckArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(self) -> eyre::Result<()> {
+        println!("Checking verification status on {}", self.chain);
         self.verifier.verifier.client(&self.etherscan_key)?.check(self).await
     }
 }
