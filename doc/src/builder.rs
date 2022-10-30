@@ -5,7 +5,7 @@ use itertools::Itertools;
 use rayon::prelude::*;
 use solang_parser::{
     doccomment::DocCommentTag,
-    pt::{Base, ContractTy, Identifier, Parameter},
+    pt::{Base, Identifier, Parameter},
 };
 use std::{
     cmp::Ordering,
@@ -226,7 +226,7 @@ impl DocBuilder {
                     let new_path = new_path.join(&format!("contract.{}.md", contract.name));
 
                     fs::write(self.out_dir_src().join(&new_path), doc_file)?;
-                    filenames.push((contract.name.clone(), contract.ty.clone(), new_path));
+                    filenames.push((contract.name.clone(), new_path));
                 }
 
                 if let DocElement::Error(ref error) = part.element {
@@ -390,10 +390,7 @@ impl DocBuilder {
         Ok(out)
     }
 
-    fn write_book_config(
-        &self,
-        filenames: Vec<(Identifier, ContractTy, PathBuf)>,
-    ) -> eyre::Result<()> {
+    fn write_book_config(&self, filenames: Vec<(Identifier, PathBuf)>) -> eyre::Result<()> {
         let out_dir_src = self.out_dir_src();
 
         let readme_content = {
@@ -435,7 +432,7 @@ impl DocBuilder {
         out: &mut String,
         depth: usize,
         path: Option<&Path>,
-        entries: &[(Identifier, ContractTy, PathBuf)],
+        entries: &[(Identifier, PathBuf)],
     ) -> eyre::Result<()> {
         if !entries.is_empty() {
             if let Some(path) = path {
@@ -458,7 +455,7 @@ impl DocBuilder {
             // group and sort entries
             let mut grouped = HashMap::new();
             for entry in entries {
-                let key = entry.2.iter().take(depth + 1).collect::<PathBuf>();
+                let key = entry.1.iter().take(depth + 1).collect::<PathBuf>();
                 grouped.entry(key).or_insert_with(Vec::new).push(entry.clone());
             }
             let grouped = grouped.iter().sorted_by(|(lhs, _), (rhs, _)| {
@@ -477,7 +474,7 @@ impl DocBuilder {
             let mut readme = String::from("\n\n# Contents\n");
             for (path, entries) in grouped {
                 if path.extension().map(|ext| ext.eq("sol")).unwrap_or_default() {
-                    for (src, _, filename) in entries {
+                    for (src, filename) in entries {
                         writeln_doc!(
                             readme,
                             "- {}",
