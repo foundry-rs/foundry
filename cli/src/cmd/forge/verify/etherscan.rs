@@ -120,7 +120,6 @@ impl VerificationProvider for EtherscanVerificationProvider {
     async fn check(&self, args: VerifyCheckArgs) -> eyre::Result<()> {
         let etherscan =
             self.client(&args.chain, &args.verifier.verifier_url, &args.etherscan_key)?;
-        println!("Waiting for verification result...");
         let retry: Retry = args.retry.into();
         retry
             .run_async(|| {
