@@ -36,10 +36,21 @@ contract SimpleComments {
     }
 
     function test4() public view {
-        uint256 abc; // really long comment that exceeds
+        uint256 abc; // long postfix comment that exceeds
             // line width. the comment should be split and
             // carried over to the next line
         uint256 abc2; // reallylongsinglewordcommentthatexceedslinewidththecommentshouldbesplitandcarriedovertothenextline
+
+        // long prefix comment that exceeds line width. the
+        // comment should be split and carried over to the
+        // next line
+        // reallylongsinglewordcommentthatexceedslinewidththecommentshouldbesplitandcarriedovertothenextline
+        uint256 c;
+
+        /* a really really long multiline prefix comment
+        that exceeds line width */
+        uint256 d; /* a really really long multiline postfix
+            comment that exceeds line width */
     }
 }
 

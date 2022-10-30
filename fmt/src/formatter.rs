@@ -450,12 +450,12 @@ impl<'a, W: Write> Formatter<'a, W> {
     ) -> Result<usize> {
         write!(self.buf(), "{}", comment.start_token())?;
 
+        let start_token_pos = self.current_line_len();
         let first_line_needs_space = first_line
             .as_ref()
             .map(|l| l.as_ref().chars().next().map(|ch| !ch.is_whitespace()))
             .flatten()
             .unwrap_or_default();
-        let start_token_pos = self.current_line_len();
         if comment.is_line() && first_line_needs_space {
             self.write_whitespace_separator(false)?;
         }
@@ -490,11 +490,10 @@ impl<'a, W: Write> Formatter<'a, W> {
             self.write_preserved_line()?;
         }
 
-        // TODO: add tests for doc blocks in the postfix position
         if matches!(comment.ty, CommentType::DocBlock) {
             let lines = comment.contents().trim().lines();
             writeln!(self.buf(), "{}", comment.start_token())?;
-            lines.map(|l| self.write_doc_block_line(l)).collect::<Result<_>>()?;
+            lines.map(|l| self.write_doc_block_line(comment, l)).collect::<Result<_>>()?;
             write!(self.buf(), " {}", comment.end_token().unwrap())?;
             self.write_preserved_line()?;
             return Ok(())
@@ -540,14 +539,6 @@ impl<'a, W: Write> Formatter<'a, W> {
                         fmt.write_whitespace_separator(true)?;
                     }
                 }
-
-                // TODO:
-                let multiline = fmt.find_next_line(comment.loc.start()).unwrap_or_default() <=
-                    comment.loc.end();
-                if !comment.is_line() && multiline {
-                    fmt.write_whitespace_separator(true)?;
-                }
-
                 Ok(())
             })?;
 
@@ -560,16 +551,35 @@ impl<'a, W: Write> Formatter<'a, W> {
         })
     }
 
+    /// Write the line of a doc block comment line
+    fn write_doc_block_line(&mut self, comment: &CommentWithMetadata, line: &str) -> Result<()> {
+        if line.trim().starts_with('*') {
+            let line = line.trim().trim_start_matches('*');
+            let needs_space = line.chars().next().map_or(false, |ch| !ch.is_whitespace());
+            write!(self.buf(), " *{}", if needs_space { " " } else { "" })?;
+            self.write_comment_line(comment, line)?;
+            self.write_whitespace_separator(true)?;
+            return Ok(())
+        }
+
+        let indent_whitespace_count = line
+            .char_indices()
+            .take_while(|(idx, ch)| ch.is_whitespace() && *idx <= self.buf.current_indent_len())
+            .count();
+        let to_skip = indent_whitespace_count - indent_whitespace_count % self.config.tab_width;
+        write!(self.buf(), " * ")?;
+        self.write_comment_line(comment, &line[to_skip..])?;
+        self.write_whitespace_separator(true)?;
+        Ok(())
+    }
+
     /// Write a comment line that might potentially overflow the maximum line length
     /// and, if configured, will be wrapped to the next line
     fn write_comment_line(&mut self, comment: &CommentWithMetadata, line: &str) -> Result<()> {
-        // TODO:
-        // if line.trim().is_empty() {
-        //     return Ok(())
-        // }
-
         if self.will_it_fit(line) || !self.config.wrap_comments {
-            if !self.is_beginning_of_line() {
+            let start_with_ws =
+                line.chars().next().map(|ch| ch.is_whitespace()).unwrap_or_default();
+            if !self.is_beginning_of_line() || !start_with_ws {
                 write!(self.buf(), "{line}")?;
                 return Ok(())
             }
@@ -588,16 +598,19 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         let mut words = line.split(' ').peekable();
         while let Some(word) = words.next() {
-            self.write_raw(word)?;
+            if self.is_beginning_of_line() {
+                write!(self.buf(), "{}", word.trim_start())?;
+            } else {
+                self.write_raw(word)?;
+            }
 
             if let Some(next) = words.peek() {
                 if !word.is_empty() && !self.will_it_fit(next) {
+                    // the next word doesn't fit on this line,
+                    // write remaining words on the next
                     self.write_whitespace_separator(true)?;
-                    if comment.is_line() {
-                        write!(self.buf(), "{} ", comment.start_token())?;
-                    }
-                    // the next word doesn't fit on this line, write remaining
-                    // words on the next
+                    // write newline wrap token
+                    write!(self.buf(), "{}", comment.wrap_token())?;
                     self.write_comment_line(comment, &words.join(" "))?;
                     return Ok(())
                 }
@@ -605,24 +618,6 @@ impl<'a, W: Write> Formatter<'a, W> {
                 self.write_whitespace_separator(false)?;
             }
         }
-        Ok(())
-    }
-
-    /// Write the line of a doc block comment
-    fn write_doc_block_line(&mut self, line: &str) -> Result<()> {
-        if line.trim().starts_with('*') {
-            let line = line.trim().trim_start_matches('*');
-            let needs_space = line.chars().next().map_or(false, |ch| !ch.is_whitespace());
-            writeln!(self.buf(), " *{}{}", if needs_space { " " } else { "" }, line)?;
-            return Ok(())
-        }
-
-        let indent_whitespace_count = line
-            .char_indices()
-            .take_while(|(idx, ch)| ch.is_whitespace() && *idx <= self.buf.current_indent_len())
-            .count();
-        let to_skip = indent_whitespace_count - indent_whitespace_count % self.config.tab_width;
-        writeln!(self.buf(), " * {}", &line[to_skip..])?;
         Ok(())
     }
 
@@ -643,8 +638,10 @@ impl<'a, W: Write> Formatter<'a, W> {
         comments: impl IntoIterator<Item = &'b CommentWithMetadata>,
     ) -> Result<()> {
         let mut comments = comments.into_iter().peekable();
-        let mut last_byte_written =
-            if let Some(comment) = comments.peek() { comment.loc.start() } else { return Ok(()) };
+        let mut last_byte_written = match comments.peek() {
+            Some(comment) => comment.loc.start(),
+            None => return Ok(()),
+        };
         let mut is_first = true;
         for comment in comments {
             let unwritten_whitespace_loc =

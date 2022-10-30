@@ -198,6 +198,17 @@ impl CommentWithMetadata {
         }
     }
 
+    /// The token that gets written on the newline when the
+    /// comment is wrapped
+    pub fn wrap_token(&self) -> &str {
+        match self.ty {
+            CommentType::Line => "// ",
+            CommentType::DocLine => "/// ",
+            CommentType::Block => "",
+            CommentType::DocBlock => " * ",
+        }
+    }
+
     /// The end token of the comment
     pub fn end_token(&self) -> Option<&str> {
         match self.ty {
