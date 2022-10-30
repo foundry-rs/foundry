@@ -32,7 +32,7 @@ use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
 };
-use tracing::{trace, warn};
+use tracing::{error, trace, warn};
 
 pub static RE_BUILD_COMMIT: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?P<commit>commit\.[0-9,a-f]{8})"#).unwrap());
@@ -60,8 +60,11 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     .wrap_err_with(|| {
                         // valid json
                         let args = serde_json::to_string(&verify_args).unwrap();
+                        error!(?args, target = "forge::verify", "Failed to submit verification");
                         format!("Failed to submit contract verification, payload:\n{args}")
                     })?;
+
+                trace!(?resp, target = "forge::verify", "Received verification response");
 
                 if resp.status == "0" {
                     if resp.result == "Contract source code already verified" {
@@ -127,6 +130,8 @@ impl VerificationProvider for EtherscanVerificationProvider {
                         .await
                         .wrap_err("Failed to request verification status")?;
 
+                    trace!(?resp, target = "forge::verify", "Received verification response");
+
                     eprintln!(
                         "Contract verification status:\nResponse: `{}`\nDetails: `{}`",
                         resp.message, resp.result
@@ -148,6 +153,10 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     if resp.status == "0" {
                         println!("Contract failed to verify.");
                         std::process::exit(1);
+                    }
+
+                    if resp.result == "Pass - Verified" {
+                        println!("Contract successfully verified");
                     }
 
                     Ok(())
