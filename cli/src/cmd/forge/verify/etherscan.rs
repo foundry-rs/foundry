@@ -48,7 +48,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
             self.client(&args.chain, &args.verifier.verifier_url, &args.etherscan_key)?;
         let verify_args = self.create_verify_request(&args).await?;
 
-        trace!("submitting verification request {:?}", verify_args);
+        trace!(?verify_args, target = "forge::verify", "submitting verification request");
 
         let retry: Retry = args.retry.into();
         let resp = retry.run_async(|| {
@@ -455,6 +455,9 @@ To skip this solc dry, pass `--force`.
 
         let source =
             serde_json::to_string(&input).wrap_err("Failed to parse standard json input")?;
+
+        trace!(standard_json = source, target = "forge::verify", "determined standard json input");
+
         let name = format!(
             "{}:{}",
             target.strip_prefix(project.root()).unwrap_or(target).display(),
