@@ -209,7 +209,11 @@ pub struct MultiWallet {
     pub froms: Option<Vec<Address>>,
 }
 
-impl WalletTrait for MultiWallet {}
+impl WalletTrait for MultiWallet {
+    fn sender(&self) -> Option<Address> {
+        self.froms.as_ref()?.first().copied()
+    }
+}
 
 impl MultiWallet {
     /// Given a list of addresses, it finds all the associated wallets if they exist. Throws an
