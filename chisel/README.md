@@ -12,6 +12,9 @@ Chisel is a fast, utilitarian, and verbose solidity REPL. It is heavily inspired
   - [x] Utilize foundry's `evm` module for REPL env.
     - [x] Implement network forking.
   - [ ] Expression evaluation / inspection (i.e. the input `0x01 << 0x08` should inspect a `uint` of value `256`)
+    - [x] Support for primitive type expressions (i.e. primitive types, arithmetic ops, bitwise ops, boolean ops, global vars (`msg`, `tx`, `block`, & `abi`))
+    - [ ] Support for function call expressions
+    - [ ] Clean up how this is done, not a huge fan of the current solution
   - [x] Input history.
   - [ ] Use forge fmt module to format source code when printing via the `!source` command or exporting to a Script file (?)
   - [ ] Link libraries on deployment if script inheritance is enabled.
