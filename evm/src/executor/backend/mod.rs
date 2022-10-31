@@ -923,17 +923,20 @@ impl DatabaseExt for Backend {
             if launched_with_fork {
                 let caller = env.tx.caller;
                 let caller_account =
-                    active.journaled_state.state.get(&env.tx.caller).map(|acc| acc.info.clone());
+                    active.journaled_state.state.get(&env.tx.caller).map(|acc| acc.clone());
                 let target_fork = self.inner.get_fork_mut(idx);
 
                 // depth 0 will be the default value when the fork was created
                 if target_fork.journaled_state.depth == 0 {
-                    // we also need to initialize and touch the caller
-                    if let Some(acc) = caller_account {
-                        if !target_fork.db.accounts.contains_key(&caller) {
-                            target_fork.db.insert_account_info(caller, acc.clone());
-                        }
-                        target_fork.journaled_state.state.insert(caller, acc.into());
+                    // Initialize caller with its fork info
+                    if let (Some(mut acc), None) =
+                        (caller_account, target_fork.journaled_state.state.get(&caller))
+                    {
+                        let fork_account = Database::basic(&mut target_fork.db, caller)?
+                            .ok_or(DatabaseError::MissingAccount(caller))?;
+
+                        acc.info = fork_account;
+                        target_fork.journaled_state.state.insert(caller, acc);
                     }
                 }
             }
