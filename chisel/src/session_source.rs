@@ -122,20 +122,35 @@ impl SessionSource {
         }
     }
 
+    // Clones a [SessionSource] without copying the [GeneratedOutput], as it will
+    // need to be regenerated as soon as new code is added.
+    fn shallow_clone(&self) -> Self {
+        Self {
+            file_name: self.file_name.clone(),
+            contract_name: self.contract_name.clone(),
+            solc: self.solc.clone(),
+            global_code: self.global_code.clone(),
+            top_level_code: self.top_level_code.clone(),
+            run_code: self.run_code.clone(),
+            generated_output: None,
+            config: self.config.clone(),
+        }
+    }
+
     /// Clones the [SessionSource] and appends a new line of code. Will return
     /// an error result if the new line fails to be parsed.
     pub fn clone_with_new_line(&self, mut content: String) -> Result<(SessionSource, bool)> {
-        let mut new_source = self.clone();
-        if let Some(parsed) = parse_fragment(&new_source.solc, &self.config, &content)
+        let mut new_source = self.shallow_clone();
+        if let Some(parsed) = parse_fragment(&new_source.solc, &new_source.config, &content)
             .or_else(|| {
                 content = content.trim_end().to_string();
                 content.push_str(";\n");
-                parse_fragment(&new_source.solc, &self.config, &content)
+                parse_fragment(&new_source.solc, &new_source.config, &content)
             })
             .or_else(|| {
                 content = content.trim_end().trim_end_matches(';').to_string();
                 content.push('\n');
-                parse_fragment(&new_source.solc, &self.config, &format!("\t{}", content))
+                parse_fragment(&new_source.solc, &new_source.config, &format!("\t{}", content))
             })
         {
             // Flag that tells the dispatcher whether to build or execute the session
@@ -152,7 +167,7 @@ impl SessionSource {
 
             Ok((new_source, do_execute))
         } else {
-            eyre::bail!(content.trim().to_owned());
+            eyre::bail!("\"{}\"", content.trim().to_owned());
         }
     }
 
@@ -456,7 +471,7 @@ pub enum ParseTreeFragment {
 
 /// Parses a fragment of solidity code with solang_parser and assigns
 /// it a scope within the [SessionSource].
-fn parse_fragment(
+pub fn parse_fragment(
     solc: &Solc,
     config: &SessionSourceConfig,
     buffer: &str,

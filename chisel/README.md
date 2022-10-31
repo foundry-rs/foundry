@@ -45,9 +45,11 @@ Chisel is a fast, utilitarian, and verbose solidity REPL. It is heavily inspired
     - [x] Executor
     - [x] Inspection
     - [x] Cloning
-- [ ] Optimizations.
+- [ ] Optimizations (after MVP).
   - [ ] Speed up REPL execution time.
+    - [ ] Use flamegraph to determine plan of attack.
     - [x] Don't inherit `Script.sol` by default. (`!script` to enable / disable inheritance.)
+    - [ ] Rework SessionSource clone, does not need to be a full deep copy.
 - [ ] Finish README.
   - [ ] Examples
 

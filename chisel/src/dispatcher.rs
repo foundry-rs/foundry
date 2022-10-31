@@ -595,23 +595,24 @@ impl ChiselDisptacher {
             }
         };
 
-        // TODO: Support expressions with ambiguous types / no variable declaration
-        if let Some(generated_output) = &source.generated_output {
-            if generated_output.intermediate.variable_definitions.get(input).is_some() {
-                match source.inspect(input).await {
-                    Ok(res) => {
-                        self.errored = false;
-                        return DispatchResult::Success(Some(res))
-                    }
-                    Err(e) => {
-                        self.errored = true;
-                        return DispatchResult::CommandFailed(e.to_string())
-                    }
+        // TODO: Cloning / parsing the session source twice on non-inspected inputs kinda sucks.
+        // Should change up how this works.
+        match source.inspect(input).await {
+            Ok(res) => {
+                // If the input was inspected, hault here.
+                if let Some(res) = res {
+                    self.errored = false;
+                    return DispatchResult::Success(Some(res))
                 }
+            }
+            Err(e) => {
+                // If there was an explicit error thrown, hault here.
+                self.errored = true;
+                return DispatchResult::CommandFailed(e.to_string())
             }
         }
 
-        // Create new source and parse
+        // Create new source with exact input appended and parse
         let (mut new_source, do_execute) = match source.clone_with_new_line(input.to_string()) {
             Ok(new) => new,
             Err(e) => {
@@ -677,7 +678,10 @@ impl ChiselDisptacher {
                     self.errored = false;
                     DispatchResult::Success(None)
                 }
-                Err(e) => DispatchResult::Failure(Some(e.to_string())),
+                Err(e) => {
+                    self.errored = true;
+                    DispatchResult::Failure(Some(e.to_string()))
+                }
             }
         }
     }
