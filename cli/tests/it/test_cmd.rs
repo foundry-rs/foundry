@@ -298,21 +298,12 @@ forgetest_init!(
     can_test_forge_std,
     |prj: TestProject, mut cmd: TestCommand| {
         let forge_std_dir = prj.root().join("lib/forge-std");
-        // explicitly allow fs access
-        let config = Config {
-            fs_permissions: FsPermissions::new(vec![PathPermission::read_write(
-                forge_std_dir.clone(),
-            )]),
-            ..Default::default()
-        };
-
-        fs::write(&forge_std_dir.join(Config::FILE_NAME), config.to_string_pretty().unwrap())
-            .unwrap();
-
+        // execute in subdir
         cmd.cmd().current_dir(forge_std_dir);
         cmd.args(["test", "--root", "."]);
-
-        cmd.stdout().contains("[PASS]") && !cmd.stdout().contains("[FAIL]")
+        let stdout = cmd.stdout();
+        assert!(stdout.contains("[PASS]"), "No tests passed:\n{}", stdout);
+        assert!(!stdout.contains("[FAIL]"), "Tests failed :\n{}", stdout);
     }
 );
 
