@@ -595,7 +595,7 @@ impl ChiselDisptacher {
             }
         };
 
-        // TODO: Cloning / parsing the session source twice on non-inspected inputs sucks.
+        // TODO: Cloning / parsing the session source twice on non-inspected inputs kinda sucks.
         // Should change up how this works.
         match source.inspect(input).await {
             Ok(res) => {
@@ -606,12 +606,13 @@ impl ChiselDisptacher {
                 }
             }
             Err(e) => {
+                // If there was an explicit error thrown, hault here.
                 self.errored = true;
                 return DispatchResult::CommandFailed(e.to_string())
             }
         }
 
-        // Create new source and parse
+        // Create new source with exact input appended and parse
         let (mut new_source, do_execute) = match source.clone_with_new_line(input.to_string()) {
             Ok(new) => new,
             Err(e) => {
@@ -677,7 +678,10 @@ impl ChiselDisptacher {
                     self.errored = false;
                     DispatchResult::Success(None)
                 }
-                Err(e) => DispatchResult::Failure(Some(e.to_string())),
+                Err(e) => {
+                    self.errored = true;
+                    DispatchResult::Failure(Some(e.to_string()))
+                }
             }
         }
     }

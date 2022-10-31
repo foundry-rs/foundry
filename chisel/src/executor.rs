@@ -125,7 +125,8 @@ impl SessionSource {
                         eyre::bail!("No state present")
                     }
                 }
-                Err(e) => Err(e),
+                // Failed to compile item inside of an `abi.encode` call. Move on gracefully.
+                Err(_) => Ok(None),
             },
             // Failed to parse the item inside of an `abi.encode` call. Move on gracefully.
             Err(_) => Ok(None),
@@ -141,10 +142,9 @@ impl SessionSource {
             Some(pt::Expression::FunctionCall(_, _, expressions)),
         )) = source.generated_output.unwrap().intermediate.statements.last()
         {
-            if expressions.len() != 1 {
-                return None
-            }
-
+            // We can safely unwrap the first expression because this function
+            // will only be called on a session source that has just had an
+            // `inspectoor` variable appended to it.
             Type::from_expression(expressions.first().unwrap())
         } else {
             None
@@ -240,15 +240,22 @@ fn format_token(token: Token) -> String {
             let mut out = format!("{}", Paint::red(format!("array[{}]", tokens.len())));
             out.push_str(" = [");
             for token in tokens {
-                out.push_str(&"\n  ├ ");
+                out.push_str("\n  ├ ");
                 out.push_str(&format!("{}", format_token(token).replace('\n', "\n  ")));
                 out.push_str("\n");
             }
             out.push(']');
             out
         }
-        Token::Tuple(_) => {
-            todo!()
+        Token::Tuple(tokens) => {
+            let mut out = format!("{}", Paint::red(format!("tuple({}) = (", tokens.len())));
+            for token in tokens {
+                out.push_str("\n  ├ ");
+                out.push_str(&format!("{}", format_token(token).replace('\n', "\n  ")));
+                out.push_str("\n");
+            }
+            out.push(')');
+            out
         }
     }
 }
@@ -287,7 +294,7 @@ impl Type {
                 pt::Type::Function { .. } => Self::Custom(vec!["[Function]".to_string()]),
                 pt::Type::Rational => Self::Custom(vec!["[Rational]".to_string()]),
             },
-            // pt::Expression::Variable(ident) => Self::Custom(vec![ident.name.clone()]),
+            pt::Expression::Variable(ident) => Self::Custom(vec![ident.name.clone()]),
             pt::Expression::ArraySubscript(_, expr, num) => {
                 let num = num.as_ref().and_then(|num| {
                     if let pt::Expression::NumberLiteral(_, num, exp) = num.as_ref() {
@@ -358,37 +365,36 @@ impl Type {
                 inner.as_ethabi().map(|inner| ParamType::FixedArray(Box::new(inner), *size))
             }
             Self::Custom(types) => {
-                if let Some(first) = types.get(0) {
-                    if let Some(second) = types.get(1) {
-                        match first.as_str() {
-                            "block" => match second.as_str() {
-                                "coinbase" => Some(ParamType::Address),
-                                _ => Some(ParamType::Uint(256)),
-                            },
-                            "msg" => match second.as_str() {
-                                "data" => Some(ParamType::Bytes),
-                                "sender" => Some(ParamType::Address),
-                                "sig" => Some(ParamType::FixedBytes(4)),
-                                "value" => Some(ParamType::Uint(256)),
-                                _ => None,
-                            },
-                            "tx" => match second.as_str() {
-                                "gasprice" => Some(ParamType::Uint(256)),
-                                "origin" => Some(ParamType::Address),
-                                _ => None,
-                            },
-                            "abi" => {
-                                if second.as_str().starts_with("decode") {
-                                    Some(ParamType::Tuple(Vec::default()))
-                                } else {
-                                    Some(ParamType::Bytes)
-                                }
-                            }
-                            // TODO: Other member access cases use this!
+                // Cover globally available vars
+                if types.len() == 2 {
+                    let s: &[String] = &types[0..2];
+
+                    match s[0].as_str() {
+                        "block" => match s[1].as_str() {
+                            "coinbase" => Some(ParamType::Address),
+                            _ => Some(ParamType::Uint(256)),
+                        },
+                        "msg" => match s[1].as_str() {
+                            "data" => Some(ParamType::Bytes),
+                            "sender" => Some(ParamType::Address),
+                            "sig" => Some(ParamType::FixedBytes(4)),
+                            "value" => Some(ParamType::Uint(256)),
                             _ => None,
+                        },
+                        "tx" => match s[1].as_str() {
+                            "gasprice" => Some(ParamType::Uint(256)),
+                            "origin" => Some(ParamType::Address),
+                            _ => None,
+                        },
+                        "abi" => {
+                            if s[1].starts_with("decode") {
+                                Some(ParamType::Tuple(Vec::default()))
+                            } else {
+                                Some(ParamType::Bytes)
+                            }
                         }
-                    } else {
-                        None
+                        // TODO: Other member access cases!
+                        _ => None,
                     }
                 } else {
                     None
