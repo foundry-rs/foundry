@@ -32,7 +32,7 @@ use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
 };
-use tracing::{trace, warn};
+use tracing::{error, trace, warn};
 
 pub static RE_BUILD_COMMIT: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?P<commit>commit\.[0-9,a-f]{8})"#).unwrap());
@@ -48,7 +48,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
             self.client(&args.chain, &args.verifier.verifier_url, &args.etherscan_key)?;
         let verify_args = self.create_verify_request(&args).await?;
 
-        trace!("submitting verification request {:?}", verify_args);
+        trace!(?verify_args, target = "forge::verify", "submitting verification request");
 
         let retry: Retry = args.retry.into();
         let resp = retry.run_async(|| {
@@ -60,8 +60,11 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     .wrap_err_with(|| {
                         // valid json
                         let args = serde_json::to_string(&verify_args).unwrap();
+                        error!(?args, target = "forge::verify", "Failed to submit verification");
                         format!("Failed to submit contract verification, payload:\n{args}")
                     })?;
+
+                trace!(?resp, target = "forge::verify", "Received verification response");
 
                 if resp.status == "0" {
                     if resp.result == "Contract source code already verified" {
@@ -117,7 +120,6 @@ impl VerificationProvider for EtherscanVerificationProvider {
     async fn check(&self, args: VerifyCheckArgs) -> eyre::Result<()> {
         let etherscan =
             self.client(&args.chain, &args.verifier.verifier_url, &args.etherscan_key)?;
-        println!("Waiting for verification result...");
         let retry: Retry = args.retry.into();
         retry
             .run_async(|| {
@@ -127,24 +129,35 @@ impl VerificationProvider for EtherscanVerificationProvider {
                         .await
                         .wrap_err("Failed to request verification status")?;
 
+                    trace!(?resp, target = "forge::verify", "Received verification response");
+
+                    eprintln!(
+                        "Contract verification status:\nResponse: `{}`\nDetails: `{}`",
+                        resp.message, resp.result
+                    );
+
+                    if resp.result == "Pending in queue" {
+                        return Err(eyre!("Verification is still pending...",))
+                    }
+
+                    if resp.result == "Unable to verify" {
+                        return Err(eyre!("Unable to verify.",))
+                    }
+
+                    if resp.result == "Already Verified" {
+                        println!("Contract source code already verified");
+                        return Ok(())
+                    }
+
                     if resp.status == "0" {
-                        if resp.result == "Already Verified" {
-                            println!("Contract source code already verified");
-                            return Ok(())
-                        }
-
-                        if resp.result == "Pending in queue" {
-                            return Err(eyre!("Verification is still pending...",))
-                        }
-
-                        eprintln!(
-                            "Contract verification failed:\nResponse: `{}`\nDetails: `{}`",
-                            resp.message, resp.result
-                        );
+                        println!("Contract failed to verify.");
                         std::process::exit(1);
                     }
 
-                    println!("Contract successfully verified");
+                    if resp.result == "Pass - Verified" {
+                        println!("Contract successfully verified");
+                    }
+
                     Ok(())
                 }
                 .boxed()
@@ -180,7 +193,7 @@ impl EtherscanVerificationProvider {
     ///
     /// If `--flatten` is set to `true` then this will send with [`CodeFormat::SingleFile`]
     /// otherwise this will use the [`CodeFormat::StandardJsonInput`]
-    async fn create_verify_request(&self, args: &VerifyArgs) -> eyre::Result<VerifyContract> {
+    pub async fn create_verify_request(&self, args: &VerifyArgs) -> eyre::Result<VerifyContract> {
         let mut config = args.try_load_config_emit_warnings()?;
         config.libraries.extend(args.libraries.clone());
 
@@ -442,6 +455,9 @@ To skip this solc dry, pass `--force`.
 
         let source =
             serde_json::to_string(&input).wrap_err("Failed to parse standard json input")?;
+
+        trace!(standard_json = source, target = "forge::verify", "determined standard json input");
+
         let name = format!(
             "{}:{}",
             target.strip_prefix(project.root()).unwrap_or(target).display(),

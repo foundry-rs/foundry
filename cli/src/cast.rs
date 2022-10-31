@@ -314,7 +314,7 @@ async fn main() -> eyre::Result<()> {
             let tx_hash = *pending_tx;
 
             if cast_async {
-                println!("{pending_tx:?}");
+                println!("{tx_hash:#x}");
             } else {
                 let receipt =
                     pending_tx.await?.ok_or_else(|| eyre::eyre!("tx {tx_hash} not found"))?;

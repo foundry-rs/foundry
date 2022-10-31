@@ -284,6 +284,7 @@ impl CreateArgs {
             libraries: vec![],
             root: None,
             verifier: self.verifier,
+            show_standard_json_input: false,
         };
         println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier);
         verify.run().await
