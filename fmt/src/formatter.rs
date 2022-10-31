@@ -3025,6 +3025,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             let tx = fmt.transact(|fmt| {
                 fmt.grouped(|fmt| {
                     write_return(fmt)?;
+                    if !fmt.is_beginning_of_line() {
+                        fmt.write_whitespace_separator(true)?;
+                    }
                     fit_on_next_line = fmt.try_on_single_line(|fmt| expr.visit(fmt))?;
                     Ok(())
                 })?;
