@@ -1,3 +1,5 @@
+// config: line_length = 40
+// config: wrap_comments = true
 pragma solidity ^0.8.13;
 
 /// @title A Hello world example
@@ -9,14 +11,18 @@ contract HelloWorld {
     }
 
     /**
-     * Here's a more double asterix comment
+     * Here's a more double asterix
+     * comment
      */
     Person public theDude;
 
     /// Constructs the dude
     /// @param age The dude's age
     constructor(uint256 age) {
-        theDude = Person({age: age, wallet: msg.sender});
+        theDude = Person({
+            age: age,
+            wallet: msg.sender
+        });
     }
 
     /**
@@ -24,20 +30,26 @@ contract HelloWorld {
      */
     function example() public {
         /**
-         * Does this add a whitespace error?
+         * Does this add a whitespace
+         * error?
          *
          * Let's find out.
          */
     }
 
     /**
-     * @dev Calculates a rectangle's surface and perimeter.
+     * @dev Calculates a rectangle's
+     * surface and perimeter.
      * @param w Width of the rectangle.
      * @param h Height of the rectangle.
      * @return s The calculated surface.
-     * @return p The calculated perimeter.
+     * @return p The calculated
+     * perimeter.
      */
-    function rectangle(uint256 w, uint256 h)
+    function rectangle(
+        uint256 w,
+        uint256 h
+    )
         public
         pure
         returns (uint256 s, uint256 p)
@@ -46,12 +58,18 @@ contract HelloWorld {
         p = 2 * (w + h);
     }
 
-    /// A long doc line comment that will be wrapped
-    function docLineOverflow() external {}
+    /// A long doc line comment that
+    /// will be wrapped
+    function docLineOverflow()
+        external
+    {}
 
-    function docLinePostfixOveflow() external {}
+    function docLinePostfixOveflow()
+        external
+    {}
 
-    /// A long doc line comment that will be wrapped
+    /// A long doc line comment that
+    /// will be wrapped
 
     /**
      * @notice Here is my comment
@@ -60,7 +78,9 @@ contract HelloWorld {
      * Some equations:
      *     y = mx + b
      */
-    function anotherExample() external {}
+    function anotherExample()
+        external
+    {}
 
     /**
      * contract A {
@@ -69,7 +89,9 @@ contract HelloWorld {
      *     }
      * }
      */
-    function multilineIndent() external {}
+    function multilineIndent()
+        external
+    {}
 
     /**
      * contract A {
@@ -78,16 +100,22 @@ contract HelloWorld {
      *   }
      * }
      */
-    function multilineMalformedIndent() external {}
+    function multilineMalformedIndent()
+        external
+    {}
 
     /**
      * contract A {
-     * function withALongNameThatWillCauseCommentWrap() public {
+     * function
+     * withALongNameThatWillCauseCommentWrap()
+     * public {
      *             // does nothing.
      *   }
      * }
      */
-    function malformedIndentOveflow() external {}
+    function malformedIndentOveflow()
+        external
+    {}
 }
 
 /**
