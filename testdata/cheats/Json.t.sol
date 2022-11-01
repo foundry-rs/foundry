@@ -140,6 +140,10 @@ contract WriteJson is DSTest {
         data2[2] = vm.addr(123);
         vm.serializeAddress(json1, "array2", data2);
 
+        bytes[] memory data3 = new bytes[](3);
+        data3[0] = bytes("123");
+        data3[2] = bytes("fpovhpgjaiosfjhapiufpsdf");
+        vm.serializeBytes(json1, "array3", data3);
 
         string memory path = "../testdata/fixtures/Json/write_test_array.json";
         vm.writeJson(json1, path);
@@ -159,6 +163,13 @@ contract WriteJson is DSTest {
         assertEq(parsedData2[0], data2[0]);
         assertEq(parsedData2[1], data2[1]);
         assertEq(parsedData2[2], data2[2]);
+
+        rawData= vm.parseJson(json, ".array3");
+        bytes[] memory parsedData3 = new bytes[](3);
+        parsedData3 = abi.decode(rawData, (bytes[]));
+        assertEq(parsedData3[0], data3[0]);
+        assertEq(parsedData3[1], data3[1]);
+        assertEq(parsedData3[2], data3[2]);
     }
 
     function test_writeJson()public{
