@@ -384,14 +384,30 @@ fn serialize_json(
     Ok(abi::encode(&[Token::String(stringified)]).into())
 }
 
-fn array_to_string<T: UIfmt>(array: &Vec<T>) -> String {
+fn array_str_to_str<T: UIfmt>(array: &Vec<T>) -> String {
     format!(
         "[{}",
         array
             .iter()
             .enumerate()
             .map(|(index, value)| {
-                if value
+                if index == array.len() - 1 {
+                    format!("\"{}\"]", value.pretty())
+                } else {
+                    format!("\"{}\",", value.pretty())
+                }
+            })
+            .collect::<String>()
+    )
+}
+
+fn array_eval_to_str<T: UIfmt>(array: &Vec<T>) -> String {
+    format!(
+        "[{}",
+        array
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
                 if index == array.len() - 1 {
                     format!("{}]", value.pretty())
                 } else {
@@ -462,43 +478,43 @@ pub fn apply(
             serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
         }
         HEVMCalls::SerializeBool1(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &array_to_string(&inner.2))
+            serialize_json(state, &inner.0, &inner.1, &array_eval_to_str(&inner.2))
         }
         HEVMCalls::SerializeUint0(inner) => {
             serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
         }
         HEVMCalls::SerializeUint1(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &array_to_string(&inner.2))
+            serialize_json(state, &inner.0, &inner.1, &array_eval_to_str(&inner.2))
         }
         HEVMCalls::SerializeInt0(inner) => {
             serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
         }
         HEVMCalls::SerializeInt1(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &array_to_string(&inner.2))
+            serialize_json(state, &inner.0, &inner.1, &array_eval_to_str(&inner.2))
         }
         HEVMCalls::SerializeAddress0(inner) => {
             serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
         }
         HEVMCalls::SerializeAddress1(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &array_to_string(&inner.2))
+            serialize_json(state, &inner.0, &inner.1, &array_str_to_str(&inner.2))
         }
         HEVMCalls::SerializeBytes320(inner) => {
             serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
         }
         HEVMCalls::SerializeBytes321(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &array_to_string(&inner.2))
+            serialize_json(state, &inner.0, &inner.1, &array_str_to_str(&inner.2))
         }
         HEVMCalls::SerializeString0(inner) => {
             serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
         }
         HEVMCalls::SerializeString1(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &array_to_string(&inner.2))
+            serialize_json(state, &inner.0, &inner.1, &array_str_to_str(&inner.2))
         }
         HEVMCalls::SerializeBytes0(inner) => {
             serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
         }
         HEVMCalls::SerializeBytes1(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &array_to_string(&inner.2))
+            serialize_json(state, &inner.0, &inner.1, &array_str_to_str(&inner.2))
         }
         HEVMCalls::WriteJson(inner) => write_json(state, &inner.0, &inner.1),
         _ => return None,
