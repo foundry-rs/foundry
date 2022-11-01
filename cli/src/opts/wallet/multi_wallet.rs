@@ -1,5 +1,5 @@
 use super::{WalletTrait, WalletType};
-use clap::Parser;
+use clap::{ArgAction, Parser};
 use ethers::{
     middleware::SignerMiddleware,
     prelude::{Middleware, Signer},
@@ -105,7 +105,8 @@ pub struct MultiWallet {
         help_heading = "WALLET OPTIONS - RAW",
         help = "Use the provided private keys.",
         value_name = "RAW_PRIVATE_KEYS",
-        value_parser = foundry_common::clap_helpers::strip_0x_prefix
+        value_parser = foundry_common::clap_helpers::strip_0x_prefix,
+        action = ArgAction::Append,
     )]
     pub private_keys: Option<Vec<String>>,
 
@@ -115,7 +116,7 @@ pub struct MultiWallet {
         help = "Use the provided private key.",
         conflicts_with = "private_keys",
         value_name = "RAW_PRIVATE_KEY",
-        value_parser = foundry_common::clap_helpers::strip_0x_prefix
+        value_parser = foundry_common::clap_helpers::strip_0x_prefix,
     )]
     pub private_key: Option<String>,
 
@@ -124,7 +125,8 @@ pub struct MultiWallet {
         alias = "mnemonic-paths",
         help_heading = "WALLET OPTIONS - RAW",
         help = "Use the mnemonic phrases or mnemonic files at the specified paths.",
-        value_name = "PATHS"
+        value_name = "PATHS",
+        action = ArgAction::Append,
     )]
     pub mnemonics: Option<Vec<String>>,
 
@@ -132,7 +134,8 @@ pub struct MultiWallet {
         long = "mnemonic-passphrases",
         help_heading = "WALLET OPTIONS - RAW",
         help = "Use a BIP39 passphrases for the mnemonic.",
-        value_name = "PASSPHRASE"
+        value_name = "PASSPHRASE",
+        action = ArgAction::Append,
     )]
     pub mnemonic_passphrases: Option<Vec<String>>,
 
@@ -141,7 +144,8 @@ pub struct MultiWallet {
         alias = "hd-paths",
         help_heading = "WALLET OPTIONS - RAW",
         help = "The wallet derivation path. Works with both --mnemonic-path and hardware wallets.",
-        value_name = "PATHS"
+        value_name = "PATHS",
+        action = ArgAction::Append,
     )]
     pub hd_paths: Option<Vec<String>>,
 
@@ -151,16 +155,19 @@ pub struct MultiWallet {
         help_heading = "WALLET OPTIONS - RAW",
         help = "Use the private key from the given mnemonic index. Used with --mnemonic-paths.",
         default_value = "0",
-        value_name = "INDEXES"
+        value_name = "INDEXES",
+        action = ArgAction::Append,
     )]
     pub mnemonic_indexes: Option<Vec<u32>>,
 
     #[clap(
         env = "ETH_KEYSTORE",
-        long = "keystores",
+        long = "keystore",
+        visible_alias = "keystores",
         help_heading = "WALLET OPTIONS - KEYSTORE",
         help = "Use the keystore in the given folder or file.",
-        value_name = "PATHS"
+        action = ArgAction::Append,
+        value_name = "PATHS",
     )]
     pub keystore_paths: Option<Vec<String>>,
 
@@ -169,7 +176,8 @@ pub struct MultiWallet {
         help_heading = "WALLET OPTIONS - KEYSTORE",
         help = "The keystore password. Used with --keystore.",
         requires = "keystore_paths",
-        value_name = "PASSWORDS"
+        value_name = "PASSWORDS",
+        action = ArgAction::Append,
     )]
     pub keystore_passwords: Option<Vec<String>>,
 
@@ -195,12 +203,17 @@ pub struct MultiWallet {
         long = "froms",
         help_heading = "WALLET OPTIONS - REMOTE",
         help = "The sender account.",
-        value_name = "ADDRESSES"
+        value_name = "ADDRESSES",
+        action = ArgAction::Append,
     )]
     pub froms: Option<Vec<Address>>,
 }
 
-impl WalletTrait for MultiWallet {}
+impl WalletTrait for MultiWallet {
+    fn sender(&self) -> Option<Address> {
+        self.froms.as_ref()?.first().copied()
+    }
+}
 
 impl MultiWallet {
     /// Given a list of addresses, it finds all the associated wallets if they exist. Throws an
@@ -282,6 +295,9 @@ impl MultiWallet {
         Ok(None)
     }
 
+    /// Returns all wallets read from the provided keystores arguments
+    ///
+    /// Returns `Ok(None)` if no keystore provided.
     pub fn keystores(&self) -> Result<Option<Vec<LocalWallet>>> {
         if let Some(keystore_paths) = &self.keystore_paths {
             let mut wallets = vec![];
@@ -394,5 +410,23 @@ impl MultiWallet {
         };
 
         Ok(Some(Ledger::new(derivation, chain_id).await.wrap_err("Ledger device not available.")?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_keystore_args() {
+        let args: MultiWallet =
+            MultiWallet::parse_from(["foundry-cli", "--keystores", "my/keystore/path"]);
+        assert_eq!(args.keystore_paths, Some(vec!["my/keystore/path".to_string()]));
+
+        std::env::set_var("ETH_KEYSTORE", "MY_KEYSTORE");
+        let args: MultiWallet = MultiWallet::parse_from(["foundry-cli"]);
+        assert_eq!(args.keystore_paths, Some(vec!["MY_KEYSTORE".to_string()]));
+
+        std::env::remove_var("ETH_KEYSTORE");
     }
 }
