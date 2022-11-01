@@ -21,6 +21,7 @@ ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = fals
   "abigen",
 ] }
 jsonpath-rust = "0.1.5"
+jsonpath_lib = "0.3.0"
 
 # Error handling
 eyre = "0.6.5"

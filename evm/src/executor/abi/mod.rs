@@ -144,6 +144,7 @@ ethers::contract::abigen!(
             serializeBytes(string,string,bytes)(string)
             serializeBytes(string,string,bytes[])(string)
             writeJson(string, string)
+            writeJson(string, string, string)
     ]"#,
 );
 pub use hevm::{HEVMCalls, HEVM_ABI};

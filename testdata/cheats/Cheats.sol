@@ -243,6 +243,7 @@ interface Cheats {
     function serializeString(string calldata, string calldata, string[] calldata) external returns(string memory);
     function serializeBytes(string calldata, string calldata, bytes[] calldata) external returns(string memory);
     function writeJson(string calldata, string calldata) external;
+    function writeJson(string calldata, string calldata, string calldata) external;
 }
 
 

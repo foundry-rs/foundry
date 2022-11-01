@@ -124,10 +124,7 @@ contract WriteJson is DSTest {
 
     }
 
-    struct simpleJson {
-        uint256 a;
-        string b;
-    }
+
 
     function test_serializeArray() public {
         bool[] memory data1 = new bool[](3);
@@ -173,6 +170,11 @@ contract WriteJson is DSTest {
         vm.removeFile(path);
     }
 
+    struct simpleJson {
+        uint256 a;
+        string b;
+    }
+
     function test_writeJson()public{
         string memory json3 = "json3";
         string memory path = "../testdata/fixtures/Json/write_test.json";
@@ -185,6 +187,15 @@ contract WriteJson is DSTest {
         simpleJson memory decodedData = abi.decode(data, (simpleJson));
         assertEq(decodedData.a, 123);
         assertEq(decodedData.b, "test");
-        vm.removeFile(path);
+
+        // write json3 to key b
+        vm.writeJson(json3, path, ".b");
+        // read again
+        json = vm.readFile(path);
+        data = vm.parseJson(json, ".b");
+        decodedData = abi.decode(data, (simpleJson));
+        assertEq(decodedData.a, 123);
+        assertEq(decodedData.b, "test");
     }
+
 }

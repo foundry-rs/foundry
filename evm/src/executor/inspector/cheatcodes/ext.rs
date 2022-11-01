@@ -15,6 +15,7 @@ use ethers::{
 use foundry_common::{fmt::*, fs, get_artifact_path};
 use foundry_config::fs_permissions::FsAccessKind;
 use hex::FromHex;
+use jsonpath_lib;
 use jsonpath_rust::JsonPathFinder;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -422,9 +423,26 @@ fn write_json(
     _state: &mut Cheatcodes,
     object_key: &str,
     path: impl AsRef<Path>,
+    json_path_or_none: Option<&str>,
 ) -> Result<Bytes, Bytes> {
     let json = json!(_state.serialized_jsons.get(object_key).unwrap());
-    let json_string = serde_json::to_string(&json).map_err(error::encode_error)?;
+    let json_string = serde_json::to_string(&if let Some(json_path) = json_path_or_none {
+        let path = _state
+            .config
+            .ensure_path_allowed(&path, FsAccessKind::Read)
+            .map_err(error::encode_error)?;
+
+        let data = serde_json::from_str(&fs::read_to_string(path).map_err(error::encode_error)?)
+            .map_err(error::encode_error)?;
+        let result = jsonpath_lib::replace_with(data, &format!("${}", json_path), &mut |_| {
+            Some(json.clone())
+        })
+        .map_err(error::encode_error)?;
+        result
+    } else {
+        json
+    })
+    .map_err(error::encode_error)?;
     write_file(_state, path, json_string)?;
     Ok(Bytes::new())
 }
@@ -516,7 +534,8 @@ pub fn apply(
         HEVMCalls::SerializeBytes1(inner) => {
             serialize_json(state, &inner.0, &inner.1, &array_str_to_str(&inner.2))
         }
-        HEVMCalls::WriteJson(inner) => write_json(state, &inner.0, &inner.1),
+        HEVMCalls::WriteJson0(inner) => write_json(state, &inner.0, &inner.1, None),
+        HEVMCalls::WriteJson1(inner) => write_json(state, &inner.0, &inner.1, Some(&inner.2)),
         _ => return None,
     })
 }
