@@ -170,6 +170,7 @@ contract WriteJson is DSTest {
         assertEq(parsedData3[0], data3[0]);
         assertEq(parsedData3[1], data3[1]);
         assertEq(parsedData3[2], data3[2]);
+        vm.removeFile(path);
     }
 
     function test_writeJson()public{
@@ -184,5 +185,6 @@ contract WriteJson is DSTest {
         simpleJson memory decodedData = abi.decode(data, (simpleJson));
         assertEq(decodedData.a, 123);
         assertEq(decodedData.b, "test");
+        vm.removeFile(path);
     }
 }
