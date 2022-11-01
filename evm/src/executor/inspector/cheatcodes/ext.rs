@@ -16,7 +16,6 @@ use foundry_common::{fmt::*, fs, get_artifact_path};
 use foundry_config::fs_permissions::FsAccessKind;
 use hex::FromHex;
 use jsonpath_lib;
-use jsonpath_rust::JsonPathFinder;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
@@ -344,14 +343,13 @@ fn value_to_token(value: &Value) -> eyre::Result<Token> {
 /// As the JSON object is parsed serially, with the keys ordered alphabetically, they must be
 /// deserialized in the same order. That means that the solidity `struct` should order it's fields
 /// alphabetically and not by efficient packing or some other taxonomy.
-fn parse_json(_state: &mut Cheatcodes, json: &str, key: &str) -> Result<Bytes, Bytes> {
-    let values: Value = JsonPathFinder::from_str(json, key)?.find();
+fn parse_json(_state: &mut Cheatcodes, json_str: &str, key: &str) -> Result<Bytes, Bytes> {
+    let json = serde_json::from_str(&json_str).map_err(error::encode_error)?;
+    let values: Vec<&Value> = jsonpath_lib::select(&json, key).map_err(error::encode_error)?;
     // values is an array of items. Depending on the JsonPath key, they
     // can be many or a single item. An item can be a single value or
     // an entire JSON object.
     let res = values
-        .as_array()
-        .ok_or_else(|| error::encode_error("JsonPath did not return an array"))?
         .iter()
         .map(|inner| {
             value_to_token(inner).map_err(|err| {
@@ -434,10 +432,9 @@ fn write_json(
 
         let data = serde_json::from_str(&fs::read_to_string(path).map_err(error::encode_error)?)
             .map_err(error::encode_error)?;
-        let result = jsonpath_lib::replace_with(data, &format!("${}", json_path), &mut |_| {
-            Some(json.clone())
-        })
-        .map_err(error::encode_error)?;
+        let result =
+            jsonpath_lib::replace_with(data, &format!("${json_path}"), &mut |_| Some(json.clone()))
+                .map_err(error::encode_error)?;
         result
     } else {
         json
@@ -491,7 +488,7 @@ pub fn apply(
         // If no key argument is passed, return the whole JSON object.
         // "$" is the JSONPath key for the root of the object
         HEVMCalls::ParseJson0(inner) => parse_json(state, &inner.0, "$"),
-        HEVMCalls::ParseJson1(inner) => parse_json(state, &inner.0, &inner.1),
+        HEVMCalls::ParseJson1(inner) => parse_json(state, &inner.0, &format!("$.{}", &inner.1)),
         HEVMCalls::SerializeBool0(inner) => {
             serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
         }
