@@ -254,8 +254,8 @@
       }
     },
     "cheats/Cheats.sol": {
-      "lastModificationDate": 1667095485375,
-      "contentHash": "a37b8fc85b9f30e6a9433e57e80882de",
+      "lastModificationDate": 1667238901989,
+      "contentHash": "4ad77af0637bd9dd4a5388067d061bd5",
       "sourceName": "cheats/Cheats.sol",
       "solcConfig": {
         "settings": {
@@ -290,9 +290,6 @@
       "artifacts": {
         "Cheats": {
           "0.8.16+commit.07a7930e.Darwin.appleclang": "Cheats.sol/Cheats.json"
-        },
-        "Serializer": {
-          "0.8.16+commit.07a7930e.Darwin.appleclang": "Cheats.sol/Serializer.json"
         }
       }
     },
@@ -1021,8 +1018,8 @@
       }
     },
     "cheats/Json.t.sol": {
-      "lastModificationDate": 1667095499379,
-      "contentHash": "8750f5c590c960e640548a2e831fa0ca",
+      "lastModificationDate": 1667240061707,
+      "contentHash": "fcaea8d046418d7e16820e70f4a4c1e4",
       "sourceName": "cheats/Json.t.sol",
       "solcConfig": {
         "settings": {

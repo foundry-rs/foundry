@@ -17,7 +17,7 @@ use foundry_config::fs_permissions::FsAccessKind;
 use hex::FromHex;
 use jsonpath_rust::JsonPathFinder;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::{
     collections::HashMap,
     env,
@@ -27,7 +27,6 @@ use std::{
     str::FromStr,
 };
 use tracing::{error, trace};
-
 /// Invokes a `Command` with the given args and returns the abi encoded response
 ///
 /// If the output of the command is valid hex, it returns the hex decoded value
@@ -364,20 +363,13 @@ fn parse_json(_state: &mut Cheatcodes, json: &str, key: &str) -> Result<Bytes, B
     Ok(abi_encoded.into())
 }
 
-n serialize_json(
+fn serialize_json(
     _state: &mut Cheatcodes,
     object_key: &str,
     value_key: &str,
     value: &str,
-    json: bool,
 ) -> Result<Bytes, Bytes> {
-    println!("Received -> {}", value);
-    let parsed_value = if json {
-        serde_json::from_str(value)
-            .map_err(|err| error::encode_error(format!("Failed to parse json string: {}", err)))?
-    } else {
-        Value::String(value.to_string())
-    };
+    let parsed_value = serde_json::from_str(value).unwrap_or(Value::String(value.to_string()));
     let json = if let Some(serialization) = _state.serialized_jsons.get_mut(object_key) {
         serialization.insert(value_key.to_string(), parsed_value);
         serialization.clone()
@@ -387,10 +379,38 @@ n serialize_json(
         _state.serialized_jsons.insert(object_key.to_string(), serialization.clone());
         serialization.clone()
     };
-    println!("State status: {:?}", &_state.serialized_jsons);
     let stringified = serde_json::to_string(&json)
         .map_err(|err| error::encode_error(format!("Failed to stringify hashmap: {}", err)))?;
     Ok(abi::encode(&[Token::String(stringified)]).into())
+}
+
+fn array_to_string<T: UIfmt>(array: &Vec<T>) -> String {
+    format!(
+        "[{}",
+        array
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                if value
+                if index == array.len() - 1 {
+                    format!("{}]", value.pretty())
+                } else {
+                    format!("{},", value.pretty())
+                }
+            })
+            .collect::<String>()
+    )
+}
+
+fn write_json(
+    _state: &mut Cheatcodes,
+    object_key: &str,
+    path: impl AsRef<Path>,
+) -> Result<Bytes, Bytes> {
+    let json = json!(_state.serialized_jsons.get(object_key).unwrap());
+    let json_string = serde_json::to_string(&json).map_err(error::encode_error)?;
+    write_file(_state, path, json_string)?;
+    Ok(Bytes::new())
 }
 
 pub fn apply(
@@ -438,30 +458,49 @@ pub fn apply(
         // "$" is the JSONPath key for the root of the object
         HEVMCalls::ParseJson0(inner) => parse_json(state, &inner.0, "$"),
         HEVMCalls::ParseJson1(inner) => parse_json(state, &inner.0, &inner.1),
-        HEVMCalls::SerializeBool(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty(), false)
+        HEVMCalls::SerializeBool0(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
         }
-        HEVMCalls::SerializeUint(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty(), false)
+        HEVMCalls::SerializeBool1(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &array_to_string(&inner.2))
         }
-        HEVMCalls::SerializeInt(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty(), false)
+        HEVMCalls::SerializeUint0(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
         }
-        HEVMCalls::SerializeAddress(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty(), false)
+        HEVMCalls::SerializeUint1(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &array_to_string(&inner.2))
         }
-        HEVMCalls::SerializeBytes32(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty(), false)
+        HEVMCalls::SerializeInt0(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
         }
-        HEVMCalls::SerializeString(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty(), false)
+        HEVMCalls::SerializeInt1(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &array_to_string(&inner.2))
         }
-        HEVMCalls::SerializeBytes(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty(), false)
+        HEVMCalls::SerializeAddress0(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
         }
-        HEVMCalls::SerializeStruct(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty(), true)
+        HEVMCalls::SerializeAddress1(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &array_to_string(&inner.2))
         }
+        HEVMCalls::SerializeBytes320(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
+        }
+        HEVMCalls::SerializeBytes321(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &array_to_string(&inner.2))
+        }
+        HEVMCalls::SerializeString0(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
+        }
+        HEVMCalls::SerializeString1(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &array_to_string(&inner.2))
+        }
+        HEVMCalls::SerializeBytes0(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
+        }
+        HEVMCalls::SerializeBytes1(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &array_to_string(&inner.2))
+        }
+        HEVMCalls::WriteJson(inner) => write_json(state, &inner.0, &inner.1),
         _ => return None,
     })
 }
