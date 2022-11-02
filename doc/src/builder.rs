@@ -82,268 +82,281 @@ impl DocBuilder {
         for (path, doc) in docs.as_ref() {
             for part in doc.iter() {
                 // TODO: other top level elements
-                if let DocElement::Contract(ref contract) = part.element {
-                    let mut doc_file = String::new();
-                    writeln_doc!(doc_file, DocOutput::H1(&contract.name.name))?;
+                match part.element {
+                    DocElement::Contract(ref contract) => {
+                        let mut doc_file = String::new();
+                        writeln_doc!(doc_file, DocOutput::H1(&contract.name.name))?;
 
-                    if !contract.base.is_empty() {
-                        let bases = contract
-                            .base
-                            .iter()
-                            .map(|base| {
-                                Ok(self
-                                    .lookup_contract_base(docs.as_ref(), base)?
-                                    .unwrap_or(base.doc()))
-                            })
-                            .collect::<eyre::Result<Vec<_>>>()?;
+                        if !contract.base.is_empty() {
+                            let bases = contract
+                                .base
+                                .iter()
+                                .map(|base| {
+                                    Ok(self
+                                        .lookup_contract_base(docs.as_ref(), base)?
+                                        .unwrap_or(base.doc()))
+                                })
+                                .collect::<eyre::Result<Vec<_>>>()?;
 
-                        writeln_doc!(
-                            doc_file,
-                            "{} {}\n",
-                            DocOutput::Bold("Inherits:"),
-                            bases.join(", ")
-                        )?;
-                    }
-
-                    writeln_doc!(doc_file, part.comments)?;
-
-                    let mut attributes = vec![];
-                    let mut funcs = vec![];
-                    let mut events = vec![];
-                    let mut errors = vec![];
-                    let mut structs = vec![];
-                    let mut enumerables = vec![];
-
-                    for child in part.children.iter() {
-                        // TODO: remove `clone`s
-                        match &child.element {
-                            DocElement::Function(func) => funcs.push((func, &child.comments)),
-                            DocElement::Variable(var) => attributes.push((var, &child.comments)),
-                            DocElement::Event(event) => events.push((event, &child.comments)),
-                            DocElement::Error(error) => errors.push((error, &child.comments)),
-                            DocElement::Struct(structure) => {
-                                structs.push((structure, &child.comments))
-                            },
-                            DocElement::Enum(enumerable) => enumerables.push((enumerable, &child.comments)),
-                            _ => (),
-                        }
-                    }
-
-                    if !attributes.is_empty() {
-                        writeln_doc!(doc_file, DocOutput::H2("Attributes"))?;
-                        for (var, comments) in attributes {
-                            writeln_doc!(doc_file, "{}\n{}\n", var, comments)?;
-                            writeln_code!(doc_file, "{}", var)?;
-                            writeln!(doc_file)?;
-                        }
-                    }
-
-                    if !funcs.is_empty() {
-                        writeln_doc!(doc_file, DocOutput::H2("Functions"))?;
-                        for (func, comments) in funcs {
-                            writeln_doc!(doc_file, "{}\n", func)?;
                             writeln_doc!(
                                 doc_file,
-                                "{}\n",
-                                filter_comments_without_tags(&comments, vec!["param", "return"])
+                                "{} {}\n",
+                                DocOutput::Bold("Inherits:"),
+                                bases.join(", ")
                             )?;
-                            writeln_code!(doc_file, "{}", func)?;
+                        }
 
-                            let params: Vec<_> =
-                                func.params.iter().filter_map(|p| p.1.as_ref()).collect();
-                            let param_comments = filter_comments_by_tag(&comments, "param");
-                            if !params.is_empty() && !param_comments.is_empty() {
+                        writeln_doc!(doc_file, part.comments)?;
+
+                        let mut attributes = vec![];
+                        let mut funcs = vec![];
+                        let mut events = vec![];
+                        let mut errors = vec![];
+                        let mut structs = vec![];
+                        let mut enumerables = vec![];
+
+                        for child in part.children.iter() {
+                            // TODO: remove `clone`s
+                            match &child.element {
+                                DocElement::Function(func) => funcs.push((func, &child.comments)),
+                                DocElement::Variable(var) => attributes.push((var, &child.comments)),
+                                DocElement::Event(event) => events.push((event, &child.comments)),
+                                DocElement::Error(error) => errors.push((error, &child.comments)),
+                                DocElement::Struct(structure) => {
+                                    structs.push((structure, &child.comments))
+                                },
+                                DocElement::Enum(enumerable) => enumerables.push((enumerable, &child.comments)),
+                                _ => (),
+                            }
+                        }
+
+                        if !attributes.is_empty() {
+                            writeln_doc!(doc_file, DocOutput::H2("Attributes"))?;
+                            for (var, comments) in attributes {
+                                writeln_doc!(doc_file, "{}\n{}\n", var, comments)?;
+                                writeln_code!(doc_file, "{}", var)?;
+                                writeln!(doc_file)?;
+                            }
+                        }
+
+                        if !funcs.is_empty() {
+                            writeln_doc!(doc_file, DocOutput::H2("Functions"))?;
+                            for (func, comments) in funcs {
+                                writeln_doc!(doc_file, "{}\n", func)?;
                                 writeln_doc!(
                                     doc_file,
-                                    "{}\n{}",
-                                    DocOutput::H3("Parameters"),
-                                    self.format_comment_table(
-                                        &["Name", "Type", "Description"],
-                                        &params,
-                                        &param_comments
-                                    )?
+                                    "{}\n",
+                                    filter_comments_without_tags(&comments, vec!["param", "return"])
                                 )?;
+                                writeln_code!(doc_file, "{}", func)?;
+
+                                let params: Vec<_> =
+                                    func.params.iter().filter_map(|p| p.1.as_ref()).collect();
+                                let param_comments = filter_comments_by_tag(&comments, "param");
+                                if !params.is_empty() && !param_comments.is_empty() {
+                                    writeln_doc!(
+                                        doc_file,
+                                        "{}\n{}",
+                                        DocOutput::H3("Parameters"),
+                                        self.format_comment_table(
+                                            &["Name", "Type", "Description"],
+                                            &params,
+                                            &param_comments
+                                        )?
+                                    )?;
+                                }
+
+                                let returns: Vec<_> =
+                                    func.returns.iter().filter_map(|p| p.1.as_ref()).collect();
+                                let returns_comments = filter_comments_by_tag(&comments, "return");
+                                if !returns.is_empty() && !returns_comments.is_empty() {
+                                    writeln_doc!(
+                                        doc_file,
+                                        "{}\n{}",
+                                        DocOutput::H3("Returns"),
+                                        self.format_comment_table(
+                                            &["Name", "Type", "Description"],
+                                            &params,
+                                            &returns_comments
+                                        )?
+                                    )?;
+                                }
+
+                                writeln!(doc_file)?;
                             }
+                        }
 
-                            let returns: Vec<_> =
-                                func.returns.iter().filter_map(|p| p.1.as_ref()).collect();
-                            let returns_comments = filter_comments_by_tag(&comments, "return");
-                            if !returns.is_empty() && !returns_comments.is_empty() {
-                                writeln_doc!(
-                                    doc_file,
-                                    "{}\n{}",
-                                    DocOutput::H3("Returns"),
-                                    self.format_comment_table(
-                                        &["Name", "Type", "Description"],
-                                        &params,
-                                        &returns_comments
-                                    )?
-                                )?;
+                        if !events.is_empty() {
+                            writeln_doc!(doc_file, DocOutput::H2("Events"))?;
+                            for (ev, comments) in events {
+                                writeln_doc!(doc_file, "{}\n{}\n", ev, comments)?;
+                                writeln_code!(doc_file, "{}", ev)?;
+                                writeln!(doc_file)?;
                             }
-
-                            writeln!(doc_file)?;
                         }
-                    }
 
-                    if !events.is_empty() {
-                        writeln_doc!(doc_file, DocOutput::H2("Events"))?;
-                        for (ev, comments) in events {
-                            writeln_doc!(doc_file, "{}\n{}\n", ev, comments)?;
-                            writeln_code!(doc_file, "{}", ev)?;
-                            writeln!(doc_file)?;
+                        if !errors.is_empty() {
+                            writeln_doc!(doc_file, DocOutput::H2("Errors"))?;
+                            for (err, comments) in errors {
+                                writeln_doc!(doc_file, "{}\n{}\n", err, comments)?;
+                                writeln_code!(doc_file, "{}", err)?;
+                                writeln!(doc_file)?;
+                            }
                         }
-                    }
 
-                    if !errors.is_empty() {
-                        writeln_doc!(doc_file, DocOutput::H2("Errors"))?;
-                        for (err, comments) in errors {
-                            writeln_doc!(doc_file, "{}\n{}\n", err, comments)?;
-                            writeln_code!(doc_file, "{}", err)?;
-                            writeln!(doc_file)?;
+                        if !structs.is_empty() {
+                            writeln_doc!(doc_file, DocOutput::H2("Structs"))?;
+                            for (structure, comments) in structs {
+                                writeln_doc!(doc_file, "{}\n{}\n", structure, comments)?;
+                                writeln_code!(doc_file, "{}", structure)?;
+                                writeln!(doc_file)?;
+                            }
                         }
-                    }
 
-                    if !structs.is_empty() {
-                        writeln_doc!(doc_file, DocOutput::H2("Structs"))?;
-                        for (structure, comments) in structs {
-                            writeln_doc!(doc_file, "{}\n{}\n", structure, comments)?;
-                            writeln_code!(doc_file, "{}", structure)?;
-                            writeln!(doc_file)?;
+                        if !enumerables.is_empty() {
+                            writeln_doc!(doc_file, DocOutput::H2("Enums"))?;
+                            for (enumerable, comments) in enumerables {
+                                writeln_doc!(doc_file, "{}\n{}\n", enumerable, comments)?;
+                                writeln_code!(doc_file, "{}", enumerable)?;
+                                writeln!(doc_file)?;
+                            }
                         }
+
+                        let new_path = path.strip_prefix(&self.config.root)?.to_owned();
+                        fs::create_dir_all(self.out_dir_src().join(&new_path))?;
+                        let new_path = new_path.join(&format!("contract.{}.md", contract.name));
+
+                        fs::write(self.out_dir_src().join(&new_path), doc_file)?;
+                        filenames.push((contract.name.clone(), new_path));
                     }
+                    DocElement::Error(ref error) => {
+                        let mut doc_file = String::new();
+                        writeln_doc!(doc_file, DocOutput::H1("Error"))?;
 
-                    if !enumerables.is_empty() {
-                        writeln_doc!(doc_file, DocOutput::H2("Enums"))?;
-                        for (enumerable, comments) in enumerables {
-                            writeln_doc!(doc_file, "{}\n{}\n", enumerable, comments)?;
-                            writeln_code!(doc_file, "{}", enumerable)?;
-                            writeln!(doc_file)?;
-                        }
+                        writeln_doc!(doc_file, "{}\n{}\n", error, part.comments)?;
+                        writeln_code!(doc_file, "{}", error)?;
+                        writeln!(doc_file)?;
+
+                        let new_path = path.strip_prefix(&self.config.root)?.to_owned();
+                        fs::create_dir_all(self.out_dir_src().join(&new_path))?;
+                        let new_path = new_path.join(&format!("error.{}.md", error.name));
+
+                        fs::write(self.out_dir_src().join(&new_path), doc_file)?;
+                        filenames.push((error.name.clone(), new_path));
                     }
+                    DocElement::Event(ref event) => {
+                        let mut doc_file = String::new();
+                        writeln_doc!(doc_file, DocOutput::H1("Event"))?;
+    
+                        writeln_doc!(doc_file, "{}\n{}\n", event, part.comments)?;
+                        writeln_code!(doc_file, "{}", event)?;
+                        writeln!(doc_file)?;
+    
+                        let new_path = path.strip_prefix(&self.config.root)?.to_owned();
+                        fs::create_dir_all(self.out_dir_src().join(&new_path))?;
+                        let new_path = new_path.join(&format!("event.{}.md", event.name));
+    
+                        fs::write(self.out_dir_src().join(&new_path), doc_file)?;
+                        filenames.push((event.name.clone(), new_path));
+                    }
+                    DocElement::Struct(ref structure) => {
+                        let mut doc_file = String::new();
+                        writeln_doc!(doc_file, DocOutput::H1("Struct"))?;
 
-                    let new_path = path.strip_prefix(&self.config.root)?.to_owned();
-                    fs::create_dir_all(self.out_dir_src().join(&new_path))?;
-                    let new_path = new_path.join(&format!("contract.{}.md", contract.name));
+                        writeln_doc!(doc_file, "{}\n{}\n", structure, part.comments)?;
+                        writeln_code!(doc_file, "{}", structure)?;
+                        writeln!(doc_file)?;
 
-                    fs::write(self.out_dir_src().join(&new_path), doc_file)?;
-                    filenames.push((contract.name.clone(), new_path));
-                }
+                        let new_path = path.strip_prefix(&self.config.root)?.to_owned();
+                        fs::create_dir_all(self.out_dir_src().join(&new_path))?;
+                        let new_path = new_path.join(&format!("struct.{}.md", structure.name));
 
-                if let DocElement::Error(ref error) = part.element {
-                    let mut doc_file = String::new();
-                    writeln_doc!(doc_file, DocOutput::H1("Error"))?;
+                        fs::write(self.out_dir_src().join(&new_path), doc_file)?;
+                        filenames.push((structure.name.clone(), new_path));
+                    }
+                    DocElement::Enum(ref enumerable) => {
+                        let mut doc_file = String::new();
+                        writeln_doc!(doc_file, DocOutput::H1("Enum"))?;
 
-                    writeln_doc!(doc_file, "{}\n{}\n", error, part.comments)?;
-                    writeln_code!(doc_file, "{}", error)?;
-                    writeln!(doc_file)?;
+                        writeln_doc!(doc_file, "{}\n{}\n", enumerable, part.comments)?;
+                        writeln_code!(doc_file, "{}", enumerable)?;
+                        writeln!(doc_file)?;
 
-                    let new_path = path.strip_prefix(&self.config.root)?.to_owned();
-                    fs::create_dir_all(self.out_dir_src().join(&new_path))?;
-                    let new_path = new_path.join(&format!("error.{}.md", error.name));
+                        let new_path = path.strip_prefix(&self.config.root)?.to_owned();
+                        fs::create_dir_all(self.out_dir_src().join(&new_path))?;
+                        let new_path = new_path.join(&format!("enum.{}.md", enumerable.name));
 
-                    fs::write(self.out_dir_src().join(&new_path), doc_file)?;
-                    // TODO: save new `filenames` for book_config?
-                }
+                        fs::write(self.out_dir_src().join(&new_path), doc_file)?;
+                        filenames.push((enumerable.name.clone(), new_path));
+                    }
+                    DocElement::Function(ref func) => {
+                        let mut doc_file = String::new();
+                        writeln_doc!(doc_file, DocOutput::H1("Function"))?;
 
-                if let DocElement::Event(ref event) = part.element {
-                    let mut doc_file = String::new();
-                    writeln_doc!(doc_file, DocOutput::H1("Event"))?;
-
-                    writeln_doc!(doc_file, "{}\n{}\n", event, part.comments)?;
-                    writeln_code!(doc_file, "{}", event)?;
-                    writeln!(doc_file)?;
-
-                    let new_path = path.strip_prefix(&self.config.root)?.to_owned();
-                    fs::create_dir_all(self.out_dir_src().join(&new_path))?;
-                    let new_path = new_path.join(&format!("event.{}.md", event.name));
-
-                    fs::write(self.out_dir_src().join(&new_path), doc_file)?;
-                    // TODO: save new `filenames` for book_config?
-                }
-
-                if let DocElement::Struct(ref structure) = part.element {
-                    let mut doc_file = String::new();
-                    writeln_doc!(doc_file, DocOutput::H1("Struct"))?;
-
-                    writeln_doc!(doc_file, "{}\n{}\n", structure, part.comments)?;
-                    writeln_code!(doc_file, "{}", structure)?;
-                    writeln!(doc_file)?;
-
-                    let new_path = path.strip_prefix(&self.config.root)?.to_owned();
-                    fs::create_dir_all(self.out_dir_src().join(&new_path))?;
-                    let new_path = new_path.join(&format!("struct.{}.md", structure.name));
-
-                    fs::write(self.out_dir_src().join(&new_path), doc_file)?;
-                    // TODO: save new `filenames` for book_config?
-                }
-
-                if let DocElement::Enum(ref enumerable) = part.element {
-                    let mut doc_file = String::new();
-                    writeln_doc!(doc_file, DocOutput::H1("Enum"))?;
-
-                    writeln_doc!(doc_file, "{}\n{}\n", enumerable, part.comments)?;
-                    writeln_code!(doc_file, "{}", enumerable)?;
-                    writeln!(doc_file)?;
-
-                    let new_path = path.strip_prefix(&self.config.root)?.to_owned();
-                    fs::create_dir_all(self.out_dir_src().join(&new_path))?;
-                    let new_path = new_path.join(&format!("enum.{}.md", enumerable.name));
-
-                    fs::write(self.out_dir_src().join(&new_path), doc_file)?;
-                    // TODO: save new `filenames` for book_config?
-                }
-
-                if let DocElement::Function(ref func) = part.element {
-                    let mut doc_file = String::new();
-                    writeln_doc!(doc_file, DocOutput::H1("Function"))?;
-
-                    writeln_doc!(doc_file, "{}\n", func)?;
-                    writeln_doc!(
-                        doc_file,
-                        "{}\n",
-                        filter_comments_without_tags(&part.comments, vec!["param", "return"])
-                    )?;
-                    writeln_code!(doc_file, "{}", func)?;
-
-                    let params: Vec<_> =
-                        func.params.iter().filter_map(|p| p.1.as_ref()).collect();
-                    let param_comments = filter_comments_by_tag(&part.comments, "param");
-                    if !params.is_empty() && !param_comments.is_empty() {
+                        writeln_doc!(doc_file, "{}\n", func)?;
                         writeln_doc!(
                             doc_file,
-                            "{}\n{}",
-                            DocOutput::H3("Parameters"),
-                            self.format_comment_table(
-                                &["Name", "Type", "Description"],
-                                &params,
-                                &param_comments
-                            )?
+                            "{}\n",
+                            filter_comments_without_tags(&part.comments, vec!["param", "return"])
                         )?;
-                    }
+                        writeln_code!(doc_file, "{}", func)?;
 
-                    let returns: Vec<_> =
-                        func.returns.iter().filter_map(|p| p.1.as_ref()).collect();
-                    let returns_comments = filter_comments_by_tag(&part.comments, "return");
-                    if !returns.is_empty() && !returns_comments.is_empty() {
-                        writeln_doc!(
-                            doc_file,
-                            "{}\n{}",
-                            DocOutput::H3("Returns"),
-                            self.format_comment_table(
-                                &["Name", "Type", "Description"],
-                                &params,
-                                &returns_comments
-                            )?
-                        )?;
-                    }
-                    writeln!(doc_file)?;
-                    let new_path = path.strip_prefix(&self.config.root)?.to_owned();
-                    fs::create_dir_all(self.out_dir_src().join(&new_path))?;
-                    let new_path = new_path.join(&format!("function.{}.md", func.name.as_ref().map(|name| name.name.to_owned()).unwrap_or_default()));
+                        let params: Vec<_> =
+                            func.params.iter().filter_map(|p| p.1.as_ref()).collect();
+                        let param_comments = filter_comments_by_tag(&part.comments, "param");
+                        if !params.is_empty() && !param_comments.is_empty() {
+                            writeln_doc!(
+                                doc_file,
+                                "{}\n{}",
+                                DocOutput::H3("Parameters"),
+                                self.format_comment_table(
+                                    &["Name", "Type", "Description"],
+                                    &params,
+                                    &param_comments
+                                )?
+                            )?;
+                        }
 
-                    fs::write(self.out_dir_src().join(&new_path), doc_file)?;
-                    // TODO: save new `filenames` for book_config?
-                }
+                        let returns: Vec<_> =
+                            func.returns.iter().filter_map(|p| p.1.as_ref()).collect();
+                        let returns_comments = filter_comments_by_tag(&part.comments, "return");
+                        if !returns.is_empty() && !returns_comments.is_empty() {
+                            writeln_doc!(
+                                doc_file,
+                                "{}\n{}",
+                                DocOutput::H3("Returns"),
+                                self.format_comment_table(
+                                    &["Name", "Type", "Description"],
+                                    &params,
+                                    &returns_comments
+                                )?
+                            )?;
+                        }
+                        writeln!(doc_file)?;
+                        let new_path = path.strip_prefix(&self.config.root)?.to_owned();
+                        fs::create_dir_all(self.out_dir_src().join(&new_path))?;
+                        let func_name = func.name.as_ref().map(|name| name.name.to_owned()).unwrap_or_default();
+                        let new_path = new_path.join(&format!("function.{}.md", func_name));
+
+                        fs::write(self.out_dir_src().join(&new_path), doc_file)?;
+                        // filenames.push((func.name.clone(), new_path));
+                    }
+                    DocElement::Variable(ref attribute) => {
+                        let mut doc_file = String::new();
+                        writeln_doc!(doc_file, DocOutput::H1("Attribute"))?;
+    
+                        writeln_doc!(doc_file, "{}\n{}\n", attribute, part.comments)?;
+                        writeln_code!(doc_file, "{}", attribute)?;
+                        writeln!(doc_file)?;
+    
+                        let new_path = path.strip_prefix(&self.config.root)?.to_owned();
+                        fs::create_dir_all(self.out_dir_src().join(&new_path))?;
+                        let new_path = new_path.join(&format!("variable.{}.md", attribute.name));
+    
+                        fs::write(self.out_dir_src().join(&new_path), doc_file)?;
+                        filenames.push((attribute.name.clone(), new_path));
+                    }
+                }  
             }
         }
 

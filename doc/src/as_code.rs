@@ -219,8 +219,8 @@ impl AsCode for VariableDeclaration {
 impl AsCode for EnumDefinition {
     fn as_code(&self) -> String {
         let name = &self.name.name;
-        let values = self.values.iter().map(AsCode::as_code).join(";\n\t");
-        format!("enum {name}({values})")
+        let values = self.values.iter().map(AsCode::as_code).join("\n\t");
+        format!("enum {name}{{\n\t{values}\n}}")
     }
 }
 
