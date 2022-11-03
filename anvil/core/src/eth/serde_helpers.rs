@@ -1,14 +1,5 @@
 //! custom serde helper functions
 
-use serde::Deserialize;
-
-/// Wrapper type that ensures the type is named `params`
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct Params<T: Default> {
-    #[serde(default)]
-    pub params: T,
-}
-
 #[allow(unused)]
 pub mod sequence {
     use serde::{
@@ -36,7 +27,7 @@ pub mod sequence {
             return Err(serde::de::Error::custom(format!(
                 "expected params sequence with length 1 but got {}",
                 seq.len()
-            )))
+            )));
         }
         Ok(seq.remove(0))
     }
@@ -55,7 +46,7 @@ pub mod empty_params {
             return Err(serde::de::Error::custom(format!(
                 "expected params sequence with length 0 but got {}",
                 seq.len()
-            )))
+            )));
         }
         Ok(())
     }

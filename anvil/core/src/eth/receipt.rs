@@ -8,10 +8,10 @@ use ethers_core::{
     },
 };
 use fastrlp::{length_of_length, Header, RlpDecodable, RlpEncodable};
-use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, RlpEncodable, RlpDecodable)]
+#[derive(Clone, Debug, PartialEq, Eq, RlpEncodable, RlpDecodable)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Log {
     pub address: Address,
     pub topics: Vec<H256>,
@@ -52,7 +52,8 @@ impl Decodable for Log {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, RlpEncodable, RlpDecodable)]
+#[derive(Clone, Debug, PartialEq, Eq, RlpEncodable, RlpDecodable)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EIP658Receipt {
     pub status_code: u8,
     pub gas_used: U256,
@@ -86,7 +87,8 @@ impl Decodable for EIP658Receipt {
 pub type EIP2930Receipt = EIP658Receipt;
 pub type EIP1559Receipt = EIP658Receipt;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TypedReceipt {
     /// Legacy receipt
     Legacy(EIP658Receipt),
@@ -135,17 +137,17 @@ impl Decodable for TypedReceipt {
         let first = *slice.first().ok_or(DecoderError::Custom("empty receipt"))?;
 
         if rlp.is_list() {
-            return Ok(TypedReceipt::Legacy(Decodable::decode(rlp)?))
+            return Ok(TypedReceipt::Legacy(Decodable::decode(rlp)?));
         }
 
         let s = slice.get(1..).ok_or(DecoderError::Custom("no receipt content"))?;
 
         if first == 0x01 {
-            return rlp::decode(s).map(TypedReceipt::EIP2930)
+            return rlp::decode(s).map(TypedReceipt::EIP2930);
         }
 
         if first == 0x02 {
-            return rlp::decode(s).map(TypedReceipt::EIP1559)
+            return rlp::decode(s).map(TypedReceipt::EIP1559);
         }
 
         Err(DecoderError::Custom("unknown receipt type"))
