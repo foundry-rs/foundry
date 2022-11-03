@@ -187,7 +187,6 @@ impl EtherscanVerificationProvider {
         config: &Config,
     ) -> eyre::Result<Client> {
         let etherscan_config = config.get_etherscan_config_with_chain(Some(chain))?;
-        dbg!(&etherscan_config);
 
         let url = verifier_url.or_else(|| etherscan_config.as_ref().map(|c| c.api_url.as_str()));
         let etherscan_key =
@@ -202,7 +201,7 @@ impl EtherscanVerificationProvider {
         };
 
         builder
-            .with_api_key(etherscan_key.clone().unwrap_or_default())
+            .with_api_key(etherscan_key.unwrap_or_default())
             .build()
             .wrap_err("Failed to create etherscan client")
     }

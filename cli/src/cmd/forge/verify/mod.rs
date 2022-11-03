@@ -296,7 +296,7 @@ mod tests {
             .unwrap();
         assert_eq!(client.etherscan_api_url().as_str(), "https://api-testnet.polygonscan.com/");
 
-        assert!(format!("{:?}", client).contains("dummykey"));
+        assert!(format!("{client:?}").contains("dummykey"));
 
         let args: VerifyArgs = VerifyArgs::parse_from([
             "foundry-cli",
@@ -322,6 +322,6 @@ mod tests {
             )
             .unwrap();
         assert_eq!(client.etherscan_api_url().as_str(), "https://verifier-url.com/");
-        assert!(format!("{:?}", client).contains("dummykey"));
+        assert!(format!("{client:?}").contains("dummykey"));
     }
 }
