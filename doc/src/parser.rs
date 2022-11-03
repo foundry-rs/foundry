@@ -2,8 +2,8 @@ use forge_fmt::{Visitable, Visitor};
 use solang_parser::{
     doccomment::{parse_doccomments, DocComment, DocCommentTag},
     pt::{
-        Comment, ContractDefinition, EventDefinition, ErrorDefinition, FunctionDefinition, Loc, SourceUnit,
-        SourceUnitPart, StructDefinition, VariableDefinition, EnumDefinition,
+        Comment, ContractDefinition, EnumDefinition, ErrorDefinition, EventDefinition,
+        FunctionDefinition, Loc, SourceUnit, SourceUnitPart, StructDefinition, VariableDefinition,
     },
 };
 use thiserror::Error;

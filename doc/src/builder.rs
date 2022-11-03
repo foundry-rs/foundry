@@ -118,19 +118,27 @@ impl DocBuilder {
                             // TODO: remove `clone`s
                             match &child.element {
                                 DocElement::Function(func) => funcs.push((func, &child.comments)),
-                                DocElement::Variable(var) => attributes.push((var, &child.comments)),
+                                DocElement::Variable(var) => {
+                                    attributes.push((var, &child.comments))
+                                }
                                 DocElement::Event(event) => events.push((event, &child.comments)),
                                 DocElement::Error(error) => errors.push((error, &child.comments)),
                                 DocElement::Struct(structure) => {
                                     structs.push((structure, &child.comments))
-                                },
-                                DocElement::Enum(enumerable) => enumerables.push((enumerable, &child.comments)),
+                                }
+                                DocElement::Enum(enumerable) => {
+                                    enumerables.push((enumerable, &child.comments))
+                                }
                                 _ => (),
                             }
                         }
 
                         if !attributes.is_empty() {
-                            writeln_doc!(doc_file, "{}", self.format_section("Attributes", attributes)?)?;
+                            writeln_doc!(
+                                doc_file,
+                                "{}",
+                                self.format_section("Attributes", attributes)?
+                            )?;
                         }
 
                         if !funcs.is_empty() {
@@ -140,7 +148,10 @@ impl DocBuilder {
                                 writeln_doc!(
                                     doc_file,
                                     "{}\n",
-                                    filter_comments_without_tags(&comments, vec!["param", "return"])
+                                    filter_comments_without_tags(
+                                        &comments,
+                                        vec!["param", "return"]
+                                    )
                                 )?;
                                 writeln_code!(doc_file, "{}", func)?;
 
@@ -193,7 +204,11 @@ impl DocBuilder {
                         }
 
                         if !enumerables.is_empty() {
-                            writeln_doc!(doc_file, "{}", self.format_section("Enums", enumerables)?)?;
+                            writeln_doc!(
+                                doc_file,
+                                "{}",
+                                self.format_section("Enums", enumerables)?
+                            )?;
                         }
 
                         let new_path = path.strip_prefix(&self.config.root)?.to_owned();
@@ -207,12 +222,16 @@ impl DocBuilder {
                         let mut doc_file = String::new();
                         let mut variable_section = vec![];
                         variable_section.push((attribute, &part.comments));
-                        writeln_doc!(doc_file, "{}", self.format_section("Attribute", variable_section)?)?;
-    
+                        writeln_doc!(
+                            doc_file,
+                            "{}",
+                            self.format_section("Attribute", variable_section)?
+                        )?;
+
                         let new_path = path.strip_prefix(&self.config.root)?.to_owned();
                         fs::create_dir_all(self.out_dir_src().join(&new_path))?;
                         let new_path = new_path.join(&format!("variable.{}.md", attribute.name));
-    
+
                         fs::write(self.out_dir_src().join(&new_path), doc_file)?;
                         filenames.push((attribute.name.clone(), new_path));
                     }
@@ -234,11 +253,11 @@ impl DocBuilder {
                         let mut event_section = vec![];
                         event_section.push((event, &part.comments));
                         writeln_doc!(doc_file, "{}", self.format_section("Event", event_section)?)?;
-    
+
                         let new_path = path.strip_prefix(&self.config.root)?.to_owned();
                         fs::create_dir_all(self.out_dir_src().join(&new_path))?;
                         let new_path = new_path.join(&format!("event.{}.md", event.name));
-    
+
                         fs::write(self.out_dir_src().join(&new_path), doc_file)?;
                         filenames.push((event.name.clone(), new_path));
                     }
@@ -246,7 +265,11 @@ impl DocBuilder {
                         let mut doc_file = String::new();
                         let mut struct_section = vec![];
                         struct_section.push((structure, &part.comments));
-                        writeln_doc!(doc_file, "{}", self.format_section("Struct", struct_section)?)?;
+                        writeln_doc!(
+                            doc_file,
+                            "{}",
+                            self.format_section("Struct", struct_section)?
+                        )?;
 
                         let new_path = path.strip_prefix(&self.config.root)?.to_owned();
                         fs::create_dir_all(self.out_dir_src().join(&new_path))?;
@@ -314,13 +337,14 @@ impl DocBuilder {
                         writeln!(doc_file)?;
                         let new_path = path.strip_prefix(&self.config.root)?.to_owned();
                         fs::create_dir_all(self.out_dir_src().join(&new_path))?;
-                        let func_name = func.name.as_ref().map(|name| name.name.to_owned()).unwrap_or_default();
+                        let func_name =
+                            func.name.as_ref().map(|name| name.name.to_owned()).unwrap_or_default();
                         let new_path = new_path.join(&format!("function.{}.md", func_name));
 
                         fs::write(self.out_dir_src().join(&new_path), doc_file)?;
                         // filenames.push((func.name.clone(), new_path));
                     }
-                }  
+                }
             }
         }
 
@@ -367,7 +391,11 @@ impl DocBuilder {
         Ok(out)
     }
 
-    fn format_section<T: DocFormat + AsCode>(&self, title: &str, entries: Vec<(&T, &Vec<DocCommentTag>)>) -> eyre::Result<String>  {
+    fn format_section<T: DocFormat + AsCode>(
+        &self,
+        title: &str,
+        entries: Vec<(&T, &Vec<DocCommentTag>)>,
+    ) -> eyre::Result<String> {
         let mut out = String::new();
 
         writeln!(out, "{}", DocOutput::H2(title))?;
@@ -521,7 +549,7 @@ impl DocBuilder {
                         );
                         return Ok(Some(
                             DocOutput::Link(&base.doc(), &path.display().to_string()).doc(),
-                        ))
+                        ));
                     }
                 }
             }

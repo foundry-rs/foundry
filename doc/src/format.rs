@@ -2,7 +2,10 @@ use crate::output::DocOutput;
 use itertools::Itertools;
 use solang_parser::{
     doccomment::DocCommentTag,
-    pt::{Base, EventDefinition, FunctionDefinition, StructDefinition, VariableDefinition, ErrorDefinition, EnumDefinition},
+    pt::{
+        Base, EnumDefinition, ErrorDefinition, EventDefinition, FunctionDefinition,
+        StructDefinition, VariableDefinition,
+    },
 };
 
 /// TODO:

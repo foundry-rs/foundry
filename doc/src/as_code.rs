@@ -1,9 +1,9 @@
 use forge_fmt::solang_ext::AttrSortKeyIteratorExt;
 use itertools::Itertools;
 use solang_parser::pt::{
-    EventDefinition, EventParameter, ErrorDefinition, ErrorParameter, Expression, FunctionAttribute, FunctionDefinition,
-    IdentifierPath, Loc, Parameter, StructDefinition, Type, VariableAttribute, VariableDeclaration,
-    VariableDefinition, EnumDefinition, Identifier,
+    EnumDefinition, ErrorDefinition, ErrorParameter, EventDefinition, EventParameter, Expression,
+    FunctionAttribute, FunctionDefinition, Identifier, IdentifierPath, Loc, Parameter,
+    StructDefinition, Type, VariableAttribute, VariableDeclaration, VariableDefinition,
 };
 
 /// Display Solidity parse tree unit as code string.
