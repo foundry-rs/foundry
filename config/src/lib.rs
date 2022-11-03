@@ -850,11 +850,8 @@ impl Config {
         }
 
         // try to find by comparing chain ids
-        if let Some((chain, config)) =
-            chain.and_then(|chain| self.etherscan.find_chain(chain).map(|config| (chain, config)))
-        {
-            let key = config.key.clone().resolve()?;
-            return Ok(ResolvedEtherscanConfig::create(key, chain))
+        if let Some(config) = chain.and_then(|chain| self.etherscan.find_chain(chain).cloned()) {
+            return Ok(config.resolve().ok())
         }
 
         // fallback `etherscan_api_key` as actual key
@@ -3029,6 +3026,32 @@ mod tests {
                 .unwrap()
                 .unwrap();
             assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_extract_etherscan_config_by_chain_with_url() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+
+                [etherscan]
+                mumbai = { key = "https://etherscan-mumbai.com/", chain = 80001 , url =  "https://verifier-url.com/"}
+            "#,
+            )?;
+
+            let config = Config::load();
+
+            let mumbai = config
+                .get_etherscan_config_with_chain(Some(ethers_core::types::Chain::PolygonMumbai))
+                .unwrap()
+                .unwrap();
+            assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
+            assert_eq!(mumbai.api_url, "https://verifier-url.com/".to_string());
 
             Ok(())
         });
