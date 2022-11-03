@@ -81,7 +81,6 @@ impl DocBuilder {
         let mut filenames = vec![];
         for (path, doc) in docs.as_ref() {
             for part in doc.iter() {
-                // TODO: other top level elements
                 match part.element {
                     DocElement::Contract(ref contract) => {
                         let mut doc_file = String::new();
@@ -131,12 +130,7 @@ impl DocBuilder {
                         }
 
                         if !attributes.is_empty() {
-                            writeln_doc!(doc_file, DocOutput::H2("Attributes"))?;
-                            for (var, comments) in attributes {
-                                writeln_doc!(doc_file, "{}\n{}\n", var, comments)?;
-                                writeln_code!(doc_file, "{}", var)?;
-                                writeln!(doc_file)?;
-                            }
+                            writeln_doc!(doc_file, "{}", self.format_section("Attributes", attributes)?)?;
                         }
 
                         if !funcs.is_empty() {
@@ -187,39 +181,19 @@ impl DocBuilder {
                         }
 
                         if !events.is_empty() {
-                            writeln_doc!(doc_file, DocOutput::H2("Events"))?;
-                            for (ev, comments) in events {
-                                writeln_doc!(doc_file, "{}\n{}\n", ev, comments)?;
-                                writeln_code!(doc_file, "{}", ev)?;
-                                writeln!(doc_file)?;
-                            }
+                            writeln_doc!(doc_file, "{}", self.format_section("Events", events)?)?;
                         }
 
                         if !errors.is_empty() {
-                            writeln_doc!(doc_file, DocOutput::H2("Errors"))?;
-                            for (err, comments) in errors {
-                                writeln_doc!(doc_file, "{}\n{}\n", err, comments)?;
-                                writeln_code!(doc_file, "{}", err)?;
-                                writeln!(doc_file)?;
-                            }
+                            writeln_doc!(doc_file, "{}", self.format_section("Errors", errors)?)?;
                         }
 
                         if !structs.is_empty() {
-                            writeln_doc!(doc_file, DocOutput::H2("Structs"))?;
-                            for (structure, comments) in structs {
-                                writeln_doc!(doc_file, "{}\n{}\n", structure, comments)?;
-                                writeln_code!(doc_file, "{}", structure)?;
-                                writeln!(doc_file)?;
-                            }
+                            writeln_doc!(doc_file, "{}", self.format_section("Structs", structs)?)?;
                         }
 
                         if !enumerables.is_empty() {
-                            writeln_doc!(doc_file, DocOutput::H2("Enums"))?;
-                            for (enumerable, comments) in enumerables {
-                                writeln_doc!(doc_file, "{}\n{}\n", enumerable, comments)?;
-                                writeln_code!(doc_file, "{}", enumerable)?;
-                                writeln!(doc_file)?;
-                            }
+                            writeln_doc!(doc_file, "{}", self.format_section("Enums", enumerables)?)?;
                         }
 
                         let new_path = path.strip_prefix(&self.config.root)?.to_owned();
@@ -229,13 +203,24 @@ impl DocBuilder {
                         fs::write(self.out_dir_src().join(&new_path), doc_file)?;
                         filenames.push((contract.name.clone(), new_path));
                     }
+                    DocElement::Variable(ref attribute) => {
+                        let mut doc_file = String::new();
+                        let mut variable_section = vec![];
+                        variable_section.push((attribute, &part.comments));
+                        writeln_doc!(doc_file, "{}", self.format_section("Attribute", variable_section)?)?;
+    
+                        let new_path = path.strip_prefix(&self.config.root)?.to_owned();
+                        fs::create_dir_all(self.out_dir_src().join(&new_path))?;
+                        let new_path = new_path.join(&format!("variable.{}.md", attribute.name));
+    
+                        fs::write(self.out_dir_src().join(&new_path), doc_file)?;
+                        filenames.push((attribute.name.clone(), new_path));
+                    }
                     DocElement::Error(ref error) => {
                         let mut doc_file = String::new();
-                        writeln_doc!(doc_file, DocOutput::H1("Error"))?;
-
-                        writeln_doc!(doc_file, "{}\n{}\n", error, part.comments)?;
-                        writeln_code!(doc_file, "{}", error)?;
-                        writeln!(doc_file)?;
+                        let mut error_section = vec![];
+                        error_section.push((error, &part.comments));
+                        writeln_doc!(doc_file, "{}", self.format_section("Error", error_section)?)?;
 
                         let new_path = path.strip_prefix(&self.config.root)?.to_owned();
                         fs::create_dir_all(self.out_dir_src().join(&new_path))?;
@@ -246,11 +231,9 @@ impl DocBuilder {
                     }
                     DocElement::Event(ref event) => {
                         let mut doc_file = String::new();
-                        writeln_doc!(doc_file, DocOutput::H1("Event"))?;
-    
-                        writeln_doc!(doc_file, "{}\n{}\n", event, part.comments)?;
-                        writeln_code!(doc_file, "{}", event)?;
-                        writeln!(doc_file)?;
+                        let mut event_section = vec![];
+                        event_section.push((event, &part.comments));
+                        writeln_doc!(doc_file, "{}", self.format_section("Event", event_section)?)?;
     
                         let new_path = path.strip_prefix(&self.config.root)?.to_owned();
                         fs::create_dir_all(self.out_dir_src().join(&new_path))?;
@@ -261,11 +244,9 @@ impl DocBuilder {
                     }
                     DocElement::Struct(ref structure) => {
                         let mut doc_file = String::new();
-                        writeln_doc!(doc_file, DocOutput::H1("Struct"))?;
-
-                        writeln_doc!(doc_file, "{}\n{}\n", structure, part.comments)?;
-                        writeln_code!(doc_file, "{}", structure)?;
-                        writeln!(doc_file)?;
+                        let mut struct_section = vec![];
+                        struct_section.push((structure, &part.comments));
+                        writeln_doc!(doc_file, "{}", self.format_section("Struct", struct_section)?)?;
 
                         let new_path = path.strip_prefix(&self.config.root)?.to_owned();
                         fs::create_dir_all(self.out_dir_src().join(&new_path))?;
@@ -276,11 +257,9 @@ impl DocBuilder {
                     }
                     DocElement::Enum(ref enumerable) => {
                         let mut doc_file = String::new();
-                        writeln_doc!(doc_file, DocOutput::H1("Enum"))?;
-
-                        writeln_doc!(doc_file, "{}\n{}\n", enumerable, part.comments)?;
-                        writeln_code!(doc_file, "{}", enumerable)?;
-                        writeln!(doc_file)?;
+                        let mut enum_section = vec![];
+                        enum_section.push((enumerable, &part.comments));
+                        writeln_doc!(doc_file, "{}", self.format_section("Enum", enum_section)?)?;
 
                         let new_path = path.strip_prefix(&self.config.root)?.to_owned();
                         fs::create_dir_all(self.out_dir_src().join(&new_path))?;
@@ -341,21 +320,6 @@ impl DocBuilder {
                         fs::write(self.out_dir_src().join(&new_path), doc_file)?;
                         // filenames.push((func.name.clone(), new_path));
                     }
-                    DocElement::Variable(ref attribute) => {
-                        let mut doc_file = String::new();
-                        writeln_doc!(doc_file, DocOutput::H1("Attribute"))?;
-    
-                        writeln_doc!(doc_file, "{}\n{}\n", attribute, part.comments)?;
-                        writeln_code!(doc_file, "{}", attribute)?;
-                        writeln!(doc_file)?;
-    
-                        let new_path = path.strip_prefix(&self.config.root)?.to_owned();
-                        fs::create_dir_all(self.out_dir_src().join(&new_path))?;
-                        let new_path = new_path.join(&format!("variable.{}.md", attribute.name));
-    
-                        fs::write(self.out_dir_src().join(&new_path), doc_file)?;
-                        filenames.push((attribute.name.clone(), new_path));
-                    }
                 }  
             }
         }
@@ -401,6 +365,19 @@ impl DocBuilder {
         }
 
         Ok(out)
+    }
+
+    fn format_section<T: DocFormat + AsCode>(&self, title: &str, entries: Vec<(&T, &Vec<DocCommentTag>)>) -> eyre::Result<String>  {
+        let mut out = String::new();
+
+        writeln!(out, "{}", DocOutput::H2(title))?;
+        for (ev, comments) in entries {
+            writeln!(out, "{}\n{}\n", ev.doc(), comments.doc())?;
+            writeln_code!(out, "{}", ev)?;
+            writeln!(out)?;
+        }
+
+        return Ok(out);
     }
 
     fn write_book_config(&self, filenames: Vec<(Identifier, PathBuf)>) -> eyre::Result<()> {
