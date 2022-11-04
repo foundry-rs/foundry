@@ -7,7 +7,7 @@ use ethers_core::{
         rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream},
     },
 };
-use fastrlp::{length_of_length, Header, RlpDecodable, RlpEncodable};
+use open_fastrlp::{length_of_length, Header, RlpDecodable, RlpEncodable};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 
@@ -152,7 +152,7 @@ impl Decodable for TypedReceipt {
     }
 }
 
-impl fastrlp::Encodable for TypedReceipt {
+impl open_fastrlp::Encodable for TypedReceipt {
     fn length(&self) -> usize {
         match self {
             TypedReceipt::Legacy(r) => r.length(),
@@ -168,7 +168,7 @@ impl fastrlp::Encodable for TypedReceipt {
             }
         }
     }
-    fn encode(&self, out: &mut dyn fastrlp::BufMut) {
+    fn encode(&self, out: &mut dyn open_fastrlp::BufMut) {
         match self {
             TypedReceipt::Legacy(r) => r.encode(out),
             receipt => {
@@ -202,37 +202,39 @@ impl fastrlp::Encodable for TypedReceipt {
     }
 }
 
-impl fastrlp::Decodable for TypedReceipt {
-    fn decode(buf: &mut &[u8]) -> Result<Self, fastrlp::DecodeError> {
+impl open_fastrlp::Decodable for TypedReceipt {
+    fn decode(buf: &mut &[u8]) -> Result<Self, open_fastrlp::DecodeError> {
         // a receipt is either encoded as a string (non legacy) or a list (legacy).
         // We should not consume the buffer if we are decoding a legacy receipt, so let's
         // check if the first byte is between 0x80 and 0xbf.
         let rlp_type = *buf
             .first()
-            .ok_or(fastrlp::DecodeError::Custom("cannot decode a receipt from empty bytes"))?;
+            .ok_or(open_fastrlp::DecodeError::Custom("cannot decode a receipt from empty bytes"))?;
 
-        match rlp_type.cmp(&fastrlp::EMPTY_LIST_CODE) {
+        match rlp_type.cmp(&open_fastrlp::EMPTY_LIST_CODE) {
             Ordering::Less => {
                 // strip out the string header
                 let _header = Header::decode(buf)?;
-                let receipt_type = *buf.first().ok_or(fastrlp::DecodeError::Custom(
+                let receipt_type = *buf.first().ok_or(open_fastrlp::DecodeError::Custom(
                     "typed receipt cannot be decoded from an empty slice",
                 ))?;
                 if receipt_type == 0x01 {
                     buf.advance(1);
-                    <EIP2930Receipt as fastrlp::Decodable>::decode(buf).map(TypedReceipt::EIP2930)
+                    <EIP2930Receipt as open_fastrlp::Decodable>::decode(buf)
+                        .map(TypedReceipt::EIP2930)
                 } else if receipt_type == 0x02 {
                     buf.advance(1);
-                    <EIP1559Receipt as fastrlp::Decodable>::decode(buf).map(TypedReceipt::EIP1559)
+                    <EIP1559Receipt as open_fastrlp::Decodable>::decode(buf)
+                        .map(TypedReceipt::EIP1559)
                 } else {
-                    Err(fastrlp::DecodeError::Custom("invalid receipt type"))
+                    Err(open_fastrlp::DecodeError::Custom("invalid receipt type"))
                 }
             }
-            Ordering::Equal => {
-                Err(fastrlp::DecodeError::Custom("an empty list is not a valid receipt encoding"))
-            }
+            Ordering::Equal => Err(open_fastrlp::DecodeError::Custom(
+                "an empty list is not a valid receipt encoding",
+            )),
             Ordering::Greater => {
-                <EIP658Receipt as fastrlp::Decodable>::decode(buf).map(TypedReceipt::Legacy)
+                <EIP658Receipt as open_fastrlp::Decodable>::decode(buf).map(TypedReceipt::Legacy)
             }
         }
     }
@@ -256,7 +258,7 @@ mod tests {
         types::{Bytes, H160, H256},
         utils::hex,
     };
-    use fastrlp::{Decodable, Encodable};
+    use open_fastrlp::{Decodable, Encodable};
 
     use super::{EIP658Receipt, Log, TypedReceipt};
 

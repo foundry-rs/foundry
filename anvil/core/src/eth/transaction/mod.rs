@@ -15,8 +15,8 @@ use ethers_core::{
         rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream},
     },
 };
-use fastrlp::{length_of_length, Header, RlpDecodable, RlpEncodable};
 use foundry_evm::trace::CallTraceArena;
+use open_fastrlp::{length_of_length, Header, RlpDecodable, RlpEncodable};
 use revm::{CreateScheme, Return, TransactTo, TxEnv};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -186,14 +186,14 @@ impl Decodable for TransactionKind {
     }
 }
 
-impl fastrlp::Encodable for TransactionKind {
+impl open_fastrlp::Encodable for TransactionKind {
     fn length(&self) -> usize {
         match self {
             TransactionKind::Call(to) => to.length(),
             TransactionKind::Create => ([]).length(),
         }
     }
-    fn encode(&self, out: &mut dyn fastrlp::BufMut) {
+    fn encode(&self, out: &mut dyn open_fastrlp::BufMut) {
         match self {
             TransactionKind::Call(to) => to.encode(out),
             TransactionKind::Create => ([]).encode(out),
@@ -201,18 +201,18 @@ impl fastrlp::Encodable for TransactionKind {
     }
 }
 
-impl fastrlp::Decodable for TransactionKind {
-    fn decode(buf: &mut &[u8]) -> Result<Self, fastrlp::DecodeError> {
+impl open_fastrlp::Decodable for TransactionKind {
+    fn decode(buf: &mut &[u8]) -> Result<Self, open_fastrlp::DecodeError> {
         if let Some(&first) = buf.first() {
             if first == 0x80 {
                 buf.advance(1);
                 Ok(TransactionKind::Create)
             } else {
-                let addr = <Address as fastrlp::Decodable>::decode(buf)?;
+                let addr = <Address as open_fastrlp::Decodable>::decode(buf)?;
                 Ok(TransactionKind::Call(addr))
             }
         } else {
-            Err(fastrlp::DecodeError::InputTooShort)
+            Err(open_fastrlp::DecodeError::InputTooShort)
         }
     }
 }
@@ -587,7 +587,7 @@ impl Decodable for TypedTransaction {
     }
 }
 
-impl fastrlp::Encodable for TypedTransaction {
+impl open_fastrlp::Encodable for TypedTransaction {
     fn length(&self) -> usize {
         match self {
             TypedTransaction::Legacy(tx) => tx.length(),
@@ -602,7 +602,7 @@ impl fastrlp::Encodable for TypedTransaction {
             }
         }
     }
-    fn encode(&self, out: &mut dyn fastrlp::BufMut) {
+    fn encode(&self, out: &mut dyn open_fastrlp::BufMut) {
         match self {
             TypedTransaction::Legacy(tx) => tx.encode(out),
             tx => {
@@ -634,14 +634,14 @@ impl fastrlp::Encodable for TypedTransaction {
     }
 }
 
-impl fastrlp::Decodable for TypedTransaction {
-    fn decode(buf: &mut &[u8]) -> Result<Self, fastrlp::DecodeError> {
-        let first = *buf.first().ok_or(fastrlp::DecodeError::Custom("empty slice"))?;
+impl open_fastrlp::Decodable for TypedTransaction {
+    fn decode(buf: &mut &[u8]) -> Result<Self, open_fastrlp::DecodeError> {
+        let first = *buf.first().ok_or(open_fastrlp::DecodeError::Custom("empty slice"))?;
 
         // a signed transaction is either encoded as a string (non legacy) or a list (legacy).
         // We should not consume the buffer if we are decoding a legacy transaction, so let's
         // check if the first byte is between 0x80 and 0xbf.
-        match first.cmp(&fastrlp::EMPTY_LIST_CODE) {
+        match first.cmp(&open_fastrlp::EMPTY_LIST_CODE) {
             Ordering::Less => {
                 // strip out the string header
                 // NOTE: typed transaction encodings either contain a "rlp header" which contains
@@ -655,27 +655,26 @@ impl fastrlp::Decodable for TypedTransaction {
                 // consumed.
                 // Otherwise, header decoding will succeed but nothing is consumed.
                 let _header = Header::decode(buf)?;
-                let tx_type = *buf.first().ok_or(fastrlp::DecodeError::Custom(
+                let tx_type = *buf.first().ok_or(open_fastrlp::DecodeError::Custom(
                     "typed tx cannot be decoded from an empty slice",
                 ))?;
                 if tx_type == 0x01 {
                     buf.advance(1);
-                    <EIP2930Transaction as fastrlp::Decodable>::decode(buf)
+                    <EIP2930Transaction as open_fastrlp::Decodable>::decode(buf)
                         .map(TypedTransaction::EIP2930)
                 } else if tx_type == 0x02 {
                     buf.advance(1);
-                    <EIP1559Transaction as fastrlp::Decodable>::decode(buf)
+                    <EIP1559Transaction as open_fastrlp::Decodable>::decode(buf)
                         .map(TypedTransaction::EIP1559)
                 } else {
-                    Err(fastrlp::DecodeError::Custom("invalid tx type"))
+                    Err(open_fastrlp::DecodeError::Custom("invalid tx type"))
                 }
             }
-            Ordering::Equal => Err(fastrlp::DecodeError::Custom(
+            Ordering::Equal => Err(open_fastrlp::DecodeError::Custom(
                 "an empty list is not a valid transaction encoding",
             )),
-            Ordering::Greater => {
-                <LegacyTransaction as fastrlp::Decodable>::decode(buf).map(TypedTransaction::Legacy)
-            }
+            Ordering::Greater => <LegacyTransaction as open_fastrlp::Decodable>::decode(buf)
+                .map(TypedTransaction::Legacy),
         }
     }
 }
@@ -1127,7 +1126,7 @@ mod tests {
     use super::*;
     use bytes::BytesMut;
     use ethers_core::utils::hex;
-    use fastrlp::{Decodable, Encodable};
+    use open_fastrlp::{Decodable, Encodable};
 
     #[test]
     fn can_recover_sender() {
