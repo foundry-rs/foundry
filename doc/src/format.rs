@@ -2,7 +2,10 @@ use crate::output::DocOutput;
 use itertools::Itertools;
 use solang_parser::{
     doccomment::DocCommentTag,
-    pt::{Base, EventDefinition, FunctionDefinition, StructDefinition, VariableDefinition},
+    pt::{
+        Base, EnumDefinition, ErrorDefinition, EventDefinition, FunctionDefinition,
+        StructDefinition, VariableDefinition,
+    },
 };
 
 /// TODO:
@@ -78,7 +81,19 @@ impl DocFormat for EventDefinition {
     }
 }
 
+impl DocFormat for ErrorDefinition {
+    fn doc(&self) -> String {
+        DocOutput::H3(&self.name.name).doc()
+    }
+}
+
 impl DocFormat for StructDefinition {
+    fn doc(&self) -> String {
+        DocOutput::H3(&self.name.name).doc()
+    }
+}
+
+impl DocFormat for EnumDefinition {
     fn doc(&self) -> String {
         DocOutput::H3(&self.name.name).doc()
     }

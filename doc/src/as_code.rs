@@ -1,9 +1,9 @@
 use forge_fmt::solang_ext::AttrSortKeyIteratorExt;
 use itertools::Itertools;
 use solang_parser::pt::{
-    EventDefinition, EventParameter, Expression, FunctionAttribute, FunctionDefinition,
-    IdentifierPath, Loc, Parameter, StructDefinition, Type, VariableAttribute, VariableDeclaration,
-    VariableDefinition,
+    EnumDefinition, ErrorDefinition, ErrorParameter, EventDefinition, EventParameter, Expression,
+    FunctionAttribute, FunctionDefinition, Identifier, IdentifierPath, Loc, Parameter,
+    StructDefinition, Type, VariableAttribute, VariableDeclaration, VariableDefinition,
 };
 
 /// Display Solidity parse tree unit as code string.
@@ -175,6 +175,28 @@ impl AsCode for Vec<EventParameter> {
     }
 }
 
+impl AsCode for ErrorDefinition {
+    fn as_code(&self) -> String {
+        let name = &self.name.name;
+        let fields = self.fields.as_code();
+        format!("error {name}({fields})")
+    }
+}
+
+impl AsCode for ErrorParameter {
+    fn as_code(&self) -> String {
+        let ty = self.ty.as_code();
+        let name = self.name.as_ref().map(|name| name.name.to_owned()).unwrap_or_default();
+        format!("{ty} {name}")
+    }
+}
+
+impl AsCode for Vec<ErrorParameter> {
+    fn as_code(&self) -> String {
+        self.iter().map(AsCode::as_code).join(", ")
+    }
+}
+
 impl AsCode for IdentifierPath {
     fn as_code(&self) -> String {
         self.identifiers.iter().map(|ident| ident.name.to_owned()).join(".")
@@ -191,5 +213,19 @@ impl AsCode for StructDefinition {
 impl AsCode for VariableDeclaration {
     fn as_code(&self) -> String {
         format!("{} {}", self.ty.as_code(), self.name.name)
+    }
+}
+
+impl AsCode for EnumDefinition {
+    fn as_code(&self) -> String {
+        let name = &self.name.name;
+        let values = self.values.iter().map(AsCode::as_code).join("\n\t");
+        format!("enum {name}{{\n\t{values}\n}}")
+    }
+}
+
+impl AsCode for Identifier {
+    fn as_code(&self) -> String {
+        format!("{}", self.name)
     }
 }

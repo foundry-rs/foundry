@@ -2,8 +2,8 @@ use forge_fmt::{Visitable, Visitor};
 use solang_parser::{
     doccomment::{parse_doccomments, DocComment, DocCommentTag},
     pt::{
-        Comment, ContractDefinition, EventDefinition, FunctionDefinition, Loc, SourceUnit,
-        SourceUnitPart, StructDefinition, VariableDefinition,
+        Comment, ContractDefinition, EnumDefinition, ErrorDefinition, EventDefinition,
+        FunctionDefinition, Loc, SourceUnit, SourceUnitPart, StructDefinition, VariableDefinition,
     },
 };
 use thiserror::Error;
@@ -40,7 +40,9 @@ pub(crate) enum DocElement {
     Function(FunctionDefinition),
     Variable(VariableDefinition),
     Event(EventDefinition),
+    Error(ErrorDefinition),
     Struct(StructDefinition),
+    Enum(EnumDefinition),
 }
 
 impl DocParser {
@@ -106,7 +108,9 @@ impl Visitor for DocParser {
                 }
                 SourceUnitPart::FunctionDefinition(func) => self.visit_function(func)?,
                 SourceUnitPart::EventDefinition(event) => self.visit_event(event)?,
+                SourceUnitPart::ErrorDefinition(error) => self.visit_error(error)?,
                 SourceUnitPart::StructDefinition(structure) => self.visit_struct(structure)?,
+                SourceUnitPart::EnumDefinition(enumerable) => self.visit_enum(enumerable)?,
                 _ => {}
             };
         }
@@ -129,8 +133,18 @@ impl Visitor for DocParser {
         Ok(())
     }
 
+    fn visit_error(&mut self, error: &mut ErrorDefinition) -> Result<()> {
+        self.add_element_to_parent(DocElement::Error(error.clone()), error.loc);
+        Ok(())
+    }
+
     fn visit_struct(&mut self, structure: &mut StructDefinition) -> Result<()> {
         self.add_element_to_parent(DocElement::Struct(structure.clone()), structure.loc);
+        Ok(())
+    }
+
+    fn visit_enum(&mut self, enumerable: &mut EnumDefinition) -> Result<()> {
+        self.add_element_to_parent(DocElement::Enum(enumerable.clone()), enumerable.loc);
         Ok(())
     }
 }
