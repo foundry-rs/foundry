@@ -127,7 +127,7 @@ fn get_deployed_code(state: &Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
 fn read_bytecode(state: &Cheatcodes, path: &str) -> Result<ArtifactBytecode, Bytes> {
     let path = get_artifact_path(&state.config.paths, path);
     let path =
-        state.config.ensure_path_allowed(&path, FsAccessKind::Read).map_err(error::encode_error)?;
+        state.config.ensure_path_allowed(path, FsAccessKind::Read).map_err(error::encode_error)?;
 
     let data = fs::read_to_string(path).map_err(error::encode_error)?;
     serde_json::from_str::<ArtifactBytecode>(&data).map_err(error::encode_error)
@@ -344,7 +344,7 @@ fn value_to_token(value: &Value) -> eyre::Result<Token> {
 /// deserialized in the same order. That means that the solidity `struct` should order it's fields
 /// alphabetically and not by efficient packing or some other taxonomy.
 fn parse_json(_state: &mut Cheatcodes, json_str: &str, key: &str) -> Result<Bytes, Bytes> {
-    let json = serde_json::from_str(&json_str).map_err(error::encode_error)?;
+    let json = serde_json::from_str(json_str).map_err(error::encode_error)?;
     let values: Vec<&Value> = jsonpath_lib::select(&json, key).map_err(error::encode_error)?;
     // values is an array of items. Depending on the JsonPath key, they
     // can be many or a single item. An item can be a single value or
@@ -361,28 +361,34 @@ fn parse_json(_state: &mut Cheatcodes, json_str: &str, key: &str) -> Result<Byte
     let abi_encoded = abi::encode(&[Token::Bytes(abi::encode(&res?))]);
     Ok(abi_encoded.into())
 }
-
+/// Serializes a key:value pair to a specific object. By calling this function multiple times,
+/// the user can serialize multiple KV pairs to the same object. The value can be of any type, even
+/// a new object in itself. The function will return
+/// a stringified version of the object, so that the user can use that as a value to a new
+/// invocation of the same function with a new object key. This enables the user to reuse the same
+/// function to crate arbitrarily complex object structures (JSON).
 fn serialize_json(
-    _state: &mut Cheatcodes,
+    state: &mut Cheatcodes,
     object_key: &str,
     value_key: &str,
     value: &str,
 ) -> Result<Bytes, Bytes> {
     let parsed_value = serde_json::from_str(value).unwrap_or(Value::String(value.to_string()));
-    let json = if let Some(serialization) = _state.serialized_jsons.get_mut(object_key) {
+    let json = if let Some(serialization) = state.serialized_jsons.get_mut(object_key) {
         serialization.insert(value_key.to_string(), parsed_value);
         serialization.clone()
     } else {
         let mut serialization = HashMap::new();
         serialization.insert(value_key.to_string(), parsed_value);
-        _state.serialized_jsons.insert(object_key.to_string(), serialization.clone());
+        state.serialized_jsons.insert(object_key.to_string(), serialization.clone());
         serialization.clone()
     };
     let stringified = serde_json::to_string(&json)
         .map_err(|err| error::encode_error(format!("Failed to stringify hashmap: {}", err)))?;
     Ok(abi::encode(&[Token::String(stringified)]).into())
 }
-
+/// Converts an array to it's stringified version, adding the appropriate quotes around it's
+/// ellements. This is to signify that the elements of the array are string themselves.
 fn array_str_to_str<T: UIfmt>(array: &Vec<T>) -> String {
     format!(
         "[{}",
@@ -400,6 +406,9 @@ fn array_str_to_str<T: UIfmt>(array: &Vec<T>) -> String {
     )
 }
 
+/// Converts an array to it's stringified version. It will not add quotes around the values of the
+/// array, enabling serde_json to parse the values of the array as types (e.g numbers, booleans,
+/// etc.)
 fn array_eval_to_str<T: UIfmt>(array: &Vec<T>) -> String {
     format!(
         "[{}",
@@ -417,6 +426,8 @@ fn array_eval_to_str<T: UIfmt>(array: &Vec<T>) -> String {
     )
 }
 
+/// Write an object to a new file OR replaces the value of an existing JSON file with the supplied
+/// object.
 fn write_json(
     _state: &mut Cheatcodes,
     object_key: &str,
