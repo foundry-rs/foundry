@@ -181,7 +181,7 @@ impl DocBuilder {
                                         DocOutput::H3("Returns"),
                                         self.format_comment_table(
                                             &["Name", "Type", "Description"],
-                                            &params,
+                                            &returns,
                                             &returns_comments
                                         )?
                                     )?;
@@ -329,7 +329,7 @@ impl DocBuilder {
                                 DocOutput::H3("Returns"),
                                 self.format_comment_table(
                                     &["Name", "Type", "Description"],
-                                    &params,
+                                    &returns,
                                     &returns_comments
                                 )?
                             )?;
