@@ -28,4 +28,4 @@ reference-trie = { version = "0.25" }
 keccak-hasher = { version = "0.15" }
 
 [features]
-serde = ["dep:serde"]
+default = ["serde"]
