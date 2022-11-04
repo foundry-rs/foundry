@@ -56,7 +56,7 @@ impl EtherscanConfigs {
                 .configs
                 .into_iter()
                 .map(|(name, e)| {
-                    let resolved = e.resolve(&name);
+                    let resolved = e.resolve_with_alias(&name);
                     (name, resolved)
                 })
                 .collect(),
@@ -139,16 +139,27 @@ impl EtherscanConfig {
     ///
     /// Returns an error if the type holds a reference to an env var and the env var is not set
     /// Or no chain or url is configured
-    pub fn resolve(self, alias: &str) -> Result<ResolvedEtherscanConfig, EtherscanConfigError> {
-        let EtherscanConfig { chain, url, key } = self;
-        let key = key.resolve()?;
-
-        let chain = chain.or_else(|| {
+    pub fn resolve_with_alias(
+        mut self,
+        alias: &str,
+    ) -> Result<ResolvedEtherscanConfig, EtherscanConfigError> {
+        if self.chain.is_none() {
             // if no chain is provided we try to convert the alias into a named chain, this way we
             // can support settings like `moonbeam = { key = "..." }` where the alias `moonbeam`
             // also serves as the chain id
-            Chain::from_str(alias).ok()
-        });
+            self.chain = Chain::from_str(alias).ok();
+        }
+        self.resolve()
+    }
+
+    /// Returns the etherscan config required to create a client
+    ///
+    /// # Error
+    ///
+    /// Returns an error if the type holds a reference to an env var and the env var is not set
+    pub fn resolve(self) -> Result<ResolvedEtherscanConfig, EtherscanConfigError> {
+        let EtherscanConfig { chain, url, key } = self;
+        let key = key.resolve()?;
 
         match (chain, url) {
             (Some(chain), Some(api_url)) => Ok(ResolvedEtherscanConfig {
@@ -158,11 +169,11 @@ impl EtherscanConfig {
                 chain: Some(chain),
             }),
             (Some(chain), None) => ResolvedEtherscanConfig::create(key, chain)
-                .ok_or_else(|| EtherscanConfigError::UnknownChain(alias.to_string(), chain)),
+                .ok_or_else(|| EtherscanConfigError::UnknownChain(chain.to_string(), chain)),
             (None, Some(api_url)) => {
                 Ok(ResolvedEtherscanConfig { api_url, browser_url: None, key, chain: None })
             }
-            _ => Err(EtherscanConfigError::MissingUrlOrChain(alias.to_string())),
+            _ => Err(EtherscanConfigError::MissingUrlOrChain("No chain provided".to_string())),
         }
     }
 }

@@ -44,9 +44,14 @@ pub struct EtherscanVerificationProvider;
 #[async_trait]
 impl VerificationProvider for EtherscanVerificationProvider {
     async fn verify(&self, args: VerifyArgs) -> eyre::Result<()> {
-        let etherscan =
-            self.client(&args.chain, &args.verifier.verifier_url, &args.etherscan_key)?;
-        let verify_args = self.create_verify_request(&args).await?;
+        let config = args.try_load_config_emit_warnings()?;
+        let etherscan = self.client(
+            args.chain,
+            args.verifier.verifier_url.as_deref(),
+            args.etherscan_key.as_deref(),
+            &config,
+        )?;
+        let verify_args = self.create_verify_request(&args, Some(config)).await?;
 
         trace!(?verify_args, target = "forge::verify", "submitting verification request");
 
@@ -118,8 +123,13 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
     /// Executes the command to check verification status on Etherscan
     async fn check(&self, args: VerifyCheckArgs) -> eyre::Result<()> {
-        let etherscan =
-            self.client(&args.chain, &args.verifier.verifier_url, &args.etherscan_key)?;
+        let config = args.try_load_config_emit_warnings()?;
+        let etherscan = self.client(
+            args.chain,
+            args.verifier.verifier_url.as_deref(),
+            args.etherscan_key.as_deref(),
+            &config,
+        )?;
         let retry: Retry = args.retry.into();
         retry
             .run_async(|| {
@@ -169,12 +179,19 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
 impl EtherscanVerificationProvider {
     /// Create an etherscan client
-    fn client(
+    pub(crate) fn client(
         &self,
-        chain: &Chain,
-        url: &Option<String>,
-        etherscan_key: &Option<String>,
+        chain: Chain,
+        verifier_url: Option<&str>,
+        etherscan_key: Option<&str>,
+        config: &Config,
     ) -> eyre::Result<Client> {
+        let etherscan_config = config.get_etherscan_config_with_chain(Some(chain))?;
+
+        let url = verifier_url.or_else(|| etherscan_config.as_ref().map(|c| c.api_url.as_str()));
+        let etherscan_key =
+            etherscan_key.or_else(|| etherscan_config.as_ref().map(|c| c.key.as_str()));
+
         let mut builder = Client::builder();
 
         builder = if let Some(url) = url {
@@ -184,17 +201,23 @@ impl EtherscanVerificationProvider {
         };
 
         builder
-            .with_api_key(etherscan_key.clone().unwrap_or_default())
+            .with_api_key(etherscan_key.unwrap_or_default())
             .build()
             .wrap_err("Failed to create etherscan client")
     }
 
-    /// Creates the `VerifyContract` etherescan request in order to verify the contract
+    /// Creates the `VerifyContract` etherscan request in order to verify the contract
     ///
     /// If `--flatten` is set to `true` then this will send with [`CodeFormat::SingleFile`]
     /// otherwise this will use the [`CodeFormat::StandardJsonInput`]
-    pub async fn create_verify_request(&self, args: &VerifyArgs) -> eyre::Result<VerifyContract> {
-        let mut config = args.try_load_config_emit_warnings()?;
+    pub async fn create_verify_request(
+        &self,
+        args: &VerifyArgs,
+        config: Option<Config>,
+    ) -> eyre::Result<VerifyContract> {
+        let mut config =
+            if let Some(config) = config { config } else { args.try_load_config_emit_warnings()? };
+
         config.libraries.extend(args.libraries.clone());
 
         let project = config.project()?;

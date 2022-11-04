@@ -5,7 +5,7 @@ use ethers_core::{
     types::{H256, U256},
     utils::rlp,
 };
-use fastrlp::{RlpDecodable, RlpEncodable};
+use open_fastrlp::{RlpDecodable, RlpEncodable};
 use revm::KECCAK_EMPTY;
 // reexport for convenience
 pub use ethers_core::types::{EIP1186ProofResponse as AccountProof, StorageProof};
