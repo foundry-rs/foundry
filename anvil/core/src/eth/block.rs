@@ -14,7 +14,6 @@ use open_fastrlp::{
     length_of_length, Decodable as FastDecodable, Encodable as FastEncodable, RlpDecodable,
     RlpEncodable,
 };
-use serde::{Deserialize, Serialize};
 
 /// Container type that gathers all block data
 #[derive(Debug, Clone)]
@@ -25,7 +24,8 @@ pub struct BlockInfo {
 }
 
 /// ethereum block
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, RlpEncodable, RlpDecodable)]
+#[derive(Clone, Debug, PartialEq, Eq, RlpEncodable, RlpDecodable)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Block {
     pub header: Header,
     pub transactions: Vec<TypedTransaction>,
@@ -68,8 +68,9 @@ impl Decodable for Block {
 }
 
 /// ethereum block header
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct Header {
     pub parent_hash: H256,
     pub ommers_hash: H256,

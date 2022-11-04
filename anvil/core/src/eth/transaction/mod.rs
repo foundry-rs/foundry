@@ -18,7 +18,6 @@ use ethers_core::{
 use foundry_evm::trace::CallTraceArena;
 use open_fastrlp::{length_of_length, Header, RlpDecodable, RlpEncodable};
 use revm::{CreateScheme, Return, TransactTo, TxEnv};
-use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 
 /// compatibility with `ethers-rs` types
@@ -38,22 +37,23 @@ pub enum TypedTransactionRequest {
 }
 
 /// Represents _all_ transaction requests received from RPC
-#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct EthTransactionRequest {
     /// from address
     pub from: Option<Address>,
     /// to address
     pub to: Option<Address>,
     /// legacy, gas Price
-    #[serde(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub gas_price: Option<U256>,
     /// max base fee per gas sender is willing to pay
-    #[serde(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub max_fee_per_gas: Option<U256>,
     /// miner tip
-    #[serde(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub max_priority_fee_per_gas: Option<U256>,
     /// gas
     pub gas: Option<U256>,
@@ -64,10 +64,10 @@ pub struct EthTransactionRequest {
     /// Transaction nonce
     pub nonce: Option<U256>,
     /// warm storage access pre-payment
-    #[serde(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub access_list: Option<Vec<AccessListItem>>,
     /// EIP-2718 type
-    #[serde(rename = "type")]
+    #[cfg_attr(feature = "serde", serde(rename = "type"))]
     pub transaction_type: Option<U256>,
 }
 
@@ -143,7 +143,8 @@ impl EthTransactionRequest {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TransactionKind {
     Call(Address),
     Create,
@@ -383,7 +384,8 @@ impl Encodable for EIP1559TransactionRequest {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TypedTransaction {
     /// Legacy transaction type
     Legacy(LegacyTransaction),
@@ -679,7 +681,8 @@ impl open_fastrlp::Decodable for TypedTransaction {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash, RlpEncodable, RlpDecodable)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, RlpEncodable, RlpDecodable)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LegacyTransaction {
     pub nonce: U256,
     pub gas_price: U256,
@@ -760,7 +763,8 @@ impl Decodable for LegacyTransaction {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash, RlpEncodable, RlpDecodable)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, RlpEncodable, RlpDecodable)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EIP2930Transaction {
     pub chain_id: u64,
     pub nonce: U256,
@@ -846,7 +850,8 @@ impl Decodable for EIP2930Transaction {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash, RlpEncodable, RlpDecodable)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, RlpEncodable, RlpDecodable)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EIP1559Transaction {
     pub chain_id: u64,
     pub nonce: U256,
