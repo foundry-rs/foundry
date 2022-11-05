@@ -124,6 +124,14 @@ pub struct ScriptArgs {
     #[clap(flatten, next_help_heading = "EVM OPTIONS")]
     pub evm_opts: EvmArgs,
 
+    #[clap(
+        long,
+        help = "Send via `eth_sendTransaction` using the `--sender` argument or `$ETH_FROM` as sender",
+        requires = "sender",
+        conflicts_with_all = &["private_key", "private_keys", "froms", "ledger", "trezor"]
+    )]
+    pub unlocked: bool,
+
     /// Resumes submitting transactions that failed or timed-out previously.
     ///
     /// It DOES NOT simulate the script again and it expects nonces to have remained the same.
@@ -634,6 +642,30 @@ mod tests {
             args.sig,
             "522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266"
         );
+    }
+
+    #[test]
+    fn can_parse_unlocked() {
+        let args: ScriptArgs = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--sender",
+            "0x4e59b44847b379578588920ca78fbf26c0b4956c",
+            "--unlocked",
+        ]);
+        assert!(args.unlocked);
+
+        let key = U256::zero();
+        let args = ScriptArgs::try_parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--sender",
+            "0x4e59b44847b379578588920ca78fbf26c0b4956c",
+            "--unlocked",
+            "--private-key",
+            key.to_string().as_str(),
+        ]);
+        assert!(args.is_err());
     }
 
     #[test]
