@@ -136,17 +136,17 @@ impl Decodable for TypedReceipt {
         let first = *slice.first().ok_or(DecoderError::Custom("empty receipt"))?;
 
         if rlp.is_list() {
-            return Ok(TypedReceipt::Legacy(Decodable::decode(rlp)?));
+            return Ok(TypedReceipt::Legacy(Decodable::decode(rlp)?))
         }
 
         let s = slice.get(1..).ok_or(DecoderError::Custom("no receipt content"))?;
 
         if first == 0x01 {
-            return rlp::decode(s).map(TypedReceipt::EIP2930);
+            return rlp::decode(s).map(TypedReceipt::EIP2930)
         }
 
         if first == 0x02 {
-            return rlp::decode(s).map(TypedReceipt::EIP1559);
+            return rlp::decode(s).map(TypedReceipt::EIP1559)
         }
 
         Err(DecoderError::Custom("unknown receipt type"))

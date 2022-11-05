@@ -48,7 +48,7 @@ impl<'a> serde::Deserialize<'a> for SubscriptionParams {
 
         let val = serde_json::Value::deserialize(deserializer)?;
         if val.is_null() {
-            return Ok(SubscriptionParams::default());
+            return Ok(SubscriptionParams::default())
         }
 
         let filter: Filter = serde_json::from_value(val)
