@@ -1018,17 +1018,18 @@ impl Config {
         // autodetect paths
         let root = root.into();
         let paths = ProjectPathsConfig::builder().build_with_root(&root);
+        let artifacts: PathBuf = paths.artifacts.file_name().unwrap().into();
         Config {
             __root: paths.root.into(),
             src: paths.sources.file_name().unwrap().into(),
-            out: paths.artifacts.file_name().unwrap().into(),
+            out: artifacts.clone(),
             libs: paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect(),
             remappings: paths
                 .remappings
                 .into_iter()
                 .map(|r| RelativeRemapping::new(r, &root))
                 .collect(),
-            fs_permissions: FsPermissions::new([PathPermission::read(paths.artifacts)]),
+            fs_permissions: FsPermissions::new([PathPermission::read(artifacts)]),
             ..Config::default()
         }
     }
