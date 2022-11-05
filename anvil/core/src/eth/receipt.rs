@@ -1,5 +1,4 @@
 use crate::eth::utils::enveloped;
-use bytes::Buf;
 use ethers_core::{
     types::{Address, Bloom, Bytes, H256, U256},
     utils::{
@@ -7,11 +6,9 @@ use ethers_core::{
         rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream},
     },
 };
-use open_fastrlp::{length_of_length, Header, RlpDecodable, RlpEncodable};
 
-use std::cmp::Ordering;
-
-#[derive(Clone, Debug, PartialEq, Eq, RlpEncodable, RlpDecodable)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "fastrlp", derive(open_fastrlp::RlpEncodable, open_fastrlp::RlpDecodable))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Log {
     pub address: Address,
@@ -53,7 +50,8 @@ impl Decodable for Log {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, RlpEncodable, RlpDecodable)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "fastrlp", derive(open_fastrlp::RlpEncodable, open_fastrlp::RlpDecodable))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EIP658Receipt {
     pub status_code: u8,
@@ -155,6 +153,7 @@ impl Decodable for TypedReceipt {
     }
 }
 
+#[cfg(feature = "fastrlp")]
 impl open_fastrlp::Encodable for TypedReceipt {
     fn length(&self) -> usize {
         match self {
@@ -167,11 +166,13 @@ impl open_fastrlp::Encodable for TypedReceipt {
                 };
 
                 // we include a string header for typed receipts, so include the length here
-                payload_len + length_of_length(payload_len)
+                payload_len + open_fastrlp::length_of_length(payload_len)
             }
         }
     }
     fn encode(&self, out: &mut dyn open_fastrlp::BufMut) {
+        use open_fastrlp::Header;
+
         match self {
             TypedReceipt::Legacy(r) => r.encode(out),
             receipt => {
@@ -205,8 +206,13 @@ impl open_fastrlp::Encodable for TypedReceipt {
     }
 }
 
+#[cfg(feature = "fastrlp")]
 impl open_fastrlp::Decodable for TypedReceipt {
     fn decode(buf: &mut &[u8]) -> Result<Self, open_fastrlp::DecodeError> {
+        use bytes::Buf;
+        use open_fastrlp::Header;
+        use std::cmp::Ordering;
+
         // a receipt is either encoded as a string (non legacy) or a list (legacy).
         // We should not consume the buffer if we are decoding a legacy receipt, so let's
         // check if the first byte is between 0x80 and 0xbf.
@@ -255,19 +261,20 @@ impl From<TypedReceipt> for EIP658Receipt {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
-    use ethers_core::{
-        types::{Bytes, H160, H256},
-        utils::hex,
-    };
-    use open_fastrlp::{Decodable, Encodable};
-
-    use super::{EIP658Receipt, Log, TypedReceipt};
-
     #[test]
+    #[cfg(feature = "fastrlp")]
     // Test vector from: https://eips.ethereum.org/EIPS/eip-2481
     fn encode_legacy_receipt() {
+        use std::str::FromStr;
+
+        use ethers_core::{
+            types::{Bytes, H160, H256},
+            utils::hex,
+        };
+        use open_fastrlp::Encodable;
+
+        use crate::eth::receipt::{EIP658Receipt, Log, TypedReceipt};
+
         let expected = hex::decode("f901668001b9010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f85ff85d940000000000000000000000000000000000000011f842a0000000000000000000000000000000000000000000000000000000000000deada0000000000000000000000000000000000000000000000000000000000000beef830100ff").unwrap();
 
         let mut data = vec![];
@@ -298,8 +305,19 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "fastrlp")]
     // Test vector from: https://eips.ethereum.org/EIPS/eip-2481
     fn decode_legacy_receipt() {
+        use std::str::FromStr;
+
+        use ethers_core::{
+            types::{Bytes, H160, H256},
+            utils::hex,
+        };
+        use open_fastrlp::Decodable;
+
+        use crate::eth::receipt::{EIP658Receipt, Log, TypedReceipt};
+
         let data = hex::decode("f901668001b9010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f85ff85d940000000000000000000000000000000000000011f842a0000000000000000000000000000000000000000000000000000000000000deada0000000000000000000000000000000000000000000000000000000000000beef830100ff").unwrap();
 
         let expected = TypedReceipt::Legacy(EIP658Receipt {
