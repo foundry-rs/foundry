@@ -11,7 +11,7 @@ use ethers::{
 use eyre::{Result, WrapErr};
 use rayon::prelude::*;
 use regex::RegexSetBuilder;
-use std::time::Instant;
+use std::{str::FromStr, time::Instant};
 
 #[derive(Debug, Clone, Parser)]
 pub struct Create2Args {
@@ -54,8 +54,14 @@ pub struct Create2Args {
     init_code_hash: Option<String>,
 }
 
+#[allow(dead_code)]
+pub struct Create2Output {
+    address: Address,
+    salt: U256,
+}
+
 impl Cmd for Create2Args {
-    type Output = ();
+    type Output = Create2Output;
 
     fn run(self) -> eyre::Result<Self::Output> {
         Create2Args::generate_address(self)
@@ -63,7 +69,7 @@ impl Cmd for Create2Args {
 }
 
 impl Create2Args {
-    fn generate_address(self) -> Result<()> {
+    fn generate_address(self) -> Result<Create2Output> {
         let Create2Args {
             starts_with,
             ends_with,
@@ -146,13 +152,123 @@ impl Create2Args {
             })
             .unwrap();
 
+        let salt = U256::from(salt.to_vec().as_slice());
+        let address = Address::from_str(&addr).unwrap();
+
         println!(
             "Successfully found contract address in {} seconds.\nAddress: {}\nSalt: {}",
             timer.elapsed().as_secs(),
             addr,
-            U256::from(salt.to_vec().as_slice())
+            salt
         );
 
-        Ok(())
+        Ok(Create2Output { address, salt })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ethers::{abi::AbiEncode, utils::get_create2_address};
+
+    use super::*;
+
+    const DEPLOYER: &'static str = "0x4e59b44847b379578588920ca78fbf26c0b4956c";
+
+    #[test]
+    fn basic_create2() {
+        let args = Create2Args::parse_from(["foundry-cli", "--starts-with", "babe"]);
+        let create2_out = args.run().unwrap();
+        let address = create2_out.address;
+        let address = format!("{address:x}");
+
+        assert!(address.starts_with("babe"));
+    }
+
+    #[test]
+    fn matches_pattern() {
+        let args = Create2Args::parse_from([
+            "foundry-cli",
+            "--matching",
+            "0xbabeXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+        ]);
+        let create2_out = args.run().unwrap();
+        let address = create2_out.address;
+        let address = format!("{address:x}");
+
+        assert!(address.starts_with("babe"));
+    }
+
+    #[test]
+    fn create2_init_code() {
+        let init_code = "00";
+        let args = Create2Args::parse_from([
+            "foundry-cli",
+            "--starts-with",
+            "babe",
+            "--init-code",
+            init_code,
+        ]);
+        let create2_out = args.run().unwrap();
+        let address = create2_out.address;
+        let address_str = format!("{address:x}");
+        let salt = create2_out.salt;
+        let deployer = Address::from_str(DEPLOYER).unwrap();
+
+        assert!(address_str.starts_with("babe"));
+        assert_eq!(address, verify_create2(deployer, salt, hex::decode(init_code).unwrap()));
+    }
+
+    #[test]
+    fn create2_init_code_hash() {
+        let init_code_hash = "bc36789e7a1e281436464229828f817d6612f7b477d66591ff96a9e064bcc98a";
+        let args = Create2Args::parse_from([
+            "foundry-cli",
+            "--starts-with",
+            "babe",
+            "--init-code-hash",
+            init_code_hash,
+        ]);
+        let create2_out = args.run().unwrap();
+        let address = create2_out.address;
+        let address_str = format!("{address:x}");
+        let salt = create2_out.salt;
+        let deployer = Address::from_str(DEPLOYER).unwrap();
+
+        assert!(address_str.starts_with("babe"));
+        assert_eq!(
+            address,
+            verify_create2_hash(deployer, salt, hex::decode(init_code_hash).unwrap())
+        );
+    }
+
+    #[test]
+    fn verify_helpers() {
+        // https://eips.ethereum.org/EIPS/eip-1014
+        let eip_address = Address::from_str("0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38").unwrap();
+
+        let deployer = Address::from_str("0x0000000000000000000000000000000000000000").unwrap();
+        let salt =
+            U256::from_str("0x0000000000000000000000000000000000000000000000000000000000000000")
+                .unwrap();
+        let init_code = hex::decode("00").unwrap();
+        let address = verify_create2(deployer, salt, init_code);
+
+        assert_eq!(address, eip_address);
+
+        let init_code_hash =
+            hex::decode("bc36789e7a1e281436464229828f817d6612f7b477d66591ff96a9e064bcc98a")
+                .unwrap();
+        let address = verify_create2_hash(deployer, salt, init_code_hash);
+
+        assert_eq!(address, eip_address);
+    }
+
+    fn verify_create2(deployer: Address, salt: U256, init_code: Vec<u8>) -> Address {
+        // let init_code_hash = keccak256(init_code);
+        get_create2_address(deployer, salt.encode(), init_code)
+    }
+
+    fn verify_create2_hash(deployer: Address, salt: U256, init_code_hash: Vec<u8>) -> Address {
+        get_create2_address_from_hash(deployer, salt.encode(), init_code_hash)
     }
 }

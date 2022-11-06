@@ -679,7 +679,15 @@ async fn main() -> eyre::Result<()> {
                 }
             }
         }
+<<<<<<< HEAD
         Subcommands::Create2(cmd) => cmd.run()?,
+=======
+        Subcommands::FindBlock(cmd) => cmd.run()?.await?,
+        Subcommands::Estimate(cmd) => cmd.run().await?,
+        Subcommands::Create2(cmd) => {
+            cmd.run()?;
+        }
+>>>>>>> ba45e552 (add tests)
         Subcommands::Wallet { command } => command.run().await?,
         Subcommands::Completions { shell } => {
             generate(shell, &mut Opts::command(), "cast", &mut std::io::stdout())
