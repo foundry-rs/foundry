@@ -45,13 +45,18 @@ impl ScriptArgs {
 
             let (send_kind, chain) = if self.unlocked {
                 let chain = provider.get_chainid().await?;
-                (
-                    SendTransactionsKind::Unlocked(HashSet::from([self
-                        .evm_opts
-                        .sender
-                        .wrap_err("--sender must be set with --unlocked")?])),
-                    chain.as_u64(),
-                )
+                let mut senders = HashSet::from([self
+                    .evm_opts
+                    .sender
+                    .wrap_err("--sender must be set with --unlocked")?]);
+                // also take all additional senders that where set manually via broadcast
+                senders.extend(
+                    deployment_sequence
+                        .typed_transactions()
+                        .iter()
+                        .filter_map(|tx| tx.from().copied()),
+                );
+                (SendTransactionsKind::Unlocked(senders), chain.as_u64())
             } else {
                 let local_wallets = self
                     .wallets
