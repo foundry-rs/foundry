@@ -116,10 +116,10 @@ impl Create2Args {
             let mut a: [u8; 32] = Default::default();
             let init_code_hash = init_code_hash.strip_prefix("0x").unwrap_or(&init_code_hash);
             assert!(init_code_hash.len() == 64, "init code hash should be 32 bytes long"); // 32 bytes * 2
-            a.copy_from_slice(&hex::decode(init_code_hash)?[..64]);
+            a.copy_from_slice(&hex::decode(init_code_hash)?[..32]);
             a
         } else {
-            let init_code = init_code.strip_prefix("0x").unwrap_or(&init_code);
+            let init_code = init_code.strip_prefix("0x").unwrap_or(&init_code).as_bytes();
             keccak256(hex::decode(init_code)?)
         };
 
