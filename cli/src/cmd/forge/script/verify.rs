@@ -110,7 +110,7 @@ impl VerifyBundle {
                     flatten: false,
                     force: false,
                     watch: true,
-                    retry: self.retry.clone(),
+                    retry: self.retry,
                     libraries: libraries.to_vec(),
                     root: None,
                     verifier: self.verifier.clone(),
