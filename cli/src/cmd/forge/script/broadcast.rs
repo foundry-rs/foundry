@@ -16,12 +16,12 @@ use ethers::{
     types::transaction::eip2718::TypedTransaction,
     utils::format_units,
 };
-use eyre::{ContextCompat, WrapErr};
+use eyre::{bail, ContextCompat, WrapErr};
 use foundry_common::{estimate_eip1559_fees, try_get_http_provider, RetryProvider};
 use foundry_config::Chain;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::{cmp::min, ops::Mul, sync::Arc};
+use std::{cmp::min, collections::HashSet, ops::Mul, sync::Arc};
 use tracing::{instrument, trace};
 
 impl ScriptArgs {
@@ -43,15 +43,34 @@ impl ScriptArgs {
                 .map(|tx| *tx.from().expect("No sender for onchain transaction!"))
                 .collect();
 
-            let local_wallets =
-                self.wallets.find_all(provider.clone(), required_addresses, script_wallets).await?;
-            let chain = local_wallets.values().last().wrap_err("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")?.chain_id();
+            let (send_kind, chain) = if self.unlocked {
+                let chain = provider.get_chainid().await?;
+                let mut senders = HashSet::from([self
+                    .evm_opts
+                    .sender
+                    .wrap_err("--sender must be set with --unlocked")?]);
+                // also take all additional senders that where set manually via broadcast
+                senders.extend(
+                    deployment_sequence
+                        .typed_transactions()
+                        .iter()
+                        .filter_map(|tx| tx.from().copied()),
+                );
+                (SendTransactionsKind::Unlocked(senders), chain.as_u64())
+            } else {
+                let local_wallets = self
+                    .wallets
+                    .find_all(provider.clone(), required_addresses, script_wallets)
+                    .await?;
+                let chain = local_wallets.values().last().wrap_err("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")?.chain_id();
+                (SendTransactionsKind::Raw(local_wallets), chain)
+            };
 
             // We only wait for a transaction receipt before sending the next transaction, if there
             // is more than one signer. There would be no way of assuring their order
             // otherwise. Or if the chain does not support batched transactions (eg. Arbitrum).
             let sequential_broadcast =
-                local_wallets.len() != 1 || self.slow || !has_batch_support(chain);
+                send_kind.signers_count() != 1 || self.slow || !has_batch_support(chain);
 
             // Make a one-time gas price estimation
             let (gas_price, eip1559_fees) = {
@@ -77,7 +96,8 @@ impl ScriptArgs {
                 .skip(already_broadcasted)
                 .map(|tx| {
                     let from = *tx.from().expect("No sender for onchain transaction!");
-                    let signer = local_wallets.get(&from).expect("`find_all` returned incomplete.");
+
+                    let kind = send_kind.for_sender(&from).unwrap();
 
                     let mut tx = tx.clone();
 
@@ -100,7 +120,7 @@ impl ScriptArgs {
                         }
                     }
 
-                    (tx, signer)
+                    (tx, kind)
                 })
                 .collect::<Vec<_>>();
 
@@ -120,8 +140,14 @@ impl ScriptArgs {
                     batch_number * batch_size,
                     batch_number * batch_size + min(batch_size, batch.len()) - 1
                 );
-                for (tx, signer) in batch.into_iter() {
-                    let tx_hash = self.send_transaction(tx, signer, sequential_broadcast, fork_url);
+                for (tx, kind) in batch.into_iter() {
+                    let tx_hash = self.send_transaction(
+                        provider.clone(),
+                        tx,
+                        kind,
+                        sequential_broadcast,
+                        fork_url,
+                    );
 
                     if sequential_broadcast {
                         let tx_hash = tx_hash.await?;
@@ -179,9 +205,9 @@ impl ScriptArgs {
                 (acc.0 + gas_used, acc.1 + gas_price, acc.2 + gas_used.mul(gas_price))
             },
         );
-        let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".into());
+        let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".to_string());
         let avg_gas_price = format_units(total_gas_price / deployment_sequence.receipts.len(), 9)
-            .unwrap_or_else(|_| "N/A".into());
+            .unwrap_or_else(|_| "N/A".to_string());
         println!(
             "Total Paid: {} ETH ({} gas * avg {} gwei)",
             paid.trim_end_matches('0'),
@@ -191,10 +217,11 @@ impl ScriptArgs {
         Ok(())
     }
 
-    pub async fn send_transaction(
+    async fn send_transaction(
         &self,
-        tx: TypedTransaction,
-        signer: &WalletType,
+        provider: Arc<RetryProvider>,
+        mut tx: TypedTransaction,
+        kind: SendTransactionKind<'_>,
         sequential_broadcast: bool,
         fork_url: &str,
     ) -> eyre::Result<TxHash> {
@@ -208,14 +235,32 @@ impl ScriptArgs {
             let tx_nonce = tx.nonce().expect("no nonce");
 
             if nonce != *tx_nonce {
-                eyre::bail!("EOA nonce changed unexpectedly while sending transactions.")
+                bail!("EOA nonce changed unexpectedly while sending transactions.")
             }
         }
 
-        match signer {
-            WalletType::Local(signer) => self.broadcast(signer, tx).await,
-            WalletType::Ledger(signer) => self.broadcast(signer, tx).await,
-            WalletType::Trezor(signer) => self.broadcast(signer, tx).await,
+        match kind {
+            SendTransactionKind::Unlocked(addr) => {
+                tracing::debug!("sending transaction from unlocked account {:?}: {:?}", addr, tx);
+
+                // Chains which use `eth_estimateGas` are being sent sequentially and require their
+                // gas to be re-estimated right before broadcasting.
+                if has_different_gas_calc(provider.get_chainid().await?.as_u64()) ||
+                    self.skip_simulation
+                {
+                    self.estimate_gas(&mut tx, &provider).await?;
+                }
+
+                // Submit the transaction
+                let pending = provider.send_transaction(tx, None).await?;
+
+                Ok(pending.tx_hash())
+            }
+            SendTransactionKind::Raw(ref signer) => match signer {
+                WalletType::Local(signer) => self.broadcast(signer, tx).await,
+                WalletType::Ledger(signer) => self.broadcast(signer, tx).await,
+                WalletType::Trezor(signer) => self.broadcast(signer, tx).await,
+            },
         }
     }
 
@@ -348,6 +393,7 @@ impl ScriptArgs {
         }
         Ok(new_txes)
     }
+
     /// Uses the signer to submit a transaction to the network. If it fails, it tries to retrieve
     /// the transaction hash that can be used on a later run with `--resume`.
     async fn broadcast<T, S>(
@@ -404,5 +450,51 @@ impl ScriptArgs {
                 100,
         );
         Ok(())
+    }
+}
+
+/// How to send a single transaction
+#[derive(Clone)]
+enum SendTransactionKind<'a> {
+    Unlocked(Address),
+    Raw(&'a WalletType),
+}
+
+/// Represents how to send _all_ transactions
+enum SendTransactionsKind {
+    /// Send via `eth_sendTransaction` and rely on the  `from` address being unlocked.
+    Unlocked(HashSet<Address>),
+    /// Send a signed transaction via `eth_sendRawTransaction`
+    Raw(HashMap<Address, WalletType>),
+}
+
+impl SendTransactionsKind {
+    /// Returns the [`SendTransactionKind`] for the given address
+    ///
+    /// Returns an error if no matching signer is found or the address is not unlocked
+    fn for_sender(&self, addr: &Address) -> eyre::Result<SendTransactionKind<'_>> {
+        match self {
+            SendTransactionsKind::Unlocked(unlocked) => {
+                if !unlocked.contains(addr) {
+                    bail!("Sender address {:?} is not unlocked", addr)
+                }
+                Ok(SendTransactionKind::Unlocked(*addr))
+            }
+            SendTransactionsKind::Raw(wallets) => {
+                if let Some(wallet) = wallets.get(addr) {
+                    Ok(SendTransactionKind::Raw(wallet))
+                } else {
+                    bail!("No matching signer for {:?} found", addr)
+                }
+            }
+        }
+    }
+
+    /// How many signers are set
+    fn signers_count(&self) -> usize {
+        match self {
+            SendTransactionsKind::Unlocked(addr) => addr.len(),
+            SendTransactionsKind::Raw(signers) => signers.len(),
+        }
     }
 }
