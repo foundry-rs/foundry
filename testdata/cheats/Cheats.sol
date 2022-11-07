@@ -226,4 +226,22 @@ interface Cheats {
     function rpcUrls() external returns (string[2][] memory);
     function parseJson(string calldata, string calldata) external returns (bytes memory);
     function parseJson(string calldata) external returns (bytes memory);
+
+    function serializeBool(string calldata, string calldata, bool) external returns (string memory);
+    function serializeUint(string calldata, string calldata, uint256) external returns (string memory);
+    function serializeInt(string calldata, string calldata, int256) external returns (string memory);
+    function serializeAddress(string calldata, string calldata, address) external returns (string memory);
+    function serializeBytes32(string calldata, string calldata, bytes32) external returns (string memory);
+    function serializeString(string calldata, string calldata, string calldata) external returns (string memory);
+    function serializeBytes(string calldata, string calldata, bytes calldata) external returns (string memory);
+
+    function serializeBool(string calldata, string calldata, bool[] calldata) external returns (string memory);
+    function serializeUint(string calldata, string calldata, uint256[] calldata) external returns (string memory);
+    function serializeInt(string calldata, string calldata, int256[] calldata) external returns (string memory);
+    function serializeAddress(string calldata, string calldata, address[] calldata) external returns (string memory);
+    function serializeBytes32(string calldata, string calldata, bytes32[] calldata) external returns (string memory);
+    function serializeString(string calldata, string calldata, string[] calldata) external returns (string memory);
+    function serializeBytes(string calldata, string calldata, bytes[] calldata) external returns (string memory);
+    function writeJson(string calldata, string calldata) external;
+    function writeJson(string calldata, string calldata, string calldata) external;
 }
