@@ -18,7 +18,6 @@ use forge::{
 };
 use foundry_common::try_get_http_provider;
 use foundry_config::{find_project_root_path, Config};
-use indicatif::{ProgressBar, ProgressStyle};
 use std::{collections::BTreeMap, str::FromStr};
 use tracing::trace;
 use ui::{TUIExitReason, Tui, Ui};
@@ -114,7 +113,7 @@ impl RunArgs {
 
             if let Some(block) = block {
                 let pb = init_progress!(block.transactions, "tx");
-                update_progress!(pb, -1);
+                pb.set_position(0);
 
                 for (index, tx) in block.transactions.into_iter().enumerate() {
                     if tx.hash().eq(&tx_hash) {
