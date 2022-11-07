@@ -99,9 +99,7 @@ contract ParseJson is DSTest {
     }
 }
 
-
 contract WriteJson is DSTest {
-
     Cheats constant vm = Cheats(HEVM_ADDRESS);
 
     string json1;
@@ -113,18 +111,14 @@ contract WriteJson is DSTest {
     }
 
     function test_serializeJson() public {
-
-        vm.serializeUint(json1, "key1", uint(254));
+        vm.serializeUint(json1, "key1", uint256(254));
         vm.serializeBool(json1, "boolean", true);
         vm.serializeInt(json2, "key2", -234);
-        vm.serializeUint(json2,"deploy", uint(254));
-        string memory data = vm.serializeBool(json2,"boolean", true);
+        vm.serializeUint(json2, "deploy", uint256(254));
+        string memory data = vm.serializeBool(json2, "boolean", true);
         vm.serializeString(json2, "json1", data);
         emit log(data);
-
     }
-
-
 
     function test_serializeArray() public {
         bool[] memory data1 = new bool[](3);
@@ -132,7 +126,7 @@ contract WriteJson is DSTest {
         data1[2] = false;
         vm.serializeBool(json1, "array1", data1);
 
-        address [] memory data2 = new address[](3);
+        address[] memory data2 = new address[](3);
         data2[0] = address(0xBEEEF);
         data2[2] = vm.addr(123);
         vm.serializeAddress(json1, "array2", data2);
@@ -146,22 +140,21 @@ contract WriteJson is DSTest {
         vm.writeJson(json1, path);
 
         string memory json = vm.readFile(path);
-        bytes memory rawData= vm.parseJson(json, ".array1");
+        bytes memory rawData = vm.parseJson(json, ".array1");
         bool[] memory parsedData1 = new bool[](3);
         parsedData1 = abi.decode(rawData, (bool[]));
         assertEq(parsedData1[0], data1[0]);
         assertEq(parsedData1[1], data1[1]);
         assertEq(parsedData1[2], data1[2]);
 
-
-        rawData= vm.parseJson(json, ".array2");
+        rawData = vm.parseJson(json, ".array2");
         address[] memory parsedData2 = new address[](3);
         parsedData2 = abi.decode(rawData, (address[]));
         assertEq(parsedData2[0], data2[0]);
         assertEq(parsedData2[1], data2[1]);
         assertEq(parsedData2[2], data2[2]);
 
-        rawData= vm.parseJson(json, ".array3");
+        rawData = vm.parseJson(json, ".array3");
         bytes[] memory parsedData3 = new bytes[](3);
         parsedData3 = abi.decode(rawData, (bytes[]));
         assertEq(parsedData3[0], data3[0]);
@@ -175,10 +168,10 @@ contract WriteJson is DSTest {
         string b;
     }
 
-    function test_writeJson()public{
+    function test_writeJson() public {
         string memory json3 = "json3";
         string memory path = "../testdata/fixtures/Json/write_test.json";
-        vm.serializeUint(json3, "a", uint(123));
+        vm.serializeUint(json3, "a", uint256(123));
         vm.serializeString(json3, "b", "test");
         vm.writeJson(json3, path);
 
@@ -197,5 +190,4 @@ contract WriteJson is DSTest {
         assertEq(decodedData.a, 123);
         assertEq(decodedData.b, "test");
     }
-
 }
