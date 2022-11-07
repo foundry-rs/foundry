@@ -113,7 +113,7 @@ impl Cmd for VanityArgs {
         .expect("failed to generate vanity wallet");
 
         println!(
-            "Successfully found vanity address in {} seconds.{}{}\nAddress: {}\nPrivate Key: {}",
+            "Successfully found vanity address in {} seconds.{}{}\nAddress: {}\nPrivate Key: 0x{}",
             timer.elapsed().as_secs(),
             if nonce.is_some() { "\nContract address: " } else { "" },
             if nonce.is_some() {
