@@ -5,7 +5,6 @@ use crate::{
 use ethers::prelude::{PendingTransaction, TxHash};
 use foundry_common::RetryProvider;
 use futures::StreamExt;
-use indicatif::{ProgressBar, ProgressStyle};
 use std::sync::Arc;
 use tracing::trace;
 
@@ -38,7 +37,7 @@ pub async fn wait_for_receipts(
     let mut receipts = Vec::with_capacity(tx_hashes.len());
     let mut errors: Vec<String> = vec![];
     let pb = init_progress!(tx_hashes, "receipts");
-    update_progress!(pb, -1);
+    pb.set_position(0);
 
     for (index, tx_hash) in tx_hashes.into_iter().enumerate() {
         if let Some(receipt) = tasks.next().await {

@@ -2206,7 +2206,7 @@ dependencies = [
  "glob",
  "globset",
  "hex",
- "indicatif 0.17.0-rc.11",
+ "indicatif 0.17.1",
  "itertools",
  "once_cell",
  "path-slash",
@@ -3137,9 +3137,9 @@ dependencies = [
 
 [[package]]
 name = "indicatif"
-version = "0.17.0-rc.11"
+version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4017d0ce94b8e91e29d2c78ed891e57e5ec3dc4371820a9d96abab4af09eb8ad"
+checksum = "bfddc9561e8baf264e0e45e197fd7696320026eb10a8180340debc27b18f535b"
 dependencies = [
  "console 0.15.0",
  "number_prefix",

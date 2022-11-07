@@ -20,7 +20,6 @@ use eyre::{ContextCompat, WrapErr};
 use foundry_common::{estimate_eip1559_fees, try_get_http_provider, RetryProvider};
 use foundry_config::Chain;
 use futures::StreamExt;
-use indicatif::{ProgressBar, ProgressStyle};
 use std::{cmp::min, ops::Mul, sync::Arc};
 use tracing::{instrument, trace};
 
