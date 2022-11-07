@@ -82,19 +82,23 @@ impl Create2Args {
 
         let mut regexs = vec![];
 
-        if let Some(mut matches) = matching {
+        if let Some(matches) = matching {
             if starts_with.is_some() || ends_with.is_some() {
                 eyre::bail!("Either use --matching or --starts/ends-with");
             }
 
+            let matches = matches.trim_start_matches("0x");
+
             if matches.len() != 40 {
-                if !(matches.len() == 42 && matches.starts_with("0x")) {
-                    eyre::bail!("Please provide a 40 characters long sequence for matching");
-                }
-                matches = matches.strip_prefix("0x").unwrap().to_string();
+                eyre::bail!("Please provide a 40 characters long sequence for matching");
             }
 
+<<<<<<< HEAD
             hex::decode(&matches.replace('X', "0")).wrap_err("invalid matching hex provided")?;
+=======
+            hex::decode(matches.replace('X', "0")).wrap_err("invalid matching hex provided")?;
+            // replacing X placeholders by . to match any character at these positions
+>>>>>>> 964339ac (nits)
             regexs.push(matches.replace('X', "."));
         }
 
@@ -111,7 +115,7 @@ impl Create2Args {
             regexs.push(format!(r"{}$", suffix));
         }
 
-        assert!(
+        debug_assert!(
             regexs.iter().map(|p| p.len() - 1).sum::<usize>() <= 40,
             "vanity patterns length exceeded. cannot be more than 40 characters",
         );
@@ -119,7 +123,7 @@ impl Create2Args {
         let regex = RegexSetBuilder::new(regexs).case_insensitive(!case_sensitive).build()?;
 
         let init_code_hash = if let Some(init_code_hash) = init_code_hash {
-            let mut a: [u8; 32] = Default::default();
+            let mut a: [u8; 32] = [0; 32];
             let init_code_hash = init_code_hash.strip_prefix("0x").unwrap_or(&init_code_hash);
             assert!(init_code_hash.len() == 64, "init code hash should be 32 bytes long"); // 32 bytes * 2
             a.copy_from_slice(&hex::decode(init_code_hash)?[..32]);

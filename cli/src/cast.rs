@@ -679,15 +679,7 @@ async fn main() -> eyre::Result<()> {
                 }
             }
         }
-<<<<<<< HEAD
         Subcommands::Create2(cmd) => cmd.run()?,
-=======
-        Subcommands::FindBlock(cmd) => cmd.run()?.await?,
-        Subcommands::Estimate(cmd) => cmd.run().await?,
-        Subcommands::Create2(cmd) => {
-            cmd.run()?;
-        }
->>>>>>> ba45e552 (add tests)
         Subcommands::Wallet { command } => command.run().await?,
         Subcommands::Completions { shell } => {
             generate(shell, &mut Opts::command(), "cast", &mut std::io::stdout())
@@ -713,6 +705,7 @@ where
         }
     })
 }
+<<<<<<< HEAD
 
 #[allow(clippy::too_many_arguments)]
 async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
@@ -764,3 +757,5 @@ where
 
     Ok(())
 }
+=======
+>>>>>>> 964339ac (nits)

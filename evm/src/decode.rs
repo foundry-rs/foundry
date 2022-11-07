@@ -161,7 +161,11 @@ pub fn decode_revert(
                                 .map(foundry_utils::format_token)
                                 .collect::<Vec<_>>()
                                 .join(", ");
+<<<<<<< HEAD
                             return Ok(format!("{}({})", abi_error.name, inputs));
+=======
+                            return Ok(format!("{}({inputs})", abi_error.name))
+>>>>>>> 964339ac (nits)
                         }
                     }
                 }
