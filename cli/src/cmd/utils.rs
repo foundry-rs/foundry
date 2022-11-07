@@ -151,7 +151,7 @@ macro_rules! init_progress {
         pb.set_style(
             indicatif::ProgressStyle::with_template(&template)
                 .unwrap()
-                .with_key("eta", crate::cmd::utils::eta_key)
+                .with_key("eta", $crate::cmd::utils::eta_key)
                 .progress_chars("#>-"),
         );
         pb
