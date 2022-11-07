@@ -356,6 +356,22 @@ forgetest_async!(
 
 forgetest_async!(
     #[serial_test::serial]
+    can_deploy_unlocked,
+    |prj: TestProject, cmd: TestCommand| async move {
+        let (_api, handle) = spawn(NodeConfig::test()).await;
+        let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+
+        tester
+            .sender("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".parse().unwrap())
+            .unlocked()
+            .add_sig("BroadcastTest", "deployOther()")
+            .simulate(ScriptOutcome::OkSimulation)
+            .broadcast(ScriptOutcome::OkBroadcast);
+    }
+);
+
+forgetest_async!(
+    #[serial_test::serial]
     can_deploy_script_remember_key,
     |prj: TestProject, cmd: TestCommand| async move {
         let (_api, handle) = spawn(NodeConfig::test()).await;

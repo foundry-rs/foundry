@@ -3,9 +3,9 @@ use foundry_cli_test_utils::{
     forgetest, forgetest_init,
     util::{OutputExt, TestCommand, TestProject},
 };
-use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
+use foundry_config::Config;
 use foundry_utils::rpc;
-use std::{fs, path::PathBuf, str::FromStr};
+use std::{path::PathBuf, str::FromStr};
 
 // tests that test filters are handled correctly
 forgetest!(can_set_filter_values, |prj: TestProject, mut cmd: TestCommand| {
