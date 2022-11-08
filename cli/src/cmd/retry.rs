@@ -2,10 +2,10 @@ use clap::{builder::RangedU64ValueParser, Parser};
 use foundry_utils::Retry;
 
 /// Retry config used when waiting for verification
-pub const RETRY_CHECK_ON_VERIFY: RetryArgs = RetryArgs { retries: 6, delay: 10 };
+pub const RETRY_CHECK_ON_VERIFY: RetryArgs = RetryArgs { retries: 8, delay: 15 };
 
 /// Retry config used when waiting for a created contract
-pub const RETRY_VERIFY_ON_CREATE: RetryArgs = RetryArgs { retries: 15, delay: 3 };
+pub const RETRY_VERIFY_ON_CREATE: RetryArgs = RetryArgs { retries: 15, delay: 5 };
 
 /// A type that keeps track of attempts
 #[derive(Debug, Clone, Copy, Parser)]
@@ -31,7 +31,7 @@ pub struct RetryArgs {
 
 impl Default for RetryArgs {
     fn default() -> Self {
-        RetryArgs { retries: 15, delay: 3 }
+        RETRY_VERIFY_ON_CREATE
     }
 }
 
