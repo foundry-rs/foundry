@@ -8,7 +8,7 @@ pub const RETRY_CHECK_ON_VERIFY: RetryArgs = RetryArgs { retries: 6, delay: 10 }
 pub const RETRY_VERIFY_ON_CREATE: RetryArgs = RetryArgs { retries: 15, delay: 3 };
 
 /// A type that keeps track of attempts
-#[derive(Debug, Clone, Parser)]
+#[derive(Debug, Clone, Copy, Parser)]
 pub struct RetryArgs {
     #[clap(
         long,

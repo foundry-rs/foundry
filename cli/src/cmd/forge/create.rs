@@ -2,8 +2,8 @@
 use super::verify;
 use crate::{
     cmd::{
-        forge::build::CoreBuildArgs, read_constructor_args_file, remove_contract,
-        retry::RETRY_VERIFY_ON_CREATE, LoadConfig,
+        forge::build::CoreBuildArgs, read_constructor_args_file, remove_contract, retry::RetryArgs,
+        LoadConfig,
     },
     opts::{EthereumOpts, TransactionOpts, WalletType},
 };
@@ -78,6 +78,9 @@ pub struct CreateArgs {
 
     #[clap(flatten)]
     pub verifier: verify::VerifierArgs,
+
+    #[clap(flatten, help = "Allows to use retry arguments for contract verification")]
+    retry: RetryArgs,
 }
 
 impl CreateArgs {
@@ -280,7 +283,7 @@ impl CreateArgs {
             flatten: false,
             force: false,
             watch: true,
-            retry: RETRY_VERIFY_ON_CREATE,
+            retry: self.retry,
             libraries: vec![],
             root: None,
             verifier: self.verifier,
@@ -303,5 +306,25 @@ impl CreateArgs {
             .collect::<Vec<_>>();
 
         parse_tokens(params, true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_parse_create() {
+        let args: CreateArgs = CreateArgs::parse_from([
+            "foundry-cli",
+            "src/Domains.sol:Domains",
+            "--verify",
+            "--retries",
+            "10",
+            "--delay",
+            "30",
+        ]);
+        assert_eq!(args.retry.retries, 10);
+        assert_eq!(args.retry.delay, 30);
     }
 }
