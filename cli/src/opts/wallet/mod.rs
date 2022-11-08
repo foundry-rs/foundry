@@ -160,8 +160,8 @@ impl Wallet {
 
     pub fn keystore(&self) -> Result<Option<LocalWallet>> {
         self.get_from_keystore(
-            self.keystore_path.as_ref(), 
-            self.keystore_password.as_ref(), 
+            self.keystore_path.as_ref(),
+            self.keystore_password.as_ref(),
             self.keystore_password_file.as_ref(),
         )
     }
