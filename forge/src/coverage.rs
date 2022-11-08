@@ -4,7 +4,7 @@ use std::io::Write;
 
 /// A coverage reporter.
 pub trait CoverageReporter {
-    fn report(self, report: CoverageReport) -> eyre::Result<()>;
+    fn report(self, report: &CoverageReport) -> eyre::Result<()>;
 }
 
 /// A simple summary reporter that prints the coverage results in a table.
@@ -37,7 +37,7 @@ impl SummaryReporter {
 }
 
 impl CoverageReporter for SummaryReporter {
-    fn report(mut self, report: CoverageReport) -> eyre::Result<()> {
+    fn report(mut self, report: &CoverageReport) -> eyre::Result<()> {
         for (path, summary) in report.summary_by_file() {
             self.total += &summary;
             self.add_row(path, summary);
@@ -78,7 +78,7 @@ impl<'a> LcovReporter<'a> {
 }
 
 impl<'a> CoverageReporter for LcovReporter<'a> {
-    fn report(self, report: CoverageReport) -> eyre::Result<()> {
+    fn report(self, report: &CoverageReport) -> eyre::Result<()> {
         for (file, items) in report.items_by_source() {
             let summary = items.iter().fold(CoverageSummary::default(), |mut summary, item| {
                 summary += item;
@@ -138,7 +138,7 @@ impl<'a> CoverageReporter for LcovReporter<'a> {
 pub struct DebugReporter;
 
 impl CoverageReporter for DebugReporter {
-    fn report(self, report: CoverageReport) -> eyre::Result<()> {
+    fn report(self, report: &CoverageReport) -> eyre::Result<()> {
         for (path, items) in report.items_by_source() {
             println!("Uncovered for {path}:");
             items.iter().for_each(|item| {
@@ -149,7 +149,7 @@ impl CoverageReporter for DebugReporter {
             println!();
         }
 
-        for (contract_id, anchors) in report.anchors {
+        for (contract_id, anchors) in &report.anchors {
             println!("Anchors for {contract_id}:");
             anchors.iter().for_each(|anchor| {
                 println!("- {anchor}");
