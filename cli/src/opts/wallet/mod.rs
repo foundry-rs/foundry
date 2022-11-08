@@ -312,12 +312,13 @@ pub trait WalletTrait {
     }
 
     /// Attempts to read the keystore password from the password file.
-    fn password_from_file(&self, password_file: &String) -> Result<String> {
-        if !Path::new(password_file).is_file() {
+    fn password_from_file(&self, password_file: impl AsRef<Path>) -> Result<String> {
+        let password_file = password_file.as_ref();
+        if !password_file.is_file() {
             bail!("Keystore password file `{password_file:?}` does not exist")
         }
 
-        Ok(fs::read_to_string(password_file)?.replace('\n', ""))
+        Ok(fs::read_to_string(password_file)?.trim_end_matches('\n').to_string())
     }
 }
 
@@ -416,5 +417,17 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn gets_password_from_file() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/keystore/password")
+            .into_os_string();
+        let wallet: Wallet = Wallet::parse_from([
+            "foundry-cli"
+        ]);
+        let password = wallet.password_from_file(path).unwrap();
+        assert_eq!(password, "this is keystore password")
     }
 }
