@@ -34,7 +34,7 @@ impl Cmd for DocArgs {
         DocBuilder::from_config(DocConfig {
             root: self.root.as_ref().unwrap_or(&find_project_root_path()?).to_path_buf(),
             sources: config.project_paths().sources,
-            out: self.out.as_ref().unwrap_or(&PathBuf::from("docs")).to_path_buf(),
+            out: self.out.clone().unwrap_or_else(|| PathBuf::from("docs")),
             ..Default::default()
         })
         .build()
