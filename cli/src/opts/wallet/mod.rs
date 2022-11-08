@@ -425,7 +425,6 @@ mod tests {
             .join("tests/fixtures/keystore/password")
             .into_os_string();
         let wallet: Wallet = Wallet::parse_from(["foundry-cli"]);
-        
         let password = wallet.password_from_file(path).unwrap();
         assert_eq!(password, "this is keystore password")
     }
