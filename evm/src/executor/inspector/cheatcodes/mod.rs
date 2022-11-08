@@ -35,7 +35,7 @@ use std::{
 
 /// Cheatcodes related to the execution environment.
 mod env;
-pub use env::{Prank, RecordAccess};
+pub use env::{Log, Prank, RecordAccess};
 /// Assertion helpers (such as `expectEmit`)
 mod expect;
 pub use expect::{ExpectedCallData, ExpectedEmit, ExpectedRevert, MockCallDataContext};
@@ -274,9 +274,10 @@ where
 
         // Stores this log if `recordLogs` has been called
         if let Some(storage_recorded_logs) = &mut self.recorded_logs {
-            storage_recorded_logs
-                .entries
-                .push(RawLog { topics: topics.to_vec(), data: data.to_vec() });
+            storage_recorded_logs.entries.push(Log {
+                emitter: *address,
+                inner: RawLog { topics: topics.to_vec(), data: data.to_vec() },
+            });
         }
     }
 

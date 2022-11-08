@@ -6,6 +6,7 @@ interface Cheats {
     struct Log {
         bytes32[] topics;
         bytes data;
+        address emitter;
     }
     // Set block.timestamp (newTimestamp)
 
