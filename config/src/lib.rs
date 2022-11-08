@@ -856,7 +856,7 @@ impl Config {
 
         // fallback `etherscan_api_key` as actual key
         if let Some(key) = self.etherscan_api_key.as_ref() {
-            let chain = self.chain_id.unwrap_or_else(|| Mainnet.into());
+            let chain = chain.or(self.chain_id).unwrap_or_else(|| Mainnet.into());
             return Ok(ResolvedEtherscanConfig::create(key, chain))
         }
 
