@@ -329,7 +329,7 @@ fn value_to_token(value: &Value) -> eyre::Result<Token> {
         Ok(Token::Int(number.into()))
     } else if let Some(array) = value.as_array() {
         Ok(Token::Array(array.iter().map(value_to_token).collect::<eyre::Result<Vec<_>>>()?))
-    } else if let Some(_) = value.as_object() {
+    } else if value.as_object().is_some() {
         let ordered_object: BTreeMap<String, Value> =
             serde_json::from_value(value.clone()).unwrap();
         let values =
