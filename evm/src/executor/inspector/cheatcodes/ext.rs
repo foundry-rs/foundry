@@ -17,9 +17,9 @@ use foundry_config::fs_permissions::FsAccessKind;
 use hex::FromHex;
 use jsonpath_lib;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     env,
     io::{BufRead, BufReader, Write},
     path::Path,
@@ -329,8 +329,11 @@ fn value_to_token(value: &Value) -> eyre::Result<Token> {
         Ok(Token::Int(number.into()))
     } else if let Some(array) = value.as_array() {
         Ok(Token::Array(array.iter().map(value_to_token).collect::<eyre::Result<Vec<_>>>()?))
-    } else if let Some(object) = value.as_object() {
-        let values = object.values().map(value_to_token).collect::<eyre::Result<Vec<_>>>()?;
+    } else if value.as_object().is_some() {
+        let ordered_object: BTreeMap<String, Value> =
+            serde_json::from_value(value.clone()).unwrap();
+        let values =
+            ordered_object.values().map(value_to_token).collect::<eyre::Result<Vec<_>>>()?;
         Ok(Token::Tuple(values))
     } else if value.is_null() {
         Ok(Token::FixedBytes(vec![0; 32]))
@@ -429,17 +432,16 @@ fn array_eval_to_str<T: UIfmt>(array: &Vec<T>) -> String {
 /// object.
 fn write_json(
     _state: &mut Cheatcodes,
-    object_key: &str,
+    object: &str,
     path: impl AsRef<Path>,
     json_path_or_none: Option<&str>,
 ) -> Result<Bytes, Bytes> {
-    let json = json!(_state.serialized_jsons.get(object_key).unwrap());
+    let json: Value = serde_json::from_str(object).unwrap_or(Value::String(object.to_owned()));
     let json_string = serde_json::to_string(&if let Some(json_path) = json_path_or_none {
         let path = _state
             .config
             .ensure_path_allowed(&path, FsAccessKind::Read)
             .map_err(error::encode_error)?;
-
         let data = serde_json::from_str(&fs::read_to_string(path).map_err(error::encode_error)?)
             .map_err(error::encode_error)?;
         let result =
