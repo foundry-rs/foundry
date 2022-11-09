@@ -19,7 +19,7 @@ use jsonpath_lib;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     env,
     io::{BufRead, BufReader, Write},
     path::Path,
@@ -329,8 +329,11 @@ fn value_to_token(value: &Value) -> eyre::Result<Token> {
         Ok(Token::Int(number.into()))
     } else if let Some(array) = value.as_array() {
         Ok(Token::Array(array.iter().map(value_to_token).collect::<eyre::Result<Vec<_>>>()?))
-    } else if let Some(object) = value.as_object() {
-        let values = object.values().map(value_to_token).collect::<eyre::Result<Vec<_>>>()?;
+    } else if let Some(_) = value.as_object() {
+        let ordered_object: BTreeMap<String, Value> =
+            serde_json::from_value(value.clone()).unwrap();
+        let values =
+            ordered_object.values().map(value_to_token).collect::<eyre::Result<Vec<_>>>()?;
         Ok(Token::Tuple(values))
     } else if value.is_null() {
         Ok(Token::FixedBytes(vec![0; 32]))
