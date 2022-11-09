@@ -152,7 +152,7 @@ pub(crate) fn install(
             let tag = install_as_submodule(&dep, &libs, target_dir, no_commit)?;
 
             // Pin branch to submodule if branch is used
-            if let Some(branch) = tag {
+            if let Some(ref branch) = tag {
                 if !(branch.is_empty()) {
                     let libs = libs.strip_prefix(&root).unwrap_or(&libs);
                     let mut cmd = Command::new("git");
@@ -160,12 +160,21 @@ pub(crate) fn install(
                         "submodule",
                         "set-branch",
                         "-b",
-                        &branch,
+                        branch.as_str(),
                         libs.join(target_dir).to_str().unwrap(),
                     ]);
                     trace!(?cmd, "submodule set branch");
                     cmd.exec()?;
+
+                    // this changed the .gitmodules files
+                    trace!("git add .gitmodules");
+                    Command::new("git").current_dir(&root).args(["add", ".gitmodules"]).exec()?;
                 }
+            }
+
+            // commit the installation
+            if !no_commit {
+                commit_after_install(&libs, target_dir, tag.as_deref())?;
             }
         }
 
@@ -234,36 +243,35 @@ fn install_as_submodule(
     if dep.tag.is_some() {
         git_checkout(&dep, libs, target_dir, true)?;
         if !no_commit {
+            trace!("git add {:?}", libs);
             Command::new("git").args(["add", &libs.display().to_string()]).exec()?;
         }
     }
 
-    let tag = dep.tag.take();
+    Ok(dep.tag.take())
+}
 
-    // commit the added submodule
-    if !no_commit {
-        let message = if let Some(tag) = &tag {
-            format!("forge install: {target_dir}\n\n{tag}")
-        } else {
-            format!("forge install: {target_dir}")
-        };
-        trace!(?libs, ?message, "git commit -m");
+/// Commits the git submodule install
+fn commit_after_install(libs: &Path, target_dir: &str, tag: Option<&str>) -> eyre::Result<()> {
+    let message = if let Some(tag) = tag {
+        format!("forge install: {target_dir}\n\n{tag}")
+    } else {
+        format!("forge install: {target_dir}")
+    };
+    trace!(?libs, ?message, "git commit -m");
 
-        let output =
-            Command::new("git").args(["commit", "-m", &message]).current_dir(libs).output()?;
+    let output = Command::new("git").args(["commit", "-m", &message]).current_dir(libs).output()?;
 
-        if !&output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            warn!(?stdout, ?stderr, "git commit -m");
+    if !&output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        warn!(?stdout, ?stderr, "git commit -m");
 
-            if !stdout.contains("nothing to commit") {
-                eyre::bail!("Failed to commit `{message}`:\n{stdout}\n{stderr}");
-            }
+        if !stdout.contains("nothing to commit") {
+            eyre::bail!("Failed to commit `{message}`:\n{stdout}\n{stderr}");
         }
     }
-
-    Ok(tag)
+    Ok(())
 }
 
 pub fn ensure_git_status_clean(root: impl AsRef<Path>) -> eyre::Result<()> {
