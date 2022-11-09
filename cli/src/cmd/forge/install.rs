@@ -11,6 +11,7 @@ use foundry_common::fs;
 use foundry_config::{impl_figment_convert_basic, Config};
 use once_cell::sync::Lazy;
 use regex::Regex;
+use semver::Version;
 use std::{
     io::{stdin, stdout, Write},
     path::{Path, PathBuf},
@@ -153,13 +154,14 @@ pub(crate) fn install(
             // Pin branch to submodule if branch is used
             if let Some(branch) = tag {
                 if !(branch.is_empty()) {
+                    let libs = libs.strip_prefix(&root).unwrap_or(&libs);
                     let mut cmd = Command::new("git");
                     cmd.args([
                         "submodule",
                         "set-branch",
                         "-b",
                         &branch,
-                        install_lib_dir.join(target_dir).to_str().unwrap(),
+                        libs.join(target_dir).to_str().unwrap(),
                     ]);
                     trace!(?cmd, "submodule set branch");
                     cmd.exec()?;
@@ -208,7 +210,10 @@ fn install_as_folder(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::R
     Ok(())
 }
 
-/// Installs the dependency as new submodule
+/// Installs the dependency as new submodule.
+///
+/// This will add the git submodule to the given dir, initialize it and checkout the tag if provided
+/// or try to find the latest semver, release tag.
 fn install_as_submodule(
     dep: &Dependency,
     libs: &Path,
@@ -216,18 +221,24 @@ fn install_as_submodule(
     no_commit: bool,
 ) -> eyre::Result<Option<String>> {
     // install the dep
-    git_submodule(dep, libs, target_dir)?;
+    let submodule = git_submodule(dep, libs, target_dir)?;
+
+    let mut dep = dep.clone();
+    if dep.tag.is_none() {
+        // try to find latest semver release tag
+        dep.tag =
+            git_semver_tags(&submodule).ok().and_then(|mut tags| tags.pop().map(|(tag, _)| tag));
+    }
 
     // checkout the tag if necessary
-    let tag = if dep.tag.is_none() {
-        None
-    } else {
-        let tag = git_checkout(dep, libs, target_dir, true)?;
+    if dep.tag.is_some() {
+        git_checkout(&dep, libs, target_dir, true)?;
         if !no_commit {
             Command::new("git").args(["add", &libs.display().to_string()]).exec()?;
         }
-        Some(tag)
-    };
+    }
+
+    let tag = dep.tag.take();
 
     // commit the added submodule
     if !no_commit {
@@ -291,7 +302,42 @@ fn git_clone(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Result<()
     Ok(())
 }
 
-fn git_submodule(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Result<()> {
+/// Returns all semver git tags sorted in ascending order
+fn git_semver_tags(repo: &Path) -> eyre::Result<Vec<(String, Version)>> {
+    trace!(?repo, "`git tag`");
+    let output = Command::new("git").arg("tag").current_dir(repo).output()?;
+    let mut tags = Vec::new();
+    let out = String::from_utf8_lossy(&output.stdout);
+    // tags are commonly prefixed which would make them not semver: v1.2.3 is not a semantic version
+    let common_prefixes = &["v-", "v", "release-", "release"];
+    for tag in out.lines() {
+        let mut maybe_semver = tag;
+        for &prefix in common_prefixes {
+            if let Some(rem) = tag.strip_prefix(prefix) {
+                maybe_semver = rem;
+                break
+            }
+        }
+        match Version::parse(maybe_semver) {
+            Ok(v) => {
+                // ignore if additional metadata, like rc, beta, etc...
+                if v.build.is_empty() && v.pre.is_empty() {
+                    tags.push((tag.to_string(), v));
+                }
+            }
+            Err(err) => {
+                warn!(?err, ?maybe_semver, "No semver tag");
+            }
+        }
+    }
+
+    tags.sort_by(|(_, a), (_, b)| a.cmp(b));
+
+    Ok(tags)
+}
+
+/// Install the given dependency as git submodule in the `target_dir`
+fn git_submodule(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Result<PathBuf> {
     let url = dep.url.as_ref().ok_or_else(|| eyre::eyre!("No dependency url"))?;
     trace!("installing git submodule {:?} in {} from `{}`", dep, target_dir, url);
 
@@ -301,7 +347,7 @@ fn git_submodule(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Resul
         .output()?;
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    trace!(?stderr, "`git submodule add`");
+    trace!(?stderr, "`git submodule add --force {} {}`", url, target_dir);
 
     if stderr.contains("remote: Repository not found") {
         eyre::bail!("Repo: \"{}\" not found!", url)
@@ -330,7 +376,7 @@ fn git_submodule(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Resul
 
     trace!(?stderr, ?libs, "`git submodule update --init --recursive` {}", target_dir);
 
-    Ok(())
+    Ok(libs.join(target_dir))
 }
 
 fn git_checkout(
@@ -547,5 +593,29 @@ fn match_branch(tag: &str, libs: &Path, target_dir: &str) -> eyre::Result<Option
             Ok(Some(candidates.remove(i)))
         }
         _ => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_cli_test_utils::tempfile::tempdir;
+
+    #[test]
+    fn get_oz_tags() {
+        let tmp = tempdir().unwrap();
+        Command::new("git").arg("init").current_dir(tmp.path()).exec().unwrap();
+        let dep: Dependency = "openzeppelin/openzeppelin-contracts".parse().unwrap();
+        let libs = tmp.path().join("libs");
+        fs::create_dir(&libs).unwrap();
+        let target = libs.join("openzeppelin-contracts");
+        let submodule = git_submodule(&dep, &libs, "openzeppelin-contracts").unwrap();
+        assert!(target.exists());
+        assert!(submodule.exists());
+
+        let tags = git_semver_tags(&submodule).unwrap();
+        assert!(!tags.is_empty());
+        let v480: Version = "4.8.0".parse().unwrap();
+        assert!(tags.iter().any(|(_, v)| v == &v480));
     }
 }

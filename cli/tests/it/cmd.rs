@@ -16,7 +16,8 @@ use foundry_cli_test_utils::{
     util::{pretty_err, read_string, OutputExt, TestCommand, TestProject},
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
-use std::{env, fs, path::PathBuf, str::FromStr};
+use semver::Version;
+use std::{env, fs, path::PathBuf, process::Command, str::FromStr};
 
 // tests `--help` is printed to std out
 forgetest!(print_help, |_: TestProject, mut cmd: TestCommand| {
@@ -836,6 +837,25 @@ forgetest!(can_install_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {
     for _ in 0..3 {
         cmd.assert_success();
     }
+});
+
+// test that by default we install the latest semver release tag
+// <https://github.com/openzeppelin/openzeppelin-contracts>
+forgetest!(can_install_latest_release_tag, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.git_init();
+    cmd.forge_fuse().args(["install", "openzeppelin/openzeppelin-contracts"]);
+    cmd.assert_success();
+
+    let dep = prj.paths().libraries[0].join("openzeppelin-contracts");
+    assert!(dep.exists());
+
+    // the latest release at the time this test was written
+    let version: Version = "4.8.0".parse().unwrap();
+    let out = Command::new("git").current_dir(&dep).args(["describe", "--tags"]).output().unwrap();
+    let tag = String::from_utf8_lossy(&out.stdout);
+    let current: Version = tag.as_ref().trim_start_matches("v").trim().parse().unwrap();
+
+    assert!(current >= version);
 });
 
 // Tests that forge update doesn't break a working dependency by recursively updating nested
