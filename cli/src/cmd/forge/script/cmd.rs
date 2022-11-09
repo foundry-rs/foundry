@@ -212,7 +212,7 @@ impl ScriptArgs {
             verify,
         )
         .await
-        .map_err(|err| { 
+        .map_err(|err| {
             eyre::eyre!("{err}\n\nIf you were trying to resume or verify a multi chain deployment, add `--multi` to your command invocation.") 
         })
     }

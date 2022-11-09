@@ -171,7 +171,7 @@ fn create_fork<DB: DatabaseExt>(
     block: Option<u64>,
 ) -> Result<U256, Bytes> {
     let fork = create_fork_request(state, url_or_alias, block, data)?;
-    data.db.create_fork(fork, &data.journaled_state).map_err(error::encode_error)
+    data.db.create_fork(fork).map_err(error::encode_error)
 }
 /// Creates and then also selects the new fork at the given transaction
 fn create_select_fork_at_transaction<DB: DatabaseExt>(
@@ -201,9 +201,7 @@ fn create_fork_at_transaction<DB: DatabaseExt>(
     transaction: H256,
 ) -> Result<U256, Bytes> {
     let fork = create_fork_request(state, url_or_alias, None, data)?;
-    data.db
-        .create_fork_at_transaction(fork, &data.journaled_state, transaction)
-        .map_err(error::encode_error)
+    data.db.create_fork_at_transaction(fork, transaction).map_err(error::encode_error)
 }
 
 /// Creates the request object for a new fork request
