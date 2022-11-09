@@ -14,6 +14,16 @@ pub struct DocArgs {
         value_name = "PATH"
     )]
     root: Option<PathBuf>,
+
+    #[clap(
+        help = "The doc's output path.",
+        long_help = "The path where the docs are gonna get generated. By default, this is gonna be the docs directory at the root of the project.",
+        long = "out",
+        short,
+        value_hint = ValueHint::DirPath,
+        value_name = "PATH"
+    )]
+    out: Option<PathBuf>,
 }
 
 impl Cmd for DocArgs {
@@ -24,6 +34,7 @@ impl Cmd for DocArgs {
         DocBuilder::from_config(DocConfig {
             root: self.root.as_ref().unwrap_or(&find_project_root_path()?).to_path_buf(),
             sources: config.project_paths().sources,
+            out: self.out.clone().unwrap_or_else(|| PathBuf::from("docs")),
             ..Default::default()
         })
         .build()

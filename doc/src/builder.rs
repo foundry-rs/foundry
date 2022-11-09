@@ -405,7 +405,7 @@ impl DocBuilder {
             writeln!(out)?;
         }
 
-        return Ok(out);
+        return Ok(out)
     }
 
     fn write_book_config(&self, filenames: Vec<(Identifier, PathBuf)>) -> eyre::Result<()> {
@@ -549,7 +549,7 @@ impl DocBuilder {
                         );
                         return Ok(Some(
                             DocOutput::Link(&base.doc(), &path.display().to_string()).doc(),
-                        ));
+                        ))
                     }
                 }
             }
