@@ -317,7 +317,7 @@ impl MultiWallet {
             }
 
             for (path, password) in keystore_paths.iter().zip(passwords) {
-                wallets.push(self.get_from_keystore(Some(path), password.as_ref())?.unwrap());
+                wallets.push(self.get_from_keystore(Some(path), password.as_ref(), None)?.unwrap());
             }
             return Ok(Some(wallets))
         }
