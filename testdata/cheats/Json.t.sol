@@ -134,10 +134,10 @@ contract WriteJson is DSTest {
         bytes[] memory data3 = new bytes[](3);
         data3[0] = bytes("123");
         data3[2] = bytes("fpovhpgjaiosfjhapiufpsdf");
-        vm.serializeBytes(json1, "array3", data3);
+        string memory finalJson = vm.serializeBytes(json1, "array3", data3);
 
         string memory path = "../testdata/fixtures/Json/write_test_array.json";
-        vm.writeJson(json1, path);
+        vm.writeJson(finalJson, path);
 
         string memory json = vm.readFile(path);
         bytes memory rawData = vm.parseJson(json, ".array1");
@@ -172,8 +172,8 @@ contract WriteJson is DSTest {
         string memory json3 = "json3";
         string memory path = "../testdata/fixtures/Json/write_test.json";
         vm.serializeUint(json3, "a", uint256(123));
-        vm.serializeString(json3, "b", "test");
-        vm.writeJson(json3, path);
+        string memory finalJson = vm.serializeString(json3, "b", "test");
+        vm.writeJson(finalJson, path);
 
         string memory json = vm.readFile(path);
         bytes memory data = vm.parseJson(json);
@@ -182,12 +182,20 @@ contract WriteJson is DSTest {
         assertEq(decodedData.b, "test");
 
         // write json3 to key b
-        vm.writeJson(json3, path, ".b");
+        vm.writeJson(finalJson, path, ".b");
         // read again
         json = vm.readFile(path);
         data = vm.parseJson(json, ".b");
         decodedData = abi.decode(data, (simpleJson));
         assertEq(decodedData.a, 123);
         assertEq(decodedData.b, "test");
+
+        // replace a single value to key b
+        address ex = address(0xBEEF);
+        vm.writeJson(vm.toString(ex), path, ".b");
+        json = vm.readFile(path);
+        data = vm.parseJson(json, ".b");
+        address decodedAddress = abi.decode(data, (address));
+        assertEq(decodedAddress, ex);
     }
 }
