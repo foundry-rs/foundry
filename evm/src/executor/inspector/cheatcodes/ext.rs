@@ -436,7 +436,7 @@ fn write_json(
     path: impl AsRef<Path>,
     json_path_or_none: Option<&str>,
 ) -> Result<Bytes, Bytes> {
-    let json = json!(_state.serialized_jsons.get(object_key).unwrap());
+    let json: Value = json!(_state.serialized_jsons.get(object_key).unwrap_or(&HashMap::new()));
     let json_string = serde_json::to_string(&if let Some(json_path) = json_path_or_none {
         let path = _state
             .config
