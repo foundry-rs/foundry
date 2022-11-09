@@ -17,7 +17,7 @@ use foundry_config::fs_permissions::FsAccessKind;
 use hex::FromHex;
 use jsonpath_lib;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::{
     collections::{BTreeMap, HashMap},
     env,
@@ -432,17 +432,16 @@ fn array_eval_to_str<T: UIfmt>(array: &Vec<T>) -> String {
 /// object.
 fn write_json(
     _state: &mut Cheatcodes,
-    object_key: &str,
+    object: &str,
     path: impl AsRef<Path>,
     json_path_or_none: Option<&str>,
 ) -> Result<Bytes, Bytes> {
-    let json: Value = json!(_state.serialized_jsons.get(object_key).unwrap_or(&HashMap::new()));
+    let json: Value = serde_json::from_str(object).unwrap_or(Value::String(object.to_owned()));
     let json_string = serde_json::to_string(&if let Some(json_path) = json_path_or_none {
         let path = _state
             .config
             .ensure_path_allowed(&path, FsAccessKind::Read)
             .map_err(error::encode_error)?;
-
         let data = serde_json::from_str(&fs::read_to_string(path).map_err(error::encode_error)?)
             .map_err(error::encode_error)?;
         let result =
