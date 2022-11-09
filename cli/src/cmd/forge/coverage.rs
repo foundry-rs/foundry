@@ -27,7 +27,7 @@ use forge::{
     utils::{build_ic_pc_map, ICPCMap},
     MultiContractRunnerBuilder, TestOptions,
 };
-use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, ContractsByArtifact};
+use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs};
 use foundry_config::Config;
 use semver::Version;
 use std::{collections::HashMap, sync::mpsc::channel, thread};
@@ -280,7 +280,7 @@ impl CoverageArgs {
             .build(root.clone(), output, env, evm_opts)?;
 
         // Run tests
-        let known_contracts = ContractsByArtifact(runner.known_contracts.clone());
+        let known_contracts = runner.known_contracts.clone();
         let (tx, rx) = channel::<(String, SuiteResult)>();
         let handle =
             thread::spawn(move || runner.test(&self.filter, Some(tx), Default::default()).unwrap());

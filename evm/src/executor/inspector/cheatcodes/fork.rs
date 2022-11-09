@@ -1,7 +1,8 @@
-use super::Cheatcodes;
+use super::{error::CheatcodesError, Cheatcodes};
 use crate::{
     abi::HEVMCalls,
     error,
+    error::SolError,
     executor::{backend::DatabaseExt, fork::CreateFork},
 };
 use bytes::Bytes;
@@ -129,6 +130,10 @@ fn select_fork<DB: DatabaseExt>(
     data: &mut EVMData<DB>,
     fork_id: U256,
 ) -> Result<Bytes, Bytes> {
+    if state.broadcast.is_some() {
+        return Err(CheatcodesError::SelectForkDuringBroadcast.encode_string())
+    }
+
     // No need to correct since the sender's nonce does not get incremented when selecting a fork.
     state.corrected_nonce = true;
 
@@ -145,6 +150,10 @@ fn create_select_fork<DB: DatabaseExt>(
     url_or_alias: String,
     block: Option<u64>,
 ) -> Result<U256, Bytes> {
+    if state.broadcast.is_some() {
+        return Err(CheatcodesError::SelectForkDuringBroadcast.encode_string())
+    }
+
     // No need to correct since the sender's nonce does not get incremented when selecting a fork.
     state.corrected_nonce = true;
 
@@ -162,7 +171,7 @@ fn create_fork<DB: DatabaseExt>(
     block: Option<u64>,
 ) -> Result<U256, Bytes> {
     let fork = create_fork_request(state, url_or_alias, block, data)?;
-    data.db.create_fork(fork, &data.journaled_state).map_err(error::encode_error)
+    data.db.create_fork(fork).map_err(error::encode_error)
 }
 /// Creates and then also selects the new fork at the given transaction
 fn create_select_fork_at_transaction<DB: DatabaseExt>(
@@ -171,6 +180,10 @@ fn create_select_fork_at_transaction<DB: DatabaseExt>(
     url_or_alias: String,
     transaction: H256,
 ) -> Result<U256, Bytes> {
+    if state.broadcast.is_some() {
+        return Err(CheatcodesError::SelectForkDuringBroadcast.encode_string())
+    }
+
     // No need to correct since the sender's nonce does not get incremented when selecting a fork.
     state.corrected_nonce = true;
 
@@ -188,9 +201,7 @@ fn create_fork_at_transaction<DB: DatabaseExt>(
     transaction: H256,
 ) -> Result<U256, Bytes> {
     let fork = create_fork_request(state, url_or_alias, None, data)?;
-    data.db
-        .create_fork_at_transaction(fork, &data.journaled_state, transaction)
-        .map_err(error::encode_error)
+    data.db.create_fork_at_transaction(fork, transaction).map_err(error::encode_error)
 }
 
 /// Creates the request object for a new fork request

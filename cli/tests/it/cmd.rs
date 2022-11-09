@@ -1452,7 +1452,7 @@ forgetest_init!(can_build_sizes_repeatedly, |_prj: TestProject, mut cmd: TestCom
     let table = out.split("Compiler run successful").nth(1).unwrap().trim();
 
     let unchanged = cmd.stdout();
-    assert!(unchanged.contains(&table), "{}", table);
+    assert!(unchanged.contains(table), "{}", table);
 });
 
 // checks that build --names includes all contracts even if unchanged
@@ -1466,5 +1466,5 @@ forgetest_init!(can_build_names_repeatedly, |_prj: TestProject, mut cmd: TestCom
     let list = out.split("Compiler run successful").nth(1).unwrap().trim();
 
     let unchanged = cmd.stdout();
-    assert!(unchanged.contains(&list), "{}", list);
+    assert!(unchanged.contains(list), "{}", list);
 });

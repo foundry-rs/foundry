@@ -1,7 +1,7 @@
 use self::{
     env::Broadcast,
     expect::{handle_expect_emit, handle_expect_revert},
-    util::process_create,
+    util::{process_create, BroadcastableTransactions},
 };
 use crate::{
     abi::HEVMCalls,
@@ -26,7 +26,7 @@ use revm::{
 };
 use serde_json::Value;
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{BTreeMap, HashMap},
     fs::File,
     io::BufReader,
     path::PathBuf,
@@ -50,11 +50,13 @@ mod fuzz;
 mod snapshot;
 /// Utility cheatcodes (`sign` etc.)
 pub mod util;
-pub use util::DEFAULT_CREATE2_DEPLOYER;
+pub use util::{BroadcastableTransaction, DEFAULT_CREATE2_DEPLOYER};
 
 mod config;
 use crate::executor::{backend::RevertDiagnostic, inspector::utils::get_create_address};
 pub use config::CheatsConfig;
+
+mod error;
 
 /// An inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
@@ -125,7 +127,7 @@ pub struct Cheatcodes {
     pub corrected_nonce: bool,
 
     /// Scripting based transactions
-    pub broadcastable_transactions: VecDeque<TypedTransaction>,
+    pub broadcastable_transactions: BroadcastableTransactions,
 
     /// Additional, user configurable context this Inspector has access to when inspecting a call
     pub config: Arc<CheatsConfig>,
@@ -367,16 +369,17 @@ where
                         let account =
                             data.journaled_state.state().get_mut(&broadcast.origin).unwrap();
 
-                        self.broadcastable_transactions.push_back(TypedTransaction::Legacy(
-                            TransactionRequest {
+                        self.broadcastable_transactions.push_back(BroadcastableTransaction {
+                            rpc: data.db.active_fork_url(),
+                            transaction: TypedTransaction::Legacy(TransactionRequest {
                                 from: Some(broadcast.origin),
                                 to: Some(NameOrAddress::Address(call.contract)),
                                 value: Some(call.transfer.value),
                                 data: Some(call.input.clone().into()),
                                 nonce: Some(account.info.nonce.into()),
                                 ..Default::default()
-                            },
-                        ));
+                            }),
+                        });
 
                         // call_inner does not increase nonces, so we have to do it ourselves
                         account.info.nonce += 1;
@@ -567,16 +570,17 @@ where
                         }
                     };
 
-                self.broadcastable_transactions.push_back(TypedTransaction::Legacy(
-                    TransactionRequest {
+                self.broadcastable_transactions.push_back(BroadcastableTransaction {
+                    rpc: data.db.active_fork_url(),
+                    transaction: TypedTransaction::Legacy(TransactionRequest {
                         from: Some(broadcast.origin),
                         to,
                         value: Some(call.value),
                         data: Some(bytecode.into()),
                         nonce: Some(nonce.into()),
                         ..Default::default()
-                    },
-                ));
+                    }),
+                });
             }
         }
 

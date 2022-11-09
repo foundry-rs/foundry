@@ -2209,6 +2209,7 @@ dependencies = [
  "indicatif 0.17.1",
  "itertools",
  "once_cell",
+ "parking_lot 0.12.0",
  "path-slash",
  "pretty_assertions",
  "proptest",
