@@ -6,7 +6,7 @@ use crate::{
     },
     utils::{self, p_println, STATIC_FUZZ_SEED},
 };
-use clap::{Parser, ValueEnum};
+use clap::{ArgAction, Parser, ValueEnum};
 use ethers::{
     abi::Address,
     prelude::{
@@ -42,10 +42,11 @@ pub struct CoverageArgs {
     #[clap(
         long,
         value_enum,
+        action = ArgAction::Append,
         default_value = "summary",
-        help = "The report type to use for coverage."
+        help = "The report type to use for coverage. This flag can be used multiple times."
     )]
-    report: CoverageReportKind,
+    report: Vec<CoverageReportKind>,
 
     #[clap(flatten, next_help_heading = "TEST FILTERING")]
     filter: Filter,
@@ -317,14 +318,17 @@ impl CoverageArgs {
         let _ = handle.join();
 
         // Output final report
-        match self.report {
-            CoverageReportKind::Summary => SummaryReporter::default().report(report),
-            // TODO: Sensible place to put the LCOV file
-            CoverageReportKind::Lcov => {
-                LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?).report(report)
-            }
-            CoverageReportKind::Debug => DebugReporter::default().report(report),
+        for report_kind in self.report {
+            match report_kind {
+                CoverageReportKind::Summary => SummaryReporter::default().report(&report),
+                // TODO: Sensible place to put the LCOV file
+                CoverageReportKind::Lcov => {
+                    LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?).report(&report)
+                }
+                CoverageReportKind::Debug => DebugReporter::default().report(&report),
+            }?;
         }
+        Ok(())
     }
 }
 
