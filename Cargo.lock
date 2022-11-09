@@ -646,15 +646,16 @@ dependencies = [
 
 [[package]]
 name = "cargo_metadata"
-version = "0.15.0"
+version = "0.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3abb7553d5b9b8421c6de7cb02606ff15e0c6eea7d8eadd75ef013fd636bec36"
+checksum = "406c859255d568f4f742b3146d51851f3bfd49f734a2c289d9107c4395ee0062"
 dependencies = [
  "camino",
  "cargo-platform",
  "semver",
  "serde",
  "serde_json",
+ "thiserror",
 ]
 
 [[package]]
@@ -1710,7 +1711,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "1.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#14e038860b17807c148cad08192e0722c86753fb"
+source = "git+https://github.com/gakonst/ethers-rs#5c9a048f7306770bd9c6b1d337cbb848c720e137"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1725,7 +1726,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "1.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#14e038860b17807c148cad08192e0722c86753fb"
+source = "git+https://github.com/gakonst/ethers-rs#5c9a048f7306770bd9c6b1d337cbb848c720e137"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1736,7 +1737,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "1.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#14e038860b17807c148cad08192e0722c86753fb"
+source = "git+https://github.com/gakonst/ethers-rs#5c9a048f7306770bd9c6b1d337cbb848c720e137"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1754,7 +1755,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "1.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#14e038860b17807c148cad08192e0722c86753fb"
+source = "git+https://github.com/gakonst/ethers-rs#5c9a048f7306770bd9c6b1d337cbb848c720e137"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -1777,7 +1778,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "1.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#14e038860b17807c148cad08192e0722c86753fb"
+source = "git+https://github.com/gakonst/ethers-rs#5c9a048f7306770bd9c6b1d337cbb848c720e137"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1791,7 +1792,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "1.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#14e038860b17807c148cad08192e0722c86753fb"
+source = "git+https://github.com/gakonst/ethers-rs#5c9a048f7306770bd9c6b1d337cbb848c720e137"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1809,7 +1810,6 @@ dependencies = [
  "rand 0.8.5",
  "rlp",
  "rlp-derive",
- "rust_decimal",
  "serde",
  "serde_json",
  "strum",
@@ -1822,7 +1822,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "1.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#14e038860b17807c148cad08192e0722c86753fb"
+source = "git+https://github.com/gakonst/ethers-rs#5c9a048f7306770bd9c6b1d337cbb848c720e137"
 dependencies = [
  "ethers-core",
  "ethers-solc",
@@ -1839,7 +1839,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "1.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#14e038860b17807c148cad08192e0722c86753fb"
+source = "git+https://github.com/gakonst/ethers-rs#5c9a048f7306770bd9c6b1d337cbb848c720e137"
 dependencies = [
  "async-trait",
  "auto_impl 0.5.0",
@@ -1864,7 +1864,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "1.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#14e038860b17807c148cad08192e0722c86753fb"
+source = "git+https://github.com/gakonst/ethers-rs#5c9a048f7306770bd9c6b1d337cbb848c720e137"
 dependencies = [
  "async-trait",
  "auto_impl 1.0.1",
@@ -1901,7 +1901,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "1.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#14e038860b17807c148cad08192e0722c86753fb"
+source = "git+https://github.com/gakonst/ethers-rs#5c9a048f7306770bd9c6b1d337cbb848c720e137"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1924,7 +1924,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "1.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#14e038860b17807c148cad08192e0722c86753fb"
+source = "git+https://github.com/gakonst/ethers-rs#5c9a048f7306770bd9c6b1d337cbb848c720e137"
 dependencies = [
  "cfg-if 1.0.0",
  "dunce",
@@ -3752,9 +3752,9 @@ dependencies = [
 
 [[package]]
 name = "num_cpus"
-version = "1.13.1"
+version = "1.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19e64526ebdee182341572e50e9ad03965aa510cd94427a4549448f285e957a1"
+checksum = "f6058e64324c71e02bc2b150e4f3bc8286db6c83092132ffa3f6b1eab0f9def5"
 dependencies = [
  "hermit-abi",
  "libc",
@@ -3807,9 +3807,9 @@ dependencies = [
 
 [[package]]
 name = "once_cell"
-version = "1.15.0"
+version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e82dad04139b71a90c080c8463fe0dc7902db5192d939bd0950f074d014339e1"
+checksum = "86f0b0d4bf799edbc74508c1e8bf170ff5f41238e5f8225603ca7caaae2b7860"
 
 [[package]]
 name = "oorandom"
@@ -4615,9 +4615,9 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.6.0"
+version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c4eb3267174b8c6c2f654116623910a0fef09c4753f8dd83db29c48a0df988b"
+checksum = "e076559ef8e241f2ae3479e36f97bd5741c0330689e217ad51ce2c76808b868a"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -4766,9 +4766,9 @@ dependencies = [
 
 [[package]]
 name = "rlp"
-version = "0.5.1"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "999508abb0ae792aabed2460c45b89106d97fe4adac593bdaef433c2605847b5"
+checksum = "bb919243f34364b6bd2fc10ef797edbfa75f33c252e7998527479c6d6b47e1ec"
 dependencies = [
  "bytes",
  "rustc-hex",
@@ -4803,17 +4803,6 @@ checksum = "703aa035c21c589b34fb5136b12e68fc8dcf7ea46486861381361dd8ebf5cee0"
 dependencies = [
  "libc",
  "libusb1-sys",
-]
-
-[[package]]
-name = "rust_decimal"
-version = "1.26.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee9164faf726e4f3ece4978b25ca877ddc6802fa77f38cdccb32c7f805ecd70c"
-dependencies = [
- "arrayvec 0.7.2",
- "num-traits",
- "serde",
 ]
 
 [[package]]

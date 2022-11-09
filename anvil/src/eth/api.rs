@@ -47,7 +47,7 @@ use ethers::{
         },
         Address, Block, BlockId, BlockNumber, Bytes, FeeHistory, Filter, FilteredParams,
         GethDebugTracingOptions, Log, Trace, Transaction, TransactionReceipt, TxHash,
-        TxpoolContent, TxpoolInspectSummary, TxpoolStatus, TxpoolTransaction, H256, U256, U64,
+        TxpoolContent, TxpoolInspectSummary, TxpoolStatus, H256, U256, U64,
     },
     utils::rlp,
 };
@@ -1673,23 +1673,8 @@ impl EthApi {
     pub async fn txpool_content(&self) -> Result<TxpoolContent> {
         node_info!("txpool_content");
         let mut content = TxpoolContent::default();
-        fn convert(tx: Arc<PoolTransaction>) -> TxpoolTransaction {
-            let from = *tx.pending_transaction.sender();
-            let tx = &tx.pending_transaction.transaction;
-
-            TxpoolTransaction {
-                block_hash: None,
-                block_number: None,
-                from: Some(from),
-                to: tx.to().copied(),
-                gas: Some(tx.gas_limit()),
-                gas_price: Some(tx.gas_price()),
-                value: tx.value(),
-                hash: tx.hash(),
-                input: tx.data().clone(),
-                nonce: *tx.nonce(),
-                transaction_index: None,
-            }
+        fn convert(tx: Arc<PoolTransaction>) -> Transaction {
+            transaction_build(tx.pending_transaction.transaction.clone(), None, None, true, None)
         }
 
         for pending in self.pool.ready_transactions() {
