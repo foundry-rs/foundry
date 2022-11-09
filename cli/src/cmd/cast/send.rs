@@ -255,9 +255,9 @@ where
     let tx_hash = *pending_tx;
 
     if cast_async {
-        println!("{:#x}", tx_hash);
+        println!("{tx_hash:#x}");
     } else {
-        let receipt = cast.receipt(format!("{:#x}", tx_hash), None, confs, false, to_json).await?;
+        let receipt = cast.receipt(format!("{tx_hash:#x}"), None, confs, false, to_json).await?;
         println!("{receipt}");
     }
 

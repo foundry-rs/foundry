@@ -355,7 +355,7 @@ fn patch_nameless_params(event: &mut Event) -> HashSet<String> {
     if event.inputs.iter().filter(|input| input.name.is_empty()).count() > 1 {
         for (idx, param) in event.inputs.iter_mut().enumerate() {
             // this is an illegal arg name, which ensures patched identifiers are unique
-            param.name = format!("<patched {}>", idx);
+            param.name = format!("<patched {idx}>");
             patches.insert(param.name.clone());
         }
     }

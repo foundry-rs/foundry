@@ -133,6 +133,14 @@ pub struct ScriptArgs {
     #[clap(flatten, next_help_heading = "EVM OPTIONS")]
     pub evm_opts: EvmArgs,
 
+    #[clap(
+        long,
+        help = "Send via `eth_sendTransaction` using the `--sender` argument or `$ETH_FROM` as sender",
+        requires = "sender",
+        conflicts_with_all = &["private_key", "private_keys", "froms", "ledger", "trezor"]
+    )]
+    pub unlocked: bool,
+
     /// Resumes submitting transactions that failed or timed-out previously.
     ///
     /// It DOES NOT simulate the script again and it expects nonces to have remained the same.
@@ -301,7 +309,7 @@ impl ScriptArgs {
                         } else {
                             index.to_string()
                         };
-                        println!("{}: {} {}", label.trim_end(), internal_type, format_token(token));
+                        println!("{}: {internal_type} {}", label.trim_end(), format_token(token));
                     }
                 }
                 Err(_) => {
@@ -314,13 +322,13 @@ impl ScriptArgs {
         if !console_logs.is_empty() {
             println!("\n== Logs ==");
             for log in console_logs {
-                println!("  {}", log);
+                println!("  {log}");
             }
         }
 
         if !result.success {
             let revert_msg = decode::decode_revert(&result.returned[..], None, None)
-                .map(|err| format!("{}\n", err))
+                .map(|err| format!("{err}\n"))
                 .unwrap_or_else(|_| "Script failed.\n".to_string());
 
             eyre::bail!("{}", Paint::red(revert_msg));
@@ -339,7 +347,7 @@ impl ScriptArgs {
         let console_logs = decode_console_logs(&result.logs);
         let output = JsonResult { logs: console_logs, gas_used: result.gas_used, returns };
         let j = serde_json::to_string(&output)?;
-        println!("{}", j);
+        println!("{j}");
 
         Ok(())
     }
@@ -526,7 +534,7 @@ impl ScriptArgs {
                 if let RawOrDecodedReturnData::Raw(ref deployed_code) = node.trace.output {
                     // Only push if it was not present already
                     if !bytecodes.iter().any(|(_, b, _)| b == init_code) {
-                        bytecodes.push((format!("Unknown{}", unknown_c), init_code, deployed_code));
+                        bytecodes.push((format!("Unknown{unknown_c}"), init_code, deployed_code));
                         unknown_c += 1;
                     }
                     continue
@@ -707,6 +715,30 @@ mod tests {
             args.sig,
             "522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266"
         );
+    }
+
+    #[test]
+    fn can_parse_unlocked() {
+        let args: ScriptArgs = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--sender",
+            "0x4e59b44847b379578588920ca78fbf26c0b4956c",
+            "--unlocked",
+        ]);
+        assert!(args.unlocked);
+
+        let key = U256::zero();
+        let args = ScriptArgs::try_parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--sender",
+            "0x4e59b44847b379578588920ca78fbf26c0b4956c",
+            "--unlocked",
+            "--private-key",
+            key.to_string().as_str(),
+        ]);
+        assert!(args.is_err());
     }
 
     #[test]

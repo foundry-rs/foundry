@@ -136,7 +136,7 @@ impl Executor {
         let create2_deployer_account = self
             .backend_mut()
             .basic(DEFAULT_CREATE2_DEPLOYER)?
-            .ok_or(DatabaseError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
+            .ok_or_else(|| DatabaseError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
 
         if create2_deployer_account.code.is_none() ||
             create2_deployer_account.code.as_ref().unwrap().is_empty()
@@ -435,7 +435,7 @@ impl Executor {
             }
             _ => {
                 let reason = decode::decode_revert(result.as_ref(), abi, Some(exit_reason))
-                    .unwrap_or_else(|_| format!("{:?}", exit_reason));
+                    .unwrap_or_else(|_| format!("{exit_reason:?}"));
                 return Err(EvmError::Execution {
                     reverted: true,
                     reason,
@@ -828,7 +828,7 @@ fn convert_call_result<D: Detokenize>(
         }
         _ => {
             let reason = decode::decode_revert(result.as_ref(), abi, Some(status))
-                .unwrap_or_else(|_| format!("{:?}", status));
+                .unwrap_or_else(|_| format!("{status:?}"));
             Err(EvmError::Execution {
                 reverted,
                 reason,

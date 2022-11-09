@@ -100,7 +100,7 @@ impl Cmd for LsArgs {
                 ChainOrAll::All => cache = Config::list_foundry_cache()?,
             }
         }
-        print!("{}", cache);
+        print!("{cache}");
         Ok(())
     }
 }

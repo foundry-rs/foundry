@@ -12,6 +12,7 @@ use futures::future::BoxFuture;
 use std::{
     collections::BTreeMap, env::VarError, fmt::Write, path::PathBuf, str::FromStr, time::Duration,
 };
+use tracing::trace;
 
 pub mod abi;
 pub mod rpc;
@@ -140,11 +141,18 @@ pub fn recurse_link<'a>(
 ) {
     // check if we have dependencies
     if let Some(dependencies) = dependency_tree.get(&target) {
+        trace!(?target, target = "forge::link", "linking contract");
         // for each dependency, try to link
         dependencies.iter().for_each(|(next_target, file, key)| {
             // get the dependency
-            let contract = contracts.get(next_target).expect("No target contract").clone();
-            let mut next_target_bytecode = contract.bytecode.expect("No target bytecode");
+            trace!(dependency = next_target, file, key, target = "forge::link", "get dependency");
+            let contract = contracts
+                .get(next_target)
+                .unwrap_or_else(|| panic!("No target contract named {next_target}"))
+                .clone();
+            let mut next_target_bytecode = contract
+                .bytecode
+                .unwrap_or_else(|| panic!("No bytecode for contract {next_target}"));
             let mut next_target_runtime_bytecode = contract
                 .deployed_bytecode
                 .expect("No target runtime bytecode")
@@ -189,7 +197,7 @@ pub fn recurse_link<'a>(
             target_bytecode.1.link(file.clone(), key.clone(), address);
 
             if deployed_address.is_none() {
-                let library = format!("{}:{}:0x{}", file, key, hex::encode(address));
+                let library = format!("{file}:{key}:0x{}", hex::encode(address));
 
                 // push the dependency into the library deployment vector
                 deployment.push((
@@ -208,7 +216,7 @@ pub fn to_table(value: serde_json::Value) -> String {
         serde_json::Value::Object(map) => {
             let mut s = String::new();
             for (k, v) in map.iter() {
-                writeln!(&mut s, "{: <20} {}\n", k, v).expect("could not write k/v to table");
+                writeln!(&mut s, "{k: <20} {v}\n").expect("could not write k/v to table");
             }
             s
         }
@@ -325,7 +333,7 @@ pub async fn next_nonce(
     block: Option<BlockId>,
 ) -> Result<U256> {
     let provider = Provider::try_from(provider_url)
-        .wrap_err_with(|| format!("Bad fork_url provider: {}", provider_url))?;
+        .wrap_err_with(|| format!("Bad fork_url provider: {provider_url}"))?;
     Ok(provider.get_transaction_count(caller, block).await?)
 }
 

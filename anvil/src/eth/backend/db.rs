@@ -41,6 +41,9 @@ pub trait MaybeHashDatabase: DatabaseRef<Error = DatabaseError> {
     /// Clear the state and move it into a new `StateSnapshot`
     fn clear_into_snapshot(&mut self) -> StateSnapshot;
 
+    /// Clears the entire database
+    fn clear(&mut self);
+
     /// Reverses `clear_into_snapshot` by initializing the db's state with the snapshot
     fn init_from_snapshot(&mut self, snapshot: StateSnapshot);
 }
@@ -57,8 +60,10 @@ where
     }
 
     fn clear_into_snapshot(&mut self) -> StateSnapshot {
-        unimplemented!()
+        unreachable!("never called for DatabaseRef")
     }
+
+    fn clear(&mut self) {}
 
     fn init_from_snapshot(&mut self, _snapshot: StateSnapshot) {}
 }
@@ -192,6 +197,10 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeHashDatabase for CacheDB<T> {
         StateSnapshot { accounts, storage: account_storage, block_hashes }
     }
 
+    fn clear(&mut self) {
+        self.clear_into_snapshot();
+    }
+
     fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
         let StateSnapshot { accounts, mut storage, block_hashes } = snapshot;
 
@@ -253,6 +262,10 @@ impl MaybeHashDatabase for StateDb {
 
     fn clear_into_snapshot(&mut self) -> StateSnapshot {
         self.0.clear_into_snapshot()
+    }
+
+    fn clear(&mut self) {
+        self.0.clear()
     }
 
     fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {

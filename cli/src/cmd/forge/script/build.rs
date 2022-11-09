@@ -118,7 +118,7 @@ impl ScriptArgs {
             sender,
             nonce,
             &mut extra_info,
-            |file, key| (format!("{}.json:{}", key, key), file, key),
+            |file, key| (format!("{key}.json:{key}"), file, key),
             |post_link_input| {
                 let PostLinkInput {
                     contract,
@@ -190,15 +190,23 @@ impl ScriptArgs {
     ) -> eyre::Result<(Project, ProjectCompileOutput)> {
         let project = script_config.config.project()?;
 
-        // We received a file path.
+        let filters = self.opts.skip.clone().unwrap_or_default();
+        // We received a valid file path.
+        // If this file does not exist, `dunce::canonicalize` will
+        // result in an error and it will be handled below.
         if let Ok(target_contract) = dunce::canonicalize(&self.path) {
-            let output = compile::compile_target(
+            let output = compile::compile_target_with_filter(
                 &target_contract,
                 &project,
                 self.opts.args.silent,
                 self.verify,
+                filters,
             )?;
             return Ok((project, output))
+        }
+
+        if !project.paths.has_input_files() {
+            eyre::bail!("The project doesn't have any input files. Make sure the `script` directory is configured properly in foundry.toml. Otherwise, provide the path to the file.")
         }
 
         let contract = ContractInfo::from_str(&self.path)?;
@@ -207,9 +215,14 @@ impl ScriptArgs {
         // We received `contract_path:contract_name`
         if let Some(path) = contract.path {
             let path =
-                dunce::canonicalize(&path).wrap_err("Could not canonicalize the target path")?;
-            let output =
-                compile::compile_target(&path, &project, self.opts.args.silent, self.verify)?;
+                dunce::canonicalize(path).wrap_err("Could not canonicalize the target path")?;
+            let output = compile::compile_target_with_filter(
+                &path,
+                &project,
+                self.opts.args.silent,
+                self.verify,
+                filters,
+            )?;
             self.path = path.to_string_lossy().to_string();
             return Ok((project, output))
         }
@@ -278,7 +291,7 @@ pub fn filter_sources_and_artifacts(
                 Some((
                     id,
                     fs::read_to_string(&resolved).unwrap_or_else(|_| {
-                        panic!("Something went wrong reading the source file: {:?}", path)
+                        panic!("Something went wrong reading the source file: {path:?}")
                     }),
                 ))
             }

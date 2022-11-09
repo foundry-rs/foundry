@@ -139,7 +139,7 @@ impl figment::Provider for EthereumOpts {
         }
 
         if let Some(from) = self.wallet.from {
-            dict.insert("sender".to_string(), format!("{:?}", from).into());
+            dict.insert("sender".to_string(), format!("{from:?}").into());
         }
 
         if let Some(etherscan_api_key) = &self.etherscan_api_key {

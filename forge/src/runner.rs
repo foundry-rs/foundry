@@ -12,9 +12,12 @@ use foundry_common::{
     TestFunctionExt,
 };
 use foundry_evm::{
+    decode::decode_console_logs,
     executor::{CallResult, DeployResult, EvmError, Executor},
     fuzz::{
-        invariant::{InvariantContract, InvariantExecutor, InvariantFuzzTestResult},
+        invariant::{
+            InvariantContract, InvariantExecutor, InvariantFuzzError, InvariantFuzzTestResult,
+        },
         FuzzedExecutor,
     },
     trace::{load_contracts, TraceKind},
@@ -214,6 +217,7 @@ impl<'a> ContractRunner<'a> {
                         reason: Some("Multiple setUp functions".to_string()),
                         counterexample: None,
                         logs: vec![],
+                        decoded_logs: vec![],
                         kind: TestKind::Standard(0),
                         traces: vec![],
                         coverage: None,
@@ -247,6 +251,7 @@ impl<'a> ContractRunner<'a> {
                         success: false,
                         reason: setup.reason,
                         counterexample: None,
+                        decoded_logs: decode_console_logs(&setup.logs),
                         logs: setup.logs,
                         kind: TestKind::Standard(0),
                         traces: setup.traces,
@@ -415,6 +420,7 @@ impl<'a> ContractRunner<'a> {
             success,
             reason,
             counterexample: None,
+            decoded_logs: decode_console_logs(&logs),
             logs,
             kind: TestKind::Standard(gas.overflowing_sub(stipend).0),
             traces,
@@ -449,18 +455,21 @@ impl<'a> ContractRunner<'a> {
         let invariant_contract =
             InvariantContract { address, invariant_functions: functions, abi: self.contract };
 
-        if let Some(InvariantFuzzTestResult { invariants, cases, reverts }) =
+        if let Some(InvariantFuzzTestResult { invariants, cases, reverts, mut last_call_results }) =
             evm.invariant_fuzz(invariant_contract)?
         {
             let results = invariants
-                .values()
-                .map(|test_error| {
+                .iter()
+                .map(|(func_name, test_error)| {
                     let mut counterexample = None;
                     let mut logs = logs.clone();
                     let mut traces = traces.clone();
 
-                    if let Some(ref error) = test_error {
-                        if let TestError::Fail(_, _) = &error.test_error {
+                    match test_error {
+                        // If invariants were broken, replay the error to collect logs and traces
+                        Some(
+                            error @ InvariantFuzzError { test_error: TestError::Fail(_, _), .. },
+                        ) => {
                             counterexample = error.replay(
                                 self.executor.clone(),
                                 known_contracts,
@@ -468,6 +477,19 @@ impl<'a> ContractRunner<'a> {
                                 &mut logs,
                                 &mut traces,
                             )?;
+                        }
+                        // If invariants ran successfully, collect last call logs and traces
+                        _ => {
+                            if let Some(last_call_result) = last_call_results
+                                .as_mut()
+                                .and_then(|call_results| call_results.remove(func_name))
+                            {
+                                logs.extend(last_call_result.logs);
+
+                                if let Some(last_call_traces) = last_call_result.traces {
+                                    traces.push((TraceKind::Execution, last_call_traces));
+                                }
+                            }
                         }
                     }
 
@@ -477,6 +499,7 @@ impl<'a> ContractRunner<'a> {
                             (!err.revert_reason.is_empty()).then(|| err.revert_reason.clone())
                         }),
                         counterexample,
+                        decoded_logs: decode_console_logs(&logs),
                         logs,
                         kind: TestKind::Invariant(cases.clone(), reverts),
                         coverage: None, // todo?
@@ -525,6 +548,7 @@ impl<'a> ContractRunner<'a> {
             success: result.success,
             reason: result.reason,
             counterexample: result.counterexample,
+            decoded_logs: decode_console_logs(&logs),
             logs,
             kind: TestKind::Fuzz(result.cases),
             traces,

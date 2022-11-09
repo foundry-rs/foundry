@@ -1332,6 +1332,62 @@ forgetest_init!(can_use_absolute_imports, |prj: TestProject, mut cmd: TestComman
     assert!(stdout.contains("Compiler run successful"));
 });
 
+// <https://github.com/foundry-rs/foundry/issues/3440>
+forgetest_init!(
+    can_use_absolute_imports_from_test_and_script,
+    |prj: TestProject, mut cmd: TestCommand| {
+        prj.inner()
+            .add_script(
+                "IMyScript.sol",
+                r#"
+    pragma solidity ^0.8.10;
+
+    interface IMyScript {}
+   "#,
+            )
+            .unwrap();
+
+        prj.inner()
+            .add_script(
+                "MyScript.sol",
+                r#"
+    pragma solidity ^0.8.10;
+    import "script/IMyScript.sol";
+
+    contract MyScript is IMyScript {}
+   "#,
+            )
+            .unwrap();
+
+        prj.inner()
+            .add_test(
+                "IMyTest.sol",
+                r#"
+    pragma solidity ^0.8.10;
+
+    interface IMyTest {}
+   "#,
+            )
+            .unwrap();
+
+        prj.inner()
+            .add_test(
+                "MyTest.sol",
+                r#"
+    pragma solidity ^0.8.10;
+    import "test/IMyTest.sol";
+
+    contract MyTest is IMyTest {}
+   "#,
+            )
+            .unwrap();
+
+        cmd.arg("build");
+        let stdout = cmd.stdout_lossy();
+        assert!(stdout.contains("Compiler run successful"));
+    }
+);
+
 // checks forge bind works correctly on the default project
 forgetest_init!(can_bind, |_prj: TestProject, mut cmd: TestCommand| {
     cmd.arg("bind");

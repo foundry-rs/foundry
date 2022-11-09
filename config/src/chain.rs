@@ -1,6 +1,6 @@
 use crate::U256;
 use ethers_core::types::{ParseChainError, U64};
-use fastrlp::{Decodable, Encodable};
+use open_fastrlp::{Decodable, Encodable};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::{fmt, str::FromStr};
 
@@ -151,7 +151,7 @@ impl Encodable for Chain {
             Self::Id(id) => id.length(),
         }
     }
-    fn encode(&self, out: &mut dyn fastrlp::BufMut) {
+    fn encode(&self, out: &mut dyn open_fastrlp::BufMut) {
         match self {
             Self::Named(chain) => u64::from(*chain).encode(out),
             Self::Id(id) => id.encode(out),
@@ -160,7 +160,7 @@ impl Encodable for Chain {
 }
 
 impl Decodable for Chain {
-    fn decode(buf: &mut &[u8]) -> Result<Self, fastrlp::DecodeError> {
+    fn decode(buf: &mut &[u8]) -> Result<Self, open_fastrlp::DecodeError> {
         Ok(u64::decode(buf)?.into())
     }
 }

@@ -169,7 +169,7 @@ impl Cmd for FmtArgs {
 
                 if self.check || matches!(input, Input::Stdin(_)) {
                     if self.raw {
-                        print!("{}", output);
+                        print!("{output}");
                     }
 
                     let diff = TextDiff::from_lines(&source, &output);

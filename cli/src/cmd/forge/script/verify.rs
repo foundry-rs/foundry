@@ -107,7 +107,7 @@ impl VerifyBundle {
                     address: contract_address,
                     contract,
                     compiler_version: Some(version.to_string()),
-                    constructor_args: Some(hex::encode(&constructor_args)),
+                    constructor_args: Some(hex::encode(constructor_args)),
                     constructor_args_path: None,
                     num_of_optimizations: self.num_of_optimizations,
                     chain: self.chain,
@@ -115,10 +115,11 @@ impl VerifyBundle {
                     flatten: false,
                     force: false,
                     watch: true,
-                    retry: self.retry.clone(),
+                    retry: self.retry,
                     libraries: libraries.to_vec(),
                     root: None,
                     verifier: self.verifier.clone(),
+                    show_standard_json_input: false,
                 };
 
                 return Some(verify)

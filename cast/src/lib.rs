@@ -170,7 +170,7 @@ where
                 if !al.storage_keys.is_empty() {
                     s.push("  keys:".to_string());
                     for key in al.storage_keys {
-                        s.push(format!("    {:?}", key));
+                        s.push(format!("    {key:?}"));
                     }
                 }
             }
@@ -429,6 +429,8 @@ where
             "0x7b66506a9ebdbf30d32b43c5f15a3b1216269a1ec3a75aa3182b86176a2b1ca7" => {
                 "polygon-mumbai"
             }
+            "0x4f1dd23188aab3a76b463e4af801b52b1248ef073c648cbdc4c9333d3da79756" => "gnosis",
+            "0xada44fd8d2ecab8b08f256af07ad3e777f17fb434f8f8e678b312f576212ba9a" => "chiado",
             "0x6d3c66c5357ec91d5c43af47e234a939b22557cbb552dc45bebbceeed90fbe34" => "bsctest",
             "0x0d21840abff46b96c84b2ac9e10e4f5cdaeb5693cb665db62a2f3b02d2d57b5b" => "bsc",
             "0x31ced5b9beb7f8782b014660da0cb18cc409f121f408186886e1ca3e8eeca96b" => {
@@ -561,30 +563,22 @@ where
         field: Option<String>,
         to_json: bool,
     ) -> Result<String> {
-        let transaction_result = self
+        let tx_hash = H256::from_str(&tx_hash).wrap_err("invalid tx hash")?;
+        let tx = self
             .provider
-            .get_transaction(H256::from_str(&tx_hash)?)
+            .get_transaction(tx_hash)
             .await?
-            .ok_or_else(|| eyre::eyre!("transaction {:?} not found", tx_hash))?;
+            .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
 
-        let transaction = if let Some(ref field) = field {
-            serde_json::to_value(&transaction_result)?
-                .get(field)
-                .cloned()
-                .ok_or_else(|| eyre::eyre!("field {field} not found"))?
-        } else {
-            serde_json::to_value(&transaction_result)?
-        };
-
-        let transaction = if let Some(ref field) = field {
-            get_pretty_tx_attr(&transaction_result, field)
-                .unwrap_or_else(|| format!("{field} is not a valid tx field"))
+        Ok(if let Some(ref field) = field {
+            get_pretty_tx_attr(&tx, field)
+                .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field))?
         } else if to_json {
-            serde_json::to_string(&transaction)?
+            // to_value first to sort json object keys
+            serde_json::to_value(&tx)?.to_string()
         } else {
-            transaction_result.pretty()
-        };
-        Ok(transaction)
+            tx.pretty()
+        })
     }
 
     /// # Example
@@ -611,49 +605,36 @@ where
         cast_async: bool,
         to_json: bool,
     ) -> Result<String> {
-        let tx_hash = H256::from_str(&tx_hash)?;
+        let tx_hash = H256::from_str(&tx_hash).wrap_err("invalid tx hash")?;
 
-        // try to get the receipt
-        let receipt = self.provider.get_transaction_receipt(tx_hash).await?;
-
-        // if the async flag is provided, immediately exit if no tx is found,
-        // otherwise try to poll for it
-        let receipt_result = if cast_async {
-            match receipt {
-                Some(inner) => inner,
-                None => return Ok("receipt not found".to_string()),
-            }
-        } else {
-            match receipt {
-                Some(inner) => inner,
-                None => {
+        let receipt = match self.provider.get_transaction_receipt(tx_hash).await? {
+            Some(r) => r,
+            None => {
+                // if the async flag is provided, immediately exit if no tx is found, otherwise try
+                // to poll for it
+                if cast_async {
+                    eyre::bail!("tx not found: {:?}", tx_hash)
+                } else {
                     let tx = PendingTransaction::new(tx_hash, self.provider.provider());
-                    match tx.confirmations(confs).await? {
-                        Some(inner) => inner,
-                        None => return Ok("receipt not found when polling pending tx. was the transaction dropped from the mempool?".to_string())
-                    }
+                    tx.confirmations(confs).await?.ok_or_else(|| {
+                        eyre::eyre!(
+                            "tx not found, might have been dropped from mempool: {:?}",
+                            tx_hash
+                        )
+                    })?
                 }
             }
         };
 
-        let receipt = if let Some(ref field) = field {
-            serde_json::to_value(&receipt_result)?
-                .get(field)
-                .cloned()
-                .ok_or_else(|| eyre::eyre!("field {field} not found"))?
-        } else {
-            serde_json::to_value(&receipt_result)?
-        };
-
-        let receipt = if let Some(ref field) = field {
-            get_pretty_tx_receipt_attr(&receipt_result, field)
-                .unwrap_or_else(|| format!("{field} is not a valid tx receipt field"))
+        Ok(if let Some(ref field) = field {
+            get_pretty_tx_receipt_attr(&receipt, field)
+                .ok_or_else(|| eyre::eyre!("invalid receipt field: {}", field))?
         } else if to_json {
-            serde_json::to_string(&receipt)?
+            // to_value first to sort json object keys
+            serde_json::to_value(&receipt)?.to_string()
         } else {
-            receipt_result.pretty()
-        };
-        Ok(receipt)
+            receipt.pretty()
+        })
     }
 
     /// Perform a raw JSON-RPC request
@@ -761,7 +742,7 @@ impl SimpleCast {
             Err(_) => Units::try_from(decimals)?,
         };
         let n: NumberWithBase = parse_units(value, units.as_num())?.into();
-        Ok(format!("{}", n))
+        Ok(format!("{n}"))
     }
 
     /// Converts integers with specified decimals into fixed point numbers
@@ -790,7 +771,7 @@ impl SimpleCast {
         let (sign, mut value, value_len) = {
             let number = NumberWithBase::parse_int(value, None)?;
             let sign = if number.is_nonnegative() { "" } else { "-" };
-            let value = format!("{:#}", number);
+            let value = format!("{number:#}");
             let value_stripped = value.strip_prefix('-').unwrap_or(&value).to_string();
             let value_len = value_stripped.len();
             (sign, value_stripped, value_len)
@@ -799,14 +780,14 @@ impl SimpleCast {
 
         let value = if decimals >= value_len {
             // Add "0." and pad with 0s
-            format!("0.{:0>1$}", value, decimals)
+            format!("0.{value:0>decimals$}")
         } else {
             // Insert decimal at -idx (i.e 1 => decimal idx = -1)
             value.insert(value_len - decimals, '.');
             value
         };
 
-        Ok(format!("{}{}", sign, value))
+        Ok(format!("{sign}{value}"))
     }
 
     /// Concatencates hex strings
@@ -876,7 +857,7 @@ impl SimpleCast {
     /// ```
     pub fn to_uint256(value: &str) -> Result<String> {
         let n = NumberWithBase::parse_uint(value, None)?;
-        Ok(format!("{:#066x}", n))
+        Ok(format!("{n:#066x}"))
     }
 
     /// Converts a number into int256 hex string with 0x prefix
@@ -906,7 +887,7 @@ impl SimpleCast {
     /// ```
     pub fn to_int256(value: &str) -> Result<String> {
         let n = NumberWithBase::parse_int(value, None)?;
-        Ok(format!("{:#066x}", n))
+        Ok(format!("{n:#066x}"))
     }
 
     /// Converts an eth amount into a specified unit
@@ -1011,7 +992,7 @@ impl SimpleCast {
         let striped_value = strip_0x(value);
         let bytes = hex::decode(striped_value).expect("Could not decode hex");
         let item = rlp::decode::<Item>(&bytes).expect("Could not decode rlp");
-        Ok(format!("{}", item))
+        Ok(format!("{item}"))
     }
 
     /// Encodes hex data or list of hex data to hexadecimal rlp
@@ -1067,7 +1048,7 @@ impl SimpleCast {
         n.set_base(base_out);
 
         // Use Debug fmt
-        Ok(format!("{:#?}", n))
+        Ok(format!("{n:#?}"))
     }
 
     /// Converts hexdata into bytes32 value
@@ -1095,7 +1076,7 @@ impl SimpleCast {
             eyre::bail!("string >32 bytes");
         }
 
-        let padded = format!("{:0<64}", s);
+        let padded = format!("{s:0<64}");
         // need to use the Debug implementation
         Ok(format!("{:?}", H256::from_str(&padded)?))
     }
@@ -1240,7 +1221,7 @@ impl SimpleCast {
     ) -> Result<Vec<InterfaceSource>> {
         let (contract_abis, contract_names): (Vec<RawAbi>, Vec<String>) = match address_or_path {
             InterfacePath::Local { path, name } => {
-                let file = std::fs::read_to_string(&path).wrap_err("unable to read abi file")?;
+                let file = std::fs::read_to_string(path).wrap_err("unable to read abi file")?;
 
                 let mut json: serde_json::Value = serde_json::from_str(&file)?;
                 let json = if !json["abi"].is_null() { json["abi"].take() } else { json };

@@ -206,7 +206,7 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                         // this mimics geth revert error
                         let mut msg = "execution reverted".to_string();
                         if let Some(reason) = data.as_ref().and_then(decode_revert_reason) {
-                            msg = format!("{}: {}", msg, reason);
+                            msg = format!("{msg}: {reason}");
                         }
                         RpcError {
                             // geth returns this error code on reverts, See <https://github.com/ethereum/wiki/wiki/JSON-RPC-Error-Codes-Improvement-Proposal>
@@ -241,7 +241,7 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 ),
                 BlockchainError::ForkProvider(err) => {
                     error!("fork provider error: {:?}", err);
-                    RpcError::internal_error_with(format!("Fork Error: {:?}", err))
+                    RpcError::internal_error_with(format!("Fork Error: {err:?}"))
                 }
                 err @ BlockchainError::EvmError(_) => {
                     RpcError::internal_error_with(err.to_string())

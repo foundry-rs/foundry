@@ -148,9 +148,9 @@ impl fmt::Display for CallTraceArena {
 
             // Display trace header
             if !verbose {
-                writeln!(writer, "{}{}", left, node.trace)?;
+                writeln!(writer, "{left}{}", node.trace)?;
             } else {
-                writeln!(writer, "{}{:#}", left, node.trace)?;
+                writeln!(writer, "{left}{:#}", node.trace)?;
             }
 
             // Display logs and subcalls
@@ -187,7 +187,7 @@ impl fmt::Display for CallTraceArena {
 
             // Display trace return data
             let color = trace_color(&node.trace);
-            write!(writer, "{}{}", child, EDGE)?;
+            write!(writer, "{child}{EDGE}")?;
             write!(writer, "{}", color.paint(RETURN))?;
             if node.trace.created() {
                 if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
@@ -244,7 +244,7 @@ impl fmt::Display for RawOrDecodedLog {
                     .collect::<Vec<String>>()
                     .join(", ");
 
-                write!(f, "emit {}({})", Paint::cyan(name.clone()), params)
+                write!(f, "emit {}({params})", Paint::cyan(name.clone()))
             }
         }
     }

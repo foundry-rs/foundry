@@ -80,21 +80,21 @@ impl Create2Args {
                 matches = matches.strip_prefix("0x").unwrap().to_string();
             }
 
-            hex::decode(&matches.replace('X', "0")).wrap_err("invalid matching hex provided")?;
+            hex::decode(matches.replace('X', "0")).wrap_err("invalid matching hex provided")?;
             regexs.push(matches.replace('X', "."));
         }
 
         if let Some(prefix) = starts_with {
             let pad_width = prefix.len() + prefix.len() % 2;
-            hex::decode(format!("{:0>width$}", prefix, width = pad_width))
+            hex::decode(format!("{prefix:0>pad_width$}"))
                 .wrap_err("invalid prefix hex provided")?;
-            regexs.push(format!(r"^{}", prefix));
+            regexs.push(format!(r"^{prefix}"));
         }
         if let Some(suffix) = ends_with {
             let pad_width = suffix.len() + suffix.len() % 2;
-            hex::decode(format!("{:0>width$}", suffix, width = pad_width))
+            hex::decode(format!("{suffix:0>pad_width$}"))
                 .wrap_err("invalid suffix hex provided")?;
-            regexs.push(format!(r"{}$", suffix));
+            regexs.push(format!(r"{suffix}$"));
         }
 
         assert!(

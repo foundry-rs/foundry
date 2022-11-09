@@ -91,7 +91,7 @@ pub fn install_missing_dependencies(config: &mut Config, project: &Project, quie
     // try to auto install missing submodules in the default install dir but only if git is
     // installed
     if which::which("git").is_ok() &&
-        has_missing_dependencies(project.root(), &config.install_lib_dir())
+        has_missing_dependencies(project.root(), config.install_lib_dir())
     {
         // The extra newline is needed, otherwise the compiler output will overwrite the
         // message
@@ -449,7 +449,7 @@ fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String
     candidates.insert(0, String::from("SKIP AND USE ORIGINAL TAG"));
     println!("There are multiple matching tags:");
     for (i, candidate) in candidates.iter().enumerate() {
-        println!("[{}] {}", i, candidate);
+        println!("[{i}] {candidate}");
     }
 
     let n_candidates = candidates.len();
@@ -467,7 +467,7 @@ fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String
         match input.trim().parse::<usize>() {
             Ok(i) if i == 0 => return Ok(tag.into()),
             Ok(i) if (1..=n_candidates).contains(&i) => {
-                println!("[{}] {} selected", i, candidates[i]);
+                println!("[{i}] {} selected", candidates[i]);
                 return Ok(candidates[i].clone())
             }
             _ => continue,
@@ -507,7 +507,7 @@ fn match_branch(tag: &str, libs: &Path, target_dir: &str) -> eyre::Result<Option
     // only one candidate, ask whether the user wants to accept or not
     if candidates.len() == 1 {
         let matched_tag = candidates[0].clone();
-        print!("Found a similar branch: {}, do you want to use this instead? ([y]/n)", matched_tag);
+        print!("Found a similar branch: {matched_tag}, do you want to use this instead? ([y]/n)");
         stdout().flush()?;
         let mut input = String::new();
         stdin().read_line(&mut input)?;
@@ -520,10 +520,10 @@ fn match_branch(tag: &str, libs: &Path, target_dir: &str) -> eyre::Result<Option
     }
 
     // multiple candidates, ask the user to choose one or skip
-    candidates.insert(0, format!("{} (original branch)", tag));
+    candidates.insert(0, format!("{tag} (original branch)"));
     println!("There are multiple matching branches:");
     for (i, candidate) in candidates.iter().enumerate() {
-        println!("[{}] {}", i, candidate);
+        println!("[{i}] {candidate}");
     }
 
     let n_candidates = candidates.len();
@@ -543,7 +543,7 @@ fn match_branch(tag: &str, libs: &Path, target_dir: &str) -> eyre::Result<Option
     match input.parse::<usize>() {
         Ok(i) if i == 0 => Ok(Some(tag.to_string())),
         Ok(i) if (1..=n_candidates).contains(&i) => {
-            println!("[{}] {} selected", i, candidates[i]);
+            println!("[{i}] {} selected", candidates[i]);
             Ok(Some(candidates.remove(i)))
         }
         _ => Ok(None),

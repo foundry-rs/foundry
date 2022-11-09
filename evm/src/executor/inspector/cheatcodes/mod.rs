@@ -24,6 +24,7 @@ use revm::{
     opcode, BlockEnv, CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return,
     TransactTo,
 };
+use serde_json::Value;
 use std::{
     collections::{BTreeMap, HashMap},
     fs::File,
@@ -34,7 +35,7 @@ use std::{
 
 /// Cheatcodes related to the execution environment.
 mod env;
-pub use env::{Prank, RecordAccess};
+pub use env::{Log, Prank, RecordAccess};
 /// Assertion helpers (such as `expectEmit`)
 mod expect;
 pub use expect::{ExpectedCallData, ExpectedEmit, ExpectedRevert, MockCallDataContext};
@@ -137,6 +138,8 @@ pub struct Cheatcodes {
     // Commit FS changes such as file creations, writes and deletes.
     // Used to prevent duplicate changes file executing non-committing calls.
     pub fs_commit: bool,
+
+    pub serialized_jsons: HashMap<String, HashMap<String, Value>>,
 }
 
 impl Cheatcodes {
@@ -273,9 +276,10 @@ where
 
         // Stores this log if `recordLogs` has been called
         if let Some(storage_recorded_logs) = &mut self.recorded_logs {
-            storage_recorded_logs
-                .entries
-                .push(RawLog { topics: topics.to_vec(), data: data.to_vec() });
+            storage_recorded_logs.entries.push(Log {
+                emitter: *address,
+                inner: RawLog { topics: topics.to_vec(), data: data.to_vec() },
+            });
         }
     }
 
@@ -474,7 +478,7 @@ where
                         "Expected a call to {:?} with data {}{}, but got none",
                         address,
                         ethers::types::Bytes::from(expecteds[0].calldata.clone()),
-                        expecteds[0].value.map(|v| format!(" and value {}", v)).unwrap_or_default()
+                        expecteds[0].value.map(|v| format!(" and value {v}")).unwrap_or_default()
                     )
                     .encode()
                     .into(),

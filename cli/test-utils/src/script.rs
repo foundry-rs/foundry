@@ -144,8 +144,20 @@ impl ScriptTester {
         self
     }
 
+    /// Adds given address as sender
+    pub fn sender(&mut self, addr: Address) -> &mut Self {
+        self.cmd.args(["--sender", format!("{addr:?}").as_str()]);
+        self
+    }
+
     pub fn add_sig(&mut self, contract_name: &str, sig: &str) -> &mut Self {
         self.cmd.args(["--tc", contract_name, "--sig", sig]);
+        self
+    }
+
+    /// Adds the `--unlocked` flag
+    pub fn unlocked(&mut self) -> &mut Self {
+        self.cmd.arg("--unlocked");
         self
     }
 
@@ -208,7 +220,7 @@ impl ScriptTester {
             if expected.is_err() { self.cmd.stderr_lossy() } else { self.cmd.stdout_lossy() };
 
         if !output.contains(expected.as_str()) {
-            panic!("OUTPUT: {}\n\nEXPECTED: {}", output, expected.as_str());
+            panic!("OUTPUT: {output}\n\nEXPECTED: {}", expected.as_str());
         }
         self
     }

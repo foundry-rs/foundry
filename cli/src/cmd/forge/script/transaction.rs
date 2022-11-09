@@ -163,7 +163,7 @@ impl TransactionWithMetadata {
                                     .map(|p| p.kind.to_string())
                                     .collect::<Vec<_>>()
                                     .join(",");
-                                let signature = format!("constructor({})", inputs);
+                                let signature = format!("constructor({inputs})");
                                 let bytecode = hex::encode(&data.0);
                                 (signature, bytecode)
                             };

@@ -141,7 +141,7 @@ impl Tracer {
 
         // Error codes only
         if status as u8 > Return::OutOfGas as u8 {
-            step.error = Some(format!("{:?}", status));
+            step.error = Some(format!("{status:?}"));
         }
     }
 }

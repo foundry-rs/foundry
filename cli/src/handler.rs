@@ -28,9 +28,9 @@ impl EyreHandler for Handler {
             for (n, error) in errors.enumerate() {
                 writeln!(f)?;
                 if multiple {
-                    write!(f, "- Error #{}: {}", n, error)?;
+                    write!(f, "- Error #{n}: {error}")?;
                 } else {
-                    write!(f, "- {}", error)?;
+                    write!(f, "- {error}")?;
                 }
             }
         }

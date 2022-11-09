@@ -158,7 +158,7 @@ impl Display for GasReport {
                     ]);
                 })
             });
-            writeln!(f, "{}", table)?
+            writeln!(f, "{table}")?
         }
         Ok(())
     }

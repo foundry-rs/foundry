@@ -24,9 +24,9 @@ pub struct Opts {
 #[derive(Debug, Subcommand)]
 #[clap(
     about = "Perform Ethereum RPC calls from the comfort of your command line.",
-    after_help = "Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html"
+    after_help = "Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html",
+    next_display_order = None
 )]
-
 pub enum Subcommands {
     #[clap(name = "--max-int")]
     #[clap(visible_aliases = &["max-int", "maxi"])]
@@ -208,16 +208,22 @@ Examples:
     #[clap(name = "--from-rlp")]
     #[clap(about = "Decodes RLP encoded data. Input must be hexadecimal.")]
     FromRlp { value: Option<String> },
+    #[clap(name = "--to-hex")]
+    #[clap(visible_aliases = &["to-hex", "th", "2h"])]
+    #[clap(about = "Converts a number of one base to another")]
+    ToHex(ToBaseArgs),
+    #[clap(name = "--to-dec")]
+    #[clap(visible_aliases = &["to-dec", "td", "2d"])]
+    #[clap(about = "Converts a number of one base to decimal")]
+    ToDec(ToBaseArgs),
     #[clap(name = "--to-base")]
-    #[clap(visible_aliases = &["--to-radix", "to-radix", "to-base", "tr", "2r", "--to-hex", "to-hex", "th", "2h", "--to-dec", "to-dec", "td", "2d"])]
+    #[clap(visible_aliases = &["to-base", "--to-radix", "to-radix", "tr", "2r"])]
     #[clap(about = "Converts a number of one base to another")]
     ToBase {
-        #[clap(allow_hyphen_values = true, value_name = "VALUE")]
-        value: String,
+        #[clap(flatten)]
+        base: ToBaseArgs,
         #[clap(value_name = "BASE", help = "The output base")]
         base_out: String,
-        #[clap(long = "base-in", help = "The input base")]
-        base_in: Option<String>,
     },
     #[clap(name = "access-list")]
     #[clap(visible_aliases = &["ac", "acl"])]
@@ -333,8 +339,8 @@ Examples:
     #[clap(visible_alias = "t")]
     #[clap(about = "Get information about a transaction.")]
     Tx {
-        #[clap(value_name = "HASH")]
-        hash: String,
+        #[clap(value_name = "TX_HASH")]
+        tx_hash: String,
         #[clap(value_name = "FIELD")]
         field: Option<String>,
         #[clap(long = "json", short = 'j', help_heading = "DISPLAY OPTIONS")]
@@ -347,7 +353,7 @@ Examples:
     #[clap(about = "Get the transaction receipt for a transaction.")]
     Receipt {
         #[clap(value_name = "TX_HASH")]
-        hash: String,
+        tx_hash: String,
         #[clap(value_name = "FIELD")]
         field: Option<String>,
         #[clap(
@@ -752,6 +758,15 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
     },
 }
 
+/// Common args for ToHex, ToDec, ToBase
+#[derive(Debug, Parser)]
+pub struct ToBaseArgs {
+    #[clap(allow_hyphen_values = true, value_name = "VALUE")]
+    pub value: String,
+    #[clap(long = "base-in", short = 'i', help = "The input base")]
+    pub base_in: Option<String>,
+}
+
 pub fn parse_name_or_address(s: &str) -> eyre::Result<NameOrAddress> {
     Ok(if s.starts_with("0x") {
         NameOrAddress::Address(s.parse()?)
@@ -774,4 +789,31 @@ fn parse_slot(s: &str) -> eyre::Result<H256> {
     Numeric::from_str(s)
         .map_err(|e| eyre::eyre!("Could not parse slot number: {e}"))
         .map(|n| H256::from_uint(&n.into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_call_data() {
+        let args: Opts = Opts::parse_from([
+            "foundry-cli",
+            "calldata",
+            "f()",
+            "5c9d55b78febcc2061715ba4f57ecf8ea2711f2c",
+            "2",
+        ]);
+        match args.sub {
+            Subcommands::CalldataEncode { args, .. } => {
+                assert_eq!(
+                    args,
+                    vec!["5c9d55b78febcc2061715ba4f57ecf8ea2711f2c".to_string(), "2".to_string()]
+                )
+            }
+            _ => {
+                unreachable!()
+            }
+        };
+    }
 }

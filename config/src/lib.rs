@@ -8,6 +8,7 @@ use ethers_solc::{
     artifacts::{
         output_selection::ContractOutputSelection, serde_helpers, BytecodeHash, DebuggingSettings,
         Libraries, ModelCheckerSettings, ModelCheckerTarget, Optimizer, RevertStrings, Settings,
+        SettingsMetadata,
     },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     error::SolcError,
@@ -305,6 +306,11 @@ pub struct Config {
     /// The metadata hash is machine dependent. By default, this is set to [BytecodeHash::None] to allow for deterministic code, See: <https://docs.soliditylang.org/en/latest/metadata.html>
     #[serde(with = "from_str_lowercase")]
     pub bytecode_hash: BytecodeHash,
+    /// Whether to append the metadata hash to the bytecode.
+    ///
+    /// If this is `false` and the `bytecode_hash` option above is not `None` solc will issue a
+    /// warning.
+    pub cbor_metadata: bool,
     /// How to treat revert (and require) reason strings.
     #[serde(with = "serde_helpers::display_from_str_opt")]
     pub revert_strings: Option<RevertStrings>,
@@ -688,7 +694,7 @@ impl Config {
     /// ```
     pub fn project_paths(&self) -> ProjectPathsConfig {
         let mut builder = ProjectPathsConfig::builder()
-            .cache(&self.cache_path.join(SOLIDITY_FILES_CACHE_FILENAME))
+            .cache(self.cache_path.join(SOLIDITY_FILES_CACHE_FILENAME))
             .sources(&self.src)
             .tests(&self.test)
             .scripts(&self.script)
@@ -844,16 +850,13 @@ impl Config {
         }
 
         // try to find by comparing chain ids
-        if let Some((chain, config)) =
-            chain.and_then(|chain| self.etherscan.find_chain(chain).map(|config| (chain, config)))
-        {
-            let key = config.key.clone().resolve()?;
-            return Ok(ResolvedEtherscanConfig::create(key, chain))
+        if let Some(config) = chain.and_then(|chain| self.etherscan.find_chain(chain).cloned()) {
+            return Ok(config.resolve().ok())
         }
 
         // fallback `etherscan_api_key` as actual key
         if let Some(key) = self.etherscan_api_key.as_ref() {
-            let chain = self.chain_id.unwrap_or_else(|| Mainnet.into());
+            let chain = chain.or(self.chain_id).unwrap_or_else(|| Mainnet.into());
             return Ok(ResolvedEtherscanConfig::create(key, chain))
         }
 
@@ -946,7 +949,7 @@ impl Config {
             optimizer,
             evm_version: Some(self.evm_version),
             libraries,
-            metadata: Some(self.bytecode_hash.into()),
+            metadata: Some(SettingsMetadata::new(self.bytecode_hash, self.cbor_metadata)),
             debug: self.revert_strings.map(|revert_strings| DebuggingSettings {
                 revert_strings: Some(revert_strings),
                 debug_info: Vec::new(),
@@ -1015,17 +1018,18 @@ impl Config {
         // autodetect paths
         let root = root.into();
         let paths = ProjectPathsConfig::builder().build_with_root(&root);
+        let artifacts: PathBuf = paths.artifacts.file_name().unwrap().into();
         Config {
             __root: paths.root.into(),
             src: paths.sources.file_name().unwrap().into(),
-            out: paths.artifacts.file_name().unwrap().into(),
+            out: artifacts.clone(),
             libs: paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect(),
             remappings: paths
                 .remappings
                 .into_iter()
                 .map(|r| RelativeRemapping::new(r, &root))
                 .collect(),
-            fs_permissions: FsPermissions::new([PathPermission::read(paths.artifacts)]),
+            fs_permissions: FsPermissions::new([PathPermission::read(artifacts)]),
             ..Config::default()
         }
     }
@@ -1719,6 +1723,7 @@ impl Default for Config {
             etherscan: Default::default(),
             no_storage_caching: false,
             bytecode_hash: BytecodeHash::Ipfs,
+            cbor_metadata: true,
             revert_strings: None,
             sparse_mode: false,
             build_info: false,
@@ -2349,9 +2354,9 @@ impl BasicConfig {
         let s = toml::to_string_pretty(self)?;
         Ok(format!(
             r#"[profile.{}]
-{}
+{s}
 # See more config options https://github.com/foundry-rs/foundry/tree/master/config"#,
-            self.profile, s
+            self.profile
         ))
     }
 }
@@ -3028,6 +3033,32 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_etherscan_config_by_chain_with_url() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+
+                [etherscan]
+                mumbai = { key = "https://etherscan-mumbai.com/", chain = 80001 , url =  "https://verifier-url.com/"}
+            "#,
+            )?;
+
+            let config = Config::load();
+
+            let mumbai = config
+                .get_etherscan_config_with_chain(Some(ethers_core::types::Chain::PolygonMumbai))
+                .unwrap()
+                .unwrap();
+            assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
+            assert_eq!(mumbai.api_url, "https://verifier-url.com/".to_string());
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn test_extract_etherscan_config_by_chain_and_alias() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
@@ -3072,6 +3103,7 @@ mod tests {
                 via_ir = true
                 rpc_storage_caching = { chains = [1, "optimism", 999999], endpoints = "all"}
                 bytecode_hash = "ipfs"
+                cbor_metadata = true
                 revert_strings = "strip"
                 allow_paths = ["allow", "paths"]
                 build_info_path = "build-info"
@@ -3104,6 +3136,7 @@ mod tests {
                         endpoints: CachedEndpoints::All
                     },
                     bytecode_hash: BytecodeHash::Ipfs,
+                    cbor_metadata: true,
                     revert_strings: Some(RevertStrings::Strip),
                     allow_paths: vec![PathBuf::from("allow"), PathBuf::from("paths")],
                     rpc_endpoints: RpcEndpoints::new([
@@ -3167,6 +3200,7 @@ mod tests {
                 block_number = 1
                 block_timestamp = 1
                 bytecode_hash = 'ipfs'
+                cbor_metadata = true
                 cache = true
                 cache_path = 'cache'
                 evm_version = 'london'
@@ -3536,7 +3570,7 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             let addr = Address::random();
             jail.set_env("DAPP_TEST_NUMBER", 1337);
-            jail.set_env("DAPP_TEST_ADDRESS", format!("{:?}", addr));
+            jail.set_env("DAPP_TEST_ADDRESS", format!("{addr:?}"));
             jail.set_env("DAPP_TEST_FUZZ_RUNS", 420);
             jail.set_env("DAPP_TEST_DEPTH", 20);
             jail.set_env("DAPP_FORK_BLOCK", 100);

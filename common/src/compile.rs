@@ -4,38 +4,61 @@ use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, *};
 use ethers_etherscan::contract::Metadata;
 use ethers_solc::{
     artifacts::{BytecodeObject, ContractBytecodeSome},
+    remappings::Remapping,
     report::NoReporter,
     Artifact, ArtifactId, FileFilter, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
-    Solc,
+    Solc, SolcConfig,
 };
 use eyre::Result;
 use std::{
     collections::BTreeMap,
+    convert::Infallible,
     fmt::Display,
     path::{Path, PathBuf},
+    result,
+    str::FromStr,
 };
 
 /// Helper type to configure how to compile a project
 ///
 /// This is merely a wrapper for [Project::compile()] which also prints to stdout dependent on its
 /// settings
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ProjectCompiler {
     /// whether to also print the contract names
     print_names: bool,
     /// whether to also print the contract sizes
     print_sizes: bool,
+    /// files to exclude
+    filters: Vec<SkipBuildFilter>,
 }
 
 impl ProjectCompiler {
     /// Create a new instance with the settings
     pub fn new(print_names: bool, print_sizes: bool) -> Self {
-        Self { print_names, print_sizes }
+        Self::with_filter(print_names, print_sizes, Vec::new())
+    }
+
+    /// Create a new instance with all settings
+    pub fn with_filter(
+        print_names: bool,
+        print_sizes: bool,
+        filters: Vec<SkipBuildFilter>,
+    ) -> Self {
+        Self { print_names, print_sizes, filters }
     }
 
     /// Compiles the project with [`Project::compile()`]
     pub fn compile(self, project: &Project) -> Result<ProjectCompileOutput> {
-        self.compile_with(project, |prj| Ok(prj.compile()?))
+        let filters = self.filters.clone();
+        self.compile_with(project, |prj| {
+            let output = if filters.is_empty() {
+                prj.compile()
+            } else {
+                prj.compile_sparse(SkipBuildFilters(filters))
+            }?;
+            Ok(output)
+        })
     }
 
     /// Compiles the project with [`Project::compile_parse()`] and the given filter.
@@ -196,7 +219,7 @@ impl Display for SizeReport {
             ]);
         }
 
-        writeln!(f, "{}", table)?;
+        writeln!(f, "{table}")?;
         Ok(())
     }
 }
@@ -241,6 +264,19 @@ pub fn compile(
 
 /// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
 /// compilation was successful or if there was a cache hit.
+///
+/// Takes a list of [`SkipBuildFilter`] for files to exclude from the build.
+pub fn compile_with_filter(
+    project: &Project,
+    print_names: bool,
+    print_sizes: bool,
+    skip: Vec<SkipBuildFilter>,
+) -> Result<ProjectCompileOutput> {
+    ProjectCompiler::with_filter(print_names, print_sizes, skip).compile(project)
+}
+
+/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
+/// compilation was successful or if there was a cache hit.
 /// Doesn't print anything to stdout, thus is "suppressed".
 pub fn suppress_compile(project: &Project) -> Result<ProjectCompileOutput> {
     let output = ethers_solc::report::with_scoped(
@@ -253,6 +289,19 @@ pub fn suppress_compile(project: &Project) -> Result<ProjectCompileOutput> {
     }
 
     Ok(output)
+}
+
+/// Depending on whether the `skip` is empty this will [`suppress_compile_sparse`] or
+/// [`suppress_compile`]
+pub fn suppress_compile_with_filter(
+    project: &Project,
+    skip: Vec<SkipBuildFilter>,
+) -> Result<ProjectCompileOutput> {
+    if skip.is_empty() {
+        suppress_compile(project)
+    } else {
+        suppress_compile_sparse(project, SkipBuildFilters(skip))
+    }
 }
 
 /// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
@@ -316,6 +365,17 @@ pub fn compile_target(
     silent: bool,
     verify: bool,
 ) -> Result<ProjectCompileOutput> {
+    compile_target_with_filter(target_path, project, silent, verify, Vec::new())
+}
+
+/// Compiles target file path.
+pub fn compile_target_with_filter(
+    target_path: &Path,
+    project: &Project,
+    silent: bool,
+    verify: bool,
+    skip: Vec<SkipBuildFilter>,
+) -> Result<ProjectCompileOutput> {
     let graph = Graph::resolve(&project.paths)?;
 
     // Checking if it's a standalone script, or part of a project.
@@ -327,9 +387,9 @@ pub fn compile_target(
     }
 
     if silent {
-        suppress_compile(project)
+        suppress_compile_with_filter(project, skip)
     } else {
-        compile(project, false, false)
+        compile_with_filter(project, false, false, skip)
     }
 }
 
@@ -365,13 +425,126 @@ pub async fn compile_from_source(
 /// Creates a [Project] from an Etherscan source.
 pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> Result<Project> {
     let target_path = dunce::canonicalize(target_path.as_ref())?;
+    let sources_path = target_path.join(&metadata.contract_name);
     metadata.source_tree().write_to(&target_path)?;
 
-    let paths = ProjectPathsConfig::builder().build_with_root(target_path);
+    let mut settings = metadata.source_code.settings()?.unwrap_or_default();
+
+    // make remappings absolute with our root
+    for remapping in settings.remappings.iter_mut() {
+        let new_path = sources_path.join(remapping.path.trim_start_matches('/'));
+        remapping.path = new_path.display().to_string();
+    }
+
+    // add missing remappings
+    if !settings.remappings.iter().any(|remapping| remapping.name.starts_with("@openzeppelin/")) {
+        let oz = Remapping {
+            name: "@openzeppelin/".into(),
+            path: sources_path.join("@openzeppelin").display().to_string(),
+        };
+        settings.remappings.push(oz);
+    }
+
+    // root/
+    //   ContractName/
+    //     [source code]
+    let paths = ProjectPathsConfig::builder()
+        .sources(sources_path)
+        .remappings(settings.remappings.clone())
+        .build_with_root(target_path);
 
     let v = metadata.compiler_version()?;
     let v = format!("{}.{}.{}", v.major, v.minor, v.patch);
     let solc = Solc::find_or_install_svm_version(v)?;
 
-    Ok(metadata.project_builder()?.paths(paths).solc(solc).ephemeral().no_artifacts().build()?)
+    Ok(Project::builder()
+        .solc_config(SolcConfig::builder().settings(settings).build())
+        .paths(paths)
+        .solc(solc)
+        .ephemeral()
+        .no_artifacts()
+        .build()?)
+}
+
+/// Bundles multiple `SkipBuildFilter` into a single `FileFilter`
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct SkipBuildFilters(pub Vec<SkipBuildFilter>);
+
+impl FileFilter for SkipBuildFilters {
+    /// Only returns a match if _no_  exclusion filter matches
+    fn is_match(&self, file: &Path) -> bool {
+        self.0.iter().all(|filter| filter.is_match(file))
+    }
+}
+
+/// A filter that excludes matching contracts from the build
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum SkipBuildFilter {
+    /// Exclude all `.t.sol` contracts
+    Tests,
+    /// Exclude all `.s.sol` contracts
+    Scripts,
+    /// Exclude if the file matches
+    Custom(String),
+}
+
+impl SkipBuildFilter {
+    /// Returns the pattern to match against a file
+    fn file_pattern(&self) -> &str {
+        match self {
+            SkipBuildFilter::Tests => ".t.sol",
+            SkipBuildFilter::Scripts => ".s.sol",
+            SkipBuildFilter::Custom(s) => s.as_str(),
+        }
+    }
+}
+
+impl<T: AsRef<str>> From<T> for SkipBuildFilter {
+    fn from(s: T) -> Self {
+        match s.as_ref() {
+            "test" | "tests" => SkipBuildFilter::Tests,
+            "script" | "scripts" => SkipBuildFilter::Scripts,
+            s => SkipBuildFilter::Custom(s.to_string()),
+        }
+    }
+}
+
+impl FromStr for SkipBuildFilter {
+    type Err = Infallible;
+
+    fn from_str(s: &str) -> result::Result<Self, Self::Err> {
+        Ok(s.into())
+    }
+}
+
+impl FileFilter for SkipBuildFilter {
+    /// Matches file only if the filter does not apply
+    ///
+    /// This is returns the inverse of `file.name.contains(pattern)`
+    fn is_match(&self, file: &Path) -> bool {
+        fn exclude(file: &Path, pattern: &str) -> Option<bool> {
+            let file_name = file.file_name()?.to_str()?;
+            Some(file_name.contains(pattern))
+        }
+
+        !exclude(file, self.file_pattern()).unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_filter() {
+        let file = Path::new("A.t.sol");
+        assert!(!SkipBuildFilter::Tests.is_match(file));
+        assert!(SkipBuildFilter::Scripts.is_match(file));
+        assert!(!SkipBuildFilter::Custom("A.t".to_string()).is_match(file));
+
+        let file = Path::new("A.s.sol");
+        assert!(SkipBuildFilter::Tests.is_match(file));
+        assert!(!SkipBuildFilter::Scripts.is_match(file));
+        assert!(!SkipBuildFilter::Custom("A.s".to_string()).is_match(file));
+    }
 }

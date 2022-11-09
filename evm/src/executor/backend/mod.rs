@@ -706,7 +706,7 @@ impl Backend {
             for loaded_account in loaded_accounts.iter().copied() {
                 trace!(?loaded_account, "replacing account on init");
                 let fork_account = Database::basic(&mut fork.db, loaded_account)?
-                    .ok_or(DatabaseError::MissingAccount(loaded_account))?;
+                    .ok_or_else(|| DatabaseError::MissingAccount(loaded_account))?;
                 let init_account =
                     journaled_state.state.get_mut(&loaded_account).expect("exists; qed");
                 init_account.info = fork_account;
@@ -922,8 +922,7 @@ impl DatabaseExt for Backend {
             // the `JournalState` at this point
             if launched_with_fork {
                 let caller = env.tx.caller;
-                let caller_account =
-                    active.journaled_state.state.get(&env.tx.caller).map(|acc| acc.clone());
+                let caller_account = active.journaled_state.state.get(&env.tx.caller).cloned();
                 let target_fork = self.inner.get_fork_mut(idx);
 
                 // depth 0 will be the default value when the fork was created
@@ -1118,6 +1117,13 @@ impl DatabaseExt for Backend {
     ) -> Option<RevertDiagnostic> {
         let active_id = self.active_fork_id()?;
         let active_fork = self.active_fork()?;
+
+        if self.inner.forks.len() == 1 {
+            // we only want to provide additional diagnostics here when in multifork mode with > 1
+            // forks
+            return None
+        }
+
         if !active_fork.is_contract(callee) && !is_contract_in_state(journaled_state, callee) {
             // no contract for `callee` available on current fork, check if available on other forks
             let mut available_on = Vec::new();

@@ -173,7 +173,7 @@ where
         }
         NodeHandle::Hash(plain_hash) => {
             let new_root = decode_hash::<L::Hash>(plain_hash)
-                .ok_or(VerifyError::HashDecodeError(plain_hash))?;
+                .ok_or_else(|| VerifyError::HashDecodeError(plain_hash))?;
             process_node::<L>(Some(&new_root), &proof[0], key, expected_value, &proof[1..])
         }
     }
@@ -235,8 +235,8 @@ where
                 Err(VerifyError::IncompleteProof)
             } else {
                 key.advance(1);
-                let new_root =
-                    decode_hash::<L::Hash>(hash).ok_or(VerifyError::HashDecodeError(hash))?;
+                let new_root = decode_hash::<L::Hash>(hash)
+                    .ok_or_else(|| VerifyError::HashDecodeError(hash))?;
                 process_node::<L>(Some(&new_root), &proof[0], key, expected_value, &proof[1..])
             }
         }
@@ -280,7 +280,7 @@ where
         (Some(Value::Node(plain_hash, _)), Some(next_proof_item), Some(value)) => {
             let value_hash = L::Hash::hash(value);
             let node_hash = decode_hash::<L::Hash>(plain_hash)
-                .ok_or(VerifyError::HashDecodeError(plain_hash))?;
+                .ok_or_else(|| VerifyError::HashDecodeError(plain_hash))?;
             if node_hash != value_hash {
                 Err(VerifyError::HashMismatch(node_hash))
             } else if next_proof_item != value {

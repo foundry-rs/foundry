@@ -54,19 +54,19 @@ impl UIfmt for Address {
 
 impl UIfmt for H64 {
     fn pretty(&self) -> String {
-        format!("{:#x}", self)
+        format!("{self:#x}")
     }
 }
 
 impl UIfmt for H256 {
     fn pretty(&self) -> String {
-        format!("{:#x}", self)
+        format!("{self:#x}")
     }
 }
 
 impl UIfmt for Bytes {
     fn pretty(&self) -> String {
-        format!("{:#x}", self)
+        format!("{self:#x}")
     }
 }
 
@@ -84,7 +84,7 @@ impl UIfmt for U64 {
 
 impl UIfmt for Bloom {
     fn pretty(&self) -> String {
-        format!("{:#x}", self)
+        format!("{self:#x}")
     }
 }
 
