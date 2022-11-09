@@ -212,6 +212,9 @@ impl ScriptArgs {
             verify,
         )
         .await
+        .map_err(|err| { 
+            eyre::eyre!("{err}\n\nIf you were trying to resume or verify a multi chain deployment, add `--multi` to your command invocation.") 
+        })
     }
 
     /// Resumes the deployment and/or verification of a single RPC script.
