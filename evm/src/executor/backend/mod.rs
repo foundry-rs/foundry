@@ -11,14 +11,15 @@ use crate::{
 use ethers::{
     prelude::{H160, H256, U256},
     types::{Address, BlockNumber, Transaction, U64},
+    utils::keccak256,
 };
 use hashbrown::HashMap as Map;
 pub use in_memory_db::MemDb;
 use revm::{
     db::{CacheDB, DatabaseRef},
     precompiles::Precompiles,
-    Account, AccountInfo, Bytecode, Database, DatabaseCommit, Env, ExecutionResult, Inspector,
-    JournaledState, Log, SpecId, TransactTo, EVM, KECCAK_EMPTY,
+    Account, AccountInfo, Bytecode, CreateScheme, Database, DatabaseCommit, Env, ExecutionResult,
+    Inspector, JournaledState, Log, SpecId, TransactTo, EVM, KECCAK_EMPTY,
 };
 use std::collections::{HashMap, HashSet};
 use tracing::{trace, warn};
@@ -666,9 +667,19 @@ impl Backend {
     {
         self.set_caller(env.tx.caller);
         self.set_spec_id(env.cfg.spec_id);
-        if let TransactTo::Call(to) = env.tx.transact_to {
-            self.set_test_contract(to);
-        }
+
+        let test_contract = match env.tx.transact_to {
+            TransactTo::Call(to) => to,
+            TransactTo::Create(CreateScheme::Create) => {
+                revm::create_address(env.tx.caller, env.tx.nonce.unwrap_or_default())
+            }
+            TransactTo::Create(CreateScheme::Create2 { salt }) => {
+                let code_hash = H256::from_slice(keccak256(&env.tx.data).as_slice());
+                revm::create2_address(env.tx.caller, code_hash, salt)
+            }
+        };
+        self.set_test_contract(test_contract);
+
         revm::evm_inner::<Self, true>(env, self, &mut inspector).transact()
     }
 
