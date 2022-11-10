@@ -75,13 +75,20 @@ impl Cmd for Create2Args {
 }
 
 impl Create2Args {
-    fn generate_address(self) -> Result<()> {
-        let Create2Args { starts_with, ends_with, matching, case_sensitive, deployer, init_code } =
-            self;
+    fn generate_address(self) -> Result<Create2Output> {
+        let Create2Args {
+            starts_with,
+            ends_with,
+            matching,
+            case_sensitive,
+            deployer,
+            init_code,
+            init_code_hash,
+        } = self;
 
         let mut regexs = vec![];
 
-        if let Some(mut matches) = matching {
+        if let Some(matches) = matching {
             if starts_with.is_some() || ends_with.is_some() {
                 eyre::bail!("Either use --matching or --starts/ends-with");
             }
