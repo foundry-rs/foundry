@@ -16,6 +16,7 @@ ethers::contract::abigen!(
     HEVM,
     r#"[
             struct Log {bytes32[] topics; bytes data;}
+            struct Rpc {string name; string url;}
             roll(uint256)
             warp(uint256)
             difficulty(uint256)
@@ -126,6 +127,7 @@ ethers::contract::abigen!(
             rollFork(uint256,bytes32)
             rpcUrl(string)(string)
             rpcUrls()(string[2][])
+            rpcUrlStructs()(Rpc[])
             parseJson(string, string)(bytes)
             parseJson(string)(bytes)
             allowCheatcodes(address)
