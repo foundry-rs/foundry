@@ -93,12 +93,8 @@ impl Create2Args {
                 eyre::bail!("Please provide a 40 characters long sequence for matching");
             }
 
-<<<<<<< HEAD
-            hex::decode(&matches.replace('X', "0")).wrap_err("invalid matching hex provided")?;
-=======
             hex::decode(matches.replace('X', "0")).wrap_err("invalid matching hex provided")?;
             // replacing X placeholders by . to match any character at these positions
->>>>>>> 964339ac (nits)
             regexs.push(matches.replace('X', "."));
         }
 

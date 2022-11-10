@@ -705,7 +705,6 @@ where
         }
     })
 }
-<<<<<<< HEAD
 
 #[allow(clippy::too_many_arguments)]
 async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
@@ -757,5 +756,3 @@ where
 
     Ok(())
 }
-=======
->>>>>>> 964339ac (nits)
