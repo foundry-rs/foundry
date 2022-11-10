@@ -270,11 +270,5 @@ mod tests {
 
     fn verify_create2_hash(deployer: Address, salt: U256, init_code_hash: Vec<u8>) -> Address {
         get_create2_address_from_hash(deployer, salt.encode(), init_code_hash)
-=======
-            U256::from(salt.to_vec().as_slice())
-        );
-
-        Ok(())
->>>>>>> master
     }
 }
