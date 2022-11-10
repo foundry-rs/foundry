@@ -1,25 +1,27 @@
-use super::{
-    sequence::{ScriptSequence, TransactionWithMetadata},
-    *,
-};
+use super::{sequence::ScriptSequence, *};
 use crate::{
-    cmd::{forge::script::receipts::wait_for_receipts, has_batch_support, has_different_gas_calc},
+    cmd::{
+        forge::script::{
+            receipts::wait_for_receipts, transaction::TransactionWithMetadata, verify::VerifyBundle,
+        },
+        has_batch_support, has_different_gas_calc,
+    },
     init_progress,
     opts::WalletType,
     update_progress,
-    utils::get_http_provider,
 };
 use ethers::{
-    prelude::{Http, Provider, RetryClient, Signer, SignerMiddleware, TxHash},
-    providers::Middleware,
+    prelude::{Provider, Signer, SignerMiddleware, TxHash},
+    providers::{JsonRpcClient, Middleware},
     types::transaction::eip2718::TypedTransaction,
     utils::format_units,
 };
-use eyre::ContextCompat;
+use eyre::{bail, ContextCompat, WrapErr};
+use foundry_common::{estimate_eip1559_fees, try_get_http_provider, RetryProvider};
 use foundry_config::Chain;
 use futures::StreamExt;
-use indicatif::{ProgressBar, ProgressStyle};
-use std::{cmp::min, fmt, sync::Arc};
+use std::{cmp::min, collections::HashSet, ops::Mul, sync::Arc};
+use tracing::{instrument, trace};
 
 impl ScriptArgs {
     /// Sends the transactions which haven't been broadcasted yet.
@@ -27,8 +29,9 @@ impl ScriptArgs {
         &self,
         deployment_sequence: &mut ScriptSequence,
         fork_url: &str,
+        script_wallets: Vec<LocalWallet>,
     ) -> eyre::Result<()> {
-        let provider = get_http_provider(fork_url, true);
+        let provider = Arc::new(try_get_http_provider(fork_url)?);
         let already_broadcasted = deployment_sequence.receipts.len();
 
         if already_broadcasted < deployment_sequence.transactions.len() {
@@ -39,14 +42,34 @@ impl ScriptArgs {
                 .map(|tx| *tx.from().expect("No sender for onchain transaction!"))
                 .collect();
 
-            let local_wallets = self.wallets.find_all(provider.clone(), required_addresses).await?;
-            let chain = local_wallets.values().last().wrap_err("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")?.chain_id();
+            let (send_kind, chain) = if self.unlocked {
+                let chain = provider.get_chainid().await?;
+                let mut senders = HashSet::from([self
+                    .evm_opts
+                    .sender
+                    .wrap_err("--sender must be set with --unlocked")?]);
+                // also take all additional senders that where set manually via broadcast
+                senders.extend(
+                    deployment_sequence
+                        .typed_transactions()
+                        .iter()
+                        .filter_map(|tx| tx.from().copied()),
+                );
+                (SendTransactionsKind::Unlocked(senders), chain.as_u64())
+            } else {
+                let local_wallets = self
+                    .wallets
+                    .find_all(provider.clone(), required_addresses, script_wallets)
+                    .await?;
+                let chain = local_wallets.values().last().wrap_err("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")?.chain_id();
+                (SendTransactionsKind::Raw(local_wallets), chain)
+            };
 
             // We only wait for a transaction receipt before sending the next transaction, if there
             // is more than one signer. There would be no way of assuring their order
             // otherwise. Or if the chain does not support batched transactions (eg. Arbitrum).
             let sequential_broadcast =
-                local_wallets.len() != 1 || self.slow || !has_batch_support(chain);
+                send_kind.signers_count() != 1 || self.slow || !has_batch_support(chain);
 
             // Make a one-time gas price estimation
             let (gas_price, eip1559_fees) = {
@@ -55,7 +78,11 @@ impl ScriptArgs {
                         (provider.get_gas_price().await.ok(), None)
                     }
                     TypedTransaction::Eip1559(_) => {
-                        (None, provider.estimate_eip1559_fees(None).await.ok())
+                        let fees = estimate_eip1559_fees(&provider, Some(chain))
+                            .await
+                            .wrap_err("Failed to estimate EIP1559 fees")?;
+
+                        (None, Some(fees))
                     }
                 }
             };
@@ -68,7 +95,8 @@ impl ScriptArgs {
                 .skip(already_broadcasted)
                 .map(|tx| {
                     let from = *tx.from().expect("No sender for onchain transaction!");
-                    let signer = local_wallets.get(&from).expect("`find_all` returned incomplete.");
+
+                    let kind = send_kind.for_sender(&from).unwrap();
 
                     let mut tx = tx.clone();
 
@@ -91,7 +119,7 @@ impl ScriptArgs {
                         }
                     }
 
-                    (tx, signer)
+                    (tx, kind)
                 })
                 .collect::<Vec<_>>();
 
@@ -111,8 +139,14 @@ impl ScriptArgs {
                     batch_number * batch_size,
                     batch_number * batch_size + min(batch_size, batch.len()) - 1
                 );
-                for (tx, signer) in batch.into_iter() {
-                    let tx_hash = self.send_transaction(tx, signer, sequential_broadcast, fork_url);
+                for (tx, kind) in batch.into_iter() {
+                    let tx_hash = self.send_transaction(
+                        provider.clone(),
+                        tx,
+                        kind,
+                        sequential_broadcast,
+                        fork_url,
+                    );
 
                     if sequential_broadcast {
                         let tx_hash = tx_hash.await?;
@@ -161,36 +195,71 @@ impl ScriptArgs {
             "\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL. Transaction receipts written to {:?}",
             deployment_sequence.path
         );
+
+        let (total_gas, total_gas_price, total_paid) = deployment_sequence.receipts.iter().fold(
+            (U256::zero(), U256::zero(), U256::zero()),
+            |acc, receipt| {
+                let gas_used = receipt.gas_used.unwrap_or_default();
+                let gas_price = receipt.effective_gas_price.unwrap_or_default();
+                (acc.0 + gas_used, acc.1 + gas_price, acc.2 + gas_used.mul(gas_price))
+            },
+        );
+        let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".to_string());
+        let avg_gas_price = format_units(total_gas_price / deployment_sequence.receipts.len(), 9)
+            .unwrap_or_else(|_| "N/A".to_string());
+        println!(
+            "Total Paid: {} ETH ({} gas * avg {} gwei)",
+            paid.trim_end_matches('0'),
+            total_gas,
+            avg_gas_price.trim_end_matches('0').trim_end_matches('.')
+        );
         Ok(())
     }
 
-    pub async fn send_transaction(
+    async fn send_transaction(
         &self,
-        tx: TypedTransaction,
-        signer: &WalletType,
+        provider: Arc<RetryProvider>,
+        mut tx: TypedTransaction,
+        kind: SendTransactionKind<'_>,
         sequential_broadcast: bool,
         fork_url: &str,
-    ) -> Result<TxHash, BroadcastError> {
+    ) -> eyre::Result<TxHash> {
         let from = tx.from().expect("no sender");
 
         if sequential_broadcast {
-            let nonce = foundry_utils::next_nonce(*from, fork_url, None).await.map_err(|_| {
-                BroadcastError::Simple("Not able to query the EOA nonce.".to_string())
-            })?;
+            let nonce = foundry_utils::next_nonce(*from, fork_url, None)
+                .await
+                .map_err(|_| eyre::eyre!("Not able to query the EOA nonce."))?;
 
             let tx_nonce = tx.nonce().expect("no nonce");
 
             if nonce != *tx_nonce {
-                return Err(BroadcastError::Simple(
-                    "EOA nonce changed unexpectedly while sending transactions.".to_string(),
-                ))
+                bail!("EOA nonce changed unexpectedly while sending transactions.")
             }
         }
 
-        match signer {
-            WalletType::Local(signer) => broadcast(signer, tx).await,
-            WalletType::Ledger(signer) => broadcast(signer, tx).await,
-            WalletType::Trezor(signer) => broadcast(signer, tx).await,
+        match kind {
+            SendTransactionKind::Unlocked(addr) => {
+                tracing::debug!("sending transaction from unlocked account {:?}: {:?}", addr, tx);
+
+                // Chains which use `eth_estimateGas` are being sent sequentially and require their
+                // gas to be re-estimated right before broadcasting.
+                if has_different_gas_calc(provider.get_chainid().await?.as_u64()) ||
+                    self.skip_simulation
+                {
+                    self.estimate_gas(&mut tx, &provider).await?;
+                }
+
+                // Submit the transaction
+                let pending = provider.send_transaction(tx, None).await?;
+
+                Ok(pending.tx_hash())
+            }
+            SendTransactionKind::Raw(ref signer) => match signer {
+                WalletType::Local(signer) => self.broadcast(signer, tx).await,
+                WalletType::Ledger(signer) => self.broadcast(signer, tx).await,
+                WalletType::Trezor(signer) => self.broadcast(signer, tx).await,
+            },
         }
     }
 
@@ -202,27 +271,33 @@ impl ScriptArgs {
         result: ScriptResult,
         libraries: Libraries,
         decoder: &mut CallTraceDecoder,
-        script_config: &ScriptConfig,
-        verify: VerifyBundle,
+        mut script_config: ScriptConfig,
+        mut verify: VerifyBundle,
     ) -> eyre::Result<()> {
         if let Some(txs) = result.transactions {
-            if script_config.evm_opts.fork_url.is_some() {
-                let gas_filled_txs = self
-                    .execute_transactions(txs, script_config, decoder, &verify.known_contracts)
+            if let Some(fork_url) = script_config.evm_opts.fork_url.clone() {
+                let gas_filled_txs = if self.skip_simulation {
+                    println!("\nSKIPPING ON CHAIN SIMULATION.");
+                    txs.into_iter().map(TransactionWithMetadata::from_typed_transaction).collect()
+                } else {
+                    self.execute_transactions(
+                        txs,
+                        &mut script_config,
+                        decoder,
+                        &verify.known_contracts,
+                    )
                     .await
-                    .map_err(|_| {
-                        eyre::eyre!(
-                            "One or more transactions failed when simulating the
-                on-chain version. Check the trace by re-running with `-vvv`"
-                        )
-                    })?;
+                    .wrap_err_with(|| {
+                            "Transaction failed when running the on-chain simulation. Check the trace above for more information."
+                    })?
+                };
 
-                let fork_url = self.evm_opts.fork_url.as_ref().unwrap().clone();
-
-                let provider = get_http_provider(&fork_url, false);
+                let provider = Arc::new(try_get_http_provider(&fork_url)?);
                 let chain = provider.get_chainid().await?.as_u64();
 
-                let returns = self.get_returns(script_config, &result.returned)?;
+                verify.set_chain(&script_config.config, chain.into());
+
+                let returns = self.get_returns(&script_config, &result.returned)?;
 
                 let mut deployment_sequence = ScriptSequence::new(
                     self.handle_chain_requirements(gas_filled_txs, provider, chain).await?,
@@ -231,12 +306,18 @@ impl ScriptArgs {
                     target,
                     &script_config.config,
                     chain,
+                    self.broadcast || self.resume,
                 )?;
 
                 deployment_sequence.add_libraries(libraries);
 
                 if self.broadcast {
-                    self.send_transactions(&mut deployment_sequence, &fork_url).await?;
+                    self.send_transactions(
+                        &mut deployment_sequence,
+                        &fork_url,
+                        result.script_wallets,
+                    )
+                    .await?;
                     if self.verify {
                         deployment_sequence.verify_contracts(verify, chain).await?;
                     }
@@ -254,10 +335,11 @@ impl ScriptArgs {
 
     /// Modify each transaction according to the specific chain requirements (transaction type
     /// and/or gas calculations).
+    #[instrument(skip_all, fields(%chain))]
     async fn handle_chain_requirements(
         &self,
         txes: VecDeque<TransactionWithMetadata>,
-        provider: Arc<Provider<RetryClient<Http>>>,
+        provider: Arc<RetryProvider>,
         chain: u64,
     ) -> eyre::Result<VecDeque<TransactionWithMetadata>> {
         let mut is_legacy = self.legacy;
@@ -270,103 +352,148 @@ impl ScriptArgs {
         for mut tx in txes.into_iter() {
             tx.change_type(is_legacy);
 
-            let typed_tx = tx.typed_tx_mut();
+            if !self.skip_simulation {
+                let typed_tx = tx.typed_tx_mut();
 
-            if has_different_gas_calc(chain) {
-                typed_tx.set_gas(provider.estimate_gas(typed_tx).await?);
+                if has_different_gas_calc(chain) {
+                    trace!("estimating with different gas calculation");
+                    self.estimate_gas(typed_tx, &provider).await?;
+                }
+
+                total_gas += *typed_tx.gas().expect("gas is set");
             }
-
-            total_gas += *typed_tx.gas().expect("gas is set");
 
             new_txes.push_back(tx);
         }
 
-        // We don't store it in the transactions, since we want the most updated value. Right before
-        // broadcasting.
-        let per_gas = if let Some(gas_price) = self.with_gas_price {
-            gas_price
-        } else {
-            match new_txes.front().unwrap().typed_tx() {
-                TypedTransaction::Legacy(_) | TypedTransaction::Eip2930(_) => {
-                    provider.get_gas_price().await?
+        if !self.skip_simulation {
+            // We don't store it in the transactions, since we want the most updated value. Right
+            // before broadcasting.
+            let per_gas = if let Some(gas_price) = self.with_gas_price {
+                gas_price
+            } else {
+                match new_txes.front().unwrap().typed_tx() {
+                    TypedTransaction::Legacy(_) | TypedTransaction::Eip2930(_) => {
+                        provider.get_gas_price().await?
+                    }
+                    TypedTransaction::Eip1559(_) => provider.estimate_eip1559_fees(None).await?.0,
                 }
-                TypedTransaction::Eip1559(_) => provider.estimate_eip1559_fees(None).await?.0,
-            }
-        };
+            };
 
-        println!("\n==========================");
-        println!("\nEstimated total gas used for script: {}", total_gas);
-        println!(
-            "\nEstimated amount required: {} ETH",
-            format_units(total_gas.saturating_mul(per_gas), 18)
-                .unwrap_or_else(|_| "[Could not calculate]".to_string())
-                .trim_end_matches('0')
-        );
-        println!("\n==========================");
+            println!("\n==========================");
+            println!("\nEstimated total gas used for script: {total_gas}");
+            println!(
+                "\nEstimated amount required: {} ETH",
+                format_units(total_gas.saturating_mul(per_gas), 18)
+                    .unwrap_or_else(|_| "[Could not calculate]".to_string())
+                    .trim_end_matches('0')
+            );
+            println!("\n==========================");
+        }
         Ok(new_txes)
+    }
+
+    /// Uses the signer to submit a transaction to the network. If it fails, it tries to retrieve
+    /// the transaction hash that can be used on a later run with `--resume`.
+    async fn broadcast<T, S>(
+        &self,
+        signer: &SignerMiddleware<T, S>,
+        mut legacy_or_1559: TypedTransaction,
+    ) -> eyre::Result<TxHash>
+    where
+        T: Middleware + 'static,
+        S: Signer + 'static,
+    {
+        tracing::debug!("sending transaction: {:?}", legacy_or_1559);
+
+        // Chains which use `eth_estimateGas` are being sent sequentially and require their gas to
+        // be re-estimated right before broadcasting.
+        if has_different_gas_calc(signer.signer().chain_id()) || self.skip_simulation {
+            self.estimate_gas(&mut legacy_or_1559, signer.provider()).await?;
+        }
+
+        // Signing manually so we skip `fill_transaction` and its `eth_createAccessList` request.
+        let signature = signer
+            .sign_transaction(
+                &legacy_or_1559,
+                *legacy_or_1559.from().expect("Tx should have a `from`."),
+            )
+            .await
+            .wrap_err_with(|| "Failed to sign transaction")?;
+
+        // Submit the raw transaction
+        let pending =
+            signer.provider().send_raw_transaction(legacy_or_1559.rlp_signed(&signature)).await?;
+
+        Ok(pending.tx_hash())
+    }
+
+    async fn estimate_gas<T>(
+        &self,
+        tx: &mut TypedTransaction,
+        provider: &Provider<T>,
+    ) -> eyre::Result<()>
+    where
+        T: JsonRpcClient,
+    {
+        // if already set, some RPC endpoints might simply return the gas value that is already
+        // set in the request and omit the estimate altogether, so we remove it here
+        let _ = tx.gas_mut().take();
+
+        tx.set_gas(
+            provider
+                .estimate_gas(tx, None)
+                .await
+                .wrap_err_with(|| format!("Failed to estimate gas for tx: {:?}", tx.sighash()))? *
+                self.gas_estimate_multiplier /
+                100,
+        );
+        Ok(())
     }
 }
 
-#[derive(thiserror::Error, Debug, Clone)]
-pub enum BroadcastError {
-    Simple(String),
-    ErrorWithTxHash(String, TxHash),
+/// How to send a single transaction
+#[derive(Clone)]
+enum SendTransactionKind<'a> {
+    Unlocked(Address),
+    Raw(&'a WalletType),
 }
 
-impl fmt::Display for BroadcastError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+/// Represents how to send _all_ transactions
+enum SendTransactionsKind {
+    /// Send via `eth_sendTransaction` and rely on the  `from` address being unlocked.
+    Unlocked(HashSet<Address>),
+    /// Send a signed transaction via `eth_sendRawTransaction`
+    Raw(HashMap<Address, WalletType>),
+}
+
+impl SendTransactionsKind {
+    /// Returns the [`SendTransactionKind`] for the given address
+    ///
+    /// Returns an error if no matching signer is found or the address is not unlocked
+    fn for_sender(&self, addr: &Address) -> eyre::Result<SendTransactionKind<'_>> {
         match self {
-            BroadcastError::Simple(err) => write!(f, "{err}"),
-            BroadcastError::ErrorWithTxHash(err, tx_hash) => {
-                write!(f, "\nFailed to wait for transaction {tx_hash:?}:\n{err}")
+            SendTransactionsKind::Unlocked(unlocked) => {
+                if !unlocked.contains(addr) {
+                    bail!("Sender address {:?} is not unlocked", addr)
+                }
+                Ok(SendTransactionKind::Unlocked(*addr))
+            }
+            SendTransactionsKind::Raw(wallets) => {
+                if let Some(wallet) = wallets.get(addr) {
+                    Ok(SendTransactionKind::Raw(wallet))
+                } else {
+                    bail!("No matching signer for {:?} found", addr)
+                }
             }
         }
     }
-}
 
-/// Uses the signer to submit a transaction to the network. If it fails, it tries to retrieve the
-/// transaction hash that can be used on a later run with `--resume`.
-async fn broadcast<T, U>(
-    signer: &SignerMiddleware<T, U>,
-    mut legacy_or_1559: TypedTransaction,
-) -> Result<TxHash, BroadcastError>
-where
-    T: Middleware,
-    U: Signer,
-{
-    tracing::debug!("sending transaction: {:?}", legacy_or_1559);
-
-    // Chains which use `eth_estimateGas` are being sent sequentially and require their gas to be
-    // re-estimated right before broadcasting.
-    if has_different_gas_calc(signer.signer().chain_id()) {
-        // if already set, some RPC endpoints might simply return the gas value that is already set
-        // in the request and omit the estimate altogether, so we remove it here
-        let _ = legacy_or_1559.gas_mut().take();
-
-        legacy_or_1559.set_gas(
-            signer
-                .provider()
-                .estimate_gas(&legacy_or_1559)
-                .await
-                .map_err(|err| BroadcastError::Simple(err.to_string()))?,
-        );
+    /// How many signers are set
+    fn signers_count(&self) -> usize {
+        match self {
+            SendTransactionsKind::Unlocked(addr) => addr.len(),
+            SendTransactionsKind::Raw(signers) => signers.len(),
+        }
     }
-
-    // Signing manually so we skip `fill_transaction` and its `eth_createAccessList` request.
-    let signature = signer
-        .sign_transaction(
-            &legacy_or_1559,
-            *legacy_or_1559.from().expect("Tx should have a `from`."),
-        )
-        .await
-        .map_err(|err| BroadcastError::Simple(err.to_string()))?;
-
-    // Submit the raw transaction
-    let pending = signer
-        .provider()
-        .send_raw_transaction(legacy_or_1559.rlp_signed(&signature))
-        .await
-        .map_err(|err| BroadcastError::Simple(err.to_string()))?;
-
-    Ok(pending.tx_hash())
 }

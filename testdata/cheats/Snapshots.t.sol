@@ -5,8 +5,8 @@ import "ds-test/test.sol";
 import "./Cheats.sol";
 
 struct Storage {
-    uint slot0;
-    uint slot1;
+    uint256 slot0;
+    uint256 slot1;
 }
 
 contract SnapshotTest is DSTest {
@@ -33,9 +33,10 @@ contract SnapshotTest is DSTest {
     }
 
     // tests that snapshots can also revert changes to `block`
-    function testBlockValues() public  {
+    function testBlockValues() public {
         uint256 num = block.number;
         uint256 time = block.timestamp;
+        uint256 difficulty = block.difficulty;
 
         uint256 snapshot = cheats.snapshot();
 
@@ -45,10 +46,13 @@ contract SnapshotTest is DSTest {
         cheats.roll(99);
         assertEq(block.number, 99);
 
+        cheats.difficulty(123);
+        assertEq(block.difficulty, 123);
+
         assert(cheats.revertTo(snapshot));
 
         assertEq(block.number, num, "snapshot revert for block.number unsuccessful");
         assertEq(block.timestamp, time, "snapshot revert for block.timestamp unsuccessful");
+        assertEq(block.difficulty, difficulty, "snapshot revert for block.difficulty unsuccessful");
     }
-
 }

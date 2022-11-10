@@ -1,9 +1,10 @@
 use super::{
-    identifier::{SignaturesIdentifier, TraceIdentifier},
+    identifier::{SingleSignaturesIdentifier, TraceIdentifier},
     CallTraceArena, RawOrDecodedCall, RawOrDecodedLog, RawOrDecodedReturnData,
 };
 use crate::{
     abi::{CHEATCODE_ADDRESS, CONSOLE_ABI, HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS, HEVM_ABI},
+    decode,
     executor::inspector::DEFAULT_CREATE2_DEPLOYER,
     trace::{node::CallTraceNode, utils},
 };
@@ -11,12 +12,9 @@ use ethers::{
     abi::{Abi, Address, Event, Function, Param, ParamType, Token},
     types::H256,
 };
-use foundry_utils::get_indexed_event;
-use std::{
-    collections::{BTreeMap, HashMap},
-    sync::Arc,
-};
-use tokio::sync::RwLock;
+use foundry_common::{abi::get_indexed_event, SELECTOR_LEN};
+use hashbrown::HashSet;
+use std::collections::{BTreeMap, HashMap};
 
 /// Build a new [CallTraceDecoder].
 #[derive(Default)]
@@ -78,7 +76,7 @@ pub struct CallTraceDecoder {
     /// All known errors
     pub errors: Abi,
     /// A signature identifier for events and functions.
-    pub signature_identifier: Option<Arc<RwLock<SignaturesIdentifier>>>,
+    pub signature_identifier: Option<SingleSignaturesIdentifier>,
 }
 
 impl CallTraceDecoder {
@@ -183,14 +181,14 @@ impl CallTraceDecoder {
         }
     }
 
-    pub fn add_signature_identifier(&mut self, identifier: SignaturesIdentifier) {
-        self.signature_identifier = Some(Arc::new(RwLock::new(identifier)));
+    pub fn add_signature_identifier(&mut self, identifier: SingleSignaturesIdentifier) {
+        self.signature_identifier = Some(identifier);
     }
 
     /// Identify unknown addresses in the specified call trace using the specified identifier.
     ///
     /// Unknown contracts are contracts that either lack a label or an ABI.
-    pub fn identify(&mut self, trace: &CallTraceArena, identifier: &impl TraceIdentifier) {
+    pub fn identify(&mut self, trace: &CallTraceArena, identifier: &mut impl TraceIdentifier) {
         let unidentified_addresses = trace
             .addresses()
             .into_iter()
@@ -253,14 +251,14 @@ impl CallTraceDecoder {
                 node.decode_precompile(precompile_fn, &self.labels);
             } else if let RawOrDecodedCall::Raw(ref bytes) = node.trace.data {
                 if bytes.len() >= 4 {
-                    if let Some(funcs) = self.functions.get(&bytes[0..4]) {
+                    if let Some(funcs) = self.functions.get(&bytes[..SELECTOR_LEN]) {
                         node.decode_function(funcs, &self.labels, &self.errors);
                     } else if node.trace.address == DEFAULT_CREATE2_DEPLOYER {
                         node.trace.data =
                             RawOrDecodedCall::Decoded("create2".to_string(), String::new(), vec![]);
                     } else if let Some(identifier) = &self.signature_identifier {
                         if let Some(function) =
-                            identifier.write().await.identify_function(&bytes[0..4]).await
+                            identifier.write().await.identify_function(&bytes[..SELECTOR_LEN]).await
                         {
                             node.decode_function(&[function], &self.labels, &self.errors);
                         }
@@ -274,9 +272,11 @@ impl CallTraceDecoder {
 
                     if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
                         if !node.trace.success {
-                            if let Ok(decoded_error) =
-                                foundry_utils::decode_revert(&bytes[..], Some(&self.errors))
-                            {
+                            if let Ok(decoded_error) = decode::decode_revert(
+                                &bytes[..],
+                                Some(&self.errors),
+                                Some(node.trace.status),
+                            ) {
                                 node.trace.output = RawOrDecodedReturnData::Decoded(format!(
                                     r#""{}""#,
                                     decoded_error
@@ -316,14 +316,24 @@ impl CallTraceDecoder {
                 }
             }
 
-            for event in events {
+            for mut event in events {
+                // ensure all params are named, otherwise this will cause issues with decoding: See also <https://github.com/rust-ethereum/ethabi/issues/206>
+                let empty_params = patch_nameless_params(&mut event);
                 if let Ok(decoded) = event.parse_log(raw_log.clone()) {
                     *log = RawOrDecodedLog::Decoded(
                         event.name,
                         decoded
                             .params
                             .into_iter()
-                            .map(|param| (param.name, self.apply_label(&param.value)))
+                            .map(|param| {
+                                // undo patched names
+                                let name = if empty_params.contains(&param.name) {
+                                    "".to_string()
+                                } else {
+                                    param.name
+                                };
+                                (name, self.apply_label(&param.value))
+                            })
                             .collect(),
                     );
                     break
@@ -335,6 +345,21 @@ impl CallTraceDecoder {
     fn apply_label(&self, token: &Token) -> String {
         utils::label(token, &self.labels)
     }
+}
+
+/// This is a bit horrible but due to <https://github.com/rust-ethereum/ethabi/issues/206> we need to patch nameless (valid) params before decoding a logs, otherwise [`Event::parse_log()`] will result in wrong results since they're identified by name.
+///
+/// Returns a set of patched param names, that originally were empty.
+fn patch_nameless_params(event: &mut Event) -> HashSet<String> {
+    let mut patches = HashSet::new();
+    if event.inputs.iter().filter(|input| input.name.is_empty()).count() > 1 {
+        for (idx, param) in event.inputs.iter_mut().enumerate() {
+            // this is an illegal arg name, which ensures patched identifiers are unique
+            param.name = format!("<patched {idx}>");
+            patches.insert(param.name.clone());
+        }
+    }
+    patches
 }
 
 fn precompile<I, O>(number: u8, name: impl ToString, inputs: I, outputs: O) -> (Address, Function)

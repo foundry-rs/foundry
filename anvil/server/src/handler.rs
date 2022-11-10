@@ -1,5 +1,4 @@
 use crate::RpcHandler;
-
 use anvil_rpc::{
     error::RpcError,
     request::{Request, RpcCall},
@@ -19,7 +18,7 @@ pub async fn handle<Handler: RpcHandler>(
 ) -> Json<Response> {
     match request {
         Err(err) => {
-            warn!("invalid request={:?}", err);
+            warn!(target: "rpc", ?err, "invalid request");
             Response::error(RpcError::invalid_request()).into()
         }
         Ok(req) => handle_request(req.0, handler)
@@ -57,15 +56,15 @@ pub async fn handle_request<Handler: RpcHandler>(
 async fn handle_call<Handler: RpcHandler>(call: RpcCall, handler: Handler) -> Option<RpcResponse> {
     match call {
         RpcCall::MethodCall(call) => {
-            trace!(target: "rpc", "handling call {:?}", call);
+            trace!(target: "rpc", id = ?call.id , method = ?call.method,  "handling call");
             Some(handler.on_call(call).await)
         }
         RpcCall::Notification(notification) => {
-            trace!(target: "rpc", "received rpc notification method={}", notification.method);
+            trace!(target: "rpc", method = ?notification.method, "received rpc notification");
             None
         }
         RpcCall::Invalid { id } => {
-            trace!(target: "rpc", "invalid rpc call id={}", id);
+            warn!(target: "rpc", ?id,  "invalid rpc call");
             Some(RpcResponse::invalid_request(id))
         }
     }

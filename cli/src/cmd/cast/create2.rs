@@ -23,7 +23,13 @@ pub struct Create2Args {
         value_name = "HEX"
     )]
     starts_with: Option<String>,
-    #[clap(long, short, help = "Suffix for the contract address.", value_name = "HEX")]
+    #[clap(
+        long,
+        short,
+        help = "Suffix for the contract address.",
+        value_name = "HEX",
+        name = "ends-with"
+    )]
     ends_with: Option<String>,
     #[clap(long, short, help = "Sequence that the address has to match", value_name = "HEX")]
     matching: Option<String>,
@@ -69,20 +75,13 @@ impl Cmd for Create2Args {
 }
 
 impl Create2Args {
-    fn generate_address(self) -> Result<Create2Output> {
-        let Create2Args {
-            starts_with,
-            ends_with,
-            matching,
-            case_sensitive,
-            deployer,
-            init_code,
-            init_code_hash,
-        } = self;
+    fn generate_address(self) -> Result<()> {
+        let Create2Args { starts_with, ends_with, matching, case_sensitive, deployer, init_code } =
+            self;
 
         let mut regexs = vec![];
 
-        if let Some(matches) = matching {
+        if let Some(mut matches) = matching {
             if starts_with.is_some() || ends_with.is_some() {
                 eyre::bail!("Either use --matching or --starts/ends-with");
             }
@@ -95,6 +94,7 @@ impl Create2Args {
 
             hex::decode(matches.replace('X', "0")).wrap_err("invalid matching hex provided")?;
             // replacing X placeholders by . to match any character at these positions
+
             regexs.push(matches.replace('X', "."));
         }
 
@@ -270,5 +270,11 @@ mod tests {
 
     fn verify_create2_hash(deployer: Address, salt: U256, init_code_hash: Vec<u8>) -> Address {
         get_create2_address_from_hash(deployer, salt.encode(), init_code_hash)
+=======
+            U256::from(salt.to_vec().as_slice())
+        );
+
+        Ok(())
+>>>>>>> master
     }
 }

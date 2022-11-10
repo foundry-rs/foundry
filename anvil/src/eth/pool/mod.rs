@@ -95,7 +95,7 @@ impl Pool {
         // prune all the markers the mined transactions provide
         let res = self
             .prune_markers(block_number, included.into_iter().flat_map(|tx| tx.provides.clone()));
-        trace!(target: "node", "pruned transaction markers {:?}", res);
+        trace!(target: "txpool", "pruned transaction markers {:?}", res);
         res
     }
 
@@ -108,7 +108,7 @@ impl Pool {
         block_number: U64,
         markers: impl IntoIterator<Item = TxMarker>,
     ) -> PruneResult {
-        debug!(target: "txpool", "pruning transactions for block {}", block_number);
+        debug!(target: "txpool", ?block_number, "pruning transactions");
         self.inner.write().prune_markers(markers)
     }
 
@@ -150,7 +150,7 @@ impl Pool {
     ///
     /// **Note**: this will also drop any transaction that depend on the `tx`
     pub fn drop_transaction(&self, tx: TxHash) -> Option<Arc<PoolTransaction>> {
-        trace!(target: "txpool", "Dropping transaction: {:?}", tx);
+        trace!(target: "txpool", "Dropping transaction: [{:?}]", tx);
         let removed = {
             let mut pool = self.inner.write();
             pool.ready_transactions.remove_with_markers(vec![tx], None)

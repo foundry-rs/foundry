@@ -1,11 +1,17 @@
 //! Contains various tests for checking forge commands related to verifying contracts on etherscan
+//! and sourcify
 
 use crate::utils::{self, EnvExternalities};
+use ethers::solc::artifacts::BytecodeHash;
 use foundry_cli_test_utils::{
-    forgetest,
+    forgetest, forgetest_async,
     util::{TestCommand, TestProject},
 };
+use foundry_config::Config;
 use foundry_utils::Retry;
+use std::{fs, path::PathBuf};
+
+const VERIFICATION_PROVIDERS: &[&str] = &["etherscan", "sourcify"];
 
 /// Adds a `Unique` contract to the source directory of the project that can be imported as
 /// `import {Unique} from "./unique.sol";`
@@ -65,6 +71,7 @@ fn parse_verification_result(cmd: &mut TestCommand, retries: u32) -> eyre::Resul
 fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: TestCommand) {
     // only execute if keys present
     if let Some(info) = info {
+        println!("verifying on {}", info.chain);
         add_unique(&prj);
         add_verify_target(&prj);
 
@@ -81,6 +88,8 @@ fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: Te
             address,
             contract_path.to_string(),
             info.etherscan.to_string(),
+            "--verifier".to_string(),
+            info.verifier.to_string(),
         ]);
 
         // `verify-contract`
@@ -105,10 +114,13 @@ fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: Te
         // verify-check
         cmd.forge_fuse()
             .arg("verify-check")
+            .arg(guid)
             .arg("--chain-id")
             .arg(info.chain.to_string())
-            .arg(guid)
-            .arg(info.etherscan);
+            .arg("--etherscan-key")
+            .arg(info.etherscan)
+            .arg("--verifier")
+            .arg(info.verifier);
 
         parse_verification_result(&mut cmd, 6).expect("Failed to verify check")
     }
@@ -147,14 +159,28 @@ fn verify_flag_on_create_on_chain(
 ) {
     // only execute if keys present
     if let Some(info) = info {
-        add_unique(&prj);
-        add_verify_target(&prj);
+        for verifier in VERIFICATION_PROVIDERS {
+            println!("verifying with {}", verifier);
 
-        println!("root {:?}", prj.root());
+            add_unique(&prj);
+            add_verify_target(&prj);
 
-        let contract_path = "src/Verify.sol:Verify";
-        cmd.arg("create").args(info.create_args()).arg("--verify").arg(contract_path);
-        parse_verification_result(&mut cmd, 1).expect("Failed to verify check")
+            println!("root {:?}", prj.root());
+
+            let contract_path = "src/Verify.sol:Verify";
+
+            cmd.arg("create")
+                .args(info.create_args())
+                .arg("--verify")
+                .arg(contract_path)
+                .arg("--verifier")
+                .arg(verifier);
+
+            parse_verification_result(&mut cmd, 1).expect("Failed to verify check");
+
+            // reset command
+            cmd.forge_fuse();
+        }
     }
 }
 
@@ -171,6 +197,10 @@ forgetest!(can_verify_random_contract_fantom_testnet, |prj: TestProject, cmd: Te
 // tests `create && contract-verify && verify-check` on Optimism kovan if correct env vars are set
 forgetest!(can_verify_random_contract_optimism_kovan, |prj: TestProject, cmd: TestCommand| {
     verify_on_chain(EnvExternalities::optimism_kovan(), prj, cmd);
+});
+
+forgetest!(can_verify_random_contract_arbitrum_goerli, |prj: TestProject, cmd: TestCommand| {
+    verify_on_chain(EnvExternalities::arbitrum_goerli(), prj, cmd);
 });
 
 // tests `create && contract-verify --watch` on goerli if correct env vars are set
@@ -212,20 +242,24 @@ forgetest!(
                 )
                 .unwrap();
 
-            let contract_path = "src/Verify.sol:Verify";
-            cmd.arg("create")
-                .args(info.create_args())
-                .args([
-                    "--constructor-args",
-                    "0x82A0F5F531F9ce0df1DF5619f74a0d3fA31FF561",
-                    "0xE592427A0AEce92De3Edee1F18E0157C05861564",
-                    "0x1717A0D5C8705EE89A8aD6E808268D6A826C97A4",
-                    "0xc778417E063141139Fce010982780140Aa0cD5Ab",
-                ])
-                .arg("--verify")
-                .arg(contract_path);
+            for verifier in VERIFICATION_PROVIDERS {
+                let contract_path = "src/Verify.sol:Verify";
+                cmd.arg("create")
+                    .args(info.create_args())
+                    .args([
+                        "--constructor-args",
+                        "0x82A0F5F531F9ce0df1DF5619f74a0d3fA31FF561",
+                        "0xE592427A0AEce92De3Edee1F18E0157C05861564",
+                        "0x1717A0D5C8705EE89A8aD6E808268D6A826C97A4",
+                        "0xc778417E063141139Fce010982780140Aa0cD5Ab",
+                    ])
+                    .arg("--verify")
+                    .arg(contract_path)
+                    .arg("--verifier")
+                    .arg(verifier);
 
-            parse_verification_result(&mut cmd, 1).expect("Failed to verify check")
+                parse_verification_result(&mut cmd, 1).expect("Failed to verify check")
+            }
         }
     }
 );
@@ -288,5 +322,72 @@ forgetest!(
 
             parse_verification_result(&mut cmd, 1).expect("Failed to verify check")
         }
+    }
+);
+
+// tests `script --verify` by deploying on goerli and verifying it on etherscan
+// Uses predeployed libs and contract creations inside constructors and calls
+forgetest_async!(
+    test_live_can_deploy_and_verify,
+    |prj: TestProject, mut cmd: TestCommand| async move {
+        let info = EnvExternalities::goerli().expect("Goerli secrets not set.");
+
+        add_unique(&prj);
+
+        prj.inner()
+            .add_source(
+                "ScriptVerify.sol",
+                fs::read_to_string(
+                    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("tests/fixtures/ScriptVerify.sol"),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        // explicitly byte code hash for consistent checks
+        let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
+        prj.write_config(config);
+
+        let contract_path = "src/ScriptVerify.sol:ScriptVerify";
+        cmd.args(vec![
+            "script",
+            "--rpc-url",
+            &info.rpc,
+            "--private-key",
+            &info.pk,
+            "--broadcast",
+            "-vvvv",
+            "--optimize",
+            "--verify",
+            "--optimizer-runs",
+            "200",
+            "--use",
+            "0.8.16",
+            "--retries",
+            "10",
+            "--delay",
+            "20",
+            contract_path,
+        ]);
+
+        let output = cmd.unchecked_output();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let err = format!(
+            "Failed to get verification, stdout: {}, stderr: {}",
+            stdout,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        // ensure we're sending all 5 transactions
+        assert!(stdout.contains("Sending transactions [0 - 4]"), "{}", err);
+
+        // ensure all transactions are successful
+        assert_eq!(5, stdout.matches('✅').count(), "{}", err);
+
+        // ensure verified all deployments
+        // Note: the 5th tx creates contracts internally, which are little flaky at times because
+        // the goerli etherscan indexer can take a long time to index these contracts
+        assert!(stdout.matches("Contract successfully verified").count() >= 4, "{}", err);
     }
 );

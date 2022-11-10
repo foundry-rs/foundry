@@ -5,12 +5,7 @@ import "ds-test/test.sol";
 import "./Cheats.sol";
 
 contract Emitter {
-    event Something(
-        uint256 indexed topic1,
-        uint256 indexed topic2,
-        uint256 indexed topic3,
-        uint256 data
-    );
+    event Something(uint256 indexed topic1, uint256 indexed topic2, uint256 indexed topic3, uint256 data);
 
     /// This event has 0 indexed topics, but the one in our tests
     /// has exactly one indexed topic. Even though both of these
@@ -18,16 +13,9 @@ contract Emitter {
     /// be non-comparable.
     ///
     /// Ref: issue #760
-    event SomethingElse(
-        uint256 data
-    );
+    event SomethingElse(uint256 data);
 
-    function emitEvent(
-        uint256 topic1,
-        uint256 topic2,
-        uint256 topic3,
-        uint256 data
-    ) public {
+    function emitEvent(uint256 topic1, uint256 topic2, uint256 topic3, uint256 data) public {
         emit Something(topic1, topic2, topic3, data);
     }
 
@@ -41,13 +29,7 @@ contract Emitter {
         emit Something(topic1[1], topic2[1], topic3[1], data[1]);
     }
 
-    function emitNested(
-        Emitter inner,
-        uint256 topic1,
-        uint256 topic2,
-        uint256 topic3,
-        uint256 data
-    ) public {
+    function emitNested(Emitter inner, uint256 topic1, uint256 topic2, uint256 topic3, uint256 data) public {
         inner.emitEvent(topic1, topic2, topic3, data);
     }
 
@@ -73,16 +55,9 @@ contract ExpectEmitTest is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
     Emitter emitter;
 
-    event Something(
-        uint256 indexed topic1,
-        uint256 indexed topic2,
-        uint256 indexed topic3,
-        uint256 data
-    );
+    event Something(uint256 indexed topic1, uint256 indexed topic2, uint256 indexed topic3, uint256 data);
 
-    event SomethingElse(
-        uint256 indexed topic1
-    );
+    event SomethingElse(uint256 indexed topic1);
 
     function setUp() public {
         emitter = new Emitter();
@@ -203,10 +178,7 @@ contract ExpectEmitTest is DSTest {
         emit Something(5, 6, 7, 8);
 
         emitter.emitMultiple(
-            [uint256(1), uint256(5)],
-            [uint256(2), uint256(6)],
-            [uint256(3), uint256(7)],
-            [uint256(4), uint256(8)]
+            [uint256(1), uint256(5)], [uint256(2), uint256(6)], [uint256(3), uint256(7)], [uint256(4), uint256(8)]
         );
     }
 

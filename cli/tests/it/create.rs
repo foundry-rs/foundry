@@ -1,6 +1,9 @@
 //! Contains various tests for checking the `forge create` subcommand
 
-use crate::utils::{self, EnvExternalities};
+use crate::{
+    constants::*,
+    utils::{self, EnvExternalities},
+};
 use anvil::{spawn, NodeConfig};
 use ethers::{
     solc::{artifacts::BytecodeHash, remappings::Remapping},
@@ -137,6 +140,11 @@ forgetest!(can_create_oracle_on_goerli, |prj: TestProject, cmd: TestCommand| {
     create_on_chain(EnvExternalities::goerli(), prj, cmd, setup_oracle);
 });
 
+// tests `forge` create on mumbai if correct env vars are set
+forgetest!(can_create_oracle_on_mumbai, |prj: TestProject, cmd: TestCommand| {
+    create_on_chain(EnvExternalities::mumbai(), prj, cmd, setup_oracle);
+});
+
 // tests that we can deploy the template contract
 forgetest_async!(
     #[serial_test::serial]
@@ -145,7 +153,7 @@ forgetest_async!(
         let (_api, handle) = spawn(NodeConfig::test()).await;
         let rpc = handle.http_endpoint();
         let wallet = handle.dev_wallets().next().unwrap();
-        let pk = hex::encode(&wallet.signer().to_bytes());
+        let pk = hex::encode(wallet.signer().to_bytes());
         cmd.args(["init", "--force"]);
         cmd.assert_non_empty_stdout();
 
@@ -155,7 +163,7 @@ forgetest_async!(
 
         cmd.forge_fuse().args([
             "create",
-            "./src/Contract.sol:Contract",
+            format!("./src/{}.sol:{}", TEMPLATE_CONTRACT, TEMPLATE_CONTRACT).as_str(),
             "--use",
             "solc:0.8.15",
             "--rpc-url",
@@ -193,7 +201,7 @@ forgetest_async!(
 
         cmd.forge_fuse().args([
             "create",
-            "./src/Contract.sol:Contract",
+            format!("./src/{}.sol:{}", TEMPLATE_CONTRACT, TEMPLATE_CONTRACT).as_str(),
             "--use",
             "solc:0.8.15",
             "--rpc-url",

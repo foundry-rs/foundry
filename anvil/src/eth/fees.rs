@@ -9,6 +9,7 @@ use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
 use std::{
     collections::BTreeMap,
+    fmt,
     future::Future,
     pin::Pin,
     sync::Arc,
@@ -89,6 +90,14 @@ impl FeeManager {
         } else {
             U256::zero()
         }
+    }
+
+    /// Returns the suggested fee cap
+    ///
+    /// This mirrors geth's auto values for `SuggestGasTipCap` which is: `priority fee + 2x current
+    /// basefee`.
+    pub fn max_priority_fee_per_gas(&self) -> U256 {
+        self.suggested_priority_fee() + *self.base_fee.read() * 2
     }
 
     /// Returns the current gas price
@@ -317,7 +326,7 @@ pub struct FeeHistoryCacheItem {
     pub rewards: Vec<u64>,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Default, Clone)]
 pub struct FeeDetails {
     pub gas_price: Option<U256>,
     pub max_fee_per_gas: Option<U256>,
@@ -382,5 +391,16 @@ impl FeeDetails {
                 })
             }
         }
+    }
+}
+
+impl fmt::Debug for FeeDetails {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        write!(fmt, "Fees {{ ")?;
+        write!(fmt, "gaPrice: {:?}, ", self.gas_price)?;
+        write!(fmt, "max_fee_per_gas: {:?}, ", self.max_fee_per_gas)?;
+        write!(fmt, "max_priority_fee_per_gas: {:?}, ", self.max_priority_fee_per_gas)?;
+        write!(fmt, "}}")?;
+        Ok(())
     }
 }

@@ -13,7 +13,7 @@ contract RollTest is DSTest {
     }
 
     function testRollFuzzed(uint128 jump) public {
-        uint pre = block.number;
+        uint256 pre = block.number;
         cheats.roll(block.number + jump);
         assertEq(block.number, pre + jump, "roll failed");
     }

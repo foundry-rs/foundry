@@ -1,8 +1,3 @@
-use clap::{Parser, Subcommand, ValueHint};
-
-use ethers::solc::{artifacts::output_selection::ContractOutputSelection, EvmVersion};
-use std::{path::PathBuf, str::FromStr};
-
 use crate::cmd::forge::{
     bind::BindArgs,
     build::BuildArgs,
@@ -13,27 +8,21 @@ use crate::cmd::forge::{
     flatten,
     fmt::FmtArgs,
     fourbyte::UploadSelectorsArgs,
+    geiger,
     init::InitArgs,
     inspect,
     install::InstallArgs,
     remappings::RemappingArgs,
+    remove::RemoveArgs,
     script::ScriptArgs,
-    snapshot, test, tree,
+    snapshot, test, tree, update,
     verify::{VerifyArgs, VerifyCheckArgs},
 };
+use clap::{Parser, Subcommand, ValueHint};
+use ethers::solc::{artifacts::output_selection::ContractOutputSelection, EvmVersion};
+use std::path::PathBuf;
+
 use serde::Serialize;
-
-use crate::cmd::forge::remove::RemoveArgs;
-use once_cell::sync::Lazy;
-use regex::Regex;
-
-static GH_REPO_REGEX: Lazy<Regex> =
-    Lazy::new(|| Regex::new("[A-Za-z\\d-]+/[A-Za-z\\d_.-]+").unwrap());
-
-static GH_REPO_PREFIX_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"((git@)|(git\+https://)|(https://))?([A-Za-z0-9-]+)\.([A-Za-z0-9-]+)(/|:)")
-        .unwrap()
-});
 
 #[derive(Debug, Parser)]
 #[clap(name = "forge", version = crate::utils::VERSION_MESSAGE)]
@@ -45,7 +34,8 @@ pub struct Opts {
 #[derive(Debug, Subcommand)]
 #[clap(
     about = "Build, test, fuzz, debug and deploy Solidity contracts.",
-    after_help = "Find more information in the book: http://book.getfoundry.sh/reference/forge/forge.html"
+    after_help = "Find more information in the book: http://book.getfoundry.sh/reference/forge/forge.html",
+    next_display_order = None
 )]
 #[allow(clippy::large_enum_variant)]
 pub enum Subcommands {
@@ -74,13 +64,7 @@ pub enum Subcommands {
         about = "Update one or multiple dependencies.",
         long_about = "Update one or multiple dependencies. If no arguments are provided, then all dependencies are updated."
     )]
-    Update {
-        #[clap(
-            help = "The path to the dependency you want to update.",
-            value_hint = ValueHint::DirPath
-        )]
-        lib: Option<PathBuf>,
-    },
+    Update(update::UpdateArgs),
 
     #[clap(
         visible_alias = "i",
@@ -120,10 +104,11 @@ pub enum Subcommands {
 
     #[clap(visible_alias = "com", about = "Generate shell completions script.")]
     Completions {
-        #[clap(arg_enum)]
+        #[clap(value_enum)]
         shell: clap_complete::Shell,
     },
-
+    #[clap(visible_alias = "fig", about = "Generate Fig autocompletion spec.")]
+    GenerateFigSpec,
     #[clap(visible_alias = "cl", about = "Remove the build artifacts and cache directories.")]
     Clean {
         #[clap(
@@ -167,6 +152,11 @@ pub enum Subcommands {
         about = "Display a tree visualization of the project's dependency graph."
     )]
     Tree(tree::TreeArgs),
+
+    #[clap(
+        about = "Detects usage of unsafe cheat codes in a foundry project and its dependencies."
+    )]
+    Geiger(geiger::GeigerArgs),
 }
 
 // A set of solc compiler settings that can be set via command line arguments, which are intended
@@ -192,307 +182,50 @@ pub struct CompilerArgs {
     /// Example keys: evm.assembly, ewasm, ir, irOptimized, metadata
     ///
     /// For a full description, see https://docs.soliditylang.org/en/v0.8.13/using-the-compiler.html#input-description
-    #[clap(long, min_values = 1, value_name = "SELECTOR")]
+    #[clap(long, num_args(1..), value_name = "SELECTOR")]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub extra_output: Vec<ContractOutputSelection>,
 
     /// Extra output to write to separate files.
     ///
     /// Valid values: metadata, ir, irOptimized, ewasm, evm.assembly
-    #[clap(long, min_values = 1, value_name = "SELECTOR")]
+    #[clap(long, num_args(1..), value_name = "SELECTOR")]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub extra_output_files: Vec<ContractOutputSelection>,
-}
-
-/// A git dependency which will be installed as a submodule
-///
-/// A dependency can be provided as a raw URL, or as a path to a Github repository
-/// e.g. `org-name/repo-name`
-///
-/// Providing a ref can be done in the following 3 ways:
-/// * branch: master
-/// * tag: v0.1.1
-/// * commit: 8e8128
-///
-/// Non Github URLs must be provided with an https:// prefix.
-/// Adding dependencies as local paths is not supported yet.
-#[derive(Clone, Debug)]
-pub struct Dependency {
-    /// The name of the dependency
-    pub name: String,
-    /// The url to the git repository corresponding to the dependency
-    pub url: Option<String>,
-    /// Optional tag corresponding to a Git SHA, tag, or branch.
-    pub tag: Option<String>,
-    /// Optional alias of the dependency
-    pub alias: Option<String>,
-}
-
-const GITHUB: &str = "github.com";
-const VERSION_SEPARATOR: char = '@';
-const ALIAS_SEPARATOR: char = '=';
-
-/// Commonly used aliases for solidity repos,
-const COMMON_ORG_ALIASES: &[(&str, &str); 1] = &[("@openzeppelin", "openzeppelin")];
-
-impl FromStr for Dependency {
-    type Err = eyre::Error;
-    fn from_str(dependency: &str) -> Result<Self, Self::Err> {
-        let mut dependency = dependency.to_string();
-
-        // this will update wrong conventional aliases
-        for (alias, real_org) in COMMON_ORG_ALIASES.iter() {
-            if dependency.starts_with(alias) {
-                dependency = dependency.replacen(alias, real_org, 1);
-                break
-            }
-        }
-
-        // everything before "=" should be considered the alias
-        let (mut alias, dependency) = if let Some(split) = dependency.split_once(ALIAS_SEPARATOR) {
-            (Some(String::from(split.0)), split.1)
-        } else {
-            (None, dependency.as_str())
-        };
-
-        let url_with_version = if let Some(captures) = GH_REPO_PREFIX_REGEX.captures(dependency) {
-            let brand = captures.get(5).unwrap().as_str();
-            let tld = captures.get(6).unwrap().as_str();
-            let project = GH_REPO_PREFIX_REGEX.replace(dependency, "");
-            Some(format!("https://{}.{}/{}", brand, tld, project))
-        } else {
-            // If we don't have a URL and we don't have a valid
-            // GitHub repository name, then we assume this is the alias.
-            //
-            // This is to allow for conveniently removing aliased dependencies
-            // using `forge remove <alias>`
-            if !GH_REPO_REGEX.is_match(dependency) {
-                alias = Some(dependency.to_string());
-                None
-            } else {
-                Some(format!("https://{GITHUB}/{dependency}"))
-            }
-        };
-
-        // everything after the last "@" should be considered the version if there are no path
-        // segments
-        let (url, name, tag) = if let Some(url_with_version) = url_with_version {
-            // `@`s are actually valid github project name chars but we assume this is unlikely and
-            // treat everything after the last `@` as the version tag there's still the
-            // case that the user tries to use `@<org>/<project>`, so we need to check that the
-            // `tag` does not contain a slash
-            let mut split = url_with_version.rsplit(VERSION_SEPARATOR);
-
-            let mut tag = None;
-            let mut url = url_with_version.as_str();
-
-            let maybe_tag = split.next().unwrap();
-            if let Some(actual_url) = split.next() {
-                if !maybe_tag.contains('/') {
-                    tag = Some(maybe_tag.to_string());
-                    url = actual_url;
-                }
-            }
-
-            let url = url.to_string();
-            let name = url
-                .split('/')
-                .last()
-                .ok_or_else(|| eyre::eyre!("no dependency name found"))?
-                .to_string();
-
-            (Some(url), Some(name), tag)
-        } else {
-            (None, None, None)
-        };
-
-        Ok(Dependency { name: name.or_else(|| alias.clone()).unwrap(), url, tag, alias })
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethers::solc::info::ContractInfo;
 
     #[test]
-    fn parses_dependencies() {
-        [
-            ("gakonst/lootloose", "https://github.com/gakonst/lootloose", None, None),
-            ("github.com/gakonst/lootloose", "https://github.com/gakonst/lootloose", None, None),
-            (
-                "https://github.com/gakonst/lootloose",
-                "https://github.com/gakonst/lootloose",
-                None,
-                None,
-            ),
-            (
-                "git+https://github.com/gakonst/lootloose",
-                "https://github.com/gakonst/lootloose",
-                None,
-                None,
-            ),
-            (
-                "git@github.com:gakonst/lootloose@v1",
-                "https://github.com/gakonst/lootloose",
-                Some("v1"),
-                None,
-            ),
-            (
-                "git@github.com:gakonst/lootloose",
-                "https://github.com/gakonst/lootloose",
-                None,
-                None,
-            ),
-            (
-                "https://gitlab.com/gakonst/lootloose",
-                "https://gitlab.com/gakonst/lootloose",
-                None,
-                None,
-            ),
-            (
-                "https://github.xyz/gakonst/lootloose",
-                "https://github.xyz/gakonst/lootloose",
-                None,
-                None,
-            ),
-            (
-                "gakonst/lootloose@0.1.0",
-                "https://github.com/gakonst/lootloose",
-                Some("0.1.0"),
-                None,
-            ),
-            (
-                "gakonst/lootloose@develop",
-                "https://github.com/gakonst/lootloose",
-                Some("develop"),
-                None,
-            ),
-            (
-                "gakonst/lootloose@98369d0edc900c71d0ec33a01dfba1d92111deed",
-                "https://github.com/gakonst/lootloose",
-                Some("98369d0edc900c71d0ec33a01dfba1d92111deed"),
-                None,
-            ),
-            ("loot=gakonst/lootloose", "https://github.com/gakonst/lootloose", None, Some("loot")),
-            (
-                "loot=github.com/gakonst/lootloose",
-                "https://github.com/gakonst/lootloose",
-                None,
-                Some("loot"),
-            ),
-            (
-                "loot=https://github.com/gakonst/lootloose",
-                "https://github.com/gakonst/lootloose",
-                None,
-                Some("loot"),
-            ),
-            (
-                "loot=git+https://github.com/gakonst/lootloose",
-                "https://github.com/gakonst/lootloose",
-                None,
-                Some("loot"),
-            ),
-            (
-                "loot=git@github.com:gakonst/lootloose@v1",
-                "https://github.com/gakonst/lootloose",
-                Some("v1"),
-                Some("loot"),
-            ),
-        ]
-        .iter()
-        .for_each(|(input, expected_path, expected_tag, expected_alias)| {
-            let dep = Dependency::from_str(input).unwrap();
-            assert_eq!(dep.url, Some(expected_path.to_string()));
-            assert_eq!(dep.tag, expected_tag.map(ToString::to_string));
-            assert_eq!(dep.name, "lootloose");
-            assert_eq!(dep.alias, expected_alias.map(ToString::to_string));
-        });
+    fn can_parse_evm_version() {
+        let args: CompilerArgs =
+            CompilerArgs::parse_from(["foundry-cli", "--evm-version", "london"]);
+        assert_eq!(args.evm_version, Some(EvmVersion::London));
     }
 
     #[test]
-    fn can_parse_alias_only() {
-        let dep = Dependency::from_str("foo").unwrap();
-        assert_eq!(dep.name, "foo");
-        assert_eq!(dep.url, None);
-        assert_eq!(dep.tag, None);
-        assert_eq!(dep.alias, Some("foo".to_string()));
-    }
-
-    #[test]
-    fn test_invalid_github_repo_dependency() {
-        let dep = Dependency::from_str("solmate").unwrap();
-        assert_eq!(dep.url, None);
-    }
-
-    #[test]
-    fn parses_contract_info() {
-        [
-            (
-                "src/contracts/Contracts.sol:Contract",
-                Some("src/contracts/Contracts.sol"),
-                "Contract",
-            ),
-            ("Contract", None, "Contract"),
-        ]
-        .iter()
-        .for_each(|(input, expected_path, expected_name)| {
-            let contract = ContractInfo::from_str(input).unwrap();
-            assert_eq!(contract.path, expected_path.map(ToString::to_string));
-            assert_eq!(contract.name, expected_name.to_string());
-        });
-    }
-
-    #[test]
-    fn contract_info_should_reject_without_name() {
-        ["src/contracts/", "src/contracts/Contracts.sol"].iter().for_each(|input| {
-            let contract = ContractInfo::from_str(input);
-            assert!(contract.is_err())
-        });
-    }
-
-    #[test]
-    fn can_parse_oz_dep() {
-        let dep = Dependency::from_str("@openzeppelin/contracts-upgradeable").unwrap();
-        assert_eq!(dep.name, "contracts-upgradeable");
+    fn can_parse_extra_output() {
+        let args: CompilerArgs =
+            CompilerArgs::parse_from(["foundry-cli", "--extra-output", "metadata", "ir-optimized"]);
         assert_eq!(
-            dep.url,
-            Some("https://github.com/openzeppelin/contracts-upgradeable".to_string())
+            args.extra_output,
+            vec![ContractOutputSelection::Metadata, ContractOutputSelection::IrOptimized]
         );
-        assert_eq!(dep.tag, None);
-        assert_eq!(dep.alias, None);
     }
 
     #[test]
-    fn can_parse_oz_dep_tag() {
-        let dep = Dependency::from_str("@openzeppelin/contracts-upgradeable@v1").unwrap();
-        assert_eq!(dep.name, "contracts-upgradeable");
+    fn can_parse_extra_output_files() {
+        let args: CompilerArgs = CompilerArgs::parse_from([
+            "foundry-cli",
+            "--extra-output-files",
+            "metadata",
+            "ir-optimized",
+        ]);
         assert_eq!(
-            dep.url,
-            Some("https://github.com/openzeppelin/contracts-upgradeable".to_string())
+            args.extra_output_files,
+            vec![ContractOutputSelection::Metadata, ContractOutputSelection::IrOptimized]
         );
-        assert_eq!(dep.tag, Some("v1".to_string()));
-        assert_eq!(dep.alias, None);
-    }
-
-    #[test]
-    fn can_parse_oz_with_tag() {
-        let dep = Dependency::from_str("OpenZeppelin/openzeppelin-contracts@v4.7.0").unwrap();
-        assert_eq!(dep.name, "openzeppelin-contracts");
-        assert_eq!(
-            dep.url,
-            Some("https://github.com/OpenZeppelin/openzeppelin-contracts".to_string())
-        );
-        assert_eq!(dep.tag, Some("v4.7.0".to_string()));
-        assert_eq!(dep.alias, None);
-
-        let dep = Dependency::from_str("OpenZeppelin/openzeppelin-contracts@4.7.0").unwrap();
-        assert_eq!(dep.name, "openzeppelin-contracts");
-        assert_eq!(
-            dep.url,
-            Some("https://github.com/OpenZeppelin/openzeppelin-contracts".to_string())
-        );
-        assert_eq!(dep.tag, Some("4.7.0".to_string()));
-        assert_eq!(dep.alias, None);
     }
 }

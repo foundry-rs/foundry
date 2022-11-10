@@ -8,6 +8,7 @@ use crate::{
     },
     filter::Filters,
     mem::{storage::MinedBlockOutcome, Backend},
+    NodeResult,
 };
 use futures::{FutureExt, Stream, StreamExt};
 use std::{
@@ -49,20 +50,21 @@ impl NodeService {
         fee_history: FeeHistoryService,
         filters: Filters,
     ) -> Self {
+        let start = tokio::time::Instant::now() + filters.keep_alive();
+        let filter_eviction_interval = tokio::time::interval_at(start, filters.keep_alive());
         Self {
             pool,
             block_producer: BlockProducer::new(backend),
             miner,
             fee_history,
-            filter_eviction_interval: tokio::time::interval(filters.keep_alive()),
+            filter_eviction_interval,
             filters,
         }
     }
 }
 
 impl Future for NodeService {
-    // Note: this is out of convenience as this gets joined with the server
-    type Output = hyper::Result<()>;
+    type Output = NodeResult<()>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let pin = self.get_mut();

@@ -17,4 +17,10 @@ contract TestContract {
         ) = (10, 20, 30, 40);
         return 1;
     }
+
+    function test() external {
+        uint256 value = map[key];
+        uint256 allowed = allowance[from][msg.sender];
+        allowance[from][msg.sender] = allowed;
+    }
 }

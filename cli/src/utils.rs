@@ -1,7 +1,7 @@
 use console::Emoji;
 use ethers::{
     abi::token::{LenientTokenizer, Tokenizer},
-    prelude::{Http, Provider, RetryClient, TransactionReceipt},
+    prelude::TransactionReceipt,
     solc::EvmVersion,
     types::U256,
     utils::format_units,
@@ -14,7 +14,6 @@ use std::{
     path::Path,
     process::{Command, Output},
     str::FromStr,
-    sync::Arc,
     time::Duration,
 };
 use tracing_error::ErrorLayer;
@@ -35,6 +34,14 @@ pub(crate) const VERSION_MESSAGE: &str = concat!(
     env!("VERGEN_BUILD_TIMESTAMP"),
     ")"
 );
+
+/// Deterministic fuzzer seed used for gas snapshots and coverage reports.
+///
+/// The keccak256 hash of "foundry rulez"
+pub static STATIC_FUZZ_SEED: [u8; 32] = [
+    0x01, 0x00, 0xfa, 0x69, 0xa5, 0xf1, 0x71, 0x0a, 0x95, 0xcd, 0xef, 0x94, 0x88, 0x9b, 0x02, 0x84,
+    0x5d, 0x64, 0x0b, 0x19, 0xad, 0xf0, 0xe3, 0x57, 0xb8, 0xd4, 0xbe, 0x7d, 0x49, 0xee, 0x70, 0xe6,
+];
 
 /// Useful extensions to [`std::path::Path`].
 pub trait FoundryPathExt {
@@ -85,52 +92,20 @@ pub fn evm_spec(evm: &EvmVersion) -> SpecId {
     }
 }
 
-/// Artifact/Contract identifier can take the following form:
-/// `<artifact file name>:<contract name>`, the `artifact file name` is the name of the json file of
-/// the contract's artifact and the contract name is the name of the solidity contract, like
-/// `SafeTransferLibTest.json:SafeTransferLibTest`
-///
-/// This returns the `contract name` part
-///
-/// # Example
-///
-/// ```
-/// assert_eq!(
-///     "SafeTransferLibTest",
-///     utils::get_contract_name("SafeTransferLibTest.json:SafeTransferLibTest")
-/// );
-/// ```
-pub fn get_contract_name(id: &str) -> &str {
-    id.rsplit(':').next().unwrap_or(id)
-}
-
-/// This returns the `file name` part, See [`get_contract_name`]
-///
-/// # Example
-///
-/// ```
-/// assert_eq!(
-///     "SafeTransferLibTest.json",
-///     utils::get_file_name("SafeTransferLibTest.json:SafeTransferLibTest")
-/// );
-/// ```
-pub fn get_file_name(id: &str) -> &str {
-    id.split(':').next().unwrap_or(id)
-}
-
 /// parse a hex str or decimal str as U256
 pub fn parse_u256(s: &str) -> eyre::Result<U256> {
     Ok(if s.starts_with("0x") { U256::from_str(s)? } else { U256::from_dec_str(s)? })
 }
 
-/// Return `rpc-url` cli argument if given, or consume `eth-rpc-url` from foundry.toml. Default to
+/// Returns `rpc-url` cli argument if given, or consume `eth-rpc-url` from foundry.toml. Default to
 /// `localhost:8545`
-pub fn consume_config_rpc_url(rpc_url: Option<String>) -> String {
-    if let Some(rpc_url) = rpc_url {
-        rpc_url
-    } else {
-        Config::load().eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string())
-    }
+///
+/// This also supports rpc aliases and try to load the current foundry.toml file if it exists
+pub fn try_consume_config_rpc_url(rpc_url: Option<String>) -> eyre::Result<String> {
+    let mut config = Config::load();
+    config.eth_rpc_url = rpc_url;
+    let url = config.get_rpc_url_or_localhost_http()?;
+    Ok(url.into_owned())
 }
 
 /// Parses an ether value from a string.
@@ -175,7 +150,7 @@ pub fn block_on<F: Future>(future: F) -> F::Output {
 ///
 /// This macro accepts a predicate and the message to print if the predicate is tru
 ///
-/// ```rust
+/// ```ignore
 /// let quiet = true;
 /// p_println!(!quiet => "message");
 /// ```
@@ -188,6 +163,30 @@ macro_rules! p_println {
 }
 pub(crate) use p_println;
 
+/// Loads a dotenv file, from the cwd and the project root, ignoring potential failure.
+///
+/// We could use `tracing::warn!` here, but that would imply that the dotenv file can't configure
+/// the logging behavior of Foundry.
+///
+/// Similarly, we could just use `eprintln!`, but colors are off limits otherwise dotenv is implied
+/// to not be able to configure the colors. It would also mess up the JSON output.
+pub fn load_dotenv() {
+    let load = |p: &Path| {
+        dotenv::from_path(p.join(".env")).ok();
+    };
+
+    // we only want the .env file of the cwd and project root
+    // `find_project_root_path` calls `current_dir` internally so both paths are either both `Ok` or
+    // both `Err`
+    if let (Ok(cwd), Ok(prj_root)) = (std::env::current_dir(), find_project_root_path()) {
+        load(&prj_root);
+        if cwd != prj_root {
+            // prj root and cwd can be identical
+            load(&cwd);
+        }
+    };
+}
+
 /// Disables terminal colours if either:
 /// - Running windows and the terminal does not support colour codes.
 /// - Colour has been disabled by some environment variable.
@@ -198,21 +197,6 @@ pub fn enable_paint() {
     if is_windows || env_colour_disabled {
         Paint::disable();
     }
-}
-
-/// Gives out a provider with a `100ms` interval poll if it's a localhost URL (most likely an anvil
-/// node) and with the default, `7s` if otherwise.
-pub fn get_http_provider(url: &str, aggressive: bool) -> Arc<Provider<RetryClient<Http>>> {
-    let (max_retry, initial_backoff) = if aggressive { (1000, 1) } else { (10, 1000) };
-
-    let provider = Provider::<RetryClient<Http>>::new_client(url, max_retry, initial_backoff)
-        .expect("Bad fork provider.");
-
-    Arc::new(if url.contains("127.0.0.1") || url.contains("localhost") {
-        provider.interval(Duration::from_millis(100))
-    } else {
-        provider
-    })
 }
 
 /// Prints parts of the receipt to stdout
@@ -284,6 +268,9 @@ impl CommandUtils for Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_cli_test_utils::tempfile::tempdir;
+    use foundry_common::fs;
+    use std::{env, fs::File, io::Write};
 
     #[test]
     fn foundry_path_ext_works() {
@@ -292,5 +279,33 @@ mod tests {
         assert!(p.is_sol());
         let p = Path::new("contracts/Greeter.sol");
         assert!(!p.is_sol_test());
+    }
+
+    // loads .env from cwd and project dir, See [`find_project_root_path()`]
+    #[test]
+    fn can_load_dotenv() {
+        let temp = tempdir().unwrap();
+        Command::new("git").arg("init").current_dir(temp.path()).exec().unwrap();
+        let cwd_env = temp.path().join(".env");
+        fs::create_file(temp.path().join("foundry.toml")).unwrap();
+        let nested = temp.path().join("nested");
+        fs::create_dir(&nested).unwrap();
+
+        let mut cwd_file = File::create(cwd_env).unwrap();
+        let mut prj_file = File::create(nested.join(".env")).unwrap();
+
+        cwd_file.write_all("TESTCWDKEY=cwd_val".as_bytes()).unwrap();
+        cwd_file.sync_all().unwrap();
+
+        prj_file.write_all("TESTPRJKEY=prj_val".as_bytes()).unwrap();
+        prj_file.sync_all().unwrap();
+
+        let cwd = env::current_dir().unwrap();
+        env::set_current_dir(nested).unwrap();
+        load_dotenv();
+        env::set_current_dir(cwd).unwrap();
+
+        assert_eq!(env::var("TESTCWDKEY").unwrap(), "cwd_val");
+        assert_eq!(env::var("TESTPRJKEY").unwrap(), "prj_val");
     }
 }

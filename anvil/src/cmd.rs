@@ -1,12 +1,12 @@
 use crate::{
-    config::{Hardfork, DEFAULT_MNEMONIC},
-    eth::pool::transactions::TransactionOrder,
-    AccountGenerator, NodeConfig, CHAIN_ID,
+    config::DEFAULT_MNEMONIC, eth::pool::transactions::TransactionOrder, genesis::Genesis,
+    AccountGenerator, Hardfork, NodeConfig, CHAIN_ID,
 };
 use anvil_server::ServerConfig;
 use clap::Parser;
 use core::fmt;
 use ethers::utils::WEI_IN_ETHER;
+use foundry_config::Chain;
 use std::{
     net::IpAddr,
     str::FromStr,
@@ -14,6 +14,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
+    time::Duration,
 };
 use tracing::log::trace;
 
@@ -48,6 +49,9 @@ pub struct NodeArgs {
     )]
     pub balance: u64,
 
+    #[clap(long, help = "The timestamp of the genesis block", value_name = "NUM")]
+    pub timestamp: Option<u64>,
+
     #[clap(
         long,
         short,
@@ -69,7 +73,7 @@ pub struct NodeArgs {
     #[clap(long, help = "Don't print anything on startup.")]
     pub silent: bool,
 
-    #[clap(long, help = "The EVM hardfork to use.", value_name = "HARDFORK")]
+    #[clap(long, help = "The EVM hardfork to use.", value_name = "HARDFORK", value_parser = Hardfork::from_str)]
     pub hardfork: Option<Hardfork>,
 
     #[clap(
@@ -113,7 +117,34 @@ pub struct NodeArgs {
         value_name = "ORDER"
     )]
     pub order: TransactionOrder,
+
+    #[clap(
+        long,
+        help = "Initialize the genesis block with the given `genesis.json` file.",
+        value_name = "PATH",
+        value_parser = Genesis::parse
+    )]
+    pub init: Option<Genesis>,
+
+    #[clap(
+        long,
+        help = IPC_HELP,
+        value_name = "PATH",
+        visible_alias = "ipcpath"
+    )]
+    pub ipc: Option<Option<String>>,
+
+    #[clap(long, help = "Don't keep full chain history.")]
+    pub prune_history: bool,
 }
+
+#[cfg(windows)]
+const IPC_HELP: &str =
+    "Launch an ipc server at the given path or default path = `\\.\\pipe\\anvil.ipc`";
+
+/// The default IPC endpoint
+#[cfg(not(windows))]
+const IPC_HELP: &str = "Launch an ipc server at the given path or default path = `/tmp/anvil.ipc`";
 
 impl NodeArgs {
     pub fn into_node_config(self) -> NodeConfig {
@@ -127,12 +158,17 @@ impl NodeArgs {
             .with_no_mining(self.no_mining)
             .with_account_generator(self.account_generator())
             .with_genesis_balance(genesis_balance)
+            .with_genesis_timestamp(self.timestamp)
             .with_port(self.port)
             .with_fork_block_number(
                 self.evm_opts
                     .fork_block_number
                     .or_else(|| self.evm_opts.fork_url.as_ref().and_then(|f| f.block)),
             )
+            .fork_request_timeout(self.evm_opts.fork_request_timeout.map(Duration::from_millis))
+            .fork_request_retries(self.evm_opts.fork_request_retries)
+            .fork_retry_backoff(self.evm_opts.fork_retry_backoff.map(Duration::from_millis))
+            .fork_compute_units_per_second(self.evm_opts.compute_units_per_second)
             .with_eth_rpc_url(self.evm_opts.fork_url.map(|fork| fork.url))
             .with_base_fee(self.evm_opts.block_base_fee_per_gas)
             .with_storage_caching(self.evm_opts.no_storage_caching)
@@ -142,12 +178,17 @@ impl NodeArgs {
             .set_config_out(self.config_out)
             .with_chain_id(self.evm_opts.chain_id)
             .with_transaction_order(self.order)
+            .with_genesis(self.init)
+            .with_steps_tracing(self.evm_opts.steps_tracing)
+            .with_ipc(self.ipc)
+            .with_code_size_limit(self.evm_opts.code_size_limit)
+            .set_pruned_history(self.prune_history)
     }
 
     fn account_generator(&self) -> AccountGenerator {
         let mut gen = AccountGenerator::new(self.accounts as usize)
             .phrase(DEFAULT_MNEMONIC)
-            .chain_id(self.evm_opts.chain_id.unwrap_or(CHAIN_ID));
+            .chain_id(self.evm_opts.chain_id.unwrap_or_else(|| CHAIN_ID.into()));
         if let Some(ref mnemonic) = self.mnemonic {
             gen = gen.phrase(mnemonic);
         }
@@ -161,22 +202,37 @@ impl NodeArgs {
     ///
     /// See also [crate::spawn()]
     pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
-        let (api, handle) = crate::spawn(self.into_node_config()).await;
+        let (api, mut handle) = crate::spawn(self.into_node_config()).await;
 
         // sets the signal handler to gracefully shutdown.
-        let fork = api.get_fork().cloned();
+        let mut fork = api.get_fork().cloned();
         let running = Arc::new(AtomicUsize::new(0));
+
+        // handle for the currently running rt, this must be obtained before setting the crtlc
+        // handler, See [Handle::current]
+        let mut signal = handle.shutdown_signal_mut().take();
+
+        let task_manager = handle.task_manager();
+        let on_shutdown = task_manager.on_shutdown();
+
+        task_manager.spawn(async move {
+            on_shutdown.await;
+            // cleaning up and shutting down
+            // this will make sure that the fork RPC cache is flushed if caching is configured
+            if let Some(fork) = fork.take() {
+                trace!("flushing cache on shutdown");
+                fork.database.read().await.flush_cache();
+                // cleaning up and shutting down
+                // this will make sure that the fork RPC cache is flushed if caching is configured
+            }
+            std::process::exit(0);
+        });
 
         ctrlc::set_handler(move || {
             let prev = running.fetch_add(1, Ordering::SeqCst);
             if prev == 0 {
-                // cleaning up and shutting down
-                // this will make sure that the fork RPC cache is flushed if caching is configured
                 trace!("received shutdown signal, shutting down");
-                if let Some(ref fork) = fork {
-                    fork.database.read().flush_cache();
-                }
-                std::process::exit(0);
+                let _ = signal.take();
             }
         })
         .expect("Error setting Ctrl-C handler");
@@ -200,17 +256,54 @@ pub struct AnvilEvmArgs {
     )]
     pub fork_url: Option<ForkUrl>,
 
+    /// Timeout in ms for requests sent to remote JSON-RPC server in forking mode.
+    ///
+    /// Default value 45000
+    #[clap(
+        long = "timeout",
+        name = "timeout",
+        help_heading = "FORK CONFIG",
+        requires = "fork_url"
+    )]
+    pub fork_request_timeout: Option<u64>,
+
+    /// Number of retry requests for spurious networks (timed out requests)
+    ///
+    /// Default value 5
+    #[clap(
+        long = "retries",
+        name = "retries",
+        help_heading = "FORK CONFIG",
+        requires = "fork_url"
+    )]
+    pub fork_request_retries: Option<u32>,
+
     /// Fetch state from a specific block number over a remote endpoint.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork-url", value_name = "BLOCK", help_heading = "FORK CONFIG")]
+    #[clap(long, requires = "fork_url", value_name = "BLOCK", help_heading = "FORK CONFIG")]
     pub fork_block_number: Option<u64>,
 
     /// Initial retry backoff on encountering errors.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork-url", value_name = "BACKOFF", help_heading = "FORK CONFIG")]
+    #[clap(long, requires = "fork_url", value_name = "BACKOFF", help_heading = "FORK CONFIG")]
     pub fork_retry_backoff: Option<u64>,
+
+    /// Sets the number of assumed available compute units per second for this provider
+    ///
+    /// default value: 330
+    ///
+    /// See --fork-url.
+    /// See also, https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups
+    #[clap(
+        long,
+        requires = "fork_url",
+        alias = "cups",
+        value_name = "CUPS",
+        help_heading = "FORK CONFIG"
+    )]
+    pub compute_units_per_second: Option<u64>,
 
     /// Explicitly disables the use of RPC caching.
     ///
@@ -219,12 +312,17 @@ pub struct AnvilEvmArgs {
     /// This flag overrides the project's configuration file.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork-url", help_heading = "FORK CONFIG")]
+    #[clap(long, requires = "fork_url", help_heading = "FORK CONFIG")]
     pub no_storage_caching: bool,
 
     /// The block gas limit.
     #[clap(long, value_name = "GAS_LIMIT", help_heading = "ENVIRONMENT CONFIG")]
     pub gas_limit: Option<u64>,
+
+    /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests. By
+    /// default, it is 0x6000 (~25kb).
+    #[clap(long, value_name = "CODE_SIZE", help_heading = "ENVIRONMENT CONFIG")]
+    pub code_size_limit: Option<usize>,
 
     /// The gas price.
     #[clap(long, value_name = "GAS_PRICE", help_heading = "ENVIRONMENT CONFIG")]
@@ -240,8 +338,15 @@ pub struct AnvilEvmArgs {
     pub block_base_fee_per_gas: Option<u64>,
 
     /// The chain ID.
-    #[clap(long, value_name = "CHAIN_ID", help_heading = "ENVIRONMENT CONFIG")]
-    pub chain_id: Option<u64>,
+    #[clap(long, alias = "chain", value_name = "CHAIN_ID", help_heading = "ENVIRONMENT CONFIG")]
+    pub chain_id: Option<Chain>,
+
+    #[clap(
+        long,
+        help = "Enable steps tracing used for debug calls returning geth-style traces",
+        visible_alias = "tracing"
+    )]
+    pub steps_tracing: bool,
 }
 
 /// Represents the input URL for a fork with an optional trailing block number:
@@ -316,5 +421,11 @@ mod tests {
             fork,
             ForkUrl { url: "wss://user:password@example.com/".to_string(), block: Some(100000) }
         );
+    }
+
+    #[test]
+    fn can_parse_hardfork() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--hardfork", "berlin"]);
+        assert_eq!(args.hardfork, Some(Hardfork::Berlin));
     }
 }

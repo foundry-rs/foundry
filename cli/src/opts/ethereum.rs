@@ -2,19 +2,18 @@ use super::{Wallet, WalletType};
 use clap::Parser;
 use ethers::{
     middleware::SignerMiddleware,
-    prelude::RetryClient,
-    providers::{Http, Provider},
     signers::{HDPath as LedgerHDPath, Ledger, Signer, Trezor, TrezorHDPath},
-    types::{Address, Chain, U256},
+    types::{Address, U256},
 };
 use eyre::Result;
+use foundry_common::{ProviderBuilder, RetryProvider};
 use foundry_config::{
     figment::{
         self,
         value::{Dict, Map, Value},
         Metadata, Profile,
     },
-    impl_figment_convert_cast, Config,
+    impl_figment_convert_cast, Chain, Config,
 };
 use serde::Serialize;
 use std::sync::Arc;
@@ -22,7 +21,7 @@ use std::sync::Arc;
 const FLASHBOTS_URL: &str = "https://rpc.flashbots.net";
 
 impl_figment_convert_cast!(EthereumOpts);
-#[derive(Parser, Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Parser, Serialize)]
 pub struct EthereumOpts {
     #[clap(env = "ETH_RPC_URL", long = "rpc-url", help = "The RPC endpoint.", value_name = "URL")]
     pub rpc_url: Option<String>,
@@ -62,7 +61,13 @@ impl EthereumOpts {
     pub async fn signer(&self, chain_id: U256) -> eyre::Result<Option<WalletType>> {
         self.signer_with(
             chain_id,
-            Arc::new(Provider::<RetryClient<Http>>::new_client(self.rpc_url()?, 10, 1000)?),
+            Arc::new(
+                ProviderBuilder::new(self.rpc_url()?)
+                    .chain(chain_id)
+                    .initial_backoff(1000)
+                    .connect()
+                    .await?,
+            ),
         )
         .await
     }
@@ -72,7 +77,7 @@ impl EthereumOpts {
     pub async fn signer_with(
         &self,
         chain_id: U256,
-        provider: Arc<Provider<RetryClient<Http>>>,
+        provider: Arc<RetryProvider>,
     ) -> eyre::Result<Option<WalletType>> {
         if self.wallet.ledger {
             let derivation = match &self.wallet.hd_path {
@@ -134,7 +139,7 @@ impl figment::Provider for EthereumOpts {
         }
 
         if let Some(from) = self.wallet.from {
-            dict.insert("sender".to_string(), format!("{:?}", from).into());
+            dict.insert("sender".to_string(), format!("{from:?}").into());
         }
 
         if let Some(etherscan_api_key) = &self.etherscan_api_key {

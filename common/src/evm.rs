@@ -1,5 +1,5 @@
 //! cli arguments for configuring the evm settings
-use clap::Parser;
+use clap::{ArgAction, Parser};
 use ethers_core::types::{Address, U256};
 use foundry_config::{
     figment::{
@@ -8,7 +8,7 @@ use foundry_config::{
         value::{Dict, Map, Value},
         Metadata, Profile, Provider,
     },
-    Config,
+    Chain, Config,
 };
 use serde::Serialize;
 
@@ -33,7 +33,7 @@ use serde::Serialize;
 /// let opts = figment.extract::<EvmOpts>().unwrap();
 /// # }
 /// ```
-#[derive(Debug, Clone, Parser, Serialize)]
+#[derive(Debug, Clone, Default, Parser, Serialize)]
 pub struct EvmArgs {
     /// Fetch state over a remote endpoint instead of starting from an empty state.
     ///
@@ -45,14 +45,14 @@ pub struct EvmArgs {
     /// Fetch state from a specific block number over a remote endpoint.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork-url", value_name = "BLOCK")]
+    #[clap(long, requires = "fork_url", value_name = "BLOCK")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_block_number: Option<u64>,
 
     /// Initial retry backoff on encountering errors.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork-url", value_name = "BACKOFF")]
+    #[clap(long, requires = "fork_url", value_name = "BACKOFF")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_retry_backoff: Option<u64>,
 
@@ -63,7 +63,7 @@ pub struct EvmArgs {
     /// This flag overrides the project's configuration file.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork-url")]
+    #[clap(long, requires = "fork_url")]
     #[serde(skip)]
     pub no_storage_caching: bool,
 
@@ -91,7 +91,7 @@ pub struct EvmArgs {
     /// - 3: Print execution traces for failing tests
     /// - 4: Print execution traces for all tests, and setup traces for failing tests
     /// - 5: Print execution and setup traces for all tests
-    #[clap(long, short, parse(from_occurrences), verbatim_doc_comment)]
+    #[clap(long, short, verbatim_doc_comment, action = ArgAction::Count)]
     #[serde(skip)]
     pub verbosity: u8,
 
@@ -142,10 +142,16 @@ pub struct EnvArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gas_limit: Option<u64>,
 
-    /// The chain ID.
-    #[clap(long, value_name = "CHAIN_ID")]
+    /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests. By
+    /// default, it is 0x6000 (~25kb).
+    #[clap(long, value_name = "CODE_SIZE")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub chain_id: Option<u64>,
+    pub code_size_limit: Option<usize>,
+
+    /// The chain ID.
+    #[clap(long, alias = "chain", value_name = "CHAIN_ID")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chain_id: Option<Chain>,
 
     /// The gas price.
     #[clap(long, value_name = "GAS_PRICE")]
@@ -186,4 +192,25 @@ pub struct EnvArgs {
     #[clap(long, value_name = "GAS_LIMIT")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_gas_limit: Option<u64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_parse_chain_id() {
+        let args = EvmArgs {
+            env: EnvArgs {
+                chain_id: Some(ethers_core::types::Chain::Mainnet.into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let config = Config::from_provider(Config::figment().merge(args));
+        assert_eq!(config.chain_id, Some(ethers_core::types::Chain::Mainnet.into()));
+
+        let env = EnvArgs::parse_from(["foundry-common", "--chain-id", "goerli"]);
+        assert_eq!(env.chain_id, Some(ethers_core::types::Chain::Goerli.into()));
+    }
 }

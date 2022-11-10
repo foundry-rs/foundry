@@ -1,8 +1,10 @@
 //! Utility functions
 
 use crate::Config;
+use ethers_core::types::{serde_helpers::Numeric, U256};
 use ethers_solc::remappings::{Remapping, RemappingError};
 use figment::value::Value;
+use serde::{Deserialize, Deserializer};
 use std::{
     path::{Path, PathBuf},
     str::FromStr,
@@ -25,9 +27,12 @@ pub fn load_config_with_root(root: Option<PathBuf>) -> Config {
 
 /// Returns the path of the top-level directory of the working git tree. If there is no working
 /// tree, an error is returned.
-pub fn find_git_root_path() -> eyre::Result<PathBuf> {
-    let path =
-        std::process::Command::new("git").args(&["rev-parse", "--show-toplevel"]).output()?.stdout;
+pub fn find_git_root_path(relative_to: impl AsRef<Path>) -> eyre::Result<PathBuf> {
+    let path = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(relative_to.as_ref())
+        .output()?
+        .stdout;
     let path = std::str::from_utf8(&path)?.trim_end_matches('\n');
     Ok(PathBuf::from(path))
 }
@@ -47,11 +52,11 @@ pub fn find_git_root_path() -> eyre::Result<PathBuf> {
 /// ```
 /// will still detect `repo` as root
 pub fn find_project_root_path() -> std::io::Result<PathBuf> {
-    let boundary = find_git_root_path()
+    let cwd = std::env::current_dir()?;
+    let boundary = find_git_root_path(&cwd)
         .ok()
         .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(|| std::env::current_dir().unwrap());
-    let cwd = std::env::current_dir()?;
+        .unwrap_or_else(|| cwd.clone());
     let mut cwd = cwd.as_path();
     // traverse as long as we're in the current git repo cwd
     while cwd.starts_with(&boundary) {
@@ -160,5 +165,20 @@ pub(crate) fn get_dir_remapping(dir: impl AsRef<Path>) -> Option<Remapping> {
         Some(r)
     } else {
         None
+    }
+}
+
+/// Deserialize stringified percent. The value must be between 0 and 100 inclusive.
+pub(crate) fn deserialize_stringified_percent<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let num: U256 =
+        Numeric::deserialize(deserializer)?.try_into().map_err(serde::de::Error::custom)?;
+    let num: u64 = num.try_into().map_err(serde::de::Error::custom)?;
+    if num <= 100 {
+        num.try_into().map_err(serde::de::Error::custom)
+    } else {
+        Err(serde::de::Error::custom("percent must be lte 100"))
     }
 }

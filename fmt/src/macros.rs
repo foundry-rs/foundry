@@ -86,7 +86,38 @@ macro_rules! buf_fn {
     };
 }
 
+macro_rules! return_source_if_disabled {
+    ($self:expr, $loc:expr) => {{
+        let loc = $loc;
+        if $self.inline_config.is_disabled(loc) {
+            return $self.visit_source(loc)
+        }
+    }};
+    ($self:expr, $loc:expr, $suffix:literal) => {{
+        let mut loc = $loc;
+        let has_suffix = $self.extend_loc_until(&mut loc, $suffix);
+        if $self.inline_config.is_disabled(loc) {
+            $self.visit_source(loc)?;
+            if !has_suffix {
+                write!($self.buf(), "{}", $suffix)?;
+            }
+            return Ok(())
+        }
+    }};
+}
+
+macro_rules! visit_source_if_disabled_else {
+    ($self:expr, $loc:expr, $block:block) => {{
+        let loc = $loc;
+        if $self.inline_config.is_disabled(loc) {
+            $self.visit_source(loc)?;
+        } else $block
+    }};
+}
+
 pub(crate) use buf_fn;
+pub(crate) use return_source_if_disabled;
+pub(crate) use visit_source_if_disabled_else;
 pub(crate) use write_chunk;
 pub(crate) use write_chunk_spaced;
 pub(crate) use writeln_chunk;

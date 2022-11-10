@@ -163,7 +163,7 @@ impl<'a> GitCheckout<'a> {
         revision: git2::Oid,
     ) -> eyre::Result<GitCheckout<'a>> {
         let dirname = into.parent().unwrap();
-        fs::create_dir_all(&dirname)?;
+        fs::create_dir_all(dirname)?;
         if into.exists() {
             fs::remove_dir_all(into)?;
         }
@@ -274,7 +274,7 @@ impl<'a> GitCheckout<'a> {
             let reference = GitReference::Rev(head.to_string());
 
             fetch(&mut repo, url, &reference, false).with_context(|| {
-                format!("failed to fetch submodule `{}` from {}", child.name().unwrap_or(""), url)
+                format!("failed to fetch submodule `{}` from {url}", child.name().unwrap_or(""))
             })?;
 
             let obj = repo.find_object(head, None)?;
@@ -379,7 +379,7 @@ fn init(path: &Path, bare: bool) -> eyre::Result<git2::Repository> {
     // for an example issue that comes up.
     opts.external_template(false);
     opts.bare(bare);
-    Ok(git2::Repository::init_opts(&path, &opts)?)
+    Ok(git2::Repository::init_opts(path, &opts)?)
 }
 
 fn reset(repo: &git2::Repository, obj: &git2::Object<'_>) -> eyre::Result<()> {
@@ -407,7 +407,7 @@ impl Retry {
                     self.remaining,
                     e.root_cause(),
                 );
-                println!("{}", msg);
+                println!("{msg}");
                 self.remaining -= 1;
                 Ok(None)
             }
@@ -711,10 +711,10 @@ pub fn fetch(
         // For branches and tags we can fetch simply one reference and copy it
         // locally, no need to fetch other branches/tags.
         GitReference::Branch(b) => {
-            refspecs.push(format!("+refs/heads/{0}:refs/remotes/origin/{0}", b));
+            refspecs.push(format!("+refs/heads/{b}:refs/remotes/origin/{b}"));
         }
         GitReference::Tag(t) => {
-            refspecs.push(format!("+refs/tags/{0}:refs/remotes/origin/tags/{0}", t));
+            refspecs.push(format!("+refs/tags/{t}:refs/remotes/origin/tags/{t}"));
         }
 
         GitReference::DefaultBranch => {
@@ -723,7 +723,7 @@ pub fn fetch(
 
         GitReference::Rev(rev) => {
             if rev.starts_with("refs/") {
-                refspecs.push(format!("+{0}:{0}", rev));
+                refspecs.push(format!("+{rev}:{rev}"));
             } else {
                 // We don't know what the rev will point to. To handle this
                 // situation we fetch all branches and tags, and then we pray

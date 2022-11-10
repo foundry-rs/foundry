@@ -9,8 +9,8 @@ contract HelloWorld {
     }
 
     /**
-        Here's a more double asterix comment
-    */
+     * Here's a more double asterix comment
+     */
     Person public theDude;
 
     /// Constructs the dude
@@ -22,7 +22,13 @@ contract HelloWorld {
     /**
      * @dev does nothing
      */
-    function example() public {}
+    function example() public {
+        /**
+         * Does this add a whitespace error?
+         *
+         * Let's find out.
+         */
+    }
 
     /**
      * @dev Calculates a rectangle's surface and perimeter.
@@ -39,4 +45,56 @@ contract HelloWorld {
         s = w * h;
         p = 2 * (w + h);
     }
+
+    /// A long doc line comment that will be wrapped
+    function docLineOverflow() external {}
+
+    function docLinePostfixOveflow() external {}
+
+    /// A long doc line comment that will be wrapped
+
+    /**
+     * @notice Here is my comment
+     *       - item 1
+     *       - item 2
+     * Some equations:
+     *     y = mx + b
+     */
+    function anotherExample() external {}
+
+    /**
+     * contract A {
+     *     function foo() public {
+     *         // does nothing.
+     *     }
+     * }
+     */
+    function multilineIndent() external {}
+
+    /**
+     * contract A {
+     * function foo() public {
+     *             // does nothing.
+     *   }
+     * }
+     */
+    function multilineMalformedIndent() external {}
+
+    /**
+     * contract A {
+     * function withALongNameThatWillCauseCommentWrap() public {
+     *             // does nothing.
+     *   }
+     * }
+     */
+    function malformedIndentOveflow() external {}
 }
+
+/**
+ * contract A {
+ *     function foo() public {
+ *         // does nothing.
+ *     }
+ * }
+ */
+function freeFloatingMultilineIndent() {}

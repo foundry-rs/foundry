@@ -19,8 +19,7 @@ contract Contract {
         int8 int8_var,
         int128 int128_var,
         int int256_expl
-    )
-        public
-    { // do something
+    ) public {
+        // do something
     }
 }

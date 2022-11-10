@@ -84,6 +84,8 @@ impl MultiFork {
     ///
     /// Also returns the `JoinHandle` of the spawned thread.
     pub fn spawn() -> Self {
+        trace!(target: "fork::multi", "spawning multifork");
+
         let (fork, mut handler) = Self::new();
         // spawn a light-weight thread with a thread-local async runtime just for
         // sending and receiving data from the remote client(s)
@@ -112,7 +114,8 @@ impl MultiFork {
     /// Returns a fork backend
     ///
     /// If no matching fork backend exists it will be created
-    pub fn create_fork(&self, fork: CreateFork) -> eyre::Result<(ForkId, SharedBackend)> {
+    pub fn create_fork(&self, fork: CreateFork) -> eyre::Result<(ForkId, SharedBackend, Env)> {
+        trace!("Creating new fork, url={}, block={:?}", fork.url, fork.evm_opts.fork_block_number);
         let (sender, rx) = oneshot_channel();
         let req = Request::CreateFork(Box::new(fork), sender);
         self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
@@ -122,7 +125,12 @@ impl MultiFork {
     /// Rolls the block of the fork
     ///
     /// If no matching fork backend exists it will be created
-    pub fn roll_fork(&self, fork: ForkId, block: u64) -> eyre::Result<(ForkId, SharedBackend)> {
+    pub fn roll_fork(
+        &self,
+        fork: ForkId,
+        block: u64,
+    ) -> eyre::Result<(ForkId, SharedBackend, Env)> {
+        trace!(?fork, ?block, "rolling fork");
         let (sender, rx) = oneshot_channel();
         let req = Request::RollFork(fork, block, sender);
         self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
@@ -131,6 +139,7 @@ impl MultiFork {
 
     /// Returns the `Env` of the given fork, if any
     pub fn get_env(&self, fork: ForkId) -> eyre::Result<Option<Env>> {
+        trace!(?fork, "getting env config");
         let (sender, rx) = oneshot_channel();
         let req = Request::GetEnv(fork, sender);
         self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
@@ -141,8 +150,10 @@ impl MultiFork {
     ///
     /// Returns `None` if no matching fork backend is available.
     pub fn get_fork(&self, id: impl Into<ForkId>) -> eyre::Result<Option<SharedBackend>> {
+        let id = id.into();
+        trace!(?id, "get fork backend");
         let (sender, rx) = oneshot_channel();
-        let req = Request::GetFork(id.into(), sender);
+        let req = Request::GetFork(id, sender);
         self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
         Ok(rx.recv()?)
     }
@@ -151,7 +162,7 @@ impl MultiFork {
 type Handler = BackendHandler<Arc<Provider<RetryClient<Http>>>>;
 
 type CreateFuture = Pin<Box<dyn Future<Output = eyre::Result<(CreatedFork, Handler)>> + Send>>;
-type CreateSender = OneshotSender<eyre::Result<(ForkId, SharedBackend)>>;
+type CreateSender = OneshotSender<eyre::Result<(ForkId, SharedBackend, Env)>>;
 type GetEnvSender = OneshotSender<Option<Env>>;
 
 /// Request that's send to the handler
@@ -226,9 +237,11 @@ impl MultiForkHandler {
 
     fn create_fork(&mut self, fork: CreateFork, sender: CreateSender) {
         let fork_id = create_fork_id(&fork.url, fork.evm_opts.fork_block_number);
+        trace!(?fork_id, "created new forkId");
+
         if let Some(fork) = self.forks.get_mut(&fork_id) {
             fork.num_senders += 1;
-            let _ = sender.send(Ok((fork_id, fork.backend.clone())));
+            let _ = sender.send(Ok((fork_id, fork.backend.clone(), fork.opts.env.clone())));
         } else {
             let retries = self.retries;
             let backoff = self.backoff;
@@ -302,8 +315,9 @@ impl Future for MultiForkHandler {
                             Ok((fork, handler)) => {
                                 pin.handlers.push((id.clone(), handler));
                                 let backend = fork.backend.clone();
+                                let env = fork.opts.env.clone();
                                 pin.forks.insert(id.clone(), fork);
-                                let _ = sender.send(Ok((id, backend)));
+                                let _ = sender.send(Ok((id, backend, env)));
                             }
                             Err(err) => {
                                 let _ = sender.send(Err(err));
@@ -355,12 +369,13 @@ impl Future for MultiForkHandler {
 }
 
 /// Tracks the created Fork
+#[derive(Debug)]
 struct CreatedFork {
     /// How the fork was initially created
     opts: CreateFork,
     /// Copy of the sender
     backend: SharedBackend,
-    /// How many different consumers there are, since a `SharedBacked` can be used by multiple
+    /// How many consumers there are, since a `SharedBacked` can be used by multiple
     /// consumers
     num_senders: usize,
 }
@@ -373,7 +388,7 @@ impl CreatedFork {
     }
 }
 
-/// A type that's used to signaling the `MultiForkHandler` when it's time to shutdown.
+/// A type that's used to signaling the `MultiForkHandler` when it's time to shut down.
 ///
 /// This is essentially a sync on drop, so that the `MultiForkHandler` can flush all rpc cashes
 ///
@@ -412,11 +427,8 @@ async fn create_fork(
     retries: u32,
     backoff: u64,
 ) -> eyre::Result<(CreatedFork, Handler)> {
-    let provider = Arc::new(Provider::<RetryClient<Http>>::new_client(
-        fork.url.clone().as_str(),
-        retries,
-        backoff,
-    )?);
+    let provider =
+        Arc::new(Provider::<RetryClient<Http>>::new_client(fork.url.as_str(), retries, backoff)?);
 
     // initialise the fork environment
     fork.env = fork.evm_opts.fork_evm_env(&fork.url).await?;

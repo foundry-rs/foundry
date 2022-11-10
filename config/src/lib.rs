@@ -2,12 +2,13 @@
 #![deny(missing_docs, unsafe_code, unused_crate_dependencies)]
 
 use crate::cache::StorageCachingConfig;
-use ethers_core::types::{Address, H160, U256};
+use ethers_core::types::{Address, Chain::Mainnet, H160, U256};
 pub use ethers_solc::artifacts::OptimizerDetails;
 use ethers_solc::{
     artifacts::{
         output_selection::ContractOutputSelection, serde_helpers, BytecodeHash, DebuggingSettings,
         Libraries, ModelCheckerSettings, ModelCheckerTarget, Optimizer, RevertStrings, Settings,
+        SettingsMetadata,
     },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     error::SolcError,
@@ -21,28 +22,32 @@ use figment::{
     Error, Figment, Metadata, Profile, Provider,
 };
 use inflector::Inflector;
+use once_cell::sync::Lazy;
 use regex::Regex;
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     borrow::Cow,
-    collections::{hash_map::Entry, BTreeSet, HashMap},
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     str::FromStr,
 };
-use tracing::trace;
+pub(crate) use tracing::trace;
 
 // Macros useful for creating a figment.
 mod macros;
-pub(crate) use macros::config_warn;
 
 // Utilities for making it easier to handle tests.
 pub mod utils;
 pub use crate::utils::*;
 
-mod rpc;
-pub use rpc::{ResolvedRpcEndpoints, RpcEndpoint, RpcEndpoints, UnresolvedEnvVarError};
+mod endpoints;
+pub use endpoints::{ResolvedRpcEndpoints, RpcEndpoint, RpcEndpoints};
+
+mod etherscan;
+mod resolve;
+pub use resolve::UnresolvedEnvVarError;
 
 pub mod cache;
 use cache::{Cache, ChainCache};
@@ -53,14 +58,36 @@ pub use chain::Chain;
 pub mod fmt;
 pub use fmt::FormatterConfig;
 
-mod error;
+pub mod fs_permissions;
+pub use crate::fs_permissions::FsPermissions;
+
+pub mod error;
 pub use error::SolidityErrorCode;
+
+mod warning;
+pub use warning::*;
 
 // helpers for fixing configuration warnings
 pub mod fix;
 
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use figment;
+use tracing::warn;
+
+mod providers;
+use crate::{
+    error::ExtractConfigError,
+    etherscan::{EtherscanConfigError, EtherscanConfigs, ResolvedEtherscanConfig},
+};
+use providers::*;
+
+mod fuzz;
+pub use fuzz::FuzzConfig;
+
+mod invariant;
+use crate::fs_permissions::PathPermission;
+pub use invariant::InvariantConfig;
+use providers::remappings::RemappingsProvider;
 
 /// Foundry configuration
 ///
@@ -115,6 +142,8 @@ pub struct Config {
     pub libs: Vec<PathBuf>,
     /// `Remappings` to use for this repo
     pub remappings: Vec<RelativeRemapping>,
+    /// Whether to autodetect remappings by scanning the `libs` folders recursively
+    pub auto_detect_remappings: bool,
     /// library addresses to link
     pub libraries: Vec<String>,
     /// whether to enable cache
@@ -123,8 +152,10 @@ pub struct Config {
     pub cache_path: PathBuf,
     /// where the broadcast logs are stored
     pub broadcast: PathBuf,
-    /// additional solc allow paths
+    /// additional solc allow paths for `--allow-paths`
     pub allow_paths: Vec<PathBuf>,
+    /// additional solc include paths for `--include-path`
+    pub include_paths: Vec<PathBuf>,
     /// whether to force a `project.clean()`
     pub force: bool,
     /// evm version to use
@@ -132,6 +163,8 @@ pub struct Config {
     pub evm_version: EvmVersion,
     /// list of contracts to report gas of
     pub gas_reports: Vec<String>,
+    /// list of contracts to ignore for gas reports
+    pub gas_reports_ignore: Vec<String>,
     /// The Solc instance to use if any.
     ///
     /// This takes precedence over `auto_detect_solc`, if a version is set then this overrides
@@ -163,8 +196,11 @@ pub struct Config {
     pub verbosity: u8,
     /// url of the rpc server that should be used for any rpc calls
     pub eth_rpc_url: Option<String>,
-    /// etherscan API key
+    /// etherscan API key, or alias for an `EtherscanConfig` in `etherscan` table
     pub etherscan_api_key: Option<String>,
+    /// Multiple etherscan api configs and their aliases
+    #[serde(default, skip_serializing_if = "EtherscanConfigs::is_empty")]
+    pub etherscan: EtherscanConfigs,
     /// list of solidity error codes to always silence in the compiler output
     pub ignored_error_codes: Vec<SolidityErrorCode>,
     /// Only run test functions matching the specified regex pattern.
@@ -185,8 +221,10 @@ pub struct Config {
     /// Only run tests in source files that do not match the specified glob pattern.
     #[serde(rename = "no_match_path", with = "from_opt_glob")]
     pub path_pattern_inverse: Option<globset::Glob>,
-    /// The number of test cases that must execute for each property test
-    pub fuzz_runs: u32,
+    /// Configuration for fuzz testing
+    pub fuzz: FuzzConfig,
+    /// Configuration for invariant testing
+    pub invariant: InvariantConfig,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
     /// The address which will be executing all tests
@@ -199,10 +237,12 @@ pub struct Config {
     pub block_number: u64,
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
-    /// the chainid opcode value
+    /// The chain id to use
     pub chain_id: Option<Chain>,
     /// Block gas limit
     pub gas_limit: GasLimit,
+    /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests.
+    pub code_size_limit: Option<usize>,
     /// `tx.gasprice` value during EVM execution"
     ///
     /// This is an Option, so we can determine in fork mode whether to use the config's gas price
@@ -221,7 +261,7 @@ pub struct Config {
     /// The memory limit of the EVM (32 MB by default)
     pub memory_limit: u64,
     /// Additional output selection for all contracts
-    /// such as "ir", "devodc", "storageLayout", etc.
+    /// such as "ir", "devdoc", "storageLayout", etc.
     /// See [Solc Compiler Api](https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-api)
     ///
     /// The following values are always set because they're required by `forge`
@@ -241,19 +281,11 @@ pub struct Config {
     /// each contract in the project. See [Contract Metadata](https://docs.soliditylang.org/en/latest/metadata.html)
     ///
     /// The difference between `extra_output = ["metadata"]` and
-    /// `extra_output_files = ["metadata]` is that the former will include the
+    /// `extra_output_files = ["metadata"]` is that the former will include the
     /// contract's metadata in the contract's json artifact, whereas the latter will emit the
     /// output selection as separate files.
     #[serde(default)]
     pub extra_output_files: Vec<ContractOutputSelection>,
-    /// The maximum number of local test case rejections allowed
-    /// by proptest, to be encountered during usage of `vm.assume`
-    /// cheatcode.
-    pub fuzz_max_local_rejects: u32,
-    /// The maximum number of global test case rejections allowed
-    /// by proptest, to be encountered during usage of `vm.assume`
-    /// cheatcode.
-    pub fuzz_max_global_rejects: u32,
     /// Print the names of the compiled contracts
     pub names: bool,
     /// Print the sizes of the compiled contracts
@@ -274,6 +306,11 @@ pub struct Config {
     /// The metadata hash is machine dependent. By default, this is set to [BytecodeHash::None] to allow for deterministic code, See: <https://docs.soliditylang.org/en/latest/metadata.html>
     #[serde(with = "from_str_lowercase")]
     pub bytecode_hash: BytecodeHash,
+    /// Whether to append the metadata hash to the bytecode.
+    ///
+    /// If this is `false` and the `bytecode_hash` option above is not `None` solc will issue a
+    /// warning.
+    pub cbor_metadata: bool,
     /// How to treat revert (and require) reason strings.
     #[serde(with = "serde_helpers::display_from_str_opt")]
     pub revert_strings: Option<RevertStrings>,
@@ -292,6 +329,10 @@ pub struct Config {
     pub build_info_path: Option<PathBuf>,
     /// Configuration for `forge fmt`
     pub fmt: FormatterConfig,
+    /// Configures the permissions of cheat codes that touch the file system.
+    ///
+    /// This includes what operations can be executed (read, write)
+    pub fs_permissions: FsPermissions,
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
     //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
@@ -313,7 +354,19 @@ pub struct Config {
     #[doc(hidden)]
     #[serde(skip)]
     pub __non_exhaustive: (),
+    /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information
+    #[serde(default, skip_serializing)]
+    pub __warnings: Vec<Warning>,
 }
+
+/// Mapping of fallback standalone sections. See [`FallbackProfileProvider`]
+pub static STANDALONE_FALLBACK_SECTIONS: Lazy<HashMap<&'static str, &'static str>> =
+    Lazy::new(|| HashMap::from([("invariant", "fuzz")]));
+
+/// Deprecated keys.
+pub static DEPRECATIONS: Lazy<HashMap<String, String>> = Lazy::new(|| {
+    HashMap::from([("fuzz.max_global_rejects".into(), "fuzz.max_test_rejects".into())])
+});
 
 impl Config {
     /// The default profile: "default"
@@ -326,7 +379,8 @@ impl Config {
     pub const PROFILE_SECTION: &'static str = "profile";
 
     /// Standalone sections in the config which get integrated into the selected profile
-    pub const STANDALONE_SECTIONS: &'static [&'static str] = &["rpc_endpoints", "fmt"];
+    pub const STANDALONE_SECTIONS: &'static [&'static str] =
+        &["rpc_endpoints", "etherscan", "fmt", "fuzz", "invariant"];
 
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
@@ -335,6 +389,8 @@ impl Config {
     pub const FOUNDRY_DIR_NAME: &'static str = ".foundry";
 
     /// Default address for tx.origin
+    ///
+    /// `0x00a329c0648769a73afac7f9381e08fb43dbea72`
     pub const DEFAULT_SENDER: H160 = H160([
         0, 163, 41, 192, 100, 135, 105, 167, 58, 250, 199, 249, 56, 30, 8, 251, 67, 219, 234, 114,
     ]);
@@ -377,18 +433,7 @@ impl Config {
     /// ```
     pub fn from_provider<T: Provider>(provider: T) -> Self {
         trace!("load config with provider: {:?}", provider.metadata());
-        match Self::try_from(provider) {
-            Ok(config) => config,
-            Err(errors) => {
-                // providers can be nested and can return duplicate errors
-                let errors: BTreeSet<_> =
-                    errors.into_iter().map(|err| format!("config error: {}", err)).collect();
-                for error in errors {
-                    eprintln!("{}", error);
-                }
-                panic!("failed to extract foundry config")
-            }
-        }
+        Self::try_from(provider).unwrap_or_else(|err| panic!("{}", err))
     }
 
     /// Attempts to extract a `Config` from `provider`, returning the result.
@@ -406,9 +451,9 @@ impl Config {
     ///
     /// let config = Config::try_from(figment);
     /// ```
-    pub fn try_from<T: Provider>(provider: T) -> Result<Self, figment::Error> {
+    pub fn try_from<T: Provider>(provider: T) -> Result<Self, ExtractConfigError> {
         let figment = Figment::from(provider);
-        let mut config = figment.extract::<Self>()?;
+        let mut config = figment.extract::<Self>().map_err(|error| ExtractConfigError { error })?;
         config.profile = figment.profile().clone();
         Ok(config)
     }
@@ -452,6 +497,8 @@ impl Config {
         self.test = p(&root, &self.test);
         self.script = p(&root, &self.script);
         self.out = p(&root, &self.out);
+        self.broadcast = p(&root, &self.broadcast);
+        self.cache_path = p(&root, &self.cache_path);
 
         if let Some(build_info_path) = self.build_info_path {
             self.build_info_path = Some(p(&root, &build_info_path));
@@ -462,9 +509,11 @@ impl Config {
         self.remappings =
             self.remappings.into_iter().map(|r| RelativeRemapping::new(r.into(), &root)).collect();
 
-        self.cache_path = p(&root, &self.cache_path);
-
         self.allow_paths = self.allow_paths.into_iter().map(|allow| p(&root, &allow)).collect();
+
+        self.include_paths = self.include_paths.into_iter().map(|allow| p(&root, &allow)).collect();
+
+        self.fs_permissions.join_all(&root);
 
         if let Some(ref mut model_checker) = self.model_checker {
             model_checker.contracts = std::mem::take(&mut model_checker.contracts)
@@ -552,6 +601,7 @@ impl Config {
             .allowed_path(&self.__root.0)
             .allowed_paths(&self.libs)
             .allowed_paths(&self.allow_paths)
+            .include_paths(&self.include_paths)
             .solc_config(SolcConfig::builder().settings(self.solc_settings()?).build())
             .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
             .set_auto_detect(self.is_auto_detect())
@@ -575,7 +625,7 @@ impl Config {
     /// Ensures that the configured version is installed if explicitly set
     ///
     /// If `solc` is [`SolcReq::Version`] then this will download and install the solc version if
-    /// it's missing.
+    /// it's missing, unless the `offline` flag is enabled, in which case an error is thrown.
     ///
     /// If `solc` is [`SolcReq::Local`] then this will ensure that the path exists.
     fn ensure_solc(&self) -> Result<Option<Solc>, SolcError> {
@@ -585,6 +635,12 @@ impl Config {
                     let v = version.to_string();
                     let mut solc = Solc::find_svm_installed_version(&v)?;
                     if solc.is_none() {
+                        if self.offline {
+                            return Err(SolcError::msg(format!(
+                                "can't install missing solc {} in offline mode",
+                                version
+                            )))
+                        }
                         Solc::blocking_install(version)?;
                         solc = Solc::find_svm_installed_version(&v)?;
                     }
@@ -638,7 +694,7 @@ impl Config {
     /// ```
     pub fn project_paths(&self) -> ProjectPathsConfig {
         let mut builder = ProjectPathsConfig::builder()
-            .cache(&self.cache_path.join(SOLIDITY_FILES_CACHE_FILENAME))
+            .cache(self.cache_path.join(SOLIDITY_FILES_CACHE_FILENAME))
             .sources(&self.src)
             .tests(&self.test)
             .scripts(&self.script)
@@ -647,7 +703,7 @@ impl Config {
             .remappings(self.get_all_remappings());
 
         if let Some(build_info_path) = &self.build_info_path {
-            builder = builder.build_infos(&build_info_path);
+            builder = builder.build_infos(build_info_path);
         }
 
         builder.build_with_root(&self.__root.0)
@@ -672,13 +728,144 @@ impl Config {
     /// contracts/math/math.sol
     /// ```
     pub fn get_all_remappings(&self) -> Vec<Remapping> {
-        self.remappings
-            .iter()
-            .map(|m| m.clone().into())
-            .chain(self.get_source_dir_remapping())
-            .chain(self.get_test_dir_remapping())
-            .chain(self.get_script_dir_remapping())
-            .collect()
+        self.remappings.iter().map(|m| m.clone().into()).collect()
+    }
+
+    /// Returns the configured rpc url
+    ///
+    /// Returns:
+    ///    - the matching, resolved url of  `rpc_endpoints` if `eth_rpc_url` is an alias
+    ///    - the `eth_rpc_url` as-is if it isn't an alias
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// 
+    /// use foundry_config::Config;
+    /// # fn t() {
+    ///     let config = Config::with_root("./");
+    ///     let rpc_url = config.get_rpc_url().unwrap().unwrap();
+    /// # }
+    /// ```
+    pub fn get_rpc_url(&self) -> Option<Result<Cow<str>, UnresolvedEnvVarError>> {
+        let maybe_alias = self.eth_rpc_url.as_ref().or(self.etherscan_api_key.as_ref())?;
+        let mut endpoints = self.rpc_endpoints.clone().resolved();
+        if let Some(alias) = endpoints.remove(maybe_alias) {
+            Some(alias.map(Cow::Owned))
+        } else {
+            Some(Ok(Cow::Borrowed(self.eth_rpc_url.as_deref()?)))
+        }
+    }
+
+    /// Returns the configured rpc, or the fallback url
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// 
+    /// use foundry_config::Config;
+    /// # fn t() {
+    ///     let config = Config::with_root("./");
+    ///     let rpc_url = config.get_rpc_url_or("http://localhost:8545").unwrap();
+    /// # }
+    /// ```
+    pub fn get_rpc_url_or<'a>(
+        &'a self,
+        fallback: impl Into<Cow<'a, str>>,
+    ) -> Result<Cow<str>, UnresolvedEnvVarError> {
+        if let Some(url) = self.get_rpc_url() {
+            url
+        } else {
+            Ok(fallback.into())
+        }
+    }
+
+    /// Returns the configured rpc or `"http://localhost:8545"` if no `eth_rpc_url` is set
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// 
+    /// use foundry_config::Config;
+    /// # fn t() {
+    ///     let config = Config::with_root("./");
+    ///     let rpc_url = config.get_rpc_url_or_localhost_http().unwrap();
+    /// # }
+    /// ```
+    pub fn get_rpc_url_or_localhost_http(&self) -> Result<Cow<str>, UnresolvedEnvVarError> {
+        self.get_rpc_url_or("http://localhost:8545")
+    }
+
+    /// Returns the `EtherscanConfig` to use, if any
+    ///
+    /// Returns
+    ///  - the matching `ResolvedEtherscanConfig` of the `etherscan` table if `etherscan_api_key` is
+    ///    an alias
+    ///  - the Mainnet  `ResolvedEtherscanConfig` if `etherscan_api_key` is set, `None` otherwise
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// 
+    /// use foundry_config::Config;
+    /// # fn t() {
+    ///     let config = Config::with_root("./");
+    ///     let etherscan_config = config.get_etherscan_config().unwrap().unwrap();
+    ///     let client = etherscan_config.into_client().unwrap();
+    /// # }
+    /// ```
+    pub fn get_etherscan_config(
+        &self,
+    ) -> Option<Result<ResolvedEtherscanConfig, EtherscanConfigError>> {
+        let maybe_alias = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref())?;
+        if self.etherscan.contains_key(maybe_alias) {
+            // etherscan points to an alias in the `etherscan` table, so we try to resolve
+            // that
+            let mut resolved = self.etherscan.clone().resolved();
+            return resolved.remove(maybe_alias)
+        }
+        // we treat the `etherscan_api_key` as actual API key
+        // if no chain provided, we assume mainnet
+        let chain = self.chain_id.unwrap_or_else(|| Mainnet.into());
+
+        let api_key = self.etherscan_api_key.as_ref()?;
+        ResolvedEtherscanConfig::create(api_key, chain).map(Ok)
+    }
+
+    /// Same as [`Self::get_etherscan_config()`] but optionally updates the config with the given
+    /// `chain`
+    ///
+    /// If not matching alias was found, then this will try to find the first entry in the table
+    /// with a matching chain id
+    pub fn get_etherscan_config_with_chain(
+        &self,
+        chain: Option<impl Into<Chain>>,
+    ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
+        let chain = chain.map(Into::into);
+        if let Some(maybe_alias) = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref()) {
+            if self.etherscan.contains_key(maybe_alias) {
+                let mut resolved = self.etherscan.clone().resolved();
+                return resolved.remove(maybe_alias).transpose()
+            }
+        }
+
+        // try to find by comparing chain ids
+        if let Some(config) = chain.and_then(|chain| self.etherscan.find_chain(chain).cloned()) {
+            return Ok(config.resolve().ok())
+        }
+
+        // fallback `etherscan_api_key` as actual key
+        if let Some(key) = self.etherscan_api_key.as_ref() {
+            let chain = self.chain_id.unwrap_or_else(|| Mainnet.into());
+            return Ok(ResolvedEtherscanConfig::create(key, chain))
+        }
+
+        Ok(None)
+    }
+
+    /// Helper function to just get the API key
+    pub fn get_etherscan_api_key(&self, chain: Option<impl Into<Chain>>) -> Option<String> {
+        self.get_etherscan_config_with_chain(chain).ok().flatten().map(|c| c.key)
     }
 
     /// Returns the remapping for the project's _src_ directory
@@ -721,7 +908,17 @@ impl Config {
     /// returns the [`ethers_solc::ConfigurableArtifacts`] for this config, that includes the
     /// `extra_output` fields
     pub fn configured_artifacts_handler(&self) -> ConfigurableArtifacts {
-        ConfigurableArtifacts::new(self.extra_output.clone(), self.extra_output_files.clone())
+        let mut extra_output = self.extra_output.clone();
+        // Sourcify verification requires solc metadata output. Since, it doesn't
+        // affect the UX & performance of the compiler, output the metadata files
+        // by default.
+        // For more info see: <https://github.com/foundry-rs/foundry/issues/2795>
+        // Metadata is not emitted as separate file because this breaks typechain support: <https://github.com/foundry-rs/foundry/issues/2969>
+        if !extra_output.contains(&ContractOutputSelection::Metadata) {
+            extra_output.push(ContractOutputSelection::Metadata);
+        }
+
+        ConfigurableArtifacts::new(extra_output, self.extra_output_files.clone())
     }
 
     /// Parses all libraries in the form of
@@ -752,7 +949,7 @@ impl Config {
             optimizer,
             evm_version: Some(self.evm_version),
             libraries,
-            metadata: Some(self.bytecode_hash.into()),
+            metadata: Some(SettingsMetadata::new(self.bytecode_hash, self.cbor_metadata)),
             debug: self.revert_strings.map(|revert_strings| DebuggingSettings {
                 revert_strings: Some(revert_strings),
                 debug_info: Vec::new(),
@@ -821,16 +1018,18 @@ impl Config {
         // autodetect paths
         let root = root.into();
         let paths = ProjectPathsConfig::builder().build_with_root(&root);
+        let artifacts: PathBuf = paths.artifacts.file_name().unwrap().into();
         Config {
             __root: paths.root.into(),
             src: paths.sources.file_name().unwrap().into(),
-            out: paths.artifacts.file_name().unwrap().into(),
+            out: artifacts.clone(),
             libs: paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect(),
             remappings: paths
                 .remappings
                 .into_iter()
                 .map(|r| RelativeRemapping::new(r, &root))
                 .collect(),
+            fs_permissions: FsPermissions::new([PathPermission::read(artifacts)]),
             ..Config::default()
         }
     }
@@ -913,8 +1112,16 @@ impl Config {
     pub fn update_libs(&self) -> eyre::Result<()> {
         self.update(|doc| {
             let profile = self.profile.as_str().as_str();
-            let libs: toml_edit::Value =
-                self.libs.iter().map(|p| toml_edit::Value::from(&*p.to_string_lossy())).collect();
+            let root = &self.__root.0;
+            let libs: toml_edit::Value = self
+                .libs
+                .iter()
+                .map(|path| {
+                    let path =
+                        if let Ok(relative) = path.strip_prefix(root) { relative } else { path };
+                    toml_edit::Value::from(&*path.to_string_lossy())
+                })
+                .collect();
             let libs = toml_edit::value(libs);
             doc[Config::PROFILE_SECTION][profile]["libs"] = libs;
             true
@@ -1147,7 +1354,10 @@ impl Config {
     pub fn list_foundry_chain_cache(chain: Chain) -> eyre::Result<ChainCache> {
         let block_explorer_data_size = match Config::foundry_etherscan_chain_cache_dir(chain) {
             Some(cache_dir) => Self::get_cached_block_explorer_data(&cache_dir)?,
-            None => eyre::bail!("failed to access foundry_etherscan_chain_cache_dir"),
+            None => {
+                warn!("failed to access foundry_etherscan_chain_cache_dir");
+                0
+            }
         };
 
         if let Some(cache_dir) = Config::foundry_chain_cache_dir(chain) {
@@ -1203,14 +1413,14 @@ impl Config {
         toml_provider: impl Provider,
         profile: Profile,
     ) -> Figment {
-        // provide warnings for unknown sections in toml provider
-        for unknown_key in toml_provider.data().unwrap_or_default().keys().filter(|k| {
-            k != &Config::PROFILE_SECTION && !Config::STANDALONE_SECTIONS.iter().any(|s| s == k)
-        }) {
-            let src =
-                toml_provider.metadata().source.map(|src| format!(" in {src}")).unwrap_or_default();
-            config_warn!("Unknown section [{unknown_key}] found{src}. This notation for profiles has been deprecated and may result in the profile not being registered in future versions. Please use [profile.{profile}] instead or run `forge config --fix`.");
-        }
+        figment = figment.select(profile.clone());
+
+        // add warnings
+        figment = {
+            let warnings = WarningsProvider::for_figment(&toml_provider, &figment);
+            figment.merge(warnings)
+        };
+
         // use [profile.<profile>] as [<profile>]
         let mut profiles = vec![Config::DEFAULT_PROFILE];
         if profile != Config::DEFAULT_PROFILE {
@@ -1227,7 +1437,15 @@ impl Config {
         }
         // merge special keys into config
         for standalone_key in Config::STANDALONE_SECTIONS {
-            figment = figment.merge(provider.wrap(profile.clone(), standalone_key));
+            if let Some(fallback) = STANDALONE_FALLBACK_SECTIONS.get(standalone_key) {
+                figment = figment.merge(
+                    provider
+                        .fallback(standalone_key, fallback)
+                        .wrap(profile.clone(), standalone_key),
+                );
+            } else {
+                figment = figment.merge(provider.wrap(profile.clone(), standalone_key));
+            }
         }
         // merge the profile
         figment = figment.merge(provider);
@@ -1258,12 +1476,32 @@ impl From<Config> for Figment {
 
         // merge environment variables
         figment = figment
-            .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS", "LIBRARIES"]).global())
-            .merge(Env::prefixed("DAPP_TEST_").ignore(&["CACHE"]).global())
+            .merge(
+                Env::prefixed("DAPP_")
+                    .ignore(&["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
+                    .global(),
+            )
+            .merge(
+                Env::prefixed("DAPP_TEST_")
+                    .ignore(&["CACHE", "FUZZ_RUNS", "DEPTH", "FFI", "FS_PERMISSIONS"])
+                    .global(),
+            )
             .merge(DappEnvCompatProvider)
             .merge(Env::raw().only(&["ETHERSCAN_API_KEY"]))
             .merge(
-                Env::prefixed("FOUNDRY_").ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES"]).global(),
+                Env::prefixed("FOUNDRY_")
+                    .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
+                    .map(|key| {
+                        let key = key.as_str();
+                        if Config::STANDALONE_SECTIONS.iter().any(|section| {
+                            key.starts_with(&format!("{}_", section.to_ascii_uppercase()))
+                        }) {
+                            key.replacen('_', ".", 1).into()
+                        } else {
+                            key.into()
+                        }
+                    })
+                    .global(),
             )
             .select(profile.clone());
 
@@ -1271,6 +1509,9 @@ impl From<Config> for Figment {
         // redundant fs lookups to determine the default remappings that are eventually updated by
         // other providers, like the toml file
         let remappings = RemappingsProvider {
+            auto_detect_remappings: figment
+                .extract_inner::<bool>("auto_detect_remappings")
+                .unwrap_or(true),
             lib_paths: figment
                 .extract_inner::<Vec<PathBuf>>("libs")
                 .map(Cow::Owned)
@@ -1361,6 +1602,12 @@ impl<P: Into<PathBuf>> From<P> for RootPath {
     }
 }
 
+impl AsRef<Path> for RootPath {
+    fn as_ref(&self) -> &Path {
+        &self.0
+    }
+}
+
 /// Parses a config profile
 ///
 /// All `Profile` date is ignored by serde, however the `Config::to_string_pretty` includes it and
@@ -1409,6 +1656,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             profile: Self::DEFAULT_PROFILE,
+            fs_permissions: FsPermissions::new([PathPermission::read("out")]),
             __root: Default::default(),
             src: "src".into(),
             test: "test".into(),
@@ -1419,9 +1667,11 @@ impl Default for Config {
             cache_path: "cache".into(),
             broadcast: "broadcast".into(),
             allow_paths: vec![],
+            include_paths: vec![],
             force: false,
             evm_version: Default::default(),
             gas_reports: vec!["*".to_string()],
+            gas_reports_ignore: vec![],
             solc: None,
             auto_detect_solc: true,
             offline: false,
@@ -1439,9 +1689,8 @@ impl Default for Config {
             contract_pattern_inverse: None,
             path_pattern: None,
             path_pattern_inverse: None,
-            fuzz_runs: 256,
-            fuzz_max_local_rejects: 1024,
-            fuzz_max_global_rejects: 65536,
+            fuzz: Default::default(),
+            invariant: Default::default(),
             ffi: false,
             sender: Config::DEFAULT_SENDER,
             tx_origin: Config::DEFAULT_SENDER,
@@ -1450,6 +1699,7 @@ impl Default for Config {
             fork_block_number: None,
             chain_id: None,
             gas_limit: i64::MAX.into(),
+            code_size_limit: None,
             gas_price: None,
             block_base_fee_per_gas: 0,
             block_coinbase: Address::zero(),
@@ -1461,6 +1711,7 @@ impl Default for Config {
             etherscan_api_key: None,
             verbosity: 0,
             remappings: vec![],
+            auto_detect_remappings: true,
             libraries: vec![],
             ignored_error_codes: vec![
                 SolidityErrorCode::SpdxLicenseNotProvided,
@@ -1469,14 +1720,17 @@ impl Default for Config {
             via_ir: false,
             rpc_storage_caching: Default::default(),
             rpc_endpoints: Default::default(),
+            etherscan: Default::default(),
             no_storage_caching: false,
             bytecode_hash: BytecodeHash::Ipfs,
+            cbor_metadata: true,
             revert_strings: None,
             sparse_mode: false,
             build_info: false,
             build_info_path: None,
             fmt: Default::default(),
             __non_exhaustive: (),
+            __warnings: vec![],
         }
     }
 }
@@ -1647,7 +1901,8 @@ impl Provider for TomlFileProvider {
     }
 }
 
-/// A Provider that ensures all keys are snake case
+/// A Provider that ensures all keys are snake case if they're not standalone sections, See
+/// `Config::STANDALONE_SECTIONS`
 struct ForcedSnakeCaseData<P>(P);
 
 impl<P: Provider> Provider for ForcedSnakeCaseData<P> {
@@ -1658,6 +1913,11 @@ impl<P: Provider> Provider for ForcedSnakeCaseData<P> {
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let mut map = Map::new();
         for (profile, dict) in self.0.data()? {
+            if Config::STANDALONE_SECTIONS.contains(&profile.as_ref()) {
+                // don't force snake case for keys in standalone sections
+                map.insert(profile, dict);
+                continue
+            }
             map.insert(profile, dict.into_iter().map(|(k, v)| (k.to_snake_case(), v)).collect());
         }
         Ok(map)
@@ -1802,186 +2062,25 @@ impl Provider for DappEnvCompatProvider {
             dict.insert("libraries".to_string(), utils::to_array_value(&val)?);
         }
 
+        let mut fuzz_dict = Dict::new();
+        if let Ok(val) = env::var("DAPP_TEST_FUZZ_RUNS") {
+            fuzz_dict.insert(
+                "runs".to_string(),
+                val.parse::<u32>().map_err(figment::Error::custom)?.into(),
+            );
+        }
+        dict.insert("fuzz".to_string(), fuzz_dict.into());
+
+        let mut invariant_dict = Dict::new();
+        if let Ok(val) = env::var("DAPP_TEST_DEPTH") {
+            invariant_dict.insert(
+                "depth".to_string(),
+                val.parse::<u32>().map_err(figment::Error::custom)?.into(),
+            );
+        }
+        dict.insert("invariant".to_string(), invariant_dict.into());
+
         Ok(Map::from([(Config::selected_profile(), dict)]))
-    }
-}
-
-/// A figment provider that checks if the remappings were previously set and if they're unset looks
-/// up the fs via
-///   - `DAPP_REMAPPINGS` || `FOUNDRY_REMAPPINGS` env var
-///   - `<root>/remappings.txt` file
-///   - `Remapping::find_many`.
-struct RemappingsProvider<'a> {
-    lib_paths: Cow<'a, Vec<PathBuf>>,
-    /// the root path used to turn an absolute `Remapping`, as we're getting it from
-    /// `Remapping::find_many` into a relative one.
-    root: &'a PathBuf,
-    /// This contains either:
-    ///   - previously set remappings
-    ///   - a `MissingField` error, which means previous provider didn't set the "remappings" field
-    ///   - other error, like formatting
-    remappings: Result<Vec<Remapping>, figment::Error>,
-}
-
-impl<'a> RemappingsProvider<'a> {
-    /// Find and parse remappings for the projects
-    ///
-    /// **Order**
-    ///
-    /// Remappings are built in this order (last item takes precedence)
-    /// - Autogenerated remappings
-    /// - toml remappings
-    /// - `remappings.txt`
-    /// - Environment variables
-    /// - CLI parameters
-    fn get_remappings(&self, remappings: Vec<Remapping>) -> Result<Vec<Remapping>, Error> {
-        trace!("get all remappings from {:?}", self.root);
-        /// prioritizes remappings that are closer: shorter `path`
-        ///   - ("a", "1/2") over ("a", "1/2/3")
-        fn insert_closest(mappings: &mut HashMap<String, PathBuf>, key: String, path: PathBuf) {
-            match mappings.entry(key) {
-                Entry::Occupied(mut e) => {
-                    if e.get().components().count() > path.components().count() {
-                        e.insert(path);
-                    }
-                }
-                Entry::Vacant(e) => {
-                    e.insert(path);
-                }
-            }
-        }
-
-        let mut new_remappings = Vec::new();
-
-        // check env var
-        if let Some(env_remappings) = remappings_from_env_var("DAPP_REMAPPINGS")
-            .or_else(|| remappings_from_env_var("FOUNDRY_REMAPPINGS"))
-        {
-            new_remappings
-                .extend(env_remappings.map_err::<Error, _>(|err| err.to_string().into())?);
-        }
-
-        // check remappings.txt file
-        let remappings_file = self.root.join("remappings.txt");
-        if remappings_file.is_file() {
-            let content = fs::read_to_string(remappings_file).map_err(|err| err.to_string())?;
-            let remappings_from_file: Result<Vec<_>, _> =
-                remappings_from_newline(&content).collect();
-            new_remappings
-                .extend(remappings_from_file.map_err::<Error, _>(|err| err.to_string().into())?);
-        }
-
-        new_remappings.extend(remappings);
-
-        let mut lib_remappings = HashMap::new();
-        // find all remappings of from libs that use a foundry.toml
-        for r in self.lib_foundry_toml_remappings() {
-            insert_closest(&mut lib_remappings, r.name, r.path.into());
-        }
-        // use auto detection for all libs
-        for r in self
-            .lib_paths
-            .iter()
-            .map(|lib| self.root.join(lib))
-            .inspect(|lib| {
-                trace!("find all remappings in lib path: {:?}", lib);
-            })
-            .flat_map(Remapping::find_many)
-        {
-            // this is an additional safety check for weird auto-detected remappings
-            if ["lib/", "src/", "contracts/"].contains(&r.name.as_str()) {
-                continue
-            }
-            insert_closest(&mut lib_remappings, r.name, r.path.into());
-        }
-
-        new_remappings.extend(
-            lib_remappings
-                .into_iter()
-                .map(|(name, path)| Remapping { name, path: path.to_string_lossy().into() }),
-        );
-
-        // remove duplicates at this point
-        new_remappings.sort_by(|a, b| a.name.cmp(&b.name));
-        new_remappings.dedup_by(|a, b| a.name.eq(&b.name));
-
-        Ok(new_remappings)
-    }
-
-    /// Returns all remappings declared in foundry.toml files of libraries
-    fn lib_foundry_toml_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
-        self.lib_paths
-            .iter()
-            .map(|p| self.root.join(p))
-            .flat_map(foundry_toml_dirs)
-            .inspect(|lib| {
-                trace!("find all remappings of nested foundry.toml lib: {:?}", lib);
-            })
-            .flat_map(|lib: PathBuf| {
-                // load config, of the nested lib if it exists
-                let config = Config::load_with_root(&lib).sanitized();
-
-                // if the configured _src_ directory is set to something that
-                // [Remapping::find_many()] doesn't classify as a src directory (src, contracts,
-                // lib), then we need to manually add a remapping here
-                let mut src_remapping = None;
-                if ![Path::new("src"), Path::new("contracts"), Path::new("lib")]
-                    .contains(&config.src.as_path())
-                {
-                    if let Some(name) = lib.file_name().and_then(|s| s.to_str()) {
-                        let mut r = Remapping {
-                            name: format!("{}/", name),
-                            path: format!("{}", lib.join(&config.src).display()),
-                        };
-                        if !r.path.ends_with('/') {
-                            r.path.push('/')
-                        }
-                        src_remapping = Some(r);
-                    }
-                }
-
-                let mut remappings =
-                    config.remappings.into_iter().map(|m| m.into()).collect::<Vec<Remapping>>();
-
-                if let Some(r) = src_remapping {
-                    remappings.push(r);
-                }
-                remappings
-            })
-    }
-}
-
-impl<'a> Provider for RemappingsProvider<'a> {
-    fn metadata(&self) -> Metadata {
-        Metadata::named("Remapping Provider")
-    }
-
-    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
-        let remappings = match &self.remappings {
-            Ok(remappings) => self.get_remappings(remappings.clone()),
-            Err(err) => {
-                if let figment::error::Kind::MissingField(_) = err.kind {
-                    self.get_remappings(vec![])
-                } else {
-                    return Err(err.clone())
-                }
-            }
-        }?;
-
-        // turn the absolute remapping into a relative one by stripping the `root`
-        let remappings = remappings
-            .into_iter()
-            .map(|r| RelativeRemapping::new(r, &self.root).to_string())
-            .collect::<Vec<_>>();
-
-        Ok(Map::from([(
-            Config::selected_profile(),
-            Dict::from([("remappings".to_string(), figment::value::Value::from(remappings))]),
-        )]))
-    }
-
-    fn profile(&self) -> Option<Profile> {
-        Some(Config::selected_profile())
     }
 }
 
@@ -2210,6 +2309,13 @@ trait ProviderExt: Provider {
     ) -> OptionalStrictProfileProvider<&Self> {
         OptionalStrictProfileProvider::new(self, profiles)
     }
+    fn fallback(
+        &self,
+        profile: impl Into<Profile>,
+        fallback: impl Into<Profile>,
+    ) -> FallbackProfileProvider<&Self> {
+        FallbackProfileProvider::new(self, profile, fallback)
+    }
 }
 impl<P: Provider> ProviderExt for P {}
 
@@ -2248,9 +2354,9 @@ impl BasicConfig {
         let s = toml::to_string_pretty(self)?;
         Ok(format!(
             r#"[profile.{}]
-{}
+{s}
 # See more config options https://github.com/foundry-rs/foundry/tree/master/config"#,
-            self.profile, s
+            self.profile
         ))
     }
 }
@@ -2285,19 +2391,33 @@ fn canonic(path: impl Into<PathBuf>) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use ethers_solc::artifacts::{ModelCheckerEngine, YulDetails};
-    use figment::error::Kind::InvalidType;
-    use std::{collections::BTreeMap, str::FromStr};
-
-    use crate::cache::{CachedChains, CachedEndpoints};
-    use figment::{value::Value, Figment};
-    use pretty_assertions::assert_eq;
-
     use super::*;
-
-    use crate::rpc::RpcEndpoint;
-    use std::{fs::File, io::Write};
+    use crate::{
+        cache::{CachedChains, CachedEndpoints},
+        endpoints::RpcEndpoint,
+        etherscan::ResolvedEtherscanConfigs,
+        fs_permissions::PathPermission,
+    };
+    use ethers_core::types::Chain::Moonbeam;
+    use ethers_solc::artifacts::{ModelCheckerEngine, YulDetails};
+    use figment::{error::Kind::InvalidType, value::Value, Figment};
+    use pretty_assertions::assert_eq;
+    use std::{collections::BTreeMap, fs::File, io::Write, str::FromStr};
     use tempfile::tempdir;
+
+    // Helper function to clear `__warnings` in config, since it will be populated during loading
+    // from file, causing testing problem when comparing to those created from `default()`, etc.
+    fn clear_warning(config: &mut Config) {
+        config.__warnings = vec![];
+    }
+
+    #[test]
+    fn default_sender() {
+        assert_eq!(
+            Config::DEFAULT_SENDER,
+            "0x00a329c0648769a73afac7f9381e08fb43dbea72".parse().unwrap()
+        );
+    }
 
     #[test]
     fn test_caching() {
@@ -2361,6 +2481,19 @@ mod tests {
                 let config = Config::from_provider(figment);
                 assert_eq!(config, Config::default());
             }
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn ffi_env_disallowed() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("FOUNDRY_FFI", "true");
+            jail.set_env("FFI", "true");
+            jail.set_env("DAPP_FFI", "true");
+            let config = Config::load();
+            assert!(!config.ffi);
+
             Ok(())
         });
     }
@@ -2577,7 +2710,6 @@ mod tests {
                     Remapping::from_str("ds-test/=lib/ds-test/src/").unwrap(),
                     Remapping::from_str("env-lib/=lib/env-lib/").unwrap(),
                     Remapping::from_str("other/=lib/other/").unwrap(),
-                    Remapping::from_str("some-source/=some-source/").unwrap(),
                 ],
             );
 
@@ -2659,12 +2791,144 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_etherscan() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+
+                [etherscan]
+                mainnet = { key = "FX42Z3BBJJEWXWGYV2X1CIPRSCN" }
+                moonbeam = { key = "${_CONFIG_ETHERSCAN_MOONBEAM}" }
+            "#,
+            )?;
+
+            let config = Config::load();
+
+            assert!(config.etherscan.clone().resolved().has_unresolved());
+
+            jail.set_env("_CONFIG_ETHERSCAN_MOONBEAM", "123456789");
+
+            let configs = config.etherscan.resolved();
+            assert!(!configs.has_unresolved());
+
+            let mb_urls = Moonbeam.etherscan_urls().unwrap();
+            let mainnet_urls = Mainnet.etherscan_urls().unwrap();
+            assert_eq!(
+                configs,
+                ResolvedEtherscanConfigs::new([
+                    (
+                        "mainnet",
+                        ResolvedEtherscanConfig {
+                            api_url: mainnet_urls.0.to_string(),
+                            chain: Some(Mainnet.into()),
+                            browser_url: Some(mainnet_urls.1.to_string()),
+                            key: "FX42Z3BBJJEWXWGYV2X1CIPRSCN".to_string(),
+                        }
+                    ),
+                    (
+                        "moonbeam",
+                        ResolvedEtherscanConfig {
+                            api_url: mb_urls.0.to_string(),
+                            chain: Some(Moonbeam.into()),
+                            browser_url: Some(mb_urls.1.to_string()),
+                            key: "123456789".to_string(),
+                        }
+                    ),
+                ])
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_resolve_rpc_url() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                [rpc_endpoints]
+                optimism = "https://example.com/"
+                mainnet = "${_CONFIG_MAINNET}"
+            "#,
+            )?;
+            jail.set_env("_CONFIG_MAINNET", "https://eth-mainnet.alchemyapi.io/v2/123455");
+
+            let mut config = Config::load();
+            assert_eq!("http://localhost:8545", config.get_rpc_url_or_localhost_http().unwrap());
+
+            config.eth_rpc_url = Some("mainnet".to_string());
+            assert_eq!(
+                "https://eth-mainnet.alchemyapi.io/v2/123455",
+                config.get_rpc_url_or_localhost_http().unwrap()
+            );
+
+            config.eth_rpc_url = Some("optimism".to_string());
+            assert_eq!("https://example.com/", config.get_rpc_url_or_localhost_http().unwrap());
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_resolve_rpc_url_if_etherscan_set() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                etherscan_api_key = "dummy"
+                [rpc_endpoints]
+                optimism = "https://example.com/"
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!("http://localhost:8545", config.get_rpc_url_or_localhost_http().unwrap());
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_resolve_rpc_url_alias() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                [rpc_endpoints]
+                polygonMumbai = "https://polygon-mumbai.g.alchemy.com/v2/${_RESOLVE_RPC_ALIAS}"
+            "#,
+            )?;
+            let mut config = Config::load();
+            config.eth_rpc_url = Some("polygonMumbai".to_string());
+            assert!(config.get_rpc_url().unwrap().is_err());
+
+            jail.set_env("_RESOLVE_RPC_ALIAS", "123455");
+
+            let mut config = Config::load();
+            config.eth_rpc_url = Some("polygonMumbai".to_string());
+            assert_eq!(
+                "https://polygon-mumbai.g.alchemy.com/v2/123455",
+                config.get_rpc_url().unwrap().unwrap()
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
     fn test_resolve_endpoints() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
                 r#"
                 [profile.default]
+                eth_rpc_url = "optimism"
                 [rpc_endpoints]
                 optimism = "https://example.com/"
                 mainnet = "${_CONFIG_MAINNET}"
@@ -2674,6 +2938,8 @@ mod tests {
             )?;
 
             let config = Config::load();
+
+            assert_eq!(config.get_rpc_url().unwrap().unwrap(), "https://example.com/");
 
             assert!(config.rpc_endpoints.clone().resolved().has_unresolved());
 
@@ -2712,6 +2978,116 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_etherscan_config() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                etherscan_api_key = "optimism"
+
+                [etherscan]
+                optimism = { key = "https://etherscan-optimism.com/" }
+                mumbai = { key = "https://etherscan-mumbai.com/" }
+            "#,
+            )?;
+
+            let mut config = Config::load();
+
+            let optimism = config.get_etherscan_api_key(Some(ethers_core::types::Chain::Optimism));
+            assert_eq!(optimism, Some("https://etherscan-optimism.com/".to_string()));
+
+            config.etherscan_api_key = Some("mumbai".to_string());
+
+            let mumbai =
+                config.get_etherscan_api_key(Some(ethers_core::types::Chain::PolygonMumbai));
+            assert_eq!(mumbai, Some("https://etherscan-mumbai.com/".to_string()));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_extract_etherscan_config_by_chain() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+
+                [etherscan]
+                mumbai = { key = "https://etherscan-mumbai.com/", chain = 80001 }
+            "#,
+            )?;
+
+            let config = Config::load();
+
+            let mumbai = config
+                .get_etherscan_config_with_chain(Some(ethers_core::types::Chain::PolygonMumbai))
+                .unwrap()
+                .unwrap();
+            assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_extract_etherscan_config_by_chain_with_url() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+
+                [etherscan]
+                mumbai = { key = "https://etherscan-mumbai.com/", chain = 80001 , url =  "https://verifier-url.com/"}
+            "#,
+            )?;
+
+            let config = Config::load();
+
+            let mumbai = config
+                .get_etherscan_config_with_chain(Some(ethers_core::types::Chain::PolygonMumbai))
+                .unwrap()
+                .unwrap();
+            assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
+            assert_eq!(mumbai.api_url, "https://verifier-url.com/".to_string());
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_extract_etherscan_config_by_chain_and_alias() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                eth_rpc_url = "mumbai"
+
+                [etherscan]
+                mumbai = { key = "https://etherscan-mumbai.com/" }
+
+                [rpc_endpoints]
+                mumbai = "https://polygon-mumbai.g.alchemy.com/v2/mumbai"
+            "#,
+            )?;
+
+            let config = Config::load();
+
+            let mumbai =
+                config.get_etherscan_config_with_chain(Option::<u64>::None).unwrap().unwrap();
+            assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
+
+            let mumbai_rpc = config.get_rpc_url().unwrap().unwrap();
+            assert_eq!(mumbai_rpc, "https://polygon-mumbai.g.alchemy.com/v2/mumbai");
+            Ok(())
+        });
+    }
+
+    #[test]
     fn test_toml_file() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
@@ -2727,6 +3103,7 @@ mod tests {
                 via_ir = true
                 rpc_storage_caching = { chains = [1, "optimism", 999999], endpoints = "all"}
                 bytecode_hash = "ipfs"
+                cbor_metadata = true
                 revert_strings = "strip"
                 allow_paths = ["allow", "paths"]
                 build_info_path = "build-info"
@@ -2759,6 +3136,7 @@ mod tests {
                         endpoints: CachedEndpoints::All
                     },
                     bytecode_hash: BytecodeHash::Ipfs,
+                    cbor_metadata: true,
                     revert_strings: Some(RevertStrings::Strip),
                     allow_paths: vec![PathBuf::from("allow"), PathBuf::from("paths")],
                     rpc_endpoints: RpcEndpoints::new([
@@ -2822,6 +3200,7 @@ mod tests {
                 block_number = 1
                 block_timestamp = 1
                 bytecode_hash = 'ipfs'
+                cbor_metadata = true
                 cache = true
                 cache_path = 'cache'
                 evm_version = 'london'
@@ -2829,9 +3208,6 @@ mod tests {
                 extra_output_files = []
                 ffi = false
                 force = false
-                fuzz_max_global_rejects = 65536
-                fuzz_max_local_rejects = 1024
-                fuzz_runs = 256
                 gas_limit = 9223372036854775807
                 gas_price = 0
                 gas_reports = ['*']
@@ -2865,10 +3241,22 @@ mod tests {
                 mainnet = "${RPC_MAINNET}"
                 mainnet_2 = "https://eth-mainnet.alchemyapi.io/v2/${API_KEY}"
 
+                [fuzz]
+                runs = 256
+                seed = '0x3e8'
+                max_test_rejects = 65536
+
+                [invariant]
+                runs = 256
+                depth = 15
+                fail_on_revert = false
+                call_override = false
             "#,
             )?;
 
             let config = Config::load_with_root(jail.directory());
+
+            assert_eq!(config.fuzz.seed, Some(1000.into()));
             assert_eq!(
                 config.remappings,
                 vec![Remapping::from_str("nested/=lib/nested/").unwrap().into()]
@@ -3084,12 +3472,107 @@ mod tests {
     }
 
     #[test]
+    #[should_panic]
+    fn test_parse_invalid_fuzz_weight() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [fuzz]
+                dictionary_weight = 101
+            "#,
+            )?;
+            let _config = Config::load();
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_fallback_provider() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [fuzz]
+                runs = 1
+                include_storage = false
+                dictionary_weight = 99
+
+                [invariant]
+                runs = 420
+
+                [profile.ci.fuzz]
+                dictionary_weight = 5
+
+                [profile.ci.invariant]
+                runs = 400
+            "#,
+            )?;
+
+            let invariant_default = InvariantConfig::default();
+            let config = Config::load();
+
+            assert_ne!(config.invariant.runs, config.fuzz.runs);
+            assert_eq!(config.invariant.runs, 420);
+
+            assert_ne!(config.fuzz.include_storage, invariant_default.include_storage);
+            assert_eq!(config.invariant.include_storage, config.fuzz.include_storage);
+
+            assert_ne!(config.fuzz.dictionary_weight, invariant_default.dictionary_weight);
+            assert_eq!(config.invariant.dictionary_weight, config.fuzz.dictionary_weight);
+
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            let ci_config = Config::load();
+            assert_eq!(ci_config.fuzz.runs, 1);
+            assert_eq!(ci_config.invariant.runs, 400);
+            assert_eq!(ci_config.fuzz.dictionary_weight, 5);
+            assert_eq!(ci_config.invariant.dictionary_weight, config.fuzz.dictionary_weight);
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_standalone_profile_sections() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [fuzz]
+                runs = 100
+
+                [invariant]
+                runs = 120
+
+                [profile.ci.fuzz]
+                runs = 420
+
+                [profile.ci.invariant]
+                runs = 500
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(config.fuzz.runs, 100);
+            assert_eq!(config.invariant.runs, 120);
+
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            let config = Config::load();
+            assert_eq!(config.fuzz.runs, 420);
+            assert_eq!(config.invariant.runs, 500);
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn can_handle_deviating_dapp_aliases() {
         figment::Jail::expect_with(|jail| {
             let addr = Address::random();
             jail.set_env("DAPP_TEST_NUMBER", 1337);
-            jail.set_env("DAPP_TEST_ADDRESS", format!("{:?}", addr));
+            jail.set_env("DAPP_TEST_ADDRESS", format!("{addr:?}"));
             jail.set_env("DAPP_TEST_FUZZ_RUNS", 420);
+            jail.set_env("DAPP_TEST_DEPTH", 20);
             jail.set_env("DAPP_FORK_BLOCK", 100);
             jail.set_env("DAPP_BUILD_OPTIMIZE_RUNS", 999);
             jail.set_env("DAPP_BUILD_OPTIMIZE", 0);
@@ -3098,7 +3581,8 @@ mod tests {
 
             assert_eq!(config.block_number, 1337);
             assert_eq!(config.sender, addr);
-            assert_eq!(config.fuzz_runs, 420);
+            assert_eq!(config.fuzz.runs, 420);
+            assert_eq!(config.invariant.depth, 20);
             assert_eq!(config.fork_block_number, Some(100));
             assert_eq!(config.optimizer_runs, 999);
             assert!(!config.optimizer);
@@ -3221,15 +3705,48 @@ mod tests {
             let basic = default.clone().into_basic();
             jail.create_file("foundry.toml", &basic.to_string_pretty().unwrap())?;
 
-            let other = Config::load();
+            let mut other = Config::load();
+            clear_warning(&mut other);
             assert_eq!(default, other);
 
             let other = other.into_basic();
             assert_eq!(basic, other);
 
             jail.create_file("foundry.toml", &default.to_string_pretty().unwrap())?;
-            let other = Config::load();
+            let mut other = Config::load();
+            clear_warning(&mut other);
             assert_eq!(default, other);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_fs_permissions() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                fs_permissions = [{ access = "read-write", path = "./"}]
+            "#,
+            )?;
+            let loaded = Config::load();
+
+            assert_eq!(
+                loaded.fs_permissions,
+                FsPermissions::new(vec![PathPermission::read_write("./")])
+            );
+
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                fs_permissions = [{ access = "none", path = "./"}]
+            "#,
+            )?;
+            let loaded = Config::load();
+            assert_eq!(loaded.fs_permissions, FsPermissions::new(vec![PathPermission::none("./")]));
 
             Ok(())
         });
@@ -3251,7 +3768,8 @@ mod tests {
                 stackAllocation = true
             "#,
             )?;
-            let loaded = Config::load();
+            let mut loaded = Config::load();
+            clear_warning(&mut loaded);
             assert_eq!(
                 loaded.optimizer_details,
                 Some(OptimizerDetails {
@@ -3267,7 +3785,8 @@ mod tests {
             let s = loaded.to_string_pretty().unwrap();
             jail.create_file("foundry.toml", &s)?;
 
-            let reloaded = Config::load();
+            let mut reloaded = Config::load();
+            clear_warning(&mut reloaded);
             assert_eq!(loaded, reloaded);
 
             Ok(())
@@ -3289,7 +3808,8 @@ mod tests {
                 timeout = 10000
             "#,
             )?;
-            let loaded = Config::load();
+            let mut loaded = Config::load();
+            clear_warning(&mut loaded);
             assert_eq!(
                 loaded.model_checker,
                 Some(ModelCheckerSettings {
@@ -3309,7 +3829,8 @@ mod tests {
             let s = loaded.to_string_pretty().unwrap();
             jail.create_file("foundry.toml", &s)?;
 
-            let reloaded = Config::load();
+            let mut reloaded = Config::load();
+            clear_warning(&mut reloaded);
             assert_eq!(loaded, reloaded);
 
             Ok(())
@@ -3393,6 +3914,55 @@ mod tests {
     }
 
     #[test]
+    fn test_invariant_config() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [invariant]
+                runs = 512
+                depth = 10
+            "#,
+            )?;
+
+            let loaded = Config::load().sanitized();
+            assert_eq!(
+                loaded.invariant,
+                InvariantConfig { runs: 512, depth: 10, ..Default::default() }
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_standalone_sections_env() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [fuzz]
+                runs = 100
+
+                [invariant]
+                depth = 1
+            "#,
+            )?;
+
+            jail.set_env("FOUNDRY_FMT_LINE_LENGTH", "95");
+            jail.set_env("FOUNDRY_FUZZ_DICTIONARY_WEIGHT", "99");
+            jail.set_env("FOUNDRY_INVARIANT_DEPTH", "5");
+
+            let config = Config::load();
+            assert_eq!(config.fmt.line_length, 95);
+            assert_eq!(config.fuzz.dictionary_weight, 99);
+            assert_eq!(config.invariant.depth, 5);
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn test_parse_with_profile() {
         let foundry_str = r#"
             [profile.default]
@@ -3423,7 +3993,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [profile.default]
+                [default]
                 src = 'my-src'
                 out = 'my-out'
             "#,
@@ -3431,6 +4001,13 @@ mod tests {
             let loaded = Config::load().sanitized();
             assert_eq!(loaded.src.file_name().unwrap(), "my-src");
             assert_eq!(loaded.out.file_name().unwrap(), "my-out");
+            assert_eq!(
+                loaded.__warnings,
+                vec![Warning::UnknownSection {
+                    unknown_section: Profile::new("default"),
+                    source: Some("foundry.toml".into())
+                }]
+            );
 
             Ok(())
         });
@@ -3559,5 +4136,30 @@ mod tests {
 
         chain_dir.close()?;
         Ok(())
+    }
+
+    #[test]
+    fn test_parse_error_codes() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                ignored_error_codes = ["license", "unreachable", 1337]
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(
+                config.ignored_error_codes,
+                vec![
+                    SolidityErrorCode::SpdxLicenseNotProvided,
+                    SolidityErrorCode::Unreachable,
+                    SolidityErrorCode::Other(1337)
+                ]
+            );
+
+            Ok(())
+        });
     }
 }

@@ -1,11 +1,12 @@
 //! Smart caching and deduplication of requests when using a forking provider
-use revm::{db::DatabaseRef, AccountInfo, KECCAK_EMPTY};
-
-use crate::executor::fork::{cache::FlushJsonBlockCacheDB, BlockchainDb};
+use crate::executor::{
+    backend::error::{DatabaseError, DatabaseResult},
+    fork::{cache::FlushJsonBlockCacheDB, BlockchainDb},
+};
 use ethers::{
     core::abi::ethereum_types::BigEndianHash,
     providers::Middleware,
-    types::{Address, BlockId, Bytes, H160, H256, U256},
+    types::{Address, Block, BlockId, Bytes, Transaction, H160, H256, U256},
     utils::keccak256,
 };
 use futures::{
@@ -14,6 +15,7 @@ use futures::{
     task::{Context, Poll},
     Future, FutureExt,
 };
+use revm::{db::DatabaseRef, AccountInfo, Bytecode, KECCAK_EMPTY};
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
     pin::Pin,
@@ -22,29 +24,52 @@ use std::{
         Arc,
     },
 };
-use tracing::{trace, warn};
+use tracing::{error, trace, warn};
+
+// Various future/request type aliases
 
 type AccountFuture<Err> =
     Pin<Box<dyn Future<Output = (Result<(U256, U256, Bytes), Err>, Address)> + Send>>;
 type StorageFuture<Err> = Pin<Box<dyn Future<Output = (Result<U256, Err>, Address, U256)> + Send>>;
 type BlockHashFuture<Err> = Pin<Box<dyn Future<Output = (Result<H256, Err>, u64)> + Send>>;
+type FullBlockFuture<Err> = Pin<
+    Box<
+        dyn Future<Output = (FullBlockSender, Result<Option<Block<Transaction>>, Err>, BlockId)>
+            + Send,
+    >,
+>;
+type TransactionFuture<Err> = Pin<
+    Box<dyn Future<Output = (TransactionSender, Result<Option<Transaction>, Err>, H256)> + Send>,
+>;
+
+type AccountInfoSender = OneshotSender<DatabaseResult<AccountInfo>>;
+type StorageSender = OneshotSender<DatabaseResult<U256>>;
+type BlockHashSender = OneshotSender<DatabaseResult<H256>>;
+type FullBlockSender = OneshotSender<DatabaseResult<Block<Transaction>>>;
+type TransactionSender = OneshotSender<DatabaseResult<Transaction>>;
 
 /// Request variants that are executed by the provider
 enum ProviderRequest<Err> {
     Account(AccountFuture<Err>),
     Storage(StorageFuture<Err>),
     BlockHash(BlockHashFuture<Err>),
+    FullBlock(FullBlockFuture<Err>),
+    Transaction(TransactionFuture<Err>),
 }
 
 /// The Request type the Backend listens for
 #[derive(Debug)]
 enum BackendRequest {
     /// Fetch the account info
-    Basic(Address, OneshotSender<AccountInfo>),
+    Basic(Address, AccountInfoSender),
     /// Fetch a storage slot
-    Storage(Address, U256, OneshotSender<U256>),
+    Storage(Address, U256, StorageSender),
     /// Fetch a block hash
-    BlockHash(u64, OneshotSender<H256>),
+    BlockHash(u64, BlockHashSender),
+    /// Fetch an entire block with transactions
+    FullBlock(BlockId, FullBlockSender),
+    /// Fetch a transaction
+    Transaction(H256, TransactionSender),
     /// Sets the pinned block to fetch data from
     SetPinnedBlock(BlockId),
 }
@@ -59,13 +84,13 @@ pub struct BackendHandler<M: Middleware> {
     /// Stores all the data.
     db: BlockchainDb,
     /// Requests currently in progress
-    pending_requests: Vec<ProviderRequest<eyre::Error>>,
+    pending_requests: Vec<ProviderRequest<M::Error>>,
     /// Listeners that wait for a `get_account` related response
-    account_requests: HashMap<Address, Vec<OneshotSender<AccountInfo>>>,
+    account_requests: HashMap<Address, Vec<AccountInfoSender>>,
     /// Listeners that wait for a `get_storage_at` response
-    storage_requests: HashMap<(Address, U256), Vec<OneshotSender<U256>>>,
+    storage_requests: HashMap<(Address, U256), Vec<StorageSender>>,
     /// Listeners that wait for a `get_block` response
-    block_requests: HashMap<u64, Vec<OneshotSender<H256>>>,
+    block_requests: HashMap<u64, Vec<BlockHashSender>>,
     /// Incoming commands.
     incoming: Receiver<BackendRequest>,
     /// unprocessed queued requests
@@ -110,25 +135,31 @@ where
                 trace!(target: "backendhandler", "received request basic address={:?}", addr);
                 let acc = self.db.accounts().read().get(&addr).cloned();
                 if let Some(basic) = acc {
-                    let _ = sender.send(basic);
+                    let _ = sender.send(Ok(basic));
                 } else {
                     self.request_account(addr, sender);
                 }
             }
             BackendRequest::BlockHash(number, sender) => {
-                let hash = self.db.block_hashes().read().get(&number).cloned();
+                let hash = self.db.block_hashes().read().get(&U256::from(number)).cloned();
                 if let Some(hash) = hash {
-                    let _ = sender.send(hash);
+                    let _ = sender.send(Ok(hash));
                 } else {
                     self.request_hash(number, sender);
                 }
+            }
+            BackendRequest::FullBlock(number, sender) => {
+                self.request_full_block(number, sender);
+            }
+            BackendRequest::Transaction(tx, sender) => {
+                self.request_transaction(tx, sender);
             }
             BackendRequest::Storage(addr, idx, sender) => {
                 // account is already stored in the cache
                 let value =
                     self.db.storage().read().get(&addr).and_then(|acc| acc.get(&idx).copied());
                 if let Some(value) = value {
-                    let _ = sender.send(value);
+                    let _ = sender.send(Ok(value));
                 } else {
                     // account present but not storage -> fetch storage
                     self.request_account_storage(addr, idx, sender);
@@ -141,12 +172,7 @@ where
     }
 
     /// process a request for account's storage
-    fn request_account_storage(
-        &mut self,
-        address: Address,
-        idx: U256,
-        listener: OneshotSender<U256>,
-    ) {
+    fn request_account_storage(&mut self, address: Address, idx: U256, listener: StorageSender) {
         match self.storage_requests.entry((address, idx)) {
             Entry::Occupied(mut entry) => {
                 entry.get_mut().push(listener);
@@ -160,8 +186,7 @@ where
                     // serialize & deserialize back to U256
                     let idx_req = H256::from_uint(&idx);
                     let storage = provider.get_storage_at(address, idx_req, block_id).await;
-                    let storage =
-                        storage.map(|storage| storage.into_uint()).map_err(|err| eyre::eyre!(err));
+                    let storage = storage.map(|storage| storage.into_uint());
                     (storage, address, idx)
                 });
                 self.pending_requests.push(ProviderRequest::Storage(fut));
@@ -170,7 +195,7 @@ where
     }
 
     /// returns the future that fetches the account data
-    fn get_account_req(&self, address: Address) -> ProviderRequest<eyre::Error> {
+    fn get_account_req(&self, address: Address) -> ProviderRequest<M::Error> {
         trace!(target: "backendhandler", "preparing account request, address={:?}", address);
         let provider = self.provider.clone();
         let block_id = self.block_id;
@@ -178,14 +203,14 @@ where
             let balance = provider.get_balance(address, block_id);
             let nonce = provider.get_transaction_count(address, block_id);
             let code = provider.get_code(address, block_id);
-            let resp = tokio::try_join!(balance, nonce, code).map_err(|err| eyre::eyre!(err));
+            let resp = tokio::try_join!(balance, nonce, code);
             (resp, address)
         });
         ProviderRequest::Account(fut)
     }
 
     /// process a request for an account
-    fn request_account(&mut self, address: Address, listener: OneshotSender<AccountInfo>) {
+    fn request_account(&mut self, address: Address, listener: AccountInfoSender) {
         match self.account_requests.entry(address) {
             Entry::Occupied(mut entry) => {
                 entry.get_mut().push(listener);
@@ -197,8 +222,30 @@ where
         }
     }
 
+    /// process a request for an entire block
+    fn request_full_block(&mut self, number: BlockId, sender: FullBlockSender) {
+        let provider = self.provider.clone();
+        let fut = Box::pin(async move {
+            let block = provider.get_block_with_txs(number).await;
+            (sender, block, number)
+        });
+
+        self.pending_requests.push(ProviderRequest::FullBlock(fut));
+    }
+
+    /// process a request for a transactions
+    fn request_transaction(&mut self, tx: H256, sender: TransactionSender) {
+        let provider = self.provider.clone();
+        let fut = Box::pin(async move {
+            let block = provider.get_transaction(tx).await;
+            (sender, block, tx)
+        });
+
+        self.pending_requests.push(ProviderRequest::Transaction(fut));
+    }
+
     /// process a request for a block hash
-    fn request_hash(&mut self, number: u64, listener: OneshotSender<H256>) {
+    fn request_hash(&mut self, number: u64, listener: BlockHashSender) {
         match self.block_requests.entry(number) {
             Entry::Occupied(mut entry) => {
                 entry.get_mut().push(listener);
@@ -208,13 +255,22 @@ where
                 entry.insert(vec![listener]);
                 let provider = self.provider.clone();
                 let fut = Box::pin(async move {
-                    let res = provider.get_block(number).await;
-                    let block = res.ok().flatten();
+                    let block = provider.get_block(number).await;
+
                     let block_hash = match block {
-                        Some(block) => Ok(block
+                        Ok(Some(block)) => Ok(block
                             .hash
                             .expect("empty block hash on mined block, this should never happen")),
-                        None => Err(eyre::eyre!("block {number} not found")),
+                        Ok(None) => {
+                            warn!(target: "backendhandler", ?number, "block not found");
+                            // if no block was returned then the block does not exist, in which case
+                            // we return empty hash
+                            Ok(KECCAK_EMPTY)
+                        }
+                        Err(err) => {
+                            error!(target: "backendhandler", ?err, ?number, "failed to get block");
+                            Err(err)
+                        }
                     };
                     (block_hash, number)
                 });
@@ -259,9 +315,21 @@ where
                     ProviderRequest::Account(fut) => {
                         if let Poll::Ready((resp, addr)) = fut.poll_unpin(cx) {
                             // get the response
-                            let (balance, nonce, code) = resp.unwrap_or_else(|report| {
-                                panic!("Failed to get account for {}\n{}", addr, report);
-                            });
+                            let (balance, nonce, code) = match resp {
+                                Ok(res) => res,
+                                Err(err) => {
+                                    let err = Arc::new(eyre::Error::new(err));
+                                    if let Some(listeners) = pin.account_requests.remove(&addr) {
+                                        listeners.into_iter().for_each(|l| {
+                                            let _ = l.send(Err(DatabaseError::GetAccount(
+                                                addr,
+                                                Arc::clone(&err),
+                                            )));
+                                        })
+                                    }
+                                    continue
+                                }
+                            };
 
                             // convert it to revm-style types
                             let (code, code_hash) = if !code.0.is_empty() {
@@ -271,14 +339,18 @@ where
                             };
 
                             // update the cache
-                            let acc =
-                                AccountInfo { nonce: nonce.as_u64(), balance, code, code_hash };
+                            let acc = AccountInfo {
+                                nonce: nonce.as_u64(),
+                                balance,
+                                code: code.map(|bytes| Bytecode::new_raw(bytes).to_checked()),
+                                code_hash,
+                            };
                             pin.db.accounts().write().insert(addr, acc.clone());
 
                             // notify all listeners
                             if let Some(listeners) = pin.account_requests.remove(&addr) {
                                 listeners.into_iter().for_each(|l| {
-                                    let _ = l.send(acc.clone());
+                                    let _ = l.send(Ok(acc.clone()));
                                 })
                             }
                             continue
@@ -286,9 +358,25 @@ where
                     }
                     ProviderRequest::Storage(fut) => {
                         if let Poll::Ready((resp, addr, idx)) = fut.poll_unpin(cx) {
-                            let value = resp.unwrap_or_else(|report| {
-                                panic!("Failed to get storage for {} at {}\n{}", addr, idx, report);
-                            });
+                            let value = match resp {
+                                Ok(value) => value,
+                                Err(err) => {
+                                    // notify all listeners
+                                    let err = Arc::new(eyre::Error::new(err));
+                                    if let Some(listeners) =
+                                        pin.storage_requests.remove(&(addr, idx))
+                                    {
+                                        listeners.into_iter().for_each(|l| {
+                                            let _ = l.send(Err(DatabaseError::GetStorage(
+                                                addr,
+                                                idx,
+                                                Arc::clone(&err),
+                                            )));
+                                        })
+                                    }
+                                    continue
+                                }
+                            };
 
                             // update the cache
                             pin.db.storage().write().entry(addr).or_default().insert(idx, value);
@@ -296,7 +384,7 @@ where
                             // notify all listeners
                             if let Some(listeners) = pin.storage_requests.remove(&(addr, idx)) {
                                 listeners.into_iter().for_each(|l| {
-                                    let _ = l.send(value);
+                                    let _ = l.send(Ok(value));
                                 })
                             }
                             continue
@@ -304,19 +392,60 @@ where
                     }
                     ProviderRequest::BlockHash(fut) => {
                         if let Poll::Ready((block_hash, number)) = fut.poll_unpin(cx) {
-                            let value = block_hash.unwrap_or_else(|report| {
-                                panic!("Failed to get block hash for {}\n{}", number, report);
-                            });
+                            let value = match block_hash {
+                                Ok(value) => value,
+                                Err(err) => {
+                                    let err = Arc::new(eyre::Error::new(err));
+                                    // notify all listeners
+                                    if let Some(listeners) = pin.block_requests.remove(&number) {
+                                        listeners.into_iter().for_each(|l| {
+                                            let _ = l.send(Err(DatabaseError::GetBlockHash(
+                                                number,
+                                                Arc::clone(&err),
+                                            )));
+                                        })
+                                    }
+                                    continue
+                                }
+                            };
 
                             // update the cache
-                            pin.db.block_hashes().write().insert(number, value);
+                            pin.db.block_hashes().write().insert(number.into(), value);
 
                             // notify all listeners
                             if let Some(listeners) = pin.block_requests.remove(&number) {
                                 listeners.into_iter().for_each(|l| {
-                                    let _ = l.send(value);
+                                    let _ = l.send(Ok(value));
                                 })
                             }
+                            continue
+                        }
+                    }
+                    ProviderRequest::FullBlock(fut) => {
+                        if let Poll::Ready((sender, resp, number)) = fut.poll_unpin(cx) {
+                            let msg = match resp {
+                                Ok(Some(block)) => Ok(block),
+                                Ok(None) => Err(DatabaseError::BlockNotFound(number)),
+                                Err(err) => {
+                                    let err = Arc::new(eyre::Error::new(err));
+                                    Err(DatabaseError::GetFullBlock(number, err))
+                                }
+                            };
+                            let _ = sender.send(msg);
+                            continue
+                        }
+                    }
+                    ProviderRequest::Transaction(fut) => {
+                        if let Poll::Ready((sender, tx, tx_hash)) = fut.poll_unpin(cx) {
+                            let msg = match tx {
+                                Ok(Some(tx)) => Ok(tx),
+                                Ok(None) => Err(DatabaseError::TransactionNotFound(tx_hash)),
+                                Err(err) => {
+                                    let err = Arc::new(eyre::Error::new(err));
+                                    Err(DatabaseError::GetTransaction(tx_hash, err))
+                                }
+                            };
+                            let _ = sender.send(msg);
                             continue
                         }
                     }
@@ -445,30 +574,50 @@ impl SharedBackend {
         })
     }
 
-    fn do_get_basic(&self, address: Address) -> eyre::Result<AccountInfo> {
+    /// Returns the full block for the given block identifier
+    pub fn get_full_block(&self, block: impl Into<BlockId>) -> DatabaseResult<Block<Transaction>> {
+        tokio::task::block_in_place(|| {
+            let (sender, rx) = oneshot_channel();
+            let req = BackendRequest::FullBlock(block.into(), sender);
+            self.backend.clone().try_send(req)?;
+            rx.recv()?
+        })
+    }
+
+    /// Returns the transaction for the hash
+    pub fn get_transaction(&self, tx: H256) -> DatabaseResult<Transaction> {
+        tokio::task::block_in_place(|| {
+            let (sender, rx) = oneshot_channel();
+            let req = BackendRequest::Transaction(tx, sender);
+            self.backend.clone().try_send(req)?;
+            rx.recv()?
+        })
+    }
+
+    fn do_get_basic(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
         tokio::task::block_in_place(|| {
             let (sender, rx) = oneshot_channel();
             let req = BackendRequest::Basic(address, sender);
-            self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
-            Ok(rx.recv()?)
+            self.backend.clone().try_send(req)?;
+            rx.recv()?.map(Some)
         })
     }
 
-    fn do_get_storage(&self, address: Address, index: U256) -> eyre::Result<U256> {
+    fn do_get_storage(&self, address: Address, index: U256) -> DatabaseResult<U256> {
         tokio::task::block_in_place(|| {
             let (sender, rx) = oneshot_channel();
             let req = BackendRequest::Storage(address, index, sender);
-            self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
-            Ok(rx.recv()?)
+            self.backend.clone().try_send(req)?;
+            rx.recv()?
         })
     }
 
-    fn do_get_block_hash(&self, number: u64) -> eyre::Result<H256> {
+    fn do_get_block_hash(&self, number: u64) -> DatabaseResult<H256> {
         tokio::task::block_in_place(|| {
             let (sender, rx) = oneshot_channel();
             let req = BackendRequest::BlockHash(number, sender);
-            self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
-            Ok(rx.recv()?)
+            self.backend.clone().try_send(req)?;
+            rx.recv()?
         })
     }
 
@@ -479,64 +628,61 @@ impl SharedBackend {
 }
 
 impl DatabaseRef for SharedBackend {
-    fn basic(&self, address: H160) -> AccountInfo {
+    type Error = DatabaseError;
+
+    fn basic(&self, address: H160) -> Result<Option<AccountInfo>, Self::Error> {
         trace!( target: "sharedbackend", "request basic {:?}", address);
-        self.do_get_basic(address).unwrap_or_else(|_| {
-            warn!( target: "sharedbackend", "Failed to send/recv `basic` for {}", address);
-            Default::default()
+        self.do_get_basic(address).map_err(|err| {
+            error!(target: "sharedbackend",  ?err, ?address,  "Failed to send/recv `basic`");
+            err
         })
     }
 
-    fn code_by_hash(&self, _address: H256) -> bytes::Bytes {
-        panic!("Should not be called. Code is already loaded.")
+    fn code_by_hash(&self, hash: H256) -> Result<Bytecode, Self::Error> {
+        Err(DatabaseError::MissingCode(hash))
     }
 
-    fn storage(&self, address: H160, index: U256) -> U256 {
+    fn storage(&self, address: H160, index: U256) -> Result<U256, Self::Error> {
         trace!( target: "sharedbackend", "request storage {:?} at {:?}", address, index);
-        self.do_get_storage(address, index)
-            .unwrap_or_else(|_| {
-            warn!( target: "sharedbackend", "Failed to send/recv `storage` for {} at {}", address, index);
-            Default::default()
+        self.do_get_storage(address, index).map_err(|err| {
+            error!( target: "sharedbackend", ?err, ?address, ?index, "Failed to send/recv `storage`");
+          err
         })
     }
 
-    fn block_hash(&self, number: U256) -> H256 {
+    fn block_hash(&self, number: U256) -> Result<H256, Self::Error> {
         if number > U256::from(u64::MAX) {
-            return KECCAK_EMPTY
+            return Ok(KECCAK_EMPTY)
         }
         let number = number.as_u64();
         trace!( target: "sharedbackend", "request block hash for number {:?}", number);
-        self.do_get_block_hash(number).unwrap_or_else(|_| {
-            warn!( target: "sharedbackend", "Failed to send/recv `block_hash` for {}", number);
-            Default::default()
+        self.do_get_block_hash(number).map_err(|err| {
+            error!(target: "sharedbackend",?err, ?number, "Failed to send/recv `block_hash`");
+            err
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::executor::{
-        fork::{BlockchainDbMeta, JsonBlockCacheDB},
+        fork::{BlockchainDbMeta, CreateFork, JsonBlockCacheDB},
         opts::EvmOpts,
         Backend,
     };
     use ethers::{
-        providers::{Http, Provider},
         solc::utils::RuntimeOrHandle,
-        types::Address,
+        types::{Address, Chain},
     };
-
-    use crate::executor::fork::CreateFork;
-    use ethers::types::Chain;
+    use foundry_common::get_http_provider;
     use foundry_config::Config;
-    use std::{collections::BTreeSet, convert::TryFrom, path::PathBuf, sync::Arc};
-
-    use super::*;
+    use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
     const ENDPOINT: &str = "https://mainnet.infura.io/v3/c60b0bb42f8a4c6481ecd229eddaca27";
 
     #[test]
     fn shared_backend() {
-        let provider = Provider::<Http>::try_from(ENDPOINT).unwrap();
+        let provider = get_http_provider(ENDPOINT);
         let meta = BlockchainDbMeta {
             cfg_env: Default::default(),
             block_env: Default::default(),
@@ -552,8 +698,8 @@ mod tests {
         let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
 
         let idx = U256::from(0u64);
-        let value = backend.storage(address, idx);
-        let account = backend.basic(address);
+        let value = backend.storage(address, idx).unwrap();
+        let account = backend.basic(address).unwrap().unwrap();
 
         let mem_acc = db.accounts().read().get(&address).unwrap().clone();
         assert_eq!(account.balance, mem_acc.balance);
@@ -563,8 +709,8 @@ mod tests {
         assert_eq!(slots.get(&idx).copied().unwrap(), value);
 
         let num = U256::from(10u64);
-        let hash = backend.block_hash(num);
-        let mem_hash = *db.block_hashes().read().get(&num.as_u64()).unwrap();
+        let hash = backend.block_hash(num).unwrap();
+        let mem_hash = *db.block_hashes().read().get(&num).unwrap();
         assert_eq!(hash, mem_hash);
 
         let max_slots = 5;
@@ -588,7 +734,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn can_read_write_cache() {
-        let provider = Provider::<Http>::try_from(ENDPOINT).unwrap();
+        let provider = get_http_provider(ENDPOINT);
 
         let block_num = provider.get_block_number().await.unwrap().as_u64();
 

@@ -4,6 +4,7 @@ use foundry_cli_test_utils::{
     util::{OutputExt, TestCommand, TestProject},
 };
 use foundry_config::Config;
+use foundry_utils::rpc;
 use std::{path::PathBuf, str::FromStr};
 
 // tests that test filters are handled correctly
@@ -289,3 +290,79 @@ contract ContractTest is DSTest {
             ));
     }
 );
+
+// checks that we can test forge std successfully
+// `forgetest_init!` will install with `forge-std` under `lib/forge-std`
+forgetest_init!(
+    #[serial_test::serial]
+    can_test_forge_std,
+    |prj: TestProject, mut cmd: TestCommand| {
+        let forge_std_dir = prj.root().join("lib/forge-std");
+        // execute in subdir
+        cmd.cmd().current_dir(forge_std_dir);
+        cmd.args(["test", "--root", "."]);
+        let stdout = cmd.stdout();
+        assert!(stdout.contains("[PASS]"), "No tests passed:\n{}", stdout);
+        assert!(!stdout.contains("[FAIL]"), "Tests failed :\n{}", stdout);
+    }
+);
+
+// tests that libraries are handled correctly in multiforking mode
+forgetest_init!(can_use_libs_in_multi_fork, |prj: TestProject, mut cmd: TestCommand| {
+    prj.wipe_contracts();
+    prj.inner()
+        .add_source(
+            "Contract.sol",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity =0.8.13;
+
+library Library {
+    function f(uint256 a, uint256 b) public pure returns (uint256) {
+        return a + b;
+    }
+}
+
+contract Contract {
+    uint256 c;
+
+    constructor() {
+        c = Library.f(1, 2);
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    let endpoint = rpc::next_http_archive_rpc_endpoint();
+
+    prj.inner()
+        .add_test(
+            "Contract.t.sol",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity =0.8.13;
+
+import "forge-std/Test.sol";
+import "src/Contract.sol";
+
+contract ContractTest is Test {
+    function setUp() public {
+        vm.createSelectFork("<url>");
+    }
+
+    function test() public {
+        new Contract();
+    }
+}
+   "#
+            .replace("<url>", &endpoint),
+        )
+        .unwrap();
+
+    cmd.arg("test");
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_use_libs_in_multi_fork.stdout"),
+    );
+});

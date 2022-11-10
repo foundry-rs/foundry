@@ -1,3 +1,4 @@
+use crate::errors::FunctionSignatureError;
 use ethers_core::{
     abi::Function,
     types::{
@@ -6,15 +7,15 @@ use ethers_core::{
     },
 };
 use ethers_providers::Middleware;
-use eyre::{eyre, Result, WrapErr};
+use eyre::{eyre, Result};
+use foundry_common::abi::{encode_args, get_func, get_func_etherscan};
 use foundry_config::Chain;
-use foundry_utils::{encode_args, get_func, get_func_etherscan};
 use futures::future::join_all;
 
 use crate::strip_0x;
 
 pub struct TxBuilder<'a, M: Middleware> {
-    to: H160,
+    to: Option<H160>,
     chain: Chain,
     tx: TypedTransaction,
     func: Option<Function>,
@@ -31,7 +32,7 @@ pub type TxBuilderPeekOutput<'a> = (&'a TypedTransaction, &'a Option<Function>);
 ///   use ethers_core::types::{Chain, U256};
 ///   use cast::TxBuilder;
 ///   let provider = ethers_providers::test_provider::MAINNET.provider();
-///   let mut builder = TxBuilder::new(&provider, "a.eth", "b.eth", Chain::Mainnet, false).await?;
+///   let mut builder = TxBuilder::new(&provider, "a.eth", Some("b.eth"), Chain::Mainnet, false).await?;
 ///   builder
 ///       .gas(Some(U256::from(1)));
 ///   let (tx, _) = builder.build();
@@ -48,21 +49,28 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
     pub async fn new<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
         provider: &'a M,
         from: F,
-        to: T,
+        to: Option<T>,
         chain: impl Into<Chain>,
         legacy: bool,
     ) -> Result<TxBuilder<'a, M>> {
         let chain = chain.into();
         let from_addr = resolve_ens(provider, from).await?;
-        let to_addr =
-            resolve_ens(provider, foundry_utils::resolve_addr(to, chain.try_into().ok())?).await?;
 
-        let tx: TypedTransaction = if chain.is_legacy() || legacy {
-            TransactionRequest::new().from(from_addr).to(to_addr).chain_id(chain.id()).into()
+        let mut tx: TypedTransaction = if chain.is_legacy() || legacy {
+            TransactionRequest::new().from(from_addr).chain_id(chain.id()).into()
         } else {
-            Eip1559TransactionRequest::new().from(from_addr).to(to_addr).chain_id(chain.id()).into()
+            Eip1559TransactionRequest::new().from(from_addr).chain_id(chain.id()).into()
         };
 
+        let to_addr = if let Some(to) = to {
+            let addr =
+                resolve_ens(provider, foundry_utils::resolve_addr(to, chain.try_into().ok())?)
+                    .await?;
+            tx.set_to(addr);
+            Some(addr)
+        } else {
+            None
+        };
         Ok(Self { to: to_addr, chain, tx, func: None, etherscan_api_key: None, provider })
     }
 
@@ -152,6 +160,48 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
         self
     }
 
+    pub fn set_data(&mut self, v: Vec<u8>) -> &mut Self {
+        self.tx.set_data(v.into());
+        self
+    }
+
+    pub async fn create_args(
+        &mut self,
+        sig: &str,
+        args: Vec<String>,
+    ) -> Result<(Vec<u8>, Function)> {
+        let args = resolve_name_args(&args, self.provider).await;
+
+        let func = if sig.contains('(') {
+            // a regular function signature with parentheses
+            get_func(sig)?
+        } else if sig.starts_with("0x") {
+            // if only calldata is provided, returning a dummy function
+            get_func("x()")?
+        } else {
+            let chain = self
+                .chain
+                .try_into()
+                .map_err(|_| FunctionSignatureError::UnknownChain(self.chain))?;
+            get_func_etherscan(
+                sig,
+                self.to.ok_or(FunctionSignatureError::MissingToAddress)?,
+                &args,
+                chain,
+                self.etherscan_api_key.as_ref().ok_or_else(|| {
+                    FunctionSignatureError::MissingEtherscan { sig: sig.to_string() }
+                })?,
+            )
+            .await?
+        };
+
+        if sig.starts_with("0x") {
+            Ok((hex::decode(strip_0x(sig))?, func))
+        } else {
+            Ok((encode_args(&func, &args)?, func))
+        }
+    }
+
     /// Set function arguments
     /// `sig` can be:
     ///  * a fragment (`do(uint32,string)`)
@@ -164,32 +214,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
         sig: &str,
         args: Vec<String>,
     ) -> Result<&mut TxBuilder<'a, M>> {
-        let args = resolve_name_args(&args, self.provider).await;
-
-        let func = if sig.contains('(') {
-            get_func(sig)?
-        } else if sig.starts_with("0x") {
-            // if only calldata is provided, returning a dummy function
-            get_func("x()")?
-        } else {
-            let chain =
-                self.chain.try_into().wrap_err("resolving via etherscan requires a known chain")?;
-            get_func_etherscan(
-                sig,
-                self.to,
-                &args,
-               chain,
-                self.etherscan_api_key.as_ref().unwrap_or_else(|| panic!(r#"Unable to determine the function signature from `{}`. To find the function signature from the deployed contract via its name instead, a valid ETHERSCAN_API_KEY must be set."#, sig)),
-            )
-            .await?
-        };
-
-        let data = if sig.starts_with("0x") {
-            hex::decode(strip_0x(sig))?
-        } else {
-            encode_args(&func, &args)?
-        };
-
+        let (data, func) = self.create_args(sig, args).await?;
         self.tx.set_data(data.into());
         self.func = Some(func);
         Ok(self)
@@ -244,16 +269,12 @@ async fn resolve_name_args<M: Middleware>(args: &[String], provider: &M) -> Vec<
 #[cfg(test)]
 mod tests {
     use crate::TxBuilder;
-
+    use async_trait::async_trait;
     use ethers_core::types::{
         transaction::eip2718::TypedTransaction, Address, Chain, NameOrAddress, H160, U256,
     };
     use ethers_providers::{JsonRpcClient, Middleware, ProviderError};
-
     use serde::{de::DeserializeOwned, Serialize};
-
-    use async_trait::async_trait;
-
     use std::str::FromStr;
 
     const ADDR_1: &str = "0000000000000000000000000000000000000001";
@@ -297,7 +318,8 @@ mod tests {
     #[tokio::test]
     async fn builder_new_non_legacy() -> eyre::Result<()> {
         let provider = MyProvider {};
-        let builder = TxBuilder::new(&provider, "a.eth", "b.eth", Chain::Mainnet, false).await?;
+        let builder =
+            TxBuilder::new(&provider, "a.eth", Some("b.eth"), Chain::Mainnet, false).await?;
         let (tx, args) = builder.build();
         assert_eq!(*tx.from().unwrap(), H160::from_str(ADDR_1).unwrap());
         assert_eq!(*tx.to().unwrap(), NameOrAddress::Address(H160::from_str(ADDR_2).unwrap()));
@@ -315,7 +337,8 @@ mod tests {
     #[tokio::test]
     async fn builder_new_legacy() -> eyre::Result<()> {
         let provider = MyProvider {};
-        let builder = TxBuilder::new(&provider, "a.eth", "b.eth", Chain::Mainnet, true).await?;
+        let builder =
+            TxBuilder::new(&provider, "a.eth", Some("b.eth"), Chain::Mainnet, true).await?;
         // don't check anything other than the tx type - the rest is covered in the non-legacy case
         let (tx, _) = builder.build();
         match tx {
@@ -331,7 +354,7 @@ mod tests {
     async fn builder_fields() -> eyre::Result<()> {
         let provider = MyProvider {};
         let mut builder =
-            TxBuilder::new(&provider, "a.eth", "b.eth", Chain::Mainnet, false).await.unwrap();
+            TxBuilder::new(&provider, "a.eth", Some("b.eth"), Chain::Mainnet, false).await.unwrap();
         builder
             .gas(Some(U256::from(12u32)))
             .gas_price(Some(U256::from(34u32)))
@@ -353,7 +376,7 @@ mod tests {
     async fn builder_args() -> eyre::Result<()> {
         let provider = MyProvider {};
         let mut builder =
-            TxBuilder::new(&provider, "a.eth", "b.eth", Chain::Mainnet, false).await.unwrap();
+            TxBuilder::new(&provider, "a.eth", Some("b.eth"), Chain::Mainnet, false).await.unwrap();
         builder.args(Some(("what_a_day(int)", vec![String::from("31337")]))).await?;
         let (_, function_maybe) = builder.build();
 

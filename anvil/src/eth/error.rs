@@ -11,7 +11,8 @@ use ethers::{
     signers::WalletError,
     types::{Bytes, SignatureError, U256},
 };
-use foundry_evm::revm::Return;
+use foundry_common::SELECTOR_LEN;
+use foundry_evm::{executor::backend::DatabaseError, revm::Return};
 use serde::Serialize;
 use tracing::error;
 
@@ -59,6 +60,18 @@ pub enum BlockchainError {
     BlockOutOfRange(u64, u64),
     #[error("Resource not found")]
     BlockNotFound,
+    #[error("Required data unavailable")]
+    DataUnavailable,
+    #[error("Trie error: {0}")]
+    TrieError(String),
+    #[error("{0}")]
+    UintConversion(&'static str),
+    #[error("State override error: {0}")]
+    StateOverrideError(String),
+    #[error("Timestamp error: {0}")]
+    TimestampError(String),
+    #[error(transparent)]
+    DatabaseError(#[from] DatabaseError),
 }
 
 impl From<RpcError> for BlockchainError {
@@ -126,6 +139,14 @@ pub enum InvalidTransactionError {
     /// Thrown post London if the transaction's fee is less than the base fee of the block
     #[error("max fee per gas less than block base fee")]
     FeeTooLow,
+
+    /// Thrown when a tx was signed with a different chain_id
+    #[error("invalid chain id for signer")]
+    InvalidChainId,
+
+    /// Thrown when a legacy tx was signed for a different chain
+    #[error("Incompatible EIP-155 transaction, signed for another chain")]
+    IncompatibleEIP155,
 }
 
 /// Returns the revert reason from the `revm::TransactOut` data, if it's an abi encoded String.
@@ -133,10 +154,10 @@ pub enum InvalidTransactionError {
 /// **Note:** it's assumed the `out` buffer starts with the call's signature
 fn decode_revert_reason(out: impl AsRef<[u8]>) -> Option<String> {
     let out = out.as_ref();
-    if out.len() < 4 {
+    if out.len() < SELECTOR_LEN {
         return None
     }
-    String::decode(&out[4..]).ok()
+    String::decode(&out[SELECTOR_LEN..]).ok()
 }
 
 /// Helper trait to easily convert results to rpc results
@@ -185,7 +206,7 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                         // this mimics geth revert error
                         let mut msg = "execution reverted".to_string();
                         if let Some(reason) = data.as_ref().and_then(decode_revert_reason) {
-                            msg = format!("{}: {}", msg, reason);
+                            msg = format!("{msg}: {reason}");
                         }
                         RpcError {
                             // geth returns this error code on reverts, See <https://github.com/ethereum/wiki/wiki/JSON-RPC-Error-Codes-Improvement-Proposal>
@@ -220,7 +241,7 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 ),
                 BlockchainError::ForkProvider(err) => {
                     error!("fork provider error: {:?}", err);
-                    RpcError::internal_error_with(format!("Fork Error: {:?}", err))
+                    RpcError::internal_error_with(format!("Fork Error: {err:?}"))
                 }
                 err @ BlockchainError::EvmError(_) => {
                     RpcError::internal_error_with(err.to_string())
@@ -236,6 +257,22 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     message: err.to_string().into(),
                     data: None,
                 },
+                err @ BlockchainError::DataUnavailable => {
+                    RpcError::internal_error_with(err.to_string())
+                }
+                err @ BlockchainError::TrieError(_) => {
+                    RpcError::internal_error_with(err.to_string())
+                }
+                BlockchainError::UintConversion(err) => RpcError::invalid_params(err),
+                err @ BlockchainError::StateOverrideError(_) => {
+                    RpcError::invalid_params(err.to_string())
+                }
+                err @ BlockchainError::TimestampError(_) => {
+                    RpcError::invalid_params(err.to_string())
+                }
+                BlockchainError::DatabaseError(err) => {
+                    RpcError::internal_error_with(err.to_string())
+                }
             }
             .into(),
         }

@@ -1,4 +1,4 @@
-use super::{Cheatcodes, Debugger, LogCollector, Tracer};
+use super::{Cheatcodes, Debugger, Fuzzer, LogCollector, Tracer};
 use crate::{
     coverage::HitMaps,
     debug::DebugArena,
@@ -6,12 +6,16 @@ use crate::{
     trace::CallTraceArena,
 };
 use bytes::Bytes;
-use ethers::types::{Address, Log, H256};
-use revm::{CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return};
-use std::collections::BTreeMap;
+use ethers::{
+    signers::LocalWallet,
+    types::{Address, Log, H256},
+};
+use revm::{CallInputs, CreateInputs, EVMData, Gas, GasInspector, Inspector, Interpreter, Return};
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 /// Helper macro to call the same method on multiple inspectors without resorting to dynamic
 /// dispatch
+#[macro_export]
 macro_rules! call_inspectors {
     ($id:ident, [ $($inspector:expr),+ ], $call:block) => {
         $({
@@ -29,6 +33,7 @@ pub struct InspectorData {
     pub debug: Option<DebugArena>,
     pub coverage: Option<HitMaps>,
     pub cheatcodes: Option<Cheatcodes>,
+    pub script_wallets: Vec<LocalWallet>,
 }
 
 /// An inspector that calls multiple inspectors in sequence.
@@ -40,7 +45,9 @@ pub struct InspectorStack {
     pub tracer: Option<Tracer>,
     pub logs: Option<LogCollector>,
     pub cheatcodes: Option<Cheatcodes>,
+    pub gas: Option<Rc<RefCell<GasInspector>>>,
     pub debugger: Option<Debugger>,
+    pub fuzzer: Option<Fuzzer>,
     pub coverage: Option<CoverageCollector>,
 }
 
@@ -56,6 +63,11 @@ impl InspectorStack {
             traces: self.tracer.map(|tracer| tracer.traces),
             debug: self.debugger.map(|debugger| debugger.arena),
             coverage: self.coverage.map(|coverage| coverage.maps),
+            script_wallets: self
+                .cheatcodes
+                .as_ref()
+                .map(|cheatcodes| cheatcodes.script_wallets.clone())
+                .unwrap_or_default(),
             cheatcodes: self.cheatcodes,
         }
     }
@@ -74,6 +86,7 @@ where
         call_inspectors!(
             inspector,
             [
+                &mut self.gas.as_deref().map(|gas| gas.borrow_mut()),
                 &mut self.debugger,
                 &mut self.coverage,
                 &mut self.tracer,
@@ -102,6 +115,8 @@ where
         call_inspectors!(
             inspector,
             [
+                &mut self.gas.as_deref().map(|gas| gas.borrow_mut()),
+                &mut self.fuzzer,
                 &mut self.debugger,
                 &mut self.tracer,
                 &mut self.coverage,
@@ -142,7 +157,13 @@ where
     ) -> Return {
         call_inspectors!(
             inspector,
-            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            [
+                &mut self.gas.as_deref().map(|gas| gas.borrow_mut()),
+                &mut self.debugger,
+                &mut self.tracer,
+                &mut self.logs,
+                &mut self.cheatcodes
+            ],
             {
                 let status = inspector.step_end(interpreter, data, is_static, status);
 
@@ -165,6 +186,8 @@ where
         call_inspectors!(
             inspector,
             [
+                &mut self.gas.as_deref().map(|gas| gas.borrow_mut()),
+                &mut self.fuzzer,
                 &mut self.debugger,
                 &mut self.tracer,
                 &mut self.coverage,
@@ -196,6 +219,8 @@ where
         call_inspectors!(
             inspector,
             [
+                &mut self.gas.as_deref().map(|gas| gas.borrow_mut()),
+                &mut self.fuzzer,
                 &mut self.debugger,
                 &mut self.tracer,
                 &mut self.coverage,
@@ -212,9 +237,10 @@ where
                     is_static,
                 );
 
-                // If the inspector returns a different status we assume it wants to tell us
-                // something
-                if new_status != status {
+                // If the inspector returns a different status or a revert with a non-empty message,
+                // we assume it wants to tell us something
+                if new_status != status || (new_status == Return::Revert && new_retdata != retdata)
+                {
                     return (new_status, new_gas, new_retdata)
                 }
             }
@@ -231,6 +257,7 @@ where
         call_inspectors!(
             inspector,
             [
+                &mut self.gas.as_deref().map(|gas| gas.borrow_mut()),
                 &mut self.debugger,
                 &mut self.tracer,
                 &mut self.coverage,
@@ -262,6 +289,7 @@ where
         call_inspectors!(
             inspector,
             [
+                &mut self.gas.as_deref().map(|gas| gas.borrow_mut()),
                 &mut self.debugger,
                 &mut self.tracer,
                 &mut self.coverage,

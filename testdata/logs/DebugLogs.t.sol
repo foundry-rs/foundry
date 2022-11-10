@@ -47,7 +47,7 @@ contract DebugLogsTest is DSTest {
     }
 
     function testLogInt() public {
-        emit log_int(int(-31337));
+        emit log_int(int256(-31337));
     }
 
     function testLogBytes() public {
@@ -67,19 +67,19 @@ contract DebugLogsTest is DSTest {
     }
 
     function testLogNamedDecimalInt() public {
-        emit log_named_decimal_int("amount", int(-31337), uint(18));
+        emit log_named_decimal_int("amount", int256(-31337), uint256(18));
     }
 
     function testLogNamedDecimalUint() public {
-        emit log_named_decimal_uint("amount", uint(1 ether), uint(18));
+        emit log_named_decimal_uint("amount", uint256(1 ether), uint256(18));
     }
 
     function testLogNamedInt() public {
-        emit log_named_int("amount", int(-31337));
+        emit log_named_int("amount", int256(-31337));
     }
 
     function testLogNamedUint() public {
-        emit log_named_uint("amount", uint(1 ether));
+        emit log_named_uint("amount", uint256(1 ether));
     }
 
     function testLogNamedBytes() public {
@@ -89,7 +89,6 @@ contract DebugLogsTest is DSTest {
     function testLogNamedString() public {
         emit log_named_string("key", "val");
     }
-
 }
 
 contract Fails is DSTest {

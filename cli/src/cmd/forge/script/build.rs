@@ -1,8 +1,5 @@
 use super::*;
-use crate::{
-    cmd::{get_cached_entry_by_name, unwrap_contracts},
-    compile,
-};
+use crate::cmd::get_cached_entry_by_name;
 use ethers::{
     prelude::{
         artifacts::Libraries, cache::SolFilesCache, ArtifactId, Graph, Project,
@@ -10,56 +7,49 @@ use ethers::{
     },
     solc::{
         artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
+        contracts::ArtifactContracts,
         info::ContractInfo,
     },
     types::{Address, U256},
 };
 use eyre::{Context, ContextCompat};
+use foundry_common::compile;
 use foundry_utils::PostLinkInput;
 use std::{collections::BTreeMap, fs, str::FromStr};
 use tracing::warn;
 
 impl ScriptArgs {
     /// Compiles the file or project and the verify metadata.
-    pub fn compile(
-        &mut self,
-        script_config: &ScriptConfig,
-    ) -> eyre::Result<(BuildOutput, VerifyBundle)> {
-        let build_output = self.build(script_config)?;
-
-        let verify = VerifyBundle::new(
-            &build_output.project,
-            &script_config.config,
-            unwrap_contracts(&build_output.highlevel_known_contracts, false),
-            self.retry.clone(),
-        );
-
-        Ok((build_output, verify))
+    pub fn compile(&mut self, script_config: &ScriptConfig) -> eyre::Result<BuildOutput> {
+        self.build(script_config)
     }
 
     /// Compiles the file with auto-detection and compiler params.
     pub fn build(&mut self, script_config: &ScriptConfig) -> eyre::Result<BuildOutput> {
         let (project, output) = self.get_project_and_output(script_config)?;
 
-        let mut contracts: BTreeMap<ArtifactId, CompactContractBytecode> = BTreeMap::new();
         let mut sources: BTreeMap<u32, String> = BTreeMap::new();
 
-        for (id, artifact) in output.into_artifacts() {
-            // Sources are only required for the debugger, but it *might* mean that there's
-            // something wrong with the build and/or artifacts.
-            if let Some(source) = artifact.source_file() {
-                sources.insert(
-                    source.id,
-                    source
-                        .ast
-                        .ok_or(eyre::eyre!("Source from artifact has no AST."))?
-                        .absolute_path,
-                );
-            } else {
-                warn!("source not found for artifact={:?}", id);
-            }
-            contracts.insert(id, artifact.into());
-        }
+        let contracts = output
+            .into_artifacts()
+            .into_iter()
+            .map(|(id, artifact)| -> eyre::Result<_> {
+                // Sources are only required for the debugger, but it *might* mean that there's
+                // something wrong with the build and/or artifacts.
+                if let Some(source) = artifact.source_file() {
+                    sources.insert(
+                        source.id,
+                        source
+                            .ast
+                            .ok_or(eyre::eyre!("Source from artifact has no AST."))?
+                            .absolute_path,
+                    );
+                } else {
+                    warn!("source not found for artifact={:?}", id);
+                }
+                Ok((id, artifact))
+            })
+            .collect::<eyre::Result<ArtifactContracts>>()?;
 
         let mut output = self.link(
             project,
@@ -75,7 +65,7 @@ impl ScriptArgs {
     pub fn link(
         &self,
         project: Project,
-        contracts: BTreeMap<ArtifactId, CompactContractBytecode>,
+        contracts: ArtifactContracts,
         libraries_addresses: Libraries,
         sender: Address,
         nonce: U256,
@@ -123,7 +113,7 @@ impl ScriptArgs {
             sender,
             nonce,
             &mut extra_info,
-            |file, key| (format!("{}.json:{}", key, key), file, key),
+            |file, key| (format!("{key}.json:{key}"), file, key),
             |post_link_input| {
                 let PostLinkInput {
                     contract,
@@ -174,14 +164,14 @@ impl ScriptArgs {
         // Merge with user provided libraries
         let mut new_libraries = Libraries::parse(&new_libraries)?;
         for (file, libraries) in libraries_addresses.libs.into_iter() {
-            new_libraries.libs.entry(file).or_insert(BTreeMap::new()).extend(libraries.into_iter())
+            new_libraries.libs.entry(file).or_default().extend(libraries.into_iter())
         }
 
         Ok(BuildOutput {
             target,
             contract,
             known_contracts: contracts,
-            highlevel_known_contracts,
+            highlevel_known_contracts: ArtifactContracts(highlevel_known_contracts),
             predeploy_libraries,
             sources: BTreeMap::new(),
             project,
@@ -195,15 +185,23 @@ impl ScriptArgs {
     ) -> eyre::Result<(Project, ProjectCompileOutput)> {
         let project = script_config.config.project()?;
 
-        // We received a file path.
+        let filters = self.opts.skip.clone().unwrap_or_default();
+        // We received a valid file path.
+        // If this file does not exist, `dunce::canonicalize` will
+        // result in an error and it will be handled below.
         if let Ok(target_contract) = dunce::canonicalize(&self.path) {
-            let output = compile::compile_target(
+            let output = compile::compile_target_with_filter(
                 &target_contract,
                 &project,
                 self.opts.args.silent,
                 self.verify,
+                filters,
             )?;
             return Ok((project, output))
+        }
+
+        if !project.paths.has_input_files() {
+            eyre::bail!("The project doesn't have any input files. Make sure the `script` directory is configured properly in foundry.toml. Otherwise, provide the path to the file.")
         }
 
         let contract = ContractInfo::from_str(&self.path)?;
@@ -212,9 +210,14 @@ impl ScriptArgs {
         // We received `contract_path:contract_name`
         if let Some(path) = contract.path {
             let path =
-                dunce::canonicalize(&path).wrap_err("Could not canonicalize the target path")?;
-            let output =
-                compile::compile_target(&path, &project, self.opts.args.silent, self.verify)?;
+                dunce::canonicalize(path).wrap_err("Could not canonicalize the target path")?;
+            let output = compile::compile_target_with_filter(
+                &path,
+                &project,
+                self.opts.args.silent,
+                self.verify,
+                filters,
+            )?;
             self.path = path.to_string_lossy().to_string();
             return Ok((project, output))
         }
@@ -241,7 +244,7 @@ impl ScriptArgs {
 pub fn filter_sources_and_artifacts(
     target: &str,
     sources: BTreeMap<u32, String>,
-    highlevel_known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
+    highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
     project: Project,
 ) -> eyre::Result<(BTreeMap<u32, String>, HashMap<String, ContractBytecodeSome>)> {
     // Find all imports
@@ -283,7 +286,7 @@ pub fn filter_sources_and_artifacts(
                 Some((
                     id,
                     fs::read_to_string(&resolved).unwrap_or_else(|_| {
-                        panic!("Something went wrong reading the source file: {:?}", path)
+                        panic!("Something went wrong reading the source file: {path:?}")
                     }),
                 ))
             }
@@ -317,8 +320,8 @@ pub struct BuildOutput {
     pub project: Project,
     pub target: ArtifactId,
     pub contract: CompactContractBytecode,
-    pub known_contracts: BTreeMap<ArtifactId, CompactContractBytecode>,
-    pub highlevel_known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
+    pub known_contracts: ArtifactContracts,
+    pub highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
     pub libraries: Libraries,
     pub predeploy_libraries: Vec<ethers::types::Bytes>,
     pub sources: BTreeMap<u32, String>,

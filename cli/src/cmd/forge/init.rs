@@ -5,7 +5,7 @@ use crate::{
         forge::install::{ensure_git_status_clean, install, DependencyInstallOpts},
         Cmd,
     },
-    opts::forge::Dependency,
+    opts::Dependency,
     utils::{p_println, CommandUtils},
 };
 use clap::{Parser, ValueHint};
@@ -80,7 +80,7 @@ impl Cmd for InitArgs {
             };
             p_println!(!quiet => "Initializing {} from {}...", root.display(), template);
             Command::new("git")
-                .args(&["clone", "--recursive", &template, &root.display().to_string()])
+                .args(["clone", "--recursive", &template, &root.display().to_string()])
                 .exec()?;
         } else {
             // check if target is empty
@@ -112,20 +112,20 @@ impl Cmd for InitArgs {
             fs::create_dir_all(&script)?;
 
             // write the contract file
-            let contract_path = src.join("Contract.sol");
-            fs::write(contract_path, include_str!("../../../assets/ContractTemplate.sol"))?;
+            let contract_path = src.join("Counter.sol");
+            fs::write(contract_path, include_str!("../../../assets/CounterTemplate.sol"))?;
             // write the tests
-            let contract_path = test.join("Contract.t.sol");
-            fs::write(contract_path, include_str!("../../../assets/ContractTemplate.t.sol"))?;
+            let contract_path = test.join("Counter.t.sol");
+            fs::write(contract_path, include_str!("../../../assets/CounterTemplate.t.sol"))?;
             // write the script
-            let contract_path = script.join("Contract.s.sol");
-            fs::write(contract_path, include_str!("../../../assets/ContractTemplate.s.sol"))?;
+            let contract_path = script.join("Counter.s.sol");
+            fs::write(contract_path, include_str!("../../../assets/CounterTemplate.s.sol"))?;
 
             let dest = root.join(Config::FILE_NAME);
+            let mut config = Config::load_with_root(&root);
             if !dest.exists() {
                 // write foundry.toml
-                let config = Config::load_with_root(&root).into_basic();
-                fs::write(dest, config.to_string_pretty()?)?;
+                fs::write(dest, config.clone().into_basic().to_string_pretty()?)?;
             }
 
             // sets up git
@@ -138,10 +138,10 @@ impl Cmd for InitArgs {
 
                 if root.join("lib/forge-std").exists() {
                     println!("\"lib/forge-std\" already exists, skipping install....");
-                    install(&root, vec![], opts)?;
+                    install(&mut config, vec![], opts)?;
                 } else {
                     Dependency::from_str("https://github.com/foundry-rs/forge-std")
-                        .and_then(|dependency| install(&root, vec![dependency], opts))?;
+                        .and_then(|dependency| install(&mut config, vec![dependency], opts))?;
                 }
             }
             // vscode init
@@ -158,14 +158,32 @@ impl Cmd for InitArgs {
 /// Returns `true` if `root` is already in an existing git repository
 fn is_git(root: &Path) -> eyre::Result<bool> {
     let is_git = Command::new("git")
-        .args(&["rev-parse", "--is-inside-work-tree"])
-        .current_dir(&root)
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .current_dir(root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?
         .wait()?;
 
     Ok(is_git.success())
+}
+
+/// Returns the commit hash of the project if it exists
+pub fn get_commit_hash(root: &Path) -> Option<String> {
+    if is_git(root).ok()? {
+        let output = Command::new("git")
+            .args(["rev-parse", "--short", "HEAD"])
+            .current_dir(root)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .ok()?
+            .wait_with_output()
+            .ok()?;
+
+        return Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+    None
 }
 
 /// Initialises the `root` as git repository if it's not a git repository yet
@@ -175,7 +193,7 @@ fn init_git_repo(root: &Path, no_commit: bool) -> eyre::Result<()> {
         fs::write(gitignore_path, include_str!("../../../assets/.gitignoreTemplate"))?;
 
         // git init
-        Command::new("git").arg("init").current_dir(&root).exec()?;
+        Command::new("git").arg("init").current_dir(root).exec()?;
 
         // create github workflow
         let gh = root.join(".github").join("workflows");
@@ -184,10 +202,10 @@ fn init_git_repo(root: &Path, no_commit: bool) -> eyre::Result<()> {
         fs::write(workflow_path, include_str!("../../../assets/workflowTemplate.yml"))?;
 
         if !no_commit {
-            Command::new("git").args(&["add", "."]).current_dir(&root).exec()?;
+            Command::new("git").args(["add", "."]).current_dir(root).exec()?;
             Command::new("git")
-                .args(&["commit", "-m", "chore: forge init"])
-                .current_dir(&root)
+                .args(["commit", "-m", "chore: forge init"])
+                .current_dir(root)
                 .exec()?;
         }
     }

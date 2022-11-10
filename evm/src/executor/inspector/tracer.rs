@@ -1,7 +1,8 @@
 use crate::{
+    debug::Instruction::OpCode,
     executor::inspector::utils::{gas_used, get_create_address},
     trace::{
-        CallTrace, CallTraceArena, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog,
+        CallTrace, CallTraceArena, CallTraceStep, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog,
         RawOrDecodedReturnData,
     },
     CallKind,
@@ -11,17 +12,36 @@ use ethers::{
     abi::RawLog,
     types::{Address, H256, U256},
 };
-use revm::{return_ok, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Return};
+use revm::{
+    opcode, return_ok, CallInputs, CallScheme, CreateInputs, Database, EVMData, Gas, GasInspector,
+    Inspector, Interpreter, JournalEntry, Return,
+};
+use std::{cell::RefCell, rc::Rc};
 
 /// An inspector that collects call traces.
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct Tracer {
-    pub trace_stack: Vec<usize>,
+    record_steps: bool,
+
     pub traces: CallTraceArena,
+    trace_stack: Vec<usize>,
+    step_stack: Vec<(usize, usize)>, // (trace_idx, step_idx)
+
+    gas_inspector: Rc<RefCell<GasInspector>>,
 }
 
 impl Tracer {
-    pub fn start_trace(
+    /// Enables step recording and uses [revm::GasInspector] to report gas costs for each step.
+    ///
+    /// Gas Inspector should be called externally **before** [Tracer], this is why we need it as
+    /// `Rc<RefCell<_>>` here.
+    pub fn with_steps_recording(mut self, gas_inspector: Rc<RefCell<GasInspector>>) -> Self {
+        self.record_steps = true;
+        self.gas_inspector = gas_inspector;
+        self
+    }
+
+    fn start_trace(
         &mut self,
         depth: usize,
         address: Address,
@@ -45,13 +65,7 @@ impl Tracer {
         ));
     }
 
-    pub fn fill_trace(
-        &mut self,
-        status: Return,
-        cost: u64,
-        output: Vec<u8>,
-        address: Option<Address>,
-    ) {
+    fn fill_trace(&mut self, status: Return, cost: u64, output: Vec<u8>, address: Option<Address>) {
         let success = matches!(status, return_ok!());
         let trace = &mut self.traces.arena
             [self.trace_stack.pop().expect("more traces were filled than started")]
@@ -65,28 +79,90 @@ impl Tracer {
             trace.address = address;
         }
     }
+
+    fn start_step<DB: Database>(&mut self, interp: &mut Interpreter, data: &mut EVMData<'_, DB>) {
+        let trace_idx =
+            *self.trace_stack.last().expect("can't start step without starting a trace first");
+        let trace = &mut self.traces.arena[trace_idx];
+
+        self.step_stack.push((trace_idx, trace.trace.steps.len()));
+
+        let pc = interp.program_counter();
+
+        trace.trace.steps.push(CallTraceStep {
+            depth: data.journaled_state.depth(),
+            pc,
+            op: OpCode(interp.contract.bytecode.bytecode()[pc]),
+            contract: interp.contract.address,
+            stack: interp.stack.clone(),
+            memory: interp.memory.clone(),
+            gas: self.gas_inspector.borrow().gas_remaining(),
+            gas_refund_counter: interp.gas.refunded() as u64,
+            gas_cost: 0,
+            state_diff: None,
+            error: None,
+        });
+    }
+
+    fn fill_step<DB: Database>(
+        &mut self,
+        interp: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        status: Return,
+    ) {
+        let (trace_idx, step_idx) =
+            self.step_stack.pop().expect("can't fill step without starting a step first");
+        let step = &mut self.traces.arena[trace_idx].trace.steps[step_idx];
+
+        if let Some(pc) = interp.program_counter().checked_sub(1) {
+            let op = interp.contract.bytecode.bytecode()[pc];
+
+            let journal_entry = data
+                .journaled_state
+                .journal
+                .last()
+                // This should always work because revm initializes it as `vec![vec![]]`
+                .unwrap()
+                .last();
+
+            step.state_diff = match (op, journal_entry) {
+                (
+                    opcode::SLOAD | opcode::SSTORE,
+                    Some(JournalEntry::StorageChage { address, key, .. }),
+                ) => {
+                    let value = data.journaled_state.state[address].storage[key].present_value();
+                    Some((*key, value))
+                }
+                _ => None,
+            };
+
+            step.gas_cost = step.gas - self.gas_inspector.borrow().gas_remaining();
+        }
+
+        // Error codes only
+        if status as u8 > Return::OutOfGas as u8 {
+            step.error = Some(format!("{status:?}"));
+        }
+    }
 }
 
 impl<DB> Inspector<DB> for Tracer
 where
     DB: Database,
 {
-    fn call(
+    fn step(
         &mut self,
+        interp: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
-        call: &mut CallInputs,
-        _: bool,
-    ) -> (Return, Gas, Bytes) {
-        self.start_trace(
-            data.subroutine.depth() as usize,
-            call.context.code_address,
-            call.input.to_vec(),
-            call.transfer.value,
-            call.context.scheme.into(),
-            call.context.caller,
-        );
+        _is_static: bool,
+    ) -> Return {
+        if !self.record_steps {
+            return Return::Continue
+        }
 
-        (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
+        self.start_step(interp, data);
+
+        Return::Continue
     }
 
     fn log(&mut self, _: &mut EVMData<'_, DB>, _: &Address, topics: &[H256], data: &Bytes) {
@@ -96,14 +172,55 @@ where
             .push(RawOrDecodedLog::Raw(RawLog { topics: topics.to_vec(), data: data.to_vec() }));
     }
 
+    fn step_end(
+        &mut self,
+        interp: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        _is_static: bool,
+        status: Return,
+    ) -> Return {
+        if !self.record_steps {
+            return Return::Continue
+        }
+
+        self.fill_step(interp, data, status);
+
+        status
+    }
+
+    fn call(
+        &mut self,
+        data: &mut EVMData<'_, DB>,
+        inputs: &mut CallInputs,
+        _is_static: bool,
+    ) -> (Return, Gas, Bytes) {
+        let (from, to) = match inputs.context.scheme {
+            CallScheme::DelegateCall | CallScheme::CallCode => {
+                (inputs.context.address, inputs.context.code_address)
+            }
+            _ => (inputs.context.caller, inputs.context.address),
+        };
+
+        self.start_trace(
+            data.journaled_state.depth() as usize,
+            to,
+            inputs.input.to_vec(),
+            inputs.transfer.value,
+            inputs.context.scheme.into(),
+            from,
+        );
+
+        (Return::Continue, Gas::new(inputs.gas_limit), Bytes::new())
+    }
+
     fn call_end(
         &mut self,
         data: &mut EVMData<'_, DB>,
-        _call: &CallInputs,
+        _inputs: &CallInputs,
         gas: Gas,
         status: Return,
         retdata: Bytes,
-        _: bool,
+        _is_static: bool,
     ) -> (Return, Gas, Bytes) {
         self.fill_trace(
             status,
@@ -118,27 +235,27 @@ where
     fn create(
         &mut self,
         data: &mut EVMData<'_, DB>,
-        call: &mut CreateInputs,
+        inputs: &mut CreateInputs,
     ) -> (Return, Option<Address>, Gas, Bytes) {
         // TODO: Does this increase gas cost?
-        data.subroutine.load_account(call.caller, data.db);
-        let nonce = data.subroutine.account(call.caller).info.nonce;
+        let _ = data.journaled_state.load_account(inputs.caller, data.db);
+        let nonce = data.journaled_state.account(inputs.caller).info.nonce;
         self.start_trace(
-            data.subroutine.depth() as usize,
-            get_create_address(call, nonce),
-            call.init_code.to_vec(),
-            call.value,
-            CallKind::Create,
-            call.caller,
+            data.journaled_state.depth() as usize,
+            get_create_address(inputs, nonce),
+            inputs.init_code.to_vec(),
+            inputs.value,
+            inputs.scheme.into(),
+            inputs.caller,
         );
 
-        (Return::Continue, None, Gas::new(call.gas_limit), Bytes::new())
+        (Return::Continue, None, Gas::new(inputs.gas_limit), Bytes::new())
     }
 
     fn create_end(
         &mut self,
         data: &mut EVMData<'_, DB>,
-        _: &CreateInputs,
+        _inputs: &CreateInputs,
         status: Return,
         address: Option<Address>,
         gas: Gas,
@@ -146,12 +263,12 @@ where
     ) -> (Return, Option<Address>, Gas, Bytes) {
         let code = match address {
             Some(address) => data
-                .subroutine
+                .journaled_state
                 .account(address)
                 .info
                 .code
                 .as_ref()
-                .map_or(vec![], |code| code.to_vec()),
+                .map_or(vec![], |code| code.bytes()[..code.len()].to_vec()),
             None => vec![],
         };
         self.fill_trace(

@@ -2,15 +2,15 @@ use crate::{
     cmd::forge::script::sequence::ScriptSequence, init_progress, update_progress,
     utils::print_receipt,
 };
-use ethers::prelude::{Http, PendingTransaction, Provider, RetryClient, TxHash};
+use ethers::prelude::{PendingTransaction, TxHash};
+use foundry_common::RetryProvider;
 use futures::StreamExt;
-use indicatif::{ProgressBar, ProgressStyle};
 use std::sync::Arc;
 use tracing::trace;
 
 /// Gets the receipts of previously pending transactions.
 pub async fn wait_for_pending(
-    provider: Arc<Provider<RetryClient<Http>>>,
+    provider: Arc<RetryProvider>,
     deployment_sequence: &mut ScriptSequence,
 ) -> eyre::Result<()> {
     if !deployment_sequence.pending.is_empty() {
@@ -26,7 +26,7 @@ pub async fn wait_for_pending(
 pub async fn wait_for_receipts(
     tx_hashes: Vec<TxHash>,
     deployment_sequence: &mut ScriptSequence,
-    provider: Arc<Provider<RetryClient<Http>>>,
+    provider: Arc<RetryProvider>,
 ) -> eyre::Result<()> {
     trace!("waiting for receipts of {} transactions", tx_hashes.len());
     let mut tasks = futures::stream::iter(
@@ -37,7 +37,7 @@ pub async fn wait_for_receipts(
     let mut receipts = Vec::with_capacity(tx_hashes.len());
     let mut errors: Vec<String> = vec![];
     let pb = init_progress!(tx_hashes, "receipts");
-    update_progress!(pb, -1);
+    pb.set_position(0);
 
     for (index, tx_hash) in tx_hashes.into_iter().enumerate() {
         if let Some(receipt) = tasks.next().await {
@@ -45,8 +45,10 @@ pub async fn wait_for_receipts(
                 Ok(Some(receipt)) => {
                     if let Some(status) = receipt.status {
                         if status.is_zero() {
-                            errors
-                                .push(format!("Transaction Failure: {}", receipt.transaction_hash));
+                            errors.push(format!(
+                                "Transaction Failure: {:?}",
+                                receipt.transaction_hash
+                            ));
                         }
                     }
                     trace!(?receipt.transaction_hash, "received tx receipt");
@@ -55,10 +57,10 @@ pub async fn wait_for_receipts(
                     receipts.push(receipt)
                 }
                 Ok(None) => {
-                    errors.push(format!("Received an empty receipt for {}", tx_hash));
+                    errors.push(format!("Received an empty receipt for {tx_hash:?}"));
                 }
                 Err(err) => {
-                    errors.push(format!("Failure on receiving a receipt for {}:\n{err}", tx_hash));
+                    errors.push(format!("Failure on receiving a receipt for {tx_hash:?}:\n{err}"));
                 }
             }
             update_progress!(pb, index);

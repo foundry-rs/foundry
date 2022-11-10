@@ -1,29 +1,7 @@
-use ethers_core::types::{H256, U256};
-use serde::{
-    de::{Error, Visitor},
-    Deserialize, Deserializer, Serialize, Serializer,
-};
-use std::fmt;
+use ethers_core::types::H256;
 
-/// Bindings for additional `debug_traceTransaction` options
-///
-/// See <https://geth.ethereum.org/docs/rpc/ns-debug#debug_tracetransaction>
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct GethDebugTracingOptions {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub disable_storage: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub disable_stack: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub enable_memory: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub enable_return_data: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tracer: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timeout: Option<String>,
-}
+#[cfg(feature = "serde")]
+use serde::{de::Error, Deserializer, Serializer};
 
 /// Represents the params to set forking which can take various forms
 ///  - untagged
@@ -34,23 +12,24 @@ pub struct Forking {
     pub block_number: Option<u64>,
 }
 
-impl<'de> Deserialize<'de> for Forking {
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Forking {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        #[derive(Deserialize)]
+        #[derive(serde::Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct ForkOpts {
             pub json_rpc_url: Option<String>,
             pub block_number: Option<u64>,
         }
 
-        #[derive(Deserialize)]
+        #[derive(serde::Deserialize)]
         struct Tagged {
             forking: ForkOpts,
         }
-        #[derive(Deserialize)]
+        #[derive(serde::Deserialize)]
         #[serde(untagged)]
         enum ForkingVariants {
             Tagged(Tagged),
@@ -70,8 +49,9 @@ impl<'de> Deserialize<'de> for Forking {
 }
 
 /// Additional `evm_mine` options
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-#[serde(untagged)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(untagged))]
 pub enum EvmMineOptions {
     Options {
         timestamp: Option<u64>,
@@ -99,11 +79,14 @@ pub struct Work {
     pub number: Option<u64>,
 }
 
-impl Serialize for Work {
+#[cfg(feature = "serde")]
+impl serde::Serialize for Work {
     fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
+        use ethers_core::types::U256;
+
         if let Some(num) = self.number {
             (&self.pow_hash, &self.seed_hash, &self.target, U256::from(num)).serialize(s)
         } else {
@@ -122,14 +105,17 @@ impl From<Index> for usize {
     }
 }
 
-impl<'a> Deserialize<'a> for Index {
+#[cfg(feature = "serde")]
+impl<'a> serde::Deserialize<'a> for Index {
     fn deserialize<D>(deserializer: D) -> Result<Index, D::Error>
     where
-        D: Deserializer<'a>,
+        D: serde::Deserializer<'a>,
     {
+        use std::fmt;
+
         struct IndexVisitor;
 
-        impl<'a> Visitor<'a> for IndexVisitor {
+        impl<'a> serde::de::Visitor<'a> for IndexVisitor {
             type Value = Index;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -149,13 +135,13 @@ impl<'a> Deserialize<'a> for Index {
             {
                 if let Some(val) = value.strip_prefix("0x") {
                     usize::from_str_radix(val, 16).map(Index).map_err(|e| {
-                        Error::custom(format!("Failed to parse hex encoded index value: {}", e))
+                        Error::custom(format!("Failed to parse hex encoded index value: {e}"))
                     })
                 } else {
                     value
                         .parse::<usize>()
                         .map(Index)
-                        .map_err(|e| Error::custom(format!("Failed to parse numeric index: {}", e)))
+                        .map_err(|e| Error::custom(format!("Failed to parse numeric index: {e}")))
                 }
             }
 
