@@ -1388,6 +1388,12 @@ forgetest_init!(
     }
 );
 
+// checks `forge inspect <contract> irOptimized works
+forgetest_init!(can_inspect_ir_optimized, |_prj: TestProject, mut cmd: TestCommand| {
+    cmd.args(["inspect", TEMPLATE_CONTRACT, "irOptimized"]);
+    cmd.assert_success();
+});
+
 // checks forge bind works correctly on the default project
 forgetest_init!(can_bind, |_prj: TestProject, mut cmd: TestCommand| {
     cmd.arg("bind");

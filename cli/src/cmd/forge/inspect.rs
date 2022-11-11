@@ -1,8 +1,5 @@
 use crate::{
-    cmd::{
-        forge::build::{self, CoreBuildArgs},
-        Cmd,
-    },
+    cmd::{forge::build::CoreBuildArgs, Cmd},
     opts::forge::CompilerArgs,
 };
 use clap::Parser;
@@ -20,6 +17,7 @@ use ethers::{
 use foundry_common::compile;
 use serde_json::{to_value, Value};
 use std::{fmt, str::FromStr};
+use tracing::trace;
 
 #[derive(Debug, Clone, Parser)]
 pub struct InspectArgs {
@@ -45,13 +43,15 @@ possible_values = ["abi", "b/bytes/bytecode", "deployedBytecode/deployed_bytecod
 
     /// All build arguments are supported
     #[clap(flatten)]
-    build: build::CoreBuildArgs,
+    build: CoreBuildArgs,
 }
 
 impl Cmd for InspectArgs {
     type Output = ();
     fn run(self) -> eyre::Result<Self::Output> {
         let InspectArgs { mut contract, field, build, pretty } = self;
+
+        trace!(?field, ?contract, target = "forge", "running forge inspect");
 
         // Map field to ContractOutputSelection
         let mut cos = build.compiler.extra_output;
@@ -84,6 +84,8 @@ impl Cmd for InspectArgs {
 
         // Find the artifact
         let found_artifact = outcome.find_contract(&contract);
+
+        trace!(artifact=?found_artifact, input=?contract, target = "forge", "Found contract");
 
         // Unwrap the inner artifact
         let artifact = found_artifact.ok_or_else(|| {
