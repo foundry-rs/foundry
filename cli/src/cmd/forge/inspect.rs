@@ -6,7 +6,7 @@ use crate::{
     opts::forge::CompilerArgs,
 };
 use clap::Parser;
-use comfy_table::Table;
+use comfy_table::{Table, presets::ASCII_MARKDOWN};
 use ethers::{
     prelude::{
         artifacts::output_selection::{
@@ -43,6 +43,9 @@ possible_values = ["abi", "b/bytes/bytecode", "deployedBytecode/deployed_bytecod
     #[clap(long, help = "Pretty print the selected field, if supported.")]
     pub pretty: bool,
 
+    #[clap(long, help = "Print tables in a markdown compatible way.")]
+    pub markdown: bool,
+
     /// All build arguments are supported
     #[clap(flatten)]
     build: build::CoreBuildArgs,
@@ -51,7 +54,7 @@ possible_values = ["abi", "b/bytes/bytecode", "deployedBytecode/deployed_bytecod
 impl Cmd for InspectArgs {
     type Output = ();
     fn run(self) -> eyre::Result<Self::Output> {
-        let InspectArgs { mut contract, field, build, pretty } = self;
+        let InspectArgs { mut contract, field, build, pretty, markdown } = self;
 
         // Map field to ContractOutputSelection
         let mut cos = build.compiler.extra_output;
@@ -134,6 +137,9 @@ impl Cmd for InspectArgs {
                 if pretty {
                     if let Some(storage_layout) = &artifact.storage_layout {
                         let mut table = Table::new();
+                        if markdown {
+                            table.load_preset(ASCII_MARKDOWN);
+                        }
                         table.set_header(vec![
                             "Name", "Type", "Slot", "Offset", "Bytes", "Contract",
                         ]);
