@@ -295,11 +295,9 @@ impl ScriptArgs {
         // get the nonce mainnet for accurate addresses for predeploy libs
         let nonce = foundry_utils::next_nonce(
             new_sender,
-            script_config
-                .evm_opts
-                .fork_url
-                .as_ref()
-                .expect("You must provide an RPC URL (see --fork-url) when broadcasting."),
+            script_config.evm_opts.fork_url.as_ref().ok_or_else(|| {
+                eyre::eyre!("You must provide an RPC URL (see --fork-url) when broadcasting.")
+            })?,
             None,
         )
         .await?;
