@@ -1,6 +1,6 @@
 //! Support for compiling [ethers::solc::Project]
 use crate::{term, TestFunctionExt};
-use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, *};
+use comfy_table::{presets::ASCII_MARKDOWN, *};
 use ethers_etherscan::contract::Metadata;
 use ethers_solc::{
     artifacts::{BytecodeObject, ContractBytecodeSome},
@@ -196,7 +196,7 @@ impl SizeReport {
 impl Display for SizeReport {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         let mut table = Table::new();
-        table.load_preset(UTF8_FULL).apply_modifier(UTF8_ROUND_CORNERS);
+        table.load_preset(ASCII_MARKDOWN);
         table.set_header(vec![
             Cell::new("Contract").add_attribute(Attribute::Bold).fg(Color::Blue),
             Cell::new("Size (kB)").add_attribute(Attribute::Bold).fg(Color::Blue),
