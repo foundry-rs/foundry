@@ -399,7 +399,7 @@ impl EtherscanVerificationProvider {
         if out.has_error() {
             let mut o = AggregatedCompilerOutput::default();
             o.extend(version, out);
-            eprintln!("{}", o.diagnostics(&[]));
+            eprintln!("{}", o.diagnostics(&[], Default::default()));
 
             eprintln!(
                 r#"Failed to compile the flattened code locally.
