@@ -140,6 +140,9 @@ pub struct Cheatcodes {
     pub fs_commit: bool,
 
     pub serialized_jsons: HashMap<String, HashMap<String, Value>>,
+
+    /// Records all eth deals
+    pub eth_deals: Vec<DealRecord>,
 }
 
 impl Cheatcodes {
@@ -205,6 +208,21 @@ impl Cheatcodes {
         }
 
         data.db.allow_cheatcode_access(created_address);
+    }
+
+    /// Called when there was a revert.
+    ///
+    /// Cleanup any previously applied cheatcodes that altered the state in such a way that revm's
+    /// revert would run into issues.
+    pub fn on_revert<DB: DatabaseExt>(&mut self, data: &mut EVMData<'_, DB>) {
+        // Roll back all previously applied deals
+        // This will prevent overflow issues in revm's [`JournaledState::journal_revert`] routine
+        // which rolls back any transfers.
+        while let Some(record) = self.eth_deals.pop() {
+            if let Some(acc) = data.journaled_state.state.get_mut(&record.address) {
+                acc.info.balance = record.old_balance;
+            }
+        }
     }
 }
 
@@ -645,4 +663,15 @@ impl Clone for Context {
     fn clone(&self) -> Self {
         Default::default()
     }
+}
+
+/// Records `deal` cheatcodes
+#[derive(Debug, Clone)]
+pub struct DealRecord {
+    /// Target of the deal.
+    pub address: Address,
+    /// The balance of the address before deal was applied
+    pub old_balance: U256,
+    /// Balance after deal was applied
+    pub new_balance: U256,
 }
