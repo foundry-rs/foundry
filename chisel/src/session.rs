@@ -79,7 +79,7 @@ impl ChiselSession {
     /// session's [SessionSource] is None.
     pub fn contract_source(&self) -> String {
         if let Some(source) = &self.session_source {
-            source.to_string()
+            source.to_repl_source()
         } else {
             String::default()
         }

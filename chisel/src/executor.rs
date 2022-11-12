@@ -221,9 +221,13 @@ fn format_token(token: Token) -> String {
             let hex = hex::encode(ethers::abi::encode(&[token.clone()]));
             let s = token.into_string();
             format!(
-                "Type: {}\n├ UTF-8: {}\n├ Hex (Memory):\n├─ Length ({}): {}\n├─ Contents ({}): {}\n├ Hex (Calldata):\n├─ Pointer ({}): {}\n├─ Length ({}): {}\n└─ Contents ({}): {}",
+                "Type: {}\n{}├ Hex (Memory):\n├─ Length ({}): {}\n├─ Contents ({}): {}\n├ Hex (Tuple Encoded):\n├─ Pointer ({}): {}\n├─ Length ({}): {}\n└─ Contents ({}): {}",
                 Paint::red(if s.is_some() { "string" } else { "dynamic bytes" }),
-                Paint::cyan(s.unwrap_or(String::from("N/A"))),
+                if s.is_some() {
+                    format!("├ UTF-8: {}\n", Paint::cyan(s.unwrap()))
+                } else {
+                    String::default()
+                },
                 Paint::yellow("[0x00:0x20]"),
                 Paint::cyan(format!("0x{}", &hex[64..128])),
                 Paint::yellow("[0x20:..]"),

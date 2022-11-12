@@ -379,12 +379,6 @@ impl ChiselDisptacher {
             ChiselCommand::Export => {
                 // Check if the current session inherits `Script.sol` before exporting
                 if let Some(session_source) = self.session.session_source.as_ref() {
-                    if !session_source.config.script {
-                        return DispatchResult::CommandFailed(Self::make_error(
-                            "The current REPL session is not a script!",
-                        ))
-                    }
-
                     // Check if the pwd is a foundry project
                     if PathBuf::from("foundry.toml").exists() {
                         // Create "script" dir if it does not already exist.
@@ -398,7 +392,7 @@ impl ChiselDisptacher {
                         // Write session source to `script/REPL`
                         if let Err(e) = std::fs::write(
                             PathBuf::from("script/REPL.s.sol"),
-                            self.session.session_source.as_ref().unwrap().to_string(),
+                            session_source.to_script_source(),
                         ) {
                             return DispatchResult::CommandFailed(Self::make_error(e.to_string()))
                         }
@@ -546,18 +540,6 @@ impl ChiselDisptacher {
                     Err(_) => DispatchResult::CommandFailed(Self::make_error(
                         "Failed to communicate with Etherscan API; Are you offline?",
                     )),
-                }
-            }
-            ChiselCommand::Script => {
-                if let Some(session_source) = self.session.session_source.as_mut() {
-                    let script_opt = &mut session_source.config.script;
-                    *script_opt = !*script_opt;
-                    DispatchResult::CommandSuccess(Some(format!(
-                        "Set Script inheritance to {}",
-                        script_opt
-                    )))
-                } else {
-                    DispatchResult::CommandFailed(Self::make_error("Session not present."))
                 }
             }
         }
@@ -779,8 +761,6 @@ pub enum ChiselCommand {
     Export,
     /// Fetch an interface of a verified contract on Etherscan
     Fetch,
-    /// Enable/disable inheritance of forge-std/Script.sol
-    Script,
 }
 
 /// Attempt to convert a string slice to a `ChiselCommand`
@@ -802,7 +782,6 @@ impl FromStr for ChiselCommand {
             "stackdump" => Ok(ChiselCommand::StackDump),
             "export" => Ok(ChiselCommand::Export),
             "fetch" => Ok(ChiselCommand::Fetch),
-            "script" => Ok(ChiselCommand::Script),
             _ => Err(ChiselDisptacher::make_error(&format!(
                 "Unknown command \"{}\"! See available commands with `!help`.",
                 s
@@ -856,7 +835,6 @@ impl From<ChiselCommand> for CmdDescriptor {
             ChiselCommand::ClearCache => (&["clearcache"], "Clear the chisel cache of all stored sessions", CmdCategory::Session),
             ChiselCommand::Export => (&["export"], "Export the current session source to a script file", CmdCategory::Session),
             ChiselCommand::Fetch => (&["fetch <addr> <name>"], "Fetch the interface of a verified contract on Etherscan", CmdCategory::Session),
-            ChiselCommand::Script => (&["script"], "Enable or disable the inheritance of forge-std/Script.sol", CmdCategory::Session),
             // Environment
             ChiselCommand::Fork => (&["fork <url>", "f <url>"], "Fork an RPC for the current session. Supply 0 arguments to return to a local network", CmdCategory::Env),
             ChiselCommand::Traces => (&["traces", "t"], "Enable / disable traces for the current session", CmdCategory::Env),

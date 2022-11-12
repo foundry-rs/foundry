@@ -9,7 +9,7 @@ fn clone_with_new_line(c: &mut Criterion) {
     let mut g = c.benchmark_group("session_source");
 
     // Grab an empty session source
-    let session_source = get_empty_session_source(false);
+    let session_source = get_empty_session_source();
     g.bench_function("clone_with_new_line", |b| {
         b.iter(|| black_box(|| session_source.clone_with_new_line("uint a = 1".to_owned())))
     });
@@ -21,7 +21,7 @@ fn clone_with_new_line_script(c: &mut Criterion) {
     let mut g = c.benchmark_group("session_source");
 
     // Grab an empty session source
-    let session_source = get_empty_session_source(true);
+    let session_source = get_empty_session_source();
     g.bench_function("clone_with_new_line_script", |b| {
         b.iter(|| black_box(|| session_source.clone_with_new_line("uint a = 1".to_owned())))
     });
@@ -34,7 +34,7 @@ fn build(c: &mut Criterion) {
     g.bench_function("build", |b| {
         b.iter(|| {
             // Grab an empty session source
-            let mut session_source = get_empty_session_source(false);
+            let mut session_source = get_empty_session_source();
             black_box(move || session_source.build().unwrap())
         })
     });
@@ -47,7 +47,7 @@ fn build_script(c: &mut Criterion) {
     g.bench_function("build_script", |b| {
         b.iter(|| {
             // Grab an empty session source
-            let mut session_source = get_empty_session_source(true);
+            let mut session_source = get_empty_session_source();
             black_box(move || session_source.build().unwrap())
         })
     });
@@ -60,7 +60,7 @@ fn execute(c: &mut Criterion) {
     g.bench_function("execute", |b| {
         b.iter(|| {
             // Grab an empty session source
-            let mut session_source = get_empty_session_source(false);
+            let mut session_source = get_empty_session_source();
             black_box(async move { session_source.execute().await.unwrap() })
         })
     });
@@ -73,7 +73,7 @@ fn execute_script(c: &mut Criterion) {
     g.bench_function("execute_script", |b| {
         b.iter(|| {
             // Grab an empty session source
-            let mut session_source = get_empty_session_source(true);
+            let mut session_source = get_empty_session_source();
             black_box(async move { session_source.execute().await.unwrap() })
         })
     });
@@ -86,7 +86,7 @@ fn inspect(c: &mut Criterion) {
     g.bench_function("inspect", |b| {
         b.iter(|| {
             // Grab an empty session source
-            let mut session_source = get_empty_session_source(false);
+            let mut session_source = get_empty_session_source();
             // Add a uint named "a" with value 1 to the session source
             session_source.with_run_code("uint a = 1");
             black_box(async move { session_source.inspect("a").await.unwrap() })
@@ -101,7 +101,7 @@ fn inspect_script(c: &mut Criterion) {
     g.bench_function("inspect_script", |b| {
         b.iter(|| {
             // Grab an empty session source
-            let mut session_source = get_empty_session_source(true);
+            let mut session_source = get_empty_session_source();
             // Add a uint named "a" with value 1 to the session source
             session_source.with_run_code("uint a = 1");
             black_box(async move { session_source.inspect("a").await.unwrap() })
@@ -110,7 +110,7 @@ fn inspect_script(c: &mut Criterion) {
 }
 
 /// Helper function for getting an empty [SessionSource] with default configuration
-fn get_empty_session_source(script: bool) -> SessionSource {
+fn get_empty_session_source() -> SessionSource {
     let solc = Solc::find_or_install_svm_version("0.8.17").unwrap();
     SessionSource::new(
         &solc,
@@ -119,7 +119,6 @@ fn get_empty_session_source(script: bool) -> SessionSource {
             evm_opts: EvmOpts::default(),
             backend: None,
             traces: false,
-            script,
         },
     )
 }

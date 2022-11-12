@@ -16,22 +16,8 @@ use serde::{Deserialize, Serialize};
 use solang_parser::pt::CodeLocation;
 use std::{collections::HashMap, path::PathBuf};
 
-/// Solidity source for the `Script` contract in [forge-std](https://github.com/foundry-rs/forge-std)
-static SCRIPT_SOURCE: &'static str = include_str!("../../testdata/lib/forge-std/src/Script.sol");
 /// Solidity source for the `Vm` interface in [forge-std](https://github.com/foundry-rs/forge-std)
 static VM_SOURCE: &'static str = include_str!("../../testdata/lib/forge-std/src/Vm.sol");
-/// Solidity source for the `console` contract in [forge-std](https://github.com/foundry-rs/forge-std)
-static CONSOLE_SOURCE: &'static str = include_str!("../../testdata/lib/forge-std/src/console.sol");
-/// Solidity source for the `console2` contract in [forge-std](https://github.com/foundry-rs/forge-std)
-static CONSOLE_2_SOURCE: &'static str =
-    include_str!("../../testdata/lib/forge-std/src/console2.sol");
-/// Array of forge-std contract file names paired with their source code
-static SOURCES: [(&'static str, &'static str); 4] = [
-    ("Script.sol", SCRIPT_SOURCE),
-    ("Vm.sol", VM_SOURCE),
-    ("console.sol", CONSOLE_SOURCE),
-    ("console2.sol", CONSOLE_2_SOURCE),
-];
 
 /// Intermediate output for the compiled [SessionSource]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -74,8 +60,6 @@ pub struct SessionSourceConfig {
     pub backend: Option<Backend>,
     /// Optionally enable traces for the REPL contract execution
     pub traces: bool,
-    /// Optionally inherit `forge-std`'s Script.sol
-    pub script: bool,
 }
 
 /// REPL Session Source wrapper
@@ -220,18 +204,8 @@ impl SessionSource {
     /// Generates and ethers_solc::CompilerInput from the source
     pub fn compiler_input(&self) -> CompilerInput {
         let mut sources = Sources::new();
-
-        // If Script inheritance is enabled, add `Script.sol`'s sources.
-        if self.config.script {
-            for (name, source) in SOURCES {
-                sources.insert(
-                    PathBuf::from(format!("forge-std/{}", name)),
-                    Source { content: source.to_owned() },
-                );
-            }
-        }
-
-        sources.insert(self.file_name.clone(), Source { content: self.to_string() });
+        sources.insert(PathBuf::from("forge-std/Vm.sol"), Source { content: VM_SOURCE.to_owned() });
+        sources.insert(self.file_name.clone(), Source { content: self.to_repl_source() });
         CompilerInput::with_sources(sources).pop().unwrap()
     }
 
@@ -239,7 +213,7 @@ impl SessionSource {
     pub fn parse(
         &self,
     ) -> Result<solang_parser::pt::SourceUnit, Vec<solang_parser::diagnostics::Diagnostic>> {
-        solang_parser::parse(&self.to_string(), 0).map(|(pt, _)| pt)
+        solang_parser::parse(&self.to_repl_source(), 0).map(|(pt, _)| pt)
     }
 
     /// Decompose the parsed solang_parser::pt::SourceUnit into parts
@@ -408,50 +382,51 @@ impl SessionSource {
             _ => Vec::default(),
         }
     }
-}
 
-impl std::fmt::Display for SessionSource {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Fill remappings
-        // TODO: Not a very clean soln. Should retain remapped import when displaying
-        // via `!source` or exporting to a script file.
-        let remappings = &self.config.foundry_config.remappings;
-        let global_code = {
-            let mut content = self.global_code.clone();
-            for remapping in remappings {
-                // Replace remapped path with true path
-                if content.contains(&remapping.name) {
-                    content =
-                        content.replace(&remapping.name, remapping.path.path.to_str().unwrap());
-                    break
-                }
-            }
-            content
-        };
-
-        // Write the license and solidity pragma version
-        f.write_str("// SPDX-License-Identifier: UNLICENSED\n")?;
+    /// Convert the [SessionSource] to a valid Script contract
+    /// TODO: Forge FMT
+    pub fn to_script_source(&self) -> String {
         let Version { major, minor, patch, .. } = self.solc.version().unwrap();
-        f.write_fmt(format_args!("pragma solidity ^{major}.{minor}.{patch};\n\n",))?;
-        if self.config.script {
-            f.write_str("import {Script} from \"forge-std/Script.sol\";\n")?;
-        }
+        format!(
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^{major}.{minor}.{patch};
 
-        // Global imports and definitions
-        f.write_str(&global_code)?;
-        f.write_str("\n")?;
+import {{Script}} from "forge-std/Script.sol";
+{}
+contract {} is Script {{
+    {}
+    function run() public {{
+        {}
+    }}
+}}
+            "#,
+            self.global_code, self.contract_name, self.top_level_code, self.run_code,
+        )
+    }
 
-        f.write_fmt(format_args!(
-            "contract {} {}{{\n",
-            self.contract_name,
-            if self.config.script { "is Script " } else { "" }
-        ))?;
-        f.write_str(&self.top_level_code)?;
-        f.write_str("\n")?;
-        f.write_str("\tfunction run() external {\n")?;
-        f.write_str(&self.run_code)?;
-        f.write_str("\t}\n}")?;
-        Ok(())
+    /// Convert the [SessionSource] to a valid REPL contract
+    /// TODO: Forge FMT
+    pub fn to_repl_source(&self) -> String {
+        let Version { major, minor, patch, .. } = self.solc.version().unwrap();
+        format!(
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^{major}.{minor}.{patch};
+
+import {{Vm}} from "forge-std/Vm.sol";
+{}
+contract {} {{
+    Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    {}
+    /// @notice REPL contract entry point
+    function run() public {{
+        {}
+    }}
+}}
+            "#,
+            self.global_code, self.contract_name, self.top_level_code, self.run_code,
+        )
     }
 }
 
