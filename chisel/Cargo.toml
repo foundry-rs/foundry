@@ -26,6 +26,7 @@ forge = { path = "../forge" }
 foundry-config = { path = "../config" }
 foundry-cli = { path = "../cli" }
 foundry-common = { path = "../common" }
+forge-fmt = { path = "../fmt" }
 tokio = { version = "1.21.2", features = ["full"] }
 clap = { version = "4.0", features = ["derive", "env", "wrap_help"] }
 rustyline = "10.0.0"

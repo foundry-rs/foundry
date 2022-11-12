@@ -127,14 +127,15 @@ impl SessionSource {
         let mut new_source = self.shallow_clone();
         if let Some(parsed) = parse_fragment(&new_source.solc, &new_source.config, &content)
             .or_else(|| {
-                content = content.trim_end().to_string();
-                content.push_str(";\n");
+                content = format!("{};", content);
                 parse_fragment(&new_source.solc, &new_source.config, &content)
             })
             .or_else(|| {
-                content = content.trim_end().trim_end_matches(';').to_string();
-                content.push('\n');
-                parse_fragment(&new_source.solc, &new_source.config, &format!("\t{}", content))
+                parse_fragment(
+                    &new_source.solc,
+                    &new_source.config,
+                    &content.trim_end().trim_end_matches(';').to_string(),
+                )
             })
         {
             // Flag that tells the dispatcher whether to build or execute the session
@@ -159,21 +160,21 @@ impl SessionSource {
 
     /// Appends global-level code to the source
     pub fn with_global_code(&mut self, content: &str) -> &mut Self {
-        self.global_code.push_str(format!("{}\n", content.trim()).as_str());
+        self.global_code.push_str(content.trim());
         self.generated_output = None;
         self
     }
 
     /// Appends top-level code to the source
     pub fn with_top_level_code(&mut self, content: &str) -> &mut Self {
-        self.top_level_code.push_str(format!("\t{}\n", content.trim()).as_str());
+        self.top_level_code.push_str(content.trim());
         self.generated_output = None;
         self
     }
 
     /// Appends code to the "run()" function
     pub fn with_run_code(&mut self, content: &str) -> &mut Self {
-        self.run_code.push_str(format!("\t\t{}\n", content.trim()).as_str());
+        self.run_code.push_str(content.trim());
         self.generated_output = None;
         self
     }
@@ -384,7 +385,6 @@ impl SessionSource {
     }
 
     /// Convert the [SessionSource] to a valid Script contract
-    /// TODO: Forge FMT
     pub fn to_script_source(&self) -> String {
         let Version { major, minor, patch, .. } = self.solc.version().unwrap();
         format!(
@@ -406,7 +406,6 @@ contract {} is Script {{
     }
 
     /// Convert the [SessionSource] to a valid REPL contract
-    /// TODO: Forge FMT
     pub fn to_repl_source(&self) -> String {
         let Version { major, minor, patch, .. } = self.solc.version().unwrap();
         format!(

@@ -15,6 +15,7 @@ use forge::{
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
+use forge_fmt::FormatterConfig;
 use foundry_config::{Config, RpcEndpoint};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -88,6 +89,22 @@ macro_rules! format_param {
             }
         )
     }};
+}
+
+/// Helper function that formats solidity source with the given [FormatterConfig]
+pub fn format_source(source: &str, config: FormatterConfig) -> Result<String, ()> {
+    match forge_fmt::parse(source) {
+        Ok(parsed) => {
+            let mut formatted_source = String::default();
+
+            if let Err(_) = forge_fmt::format(&mut formatted_source, parsed, config) {
+                return Err(())
+            }
+
+            Ok(formatted_source)
+        }
+        Err(_) => Err(()),
+    }
 }
 
 impl ChiselDisptacher {
@@ -252,9 +269,21 @@ impl ChiselDisptacher {
                 }
             },
             ChiselCommand::Source => {
-                return DispatchResult::CommandSuccess(Some(SolidityHelper::highlight(
-                    &self.session.contract_source(),
-                )))
+                if let Some(session_source) = self.session.session_source.as_ref() {
+                    match format_source(
+                        &session_source.to_repl_source(),
+                        session_source.config.foundry_config.fmt.clone(),
+                    ) {
+                        Ok(formatted_source) => DispatchResult::CommandSuccess(Some(
+                            SolidityHelper::highlight(&formatted_source),
+                        )),
+                        Err(_) => DispatchResult::CommandFailed(String::from(
+                            "Failed to format session source",
+                        )),
+                    }
+                } else {
+                    DispatchResult::CommandFailed(Self::make_error("Session not present."))
+                }
             }
             ChiselCommand::ClearCache => match ChiselSession::clear_cache() {
                 Ok(_) => {
@@ -389,17 +418,30 @@ impl ChiselDisptacher {
                                 ))
                             }
                         }
-                        // Write session source to `script/REPL`
-                        if let Err(e) = std::fs::write(
-                            PathBuf::from("script/REPL.s.sol"),
-                            session_source.to_script_source(),
-                        ) {
-                            return DispatchResult::CommandFailed(Self::make_error(e.to_string()))
-                        }
 
-                        DispatchResult::CommandSuccess(Some(String::from(
-                            "Exported session source to script/REPL.s.sol!",
-                        )))
+                        match format_source(
+                            &session_source.to_script_source(),
+                            session_source.config.foundry_config.fmt.clone(),
+                        ) {
+                            Ok(formatted_source) => {
+                                // Write session source to `script/REPL`
+                                if let Err(e) = std::fs::write(
+                                    PathBuf::from("script/REPL.s.sol"),
+                                    formatted_source,
+                                ) {
+                                    return DispatchResult::CommandFailed(Self::make_error(
+                                        e.to_string(),
+                                    ))
+                                }
+
+                                DispatchResult::CommandSuccess(Some(String::from(
+                                    "Exported session source to script/REPL.s.sol!",
+                                )))
+                            }
+                            Err(_) => DispatchResult::CommandFailed(String::from(
+                                "Failed to format session source",
+                            )),
+                        }
                     } else {
                         DispatchResult::CommandFailed(Self::make_error(
                             "Must be in a foundry project to export source to script.",
