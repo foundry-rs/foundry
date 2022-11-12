@@ -13,13 +13,13 @@ use ethers::{
         LocalWallet, Signer, H160, *,
     },
     signers::{coins_bip39::English, MnemonicBuilder},
-    types::{NameOrAddress, H256, U256},
+    types::{transaction::eip2718::TypedTransaction, NameOrAddress, H256, U256},
     utils,
 };
-use foundry_common::fmt::*;
+use foundry_common::{fmt::*, RpcUrl};
 use hex::FromHex;
 use revm::{Account, CreateInputs, Database, EVMData, JournaledState, TransactTo};
-use std::str::FromStr;
+use std::{collections::VecDeque, str::FromStr};
 
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 
@@ -27,6 +27,15 @@ const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 pub const DEFAULT_CREATE2_DEPLOYER: H160 = H160([
     78, 89, 180, 72, 71, 179, 121, 87, 133, 136, 146, 12, 167, 143, 191, 38, 192, 180, 149, 108,
 ]);
+
+/// Helps collecting transactions from different forks.
+#[derive(Debug, Clone, Default)]
+pub struct BroadcastableTransaction {
+    pub rpc: Option<RpcUrl>,
+    pub transaction: TypedTransaction,
+}
+
+pub type BroadcastableTransactions = VecDeque<BroadcastableTransaction>;
 
 /// Configures the env for the transaction
 pub fn configure_tx_env(env: &mut revm::Env, tx: &Transaction) {

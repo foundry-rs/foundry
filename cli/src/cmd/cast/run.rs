@@ -1,5 +1,5 @@
 use crate::{cmd::Cmd, init_progress, update_progress, utils::try_consume_config_rpc_url};
-use cast::trace::{identifier::SignaturesIdentifier, CallTraceDecoder};
+use cast::trace::{identifier::SignaturesIdentifier, CallTraceDecoder, Traces};
 use clap::Parser;
 use ethers::{
     abi::Address,
@@ -14,11 +14,10 @@ use forge::{
         inspector::cheatcodes::util::configure_tx_env, opts::EvmOpts, Backend, DeployResult,
         ExecutorBuilder, RawCallResult,
     },
-    trace::{identifier::EtherscanIdentifier, CallTraceArena, CallTraceDecoderBuilder, TraceKind},
+    trace::{identifier::EtherscanIdentifier, CallTraceDecoderBuilder, TraceKind},
 };
 use foundry_common::try_get_http_provider;
 use foundry_config::{find_project_root_path, Config};
-use indicatif::{ProgressBar, ProgressStyle};
 use std::{collections::BTreeMap, str::FromStr};
 use tracing::trace;
 use ui::{TUIExitReason, Tui, Ui};
@@ -114,7 +113,7 @@ impl RunArgs {
 
             if let Some(block) = block {
                 let pb = init_progress!(block.transactions, "tx");
-                update_progress!(pb, -1);
+                pb.set_position(0);
 
                 for (index, tx) in block.transactions.into_iter().enumerate() {
                     if tx.hash().eq(&tx_hash) {
@@ -275,7 +274,7 @@ async fn print_traces(
 
 struct RunResult {
     pub success: bool,
-    pub traces: Vec<(TraceKind, CallTraceArena)>,
+    pub traces: Traces,
     pub debug: DebugArena,
     pub gas_used: u64,
 }

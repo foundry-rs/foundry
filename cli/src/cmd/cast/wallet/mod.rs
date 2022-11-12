@@ -106,7 +106,7 @@ impl WalletSubcommands {
                 } else {
                     let wallet = LocalWallet::new(&mut rng);
                     println!(
-                        "Successfully created new keypair.\nAddress: {}\nPrivate Key: {}",
+                        "Successfully created new keypair.\nAddress: {}\nPrivate Key: 0x{}",
                         SimpleCast::to_checksum_address(&wallet.address()),
                         hex::encode(wallet.signer().to_bytes()),
                     );

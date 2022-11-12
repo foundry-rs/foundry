@@ -11,14 +11,15 @@ use crate::{
 use ethers::{
     prelude::{H160, H256, U256},
     types::{Address, BlockNumber, Transaction, U64},
+    utils::keccak256,
 };
 use hashbrown::HashMap as Map;
 pub use in_memory_db::MemDb;
 use revm::{
     db::{CacheDB, DatabaseRef},
     precompiles::Precompiles,
-    Account, AccountInfo, Bytecode, Database, DatabaseCommit, Env, ExecutionResult, Inspector,
-    JournaledState, Log, SpecId, TransactTo, EVM, KECCAK_EMPTY,
+    Account, AccountInfo, Bytecode, CreateScheme, Database, DatabaseCommit, Env, ExecutionResult,
+    Inspector, JournaledState, Log, SpecId, TransactTo, EVM, KECCAK_EMPTY,
 };
 use std::collections::{HashMap, HashSet};
 use tracing::{trace, warn};
@@ -89,7 +90,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
         env: &mut Env,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<LocalForkId> {
-        let id = self.create_fork(fork, journaled_state)?;
+        let id = self.create_fork(fork)?;
         self.select_fork(id, env, journaled_state)?;
         Ok(id)
     }
@@ -104,23 +105,18 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
         journaled_state: &mut JournaledState,
         transaction: H256,
     ) -> eyre::Result<LocalForkId> {
-        let id = self.create_fork_at_transaction(fork, journaled_state, transaction)?;
+        let id = self.create_fork_at_transaction(fork, transaction)?;
         self.select_fork(id, env, journaled_state)?;
         Ok(id)
     }
 
     /// Creates a new fork but does _not_ select it
-    fn create_fork(
-        &mut self,
-        fork: CreateFork,
-        journaled_state: &JournaledState,
-    ) -> eyre::Result<LocalForkId>;
+    fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<LocalForkId>;
 
     /// Creates a new fork but does _not_ select it
     fn create_fork_at_transaction(
         &mut self,
         fork: CreateFork,
-        journaled_state: &JournaledState,
         transaction: H256,
     ) -> eyre::Result<LocalForkId>;
 
@@ -182,6 +178,9 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
     fn active_fork_id(&self) -> Option<LocalForkId>;
+
+    /// Returns the Fork url that's currently used in the database, if fork mode is on
+    fn active_fork_url(&self) -> Option<String>;
 
     /// Whether the database is currently in forked
     fn is_forked_mode(&self) -> bool {
@@ -668,9 +667,19 @@ impl Backend {
     {
         self.set_caller(env.tx.caller);
         self.set_spec_id(env.cfg.spec_id);
-        if let TransactTo::Call(to) = env.tx.transact_to {
-            self.set_test_contract(to);
-        }
+
+        let test_contract = match env.tx.transact_to {
+            TransactTo::Call(to) => to,
+            TransactTo::Create(CreateScheme::Create) => {
+                revm::create_address(env.tx.caller, env.tx.nonce.unwrap_or_default())
+            }
+            TransactTo::Create(CreateScheme::Create2 { salt }) => {
+                let code_hash = H256::from_slice(keccak256(&env.tx.data).as_slice());
+                revm::create2_address(env.tx.caller, code_hash, salt)
+            }
+        };
+        self.set_test_contract(test_contract);
+
         revm::evm_inner::<Self, true>(env, self, &mut inspector).transact()
     }
 
@@ -838,25 +847,10 @@ impl DatabaseExt for Backend {
         }
     }
 
-    fn create_fork(
-        &mut self,
-        fork: CreateFork,
-        journaled_state: &JournaledState,
-    ) -> eyre::Result<LocalForkId> {
+    fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<LocalForkId> {
         trace!("create fork");
         let (fork_id, fork, _) = self.forks.create_fork(fork)?;
         let fork_db = ForkDB::new(fork);
-
-        // there might be the case where a fork was previously created and selected during `setUp`
-        // not necessarily with the current caller in which case we need to ensure that the init
-        // state also includes the caller
-        if let Some(caller) = self.caller_address() {
-            if !self.fork_init_journaled_state.state.contains_key(&caller) {
-                if let Some(account) = journaled_state.state.get(&caller).cloned() {
-                    self.fork_init_journaled_state.state.insert(caller, account);
-                }
-            }
-        }
 
         let (id, _) =
             self.inner.insert_new_fork(fork_id, fork_db, self.fork_init_journaled_state.clone());
@@ -866,11 +860,10 @@ impl DatabaseExt for Backend {
     fn create_fork_at_transaction(
         &mut self,
         fork: CreateFork,
-        journaled_state: &JournaledState,
         transaction: H256,
     ) -> eyre::Result<LocalForkId> {
         trace!(?transaction, "create fork at transaction");
-        let id = self.create_fork(fork, journaled_state)?;
+        let id = self.create_fork(fork)?;
         let fork_id = self.ensure_fork_id(id).cloned()?;
         let mut env = self
             .forks
@@ -919,18 +912,20 @@ impl DatabaseExt for Backend {
             // the `JournalState` at this point
             if launched_with_fork {
                 let caller = env.tx.caller;
-                let caller_account =
-                    active.journaled_state.state.get(&env.tx.caller).map(|acc| acc.info.clone());
+                let caller_account = active.journaled_state.state.get(&env.tx.caller).cloned();
                 let target_fork = self.inner.get_fork_mut(idx);
 
                 // depth 0 will be the default value when the fork was created
                 if target_fork.journaled_state.depth == 0 {
-                    // we also need to initialize and touch the caller
-                    if let Some(acc) = caller_account {
-                        if !target_fork.db.accounts.contains_key(&caller) {
-                            target_fork.db.insert_account_info(caller, acc.clone());
-                        }
-                        target_fork.journaled_state.state.insert(caller, acc.into());
+                    // Initialize caller with its fork info
+                    if let (Some(mut acc), None) =
+                        (caller_account, target_fork.journaled_state.state.get(&caller))
+                    {
+                        let fork_account = Database::basic(&mut target_fork.db, caller)?
+                            .ok_or(DatabaseError::MissingAccount(caller))?;
+
+                        acc.info = fork_account;
+                        target_fork.journaled_state.state.insert(caller, acc);
                     }
                 }
             }
@@ -1080,6 +1075,11 @@ impl DatabaseExt for Backend {
 
     fn active_fork_id(&self) -> Option<LocalForkId> {
         self.active_fork_ids.map(|(id, _)| id)
+    }
+
+    fn active_fork_url(&self) -> Option<String> {
+        let fork = self.inner.issued_local_fork_ids.get(&self.active_fork_id()?)?;
+        self.forks.get_fork_url(fork.clone()).ok()?
     }
 
     fn ensure_fork(&self, id: Option<LocalForkId>) -> eyre::Result<LocalForkId> {

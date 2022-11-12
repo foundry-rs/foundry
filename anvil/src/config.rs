@@ -974,6 +974,16 @@ impl AccountGenerator {
     }
 }
 
+/// Returns the path to anvil dir `~/.foundry/anvil`
+pub fn anvil_dir() -> Option<PathBuf> {
+    Config::foundry_dir().map(|p| p.join("anvil"))
+}
+
+/// Returns the root path to anvil's temporary storage `~/.foundry/anvil/`
+pub fn anvil_tmp_dir() -> Option<PathBuf> {
+    anvil_dir().map(|p| p.join("tmp"))
+}
+
 /// Finds the latest appropriate block to fork
 ///
 /// This fetches the "latest" block and checks whether the `Block` is fully populated (`hash` field

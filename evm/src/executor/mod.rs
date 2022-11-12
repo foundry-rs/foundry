@@ -1,4 +1,6 @@
-use self::inspector::{Cheatcodes, InspectorData, InspectorStackConfig};
+use self::inspector::{
+    cheatcodes::util::BroadcastableTransactions, Cheatcodes, InspectorData, InspectorStackConfig,
+};
 use crate::{debug::DebugArena, decode, trace::CallTraceArena, CALLER};
 pub use abi::{
     format_hardhat_call, patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS,
@@ -10,7 +12,7 @@ use ethers::{
     abi::{Abi, Contract, Detokenize, Function, Tokenize},
     prelude::{decode_function_data, encode_function_data, Address, U256},
     signers::LocalWallet,
-    types::{transaction::eip2718::TypedTransaction, Log},
+    types::Log,
 };
 use foundry_common::abi::IntoFunction;
 use hashbrown::HashMap;
@@ -20,7 +22,7 @@ use revm::{
 };
 /// Reexport commonly used revm types
 pub use revm::{db::DatabaseRef, Env, SpecId};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use tracing::trace;
 
 /// ABIs used internally in the executor
@@ -594,7 +596,7 @@ pub enum EvmError {
         traces: Option<CallTraceArena>,
         debug: Option<DebugArena>,
         labels: BTreeMap<Address, String>,
-        transactions: Option<VecDeque<TypedTransaction>>,
+        transactions: Option<BroadcastableTransactions>,
         state_changeset: Option<StateChangeset>,
         script_wallets: Vec<LocalWallet>,
     },
@@ -649,7 +651,7 @@ pub struct CallResult<D: Detokenize> {
     /// The debug nodes of the call
     pub debug: Option<DebugArena>,
     /// Scripted transactions generated from this call
-    pub transactions: Option<VecDeque<TypedTransaction>>,
+    pub transactions: Option<BroadcastableTransactions>,
     /// The changeset of the state.
     ///
     /// This is only present if the changed state was not committed to the database (i.e. if you
@@ -687,7 +689,7 @@ pub struct RawCallResult {
     /// The debug nodes of the call
     pub debug: Option<DebugArena>,
     /// Scripted transactions generated from this call
-    pub transactions: Option<VecDeque<TypedTransaction>>,
+    pub transactions: Option<BroadcastableTransactions>,
     /// The changeset of the state.
     ///
     /// This is only present if the changed state was not committed to the database (i.e. if you

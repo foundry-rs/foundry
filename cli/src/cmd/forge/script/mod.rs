@@ -1,6 +1,12 @@
 //! script command
 use crate::{cmd::forge::build::BuildArgs, opts::MultiWallet, utils::parse_ether_value};
-use cast::{decode, executor::inspector::DEFAULT_CREATE2_DEPLOYER};
+use cast::{
+    decode,
+    executor::inspector::{
+        cheatcodes::{util::BroadcastableTransactions, BroadcastableTransaction},
+        DEFAULT_CREATE2_DEPLOYER,
+    },
+};
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use ethers::{
@@ -23,20 +29,21 @@ use forge::{
     executor::{opts::EvmOpts, Backend},
     trace::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
-        CallTraceArena, CallTraceDecoder, CallTraceDecoderBuilder, RawOrDecodedCall,
-        RawOrDecodedReturnData, TraceKind,
+        CallTraceDecoder, CallTraceDecoderBuilder, RawOrDecodedCall, RawOrDecodedReturnData,
+        TraceKind, Traces,
     },
     CallKind,
 };
 use foundry_common::{
-    abi::format_token, evm::EvmArgs, ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN,
+    abi::format_token, evm::EvmArgs, ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_config::{figment, Config};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     path::PathBuf,
 };
+use tracing::log::trace;
 use yansi::Paint;
 
 mod build;
@@ -56,9 +63,11 @@ use ui::{TUIExitReason, Tui, Ui};
 mod artifacts;
 mod cmd;
 mod executor;
+mod multi;
+mod providers;
 mod receipts;
 mod sequence;
-mod transaction;
+pub mod transaction;
 mod verify;
 
 use crate::cmd::retry::RetryArgs;
@@ -124,6 +133,14 @@ pub struct ScriptArgs {
     #[clap(flatten, next_help_heading = "EVM OPTIONS")]
     pub evm_opts: EvmArgs,
 
+    #[clap(
+        long,
+        help = "Send via `eth_sendTransaction` using the `--sender` argument or `$ETH_FROM` as sender",
+        requires = "sender",
+        conflicts_with_all = &["private_key", "private_keys", "froms", "ledger", "trezor"]
+    )]
+    pub unlocked: bool,
+
     /// Resumes submitting transactions that failed or timed-out previously.
     ///
     /// It DOES NOT simulate the script again and it expects nonces to have remained the same.
@@ -132,6 +149,12 @@ pub struct ScriptArgs {
     /// otherwise it fails.
     #[clap(long)]
     pub resume: bool,
+
+    #[clap(
+        long,
+        help = "If present, --resume or --verify will be assumed to be a multi chain deployment."
+    )]
+    pub multi: bool,
 
     #[clap(long, help = "Open the script in the debugger. Takes precedence over broadcast.")]
     pub debug: bool,
@@ -336,15 +359,16 @@ impl ScriptArgs {
     fn maybe_new_sender(
         &self,
         evm_opts: &EvmOpts,
-        transactions: Option<&VecDeque<TypedTransaction>>,
+        transactions: Option<&BroadcastableTransactions>,
         predeploy_libraries: &[Bytes],
     ) -> eyre::Result<Option<Address>> {
         let mut new_sender = None;
 
         if let Some(txs) = transactions {
-            if !predeploy_libraries.is_empty() {
+            // If the user passed a `--sender` don't check anything.
+            if !predeploy_libraries.is_empty() && self.evm_opts.sender.is_none() {
                 for tx in txs.iter() {
-                    match tx {
+                    match &tx.transaction {
                         TypedTransaction::Legacy(tx) => {
                             if tx.to.is_none() {
                                 let sender = tx.from.expect("no sender");
@@ -373,16 +397,18 @@ impl ScriptArgs {
         from: Address,
         nonce: U256,
         data: &[Bytes],
-    ) -> VecDeque<TypedTransaction> {
+        fork_url: &Option<RpcUrl>,
+    ) -> BroadcastableTransactions {
         data.iter()
             .enumerate()
-            .map(|(i, bytes)| {
-                TypedTransaction::Legacy(TransactionRequest {
+            .map(|(i, bytes)| BroadcastableTransaction {
+                rpc: fork_url.clone(),
+                transaction: TypedTransaction::Legacy(TransactionRequest {
                     from: Some(from),
                     data: Some(bytes.clone()),
                     nonce: Some(nonce + i),
                     ..Default::default()
-                })
+                }),
             })
             .collect()
     }
@@ -395,6 +421,8 @@ impl ScriptArgs {
         project: Project,
         highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
     ) -> eyre::Result<()> {
+        trace!(target: "script", "debugging script");
+
         let (sources, artifacts) = filter_sources_and_artifacts(
             &self.path,
             sources,
@@ -519,7 +547,10 @@ impl ScriptArgs {
         let mut prompt_user = false;
         for (data, to) in result.transactions.iter().flat_map(|txes| {
             txes.iter().filter_map(|tx| {
-                tx.data().filter(|data| data.len() > CONTRACT_MAX_SIZE).map(|data| (data, tx.to()))
+                tx.transaction
+                    .data()
+                    .filter(|data| data.len() > CONTRACT_MAX_SIZE)
+                    .map(|data| (data, tx.transaction.to()))
             })
         }) {
             let mut offset = 0;
@@ -583,11 +614,11 @@ impl Provider for ScriptArgs {
 pub struct ScriptResult {
     pub success: bool,
     pub logs: Vec<Log>,
-    pub traces: Vec<(TraceKind, CallTraceArena)>,
+    pub traces: Traces,
     pub debug: Option<Vec<DebugArena>>,
     pub gas_used: u64,
     pub labeled_addresses: BTreeMap<Address, String>,
-    pub transactions: Option<VecDeque<TypedTransaction>>,
+    pub transactions: Option<BroadcastableTransactions>,
     pub returned: bytes::Bytes,
     pub address: Option<Address>,
     pub script_wallets: Vec<LocalWallet>,
@@ -606,12 +637,62 @@ pub struct NestedValue {
     pub value: String,
 }
 
+#[derive(Default, Clone)]
 pub struct ScriptConfig {
     pub config: Config,
     pub evm_opts: EvmOpts,
     pub sender_nonce: U256,
-    pub backend: Option<Backend>,
+    /// Maps a rpc url to a backend
+    pub backends: HashMap<RpcUrl, Backend>,
+    /// Script target contract
+    pub target_contract: Option<ArtifactId>,
+    /// Function called by the script
     pub called_function: Option<Function>,
+    /// Unique list of rpc urls present
+    pub total_rpcs: HashSet<RpcUrl>,
+    /// If true, one of the transactions did not have a rpc
+    pub missing_rpc: bool,
+}
+
+impl ScriptConfig {
+    fn collect_rpcs(&mut self, txs: &BroadcastableTransactions) {
+        self.missing_rpc = txs.iter().any(|tx| tx.rpc.is_none());
+
+        self.total_rpcs
+            .extend(txs.iter().filter_map(|tx| tx.rpc.as_ref().cloned()).collect::<HashSet<_>>());
+
+        if let Some(rpc) = &self.evm_opts.fork_url {
+            self.total_rpcs.insert(rpc.clone());
+        }
+    }
+
+    fn has_multiple_rpcs(&self) -> bool {
+        self.total_rpcs.len() > 1
+    }
+
+    /// Certain features are disabled for multi chain deployments, and if tried, will return
+    /// error. [library support]
+    fn check_multi_chain_constraints(&self, libraries: &Libraries) -> eyre::Result<()> {
+        if self.has_multiple_rpcs() || (self.missing_rpc && !self.total_rpcs.is_empty()) {
+            eprintln!(
+                "{}",
+                Paint::yellow(
+                    "Multi chain deployment is still under development. Use with caution."
+                )
+            );
+            if !libraries.libs.is_empty() {
+                eyre::bail!(
+                    "Multi chain deployment does not support library linking at the moment."
+                )
+            }
+        }
+        Ok(())
+    }
+
+    /// Returns the script target contract
+    fn target_contract(&self) -> &ArtifactId {
+        self.target_contract.as_ref().expect("should exist after building")
+    }
 }
 
 #[cfg(test)]
@@ -634,6 +715,30 @@ mod tests {
             args.sig,
             "522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266"
         );
+    }
+
+    #[test]
+    fn can_parse_unlocked() {
+        let args: ScriptArgs = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--sender",
+            "0x4e59b44847b379578588920ca78fbf26c0b4956c",
+            "--unlocked",
+        ]);
+        assert!(args.unlocked);
+
+        let key = U256::zero();
+        let args = ScriptArgs::try_parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--sender",
+            "0x4e59b44847b379578588920ca78fbf26c0b4956c",
+            "--unlocked",
+            "--private-key",
+            key.to_string().as_str(),
+        ]);
+        assert!(args.is_err());
     }
 
     #[test]

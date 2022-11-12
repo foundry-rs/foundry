@@ -3,7 +3,9 @@
 use crate::{
     buffer::*,
     chunk::*,
-    comments::{CommentState, CommentStringExt, CommentWithMetadata, Comments},
+    comments::{
+        CommentPosition, CommentState, CommentStringExt, CommentType, CommentWithMetadata, Comments,
+    },
     macros::*,
     solang_ext::*,
     string::{QuoteState, QuotedStringExt},
@@ -244,6 +246,14 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
+    /// Write new line with preserved `last_indent_group_skipped` flag
+    fn write_preserved_line(&mut self) -> Result<()> {
+        let last_indent_group_skipped = self.last_indent_group_skipped();
+        writeln!(self.buf())?;
+        self.set_last_indent_group_skipped(last_indent_group_skipped);
+        Ok(())
+    }
+
     /// Returns number of blank lines in source between two byte indexes
     fn blank_lines(&self, start: usize, end: usize) -> usize {
         self.source[start..end].trim_comments().matches('\n').count()
@@ -420,85 +430,166 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Write a comment to the buffer formatted.
     /// WARNING: This may introduce a newline if the comment is a Line comment
+    /// or if the comment are wrapped
     fn write_comment(&mut self, comment: &CommentWithMetadata, is_first: bool) -> Result<()> {
         if self.inline_config.is_disabled(comment.loc) {
             return self.write_raw_comment(comment)
         }
 
-        if comment.is_prefix() {
-            let last_indent_group_skipped = self.last_indent_group_skipped();
-            let write_preserved_ln = |fmt: &mut Self| -> Result<()> {
-                writeln!(fmt.buf())?;
-                fmt.set_last_indent_group_skipped(last_indent_group_skipped);
-                Ok(())
-            };
-            if !self.is_beginning_of_line() {
-                write_preserved_ln(self)?;
-            }
-            if !is_first && comment.has_newline_before {
-                write_preserved_ln(self)?;
-            }
-            if comment.is_doc_block() {
-                let content = comment
-                    .comment
-                    .trim()
-                    .strip_prefix("/**")
-                    .unwrap()
-                    .strip_suffix("*/")
-                    .unwrap()
-                    .trim();
-                let lines = content.lines();
-                writeln!(self.buf(), "/**")?;
-                for line in lines {
-                    if line.trim().starts_with('*') {
-                        let line = line.trim().trim_start_matches('*');
-                        let needs_space =
-                            line.chars().next().map_or(false, |ch| !ch.is_whitespace());
-                        writeln!(self.buf(), " *{}{line}", if needs_space { " " } else { "" })?;
-                    } else {
-                        let curr_indent = self.buf.current_indent_len();
+        match comment.position {
+            CommentPosition::Prefix => self.write_prefix_comment(comment, is_first),
+            CommentPosition::Postfix => self.write_postfix_comment(comment),
+        }
+    }
 
-                        let indent_whitespace_count = line
-                            .char_indices()
-                            .take_while(|(idx, ch)| ch.is_whitespace() && *idx <= curr_indent)
-                            .count();
-                        let to_skip = indent_whitespace_count -
-                            indent_whitespace_count % self.config.tab_width;
+    /// Write a comment with position [CommentPosition::Prefix]
+    fn write_prefix_comment(
+        &mut self,
+        comment: &CommentWithMetadata,
+        is_first: bool,
+    ) -> Result<()> {
+        if !self.is_beginning_of_line() {
+            self.write_preserved_line()?;
+        }
+        if !is_first && comment.has_newline_before {
+            self.write_preserved_line()?;
+        }
 
-                        writeln!(self.buf(), " * {}", &line[to_skip..])?;
-                    }
-                }
-                write!(self.buf(), " */")?;
-            } else {
-                let mut lines = comment.comment.splitn(2, '\n');
-                write!(self.buf(), "{}", lines.next().unwrap())?;
-                if let Some(line) = lines.next() {
-                    write_preserved_ln(self)?;
-                    self.write_raw(line)?;
-                }
-            }
-            if self.find_next_line(comment.loc.end()).is_some() {
-                write_preserved_ln(self)?;
-            }
+        if matches!(comment.ty, CommentType::DocBlock) {
+            let mut lines = comment.contents().trim().lines();
+            writeln!(self.buf(), "{}", comment.start_token())?;
+            lines.try_for_each(|l| self.write_doc_block_line(comment, l))?;
+            write!(self.buf(), " {}", comment.end_token().unwrap())?;
+            self.write_preserved_line()?;
             return Ok(())
         }
 
+        write!(self.buf(), "{}", comment.start_token())?;
+
+        let mut lines = comment.contents().lines().peekable();
+        while let Some(line) = lines.next() {
+            self.write_comment_line(comment, line)?;
+            if lines.peek().is_some() {
+                self.write_preserved_line()?;
+            }
+        }
+
+        if let Some(end) = comment.end_token() {
+            write!(self.buf(), "{end}")?;
+        }
+        if self.find_next_line(comment.loc.end()).is_some() {
+            self.write_preserved_line()?;
+        }
+
+        Ok(())
+    }
+
+    /// Write a comment with position [CommentPosition::Postfix]
+    fn write_postfix_comment(&mut self, comment: &CommentWithMetadata) -> Result<()> {
         let indented = self.is_beginning_of_line();
         self.indented_if(indented, 1, |fmt| {
             if !indented && fmt.next_char_needs_space('/') {
-                write!(fmt.buf(), " ")?;
+                fmt.write_whitespace_separator(false)?;
             }
-            let mut lines = comment.comment.splitn(2, '\n');
-            write!(fmt.buf(), "{}", lines.next().unwrap())?;
-            if let Some(line) = lines.next() {
-                writeln!(fmt.buf())?;
-                fmt.write_raw(line)?;
+
+            write!(fmt.buf(), "{}", comment.start_token())?;
+            let start_token_pos = fmt.current_line_len();
+
+            let mut lines = comment.contents().lines().peekable();
+            fmt.grouped(|fmt| {
+                while let Some(line) = lines.next() {
+                    fmt.write_comment_line(comment, line)?;
+                    if lines.peek().is_some() {
+                        fmt.write_whitespace_separator(true)?;
+                    }
+                }
+                Ok(())
+            })?;
+
+            if let Some(end) = comment.end_token() {
+                // If comment is not multiline, end token has to be aligned with the start
+                if fmt.is_beginning_of_line() {
+                    write!(fmt.buf(), "{}{}", " ".repeat(start_token_pos), end)?;
+                } else {
+                    write!(fmt.buf(), "{end}")?;
+                }
             }
+
             if comment.is_line() {
-                writeln!(fmt.buf())?;
+                fmt.write_whitespace_separator(true)?;
             }
             Ok(())
         })
+    }
+
+    /// Write the line of a doc block comment line
+    fn write_doc_block_line(&mut self, comment: &CommentWithMetadata, line: &str) -> Result<()> {
+        if line.trim().starts_with('*') {
+            let line = line.trim().trim_start_matches('*');
+            let needs_space = line.chars().next().map_or(false, |ch| !ch.is_whitespace());
+            write!(self.buf(), " *{}", if needs_space { " " } else { "" })?;
+            self.write_comment_line(comment, line)?;
+            self.write_whitespace_separator(true)?;
+            return Ok(())
+        }
+
+        let indent_whitespace_count = line
+            .char_indices()
+            .take_while(|(idx, ch)| ch.is_whitespace() && *idx <= self.buf.current_indent_len())
+            .count();
+        let to_skip = indent_whitespace_count - indent_whitespace_count % self.config.tab_width;
+        write!(self.buf(), " * ")?;
+        self.write_comment_line(comment, &line[to_skip..])?;
+        self.write_whitespace_separator(true)?;
+        Ok(())
+    }
+
+    /// Write a comment line that might potentially overflow the maximum line length
+    /// and, if configured, will be wrapped to the next line
+    fn write_comment_line(&mut self, comment: &CommentWithMetadata, line: &str) -> Result<()> {
+        if self.will_it_fit(line) || !self.config.wrap_comments {
+            let start_with_ws =
+                line.chars().next().map(|ch| ch.is_whitespace()).unwrap_or_default();
+            if !self.is_beginning_of_line() || !start_with_ws {
+                write!(self.buf(), "{line}")?;
+                return Ok(())
+            }
+
+            // if this is the beginning of the line,
+            // the comment should start with at least an indent
+            let indent = self.buf.current_indent_len();
+            let mut chars = line
+                .char_indices()
+                .skip_while(|(idx, ch)| ch.is_whitespace() && *idx < indent)
+                .map(|(_, ch)| ch);
+            let padded = format!("{}{}", " ".repeat(indent), chars.join(""));
+            self.write_raw(padded)?;
+            return Ok(())
+        }
+
+        let mut words = line.split(' ').peekable();
+        while let Some(word) = words.next() {
+            if self.is_beginning_of_line() {
+                write!(self.buf(), "{}", word.trim_start())?;
+            } else {
+                self.write_raw(word)?;
+            }
+
+            if let Some(next) = words.peek() {
+                if !word.is_empty() && !self.will_it_fit(next) {
+                    // the next word doesn't fit on this line,
+                    // write remaining words on the next
+                    self.write_whitespace_separator(true)?;
+                    // write newline wrap token
+                    write!(self.buf(), "{}", comment.wrap_token())?;
+                    self.write_comment_line(comment, &words.join(" "))?;
+                    return Ok(())
+                }
+
+                self.write_whitespace_separator(false)?;
+            }
+        }
+        Ok(())
     }
 
     /// Write a raw comment. This is like [`write_comment`] but won't do any formatting or worry
@@ -506,9 +597,7 @@ impl<'a, W: Write> Formatter<'a, W> {
     fn write_raw_comment(&mut self, comment: &CommentWithMetadata) -> Result<()> {
         self.write_raw(&comment.comment)?;
         if comment.is_line() {
-            let last_indent_group_skipped = self.last_indent_group_skipped();
-            writeln!(self.buf())?;
-            self.set_last_indent_group_skipped(last_indent_group_skipped);
+            self.write_preserved_line()?;
         }
         Ok(())
     }
@@ -520,8 +609,10 @@ impl<'a, W: Write> Formatter<'a, W> {
         comments: impl IntoIterator<Item = &'b CommentWithMetadata>,
     ) -> Result<()> {
         let mut comments = comments.into_iter().peekable();
-        let mut last_byte_written =
-            if let Some(comment) = comments.peek() { comment.loc.start() } else { return Ok(()) };
+        let mut last_byte_written = match comments.peek() {
+            Some(comment) => comment.loc.start(),
+            None => return Ok(()),
+        };
         let mut is_first = true;
         for comment in comments {
             let unwritten_whitespace_loc =
@@ -2934,6 +3025,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             let tx = fmt.transact(|fmt| {
                 fmt.grouped(|fmt| {
                     write_return(fmt)?;
+                    if !fmt.is_beginning_of_line() {
+                        fmt.write_whitespace_separator(true)?;
+                    }
                     fit_on_next_line = fmt.try_on_single_line(|fmt| expr.visit(fmt))?;
                     Ok(())
                 })?;
