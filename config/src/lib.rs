@@ -392,7 +392,8 @@ impl Config {
     ///
     /// `0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38`
     pub const DEFAULT_SENDER: H160 = H160([
-        0, 163, 41, 192, 100, 135, 105, 167, 58, 250, 199, 249, 56, 30, 8, 251, 67, 219, 234, 114,
+        0x18, 0x04, 0xc8, 0xAB, 0x1F, 0x12, 0xE6, 0xbb, 0xF3, 0x89, 0x4D, 0x40, 0x83, 0xF3, 0x3E, 0x07,
+        0x30, 0x9D, 0x1F, 0x38,
     ]);
 
     /// Returns the current `Config`
