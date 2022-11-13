@@ -12,7 +12,7 @@ use foundry_evm::{
         backend::Backend, fork::CreateFork, inspector::CheatsConfig, opts::EvmOpts, Executor,
         ExecutorBuilder, SpecId,
     },
-    revm,
+    revm, CALLER,
 };
 use foundry_utils::PostLinkInput;
 use rayon::prelude::*;
@@ -196,7 +196,7 @@ impl MultiContractRunner {
             contract,
             deploy_code,
             self.evm_opts.initial_balance,
-            self.sender,
+            Some(self.sender.unwrap_or(CALLER)),
             self.errors.as_ref(),
             libs,
         );
