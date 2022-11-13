@@ -901,32 +901,24 @@ impl DatabaseExt for Backend {
             .get_env(fork_id)?
             .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exit", id))?;
 
-        let launched_with_fork = self.inner.launched_with_fork.is_some();
-
         // If we're currently in forking mode we need to update the journaled_state to this point,
         // this ensures the changes performed while the fork was active are recorded
         if let Some(active) = self.active_fork_mut() {
             active.journaled_state = active_journaled_state.clone();
 
-            // if the Backend was launched in forking mode, then we also need to adjust the depth of
-            // the `JournalState` at this point
-            if launched_with_fork {
-                let caller = env.tx.caller;
-                let caller_account = active.journaled_state.state.get(&env.tx.caller).cloned();
-                let target_fork = self.inner.get_fork_mut(idx);
+            let caller = env.tx.caller;
+            let caller_account = active.journaled_state.state.get(&env.tx.caller).cloned();
+            let target_fork = self.inner.get_fork_mut(idx);
 
-                // depth 0 will be the default value when the fork was created
-                if target_fork.journaled_state.depth == 0 {
-                    // Initialize caller with its fork info
-                    if let (Some(mut acc), None) =
-                        (caller_account, target_fork.journaled_state.state.get(&caller))
-                    {
-                        let fork_account = Database::basic(&mut target_fork.db, caller)?
-                            .ok_or(DatabaseError::MissingAccount(caller))?;
+            // depth 0 will be the default value when the fork was created
+            if target_fork.journaled_state.depth == 0 {
+                // Initialize caller with its fork info
+                if let Some(mut acc) = caller_account {
+                    let fork_account = Database::basic(&mut target_fork.db, caller)?
+                        .ok_or(DatabaseError::MissingAccount(caller))?;
 
-                        acc.info = fork_account;
-                        target_fork.journaled_state.state.insert(caller, acc);
-                    }
+                    acc.info = fork_account;
+                    target_fork.journaled_state.state.insert(caller, acc);
                 }
             }
         } else {
@@ -938,6 +930,9 @@ impl DatabaseExt for Backend {
             trace!("recording fork init journaled_state");
             self.fork_init_journaled_state = active_journaled_state.clone();
             self.prepare_init_journal_state()?;
+
+            // Make sure that the next created fork has a depth of 0.
+            self.fork_init_journaled_state.depth = 0;
         }
 
         {
