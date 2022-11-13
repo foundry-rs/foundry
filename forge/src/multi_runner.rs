@@ -196,7 +196,7 @@ impl MultiContractRunner {
             contract,
             deploy_code,
             self.evm_opts.initial_balance,
-            Some(self.sender.unwrap_or(CALLER)),
+            self.sender,
             self.errors.as_ref(),
             libs,
         );

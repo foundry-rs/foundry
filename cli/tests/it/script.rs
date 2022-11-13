@@ -714,7 +714,7 @@ contract Script0 is Script {
         assert_eq!(
             transactions[0].arguments,
             vec![
-                "0x00a329c0648769A73afAc7F9381E08FB43dBEA72".to_string(),
+                "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38".to_string(),
                 "4294967296".to_string(),
                 "-4294967296".to_string(),
                 "0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6".to_string(),
@@ -803,7 +803,7 @@ contract Script0 is Script {
         assert_eq!(
             transactions[0].arguments,
             vec![
-                "0x00a329c0648769A73afAc7F9381E08FB43dBEA72".to_string(),
+                "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38".to_string(),
                 "4294967296".to_string(),
                 "-4294967296".to_string(),
                 "0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6".to_string(),
