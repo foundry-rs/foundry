@@ -12,7 +12,7 @@ use foundry_evm::{
         backend::Backend, fork::CreateFork, inspector::CheatsConfig, opts::EvmOpts, Executor,
         ExecutorBuilder, SpecId,
     },
-    revm, CALLER,
+    revm,
 };
 use foundry_utils::PostLinkInput;
 use rayon::prelude::*;
