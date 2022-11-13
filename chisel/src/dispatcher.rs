@@ -584,6 +584,33 @@ impl ChiselDisptacher {
                     )),
                 }
             }
+            ChiselCommand::StorageLayout => {
+                if let Some(session_source) = self.session.session_source.as_mut() {
+                    if let Ok(output) = session_source.build() {
+                        dbg!(output
+                            .compiler_output
+                            .contracts_iter()
+                            .map(|(n, _)| n)
+                            .collect::<Vec<&String>>());
+                        dbg!(
+                            output
+                                .compiler_output
+                                .contracts_into_iter()
+                                .find(|(n, _)| n.eq("REPL"))
+                                .unwrap()
+                                .1
+                                .storage_layout
+                        );
+                        DispatchResult::CommandSuccess(None)
+                    } else {
+                        DispatchResult::CommandFailed(String::from(
+                            "Failed to build session source",
+                        ))
+                    }
+                } else {
+                    DispatchResult::CommandFailed(String::from("Session source not present"))
+                }
+            }
         }
     }
 
@@ -799,6 +826,8 @@ pub enum ChiselCommand {
     MemDump,
     /// Dump the raw stack
     StackDump,
+    /// View the storage layout of the REPL contract
+    StorageLayout,
     /// Export the current REPL session source to a Script file
     Export,
     /// Fetch an interface of a verified contract on Etherscan
@@ -824,6 +853,7 @@ impl FromStr for ChiselCommand {
             "stackdump" => Ok(ChiselCommand::StackDump),
             "export" => Ok(ChiselCommand::Export),
             "fetch" => Ok(ChiselCommand::Fetch),
+            "storage-layout" | "sl" => Ok(ChiselCommand::StorageLayout),
             _ => Err(ChiselDisptacher::make_error(&format!(
                 "Unknown command \"{}\"! See available commands with `!help`.",
                 s
@@ -883,6 +913,7 @@ impl From<ChiselCommand> for CmdDescriptor {
             // Debug
             ChiselCommand::MemDump => (&["memdump"], "Dump the raw memory of the current state", CmdCategory::Debug),
             ChiselCommand::StackDump => (&["stackdump"], "Dump the raw stack of the current state", CmdCategory::Debug),
+            ChiselCommand::StorageLayout => (&["storage-layout", "sl"], "View the storage layout of the REPL contract", CmdCategory::Debug)
         }
     }
 }

@@ -16,8 +16,7 @@ Chisel is a fast, utilitarian, and verbose solidity REPL. It is heavily inspired
     - [ ] Support for function call expressions
     - [ ] Clean up how this is done, not a huge fan of the current solution
   - [x] Input history.
-  - [ ] Use forge fmt module to format source code when printing via the `!source` command or exporting to a Script file (?)
-  - [ ] Link libraries on deployment if script inheritance is enabled.
+  - [x] Use forge fmt module to format source code when printing via the `!source` command or exporting to a Script file (?)
 - [x] Cache REPL History
   - [x] Allow a user to save/load sessions from their Chisel history.
     - [x] Fix session loading bug wrt non-serializable `IntermediateOutput` component.
@@ -31,6 +30,7 @@ Chisel is a fast, utilitarian, and verbose solidity REPL. It is heavily inspired
   - [ ] Inspection verbosity configuration
   - [ ] Undo
   - [ ] Inspect bytecode / mnenomic of local or remote contracts.
+    - [ ] Possibly use the forge debugger for this?
   - [x] Fetch contract interface from Etherscan ABI
   - [ ] Import remote sources from GitHub
   - [x] Enable / disable call trace printing
@@ -51,7 +51,6 @@ Chisel is a fast, utilitarian, and verbose solidity REPL. It is heavily inspired
 - [ ] Optimizations (after MVP).
   - [ ] Speed up REPL execution time.
     - [ ] Use flamegraph to determine plan of attack.
-    - [x] Don't inherit `Script.sol` by default. (`!script` to enable / disable inheritance.)
     - [ ] Rework SessionSource clone, does not need to be a full deep copy.
 - [ ] Finish README.
   - [ ] Examples
@@ -112,22 +111,21 @@ If you do not have `foundryup` installed, reference the Foundry [installation gu
 ⚒️ Chisel help
 =============
 General
-        !help - Display all commands
+        !help | !h - Display all commands
 
 Session
-        !clear - Clear current session source
-        !source - Display the source code of the current session
-        !save [id] - Save the current session to cache
-        !load <id> - Load a previous session ID from cache
+        !clear | !c - Clear current session source
+        !source | !so - Display the source code of the current session
+        !save [id] | !s [id] - Save the current session to cache
+        !load <id> | !l <id> - Load a previous session ID from cache
         !list - List all cached sessions
         !clearcache - Clear the chisel cache of all stored sessions
         !export - Export the current session source to a script file
         !fetch <addr> <name> - Fetch the interface of a verified contract on Etherscan
-        !script - Enable or disable the inheritance of forge-std/Script.sol
 
 Environment
-        !fork - Fork an RPC for the current session. Supply 0 arguments to return to a local network
-        !traces - Enable / disable traces for the current session
+        !fork <url> | !f <url> - Fork an RPC for the current session. Supply 0 arguments to return to a local network
+        !traces | !t - Enable / disable traces for the current session
 
 Debug
         !memdump - Dump the raw memory of the current state
@@ -186,11 +184,6 @@ To clear Chisel's cache (stored in `~/.foundry/cache/chisel`), use the `chisel c
 ➜ !clearcache
 Cleared chisel cache!
 ```
-
-### Inheriting `Script.sol`
-
-The REPL contract is bare by default to speed up compilation time, however Script inheritance can be toggled via the
-`script` command or the `-s` flag in order to utilize cheatcodes and other helper functions within `Script`.
 
 ### Toggling Traces
 

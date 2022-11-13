@@ -394,8 +394,11 @@ pragma solidity ^{major}.{minor}.{patch};
 
 import {{Script}} from "forge-std/Script.sol";
 {}
+
 contract {} is Script {{
     {}
+    
+    /// @notice Script entry point
     function run() public {{
         {}
     }}
@@ -415,9 +418,11 @@ pragma solidity ^{major}.{minor}.{patch};
 
 import {{Vm}} from "forge-std/Vm.sol";
 {}
+
 contract {} {{
     Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
     {}
+  
     /// @notice REPL contract entry point
     function run() public {{
         {}
