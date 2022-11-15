@@ -189,6 +189,12 @@ fn test_issue_3616() {
     test_repro!("Issue3616");
 }
 
+// <https://github.com/foundry-rs/foundry/issues/3685>
+#[test]
+fn test_issue_3685() {
+    test_repro!("Issue3685");
+}
+
 // <https://github.com/foundry-rs/foundry/issues/3653>
 #[test]
 fn test_issue_3653() {

@@ -32,6 +32,7 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
+use tracing::trace;
 
 /// Cheatcodes related to the execution environment.
 mod env;
@@ -215,6 +216,13 @@ impl Cheatcodes {
     /// Cleanup any previously applied cheatcodes that altered the state in such a way that revm's
     /// revert would run into issues.
     pub fn on_revert<DB: DatabaseExt>(&mut self, data: &mut EVMData<'_, DB>) {
+        trace!(deals=?self.eth_deals.len(), "Rolling back deals");
+
+        // Delay revert clean up until expected revert is handled, if set.
+        if self.expected_revert.is_some() {
+            return
+        }
+
         // Roll back all previously applied deals
         // This will prevent overflow issues in revm's [`JournaledState::journal_revert`] routine
         // which rolls back any transfers.
@@ -460,7 +468,10 @@ where
                     status,
                     retdata,
                 ) {
-                    Err(retdata) => (Return::Revert, remaining_gas, retdata),
+                    Err(retdata) => {
+                        trace!(expected=?expected_revert, actual=%hex::encode(&retdata), "Expected revert mismatch");
+                        (Return::Revert, remaining_gas, retdata)
+                    }
                     Ok((_, retdata)) => (Return::Return, remaining_gas, retdata),
                 }
             }
