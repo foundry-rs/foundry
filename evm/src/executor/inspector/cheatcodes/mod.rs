@@ -223,6 +223,11 @@ impl Cheatcodes {
             return
         }
 
+        // we only want to apply cleanup top level
+        if data.journaled_state.depth() > 0 {
+            return
+        }
+
         // Roll back all previously applied deals
         // This will prevent overflow issues in revm's [`JournaledState::journal_revert`] routine
         // which rolls back any transfers.
