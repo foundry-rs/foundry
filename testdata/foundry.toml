@@ -37,6 +37,8 @@ test = 'test'
 tx_origin = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
 verbosity = 0
 via_ir = false
+fs_permissions = [{ access = "read-write", path = "./" }]
+
 
 [profile.default.rpc_storage_caching]
 chains = 'all'

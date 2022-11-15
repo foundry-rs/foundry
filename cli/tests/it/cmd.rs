@@ -1388,6 +1388,12 @@ forgetest_init!(
     }
 );
 
+// checks `forge inspect <contract> irOptimized works
+forgetest_init!(can_inspect_ir_optimized, |_prj: TestProject, mut cmd: TestCommand| {
+    cmd.args(["inspect", TEMPLATE_CONTRACT, "irOptimized"]);
+    cmd.assert_success();
+});
+
 // checks forge bind works correctly on the default project
 forgetest_init!(can_bind, |_prj: TestProject, mut cmd: TestCommand| {
     cmd.arg("bind");
@@ -1452,7 +1458,7 @@ forgetest_init!(can_build_sizes_repeatedly, |_prj: TestProject, mut cmd: TestCom
     let table = out.split("Compiler run successful").nth(1).unwrap().trim();
 
     let unchanged = cmd.stdout();
-    assert!(unchanged.contains(&table), "{}", table);
+    assert!(unchanged.contains(table), "{}", table);
 });
 
 // checks that build --names includes all contracts even if unchanged
@@ -1466,5 +1472,5 @@ forgetest_init!(can_build_names_repeatedly, |_prj: TestProject, mut cmd: TestCom
     let list = out.split("Compiler run successful").nth(1).unwrap().trim();
 
     let unchanged = cmd.stdout();
-    assert!(unchanged.contains(&list), "{}", list);
+    assert!(unchanged.contains(list), "{}", list);
 });

@@ -1,7 +1,7 @@
 use self::{
     env::Broadcast,
     expect::{handle_expect_emit, handle_expect_revert},
-    util::process_create,
+    util::{process_create, BroadcastableTransactions},
 };
 use crate::{
     abi::HEVMCalls,
@@ -24,17 +24,19 @@ use revm::{
     opcode, BlockEnv, CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return,
     TransactTo,
 };
+use serde_json::Value;
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{BTreeMap, HashMap},
     fs::File,
     io::BufReader,
     path::PathBuf,
     sync::Arc,
 };
+use tracing::trace;
 
 /// Cheatcodes related to the execution environment.
 mod env;
-pub use env::{Prank, RecordAccess};
+pub use env::{Log, Prank, RecordAccess};
 /// Assertion helpers (such as `expectEmit`)
 mod expect;
 pub use expect::{ExpectedCallData, ExpectedEmit, ExpectedRevert, MockCallDataContext};
@@ -49,11 +51,13 @@ mod fuzz;
 mod snapshot;
 /// Utility cheatcodes (`sign` etc.)
 pub mod util;
-pub use util::DEFAULT_CREATE2_DEPLOYER;
+pub use util::{BroadcastableTransaction, DEFAULT_CREATE2_DEPLOYER};
 
 mod config;
 use crate::executor::{backend::RevertDiagnostic, inspector::utils::get_create_address};
 pub use config::CheatsConfig;
+
+mod error;
 
 /// An inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
@@ -124,7 +128,7 @@ pub struct Cheatcodes {
     pub corrected_nonce: bool,
 
     /// Scripting based transactions
-    pub broadcastable_transactions: VecDeque<TypedTransaction>,
+    pub broadcastable_transactions: BroadcastableTransactions,
 
     /// Additional, user configurable context this Inspector has access to when inspecting a call
     pub config: Arc<CheatsConfig>,
@@ -135,6 +139,11 @@ pub struct Cheatcodes {
     // Commit FS changes such as file creations, writes and deletes.
     // Used to prevent duplicate changes file executing non-committing calls.
     pub fs_commit: bool,
+
+    pub serialized_jsons: HashMap<String, HashMap<String, Value>>,
+
+    /// Records all eth deals
+    pub eth_deals: Vec<DealRecord>,
 }
 
 impl Cheatcodes {
@@ -200,6 +209,33 @@ impl Cheatcodes {
         }
 
         data.db.allow_cheatcode_access(created_address);
+    }
+
+    /// Called when there was a revert.
+    ///
+    /// Cleanup any previously applied cheatcodes that altered the state in such a way that revm's
+    /// revert would run into issues.
+    pub fn on_revert<DB: DatabaseExt>(&mut self, data: &mut EVMData<'_, DB>) {
+        trace!(deals=?self.eth_deals.len(), "Rolling back deals");
+
+        // Delay revert clean up until expected revert is handled, if set.
+        if self.expected_revert.is_some() {
+            return
+        }
+
+        // we only want to apply cleanup top level
+        if data.journaled_state.depth() > 0 {
+            return
+        }
+
+        // Roll back all previously applied deals
+        // This will prevent overflow issues in revm's [`JournaledState::journal_revert`] routine
+        // which rolls back any transfers.
+        while let Some(record) = self.eth_deals.pop() {
+            if let Some(acc) = data.journaled_state.state.get_mut(&record.address) {
+                acc.info.balance = record.old_balance;
+            }
+        }
     }
 }
 
@@ -271,9 +307,10 @@ where
 
         // Stores this log if `recordLogs` has been called
         if let Some(storage_recorded_logs) = &mut self.recorded_logs {
-            storage_recorded_logs
-                .entries
-                .push(RawLog { topics: topics.to_vec(), data: data.to_vec() });
+            storage_recorded_logs.entries.push(Log {
+                emitter: *address,
+                inner: RawLog { topics: topics.to_vec(), data: data.to_vec() },
+            });
         }
     }
 
@@ -363,16 +400,17 @@ where
                         let account =
                             data.journaled_state.state().get_mut(&broadcast.origin).unwrap();
 
-                        self.broadcastable_transactions.push_back(TypedTransaction::Legacy(
-                            TransactionRequest {
+                        self.broadcastable_transactions.push_back(BroadcastableTransaction {
+                            rpc: data.db.active_fork_url(),
+                            transaction: TypedTransaction::Legacy(TransactionRequest {
                                 from: Some(broadcast.origin),
                                 to: Some(NameOrAddress::Address(call.contract)),
                                 value: Some(call.transfer.value),
                                 data: Some(call.input.clone().into()),
                                 nonce: Some(account.info.nonce.into()),
                                 ..Default::default()
-                            },
-                        ));
+                            }),
+                        });
 
                         // call_inner does not increase nonces, so we have to do it ourselves
                         account.info.nonce += 1;
@@ -435,7 +473,10 @@ where
                     status,
                     retdata,
                 ) {
-                    Err(retdata) => (Return::Revert, remaining_gas, retdata),
+                    Err(retdata) => {
+                        trace!(expected=?expected_revert, actual=%hex::encode(&retdata), "Expected revert mismatch");
+                        (Return::Revert, remaining_gas, retdata)
+                    }
                     Ok((_, retdata)) => (Return::Return, remaining_gas, retdata),
                 }
             }
@@ -563,16 +604,17 @@ where
                         }
                     };
 
-                self.broadcastable_transactions.push_back(TypedTransaction::Legacy(
-                    TransactionRequest {
+                self.broadcastable_transactions.push_back(BroadcastableTransaction {
+                    rpc: data.db.active_fork_url(),
+                    transaction: TypedTransaction::Legacy(TransactionRequest {
                         from: Some(broadcast.origin),
                         to,
                         value: Some(call.value),
                         data: Some(bytecode.into()),
                         nonce: Some(nonce.into()),
                         ..Default::default()
-                    },
-                ));
+                    }),
+                });
             }
         }
 
@@ -637,4 +679,15 @@ impl Clone for Context {
     fn clone(&self) -> Self {
         Default::default()
     }
+}
+
+/// Records `deal` cheatcodes
+#[derive(Debug, Clone)]
+pub struct DealRecord {
+    /// Target of the deal.
+    pub address: Address,
+    /// The balance of the address before deal was applied
+    pub old_balance: U256,
+    /// Balance after deal was applied
+    pub new_balance: U256,
 }

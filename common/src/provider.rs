@@ -14,6 +14,9 @@ use std::{borrow::Cow, time::Duration};
 /// Helper type alias for a retry provider
 pub type RetryProvider = Provider<RetryClient<Http>>;
 
+/// Helper type alias for a rpc url
+pub type RpcUrl = String;
+
 /// Same as `try_get_http_provider`
 ///
 /// # Panics

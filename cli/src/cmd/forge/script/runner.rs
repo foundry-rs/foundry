@@ -3,9 +3,10 @@ use ethers::types::{Address, Bytes, NameOrAddress, U256};
 use forge::{
     executor::{CallResult, DeployResult, EvmError, Executor, RawCallResult},
     revm::{return_ok, Return},
-    trace::{CallTraceArena, TraceKind},
+    trace::{TraceKind, Traces},
     CALLER,
 };
+use tracing::log::trace;
 
 /// Represents which simulation stage is the script execution at.
 pub enum SimulationStage {
@@ -14,6 +15,7 @@ pub enum SimulationStage {
 }
 
 /// Drives script execution
+#[derive(Debug)]
 pub struct ScriptRunner {
     pub executor: Executor,
     pub initial_balance: U256,
@@ -35,6 +37,8 @@ impl ScriptRunner {
         is_broadcast: bool,
         need_create2_deployer: bool,
     ) -> eyre::Result<(Address, ScriptResult)> {
+        trace!(target: "script", "executing setUP()");
+
         if !is_broadcast {
             if self.sender == Config::DEFAULT_SENDER {
                 // We max out their balance so that they can deploy and make calls.
@@ -52,7 +56,7 @@ impl ScriptRunner {
         self.executor.set_balance(CALLER, U256::MAX)?;
 
         // Deploy libraries
-        let mut traces: Vec<(TraceKind, CallTraceArena)> = libraries
+        let mut traces: Traces = libraries
             .iter()
             .filter_map(|code| {
                 let DeployResult { traces, .. } = self
@@ -83,6 +87,7 @@ impl ScriptRunner {
         // Optionally call the `setUp` function
         let (success, gas_used, labeled_addresses, transactions, debug, script_wallets) = if !setup
         {
+            self.executor.backend_mut().set_test_contract(address);
             (
                 true,
                 0,

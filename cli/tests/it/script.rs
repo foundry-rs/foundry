@@ -415,10 +415,10 @@ forgetest_async!(
             .run(ScriptOutcome::OkBroadcast)
             .assert_nonce_increment_addresses(vec![(
                 Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
-                2,
+                1,
             )])
             .await
-            .assert_nonce_increment(vec![(0, 1)])
+            .assert_nonce_increment(vec![(0, 2)])
             .await;
     }
 );

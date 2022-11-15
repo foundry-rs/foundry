@@ -73,7 +73,7 @@ pub async fn wait_for_receipts(
     receipts.sort_unstable();
 
     for receipt in receipts {
-        print_receipt(&receipt);
+        print_receipt(deployment_sequence.chain.into(), &receipt);
         deployment_sequence.add_receipt(receipt);
     }
 

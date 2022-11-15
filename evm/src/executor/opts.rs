@@ -5,7 +5,7 @@ use ethers::{
     types::{Address, Chain, U256},
 };
 use eyre::WrapErr;
-use foundry_common::{self, try_get_http_provider};
+use foundry_common::{self, try_get_http_provider, RpcUrl};
 use foundry_config::Config;
 use revm::{BlockEnv, CfgEnv, SpecId, TxEnv};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -19,7 +19,7 @@ pub struct EvmOpts {
 
     /// Fetch state over a remote instead of starting from empty state
     #[serde(rename = "eth_rpc_url")]
-    pub fork_url: Option<String>,
+    pub fork_url: Option<RpcUrl>,
 
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
