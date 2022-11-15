@@ -109,6 +109,16 @@ pub struct Wallet {
     pub keystore_password: Option<String>,
 
     #[clap(
+        env = "ETH_PASSWORD",
+        long = "password-file",
+        help_heading = "WALLET OPTIONS - KEYSTORE",
+        help = "The keystore password file path. Used with --keystore.",
+        requires = "keystore_path",
+        value_name = "PASSWORD_FILE"
+    )]
+    pub keystore_password_file: Option<String>,
+
+    #[clap(
         short,
         long = "ledger",
         help_heading = "WALLET OPTIONS - HARDWARE WALLET",
@@ -149,7 +159,11 @@ impl Wallet {
     }
 
     pub fn keystore(&self) -> Result<Option<LocalWallet>> {
-        self.get_from_keystore(self.keystore_path.as_ref(), self.keystore_password.as_ref())
+        self.get_from_keystore(
+            self.keystore_path.as_ref(),
+            self.keystore_password.as_ref(),
+            self.keystore_password_file.as_ref(),
+        )
     }
 
     pub fn mnemonic(&self) -> Result<Option<LocalWallet>> {
@@ -271,22 +285,40 @@ pub trait WalletTrait {
         &self,
         keystore_path: Option<&String>,
         keystore_password: Option<&String>,
+        keystore_password_file: Option<&String>,
     ) -> Result<Option<LocalWallet>> {
-        Ok(match (keystore_path, keystore_password) {
-            (Some(path), Some(password)) => {
+        Ok(match (keystore_path, keystore_password, keystore_password_file) {
+            (Some(path), Some(password), _) => {
                 let path = self.find_keystore_file(path)?;
                 Some(
                     LocalWallet::decrypt_keystore(&path, password)
                         .wrap_err_with(|| format!("Failed to decrypt keystore {path:?}"))?,
                 )
             }
-            (Some(path), None) => {
+            (Some(path), _, Some(password_file)) => {
+                let path = self.find_keystore_file(path)?;
+                Some(
+                    LocalWallet::decrypt_keystore(&path, self.password_from_file(password_file)?)
+                        .wrap_err_with(|| format!("Failed to decrypt keystore {path:?}"))?,
+                )
+            }
+            (Some(path), None, None) => {
                 let path = self.find_keystore_file(path)?;
                 let password = rpassword::prompt_password("Enter keystore password:")?;
                 Some(LocalWallet::decrypt_keystore(path, password)?)
             }
-            (None, _) => None,
+            (None, _, _) => None,
         })
+    }
+
+    /// Attempts to read the keystore password from the password file.
+    fn password_from_file(&self, password_file: impl AsRef<Path>) -> Result<String> {
+        let password_file = password_file.as_ref();
+        if !password_file.is_file() {
+            bail!("Keystore password file `{password_file:?}` does not exist")
+        }
+
+        Ok(fs::read_to_string(password_file)?.trim_end_matches('\n').to_string())
     }
 }
 
@@ -366,6 +398,7 @@ mod tests {
             private_key: Some("123".to_string()),
             keystore_path: None,
             keystore_password: None,
+            keystore_password_file: None,
             mnemonic: None,
             mnemonic_passphrase: None,
             ledger: false,
@@ -384,5 +417,15 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn gets_password_from_file() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/keystore/password")
+            .into_os_string();
+        let wallet: Wallet = Wallet::parse_from(["foundry-cli"]);
+        let password = wallet.password_from_file(path).unwrap();
+        assert_eq!(password, "this is keystore password")
     }
 }

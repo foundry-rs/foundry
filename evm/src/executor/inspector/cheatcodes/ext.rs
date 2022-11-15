@@ -386,7 +386,7 @@ fn serialize_json(
         serialization.clone()
     };
     let stringified = serde_json::to_string(&json)
-        .map_err(|err| error::encode_error(format!("Failed to stringify hashmap: {}", err)))?;
+        .map_err(|err| error::encode_error(format!("Failed to stringify hashmap: {err}")))?;
     Ok(abi::encode(&[Token::String(stringified)]).into())
 }
 /// Converts an array to it's stringified version, adding the appropriate quotes around it's

@@ -8,8 +8,14 @@ interface Cheats {
         bytes data;
         address emitter;
     }
-    // Set block.timestamp (newTimestamp)
 
+    // Used in getRpcStructs
+    struct Rpc {
+        string name;
+        string url;
+    }
+
+    // Set block.timestamp (newTimestamp)
     function warp(uint256) external;
     // Set block.difficulty (newDifficulty)
     function difficulty(uint256) external;
@@ -225,6 +231,8 @@ interface Cheats {
     function rpcUrl(string calldata) external returns (string memory);
     /// Returns all rpc urls and their aliases `[alias, url][]`
     function rpcUrls() external returns (string[2][] memory);
+    /// Returns all rpc urls and their aliases as an array of structs
+    function rpcUrlStructs() external returns (Rpc[] memory);
     function parseJson(string calldata, string calldata) external returns (bytes memory);
     function parseJson(string calldata) external returns (bytes memory);
 

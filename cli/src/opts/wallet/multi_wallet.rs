@@ -222,7 +222,7 @@ impl MultiWallet {
         &self,
         provider: Arc<RetryProvider>,
         mut addresses: HashSet<Address>,
-        script_wallets: Vec<LocalWallet>,
+        script_wallets: &[LocalWallet],
     ) -> Result<HashMap<Address, WalletType>> {
         println!("\n###\nFinding wallets for all the necessary addresses...");
         let chain = provider.get_chainid().await?.as_u64();
@@ -232,7 +232,7 @@ impl MultiWallet {
 
         let script_wallets_fn = || -> Result<Option<Vec<LocalWallet>>> {
             if !script_wallets.is_empty() {
-                return Ok(Some(script_wallets))
+                return Ok(Some(script_wallets.to_vec()))
             }
             Ok(None)
         };
@@ -317,7 +317,7 @@ impl MultiWallet {
             }
 
             for (path, password) in keystore_paths.iter().zip(passwords) {
-                wallets.push(self.get_from_keystore(Some(path), password.as_ref())?.unwrap());
+                wallets.push(self.get_from_keystore(Some(path), password.as_ref(), None)?.unwrap());
             }
             return Ok(Some(wallets))
         }

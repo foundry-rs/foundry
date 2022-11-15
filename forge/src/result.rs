@@ -5,7 +5,7 @@ use ethers::prelude::Log;
 use foundry_evm::{
     coverage::HitMaps,
     fuzz::{CounterExample, FuzzedCases},
-    trace::{CallTraceArena, TraceKind},
+    trace::Traces,
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt, time::Duration};
@@ -82,7 +82,7 @@ pub struct TestResult {
     pub kind: TestKind,
 
     /// Traces
-    pub traces: Vec<(TraceKind, CallTraceArena)>,
+    pub traces: Traces,
 
     /// Raw coverage info
     #[serde(skip)]
@@ -175,7 +175,7 @@ pub struct TestSetup {
     /// The logs emitted during setup
     pub logs: Vec<Log>,
     /// Call traces of the setup
-    pub traces: Vec<(TraceKind, CallTraceArena)>,
+    pub traces: Traces,
     /// Addresses labeled during setup
     pub labeled_addresses: BTreeMap<Address, String>,
     /// Whether the setup failed
