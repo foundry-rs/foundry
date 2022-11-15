@@ -122,7 +122,7 @@ pub(crate) fn install(
     let install_lib_dir = config.install_lib_dir();
     let libs = root.join(&install_lib_dir);
 
-    if dependencies.is_empty() {
+    if dependencies.is_empty() && !opts.no_git {
         let mut cmd = Command::new("git");
         cmd.args([
             "submodule",
@@ -143,17 +143,21 @@ pub(crate) fn install(
         let target_dir = if let Some(alias) = &dep.alias { alias } else { &dep.name };
         let DependencyInstallOpts { no_git, no_commit, quiet } = opts;
         p_println!(!quiet => "Installing {} in {:?} (url: {:?}, tag: {:?})", dep.name, &libs.join(target_dir), dep.url, dep.tag);
+
+        // this tracks the actual installed tag
+        let installed_tag;
+
         if no_git {
-            install_as_folder(&dep, &libs, target_dir)?;
+            installed_tag = install_as_folder(&dep, &libs, target_dir)?;
         } else {
             if !no_commit {
                 ensure_git_status_clean(&root)?;
             }
-            let tag = install_as_submodule(&dep, &libs, target_dir, no_commit)?;
+            installed_tag = install_as_submodule(&dep, &libs, target_dir, no_commit)?;
 
             // Pin branch to submodule if branch is used
-            if let Some(ref branch) = tag {
-                if !(branch.is_empty()) {
+            if let Some(ref branch) = installed_tag {
+                if !branch.is_empty() {
                     let libs = libs.strip_prefix(&root).unwrap_or(&libs);
                     let mut cmd = Command::new("git");
                     cmd.args([
@@ -174,11 +178,19 @@ pub(crate) fn install(
 
             // commit the installation
             if !no_commit {
-                commit_after_install(&libs, target_dir, tag.as_deref())?;
+                commit_after_install(&libs, target_dir, installed_tag.as_deref())?;
             }
         }
 
-        p_println!(!quiet => "    {} {}",    Paint::green("Installed"), dep.name);
+        // constructs the message `Installed <name> <branch>?`
+        let mut msg = format!("    {} {}", Paint::green("Installed"), dep.name);
+
+        if let Some(tag) = dep.tag.or(installed_tag) {
+            msg.push(' ');
+            msg.push_str(tag.as_str());
+        }
+
+        p_println!(!quiet => "{}", msg);
     }
 
     // update `libs` in config if not included yet
@@ -206,17 +218,26 @@ pub fn has_missing_dependencies(root: impl AsRef<Path>, lib_dir: impl AsRef<Path
 }
 
 /// Installs the dependency as an ordinary folder instead of a submodule
-fn install_as_folder(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Result<()> {
-    // install the dep
-    git_clone(dep, libs, target_dir)?;
+fn install_as_folder(
+    dep: &Dependency,
+    libs: &Path,
+    target_dir: &str,
+) -> eyre::Result<Option<String>> {
+    let repo = git_clone(dep, libs, target_dir)?;
+    let mut dep = dep.clone();
+
+    if dep.tag.is_none() {
+        // try to find latest semver release tag
+        dep.tag = git_semver_tags(&repo).ok().and_then(|mut tags| tags.pop().map(|(tag, _)| tag));
+    }
 
     // checkout the tag if necessary
-    git_checkout(dep, libs, target_dir, false)?;
+    git_checkout(&dep, libs, target_dir, false)?;
 
     // remove git artifacts
-    fs::remove_dir_all(libs.join(target_dir).join(".git"))?;
+    fs::remove_dir_all(repo.join(".git"))?;
 
-    Ok(())
+    Ok(dep.tag.take())
 }
 
 /// Installs the dependency as new submodule.
@@ -288,7 +309,10 @@ fn git_status_clean(root: impl AsRef<Path>) -> eyre::Result<bool> {
     Ok(stdout.is_empty())
 }
 
-fn git_clone(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Result<()> {
+/// Executes a git clone
+///
+/// Returns the directory of the cloned repository
+fn git_clone(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Result<PathBuf> {
     let url = dep.url.as_ref().unwrap();
 
     let output = Command::new("git")
@@ -307,7 +331,7 @@ fn git_clone(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Result<()
         eyre::bail!("{}", stderr.trim())
     }
 
-    Ok(())
+    Ok(libs.join(target_dir))
 }
 
 /// Returns all semver git tags sorted in ascending order
