@@ -1,4 +1,4 @@
-use super::{Cheatcodes, Debugger, Fuzzer, LogCollector, Tracer};
+use super::{Cheatcodes, Debugger, Fuzzer, LogCollector, TracePrinter, Tracer};
 use crate::{
     coverage::HitMaps,
     debug::DebugArena,
@@ -52,6 +52,7 @@ pub struct InspectorStack {
     pub debugger: Option<Debugger>,
     pub fuzzer: Option<Fuzzer>,
     pub coverage: Option<CoverageCollector>,
+    pub printer: Option<TracePrinter>,
 }
 
 impl InspectorStack {
@@ -93,7 +94,8 @@ impl InspectorStack {
                 &mut self.tracer,
                 &mut self.coverage,
                 &mut self.logs,
-                &mut self.cheatcodes
+                &mut self.cheatcodes,
+                &mut self.printer
             ],
             {
                 let (new_status, new_gas, new_retdata) = inspector.call_end(
@@ -109,7 +111,7 @@ impl InspectorStack {
                 // we assume it wants to tell us something
                 if new_status != status || (new_status == Return::Revert && new_retdata != retdata)
                 {
-                    return (new_status, new_gas, new_retdata)
+                    return (new_status, new_gas, new_retdata);
                 }
             }
         );
@@ -136,14 +138,15 @@ where
                 &mut self.coverage,
                 &mut self.tracer,
                 &mut self.logs,
-                &mut self.cheatcodes
+                &mut self.cheatcodes,
+                &mut self.printer
             ],
             {
                 let status = inspector.initialize_interp(interpreter, data, is_static);
 
                 // Allow inspectors to exit early
                 if status != Return::Continue {
-                    return status
+                    return status;
                 }
             }
         );
@@ -166,14 +169,15 @@ where
                 &mut self.tracer,
                 &mut self.coverage,
                 &mut self.logs,
-                &mut self.cheatcodes
+                &mut self.cheatcodes,
+                &mut self.printer
             ],
             {
                 let status = inspector.step(interpreter, data, is_static);
 
                 // Allow inspectors to exit early
                 if status != Return::Continue {
-                    return status
+                    return status;
                 }
             }
         );
@@ -188,7 +192,8 @@ where
         topics: &[H256],
         data: &Bytes,
     ) {
-        call_inspectors!(inspector, [&mut self.tracer, &mut self.logs, &mut self.cheatcodes], {
+        call_inspectors!(inspector, [&mut self.tracer, &mut self.logs, &mut self.cheatcodes,
+            &mut self.printer], {
             inspector.log(evm_data, address, topics, data);
         });
     }
@@ -207,14 +212,15 @@ where
                 &mut self.debugger,
                 &mut self.tracer,
                 &mut self.logs,
-                &mut self.cheatcodes
+                &mut self.cheatcodes,
+                &mut self.printer
             ],
             {
                 let status = inspector.step_end(interpreter, data, is_static, status);
 
                 // Allow inspectors to exit early
                 if status != Return::Continue {
-                    return status
+                    return status;
                 }
             }
         );
@@ -237,14 +243,15 @@ where
                 &mut self.tracer,
                 &mut self.coverage,
                 &mut self.logs,
-                &mut self.cheatcodes
+                &mut self.cheatcodes,
+                &mut self.printer
             ],
             {
                 let (status, gas, retdata) = inspector.call(data, call, is_static);
 
                 // Allow inspectors to exit early
                 if status != Return::Continue {
-                    return (status, gas, retdata)
+                    return (status, gas, retdata);
                 }
             }
         );
@@ -288,14 +295,15 @@ where
                 &mut self.tracer,
                 &mut self.coverage,
                 &mut self.logs,
-                &mut self.cheatcodes
+                &mut self.cheatcodes,
+                &mut self.printer
             ],
             {
                 let (status, addr, gas, retdata) = inspector.create(data, call);
 
                 // Allow inspectors to exit early
                 if status != Return::Continue {
-                    return (status, addr, gas, retdata)
+                    return (status, addr, gas, retdata);
                 }
             }
         );
@@ -320,7 +328,8 @@ where
                 &mut self.tracer,
                 &mut self.coverage,
                 &mut self.logs,
-                &mut self.cheatcodes
+                &mut self.cheatcodes,
+                &mut self.printer
             ],
             {
                 let (new_status, new_address, new_gas, new_retdata) = inspector.create_end(
@@ -333,7 +342,7 @@ where
                 );
 
                 if new_status != status {
-                    return (new_status, new_address, new_gas, new_retdata)
+                    return (new_status, new_address, new_gas, new_retdata);
                 }
             }
         );
@@ -344,7 +353,8 @@ where
     fn selfdestruct(&mut self) {
         call_inspectors!(
             inspector,
-            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes,
+            &mut self.printer],
             {
                 Inspector::<DB>::selfdestruct(inspector);
             }
