@@ -43,15 +43,13 @@ pub struct EtherscanVerificationProvider;
 
 #[async_trait]
 impl VerificationProvider for EtherscanVerificationProvider {
+    async fn preflight_check(&self, args: VerifyArgs) -> eyre::Result<()> {
+        let _ = self.prepare_request(&args).await?;
+        Ok(())
+    }
+
     async fn verify(&self, args: VerifyArgs) -> eyre::Result<()> {
-        let config = args.try_load_config_emit_warnings()?;
-        let etherscan = self.client(
-            args.chain,
-            args.verifier.verifier_url.as_deref(),
-            args.etherscan_key.as_deref(),
-            &config,
-        )?;
-        let verify_args = self.create_verify_request(&args, Some(config)).await?;
+        let (etherscan, verify_args) = self.prepare_request(&args).await?;
 
         trace!(?verify_args, target = "forge::verify", "submitting verification request");
 
@@ -178,6 +176,20 @@ impl VerificationProvider for EtherscanVerificationProvider {
 }
 
 impl EtherscanVerificationProvider {
+    /// Configures the API request to the etherscan API using the given [`VerifyArgs`].
+    async fn prepare_request(&self, args: &VerifyArgs) -> eyre::Result<(Client, VerifyContract)> {
+        let config = args.try_load_config_emit_warnings()?;
+        let etherscan = self.client(
+            args.chain,
+            args.verifier.verifier_url.as_deref(),
+            args.etherscan_key.as_deref(),
+            &config,
+        )?;
+        let verify_args = self.create_verify_request(args, Some(config)).await?;
+
+        Ok((etherscan, verify_args))
+    }
+
     /// Create an etherscan client
     pub(crate) fn client(
         &self,
