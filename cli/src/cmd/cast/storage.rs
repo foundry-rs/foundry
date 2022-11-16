@@ -68,7 +68,7 @@ pub struct StorageArgs {
 
 impl StorageArgs {
     pub async fn run(self) -> Result<()> {
-        let StorageArgs { address, block, build, rpc_url, slot, chain, etherscan_api_key } = self;
+        let Self { address, block, build, rpc_url, slot, chain, etherscan_api_key } = self;
 
         let rpc_url = try_consume_config_rpc_url(rpc_url)?;
         let provider = try_get_http_provider(rpc_url)?;
@@ -93,10 +93,10 @@ impl StorageArgs {
         }
 
         // Check if we're in a forge project
-        let project = build.project()?;
+        let mut project = build.project()?;
         if project.paths.has_input_files() {
             // Find in artifacts and pretty print
-            let project = with_storage_layout_output(project);
+            add_storage_layout_output(&mut project);
             let out = compile(&project, false, false)?;
             let match_code = |artifact: &ConfigurableContractArtifact| -> Option<bool> {
                 let bytes =
@@ -128,10 +128,11 @@ impl StorageArgs {
         let auto_detect = version < MIN_SOLC;
 
         // Create a new temp project
+        // TODO: Cache instead of using a temp directory: metadata from Etherscan won't change
         let root = tempfile::tempdir()?;
         let root_path = root.path();
-        let project = etherscan_project(metadata, root_path)?;
-        let mut project = with_storage_layout_output(project);
+        let mut project = etherscan_project(metadata, root_path)?;
+        add_storage_layout_output(&mut project);
         project.auto_detect = auto_detect;
 
         // Compile
@@ -191,8 +192,7 @@ async fn fetch_storage_values(
     address: Address,
     layout: &mut StorageLayout,
 ) -> Result<()> {
-    // TODO: Batch request?
-    // TODO: Array values
+    // TODO: Batch request; handle array values;
     let futures: Vec<_> = layout
         .storage
         .iter()
@@ -205,7 +205,7 @@ async fn fetch_storage_values(
     for (value, slot) in join_all(futures).await.into_iter().zip(layout.storage.iter()) {
         let value = value?.into_uint();
         let t = layout.types.get_mut(&slot.storage_type).expect("Bad storage");
-        // TODO: Format value
+        // TODO: Better format values according to their Solidity type
         t.value = Some(format!("{:?}", value));
     }
 
@@ -241,11 +241,10 @@ fn print_storage(layout: StorageLayout, pretty: bool) -> Result<()> {
     Ok(())
 }
 
-fn with_storage_layout_output(mut project: Project) -> Project {
+fn add_storage_layout_output(project: &mut Project) {
     project.artifacts.additional_values.storage_layout = true;
     let output_selection = project.artifacts.output_selection();
-    project.solc_config.settings = project.solc_config.settings.with_extra_output(output_selection);
-    project
+    project.solc_config.settings.push_all(output_selection);
 }
 
 fn is_storage_layout_empty(storage_layout: &Option<StorageLayout>) -> bool {
