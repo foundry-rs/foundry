@@ -1,6 +1,7 @@
 //! cli arguments for configuring the evm settings
 use clap::{ArgAction, Parser};
 use ethers_core::types::{Address, U256};
+use eyre::ContextCompat;
 use foundry_config::{
     figment::{
         self,
@@ -192,6 +193,13 @@ pub struct EnvArgs {
     #[clap(long, value_name = "GAS_LIMIT")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_gas_limit: Option<u64>,
+}
+
+impl EvmArgs {
+    /// Ensures that fork url exists and returns its reference.
+    pub fn ensure_fork_url(&self) -> eyre::Result<&String> {
+        self.fork_url.as_ref().wrap_err("Missing `--fork-url` field.")
+    }
 }
 
 #[cfg(test)]

@@ -142,7 +142,7 @@ impl<'a> RemappingsProvider<'a> {
                 {
                     if let Some(name) = lib.file_name().and_then(|s| s.to_str()) {
                         let mut r = Remapping {
-                            name: format!("{}/", name),
+                            name: format!("{name}/"),
                             path: format!("{}", lib.join(&config.src).display()),
                         };
                         if !r.path.ends_with('/') {

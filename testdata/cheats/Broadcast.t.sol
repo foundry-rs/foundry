@@ -356,3 +356,71 @@ contract TestInitialBalance is DSTest {
         new NoLink();
     }
 }
+
+contract MultiChainBroadcastNoLink is DSTest {
+    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+
+    // ganache-cli -d 1st
+    address public ACCOUNT_A = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
+
+    // ganache-cli -d 2nd
+    address public ACCOUNT_B = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
+
+    function deploy(string memory sforkA, string memory sforkB) public {
+        uint256 forkA = cheats.createFork(sforkA);
+        uint256 forkB = cheats.createFork(sforkB);
+
+        cheats.selectFork(forkA);
+        cheats.broadcast(address(ACCOUNT_A));
+        new NoLink();
+        cheats.broadcast(address(ACCOUNT_B));
+        new NoLink();
+        cheats.selectFork(forkB);
+        cheats.startBroadcast(address(ACCOUNT_B));
+        new NoLink();
+        new NoLink();
+        new NoLink();
+        cheats.stopBroadcast();
+        cheats.startBroadcast(address(ACCOUNT_A));
+        new NoLink();
+        new NoLink();
+    }
+
+    function deployError(string memory sforkA, string memory sforkB) public {
+        uint256 forkA = cheats.createFork(sforkA);
+        uint256 forkB = cheats.createFork(sforkB);
+
+        cheats.selectFork(forkA);
+        cheats.broadcast(address(ACCOUNT_A));
+        new NoLink();
+        cheats.startBroadcast(address(ACCOUNT_B));
+        new NoLink();
+
+        cheats.selectFork(forkB);
+        cheats.broadcast(address(ACCOUNT_B));
+        new NoLink();
+    }
+}
+
+contract MultiChainBroadcastLink is DSTest {
+    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+
+    // ganache-cli -d 1st
+    address public ACCOUNT_A = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
+
+    // ganache-cli -d 2nd
+    address public ACCOUNT_B = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
+
+    function deploy(string memory sforkA, string memory sforkB) public {
+        uint256 forkA = cheats.createFork(sforkA);
+        uint256 forkB = cheats.createFork(sforkB);
+
+        cheats.selectFork(forkA);
+        cheats.broadcast(address(ACCOUNT_B));
+        new Test();
+
+        cheats.selectFork(forkB);
+        cheats.broadcast(address(ACCOUNT_B));
+        new Test();
+    }
+}

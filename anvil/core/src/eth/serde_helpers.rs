@@ -1,14 +1,5 @@
 //! custom serde helper functions
 
-use serde::Deserialize;
-
-/// Wrapper type that ensures the type is named `params`
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct Params<T: Default> {
-    #[serde(default)]
-    pub params: T,
-}
-
 #[allow(unused)]
 pub mod sequence {
     use serde::{

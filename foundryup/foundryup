@@ -41,7 +41,7 @@ main() {
     need_cmd cargo
 
     # Ignore branches/versions as we do not want to modify local git state
-    if [ -n "$FOUNDRYUP_REPO" ] || [ -n "$FOUNDRY_BRANCH" ] || [ -n "$FOUNDRY_VERSION" ]; then
+    if [ -n "$FOUNDRYUP_REPO" ] || [ -n "$FOUNDRYUP_BRANCH" ] || [ -n "$FOUNDRYUP_VERSION" ]; then
       warn "--branch, --version, and --repo arguments are ignored during local install"
     fi
 

@@ -4,7 +4,10 @@ use super::Cheatcodes;
 use crate::{
     abi::HEVMCalls,
     error::SolError,
-    executor::{backend::DatabaseExt, inspector::cheatcodes::util::with_journaled_account},
+    executor::{
+        backend::DatabaseExt,
+        inspector::cheatcodes::{util::with_journaled_account, DealRecord},
+    },
 };
 use bytes::Bytes;
 use ethers::{
@@ -148,7 +151,13 @@ fn accesses(state: &mut Cheatcodes, address: Address) -> Bytes {
 
 #[derive(Clone, Debug, Default)]
 pub struct RecordedLogs {
-    pub entries: Vec<RawLog>,
+    pub entries: Vec<Log>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Log {
+    pub emitter: Address,
+    pub inner: RawLog,
 }
 
 fn start_record_logs(state: &mut Cheatcodes) {
@@ -163,8 +172,9 @@ fn get_recorded_logs(state: &mut Cheatcodes) -> Bytes {
                 .iter()
                 .map(|entry| {
                     Token::Tuple(vec![
-                        entry.topics.clone().into_token(),
-                        Token::Bytes(entry.data.clone()),
+                        entry.inner.topics.clone().into_token(),
+                        Token::Bytes(entry.inner.data.clone()),
+                        entry.emitter.into_token(),
                     ])
                 })
                 .collect::<Vec<Token>>()
@@ -240,8 +250,15 @@ pub fn apply<DB: DatabaseExt>(
             let who = inner.0;
             let value = inner.1;
             trace!(?who, ?value, "deal cheatcode");
-
             with_journaled_account(&mut data.journaled_state, data.db, who, |account| {
+                // record the deal
+                let record = DealRecord {
+                    address: who,
+                    old_balance: account.info.balance,
+                    new_balance: value,
+                };
+                state.eth_deals.push(record);
+
                 account.info.balance = value;
             })
             .map_err(|err| err.encode_string())?;

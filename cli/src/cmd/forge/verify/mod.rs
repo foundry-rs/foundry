@@ -1,6 +1,9 @@
 //! Verify contract source
 
-use crate::cmd::retry::RetryArgs;
+use crate::cmd::{
+    forge::verify::{etherscan::EtherscanVerificationProvider, provider::VerificationProvider},
+    retry::RetryArgs,
+};
 use clap::{Parser, ValueHint};
 use ethers::{abi::Address, solc::info::ContractInfo};
 use foundry_config::{figment, impl_figment_convert, Chain, Config};
@@ -137,13 +140,21 @@ pub struct VerifyArgs {
 
     #[clap(flatten)]
     pub verifier: VerifierArgs,
+
+    #[clap(
+        help = "Prints the standard json compiler input.",
+        long,
+        long_help = "The standard json compiler input can be used to manually submit contract verification in the browser.",
+        conflicts_with = "flatten"
+    )]
+    pub show_standard_json_input: bool,
 }
 
 impl_figment_convert!(VerifyArgs);
 
 impl figment::Provider for VerifyArgs {
     fn metadata(&self) -> figment::Metadata {
-        figment::Metadata::named(stringify!($name))
+        figment::Metadata::named("Verify Provider")
     }
     fn data(
         &self,
@@ -166,7 +177,20 @@ impl figment::Provider for VerifyArgs {
 impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(self) -> eyre::Result<()> {
+        if self.show_standard_json_input {
+            let args =
+                EtherscanVerificationProvider::default().create_verify_request(&self, None).await?;
+            println!("{}", args.source);
+            return Ok(())
+        }
+
+        println!("Start verifying contract `{:?}` deployed on {}", self.address, self.chain);
         self.verifier.verifier.client(&self.etherscan_key)?.verify(self).await
+    }
+
+    /// Returns the configured verification provider
+    pub fn verification_provider(&self) -> eyre::Result<Box<dyn VerificationProvider>> {
+        self.verifier.verifier.client(&self.etherscan_key)
     }
 }
 
@@ -207,6 +231,105 @@ pub struct VerifyCheckArgs {
 impl VerifyCheckArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(self) -> eyre::Result<()> {
+        println!("Checking verification status on {}", self.chain);
         self.verifier.verifier.client(&self.etherscan_key)?.check(self).await
+    }
+}
+
+impl figment::Provider for VerifyCheckArgs {
+    fn metadata(&self) -> figment::Metadata {
+        figment::Metadata::named("Verify Check Provider")
+    }
+    fn data(
+        &self,
+    ) -> Result<figment::value::Map<figment::Profile, figment::value::Dict>, figment::Error> {
+        Ok(figment::value::Map::from([(Config::selected_profile(), figment::value::Dict::new())]))
+    }
+}
+impl<'a> From<&'a VerifyCheckArgs> for figment::Figment {
+    fn from(args: &'a VerifyCheckArgs) -> Self {
+        Config::figment_with_root(foundry_config::find_project_root_path().unwrap()).merge(args)
+    }
+}
+
+impl<'a> From<&'a VerifyCheckArgs> for Config {
+    fn from(args: &'a VerifyCheckArgs) -> Self {
+        let figment: figment::Figment = args.into();
+        Config::from_provider(figment).sanitized()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cmd::LoadConfig;
+    use foundry_cli_test_utils::tempfile::tempdir;
+    use foundry_common::fs;
+
+    #[test]
+    fn can_extract_etherscan_verify_config() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+
+        let config = r#"
+                [profile.default]
+
+                [etherscan]
+                mumbai = { key = "dummykey", chain = 80001, url = "https://api-testnet.polygonscan.com/" }
+            "#;
+
+        let toml_file = root.join(Config::FILE_NAME);
+        fs::write(toml_file, config).unwrap();
+
+        let args: VerifyArgs = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0xd8509bee9c9bf012282ad33aba0d87241baf5064",
+            "src/Counter.sol:Counter",
+            "--chain",
+            "mumbai",
+            "--root",
+            root.as_os_str().to_str().unwrap(),
+        ]);
+
+        let config = args.load_config();
+
+        let etherscan = EtherscanVerificationProvider::default();
+        let client = etherscan
+            .client(
+                args.chain,
+                args.verifier.verifier_url.as_deref(),
+                args.etherscan_key.as_deref(),
+                &config,
+            )
+            .unwrap();
+        assert_eq!(client.etherscan_api_url().as_str(), "https://api-testnet.polygonscan.com/");
+
+        assert!(format!("{client:?}").contains("dummykey"));
+
+        let args: VerifyArgs = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0xd8509bee9c9bf012282ad33aba0d87241baf5064",
+            "src/Counter.sol:Counter",
+            "--chain",
+            "mumbai",
+            "--verifier-url",
+            "https://verifier-url.com/",
+            "--root",
+            root.as_os_str().to_str().unwrap(),
+        ]);
+
+        let config = args.load_config();
+
+        let etherscan = EtherscanVerificationProvider::default();
+        let client = etherscan
+            .client(
+                args.chain,
+                args.verifier.verifier_url.as_deref(),
+                args.etherscan_key.as_deref(),
+                &config,
+            )
+            .unwrap();
+        assert_eq!(client.etherscan_api_url().as_str(), "https://verifier-url.com/");
+        assert!(format!("{client:?}").contains("dummykey"));
     }
 }

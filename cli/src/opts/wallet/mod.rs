@@ -5,10 +5,14 @@ use ethers::{
     signers::{coins_bip39::English, Ledger, LocalWallet, MnemonicBuilder, Trezor},
     types::Address,
 };
-use eyre::{eyre, Result};
+use eyre::{bail, eyre, Result, WrapErr};
 use foundry_common::{fs, RetryProvider};
-use serde::Serialize;
-use std::{path::Path, str::FromStr, sync::Arc};
+use serde::{Deserialize, Serialize};
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::Arc,
+};
 
 pub mod multi_wallet;
 use crate::opts::error::PrivateKeyError;
@@ -105,6 +109,16 @@ pub struct Wallet {
     pub keystore_password: Option<String>,
 
     #[clap(
+        env = "ETH_PASSWORD",
+        long = "password-file",
+        help_heading = "WALLET OPTIONS - KEYSTORE",
+        help = "The keystore password file path. Used with --keystore.",
+        requires = "keystore_path",
+        value_name = "PASSWORD_FILE"
+    )]
+    pub keystore_password_file: Option<String>,
+
+    #[clap(
         short,
         long = "ledger",
         help_heading = "WALLET OPTIONS - HARDWARE WALLET",
@@ -145,7 +159,11 @@ impl Wallet {
     }
 
     pub fn keystore(&self) -> Result<Option<LocalWallet>> {
-        self.get_from_keystore(self.keystore_path.as_ref(), self.keystore_password.as_ref())
+        self.get_from_keystore(
+            self.keystore_path.as_ref(),
+            self.keystore_password.as_ref(),
+            self.keystore_password_file.as_ref(),
+        )
     }
 
     pub fn mnemonic(&self) -> Result<Option<LocalWallet>> {
@@ -162,9 +180,10 @@ impl Wallet {
     }
 }
 
-impl WalletTrait for Wallet {}
-
 pub trait WalletTrait {
+    /// Returns the configured sender.
+    fn sender(&self) -> Option<Address>;
+
     fn get_from_interactive(&self) -> Result<LocalWallet> {
         let private_key = rpassword::prompt_password("Enter private key: ")?;
         let private_key = private_key.strip_prefix("0x").unwrap_or(&private_key);
@@ -228,19 +247,84 @@ pub trait WalletTrait {
         Ok(builder.build()?)
     }
 
+    /// Attempts to find the actual path of the keystore file.
+    ///
+    /// If the path is a directory then we try to find the first keystore file with the correct
+    /// sender address
+    fn find_keystore_file(&self, path: impl AsRef<Path>) -> Result<PathBuf> {
+        let path = path.as_ref();
+        if !path.exists() {
+            bail!("Keystore file `{path:?}` does not exist")
+        }
+
+        if path.is_dir() {
+            let sender =
+                self.sender().ok_or_else(|| eyre!("No sender account configured: $ETH_FROM"))?;
+
+            let (_, file) = walkdir::WalkDir::new(path)
+                .max_depth(2)
+                .into_iter()
+                .filter_map(Result::ok)
+                .filter(|e| e.file_type().is_file())
+                .filter_map(|e| {
+                    fs::read_json_file::<KeystoreFile>(e.path())
+                        .map(|keystore| (keystore, e.path().to_path_buf()))
+                        .ok()
+                })
+                .find(|(keystore, _)| keystore.address == sender)
+                .ok_or_else(|| {
+                    eyre!("No matching keystore file found for {sender:?} in {path:?}")
+                })?;
+            return Ok(file)
+        }
+
+        Ok(path.to_path_buf())
+    }
+
     fn get_from_keystore(
         &self,
         keystore_path: Option<&String>,
         keystore_password: Option<&String>,
+        keystore_password_file: Option<&String>,
     ) -> Result<Option<LocalWallet>> {
-        Ok(match (keystore_path, keystore_password) {
-            (Some(path), Some(password)) => Some(LocalWallet::decrypt_keystore(path, password)?),
-            (Some(path), None) => {
+        Ok(match (keystore_path, keystore_password, keystore_password_file) {
+            (Some(path), Some(password), _) => {
+                let path = self.find_keystore_file(path)?;
+                Some(
+                    LocalWallet::decrypt_keystore(&path, password)
+                        .wrap_err_with(|| format!("Failed to decrypt keystore {path:?}"))?,
+                )
+            }
+            (Some(path), _, Some(password_file)) => {
+                let path = self.find_keystore_file(path)?;
+                Some(
+                    LocalWallet::decrypt_keystore(&path, self.password_from_file(password_file)?)
+                        .wrap_err_with(|| format!("Failed to decrypt keystore {path:?}"))?,
+                )
+            }
+            (Some(path), None, None) => {
+                let path = self.find_keystore_file(path)?;
                 let password = rpassword::prompt_password("Enter keystore password:")?;
                 Some(LocalWallet::decrypt_keystore(path, password)?)
             }
-            (None, _) => None,
+            (None, _, _) => None,
         })
+    }
+
+    /// Attempts to read the keystore password from the password file.
+    fn password_from_file(&self, password_file: impl AsRef<Path>) -> Result<String> {
+        let password_file = password_file.as_ref();
+        if !password_file.is_file() {
+            bail!("Keystore password file `{password_file:?}` does not exist")
+        }
+
+        Ok(fs::read_to_string(password_file)?.trim_end_matches('\n').to_string())
+    }
+}
+
+impl WalletTrait for Wallet {
+    fn sender(&self) -> Option<Address> {
+        self.from
     }
 }
 
@@ -279,9 +363,32 @@ impl WalletType {
     }
 }
 
+/// Excerpt of a keystore file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeystoreFile {
+    pub address: Address,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn find_keystore() {
+        let keystore = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/keystore");
+        let keystore_file = keystore
+            .join("UTC--2022-10-30T06-51-20.130356000Z--560d246fcddc9ea98a8b032c9a2f474efb493c28");
+        let wallet: Wallet = Wallet::parse_from([
+            "foundry-cli",
+            "--from",
+            "560d246fcddc9ea98a8b032c9a2f474efb493c28",
+        ]);
+        let file = wallet.find_keystore_file(&keystore).unwrap();
+        assert_eq!(file, keystore_file);
+
+        let file = wallet.find_keystore_file(&keystore_file).unwrap();
+        assert_eq!(file, keystore_file);
+    }
 
     #[test]
     fn illformed_private_key_generates_user_friendly_error() {
@@ -291,6 +398,7 @@ mod tests {
             private_key: Some("123".to_string()),
             keystore_path: None,
             keystore_password: None,
+            keystore_password_file: None,
             mnemonic: None,
             mnemonic_passphrase: None,
             ledger: false,
@@ -309,5 +417,15 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn gets_password_from_file() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/keystore/password")
+            .into_os_string();
+        let wallet: Wallet = Wallet::parse_from(["foundry-cli"]);
+        let password = wallet.password_from_file(path).unwrap();
+        assert_eq!(password, "this is keystore password")
     }
 }

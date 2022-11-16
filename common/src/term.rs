@@ -196,8 +196,8 @@ impl Reporter for SpinnerReporter {
     ) {
         self.solc_io_report.log_compiler_output(output, version);
         self.send_msg(format!(
-            "Solc {}.{}.{} finished in {:.2?}",
-            version.major, version.minor, version.patch, duration
+            "Solc {}.{}.{} finished in {duration:.2?}",
+            version.major, version.minor, version.patch
         ));
     }
 

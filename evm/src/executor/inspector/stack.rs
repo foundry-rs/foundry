@@ -10,7 +10,10 @@ use ethers::{
     signers::LocalWallet,
     types::{Address, Log, H256},
 };
-use revm::{CallInputs, CreateInputs, EVMData, Gas, GasInspector, Inspector, Interpreter, Return};
+use revm::{
+    return_revert, CallInputs, CreateInputs, EVMData, Gas, GasInspector, Inspector, Interpreter,
+    Return,
+};
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 /// Helper macro to call the same method on multiple inspectors without resorting to dynamic
@@ -70,6 +73,48 @@ impl InspectorStack {
                 .unwrap_or_default(),
             cheatcodes: self.cheatcodes,
         }
+    }
+
+    fn do_call_end<DB: DatabaseExt>(
+        &mut self,
+        data: &mut EVMData<'_, DB>,
+        call: &CallInputs,
+        remaining_gas: Gas,
+        status: Return,
+        retdata: Bytes,
+        is_static: bool,
+    ) -> (Return, Gas, Bytes) {
+        call_inspectors!(
+            inspector,
+            [
+                &mut self.gas.as_deref().map(|gas| gas.borrow_mut()),
+                &mut self.fuzzer,
+                &mut self.debugger,
+                &mut self.tracer,
+                &mut self.coverage,
+                &mut self.logs,
+                &mut self.cheatcodes
+            ],
+            {
+                let (new_status, new_gas, new_retdata) = inspector.call_end(
+                    data,
+                    call,
+                    remaining_gas,
+                    status,
+                    retdata.clone(),
+                    is_static,
+                );
+
+                // If the inspector returns a different status or a revert with a non-empty message,
+                // we assume it wants to tell us something
+                if new_status != status || (new_status == Return::Revert && new_retdata != retdata)
+                {
+                    return (new_status, new_gas, new_retdata)
+                }
+            }
+        );
+
+        (status, remaining_gas, retdata)
     }
 }
 
@@ -216,37 +261,18 @@ where
         retdata: Bytes,
         is_static: bool,
     ) -> (Return, Gas, Bytes) {
-        call_inspectors!(
-            inspector,
-            [
-                &mut self.gas.as_deref().map(|gas| gas.borrow_mut()),
-                &mut self.fuzzer,
-                &mut self.debugger,
-                &mut self.tracer,
-                &mut self.coverage,
-                &mut self.logs,
-                &mut self.cheatcodes
-            ],
-            {
-                let (new_status, new_gas, new_retdata) = inspector.call_end(
-                    data,
-                    call,
-                    remaining_gas,
-                    status,
-                    retdata.clone(),
-                    is_static,
-                );
+        let res = self.do_call_end(data, call, remaining_gas, status, retdata, is_static);
 
-                // If the inspector returns a different status or a revert with a non-empty message,
-                // we assume it wants to tell us something
-                if new_status != status || (new_status == Return::Revert && new_retdata != retdata)
-                {
-                    return (new_status, new_gas, new_retdata)
-                }
+        if matches!(res.0, return_revert!()) {
+            // Encountered a revert, since cheatcodes may have altered the evm state in such a way
+            // that violates some constraints, e.g. `deal`, we need to manually roll back on revert
+            // before revm reverts the state itself
+            if let Some(cheats) = self.cheatcodes.as_mut() {
+                cheats.on_revert(data);
             }
-        );
+        }
 
-        (status, remaining_gas, retdata)
+        res
     }
 
     fn create(

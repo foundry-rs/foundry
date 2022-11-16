@@ -21,7 +21,7 @@ impl LogCollector {
     fn hardhat_log(&mut self, input: Vec<u8>) -> (Return, Bytes) {
         // Patch the Hardhat-style selectors
         let input = patch_hardhat_console_selector(input.to_vec());
-        let decoded = match HardhatConsoleCalls::decode(&input) {
+        let decoded = match HardhatConsoleCalls::decode(input) {
             Ok(inner) => inner,
             Err(err) => {
                 return (

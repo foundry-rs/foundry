@@ -47,7 +47,7 @@ use ethers::{
         },
         Address, Block, BlockId, BlockNumber, Bytes, FeeHistory, Filter, FilteredParams,
         GethDebugTracingOptions, Log, Trace, Transaction, TransactionReceipt, TxHash,
-        TxpoolContent, TxpoolInspectSummary, TxpoolStatus, TxpoolTransaction, H256, U256, U64,
+        TxpoolContent, TxpoolInspectSummary, TxpoolStatus, H256, U256, U64,
     },
     utils::rlp,
 };
@@ -683,7 +683,7 @@ impl EthApi {
         node_info!("eth_signTypedData_v4");
         let signer = self.get_signer(address).ok_or(BlockchainError::NoSignerAvailable)?;
         let signature = signer.sign_typed_data(address, data).await?;
-        Ok(format!("0x{}", signature))
+        Ok(format!("0x{signature}"))
     }
 
     /// The sign method calculates an Ethereum specific signature
@@ -693,7 +693,7 @@ impl EthApi {
         node_info!("eth_sign");
         let signer = self.get_signer(address).ok_or(BlockchainError::NoSignerAvailable)?;
         let signature = signer.sign(address, content.as_ref()).await?;
-        Ok(format!("0x{}", signature))
+        Ok(format!("0x{signature}"))
     }
 
     /// Sends a transaction
@@ -900,18 +900,11 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_getTransactionByHash`
     pub async fn transaction_by_hash(&self, hash: H256) -> Result<Option<Transaction>> {
         node_info!("eth_getTransactionByHash");
-        let mut tx = self.backend.transaction_by_hash(hash).await?;
+        let mut tx = self.pool.get_transaction(hash).map(|pending| {
+            transaction_build(pending.transaction, None, None, true, Some(self.backend.base_fee()))
+        });
         if tx.is_none() {
-            // no transaction found, check the mempool for a pending transaction
-            tx = self.pool.get_transaction(hash).map(|pending| {
-                transaction_build(
-                    pending.transaction,
-                    None,
-                    None,
-                    true,
-                    Some(self.backend.base_fee()),
-                )
-            });
+            tx = self.backend.transaction_by_hash(hash).await?
         }
 
         Ok(tx)
@@ -946,6 +939,10 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_getTransactionReceipt`
     pub async fn transaction_receipt(&self, hash: H256) -> Result<Option<TransactionReceipt>> {
         node_info!("eth_getTransactionReceipt");
+        let tx = self.pool.get_transaction(hash);
+        if tx.is_some() {
+            return Ok(None)
+        }
         self.backend.transaction_receipt(hash).await
     }
 
@@ -1039,10 +1036,15 @@ impl EthApi {
         node_info!("eth_feeHistory");
         // max number of blocks in the requested range
 
+        let current = self.backend.best_number().as_u64();
+        let slots_in_an_epoch = 32u64;
+
         let number = match newest_block {
-            BlockNumber::Latest | BlockNumber::Pending => self.backend.best_number().as_u64(),
+            BlockNumber::Latest | BlockNumber::Pending => current,
             BlockNumber::Earliest => 0,
             BlockNumber::Number(n) => n.as_u64(),
+            BlockNumber::Safe => current.saturating_sub(slots_in_an_epoch),
+            BlockNumber::Finalized => current.saturating_sub(slots_in_an_epoch * 2),
         };
 
         // check if the number predates the fork, if in fork mode
@@ -1565,7 +1567,7 @@ impl EthApi {
                     .initial_backoff(1000)
                     .build()
                     .map_err(|_| {
-                        ProviderError::CustomError(format!("Failed to parse invalid url {}", url))
+                        ProviderError::CustomError(format!("Failed to parse invalid url {url}"))
                     })?
                     .interval(interval),
             );
@@ -1671,23 +1673,8 @@ impl EthApi {
     pub async fn txpool_content(&self) -> Result<TxpoolContent> {
         node_info!("txpool_content");
         let mut content = TxpoolContent::default();
-        fn convert(tx: Arc<PoolTransaction>) -> TxpoolTransaction {
-            let from = *tx.pending_transaction.sender();
-            let tx = &tx.pending_transaction.transaction;
-
-            TxpoolTransaction {
-                block_hash: None,
-                block_number: None,
-                from: Some(from),
-                to: tx.to().copied(),
-                gas: Some(tx.gas_limit()),
-                gas_price: Some(tx.gas_price()),
-                value: tx.value(),
-                hash: tx.hash(),
-                input: tx.data().clone(),
-                nonce: *tx.nonce(),
-                transaction_index: None,
-            }
+        fn convert(tx: Arc<PoolTransaction>) -> Transaction {
+            transaction_build(tx.pending_transaction.transaction.clone(), None, None, true, None)
         }
 
         for pending in self.pool.ready_transactions() {

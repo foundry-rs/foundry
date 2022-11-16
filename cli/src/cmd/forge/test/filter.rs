@@ -221,7 +221,7 @@ impl GlobMatcher {
     pub fn is_match(&self, path: &str) -> bool {
         let mut matches = self.matcher.is_match(path);
         if !matches && !path.starts_with("./") && self.as_str().starts_with("./") {
-            matches = self.matcher.is_match(format!("./{}", path));
+            matches = self.matcher.is_match(format!("./{path}"));
         }
         matches
     }

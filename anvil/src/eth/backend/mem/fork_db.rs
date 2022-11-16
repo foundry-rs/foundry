@@ -57,6 +57,11 @@ impl MaybeHashDatabase for ForkedDatabase {
         StateSnapshot { accounts, storage, block_hashes }
     }
 
+    fn clear(&mut self) {
+        self.flush_cache();
+        self.clear_into_snapshot();
+    }
+
     fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
         let db = self.inner().db();
         let StateSnapshot { accounts, storage, block_hashes } = snapshot;
@@ -68,6 +73,11 @@ impl MaybeHashDatabase for ForkedDatabase {
 impl MaybeHashDatabase for ForkDbSnapshot {
     fn clear_into_snapshot(&mut self) -> StateSnapshot {
         std::mem::take(&mut self.snapshot)
+    }
+
+    fn clear(&mut self) {
+        std::mem::take(&mut self.snapshot);
+        self.local.clear()
     }
 
     fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {

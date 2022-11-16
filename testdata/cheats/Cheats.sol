@@ -6,9 +6,16 @@ interface Cheats {
     struct Log {
         bytes32[] topics;
         bytes data;
+        address emitter;
     }
-    // Set block.timestamp (newTimestamp)
 
+    // Used in getRpcStructs
+    struct Rpc {
+        string name;
+        string url;
+    }
+
+    // Set block.timestamp (newTimestamp)
     function warp(uint256) external;
     // Set block.difficulty (newDifficulty)
     function difficulty(uint256) external;
@@ -224,6 +231,26 @@ interface Cheats {
     function rpcUrl(string calldata) external returns (string memory);
     /// Returns all rpc urls and their aliases `[alias, url][]`
     function rpcUrls() external returns (string[2][] memory);
+    /// Returns all rpc urls and their aliases as an array of structs
+    function rpcUrlStructs() external returns (Rpc[] memory);
     function parseJson(string calldata, string calldata) external returns (bytes memory);
     function parseJson(string calldata) external returns (bytes memory);
+
+    function serializeBool(string calldata, string calldata, bool) external returns (string memory);
+    function serializeUint(string calldata, string calldata, uint256) external returns (string memory);
+    function serializeInt(string calldata, string calldata, int256) external returns (string memory);
+    function serializeAddress(string calldata, string calldata, address) external returns (string memory);
+    function serializeBytes32(string calldata, string calldata, bytes32) external returns (string memory);
+    function serializeString(string calldata, string calldata, string calldata) external returns (string memory);
+    function serializeBytes(string calldata, string calldata, bytes calldata) external returns (string memory);
+
+    function serializeBool(string calldata, string calldata, bool[] calldata) external returns (string memory);
+    function serializeUint(string calldata, string calldata, uint256[] calldata) external returns (string memory);
+    function serializeInt(string calldata, string calldata, int256[] calldata) external returns (string memory);
+    function serializeAddress(string calldata, string calldata, address[] calldata) external returns (string memory);
+    function serializeBytes32(string calldata, string calldata, bytes32[] calldata) external returns (string memory);
+    function serializeString(string calldata, string calldata, string[] calldata) external returns (string memory);
+    function serializeBytes(string calldata, string calldata, bytes[] calldata) external returns (string memory);
+    function writeJson(string calldata, string calldata) external;
+    function writeJson(string calldata, string calldata, string calldata) external;
 }

@@ -5,13 +5,13 @@ use ethers_core::{
     types::{H256, U256},
     utils::rlp,
 };
-use fastrlp::{RlpDecodable, RlpEncodable};
 use revm::KECCAK_EMPTY;
 // reexport for convenience
 pub use ethers_core::types::{EIP1186ProofResponse as AccountProof, StorageProof};
 
 /// Basic account type.
-#[derive(Debug, Clone, PartialEq, Eq, RlpEncodable, RlpDecodable)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "fastrlp", derive(open_fastrlp::RlpEncodable, open_fastrlp::RlpDecodable))]
 pub struct BasicAccount {
     /// Nonce of the account.
     pub nonce: U256,

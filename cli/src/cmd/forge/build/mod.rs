@@ -1,7 +1,6 @@
 //! Build command
 use crate::cmd::{
     forge::{
-        build::filter::{SkipBuildFilter, SkipBuildFilters},
         install::{self},
         watch::WatchArgs,
     },
@@ -9,7 +8,10 @@ use crate::cmd::{
 };
 use clap::{ArgAction, Parser};
 use ethers::solc::{Project, ProjectCompileOutput};
-use foundry_common::{compile, compile::ProjectCompiler};
+use foundry_common::{
+    compile,
+    compile::{ProjectCompiler, SkipBuildFilter},
+};
 use foundry_config::{
     figment::{
         self,
@@ -20,7 +22,6 @@ use foundry_config::{
     Config,
 };
 use serde::Serialize;
-use tracing::trace;
 use watchexec::config::{InitConfig, RuntimeConfig};
 
 mod core;
@@ -28,8 +29,6 @@ pub use self::core::CoreBuildArgs;
 
 mod paths;
 pub use self::paths::ProjectPathsArgs;
-
-mod filter;
 
 foundry_config::merge_impl_figment_convert!(BuildArgs, args);
 
@@ -98,20 +97,10 @@ impl Cmd for BuildArgs {
         let filters = self.skip.unwrap_or_default();
 
         if self.args.silent {
-            if filters.is_empty() {
-                compile::suppress_compile(&project)
-            } else {
-                trace!(?filters, "compile with filters suppressed");
-                compile::suppress_compile_sparse(&project, SkipBuildFilters(filters))
-            }
+            compile::suppress_compile_with_filter(&project, filters)
         } else {
-            let compiler = ProjectCompiler::new(self.names, self.sizes);
-            if filters.is_empty() {
-                compiler.compile(&project)
-            } else {
-                trace!(?filters, "compile with filters");
-                compiler.compile_sparse(&project, SkipBuildFilters(filters))
-            }
+            let compiler = ProjectCompiler::with_filter(self.names, self.sizes, filters);
+            compiler.compile(&project)
         }
     }
 }

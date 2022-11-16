@@ -31,7 +31,7 @@ globset = "0.4.8"
 walkdir = "2.3.2"
 
 # encoding
-fastrlp = "0.1.3"
+open-fastrlp = "0.1.2"
 
 # misc
 eyre = "0.6.5"

@@ -1,12 +1,12 @@
 //! Coverage command
 use crate::{
     cmd::{
-        forge::{build::CoreBuildArgs, test::Filter},
+        forge::{build::CoreBuildArgs, install, test::Filter},
         Cmd, LoadConfig,
     },
     utils::{self, p_println, STATIC_FUZZ_SEED},
 };
-use clap::{Parser, ValueEnum};
+use clap::{ArgAction, Parser, ValueEnum};
 use ethers::{
     abi::Address,
     prelude::{
@@ -27,7 +27,7 @@ use forge::{
     utils::{build_ic_pc_map, ICPCMap},
     MultiContractRunnerBuilder, TestOptions,
 };
-use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, ContractsByArtifact};
+use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs};
 use foundry_config::Config;
 use semver::Version;
 use std::{collections::HashMap, sync::mpsc::channel, thread};
@@ -42,10 +42,11 @@ pub struct CoverageArgs {
     #[clap(
         long,
         value_enum,
+        action = ArgAction::Append,
         default_value = "summary",
-        help = "The report type to use for coverage."
+        help = "The report type to use for coverage. This flag can be used multiple times."
     )]
-    report: CoverageReportKind,
+    report: Vec<CoverageReportKind>,
 
     #[clap(flatten, next_help_heading = "TEST FILTERING")]
     filter: Filter,
@@ -69,6 +70,15 @@ impl Cmd for CoverageArgs {
 
     fn run(self) -> eyre::Result<Self::Output> {
         let (mut config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
+        let project = config.project()?;
+
+        // install missing dependencies
+        if install::install_missing_dependencies(&mut config, &project, self.build_args().silent) &&
+            config.auto_detect_remappings
+        {
+            // need to re-configure here to also catch additional remappings
+            config = self.load_config();
+        }
 
         // Set fuzz seed so coverage reports are deterministic
         config.fuzz.seed = Some(U256::from_big_endian(&STATIC_FUZZ_SEED));
@@ -270,7 +280,7 @@ impl CoverageArgs {
             .build(root.clone(), output, env, evm_opts)?;
 
         // Run tests
-        let known_contracts = ContractsByArtifact(runner.known_contracts.clone());
+        let known_contracts = runner.known_contracts.clone();
         let (tx, rx) = channel::<(String, SuiteResult)>();
         let handle =
             thread::spawn(move || runner.test(&self.filter, Some(tx), Default::default()).unwrap());
@@ -308,14 +318,17 @@ impl CoverageArgs {
         let _ = handle.join();
 
         // Output final report
-        match self.report {
-            CoverageReportKind::Summary => SummaryReporter::default().report(report),
-            // TODO: Sensible place to put the LCOV file
-            CoverageReportKind::Lcov => {
-                LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?).report(report)
-            }
-            CoverageReportKind::Debug => DebugReporter::default().report(report),
+        for report_kind in self.report {
+            match report_kind {
+                CoverageReportKind::Summary => SummaryReporter::default().report(&report),
+                // TODO: Sensible place to put the LCOV file
+                CoverageReportKind::Lcov => {
+                    LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?).report(&report)
+                }
+                CoverageReportKind::Debug => DebugReporter::default().report(&report),
+            }?;
         }
+        Ok(())
     }
 }
 

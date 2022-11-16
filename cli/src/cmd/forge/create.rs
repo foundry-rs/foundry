@@ -2,8 +2,8 @@
 use super::verify;
 use crate::{
     cmd::{
-        forge::build::CoreBuildArgs, read_constructor_args_file, remove_contract,
-        retry::RETRY_VERIFY_ON_CREATE, LoadConfig,
+        forge::build::CoreBuildArgs, read_constructor_args_file, remove_contract, retry::RetryArgs,
+        LoadConfig,
     },
     opts::{EthereumOpts, TransactionOpts, WalletType},
 };
@@ -78,6 +78,9 @@ pub struct CreateArgs {
 
     #[clap(flatten)]
     pub verifier: verify::VerifierArgs,
+
+    #[clap(flatten, help = "Allows to use retry arguments for contract verification")]
+    retry: RetryArgs,
 }
 
 impl CreateArgs {
@@ -106,7 +109,7 @@ impl CreateArgs {
                     .link_references
                     .iter()
                     .flat_map(|(path, names)| {
-                        names.keys().map(move |name| format!("\t{}: {}", name, path))
+                        names.keys().map(move |name| format!("\t{name}: {path}"))
                     })
                     .collect::<Vec<String>>()
                     .join("\n");
@@ -154,6 +157,42 @@ impl CreateArgs {
         Ok(())
     }
 
+    /// Ensures the verify command can be executed.
+    ///
+    /// This is supposed to check any things that might go wrong when preparing a verify request
+    /// before the contract is deployed. This should prevent situations where a contract is deployed
+    /// successfully, but we fail to prepare a verify request which would require manual
+    /// verification.
+    async fn verify_preflight_check(
+        &self,
+        constructor_args: Option<String>,
+        chain: u64,
+    ) -> eyre::Result<()> {
+        // NOTE: this does not represent the same `VerifyArgs` that would be sent after deployment,
+        // since we don't know the address yet.
+        let verify = verify::VerifyArgs {
+            address: Default::default(),
+            contract: self.contract.clone(),
+            compiler_version: None,
+            constructor_args,
+            constructor_args_path: None,
+            num_of_optimizations: None,
+            chain: chain.into(),
+            etherscan_key: self.eth.etherscan_api_key.clone(),
+            flatten: false,
+            force: false,
+            watch: true,
+            retry: self.retry,
+            libraries: vec![],
+            root: None,
+            verifier: self.verifier.clone(),
+            show_standard_json_input: false,
+        };
+        verify.verification_provider()?.preflight_check(verify).await?;
+        Ok(())
+    }
+
+    /// Deploys the contract
     async fn deploy<M: Middleware + 'static>(
         self,
         abi: Abi,
@@ -232,6 +271,26 @@ impl CreateArgs {
             };
         }
 
+        // Before we actually deploy the contract we try check if the verify settings are valid
+        let mut constructor_args = None;
+        if self.verify {
+            if !args.is_empty() {
+                // we're passing an empty vec to the `encode_input` of the constructor because we
+                // only need the constructor arguments and the encoded input is
+                // `code + args`
+                let code = Vec::new();
+                let encoded_args = abi
+                    .constructor()
+                    .ok_or(eyre::eyre!("could not find constructor"))?
+                    .encode_input(code, &args)?
+                    .to_hex::<String>();
+                constructor_args = Some(encoded_args);
+            }
+
+            self.verify_preflight_check(constructor_args.clone(), chain).await?;
+        }
+
+        // Deploy the actual contract
         let (deployed_contract, receipt) = deployer.send_with_receipt().await?;
 
         let address = deployed_contract.address();
@@ -253,19 +312,7 @@ impl CreateArgs {
         }
 
         println!("Starting contract verification...");
-        let constructor_args = if !args.is_empty() {
-            // we're passing an empty vec to the `encode_input` of the constructor because we only
-            // need the constructor arguments and the encoded input is `code + args`
-            let code = Vec::new();
-            let encoded_args = abi
-                .constructor()
-                .ok_or(eyre::eyre!("could not find constructor"))?
-                .encode_input(code, &args)?
-                .to_hex::<String>();
-            Some(encoded_args)
-        } else {
-            None
-        };
+
         let num_of_optimizations =
             if self.opts.compiler.optimize { self.opts.compiler.optimizer_runs } else { None };
         let verify = verify::VerifyArgs {
@@ -280,10 +327,11 @@ impl CreateArgs {
             flatten: false,
             force: false,
             watch: true,
-            retry: RETRY_VERIFY_ON_CREATE,
+            retry: self.retry,
             libraries: vec![],
             root: None,
             verifier: self.verifier,
+            show_standard_json_input: false,
         };
         println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier);
         verify.run().await
@@ -302,5 +350,25 @@ impl CreateArgs {
             .collect::<Vec<_>>();
 
         parse_tokens(params, true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_parse_create() {
+        let args: CreateArgs = CreateArgs::parse_from([
+            "foundry-cli",
+            "src/Domains.sol:Domains",
+            "--verify",
+            "--retries",
+            "10",
+            "--delay",
+            "30",
+        ]);
+        assert_eq!(args.retry.retries, 10);
+        assert_eq!(args.retry.delay, 30);
     }
 }

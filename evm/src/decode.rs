@@ -75,7 +75,7 @@ pub fn decode_revert(
     if err.len() < SELECTOR_LEN {
         if let Some(status) = status {
             if !matches!(status, revm::return_ok!()) {
-                return Ok(format!("EvmError: {:?}", status))
+                return Ok(format!("EvmError: {status:?}"))
             }
         }
         eyre::bail!("Not enough error data to decode")
@@ -173,7 +173,7 @@ pub fn decode_revert(
                                 .map(foundry_common::abi::format_token)
                                 .collect::<Vec<_>>()
                                 .join(", ");
-                            return Ok(format!("{}({})", abi_error.name, inputs))
+                            return Ok(format!("{}({inputs})", abi_error.name))
                         }
                     }
                 }
@@ -193,7 +193,7 @@ pub fn decode_revert(
                 .or_else(|| {
                     // try decoding as unknown err
                     String::decode(&err[SELECTOR_LEN..])
-                        .map(|err_str| format!("{}:{}", hex::encode(&err[..SELECTOR_LEN]), err_str))
+                        .map(|err_str| format!("{}:{err_str}", hex::encode(&err[..SELECTOR_LEN])))
                         .ok()
                 })
                 .or_else(|| {
@@ -203,9 +203,9 @@ pub fn decode_revert(
 
                         let err_str = format_token(&token);
                         if err_str.starts_with('(') {
-                            format!("{}{}", s, err_str)
+                            format!("{s}{err_str}")
                         } else {
-                            format!("{}({})", s, err_str)
+                            format!("{s}({err_str})")
                         }
                     })
                 })

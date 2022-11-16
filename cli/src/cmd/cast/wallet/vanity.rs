@@ -50,7 +50,7 @@ impl Cmd for VanityArgs {
             if let Ok(decoded) = hex::decode(prefix.as_bytes()) {
                 left_exact_hex = Some(decoded)
             } else {
-                left_regex = Some(Regex::new(&format!(r"^{}", prefix))?);
+                left_regex = Some(Regex::new(&format!(r"^{prefix}"))?);
             }
         }
 
@@ -58,7 +58,7 @@ impl Cmd for VanityArgs {
             if let Ok(decoded) = hex::decode(suffix.as_bytes()) {
                 right_exact_hex = Some(decoded)
             } else {
-                right_regex = Some(Regex::new(&format!(r"{}$", suffix))?);
+                right_regex = Some(Regex::new(&format!(r"{suffix}$"))?);
             }
         }
 

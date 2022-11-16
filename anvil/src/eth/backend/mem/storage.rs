@@ -210,11 +210,26 @@ impl BlockchainStorage {
 impl BlockchainStorage {
     /// Returns the hash for [BlockNumber]
     pub fn hash(&self, number: BlockNumber) -> Option<H256> {
+        let slots_in_an_epoch = U64::from(32u64);
         match number {
             BlockNumber::Latest => Some(self.best_hash),
             BlockNumber::Earliest => Some(self.genesis_hash),
             BlockNumber::Pending => None,
             BlockNumber::Number(num) => self.hashes.get(&num).copied(),
+            BlockNumber::Safe => {
+                if self.best_number > (slots_in_an_epoch) {
+                    self.hashes.get(&(self.best_number - (slots_in_an_epoch))).copied()
+                } else {
+                    Some(self.genesis_hash) // treat the genesis block as safe "by definition"
+                }
+            }
+            BlockNumber::Finalized => {
+                if self.best_number > (slots_in_an_epoch * 2) {
+                    self.hashes.get(&(self.best_number - (slots_in_an_epoch * 2))).copied()
+                } else {
+                    Some(self.genesis_hash)
+                }
+            }
         }
     }
 }

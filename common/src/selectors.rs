@@ -320,12 +320,12 @@ impl fmt::Display for PossibleSigs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.method {
             SelectorOrSig::Selector(selector) => {
-                writeln!(f, "\n Method: {}", selector)?;
+                writeln!(f, "\n Method: {selector}")?;
             }
             SelectorOrSig::Sig(sigs) => {
                 writeln!(f, "\n Possible methods:")?;
                 for sig in sigs {
-                    writeln!(f, " - {}", sig)?;
+                    writeln!(f, " - {sig}")?;
                 }
             }
         }
@@ -333,7 +333,7 @@ impl fmt::Display for PossibleSigs {
         writeln!(f, " ------------")?;
         for (i, row) in self.data.iter().enumerate() {
             let pad = if i < 10 { "  " } else { " " };
-            writeln!(f, " [{}]:{}{}", i, pad, row)?;
+            writeln!(f, " [{i}]:{pad}{row}")?;
         }
         Ok(())
     }
