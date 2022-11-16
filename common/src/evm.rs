@@ -1,6 +1,6 @@
 //! cli arguments for configuring the evm settings
 use clap::{ArgAction, Parser};
-use ethers_core::types::{Address, U256};
+use ethers_core::types::{Address, H256, U256};
 use eyre::ContextCompat;
 use foundry_config::{
     figment::{
@@ -188,6 +188,11 @@ pub struct EnvArgs {
     #[clap(long, value_name = "DIFFICULTY")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_difficulty: Option<u64>,
+
+    /// The block prevrandao value. NOTE: Before merge this field was mix_hash.
+    #[clap(long, value_name = "PREVRANDAO")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_prevrandao: Option<H256>,
 
     /// The block gas limit.
     #[clap(long, value_name = "GAS_LIMIT")]

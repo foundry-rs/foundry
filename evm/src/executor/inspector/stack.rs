@@ -111,7 +111,7 @@ impl InspectorStack {
                 // we assume it wants to tell us something
                 if new_status != status || (new_status == Return::Revert && new_retdata != retdata)
                 {
-                    return (new_status, new_gas, new_retdata);
+                    return (new_status, new_gas, new_retdata)
                 }
             }
         );
@@ -146,7 +146,7 @@ where
 
                 // Allow inspectors to exit early
                 if status != Return::Continue {
-                    return status;
+                    return status
                 }
             }
         );
@@ -177,7 +177,7 @@ where
 
                 // Allow inspectors to exit early
                 if status != Return::Continue {
-                    return status;
+                    return status
                 }
             }
         );
@@ -192,10 +192,13 @@ where
         topics: &[H256],
         data: &Bytes,
     ) {
-        call_inspectors!(inspector, [&mut self.tracer, &mut self.logs, &mut self.cheatcodes,
-            &mut self.printer], {
-            inspector.log(evm_data, address, topics, data);
-        });
+        call_inspectors!(
+            inspector,
+            [&mut self.tracer, &mut self.logs, &mut self.cheatcodes, &mut self.printer],
+            {
+                inspector.log(evm_data, address, topics, data);
+            }
+        );
     }
 
     fn step_end(
@@ -220,7 +223,7 @@ where
 
                 // Allow inspectors to exit early
                 if status != Return::Continue {
-                    return status;
+                    return status
                 }
             }
         );
@@ -251,7 +254,7 @@ where
 
                 // Allow inspectors to exit early
                 if status != Return::Continue {
-                    return (status, gas, retdata);
+                    return (status, gas, retdata)
                 }
             }
         );
@@ -303,7 +306,7 @@ where
 
                 // Allow inspectors to exit early
                 if status != Return::Continue {
-                    return (status, addr, gas, retdata);
+                    return (status, addr, gas, retdata)
                 }
             }
         );
@@ -342,7 +345,7 @@ where
                 );
 
                 if new_status != status {
-                    return (new_status, new_address, new_gas, new_retdata);
+                    return (new_status, new_address, new_gas, new_retdata)
                 }
             }
         );
@@ -353,8 +356,13 @@ where
     fn selfdestruct(&mut self) {
         call_inspectors!(
             inspector,
-            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes,
-            &mut self.printer],
+            [
+                &mut self.debugger,
+                &mut self.tracer,
+                &mut self.logs,
+                &mut self.cheatcodes,
+                &mut self.printer
+            ],
             {
                 Inspector::<DB>::selfdestruct(inspector);
             }

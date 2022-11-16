@@ -5,7 +5,7 @@ use ethers::types::Address;
 use revm::{
     opcode::{self},
     CallInputs, CreateInputs, Database, EVMData, Gas, GasInspector, Return,
-}; 
+};
 #[derive(Clone)]
 pub struct TracePrinter {
     gas_inspector: GasInspector,
@@ -13,9 +13,7 @@ pub struct TracePrinter {
 
 impl TracePrinter {
     pub fn new() -> Self {
-        Self {
-            gas_inspector: GasInspector::default(),
-        }
+        Self { gas_inspector: GasInspector::default() }
     }
 }
 
@@ -26,8 +24,7 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
         data: &mut EVMData<'_, DB>,
         is_static: bool,
     ) -> Return {
-        self.gas_inspector
-            .initialize_interp(interp, data, is_static);
+        self.gas_inspector.initialize_interp(interp, data, is_static);
         Return::Continue
     }
 
@@ -45,7 +42,7 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
         let gas_remaining = self.gas_inspector.gas_remaining();
 
         println!(
-            "depth:{}, PC:{}, gas:{:#x}({}), OPCODE: {:?}({:?})  refund:{:#x}({}) Stack:{:?}, Data size:{}",
+            "depth:{}, PC:{}, gas:{:#x}({}), OPCODE: {:?}({:?})  refund:{:#x}({}) Stack:{:?}, Data size:{}, Data: 0x{}",
             data.journaled_state.depth(),
             interp.program_counter(),
             gas_remaining,
@@ -56,6 +53,7 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
             interp.gas.refunded(),
             interp.stack.data(),
             interp.memory.data().len(),
+            hex::encode(interp.memory.data()),
         );
 
         self.gas_inspector.step(interp, data, is_static);
@@ -83,8 +81,7 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
         out: Bytes,
         is_static: bool,
     ) -> (Return, Gas, Bytes) {
-        self.gas_inspector
-            .call_end(data, inputs, remaining_gas, ret, out.clone(), is_static);
+        self.gas_inspector.call_end(data, inputs, remaining_gas, ret, out.clone(), is_static);
         (ret, remaining_gas, out)
     }
 
@@ -97,8 +94,7 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
         remaining_gas: Gas,
         out: Bytes,
     ) -> (Return, Option<Address>, Gas, Bytes) {
-        self.gas_inspector
-            .create_end(data, inputs, ret, address, remaining_gas, out.clone());
+        self.gas_inspector.create_end(data, inputs, ret, address, remaining_gas, out.clone());
         (ret, address, remaining_gas, out)
     }
 

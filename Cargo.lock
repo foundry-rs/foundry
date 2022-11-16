@@ -4693,9 +4693,9 @@ dependencies = [
 
 [[package]]
 name = "revm"
-version = "2.2.0"
+version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf7259a494c33494fb23f087b36394acf4ac5e6d2dc30b2b8d6d98c314bc96c3"
+checksum = "d3d296f0199135e573ba817ed0024d0d4eafa7add1c9a8dd08488c3515598156"
 dependencies = [
  "arrayref",
  "auto_impl 1.0.1",
