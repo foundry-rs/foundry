@@ -1,9 +1,11 @@
+mod flatten;
+mod standard_json;
+
 use super::{VerifyArgs, VerifyCheckArgs};
 use crate::cmd::{
     forge::verify::provider::VerificationProvider, read_constructor_args_file,
     retry::RETRY_CHECK_ON_VERIFY, LoadConfig,
 };
-use async_trait::async_trait;
 use cast::SimpleCast;
 use ethers::{
     abi::Function,
@@ -12,12 +14,7 @@ use ethers::{
         verify::{CodeFormat, VerifyContract},
         Client,
     },
-    prelude::artifacts::StandardJsonCompilerInput,
-    solc::{
-        artifacts::{BytecodeHash, CompactContract, Source},
-        cache::CacheEntry,
-        AggregatedCompilerOutput, CompilerInput, Project, Solc,
-    },
+    solc::{artifacts::CompactContract, cache::CacheEntry, Project, Solc},
 };
 use eyre::{eyre, Context};
 use foundry_common::abi::encode_args;
@@ -29,7 +26,7 @@ use regex::Regex;
 use rustc_hex::ToHex;
 use semver::{BuildMetadata, Version};
 use std::{
-    collections::BTreeMap,
+    fmt::Debug,
     path::{Path, PathBuf},
 };
 use tracing::{error, trace, warn};
@@ -41,7 +38,7 @@ pub static RE_BUILD_COMMIT: Lazy<Regex> =
 #[non_exhaustive]
 pub struct EtherscanVerificationProvider;
 
-#[async_trait]
+#[async_trait::async_trait]
 impl VerificationProvider for EtherscanVerificationProvider {
     async fn preflight_check(&self, args: VerifyArgs) -> eyre::Result<()> {
         let _ = self.prepare_request(&args).await?;
@@ -176,6 +173,15 @@ impl VerificationProvider for EtherscanVerificationProvider {
 }
 
 impl EtherscanVerificationProvider {
+    /// Create a source provider
+    fn source_provider(&self, args: &VerifyArgs) -> Box<dyn EtherscanSourceProvider> {
+        if args.flatten {
+            Box::new(flatten::EtherscanFlattenedSource)
+        } else {
+            Box::new(standard_json::EtherscanStandardJsonSource)
+        }
+    }
+
     /// Configures the API request to the etherscan API using the given [`VerifyArgs`].
     async fn prepare_request(&self, args: &VerifyArgs) -> eyre::Result<(Client, VerifyContract)> {
         let config = args.try_load_config_emit_warnings()?;
@@ -235,15 +241,18 @@ impl EtherscanVerificationProvider {
         let project = config.project()?;
 
         if !config.cache {
-            if args.contract.path.is_none() {
-                eyre::bail!(
-                    "If cache is disabled, contract info must be provided in the format <path>:<name>"
-                );
-            } else if args.constructor_args_path.is_some() {
-                eyre::bail!(
-                    "Cache must be enabled in order to use the `--constructor-args-path` option"
-                );
-            }
+            eyre::ensure!(
+                args.contract.path.is_some(),
+                "If cache is disabled, contract info must be provided in the format <path>:<name>"
+            );
+            eyre::ensure!(
+                args.constructor_args_path.is_none(),
+                "Cache must be enabled in order to use the `--constructor-args-path` option"
+            );
+            eyre::ensure!(
+                args.compiler_version.is_some() || config.solc.is_some(),
+                "If cache is disabled, compiler version must be either provided with `--compiler-version` option or set in foundry.toml"
+            );
         }
 
         let should_read_cache = args.contract.path.is_none() ||
@@ -272,17 +281,8 @@ impl EtherscanVerificationProvider {
 
         let compiler_version = self.compiler_version(args, &config, &cached_entry)?;
 
-        let (source, contract_name, code_format) = if args.flatten {
-            self.flattened_source(
-                args,
-                &project,
-                &contract_path,
-                &compiler_version,
-                &contract_path,
-            )?
-        } else {
-            self.standard_json_source(args, &project, &contract_path, &compiler_version)?
-        };
+        let (source, contract_name, code_format) =
+            self.source_provider(args).source(args, &project, &contract_path, &compiler_version)?;
 
         let compiler_version = ensure_solc_build_metadata(compiler_version).await?;
         let compiler_version = format!("v{compiler_version}");
@@ -374,145 +374,16 @@ impl EtherscanVerificationProvider {
 
         eyre::bail!("Compiler version has to be set in `foundry.toml`. If the project was not deployed with foundry, specify the version through `--compiler-version` flag.")
     }
-
-    /// Attempts to compile the flattened content locally with the compiler version.
-    ///
-    /// This expects the completely flattened `content´ and will try to compile it using the
-    /// provided compiler. If the compiler is missing it will be installed.
-    ///
-    /// # Errors
-    ///
-    /// If it failed to install a missing solc compiler
-    ///
-    /// # Exits
-    ///
-    /// If the solc compiler output contains errors, this could either be due to a bug in the
-    /// flattening code or could to conflict in the flattened code, for example if there are
-    /// multiple interfaces with the same name.
-    fn check_flattened(
-        &self,
-        content: impl Into<String>,
-        version: &Version,
-        contract_path: &Path,
-    ) -> eyre::Result<()> {
-        let version = strip_build_meta(version.clone());
-        let solc = if let Some(solc) = Solc::find_svm_installed_version(version.to_string())? {
-            solc
-        } else {
-            Solc::blocking_install(&version)?
-        };
-        let input = CompilerInput {
-            language: "Solidity".to_string(),
-            sources: BTreeMap::from([("contract.sol".into(), Source { content: content.into() })]),
-            settings: Default::default(),
-        };
-
-        let out = solc.compile(&input)?;
-        if out.has_error() {
-            let mut o = AggregatedCompilerOutput::default();
-            o.extend(version, out);
-            eprintln!("{}", o.diagnostics(&[], Default::default()));
-
-            eprintln!(
-                r#"Failed to compile the flattened code locally.
-This could be a bug, please inspect the output of `forge flatten {}` and report an issue.
-To skip this solc dry, pass `--force`.
-"#,
-                contract_path.display()
-            );
-            std::process::exit(1)
-        }
-
-        Ok(())
-    }
-
-    fn flattened_source(
-        &self,
-        args: &VerifyArgs,
-        project: &Project,
-        target: &Path,
-        version: &Version,
-        contract_path: &Path,
-    ) -> eyre::Result<(String, String, CodeFormat)> {
-        let bch = project
-            .solc_config
-            .settings
-            .metadata
-            .as_ref()
-            .and_then(|m| m.bytecode_hash)
-            .unwrap_or_default();
-
-        eyre::ensure!(
-            bch == BytecodeHash::Ipfs,
-            "When using flattened source, bytecodeHash must be set to ipfs because Etherscan uses IPFS in its Compiler Settings when re-compiling your code. BytecodeHash is currently: {}. Hint: Set the bytecodeHash key in your foundry.toml :)",
-            bch,
-        );
-
-        let source = project.flatten(target).wrap_err("Failed to flatten contract")?;
-
-        if !args.force {
-            // solc dry run of flattened code
-            self.check_flattened(source.clone(), version, contract_path).map_err(|err| {
-                eyre::eyre!(
-                    "Failed to compile the flattened code locally: `{}`\
-    To skip this solc dry, have a look at the  `--force` flag of this command.",
-                    err
-                )
-            })?;
-        }
-
-        let name = args.contract.name.clone();
-        Ok((source, name, CodeFormat::SingleFile))
-    }
-
-    fn standard_json_source(
-        &self,
-        args: &VerifyArgs,
-        project: &Project,
-        target: &Path,
-        version: &Version,
-    ) -> eyre::Result<(String, String, CodeFormat)> {
-        let mut input: StandardJsonCompilerInput = project
-            .standard_json_input(target)
-            .wrap_err("Failed to get standard json input")?
-            .normalize_evm_version(version);
-
-        input.settings.libraries.libs = input
-            .settings
-            .libraries
-            .libs
-            .into_iter()
-            .map(|(f, libs)| (f.strip_prefix(project.root()).unwrap_or(&f).to_path_buf(), libs))
-            .collect();
-
-        // TODO: make sanitization logic shared between types in ethers
-        let input: StandardJsonCompilerInput = CompilerInput::from(input).sanitized(version).into();
-
-        let source =
-            serde_json::to_string(&input).wrap_err("Failed to parse standard json input")?;
-
-        trace!(standard_json = source, target = "forge::verify", "determined standard json input");
-
-        let name = format!(
-            "{}:{}",
-            target.strip_prefix(project.root()).unwrap_or(target).display(),
-            args.contract.name.clone()
-        );
-        Ok((source, name, CodeFormat::StandardJsonInput))
-    }
 }
 
-/// Strips [BuildMetadata] from the [Version]
-///
-/// **Note:** this is only for local compilation as a dry run, therefore this will return a
-/// sanitized variant of the specific version so that it can be installed. This is merely
-/// intended to ensure the flattened code can be compiled without errors.
-fn strip_build_meta(version: Version) -> Version {
-    if version.build != BuildMetadata::EMPTY {
-        Version::new(version.major, version.minor, version.patch)
-    } else {
-        version
-    }
+trait EtherscanSourceProvider: Send + Sync + Debug {
+    fn source(
+        &self,
+        args: &VerifyArgs,
+        project: &Project,
+        target: &Path,
+        version: &Version,
+    ) -> eyre::Result<(String, String, CodeFormat)>;
 }
 
 /// Given any solc [Version] return a [Version] with build metadata
