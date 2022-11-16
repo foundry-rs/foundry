@@ -145,7 +145,7 @@ impl StorageArgs {
 
             if is_storage_layout_empty(&artifact.storage_layout) && auto_detect {
                 // try recompiling with the minimum version
-                println!("The requested contract was compiled with {} while the minimum version for storage layouts is {} and as a result the output may be empty.", version, MIN_SOLC);
+                println!("The requested contract was compiled with {version} while the minimum version for storage layouts is {MIN_SOLC} and as a result the output may be empty.");
                 let solc = Solc::find_or_install_svm_version(MIN_SOLC.to_string())?;
                 project.solc = solc;
                 project.auto_detect = false;
@@ -200,13 +200,13 @@ async fn fetch_storage_values(
             let slot_h256 = H256::from_uint(&slot.slot.parse::<U256>()?);
             Ok(provider.get_storage_at(address, slot_h256, None))
         })
-        .collect::<Result<_, eyre::Report>>()?;
+        .collect::<Result<_>>()?;
 
     for (value, slot) in join_all(futures).await.into_iter().zip(layout.storage.iter()) {
         let value = value?.into_uint();
         let t = layout.types.get_mut(&slot.storage_type).expect("Bad storage");
         // TODO: Better format values according to their Solidity type
-        t.value = Some(format!("{:?}", value));
+        t.value = Some(format!("{value:?}"));
     }
 
     Ok(())
@@ -236,7 +236,7 @@ fn print_storage(layout: StorageLayout, pretty: bool) -> Result<()> {
         ]);
     }
 
-    println!("{}", table);
+    println!("{table}");
 
     Ok(())
 }
