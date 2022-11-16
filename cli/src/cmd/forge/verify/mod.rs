@@ -1,6 +1,9 @@
 //! Verify contract source
 
-use crate::cmd::{forge::verify::etherscan::EtherscanVerificationProvider, retry::RetryArgs};
+use crate::cmd::{
+    forge::verify::{etherscan::EtherscanVerificationProvider, provider::VerificationProvider},
+    retry::RetryArgs,
+};
 use clap::{Parser, ValueHint};
 use ethers::{abi::Address, solc::info::ContractInfo};
 use foundry_config::{figment, impl_figment_convert, Chain, Config};
@@ -183,6 +186,11 @@ impl VerifyArgs {
 
         println!("Start verifying contract `{:?}` deployed on {}", self.address, self.chain);
         self.verifier.verifier.client(&self.etherscan_key)?.verify(self).await
+    }
+
+    /// Returns the configured verification provider
+    pub fn verification_provider(&self) -> eyre::Result<Box<dyn VerificationProvider>> {
+        self.verifier.verifier.client(&self.etherscan_key)
     }
 }
 

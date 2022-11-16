@@ -8,7 +8,19 @@ use std::{fmt, str::FromStr};
 /// An abstraction for various verification providers such as etherscan, sourcify, blockscout
 #[async_trait]
 pub trait VerificationProvider {
+    /// This should ensure the verify request can be prepared successfully.
+    ///
+    /// Caution: Implementers must ensure that this _never_ sends the actual verify request
+    /// `[VerificationProvider::verify]`, instead this is supposed to evaluate whether the given
+    /// [`VerifyArgs`] are valid to begin with. This should prevent situations where there's a
+    /// contract deployment that's executed before the verify request and the subsequent verify task
+    /// fails due to misconfiguration.
+    async fn preflight_check(&self, args: VerifyArgs) -> eyre::Result<()>;
+
+    /// Sends the actual verify request for the targeted contract.
     async fn verify(&self, args: VerifyArgs) -> eyre::Result<()>;
+
+    /// Checks whether the contract is verified.
     async fn check(&self, args: VerifyCheckArgs) -> eyre::Result<()>;
 }
 
