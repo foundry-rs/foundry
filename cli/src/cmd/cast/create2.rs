@@ -107,15 +107,15 @@ impl Create2Args {
 
         if let Some(prefix) = starts_with {
             let pad_width = prefix.len() + prefix.len() % 2;
-            hex::decode(format!("{:0>width$}", prefix, width = pad_width))
+            hex::decode(format!("{prefix:0>pad_width$}"))
                 .wrap_err("invalid prefix hex provided")?;
-            regexs.push(format!(r"^{}", prefix));
+            regexs.push(format!(r"^{prefix}"));
         }
         if let Some(suffix) = ends_with {
             let pad_width = suffix.len() + suffix.len() % 2;
-            hex::decode(format!("{:0>width$}", suffix, width = pad_width))
+            hex::decode(format!("{suffix:0>pad_width$}"))
                 .wrap_err("invalid suffix hex provided")?;
-            regexs.push(format!(r"{}$", suffix));
+            regexs.push(format!(r"{suffix}$"));
         }
 
         debug_assert!(
@@ -179,7 +179,7 @@ mod tests {
 
     use super::*;
 
-    const DEPLOYER: &'static str = "0x4e59b44847b379578588920ca78fbf26c0b4956c";
+    const DEPLOYER: &str = "0x4e59b44847b379578588920ca78fbf26c0b4956c";
 
     #[test]
     fn basic_create2() {
