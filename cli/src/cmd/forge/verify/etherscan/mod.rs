@@ -307,7 +307,7 @@ impl EtherscanVerificationProvider {
         let path = match args.contract.path.as_ref() {
             Some(path) => project.root().join(path),
             None => {
-                let (path, _, _) = self.cache_entry(&project, &args.contract.name).wrap_err(
+                let (path, _, _) = self.cache_entry(project, &args.contract.name).wrap_err(
                     "If cache is disabled, contract info must be provided in the format <path>:<name>",
                 )?;
                 path.to_owned()
@@ -380,7 +380,7 @@ impl EtherscanVerificationProvider {
         project: &Project,
     ) -> eyre::Result<Option<String>> {
         if let Some(ref constructor_args_path) = args.constructor_args_path {
-            let (_, _, contract) = self.cache_entry(&project, &args.contract.name).wrap_err(
+            let (_, _, contract) = self.cache_entry(project, &args.contract.name).wrap_err(
                 "Cache must be enabled in order to use the `--constructor-args-path` option",
             )?;
             let abi = contract.abi.as_ref().ok_or(eyre!("Can't find ABI in cached artifact."))?;
