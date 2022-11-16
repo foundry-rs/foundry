@@ -219,7 +219,7 @@ impl ScriptArgs {
 
                 for (_kind, trace) in &mut traces {
                     decoder.decode(trace).await;
-                    println!("{}", trace);
+                    println!("{trace}");
                 }
             }
 
