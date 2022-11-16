@@ -255,8 +255,7 @@ casttest!(cast_storage_succeeds, |_: TestProject, mut cmd: TestCommand| {
     let output = cmd.stdout_lossy();
     assert!(
         output.contains("0x577261707065642045746865720000000000000000000000000000000000001a"),
-        "{}",
-        output
+        "{output}",
     );
 
     // Polygon bridge proxy
@@ -265,19 +264,15 @@ casttest!(cast_storage_succeeds, |_: TestProject, mut cmd: TestCommand| {
     let output = cmd.stdout_lossy();
     assert!(
         output.contains("RootChainManager") &&
-            output.contains("inited") &&
-            output.contains("bool") &&
-            output
-                .contains("0x0000000000000000000000000000000000000000000000000000000000000001"),
-        "{}",
-        output
+            output.contains("_roles") &&
+            output.contains("mapping(bytes32 => struct AccessControl.RoleData)"),
+        "{output}",
     );
     // first slot is `inited`, always is 1
     cmd.cast_fuse().args(["storage", "--rpc-url", eth_rpc_url.as_str(), address, "0"]);
     let output = cmd.stdout_lossy();
     assert!(
         output.contains("0x0000000000000000000000000000000000000000000000000000000000000001"),
-        "{}",
-        output
+        "{output}",
     );
 });
