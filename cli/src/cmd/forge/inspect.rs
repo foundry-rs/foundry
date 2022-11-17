@@ -3,7 +3,7 @@ use crate::{
     opts::forge::CompilerArgs,
 };
 use clap::Parser;
-use comfy_table::Table;
+use comfy_table::{presets::ASCII_MARKDOWN, Table};
 use ethers::{
     prelude::{
         artifacts::output_selection::{
@@ -136,6 +136,7 @@ impl Cmd for InspectArgs {
                 if pretty {
                     if let Some(storage_layout) = &artifact.storage_layout {
                         let mut table = Table::new();
+                        table.load_preset(ASCII_MARKDOWN);
                         table.set_header(vec![
                             "Name", "Type", "Slot", "Offset", "Bytes", "Contract",
                         ]);
