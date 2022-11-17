@@ -1,20 +1,13 @@
 use bytes::Bytes;
-pub use revm::Inspector;
-
 use ethers::types::Address;
 use revm::{
     opcode::{self},
-    CallInputs, CreateInputs, Database, EVMData, Gas, GasInspector, Return,
+    CallInputs, CreateInputs, Database, EVMData, Gas, GasInspector, Inspector, Return,
 };
-#[derive(Clone)]
+
+#[derive(Clone, Default)]
 pub struct TracePrinter {
     gas_inspector: GasInspector,
-}
-
-impl TracePrinter {
-    pub fn new() -> Self {
-        Self { gas_inspector: GasInspector::default() }
-    }
 }
 
 impl<DB: Database> Inspector<DB> for TracePrinter {
@@ -72,32 +65,6 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
         Return::Continue
     }
 
-    fn call_end(
-        &mut self,
-        data: &mut EVMData<'_, DB>,
-        inputs: &CallInputs,
-        remaining_gas: Gas,
-        ret: Return,
-        out: Bytes,
-        is_static: bool,
-    ) -> (Return, Gas, Bytes) {
-        self.gas_inspector.call_end(data, inputs, remaining_gas, ret, out.clone(), is_static);
-        (ret, remaining_gas, out)
-    }
-
-    fn create_end(
-        &mut self,
-        data: &mut EVMData<'_, DB>,
-        inputs: &CreateInputs,
-        ret: Return,
-        address: Option<Address>,
-        remaining_gas: Gas,
-        out: Bytes,
-    ) -> (Return, Option<Address>, Gas, Bytes) {
-        self.gas_inspector.create_end(data, inputs, ret, address, remaining_gas, out.clone());
-        (ret, address, remaining_gas, out)
-    }
-
     fn call(
         &mut self,
         _data: &mut EVMData<'_, DB>,
@@ -115,6 +82,19 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
         (Return::Continue, Gas::new(0), Bytes::new())
     }
 
+    fn call_end(
+        &mut self,
+        data: &mut EVMData<'_, DB>,
+        inputs: &CallInputs,
+        remaining_gas: Gas,
+        ret: Return,
+        out: Bytes,
+        is_static: bool,
+    ) -> (Return, Gas, Bytes) {
+        self.gas_inspector.call_end(data, inputs, remaining_gas, ret, out.clone(), is_static);
+        (ret, remaining_gas, out)
+    }
+
     fn create(
         &mut self,
         _data: &mut EVMData<'_, DB>,
@@ -129,6 +109,19 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
             inputs.gas_limit
         );
         (Return::Continue, None, Gas::new(0), Bytes::new())
+    }
+
+    fn create_end(
+        &mut self,
+        data: &mut EVMData<'_, DB>,
+        inputs: &CreateInputs,
+        ret: Return,
+        address: Option<Address>,
+        remaining_gas: Gas,
+        out: Bytes,
+    ) -> (Return, Option<Address>, Gas, Bytes) {
+        self.gas_inspector.create_end(data, inputs, ret, address, remaining_gas, out.clone());
+        (ret, address, remaining_gas, out)
     }
 
     fn selfdestruct(&mut self) {

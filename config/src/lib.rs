@@ -3200,7 +3200,7 @@ mod tests {
                 block_base_fee_per_gas = 0
                 block_coinbase = '0x0000000000000000000000000000000000000000'
                 block_difficulty = 0
-                block_prevrandao = '0x0000000000000000000000000000000000000000'
+                block_prevrandao = '0x0000000000000000000000000000000000000000000000000000000000000000'
                 block_number = 1
                 block_timestamp = 1
                 bytecode_hash = 'ipfs'

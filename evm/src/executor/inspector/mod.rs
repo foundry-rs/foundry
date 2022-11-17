@@ -90,7 +90,7 @@ impl InspectorStackConfig {
         }
 
         if self.trace_printer {
-            stack.printer = Some(TracePrinter::new());
+            stack.printer = Some(TracePrinter::default());
         }
         stack
     }
