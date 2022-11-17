@@ -123,9 +123,4 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
         self.gas_inspector.create_end(data, inputs, ret, address, remaining_gas, out.clone());
         (ret, address, remaining_gas, out)
     }
-
-    fn selfdestruct(&mut self) {
-        //, address: B160, target: B160) {
-        println!("SELFDESTRUCT on "); //{:?} target: {:?}", address, target);
-    }
 }
