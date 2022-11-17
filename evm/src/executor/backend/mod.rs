@@ -9,7 +9,7 @@ use crate::{
     CALLER, TEST_CONTRACT_ADDRESS,
 };
 use ethers::{
-    prelude::{H160, H256, U256},
+    prelude::{Block, H160, H256, U256},
     types::{Address, BlockNumber, Transaction, U64},
     utils::keccak256,
 };
@@ -723,28 +723,30 @@ impl Backend {
     }
 
     /// Returns the block numbers required for replaying a transaction
-    fn get_block_numbers_for_transaction(
+    fn get_block_number_and_block_for_transaction(
         &self,
         id: LocalForkId,
         transaction: H256,
-    ) -> eyre::Result<(U64, U64)> {
+    ) -> eyre::Result<(U64, Block<Transaction>)> {
         let fork = self.inner.get_fork_by_id(id)?;
         let tx = fork.db.db.get_transaction(transaction)?;
 
         // get the block number we need to fork
         if let Some(tx_block) = tx.block_number {
+            let block = fork.db.db.get_full_block(BlockNumber::Number(tx_block))?;
+
             // we need to subtract 1 here because we want the state before the transaction
             // was mined
             let fork_block = tx_block - 1;
-            Ok((fork_block, tx_block))
+            Ok((fork_block, block))
         } else {
-            let block = fork
-                .db
-                .db
-                .get_full_block(BlockNumber::Latest)?
+            let block = fork.db.db.get_full_block(BlockNumber::Latest)?;
+
+            let number = block
                 .number
                 .ok_or_else(|| DatabaseError::BlockNotFound(BlockNumber::Latest.into()))?;
-            Ok((block, block))
+
+            Ok((number, block))
         }
     }
 
@@ -1031,14 +1033,24 @@ impl DatabaseExt for Backend {
         trace!(?id, ?transaction, "roll fork to transaction");
         let id = self.ensure_fork(id)?;
 
-        let (fork_block, tx_block) = self.get_block_numbers_for_transaction(id, transaction)?;
+        let (fork_block, block) =
+            self.get_block_number_and_block_for_transaction(id, transaction)?;
 
         // roll the fork to the transaction's block or latest if it's pending
         self.roll_fork(Some(id), fork_block.as_u64().into(), env, journaled_state)?;
 
         // replay all transactions that came before
         let mut env = env.clone();
-        env.block.number = tx_block.as_u64().into();
+
+        // update the block's env accordingly
+        env.block.timestamp = block.timestamp;
+        env.block.coinbase = block.author.unwrap_or_default();
+        env.block.difficulty = block.difficulty;
+        env.block.prevrandao = block.mix_hash;
+        env.block.basefee = block.base_fee_per_gas.unwrap_or_default();
+        env.block.gas_limit = block.gas_limit;
+        env.block.number = block.number.unwrap_or(fork_block).as_u64().into();
+
         self.replay_until(id, env, transaction, journaled_state)?;
 
         Ok(())
@@ -1653,23 +1665,12 @@ fn commit_transaction(
     fork: &mut Fork,
 ) {
     configure_tx_env(&mut env, &tx);
-    let (res, state) = {
+    let (_, state) = {
         let mut evm = EVM::new();
-        evm.env = env.clone();
+        evm.env = env;
         evm.database(&mut fork.db);
         evm.transact()
     };
-    dbg!(tx.transaction_index);
-    let exp: H256 =
-        "0x62d76e970d9c1c1cc71b1b7063a74ffe80244de65b855bd5d3ea36889d6f4034".parse().unwrap();
-    let addr: Address = "0x847b64f9d3a95e977d157866447a5c0a5dfa0ee5".parse().unwrap();
-    if tx.hash == exp {
-        dbg!(hex::encode(&tx.input));
-        dbg!(res);
-        dbg!(state.keys());
-        dbg!(state.get(&addr));
-        dbg!(env.clone());
-    }
 
     apply_state_changeset(state, journaled_state, fork);
 }
