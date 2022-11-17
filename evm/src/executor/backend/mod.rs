@@ -758,6 +758,8 @@ impl Backend {
         tx_hash: H256,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<Option<Transaction>> {
+        trace!(?id, ?tx_hash, "replay until transaction");
+
         let fork = self.inner.get_fork_by_id_mut(id)?;
         let full_block =
             fork.db.db.get_full_block(BlockNumber::Number(env.block.number.as_u64().into()))?;
@@ -767,6 +769,7 @@ impl Backend {
                 // found the target transaction
                 return Ok(Some(tx))
             }
+            trace!(tx=?tx.hash, "committing transaction");
 
             commit_transaction(tx, env.clone(), journaled_state, fork);
         }
@@ -1650,12 +1653,21 @@ fn commit_transaction(
     fork: &mut Fork,
 ) {
     configure_tx_env(&mut env, &tx);
-    let (_, state) = {
+    let (res, state) = {
         let mut evm = EVM::new();
-        evm.env = env;
+        evm.env = env.clone();
         evm.database(&mut fork.db);
         evm.transact()
     };
+    let exp: H256 =
+        "0x62d76e970d9c1c1cc71b1b7063a74ffe80244de65b855bd5d3ea36889d6f4034".parse().unwrap();
+    let addr: Address = "0x847b64f9d3a95e977d157866447a5c0a5dfa0ee5".parse().unwrap();
+    if tx.hash == exp {
+        dbg!(res);
+        dbg!(state.keys());
+        dbg!(state.get(&addr));
+        dbg!(env.clone());
+    }
 
     apply_state_changeset(state, journaled_state, fork);
 }
