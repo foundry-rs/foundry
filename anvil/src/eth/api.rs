@@ -485,6 +485,16 @@ impl EthApi {
     pub async fn balance(&self, address: Address, block_number: Option<BlockId>) -> Result<U256> {
         node_info!("eth_getBalance");
         let block_request = self.block_request(block_number).await?;
+
+        // check if the number predates the fork, if in fork mode
+        if let BlockRequest::Number(number) = &block_request {
+            if let Some(fork) = self.get_fork() {
+                if fork.predates_fork(number.as_u64()) {
+                    return Ok(fork.get_balance(address, number.as_u64()).await?)
+                }
+            }
+        }
+
         self.backend.get_balance(address, Some(block_request)).await
     }
 
@@ -499,6 +509,18 @@ impl EthApi {
     ) -> Result<H256> {
         node_info!("eth_getStorageAt");
         let block_request = self.block_request(block_number).await?;
+
+        // check if the number predates the fork, if in fork mode
+        if let BlockRequest::Number(number) = &block_request {
+            if let Some(fork) = self.get_fork() {
+                if fork.predates_fork(number.as_u64()) {
+                    return Ok(fork
+                        .storage_at(address, index, Some(BlockNumber::Number(*number)))
+                        .await?)
+                }
+            }
+        }
+
         self.backend.storage_at(address, index, Some(block_request)).await
     }
 

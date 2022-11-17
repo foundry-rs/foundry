@@ -31,6 +31,8 @@ pub struct RunArgs {
     rpc_url: Option<String>,
     #[clap(long, short = 'd', help = "Debugs the transaction.")]
     debug: bool,
+    #[clap(long, short = 't', help = "Print out opcode traces.")]
+    trace_printer: bool,
     #[clap(
         long,
         short = 'q',
@@ -103,6 +105,7 @@ impl RunArgs {
             env.block.timestamp = block.timestamp;
             env.block.coinbase = block.author.unwrap_or_default();
             env.block.difficulty = block.difficulty;
+            env.block.prevrandao = block.mix_hash;
             env.block.basefee = block.base_fee_per_gas.unwrap_or_default();
             env.block.gas_limit = block.gas_limit;
         }
@@ -141,7 +144,10 @@ impl RunArgs {
 
         // Execute our transaction
         let mut result = {
-            executor.set_tracing(true).set_debugger(self.debug);
+            executor
+                .set_tracing(true)
+                .set_debugger(self.debug)
+                .set_trace_printer(self.trace_printer);
 
             configure_tx_env(&mut env, &tx);
 

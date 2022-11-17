@@ -509,7 +509,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             if let Some(end) = comment.end_token() {
                 // If comment is not multiline, end token has to be aligned with the start
                 if fmt.is_beginning_of_line() {
-                    write!(fmt.buf(), "{}{}", " ".repeat(start_token_pos), end)?;
+                    write!(fmt.buf(), "{}{end}", " ".repeat(start_token_pos))?;
                 } else {
                     write!(fmt.buf(), "{end}")?;
                 }
