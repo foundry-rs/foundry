@@ -31,6 +31,9 @@ use revm::{BlockEnv, GasInspector};
 mod fuzzer;
 pub use fuzzer::Fuzzer;
 
+mod printer;
+pub use printer::TracePrinter;
+
 #[derive(Default, Clone, Debug)]
 pub struct InspectorStackConfig {
     /// The cheatcode inspector and its state, if cheatcodes are enabled.
@@ -54,6 +57,8 @@ pub struct InspectorStackConfig {
     pub fuzzer: Option<Fuzzer>,
     /// Whether coverage info should be collected
     pub coverage: bool,
+    /// Should we print all opcode traces into console. Useful for debugging of EVM.
+    pub trace_printer: bool,
 }
 
 impl InspectorStackConfig {
@@ -82,6 +87,10 @@ impl InspectorStackConfig {
 
         if self.coverage {
             stack.coverage = Some(CoverageCollector::default());
+        }
+
+        if self.trace_printer {
+            stack.printer = Some(TracePrinter::default());
         }
         stack
     }

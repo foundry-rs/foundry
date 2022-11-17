@@ -1,4 +1,4 @@
-use super::{Cheatcodes, Debugger, Fuzzer, LogCollector, Tracer};
+use super::{Cheatcodes, Debugger, Fuzzer, LogCollector, TracePrinter, Tracer};
 use crate::{
     coverage::HitMaps,
     debug::DebugArena,
@@ -52,6 +52,7 @@ pub struct InspectorStack {
     pub debugger: Option<Debugger>,
     pub fuzzer: Option<Fuzzer>,
     pub coverage: Option<CoverageCollector>,
+    pub printer: Option<TracePrinter>,
 }
 
 impl InspectorStack {
@@ -93,7 +94,8 @@ impl InspectorStack {
                 &mut self.tracer,
                 &mut self.coverage,
                 &mut self.logs,
-                &mut self.cheatcodes
+                &mut self.cheatcodes,
+                &mut self.printer
             ],
             {
                 let (new_status, new_gas, new_retdata) = inspector.call_end(
@@ -136,7 +138,8 @@ where
                 &mut self.coverage,
                 &mut self.tracer,
                 &mut self.logs,
-                &mut self.cheatcodes
+                &mut self.cheatcodes,
+                &mut self.printer
             ],
             {
                 let status = inspector.initialize_interp(interpreter, data, is_static);
@@ -166,7 +169,8 @@ where
                 &mut self.tracer,
                 &mut self.coverage,
                 &mut self.logs,
-                &mut self.cheatcodes
+                &mut self.cheatcodes,
+                &mut self.printer
             ],
             {
                 let status = inspector.step(interpreter, data, is_static);
@@ -188,9 +192,13 @@ where
         topics: &[H256],
         data: &Bytes,
     ) {
-        call_inspectors!(inspector, [&mut self.tracer, &mut self.logs, &mut self.cheatcodes], {
-            inspector.log(evm_data, address, topics, data);
-        });
+        call_inspectors!(
+            inspector,
+            [&mut self.tracer, &mut self.logs, &mut self.cheatcodes, &mut self.printer],
+            {
+                inspector.log(evm_data, address, topics, data);
+            }
+        );
     }
 
     fn step_end(
@@ -207,7 +215,8 @@ where
                 &mut self.debugger,
                 &mut self.tracer,
                 &mut self.logs,
-                &mut self.cheatcodes
+                &mut self.cheatcodes,
+                &mut self.printer
             ],
             {
                 let status = inspector.step_end(interpreter, data, is_static, status);
@@ -237,7 +246,8 @@ where
                 &mut self.tracer,
                 &mut self.coverage,
                 &mut self.logs,
-                &mut self.cheatcodes
+                &mut self.cheatcodes,
+                &mut self.printer
             ],
             {
                 let (status, gas, retdata) = inspector.call(data, call, is_static);
@@ -288,7 +298,8 @@ where
                 &mut self.tracer,
                 &mut self.coverage,
                 &mut self.logs,
-                &mut self.cheatcodes
+                &mut self.cheatcodes,
+                &mut self.printer
             ],
             {
                 let (status, addr, gas, retdata) = inspector.create(data, call);
@@ -320,7 +331,8 @@ where
                 &mut self.tracer,
                 &mut self.coverage,
                 &mut self.logs,
-                &mut self.cheatcodes
+                &mut self.cheatcodes,
+                &mut self.printer
             ],
             {
                 let (new_status, new_address, new_gas, new_retdata) = inspector.create_end(
@@ -344,7 +356,13 @@ where
     fn selfdestruct(&mut self) {
         call_inspectors!(
             inspector,
-            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            [
+                &mut self.debugger,
+                &mut self.tracer,
+                &mut self.logs,
+                &mut self.cheatcodes,
+                &mut self.printer
+            ],
             {
                 Inspector::<DB>::selfdestruct(inspector);
             }

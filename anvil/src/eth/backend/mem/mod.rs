@@ -304,6 +304,7 @@ impl Backend {
                     timestamp: fork_block.timestamp,
                     gas_limit: fork_block.gas_limit,
                     difficulty: fork_block.difficulty,
+                    prevrandao: fork_block.mix_hash,
                     // Keep previous `coinbase` and `basefee` value
                     coinbase: env.block.coinbase,
                     basefee: env.block.basefee,
@@ -1301,6 +1302,7 @@ impl Backend {
                             coinbase: block.header.beneficiary,
                             timestamp: block.header.timestamp.into(),
                             difficulty: block.header.difficulty,
+                            prevrandao: Some(block.header.mix_hash),
                             basefee: block.header.base_fee_per_gas.unwrap_or_default(),
                             gas_limit: block.header.gas_limit,
                         };
@@ -1325,6 +1327,7 @@ impl Backend {
                     coinbase: block.header.beneficiary,
                     timestamp: block.header.timestamp.into(),
                     difficulty: block.header.difficulty,
+                    prevrandao: Some(block.header.mix_hash),
                     basefee: block.header.base_fee_per_gas.unwrap_or_default(),
                     gas_limit: block.header.gas_limit,
                 };
