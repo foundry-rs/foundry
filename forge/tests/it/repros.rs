@@ -215,3 +215,9 @@ fn test_issue_3674() {
         Address::from_str("0xF0959944122fb1ed4CfaBA645eA06EED30427BAA").unwrap()
     );
 }
+
+// <https://github.com/foundry-rs/foundry/issues/3703>
+#[test]
+fn test_issue_3703() {
+    test_repro!("Issue3703");
+}
