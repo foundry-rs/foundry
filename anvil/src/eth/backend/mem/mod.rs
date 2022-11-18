@@ -79,6 +79,9 @@ pub mod inspector;
 pub mod state;
 pub mod storage;
 
+// Gas per transaction not creating a contract.
+pub const MIN_TRANSACTION_GAS: U256 = U256([21_000, 0, 0, 0]);
+
 pub type State = foundry_evm::HashMap<Address, Account>;
 
 /// A block request, which includes the Pool Transactions if it's Pending
@@ -1813,6 +1816,11 @@ impl TransactionValidator for Backend {
                     return Err(InvalidTransactionError::InvalidChainId)
                 }
             }
+        }
+
+        if tx.gas_limit() < MIN_TRANSACTION_GAS {
+            warn!(target: "backend", "[{:?}] gas too low", tx.hash());
+            return Err(InvalidTransactionError::GasTooLow)
         }
 
         if tx.gas_limit() > env.block.gas_limit {

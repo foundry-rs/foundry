@@ -1,7 +1,10 @@
 use crate::{
     eth::{
         backend,
-        backend::{notifications::NewBlockNotifications, validate::TransactionValidator},
+        backend::{
+            mem::MIN_TRANSACTION_GAS, notifications::NewBlockNotifications,
+            validate::TransactionValidator,
+        },
         error::{
             BlockchainError, FeeHistoryError, InvalidTransactionError, Result, ToRpcResponseResult,
         },
@@ -1748,9 +1751,6 @@ impl EthApi {
     where
         D: DatabaseRef<Error = DatabaseError>,
     {
-        // call takes at least this amount
-        const MIN_GAS: U256 = U256([21_000, 0, 0, 0]);
-
         // if the request is a simple transfer we can optimize
         let likely_transfer =
             request.data.as_ref().map(|data| data.as_ref().is_empty()).unwrap_or(true);
@@ -1758,7 +1758,7 @@ impl EthApi {
             if let Some(to) = request.to {
                 if let Ok(target_code) = self.backend.get_code_with_state(&state, to) {
                     if target_code.as_ref().is_empty() {
-                        return Ok(MIN_GAS)
+                        return Ok(MIN_TRANSACTION_GAS)
                     }
                 }
             }
@@ -1852,7 +1852,7 @@ impl EthApi {
         // search over the possible range
 
         let gas: U256 = gas.into();
-        let mut lowest_gas_limit = MIN_GAS;
+        let mut lowest_gas_limit = MIN_TRANSACTION_GAS;
 
         // pick a point that's close to the estimated gas
         let mut mid_gas_limit = std::cmp::min(gas * 3, (highest_gas_limit + lowest_gas_limit) / 2);
