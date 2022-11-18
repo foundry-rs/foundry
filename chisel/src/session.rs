@@ -25,7 +25,7 @@ pub struct ChiselSession {
 impl ChiselSession {
     /// Create a new `ChiselSession` with a specified `solc` version and configuration.
     ///
-    /// # Panics
+    /// ### Panics
     ///
     /// Panics if there is a failure to install the requested Solc version.
     pub fn new(config: &SessionSourceConfig) -> Self {
@@ -69,7 +69,7 @@ impl ChiselSession {
 
     /// Render the full source code for the current session.
     ///
-    /// ### Return
+    /// ### Returns
     ///
     /// Returns the full, flattened source code for the current session.
     ///
@@ -140,6 +140,10 @@ impl ChiselSession {
     }
 
     /// Get the next default session cache file name
+    ///
+    /// ### Returns
+    ///
+    /// Optionally, returns a tuple containing the next cached session's id and file name.
     pub fn next_cached_session() -> Result<(String, String)> {
         let cache_dir = Self::cache_dir()?;
         let mut entries = std::fs::read_dir(&cache_dir)?;
@@ -167,6 +171,10 @@ impl ChiselSession {
     }
 
     /// The Chisel Cache Directory
+    ///
+    /// ### Returns
+    ///
+    /// Optionally, the directory of the chisel cache.
     pub fn cache_dir() -> Result<String> {
         let home_dir = dirs::home_dir().ok_or(eyre::eyre!("Failed to grab home directory"))?;
         let home_dir_str =
@@ -175,6 +183,10 @@ impl ChiselSession {
     }
 
     /// Create the cache directory if it does not exist
+    ///
+    /// ### Returns
+    ///
+    /// The unit type if the operation was successful.
     pub fn create_cache_dir() -> Result<()> {
         let cache_dir = Self::cache_dir()?;
         if !Path::new(&cache_dir).exists() {
@@ -184,6 +196,10 @@ impl ChiselSession {
     }
 
     /// Lists all available cached sessions
+    ///
+    /// ### Returns
+    ///
+    /// Optionally, a vector containing tuples of session IDs and cache-file names.
     pub fn list_sessions() -> Result<Vec<(String, String)>> {
         // Read the cache directory entries
         let cache_dir = Self::cache_dir()?;
@@ -213,8 +229,29 @@ impl ChiselSession {
         }
     }
 
+    /// Loads a specific ChiselSession from the specified cache file
+    ///
+    /// ### Takes
+    ///
+    /// The ID of the chisel session that you wish to load.
+    ///
+    /// ### Returns
+    ///
+    /// Optionally, an owned instance of the loaded chisel session.
+    pub fn load(id: &str) -> Result<Self> {
+        let cache_dir = ChiselSession::cache_dir()?;
+        let contents =
+            std::fs::read_to_string(Path::new(&format!("{}chisel-{}.json", cache_dir, id)))?;
+        let chisel_env: ChiselSession = serde_json::from_str(&contents)?;
+        Ok(chisel_env)
+    }
+
     /// Gets the most recent chisel session from the cache dir
-    pub fn latest_chached_session() -> Result<String> {
+    ///
+    /// ### Returns
+    ///
+    /// Optionally, the file name of the most recently modified cached session.
+    pub fn latest_cached_session() -> Result<String> {
         let cache_dir = Self::cache_dir()?;
         let mut entries = std::fs::read_dir(cache_dir)?;
         let mut latest = entries.next().ok_or(eyre::eyre!("No entries found!"))??;
@@ -227,18 +264,13 @@ impl ChiselSession {
         Ok(latest.path().to_str().ok_or(eyre::eyre!("Failed to get session path!"))?.to_string())
     }
 
-    /// Loads a specific ChiselSession from the specified cache file
-    pub fn load(id: &str) -> Result<Self> {
-        let cache_dir = ChiselSession::cache_dir()?;
-        let contents =
-            std::fs::read_to_string(Path::new(&format!("{}chisel-{}.json", cache_dir, id)))?;
-        let chisel_env: ChiselSession = serde_json::from_str(&contents)?;
-        Ok(chisel_env)
-    }
-
     /// Loads the latest ChiselSession from the cache file
+    ///
+    /// ### Returns
+    ///
+    /// Optionally, an owned instance of the most recently modified cached session.
     pub fn latest() -> Result<Self> {
-        let last_session = Self::latest_chached_session()?;
+        let last_session = Self::latest_cached_session()?;
         let last_session_contents = std::fs::read_to_string(Path::new(&last_session))?;
         let chisel_env: ChiselSession = serde_json::from_str(&last_session_contents)?;
         Ok(chisel_env)

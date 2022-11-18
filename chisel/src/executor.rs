@@ -15,7 +15,6 @@ use ethers::{
 use ethers_solc::Artifact;
 use eyre::Result;
 use forge::executor::{inspector::CheatsConfig, Backend, ExecutorBuilder};
-use revm::OpCode;
 use solang_parser::pt::{self, CodeLocation};
 use yansi::Paint;
 
@@ -26,8 +25,10 @@ impl SessionSource {
         // Recompile the project and ensure no errors occurred.
         match self.build() {
             Ok(compiled) => {
-                if let Some((_, contract)) =
-                    compiled.compiler_output.contracts_into_iter().find(|(name, _)| name.eq("REPL"))
+                if let Some((_, contract)) = compiled
+                    .compiler_output
+                    .contracts_into_iter()
+                    .find(|(name, _)| name.eq(&"REPL"))
                 {
                     // These *should* never panic.
                     let bytecode =
@@ -370,19 +371,19 @@ impl Type {
     ) -> Result<Option<ParamType>> {
         if let Some(contract_funcs) = intermediate.function_definitions.get(contract_name) {
             if let Some(local_func) = contract_funcs.iter().find(|func| {
-                if let Some(solang_parser::pt::Identifier { loc: _, name }) = &func.name {
+                if let Some(pt::Identifier { loc: _, name }) = &func.name {
                     name == func_name
                 } else {
                     false
                 }
             }) {
-                if let Some(solang_parser::pt::FunctionAttribute::Mutability(_mut)) =
-                    local_func.attributes.iter().find(|attr| {
-                        matches!(attr, solang_parser::pt::FunctionAttribute::Mutability(_))
-                    })
+                if let Some(pt::FunctionAttribute::Mutability(_mut)) = local_func
+                    .attributes
+                    .iter()
+                    .find(|attr| matches!(attr, pt::FunctionAttribute::Mutability(_)))
                 {
                     match _mut {
-                        solang_parser::pt::Mutability::Payable(_) => {
+                        pt::Mutability::Payable(_) => {
                             eyre::bail!("This function mutates state. Insert as a statement.")
                         }
                         _ => { /* Continue */ }
@@ -434,10 +435,7 @@ impl Type {
                 // Cover any defined non-state-modifying function call expressions that are defined
                 // outside of the REPL contract
                 if let Some((
-                    solang_parser::pt::Expression::Variable(solang_parser::pt::Identifier {
-                        loc: _,
-                        name: contract_name,
-                    }),
+                    pt::Expression::Variable(pt::Identifier { loc: _, name: contract_name }),
                     _,
                 )) = intermediate.variable_definitions.get(&types[0])
                 {
@@ -497,30 +495,6 @@ struct Instruction {
     pub opcode: u8,
     pub data: [u8; 32],
     pub data_len: u8,
-}
-
-impl Instruction {
-    fn data(&self) -> &[u8] {
-        &self.data[..self.data_len as usize]
-    }
-}
-
-impl Debug for Instruction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Instruction")
-            .field("pc", &self.pc)
-            .field(
-                "opcode",
-                &format_args!(
-                    "{}",
-                    OpCode::try_from_u8(self.opcode)
-                        .map(|op| op.as_str().to_owned())
-                        .unwrap_or_else(|| format!("0x{}", hex::encode(&[self.opcode])))
-                ),
-            )
-            .field("data", &format_args!("0x{}", hex::encode(self.data())))
-            .finish()
-    }
 }
 
 struct InstructionIter<'a> {

@@ -7,6 +7,7 @@ use ethers::{
     prelude::{types::U256, Address},
     types::{Bytes, Log},
 };
+use eyre::Result;
 use forge::{
     executor::{DeployResult, Executor, RawCallResult},
     trace::{CallTraceArena, TraceKind},
@@ -55,12 +56,30 @@ pub struct ChiselResult {
 /// ChiselRunner implementation
 impl ChiselRunner {
     /// Create a new [ChiselRunner]
+    ///
+    /// ### Takes
+    ///
+    /// An [Executor], the initial balance of the sender, and the sender's [Address].
+    ///
+    /// ### Returns
+    ///
+    /// A new [ChiselRunner]
     pub fn new(executor: Executor, initial_balance: U256, sender: Address) -> Self {
         Self { executor, initial_balance, sender }
     }
 
     /// Run a contract as a REPL session
-    pub fn run(&mut self, bytecode: Bytes) -> eyre::Result<(Address, ChiselResult)> {
+    ///
+    /// ### Takes
+    ///
+    /// The creation bytecode of the REPL contract
+    ///
+    /// ### Returns
+    ///
+    /// Optionally, a tuple containing the deployed address of the bytecode as well as a
+    /// [ChiselResult] containing information about the result of the call to the deployed REPL
+    /// contract.
+    pub fn run(&mut self, bytecode: Bytes) -> Result<(Address, ChiselResult)> {
         // Set the sender's balance to [U256::MAX] for deployment of the REPL contract.
         self.executor.set_balance(self.sender, U256::MAX)?;
 

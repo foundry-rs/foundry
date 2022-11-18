@@ -13,7 +13,7 @@ use forge::executor::{opts::EvmOpts, Backend};
 use foundry_config::Config;
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use solang_parser::pt::CodeLocation;
+use solang_parser::pt::{self, CodeLocation};
 use std::{collections::HashMap, path::PathBuf};
 
 /// Solidity source for the `Vm` interface in [forge-std](https://github.com/foundry-rs/forge-std)
@@ -24,22 +24,19 @@ static VM_SOURCE: &'static str = include_str!("../../testdata/lib/forge-std/src/
 pub struct IntermediateOutput {
     /// The source unit parts
     #[serde(skip)]
-    pub source_unit_parts: Vec<solang_parser::pt::SourceUnitPart>,
+    pub source_unit_parts: Vec<pt::SourceUnitPart>,
     /// Contract parts
     #[serde(skip)]
-    pub contract_parts: Vec<solang_parser::pt::ContractPart>,
+    pub contract_parts: Vec<pt::ContractPart>,
     /// Contract statements
     #[serde(skip)]
-    pub statements: Vec<solang_parser::pt::Statement>,
+    pub statements: Vec<pt::Statement>,
     /// Contract variable definitions
     #[serde(skip)]
-    pub variable_definitions: HashMap<
-        String,
-        (solang_parser::pt::Expression, Option<solang_parser::pt::StorageLocation>),
-    >,
+    pub variable_definitions: HashMap<String, (pt::Expression, Option<pt::StorageLocation>)>,
     /// Function definitions for all contracts included in the compilation input
     #[serde(skip)]
-    pub function_definitions: HashMap<String, Vec<Box<solang_parser::pt::FunctionDefinition>>>,
+    pub function_definitions: HashMap<String, Vec<Box<pt::FunctionDefinition>>>,
 }
 
 /// Full compilation output for the [SessionSource]
@@ -95,6 +92,15 @@ pub struct SessionSource {
 
 impl SessionSource {
     /// Creates a new source given a solidity compiler version
+    ///
+    /// ### Takes
+    ///
+    /// - A reference to a [Solc] instance
+    /// - A reference to a [SessionSourceConfig]
+    ///
+    /// ### Returns
+    ///
+    /// A blank [SessionSource]
     pub fn new(solc: &Solc, config: &SessionSourceConfig) -> Self {
         assert!(solc.version().is_ok());
         Self {
@@ -111,6 +117,10 @@ impl SessionSource {
 
     // Clones a [SessionSource] without copying the [GeneratedOutput], as it will
     // need to be regenerated as soon as new code is added.
+    //
+    // ### Returns
+    //
+    // A shallow-cloned [SessionSource]
     fn shallow_clone(&self) -> Self {
         Self {
             file_name: self.file_name.clone(),
@@ -126,6 +136,11 @@ impl SessionSource {
 
     /// Clones the [SessionSource] and appends a new line of code. Will return
     /// an error result if the new line fails to be parsed.
+    ///
+    /// ### Returns
+    ///
+    /// Optionally, a shallow-cloned [SessionSource] with the passed content appended to the
+    /// source code.
     pub fn clone_with_new_line(&self, mut content: String) -> Result<(SessionSource, bool)> {
         let mut new_source = self.shallow_clone();
         if let Some(parsed) = parse_fragment(&new_source.solc, &new_source.config, &content)
@@ -143,17 +158,13 @@ impl SessionSource {
         {
             // Flag that tells the dispatcher whether to build or execute the session
             // source based on the scope of the new code.
-            let mut do_execute = false;
             match parsed {
-                ParseTreeFragment::Function(_) => {
-                    do_execute = true;
-                    new_source.with_run_code(&content)
-                }
+                ParseTreeFragment::Function(_) => new_source.with_run_code(&content),
                 ParseTreeFragment::Contract(_) => new_source.with_top_level_code(&content),
                 ParseTreeFragment::Source(_) => new_source.with_global_code(&content),
             };
 
-            Ok((new_source, do_execute))
+            Ok((new_source, matches!(parsed, ParseTreeFragment::Function(_))))
         } else {
             eyre::bail!("\"{}\"", content.trim().to_owned());
         }
@@ -163,21 +174,21 @@ impl SessionSource {
 
     /// Appends global-level code to the source
     pub fn with_global_code(&mut self, content: &str) -> &mut Self {
-        self.global_code.push_str(content.trim());
+        self.global_code.push_str(&format!("{}\n", content.trim()));
         self.generated_output = None;
         self
     }
 
     /// Appends top-level code to the source
     pub fn with_top_level_code(&mut self, content: &str) -> &mut Self {
-        self.top_level_code.push_str(content.trim());
+        self.top_level_code.push_str(&format!("{}\n", content.trim()));
         self.generated_output = None;
         self
     }
 
     /// Appends code to the "run()" function
     pub fn with_run_code(&mut self, content: &str) -> &mut Self {
-        self.run_code.push_str(content.trim());
+        self.run_code.push_str(&format!("{}\n", content.trim()));
         self.generated_output = None;
         self
     }
@@ -206,6 +217,11 @@ impl SessionSource {
     }
 
     /// Generates and ethers_solc::CompilerInput from the source
+    ///
+    /// ### Returns
+    ///
+    /// A [CompilerInput] object containing forge-std's `Vm` interface as well as the REPL contract
+    /// source.
     pub fn compiler_input(&self) -> CompilerInput {
         let mut sources = Sources::new();
         sources.insert(PathBuf::from("forge-std/Vm.sol"), Source { content: VM_SOURCE.to_owned() });
@@ -213,34 +229,34 @@ impl SessionSource {
         CompilerInput::with_sources(sources).pop().unwrap()
     }
 
-    /// Compiles the source using [solang_parser]()
-    pub fn parse(
-        &self,
-    ) -> Result<solang_parser::pt::SourceUnit, Vec<solang_parser::diagnostics::Diagnostic>> {
+    /// Compiles the source using [solang_parser]
+    ///
+    /// ### Returns
+    ///
+    /// A [pt::SourceUnit] if successful.
+    /// A vec of [solang_parser::diagnostics::Diagnostic]s if unsuccessful.
+    pub fn parse(&self) -> Result<pt::SourceUnit, Vec<solang_parser::diagnostics::Diagnostic>> {
         solang_parser::parse(&self.to_repl_source(), 0).map(|(pt, _)| pt)
     }
 
-    /// Decompose the parsed solang_parser::pt::SourceUnit into parts
+    /// Decompose the parsed [pt::SourceUnit] into parts
+    ///
+    /// ### Takes
+    ///
+    /// A [pt::SourceUnit] representing a parsed Solidity file.
     ///
     /// ### Returns
     ///
     /// Optionally, SourceUnitParts, ContractParts, and Statements
     pub fn decompose(
         &self,
-        source_unit: solang_parser::pt::SourceUnit,
-    ) -> Result<(
-        Vec<solang_parser::pt::SourceUnitPart>,
-        Vec<solang_parser::pt::ContractPart>,
-        Vec<solang_parser::pt::Statement>,
-    )> {
+        source_unit: pt::SourceUnit,
+    ) -> Result<(Vec<pt::SourceUnitPart>, Vec<pt::ContractPart>, Vec<pt::Statement>)> {
         // Extract the SourceUnitParts from the source_unit
-        let solang_parser::pt::SourceUnit(mut source_unit_parts) = source_unit;
+        let pt::SourceUnit(mut source_unit_parts) = source_unit;
 
         // The first item in the source unit should be the pragma directive
-        if !matches!(
-            source_unit_parts.get(0),
-            Some(solang_parser::pt::SourceUnitPart::PragmaDirective(..))
-        ) {
+        if !matches!(source_unit_parts.get(0), Some(pt::SourceUnitPart::PragmaDirective(..))) {
             eyre::bail!("Missing pragma directive");
         }
         source_unit_parts.remove(0);
@@ -248,7 +264,7 @@ impl SessionSource {
         // Extract contract definitions
         let mut contract_parts =
             match source_unit_parts.pop().ok_or(eyre::eyre!("Failed to pop source unit part"))? {
-                solang_parser::pt::SourceUnitPart::ContractDefinition(contract) => {
+                pt::SourceUnitPart::ContractDefinition(contract) => {
                     if contract.name.name == self.contract_name {
                         Ok(contract.parts)
                     } else {
@@ -261,12 +277,12 @@ impl SessionSource {
         // Parse Statements
         let statements =
             match contract_parts.pop().ok_or(eyre::eyre!("Failed to pop source unit part"))? {
-                solang_parser::pt::ContractPart::FunctionDefinition(func) => {
-                    if !matches!(func.ty, solang_parser::pt::FunctionTy::Function) {
+                pt::ContractPart::FunctionDefinition(func) => {
+                    if !matches!(func.ty, pt::FunctionTy::Function) {
                         eyre::bail!("Missing run() function");
                     }
                     match func.body.ok_or(eyre::eyre!("Missing run() Function Body"))? {
-                        solang_parser::pt::Statement::Block { statements, .. } => Ok(statements),
+                        pt::Statement::Block { statements, .. } => Ok(statements),
                         _ => Err(eyre::eyre!("Invalid run() function body")),
                     }
                 }
@@ -278,13 +294,14 @@ impl SessionSource {
     }
 
     /// Parses and decomposes the source
+    ///
+    /// ### Returns
+    ///
+    /// Optionally, a tuple containing a vec of [pt::SourceUnitPart]s, a vec of [pt::ContractPart]s,
+    /// and a vec of [pt::Statement]s
     pub fn parse_and_decompose(
         &self,
-    ) -> Result<(
-        Vec<solang_parser::pt::SourceUnitPart>,
-        Vec<solang_parser::pt::ContractPart>,
-        Vec<solang_parser::pt::Statement>,
-    )> {
+    ) -> Result<(Vec<pt::SourceUnitPart>, Vec<pt::ContractPart>, Vec<pt::Statement>)> {
         let parse_tree =
             self.parse().map_err(|_| eyre::eyre!("Failed to generate SourceUnit from Source"))?;
         self.decompose(parse_tree)
@@ -294,37 +311,34 @@ impl SessionSource {
     /// of contract names -> all defined functions
     ///
     /// TODO: Clean - we don't need to re-parse the REPL source. Should pass this in.
-    pub fn parse_all_func_defs(
-        &self,
-    ) -> Result<HashMap<String, Vec<Box<solang_parser::pt::FunctionDefinition>>>> {
+    ///
+    /// ### Returns
+    ///
+    /// Optionally, a map of contract names to a vec of [pt::FunctionDefinition]s.
+    pub fn parse_all_func_defs(&self) -> Result<HashMap<String, Vec<Box<pt::FunctionDefinition>>>> {
         let mut res_map = HashMap::new();
         let parsed_map = self.compiler_input().sources;
-        for (_, v) in parsed_map {
-            if let Ok((solang_parser::pt::SourceUnit(source_unit_parts), _)) =
-                solang_parser::parse(&v.content, 0)
+        for source in parsed_map.values() {
+            if let Ok((pt::SourceUnit(source_unit_parts), _)) =
+                solang_parser::parse(&source.content, 0)
             {
                 let func_defs = source_unit_parts
                     .into_iter()
-                    .filter_map(|sup| {
-                        // matches!(sup, solang_parser::pt::SourceUnitPart::ContractDefinition(_))
-                        match sup {
-                            solang_parser::pt::SourceUnitPart::ContractDefinition(cd) => {
-                                let funcs = cd
-                                    .parts
-                                    .into_iter()
-                                    .filter_map(|part| match part {
-                                        solang_parser::pt::ContractPart::FunctionDefinition(
-                                            def,
-                                        ) => Some(def),
-                                        _ => None,
-                                    })
-                                    .collect::<Vec<_>>();
-                                Some((cd.name.name, funcs))
-                            }
-                            _ => None,
+                    .filter_map(|sup| match sup {
+                        pt::SourceUnitPart::ContractDefinition(cd) => {
+                            let funcs = cd
+                                .parts
+                                .into_iter()
+                                .filter_map(|part| match part {
+                                    pt::ContractPart::FunctionDefinition(def) => Some(def),
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>();
+                            Some((cd.name.name, funcs))
                         }
+                        _ => None,
                     })
-                    .collect::<HashMap<String, Vec<Box<solang_parser::pt::FunctionDefinition>>>>();
+                    .collect::<HashMap<String, Vec<Box<pt::FunctionDefinition>>>>();
                 res_map.extend(func_defs);
             }
         }
@@ -332,6 +346,10 @@ impl SessionSource {
     }
 
     /// Compile the contract
+    ///
+    /// ### Returns
+    ///
+    /// Optionally, a [CompilerOutput] object that contains compilation artifacts.
     pub fn compile(&self) -> Result<CompilerOutput> {
         // Compile the contract
         let compiled = self.solc.compile_exact(&self.compiler_input())?;
@@ -350,6 +368,11 @@ impl SessionSource {
     }
 
     /// Builds the SessionSource from input into the complete CompiledOutput
+    ///
+    /// ### Returns
+    ///
+    /// Optionally, a [GeneratedOutput] object containing both the [CompilerOutput] and the
+    /// [IntermediateOutput].
     pub fn build(&mut self) -> Result<GeneratedOutput> {
         // Compile
         let compiler_output = self.compile()?;
@@ -360,10 +383,8 @@ impl SessionSource {
         // Construct variable definitions
         let mut variable_definitions = HashMap::new();
         for (key, ty) in contract_parts.iter().flat_map(Self::get_contract_part_definition) {
-            variable_definitions.insert(
-                key.to_string(),
-                (ty.clone(), Some(solang_parser::pt::StorageLocation::Memory(ty.loc()))),
-            );
+            variable_definitions
+                .insert(key.to_string(), (ty.clone(), Some(pt::StorageLocation::Memory(ty.loc()))));
         }
         for (key, ty, storage) in statements.iter().flat_map(Self::get_statement_definitions) {
             variable_definitions.insert(key.to_string(), (ty.clone(), storage.cloned()));
@@ -381,16 +402,24 @@ impl SessionSource {
         // Construct a Compiled Result
         let generated_output =
             GeneratedOutput { intermediate: intermediate_output, compiler_output };
-        self.generated_output = Some(generated_output.clone());
+        self.generated_output = Some(generated_output.clone()); // ehhh, need to not clone this.
         Ok(generated_output)
     }
 
     /// Helper to convert a ContractPart into a VariableDefinition
+    ///
+    /// ### Takes
+    ///
+    /// A reference to a [pt::ContractPart]
+    ///
+    /// ### Returns
+    ///
+    /// Optionally, a tuple containing the [pt::ContractPart::VariableDefinition]'s name and type.
     pub fn get_contract_part_definition(
-        contract_part: &solang_parser::pt::ContractPart,
-    ) -> Option<(&str, &solang_parser::pt::Expression)> {
+        contract_part: &pt::ContractPart,
+    ) -> Option<(&str, &pt::Expression)> {
         match contract_part {
-            solang_parser::pt::ContractPart::VariableDefinition(var_def) => {
+            pt::ContractPart::VariableDefinition(var_def) => {
                 Some((&var_def.name.name, &var_def.ty))
             }
             _ => None,
@@ -398,19 +427,23 @@ impl SessionSource {
     }
 
     /// Helper to deconstruct a statement
+    ///
+    /// ### Takes
+    ///
+    /// A reference to a [pt::Statement]
+    ///
+    /// ### Returns
+    ///
+    /// A vector containing tuples of the inner expressions' names, types, and storage locations.
     pub fn get_statement_definitions(
-        statement: &solang_parser::pt::Statement,
-    ) -> Vec<(&str, &solang_parser::pt::Expression, Option<&solang_parser::pt::StorageLocation>)>
-    {
+        statement: &pt::Statement,
+    ) -> Vec<(&str, &pt::Expression, Option<&pt::StorageLocation>)> {
         match statement {
-            solang_parser::pt::Statement::VariableDefinition(_, def, _) => {
+            pt::Statement::VariableDefinition(_, def, _) => {
                 vec![(def.name.name.as_str(), &def.ty, def.storage.as_ref())]
             }
-            solang_parser::pt::Statement::Expression(
-                _,
-                solang_parser::pt::Expression::Assign(_, left, _),
-            ) => {
-                if let solang_parser::pt::Expression::List(_, list) = left.as_ref() {
+            pt::Statement::Expression(_, pt::Expression::Assign(_, left, _)) => {
+                if let pt::Expression::List(_, list) = left.as_ref() {
                     list.iter()
                         .filter_map(|(_, param)| {
                             param.as_ref().and_then(|param| {
@@ -430,6 +463,10 @@ impl SessionSource {
     }
 
     /// Convert the [SessionSource] to a valid Script contract
+    ///
+    /// ### Returns
+    ///
+    /// The [SessionSource] represented as a Forge Script contract.
     pub fn to_script_source(&self) -> String {
         let Version { major, minor, patch, .. } = self.solc.version().unwrap();
         format!(
@@ -454,6 +491,10 @@ contract {} is Script {{
     }
 
     /// Convert the [SessionSource] to a valid REPL contract
+    ///
+    /// ### Returns
+    ///
+    /// The [SessionSource] represented as a REPL contract.
     pub fn to_repl_source(&self) -> String {
         let Version { major, minor, patch, .. } = self.solc.version().unwrap();
         format!(
@@ -486,11 +527,11 @@ contract {} {{
 #[derive(Debug)]
 pub enum ParseTreeFragment {
     /// Code for the global scope
-    Source(Vec<solang_parser::pt::SourceUnitPart>),
+    Source(Vec<pt::SourceUnitPart>),
     /// Code for the top level of the contract
-    Contract(Vec<solang_parser::pt::ContractPart>),
+    Contract(Vec<pt::ContractPart>),
     /// Code for the "run()" function
-    Function(Vec<solang_parser::pt::Statement>),
+    Function(Vec<pt::Statement>),
 }
 
 /// Parses a fragment of solidity code with solang_parser and assigns

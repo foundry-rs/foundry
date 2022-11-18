@@ -424,7 +424,7 @@ impl ChiselDisptacher {
                             session_source.config.foundry_config.fmt.clone(),
                         ) {
                             Ok(formatted_source) => {
-                                // Write session source to `script/REPL`
+                                // Write session source to `script/REPL.s.sol`
                                 if let Err(e) = std::fs::write(
                                     PathBuf::from("script/REPL.s.sol"),
                                     formatted_source,
@@ -582,33 +582,6 @@ impl ChiselDisptacher {
                     Err(_) => DispatchResult::CommandFailed(Self::make_error(
                         "Failed to communicate with Etherscan API; Are you offline?",
                     )),
-                }
-            }
-            ChiselCommand::StorageLayout => {
-                if let Some(session_source) = self.session.session_source.as_mut() {
-                    if let Ok(output) = session_source.build() {
-                        dbg!(output
-                            .compiler_output
-                            .contracts_iter()
-                            .map(|(n, _)| n)
-                            .collect::<Vec<&String>>());
-                        dbg!(
-                            output
-                                .compiler_output
-                                .contracts_into_iter()
-                                .find(|(n, _)| n.eq("REPL"))
-                                .unwrap()
-                                .1
-                                .storage_layout
-                        );
-                        DispatchResult::CommandSuccess(None)
-                    } else {
-                        DispatchResult::CommandFailed(String::from(
-                            "Failed to build session source",
-                        ))
-                    }
-                } else {
-                    DispatchResult::CommandFailed(String::from("Session source not present"))
                 }
             }
         }
@@ -808,9 +781,11 @@ pub enum ChiselCommand {
     /// Print the generated source contract
     Source,
     /// Save the current session to the cache
+    /// Takes: [session-id]
     Save,
     /// Load a previous session from cache
-    /// Requires a session id as the first argument
+    /// Takes: <session-id>
+    ///
     /// WARNING: This will overwrite the current session (though the current session will be
     /// optimistically cached)
     Load,
@@ -819,6 +794,7 @@ pub enum ChiselCommand {
     /// Clear the cache of all stored sessions
     ClearCache,
     /// Fork an RPC in the current session
+    /// Takes <fork-url|env-var|rpc_endpoints-alias>
     Fork,
     /// Enable / disable traces for the current session
     Traces,
@@ -826,11 +802,10 @@ pub enum ChiselCommand {
     MemDump,
     /// Dump the raw stack
     StackDump,
-    /// View the storage layout of the REPL contract
-    StorageLayout,
     /// Export the current REPL session source to a Script file
     Export,
     /// Fetch an interface of a verified contract on Etherscan
+    /// Takes: <addr> <interface-name>
     Fetch,
 }
 
@@ -853,7 +828,6 @@ impl FromStr for ChiselCommand {
             "stackdump" => Ok(ChiselCommand::StackDump),
             "export" => Ok(ChiselCommand::Export),
             "fetch" => Ok(ChiselCommand::Fetch),
-            "storage-layout" | "sl" => Ok(ChiselCommand::StorageLayout),
             _ => Err(ChiselDisptacher::make_error(&format!(
                 "Unknown command \"{}\"! See available commands with `!help`.",
                 s
@@ -913,7 +887,6 @@ impl From<ChiselCommand> for CmdDescriptor {
             // Debug
             ChiselCommand::MemDump => (&["memdump"], "Dump the raw memory of the current state", CmdCategory::Debug),
             ChiselCommand::StackDump => (&["stackdump"], "Dump the raw stack of the current state", CmdCategory::Debug),
-            ChiselCommand::StorageLayout => (&["storage-layout", "sl"], "View the storage layout of the REPL contract", CmdCategory::Debug)
         }
     }
 }
