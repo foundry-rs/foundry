@@ -13,7 +13,7 @@ Chisel is a fast, utilitarian, and verbose solidity REPL. It is heavily inspired
     - [x] Implement network forking.
   - [ ] Expression evaluation / inspection (i.e. the input `0x01 << 0x08` should inspect a `uint` of value `256`)
     - [x] Support for primitive type expressions (i.e. primitive types, arithmetic ops, bitwise ops, boolean ops, global vars (`msg`, `tx`, `block`, & `abi`))
-    - [ ] Support for function call expressions
+    - [ ] Support for function call expressions (both local and external to the REPL contract)
     - [ ] Clean up how this is done, not a huge fan of the current solution
   - [x] Input history.
   - [x] Use forge fmt module to format source code when printing via the `!source` command or exporting to a Script file (?)
@@ -54,7 +54,7 @@ Chisel is a fast, utilitarian, and verbose solidity REPL. It is heavily inspired
     - [ ] Rework SessionSource clone, does not need to be a full deep copy.
 - [ ] Finish README.
   - [ ] Examples
-
+  - [ ] Migration from existing REPLs
 - [ ] First review.
   - [x] Support ENV var interpolation in fork urls
   - [x] Allow named sessions
@@ -94,7 +94,8 @@ Chisel aims to improve upon existing Solidity REPLs by integrating with foundry 
 - ... and many more future features!
 
 ### Migrating from [soli](https://github.com/jpopesculian/soli) or [solidity-shell](https://github.com/tintinweb/solidity-shell)
-*TODO*
+
+_TODO_
 
 ## Installation
 
@@ -107,6 +108,7 @@ If you do not have `foundryup` installed, reference the Foundry [installation gu
 ## Usage
 
 ### REPL Commands
+
 ```
 ⚒️ Chisel help
 =============
