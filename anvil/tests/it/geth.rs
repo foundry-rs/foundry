@@ -6,6 +6,7 @@ use ethers::{
     contract::{Contract, ContractFactory},
     prelude::{Middleware, TransactionRequest},
     providers::Provider,
+    types::U256,
     utils::WEI_IN_ETHER,
 };
 use ethers_solc::{project_util::TempProject, Artifact};
@@ -67,4 +68,24 @@ async fn test_geth_revert_transaction() {
     let err = resp.unwrap_err().to_string();
     assert!(err.contains("execution reverted: Not enough Ether provided."));
     assert!(err.contains("code: 3"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn test_geth_low_gas_limit() {
+    let provider = Arc::new(Provider::try_from("http://127.0.0.1:8545").unwrap());
+
+    let account = provider.get_accounts().await.unwrap().remove(0);
+
+    let gas = 21_000u64 - 1;
+    let tx = TransactionRequest::new()
+        .to(Address::random())
+        .value(U256::from(1337u64))
+        .from(account)
+        .gas(gas);
+
+    let resp = provider.send_transaction(tx, None).await;
+
+    let err = resp.unwrap_err().to_string();
+    assert!(err.contains("intrinsic gas too low"));
 }
