@@ -509,7 +509,7 @@ async fn test_fork_base_fee() {
 
     let addr = Address::random();
     let val = 1337u64;
-    let tx = TransactionRequest::new().from(from).to(addr).value(val).gas(0u64);
+    let tx = TransactionRequest::new().from(from).to(addr).value(val);
 
     let _res = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 }
