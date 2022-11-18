@@ -2,7 +2,10 @@
 //!
 //! This module contains the execution logic for the [SessionSource].
 
-use crate::prelude::{ChiselResult, ChiselRunner, SessionSource};
+use crate::{
+    prelude::{ChiselResult, ChiselRunner, SessionSource},
+    session_source::IntermediateOutput,
+};
 use core::fmt::Debug;
 use ethers::{
     abi::{ethabi, ParamType, Token},
@@ -90,13 +93,16 @@ impl SessionSource {
                         let ty_opt = if let Some((expr, _)) = def {
                             Type::from_expression(expr)
                         } else {
-                            self.assign_inner_expr_type(source)
+                            self.assign_inner_expr_type(&source)
                         };
 
-                        let ty = if let Some(ty) = ty_opt.and_then(|ty| ty.as_ethabi()) {
+                        let ty = if let Some(ty) = ty_opt.and_then(|ty| {
+                            ty.as_ethabi(&source.generated_output.as_ref().unwrap().intermediate)
+                        }) {
                             ty
                         } else {
-                            eyre::bail!("Expression type not supported! Please assign this value to a variable before inspecting.");
+                            // Move on gracefully; This type was denied for inspection.
+                            return Ok(None)
                         };
                         let memory_offset = if let Some(offset) = stack.data().last() {
                             offset.as_usize()
@@ -135,12 +141,12 @@ impl SessionSource {
 
     /// Gracefully attempts to extract the expression within the `abi.encode(...)`
     /// call inserted by the inspect function and attempts to assign it a type.
-    fn assign_inner_expr_type(&mut self, source: SessionSource) -> Option<Type> {
+    fn assign_inner_expr_type(&mut self, source: &SessionSource) -> Option<Type> {
         if let Some(pt::Statement::VariableDefinition(
             _,
             _,
             Some(pt::Expression::FunctionCall(_, _, expressions)),
-        )) = source.generated_output.unwrap().intermediate.statements.last()
+        )) = source.generated_output.as_ref().unwrap().intermediate.statements.last()
         {
             // We can safely unwrap the first expression because this function
             // will only be called on a session source that has just had an
@@ -294,9 +300,7 @@ impl Type {
                     Box::new(Self::from_expression(left)?),
                     Box::new(Self::from_expression(right)?),
                 ),
-                // TODO: These are unsupported in `as_ethabi` atm.
-                pt::Type::Function { .. } => Self::Custom(vec!["[Function]".to_string()]),
-                pt::Type::Rational => Self::Custom(vec!["[Rational]".to_string()]),
+                _ => return None,
             },
             pt::Expression::Variable(ident) => Self::Custom(vec![ident.name.clone()]),
             pt::Expression::ArraySubscript(_, expr, num) => {
@@ -354,22 +358,99 @@ impl Type {
             pt::Expression::Not(_, _) => Self::Builtin(ParamType::Bool),
             pt::Expression::StringLiteral(_) => Self::Builtin(ParamType::String),
             pt::Expression::HexLiteral(_) => Self::Builtin(ParamType::Bytes),
-            // TODO: Cover all cases- this does not allow for inspection of internal or external
-            // function call expressions, just `address(0)` etc.
             pt::Expression::FunctionCall(_, outer_expr, _) => Self::from_expression(outer_expr)?,
             _ => return None,
         })
     }
 
-    fn as_ethabi(&self) -> Option<ParamType> {
+    fn parse_return_type(
+        intermediate: &IntermediateOutput,
+        contract_name: &str,
+        func_name: &str,
+    ) -> Result<Option<ParamType>> {
+        if let Some(contract_funcs) = intermediate.function_definitions.get(contract_name) {
+            if let Some(local_func) = contract_funcs.iter().find(|func| {
+                if let Some(solang_parser::pt::Identifier { loc: _, name }) = &func.name {
+                    name == func_name
+                } else {
+                    false
+                }
+            }) {
+                if let Some(solang_parser::pt::FunctionAttribute::Mutability(_mut)) =
+                    local_func.attributes.iter().find(|attr| {
+                        matches!(attr, solang_parser::pt::FunctionAttribute::Mutability(_))
+                    })
+                {
+                    match _mut {
+                        solang_parser::pt::Mutability::Payable(_) => {
+                            eyre::bail!("This function mutates state. Insert as a statement.")
+                        }
+                        _ => { /* Continue */ }
+                    }
+                } else {
+                    eyre::bail!("This function mutates state. Insert as a statement.")
+                }
+
+                // Because tuple types cannot be passed to `abi.encode`, we will only be receiving
+                // functions that have 0 or 1 return parameters here.
+                if local_func.returns.len() == 0 {
+                    eyre::bail!(
+                        "This function does not return any values to inspect. Insert as statement."
+                    )
+                } else {
+                    Ok(Type::from_expression(
+                        &local_func.returns.get(0).unwrap().1.as_ref().unwrap().ty,
+                    )
+                    .unwrap()
+                    .as_ethabi(intermediate))
+                }
+            } else {
+                Ok(None)
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn as_ethabi(&self, intermediate: &IntermediateOutput) -> Option<ParamType> {
         match self {
             Self::Builtin(param) => Some(param.clone()),
-            Self::Array(inner) => inner.as_ethabi().map(|inner| ParamType::Array(Box::new(inner))),
-            Self::FixedArray(inner, size) => {
-                inner.as_ethabi().map(|inner| ParamType::FixedArray(Box::new(inner), *size))
+            Self::Array(inner) => {
+                inner.as_ethabi(intermediate).map(|inner| ParamType::Array(Box::new(inner)))
             }
+            Self::FixedArray(inner, size) => inner
+                .as_ethabi(intermediate)
+                .map(|inner| ParamType::FixedArray(Box::new(inner), *size)),
             Self::Custom(types) => {
-                // Cover globally available vars
+                // Cover any local non-state-modifying function call expressions
+                match Self::parse_return_type(intermediate, "REPL", &types[0]) {
+                    Ok(opt) => match opt {
+                        Some(_) => return opt,
+                        None => { /* Continue */ }
+                    },
+                    Err(_) => return None,
+                }
+
+                // Cover any defined non-state-modifying function call expressions that are defined
+                // outside of the REPL contract
+                if let Some((
+                    solang_parser::pt::Expression::Variable(solang_parser::pt::Identifier {
+                        loc: _,
+                        name: contract_name,
+                    }),
+                    _,
+                )) = intermediate.variable_definitions.get(&types[0])
+                {
+                    match Self::parse_return_type(intermediate, contract_name, &types[1]) {
+                        Ok(opt) => match opt {
+                            Some(_) => return opt,
+                            None => { /* Continue */ }
+                        },
+                        Err(_) => return None,
+                    }
+                }
+
+                // Cover globally available vars / functions
                 if types.len() == 2 {
                     let s: &[String] = &types[0..2];
 
@@ -392,7 +473,8 @@ impl Type {
                         },
                         "abi" => {
                             if s[1].starts_with("decode") {
-                                Some(ParamType::Tuple(Vec::default()))
+                                // TODO: Fill value types
+                                Some(ParamType::Tuple(vec![ParamType::Uint(256)]))
                             } else {
                                 Some(ParamType::Bytes)
                             }

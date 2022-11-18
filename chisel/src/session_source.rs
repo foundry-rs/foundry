@@ -37,6 +37,9 @@ pub struct IntermediateOutput {
         String,
         (solang_parser::pt::Expression, Option<solang_parser::pt::StorageLocation>),
     >,
+    /// Function definitions for all contracts included in the compilation input
+    #[serde(skip)]
+    pub function_definitions: HashMap<String, Vec<Box<solang_parser::pt::FunctionDefinition>>>,
 }
 
 /// Full compilation output for the [SessionSource]
@@ -287,6 +290,47 @@ impl SessionSource {
         self.decompose(parse_tree)
     }
 
+    /// Parses all function definitions from all compiler input sources and returns a map
+    /// of contract names -> all defined functions
+    ///
+    /// TODO: Clean - we don't need to re-parse the REPL source. Should pass this in.
+    pub fn parse_all_func_defs(
+        &self,
+    ) -> Result<HashMap<String, Vec<Box<solang_parser::pt::FunctionDefinition>>>> {
+        let mut res_map = HashMap::new();
+        let parsed_map = self.compiler_input().sources;
+        for (_, v) in parsed_map {
+            if let Ok((solang_parser::pt::SourceUnit(source_unit_parts), _)) =
+                solang_parser::parse(&v.content, 0)
+            {
+                let func_defs = source_unit_parts
+                    .into_iter()
+                    .filter_map(|sup| {
+                        // matches!(sup, solang_parser::pt::SourceUnitPart::ContractDefinition(_))
+                        match sup {
+                            solang_parser::pt::SourceUnitPart::ContractDefinition(cd) => {
+                                let funcs = cd
+                                    .parts
+                                    .into_iter()
+                                    .filter_map(|part| match part {
+                                        solang_parser::pt::ContractPart::FunctionDefinition(
+                                            def,
+                                        ) => Some(def),
+                                        _ => None,
+                                    })
+                                    .collect::<Vec<_>>();
+                                Some((cd.name.name, funcs))
+                            }
+                            _ => None,
+                        }
+                    })
+                    .collect::<HashMap<String, Vec<Box<solang_parser::pt::FunctionDefinition>>>>();
+                res_map.extend(func_defs);
+            }
+        }
+        Ok(res_map)
+    }
+
     /// Compile the contract
     pub fn compile(&self) -> Result<CompilerOutput> {
         // Compile the contract
@@ -331,6 +375,7 @@ impl SessionSource {
             contract_parts,
             statements,
             variable_definitions,
+            function_definitions: self.parse_all_func_defs()?,
         };
 
         // Construct a Compiled Result
