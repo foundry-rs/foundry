@@ -34,9 +34,26 @@ pub struct IntermediateOutput {
     /// Contract variable definitions
     #[serde(skip)]
     pub variable_definitions: HashMap<String, (pt::Expression, Option<pt::StorageLocation>)>,
-    /// Function definitions for all contracts included in the compilation input
+    /// Intermediate contracts
+    pub intermediate_contracts: HashMap<String, IntermediateContract>,
+}
+
+/// A refined intermediate parse tree for a contract that enables easy lookups
+/// of definitions.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IntermediateContract {
+    /// All function definitions within the contract
     #[serde(skip)]
-    pub function_definitions: HashMap<String, Vec<Box<pt::FunctionDefinition>>>,
+    pub function_definitions: HashMap<String, Box<pt::FunctionDefinition>>,
+    /// All event definitions within the contract
+    #[serde(skip)]
+    pub event_definitions: HashMap<String, Box<pt::EventDefinition>>,
+    /// All struct definitions within the contract
+    #[serde(skip)]
+    pub struct_definitions: HashMap<String, Box<pt::StructDefinition>>,
+    /// All variable definitions within the contract
+    #[serde(skip)]
+    pub variable_definitions: HashMap<String, Box<pt::VariableDefinition>>,
 }
 
 /// Full compilation output for the [SessionSource]
@@ -307,15 +324,14 @@ impl SessionSource {
         self.decompose(parse_tree)
     }
 
-    /// Parses all function definitions from all compiler input sources and returns a map
-    /// of contract names -> all defined functions
+    /// Generate intermediate contracts for all contract definitions in the compilation source.
     ///
     /// TODO: Clean - we don't need to re-parse the REPL source. Should pass this in.
     ///
     /// ### Returns
     ///
-    /// Optionally, a map of contract names to a vec of [pt::FunctionDefinition]s.
-    pub fn parse_all_func_defs(&self) -> Result<HashMap<String, Vec<Box<pt::FunctionDefinition>>>> {
+    /// Optionally, a map of contract names to a vec of [IntermediateContract]s.
+    pub fn generate_intermediate_contracts(&self) -> Result<HashMap<String, IntermediateContract>> {
         let mut res_map = HashMap::new();
         let parsed_map = self.compiler_input().sources;
         for source in parsed_map.values() {
@@ -326,19 +342,38 @@ impl SessionSource {
                     .into_iter()
                     .filter_map(|sup| match sup {
                         pt::SourceUnitPart::ContractDefinition(cd) => {
-                            let funcs = cd
-                                .parts
-                                .into_iter()
-                                .filter_map(|part| match part {
-                                    pt::ContractPart::FunctionDefinition(def) => Some(def),
-                                    _ => None,
-                                })
-                                .collect::<Vec<_>>();
-                            Some((cd.name.name, funcs))
+                            let mut intermediate = IntermediateContract::default();
+
+                            cd.parts.into_iter().for_each(|part| match part {
+                                pt::ContractPart::FunctionDefinition(def) => {
+                                    if matches!(def.ty, pt::FunctionTy::Function) {
+                                        intermediate
+                                            .function_definitions
+                                            .insert(def.name.clone().unwrap().name, def);
+                                    }
+                                }
+                                pt::ContractPart::EventDefinition(def) => {
+                                    intermediate
+                                        .event_definitions
+                                        .insert(def.name.name.clone(), def);
+                                }
+                                pt::ContractPart::StructDefinition(def) => {
+                                    intermediate
+                                        .struct_definitions
+                                        .insert(def.name.name.clone(), def);
+                                }
+                                pt::ContractPart::VariableDefinition(def) => {
+                                    intermediate
+                                        .variable_definitions
+                                        .insert(def.name.name.clone(), def);
+                                }
+                                _ => {}
+                            });
+                            Some((cd.name.name, intermediate))
                         }
                         _ => None,
                     })
-                    .collect::<HashMap<String, Vec<Box<pt::FunctionDefinition>>>>();
+                    .collect::<HashMap<String, IntermediateContract>>();
                 res_map.extend(func_defs);
             }
         }
@@ -396,7 +431,7 @@ impl SessionSource {
             contract_parts,
             statements,
             variable_definitions,
-            function_definitions: self.parse_all_func_defs()?,
+            intermediate_contracts: self.generate_intermediate_contracts()?,
         };
 
         // Construct a Compiled Result
