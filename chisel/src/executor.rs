@@ -30,7 +30,7 @@ impl SessionSource {
                     .contracts_into_iter()
                     .find(|(name, _)| name.eq(&"REPL"))
                 {
-                    // These *should* never panic.
+                    // These *should* never panic after a successful compilation.
                     let bytecode =
                         contract.get_bytecode_bytes().expect("No bytecode for contract.");
                     let deployed_bytecode = contract
@@ -82,24 +82,21 @@ impl SessionSource {
             Ok((mut source, _)) => match source.execute().await {
                 Ok((_, res)) => {
                     if let Some((stack, memory, _)) = &res.state {
-                        let def = source
-                            .generated_output
-                            .as_ref()
-                            .unwrap()
-                            .intermediate
-                            .variable_definitions
-                            .get(item);
-                        // If the expression is a variable declaration, use its type- otherwise,
-                        // attempt to infer the type.
-                        let ty_opt = if let Some((expr, _)) = def {
+                        let generated_output = source.generated_output.as_ref().unwrap();
+
+                        // If the expression is a variable declaration within the REPL contract,
+                        // use its type- otherwise, attempt to infer the type.
+                        let ty_opt = if let Some((expr, _)) =
+                            generated_output.intermediate.variable_definitions.get(item)
+                        {
                             Type::from_expression(expr)
                         } else {
-                            self.assign_inner_expr_type(&source)
+                            self.infer_inner_expr_type(&source)
                         };
 
-                        let ty = if let Some(ty) = ty_opt.and_then(|ty| {
-                            ty.as_ethabi(&source.generated_output.as_ref().unwrap().intermediate)
-                        }) {
+                        let ty = if let Some(ty) =
+                            ty_opt.and_then(|ty| ty.as_ethabi(&generated_output.intermediate))
+                        {
                             ty
                         } else {
                             // Move on gracefully; This type was denied for inspection.
@@ -140,15 +137,17 @@ impl SessionSource {
         }
     }
 
-    /// Gracefully attempts to extract the expression within the `abi.encode(...)`
-    /// call inserted by the inspect function and attempts to assign it a type.
-    fn assign_inner_expr_type(&mut self, source: &SessionSource) -> Option<Type> {
+    /// Gracefully attempts to extract the type of the expression within the `abi.encode(...)`
+    /// call inserted by the inspect function.
+    fn infer_inner_expr_type(&mut self, source: &SessionSource) -> Option<Type> {
+        dbg!("inferring inner expr type");
         if let Some(pt::Statement::VariableDefinition(
             _,
             _,
             Some(pt::Expression::FunctionCall(_, _, expressions)),
         )) = source.generated_output.as_ref().unwrap().intermediate.statements.last()
         {
+            dbg!("expressions to make inferrence with:", expressions);
             // We can safely unwrap the first expression because this function
             // will only be called on a session source that has just had an
             // `inspectoor` variable appended to it.
@@ -324,12 +323,28 @@ impl Type {
             pt::Expression::MemberAccess(_, expr, ident) => {
                 let mut out = vec![ident.name.clone()];
                 let mut cur_expr = expr;
-                while let pt::Expression::MemberAccess(_, expr, ident) = cur_expr.as_ref() {
-                    out.insert(0, ident.name.clone());
-                    cur_expr = expr;
+                while let pt::Expression::FunctionCall(_, func_expr, _) = cur_expr.as_ref() {
+                    if let pt::Expression::MemberAccess(_, member_expr, ident) = func_expr.as_ref()
+                    {
+                        out.push(ident.name.clone());
+                        cur_expr = member_expr;
+                    } else if let pt::Expression::Variable(ident) = func_expr.as_ref() {
+                        out.push(ident.name.clone());
+                        break
+                    } else if let pt::Expression::Type(_, ty) = func_expr.as_ref() {
+                        match ty {
+                            pt::Type::Address => {
+                                out.push("address".to_owned());
+                                break
+                            }
+                            _ => break,
+                        }
+                        // Shouldn't ever hit here- just in case.
+                        // break;
+                    }
                 }
                 if let pt::Expression::Variable(ident) = cur_expr.as_ref() {
-                    out.insert(0, ident.name.clone());
+                    out.push(ident.name.clone());
                 }
                 Self::Custom(out)
             }
@@ -360,55 +375,135 @@ impl Type {
             pt::Expression::StringLiteral(_) => Self::Builtin(ParamType::String),
             pt::Expression::HexLiteral(_) => Self::Builtin(ParamType::Bytes),
             pt::Expression::FunctionCall(_, outer_expr, _) => Self::from_expression(outer_expr)?,
+            pt::Expression::New(_, inner) => Self::from_expression(inner)?,
             _ => return None,
         })
     }
 
-    fn parse_return_type(
+    /// Infers a custom type's true type by recursing up the parse tree
+    ///
+    /// ### Takes
+    /// - A reference to the [IntermediateOutput]
+    /// - An array of custom types generated by the `MemberAccess` arm of [Self::from_expression]
+    /// - An optional contract name. This should always be `None` when this function is first
+    ///   called.
+    ///
+    /// ### Returns
+    ///
+    /// If successful, an `Ok(Some(ParamType))` variant.
+    /// If gracefully failed, an `Ok(None)` variant.
+    /// If failed, an `Err(e)` variant.
+    ///
+    /// TODO: Allow for variable definition function calls.
+    fn infer_custom_type(
         intermediate: &IntermediateOutput,
-        contract_name: &str,
-        func_name: &str,
+        mut custom_type: Vec<String>,
+        contract_name: Option<String>,
     ) -> Result<Option<ParamType>> {
-        if let Some(contract_funcs) = intermediate.function_definitions.get(contract_name) {
-            if let Some(local_func) = contract_funcs.iter().find(|func| {
-                if let Some(pt::Identifier { loc: _, name }) = &func.name {
-                    name == func_name
-                } else {
-                    false
-                }
-            }) {
-                if let Some(pt::FunctionAttribute::Mutability(_mut)) = local_func
-                    .attributes
-                    .iter()
-                    .find(|attr| matches!(attr, pt::FunctionAttribute::Mutability(_)))
-                {
-                    match _mut {
-                        pt::Mutability::Payable(_) => {
+        // First, check if the contract name has been defined
+        if let Some(contract_name) = contract_name {
+            if let Some(contract_funcs) = intermediate.function_definitions.get(&contract_name) {
+                if let Some(func) = contract_funcs.iter().find(|func| {
+                    if let Some(pt::Identifier { loc: _, name }) = &func.name {
+                        name == custom_type.last().unwrap()
+                    } else {
+                        false
+                    }
+                }) {
+                    // Because tuple types cannot be passed to `abi.encode`, we will only be
+                    // receiving functions that have 0 or 1 return parameters
+                    // here.
+                    if func.returns.len() == 0 {
+                        eyre::bail!(
+                            "This function does not return any values to inspect. Insert as statement."
+                        )
+                    } else {
+                        // TODO: yuck
+                        let return_ty = &func.returns.get(0).unwrap().1.as_ref().unwrap().ty;
+
+                        // If the return type is a variable (not a type expression), assume it is a
+                        // contract.
+                        //
+                        // TODO: This may not always be a contract!!
+                        if let pt::Expression::Variable(pt::Identifier { loc: _, name: ident }) =
+                            return_ty
+                        {
+                            custom_type.pop();
+                            return Self::infer_custom_type(
+                                intermediate,
+                                custom_type,
+                                Some(ident.clone()),
+                            )
+                        }
+
+                        // Check if our final function alters the state. If it does, we bail so
+                        // that it will be inserted normally without inspecting. If the state
+                        // mutability was not expressly set, the function is inferred to alter
+                        // state.
+                        if let Some(pt::FunctionAttribute::Mutability(_mut)) = func
+                            .attributes
+                            .iter()
+                            .find(|attr| matches!(attr, pt::FunctionAttribute::Mutability(_)))
+                        {
+                            match _mut {
+                                pt::Mutability::Payable(_) => {
+                                    eyre::bail!(
+                                        "This function mutates state. Insert as a statement."
+                                    )
+                                }
+                                _ => { /* Continue */ }
+                            }
+                        } else {
                             eyre::bail!("This function mutates state. Insert as a statement.")
                         }
-                        _ => { /* Continue */ }
+
+                        dbg!(return_ty);
+
+                        return Ok(Type::from_expression(return_ty).unwrap().as_ethabi(intermediate))
                     }
                 } else {
-                    eyre::bail!("This function mutates state. Insert as a statement.")
-                }
-
-                // Because tuple types cannot be passed to `abi.encode`, we will only be receiving
-                // functions that have 0 or 1 return parameters here.
-                if local_func.returns.len() == 0 {
-                    eyre::bail!(
-                        "This function does not return any values to inspect. Insert as statement."
-                    )
-                } else {
-                    Ok(Type::from_expression(
-                        &local_func.returns.get(0).unwrap().1.as_ref().unwrap().ty,
-                    )
-                    .unwrap()
-                    .as_ethabi(intermediate))
+                    eyre::bail!("Could not find function definition!")
                 }
             } else {
-                Ok(None)
+                eyre::bail!("Could not find function definitions for contract!")
             }
         } else {
+            // Check if the custom type is a function within the REPL contract before anything. If
+            // it is, we can stop here.
+            if let Ok(res) =
+                Self::infer_custom_type(intermediate, custom_type.clone(), Some("REPL".to_owned()))
+            {
+                return Ok(res)
+            }
+
+            // Check if the first element of the custom type is a known contract. If it is, begin
+            // our recursion on on that contract's functions.
+            if intermediate.function_definitions.get(custom_type.last().unwrap()).is_some() {
+                let removed = custom_type.pop();
+                return Self::infer_custom_type(intermediate, custom_type, removed)
+            }
+
+            // If the first element of the custom type is a variable within the REPL contract,
+            // that variable could be a contract itself, so we recurse back into this function
+            // with a contract name set.
+            //
+            // If this variable is not a contract name, it is a primitive type such as an
+            // `address(...)` call.
+            if let Some((
+                pt::Expression::Variable(pt::Identifier { loc: _, name: contract_name }),
+                _,
+            )) = intermediate.variable_definitions.get(custom_type.last().unwrap())
+            {
+                custom_type.pop();
+                return Self::infer_custom_type(
+                    intermediate,
+                    custom_type,
+                    Some(contract_name.clone()),
+                )
+            }
+
+            // The first element of our custom type was neither a variable or a function within the
+            // REPL contract, move on to globally available types gracefully.
             Ok(None)
         }
     }
@@ -423,8 +518,9 @@ impl Type {
                 .as_ethabi(intermediate)
                 .map(|inner| ParamType::FixedArray(Box::new(inner), *size)),
             Self::Custom(types) => {
+                dbg!(types);
                 // Cover any local non-state-modifying function call expressions
-                match Self::parse_return_type(intermediate, "REPL", &types[0]) {
+                match Self::infer_custom_type(intermediate, types.clone(), None) {
                     Ok(opt) => match opt {
                         Some(_) => return opt,
                         None => { /* Continue */ }
@@ -432,51 +528,55 @@ impl Type {
                     Err(_) => return None,
                 }
 
-                // Cover any defined non-state-modifying function call expressions that are defined
-                // outside of the REPL contract
-                if let Some((
-                    pt::Expression::Variable(pt::Identifier { loc: _, name: contract_name }),
-                    _,
-                )) = intermediate.variable_definitions.get(&types[0])
-                {
-                    match Self::parse_return_type(intermediate, contract_name, &types[1]) {
-                        Ok(opt) => match opt {
-                            Some(_) => return opt,
-                            None => { /* Continue */ }
-                        },
-                        Err(_) => return None,
-                    }
-                }
-
+                let types = types.iter().rev().collect::<Vec<&String>>();
                 // Cover globally available vars / functions
-                if types.len() == 2 {
-                    let s: &[String] = &types[0..2];
-
-                    match s[0].as_str() {
-                        "block" => match s[1].as_str() {
+                if types.len() == 1 {
+                    match types[0].as_str() {
+                        "gasleft" | "addmod" | "mulmod" => Some(ParamType::Uint(256)),
+                        "keccak256" | "sha256" | "blockhash" => Some(ParamType::FixedBytes(32)),
+                        "ripemd160" => Some(ParamType::FixedBytes(20)),
+                        "ecrecover" => Some(ParamType::Address),
+                        _ => None,
+                    }
+                } else if types.len() == 2 {
+                    match types[0].as_str() {
+                        "block" => match types[1].as_str() {
                             "coinbase" => Some(ParamType::Address),
                             _ => Some(ParamType::Uint(256)),
                         },
-                        "msg" => match s[1].as_str() {
+                        "msg" => match types[1].as_str() {
                             "data" => Some(ParamType::Bytes),
                             "sender" => Some(ParamType::Address),
                             "sig" => Some(ParamType::FixedBytes(4)),
                             "value" => Some(ParamType::Uint(256)),
                             _ => None,
                         },
-                        "tx" => match s[1].as_str() {
+                        "tx" => match types[1].as_str() {
                             "gasprice" => Some(ParamType::Uint(256)),
                             "origin" => Some(ParamType::Address),
                             _ => None,
                         },
                         "abi" => {
-                            if s[1].starts_with("decode") {
+                            if types[1].starts_with("decode") {
                                 // TODO: Fill value types
                                 Some(ParamType::Tuple(vec![ParamType::Uint(256)]))
                             } else {
                                 Some(ParamType::Bytes)
                             }
                         }
+                        "address" => match types[1].as_str() {
+                            "balance" => Some(ParamType::Uint(256)),
+                            "code" => Some(ParamType::Bytes),
+                            "codehash" => Some(ParamType::FixedBytes(32)),
+                            _ => None,
+                        },
+                        "type" => match types[1].as_str() {
+                            "name" => Some(ParamType::String),
+                            "creationCode" | "runtimeCode" => Some(ParamType::Bytes),
+                            "interfaceId" => Some(ParamType::FixedBytes(4)),
+                            "min" | "max" => Some(ParamType::Uint(256)),
+                            _ => None,
+                        },
                         // TODO: Other member access cases!
                         _ => None,
                     }
