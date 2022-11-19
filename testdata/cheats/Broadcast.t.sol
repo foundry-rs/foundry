@@ -348,7 +348,7 @@ contract TestInitialBalance is DSTest {
 
     function runDefaultSender() public {
         // Make sure we're testing with the default caller.
-        assert(msg.sender == address(0x00a329c0648769A73afAc7F9381E08FB43dBEA72));
+        assert(msg.sender == address(0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38));
 
         assert(msg.sender.balance == type(uint256).max);
 
