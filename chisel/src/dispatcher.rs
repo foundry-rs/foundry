@@ -395,7 +395,7 @@ impl ChiselDisptacher {
                                 DispatchResult::CommandSuccess(None)
                             } else {
                                 DispatchResult::CommandFailed(Self::make_error(
-                                    "State not present.",
+                                    "Run function is empty.",
                                 ))
                             }
                         }
@@ -424,7 +424,7 @@ impl ChiselDisptacher {
                             session_source.config.foundry_config.fmt.clone(),
                         ) {
                             Ok(formatted_source) => {
-                                // Write session source to `script/REPL`
+                                // Write session source to `script/REPL.s.sol`
                                 if let Err(e) = std::fs::write(
                                     PathBuf::from("script/REPL.s.sol"),
                                     formatted_source,
@@ -632,7 +632,7 @@ impl ChiselDisptacher {
             Err(e) => {
                 // If there was an explicit error thrown, hault here.
                 self.errored = true;
-                return DispatchResult::CommandFailed(e.to_string())
+                return DispatchResult::CommandFailed(Self::make_error(e))
             }
         }
 
@@ -781,9 +781,11 @@ pub enum ChiselCommand {
     /// Print the generated source contract
     Source,
     /// Save the current session to the cache
+    /// Takes: [session-id]
     Save,
     /// Load a previous session from cache
-    /// Requires a session id as the first argument
+    /// Takes: <session-id>
+    ///
     /// WARNING: This will overwrite the current session (though the current session will be
     /// optimistically cached)
     Load,
@@ -792,6 +794,7 @@ pub enum ChiselCommand {
     /// Clear the cache of all stored sessions
     ClearCache,
     /// Fork an RPC in the current session
+    /// Takes <fork-url|env-var|rpc_endpoints-alias>
     Fork,
     /// Enable / disable traces for the current session
     Traces,
@@ -802,6 +805,7 @@ pub enum ChiselCommand {
     /// Export the current REPL session source to a Script file
     Export,
     /// Fetch an interface of a verified contract on Etherscan
+    /// Takes: <addr> <interface-name>
     Fetch,
 }
 

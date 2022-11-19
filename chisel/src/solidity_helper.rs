@@ -32,7 +32,6 @@ impl Highlighter for SolidityHelper {
     }
 }
 
-/// Ported from [soli](https://github.com/jpopesculian/soli/blob/master/src/main.rs)
 impl SolidityHelper {
     /// Get styles for a solidity source string
     pub fn get_styles(input: &str) -> Vec<(usize, Style, usize)> {

@@ -171,6 +171,7 @@ async fn main() {
     }
 }
 
+/// [Provider] impl
 impl Provider for ChiselParser {
     fn metadata(&self) -> Metadata {
         Metadata::named("Script Args Provider")
