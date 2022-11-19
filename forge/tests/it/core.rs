@@ -1,13 +1,17 @@
 //! forge tests for core functionality
 
 use crate::{config::*, test_helpers::filter::Filter};
+use ethers::types::Address;
 use forge::result::SuiteResult;
+use foundry_config::Config;
 use foundry_evm::trace::TraceKind;
-use std::{collections::BTreeMap, env};
+use std::{collections::BTreeMap, env, str::FromStr};
 
 #[test]
 fn test_core() {
-    let mut runner = runner();
+    let mut config = Config::default();
+    config.sender = Address::from_str("0x00a329c0648769a73afac7f9381e08fb43dbea72").expect("");
+    let mut runner = runner_with_config(config);
     let results = runner.test(&Filter::new(".*", ".*", ".*core"), None, TEST_OPTS).unwrap();
 
     assert_multiple(

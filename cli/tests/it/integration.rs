@@ -1,7 +1,11 @@
 use foundry_cli_test_utils::{forgetest_external, util::setup_forge_remote};
 
 forgetest_external!(solmate, "transmissions11/solmate");
-forgetest_external!(geb, "reflexer-labs/geb", &["--chain-id", "99"]);
+forgetest_external!(
+    geb,
+    "reflexer-labs/geb",
+    &["--chain-id", "99", "--sender", "0x00a329c0648769A73afAc7F9381E08FB43dBEA72"]
+);
 forgetest_external!(stringutils, "Arachnid/solidity-stringutils");
 forgetest_external!(lootloose, "gakonst/lootloose");
 forgetest_external!(lil_web3, "m1guelpf/lil-web3");
