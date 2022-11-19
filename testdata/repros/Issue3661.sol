@@ -13,7 +13,7 @@ contract Issue3661Test is DSTest {
         sender = msg.sender;
     }
 
-    function testRollFork() public {
+    function testSameSender() public {
         assert(sender == msg.sender);
     }
 }
