@@ -517,7 +517,7 @@ mod tests {
         let address = "0xd8509bee9c9bf012282ad33aba0d87241baf5064";
         let contract_name = "Counter";
         let src_dir = "src";
-        fs::create_dir_all(root.join(&src_dir)).unwrap();
+        fs::create_dir_all(root.join(src_dir)).unwrap();
         let contract_path = format!("{src_dir}/Counter.sol");
         fs::write(root.join(&contract_path), "").unwrap();
 
