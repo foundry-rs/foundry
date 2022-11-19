@@ -13,7 +13,7 @@ use forge::executor::{opts::EvmOpts, Backend};
 use foundry_config::Config;
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use solang_parser::pt::{self, CodeLocation};
+use solang_parser::pt;
 use std::{collections::HashMap, path::PathBuf};
 
 /// Solidity source for the `Vm` interface in [forge-std](https://github.com/foundry-rs/forge-std)
@@ -22,20 +22,12 @@ static VM_SOURCE: &'static str = include_str!("../../testdata/lib/forge-std/src/
 /// Intermediate output for the compiled [SessionSource]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IntermediateOutput {
-    /// The source unit parts
+    /// All expressions within the REPL contract's run function and top level scope.
     #[serde(skip)]
-    pub source_unit_parts: Vec<pt::SourceUnitPart>,
-    /// Contract parts
-    #[serde(skip)]
-    pub contract_parts: Vec<pt::ContractPart>,
-    /// Contract statements
-    #[serde(skip)]
-    pub statements: Vec<pt::Statement>,
-    /// Contract variable definitions
-    #[serde(skip)]
-    pub variable_definitions: HashMap<String, (pt::Expression, Option<pt::StorageLocation>)>,
+    pub repl_contract_expressions: HashMap<String, pt::Expression>,
     /// Intermediate contracts
-    pub intermediate_contracts: HashMap<String, IntermediateContract>,
+    #[serde(skip)]
+    pub intermediate_contracts: IntermediateContracts,
 }
 
 /// A refined intermediate parse tree for a contract that enables easy lookups
@@ -51,10 +43,13 @@ pub struct IntermediateContract {
     /// All struct definitions within the contract
     #[serde(skip)]
     pub struct_definitions: HashMap<String, Box<pt::StructDefinition>>,
-    /// All variable definitions within the contract
+    /// All variable definitions within the top level scope of the contract
     #[serde(skip)]
     pub variable_definitions: HashMap<String, Box<pt::VariableDefinition>>,
 }
+
+/// A defined type for a map of contract names to [IntermediateContract]s
+type IntermediateContracts = HashMap<String, IntermediateContract>;
 
 /// Full compilation output for the [SessionSource]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -176,12 +171,12 @@ impl SessionSource {
             // Flag that tells the dispatcher whether to build or execute the session
             // source based on the scope of the new code.
             match parsed {
-                ParseTreeFragment::Function(_) => new_source.with_run_code(&content),
-                ParseTreeFragment::Contract(_) => new_source.with_top_level_code(&content),
-                ParseTreeFragment::Source(_) => new_source.with_global_code(&content),
+                ParseTreeFragment::Function => new_source.with_run_code(&content),
+                ParseTreeFragment::Contract => new_source.with_top_level_code(&content),
+                ParseTreeFragment::Source => new_source.with_global_code(&content),
             };
 
-            Ok((new_source, matches!(parsed, ParseTreeFragment::Function(_))))
+            Ok((new_source, matches!(parsed, ParseTreeFragment::Function)))
         } else {
             eyre::bail!("\"{}\"", content.trim().to_owned());
         }
@@ -255,75 +250,6 @@ impl SessionSource {
     pub fn parse(&self) -> Result<pt::SourceUnit, Vec<solang_parser::diagnostics::Diagnostic>> {
         solang_parser::parse(&self.to_repl_source(), 0).map(|(pt, _)| pt)
     }
-
-    /// Decompose the parsed [pt::SourceUnit] into parts
-    ///
-    /// ### Takes
-    ///
-    /// A [pt::SourceUnit] representing a parsed Solidity file.
-    ///
-    /// ### Returns
-    ///
-    /// Optionally, SourceUnitParts, ContractParts, and Statements
-    pub fn decompose(
-        &self,
-        source_unit: pt::SourceUnit,
-    ) -> Result<(Vec<pt::SourceUnitPart>, Vec<pt::ContractPart>, Vec<pt::Statement>)> {
-        // Extract the SourceUnitParts from the source_unit
-        let pt::SourceUnit(mut source_unit_parts) = source_unit;
-
-        // The first item in the source unit should be the pragma directive
-        if !matches!(source_unit_parts.get(0), Some(pt::SourceUnitPart::PragmaDirective(..))) {
-            eyre::bail!("Missing pragma directive");
-        }
-        source_unit_parts.remove(0);
-
-        // Extract contract definitions
-        let mut contract_parts =
-            match source_unit_parts.pop().ok_or(eyre::eyre!("Failed to pop source unit part"))? {
-                pt::SourceUnitPart::ContractDefinition(contract) => {
-                    if contract.name.name == self.contract_name {
-                        Ok(contract.parts)
-                    } else {
-                        Err(eyre::eyre!("Contract name mismatch"))
-                    }
-                }
-                _ => Err(eyre::eyre!("Missing contract definition")),
-            }?;
-
-        // Parse Statements
-        let statements =
-            match contract_parts.pop().ok_or(eyre::eyre!("Failed to pop source unit part"))? {
-                pt::ContractPart::FunctionDefinition(func) => {
-                    if !matches!(func.ty, pt::FunctionTy::Function) {
-                        eyre::bail!("Missing run() function");
-                    }
-                    match func.body.ok_or(eyre::eyre!("Missing run() Function Body"))? {
-                        pt::Statement::Block { statements, .. } => Ok(statements),
-                        _ => Err(eyre::eyre!("Invalid run() function body")),
-                    }
-                }
-                _ => Err(eyre::eyre!("Contract missing function definition")),
-            }?;
-
-        // Return the parts
-        Ok((source_unit_parts, contract_parts, statements))
-    }
-
-    /// Parses and decomposes the source
-    ///
-    /// ### Returns
-    ///
-    /// Optionally, a tuple containing a vec of [pt::SourceUnitPart]s, a vec of [pt::ContractPart]s,
-    /// and a vec of [pt::Statement]s
-    pub fn parse_and_decompose(
-        &self,
-    ) -> Result<(Vec<pt::SourceUnitPart>, Vec<pt::ContractPart>, Vec<pt::Statement>)> {
-        let parse_tree =
-            self.parse().map_err(|_| eyre::eyre!("Failed to generate SourceUnit from Source"))?;
-        self.decompose(parse_tree)
-    }
-
     /// Generate intermediate contracts for all contract definitions in the compilation source.
     ///
     /// TODO: Clean - we don't need to re-parse the REPL source. Should pass this in.
@@ -346,6 +272,7 @@ impl SessionSource {
 
                             cd.parts.into_iter().for_each(|part| match part {
                                 pt::ContractPart::FunctionDefinition(def) => {
+                                    // Only match normal function definitions here.
                                     if matches!(def.ty, pt::FunctionTy::Function) {
                                         intermediate
                                             .function_definitions
@@ -412,53 +339,36 @@ impl SessionSource {
         // Compile
         let compiler_output = self.compile()?;
 
-        // Parse and decompose into parts
-        let (source_unit_parts, contract_parts, statements) = self.parse_and_decompose()?;
+        // Parse generate intermediate contracts
+        let intermediate_contracts = self.generate_intermediate_contracts()?;
 
         // Construct variable definitions
-        let mut variable_definitions = HashMap::new();
-        for (key, ty) in contract_parts.iter().flat_map(Self::get_contract_part_definition) {
-            variable_definitions
-                .insert(key.to_string(), (ty.clone(), Some(pt::StorageLocation::Memory(ty.loc()))));
-        }
-        for (key, ty, storage) in statements.iter().flat_map(Self::get_statement_definitions) {
-            variable_definitions.insert(key.to_string(), (ty.clone(), storage.cloned()));
-        }
-
+        let variable_definitions = intermediate_contracts
+            .get("REPL")
+            .ok_or(eyre::eyre!("Could not find intermediate REPL contract!"))?
+            .variable_definitions
+            .clone()
+            .into_iter()
+            .map(|(k, v)| (k, v.ty))
+            .collect::<HashMap<String, pt::Expression>>();
         // Construct intermediate output
-        let intermediate_output = IntermediateOutput {
-            source_unit_parts,
-            contract_parts,
-            statements,
-            variable_definitions,
-            intermediate_contracts: self.generate_intermediate_contracts()?,
+        let mut intermediate_output = IntermediateOutput {
+            repl_contract_expressions: variable_definitions,
+            intermediate_contracts,
         };
 
-        // Construct a Compiled Result
+        // Add all statements within the run function to the repl_contract_expressions map
+        for (key, val) in
+            intermediate_output.run_func_body()?.iter().flat_map(Self::get_statement_definitions)
+        {
+            intermediate_output.repl_contract_expressions.insert(key.to_string(), val);
+        }
+
+        // Construct generated output
         let generated_output =
             GeneratedOutput { intermediate: intermediate_output, compiler_output };
         self.generated_output = Some(generated_output.clone()); // ehhh, need to not clone this.
         Ok(generated_output)
-    }
-
-    /// Helper to convert a ContractPart into a VariableDefinition
-    ///
-    /// ### Takes
-    ///
-    /// A reference to a [pt::ContractPart]
-    ///
-    /// ### Returns
-    ///
-    /// Optionally, a tuple containing the [pt::ContractPart::VariableDefinition]'s name and type.
-    pub fn get_contract_part_definition(
-        contract_part: &pt::ContractPart,
-    ) -> Option<(&str, &pt::Expression)> {
-        match contract_part {
-            pt::ContractPart::VariableDefinition(var_def) => {
-                Some((&var_def.name.name, &var_def.ty))
-            }
-            _ => None,
-        }
     }
 
     /// Helper to deconstruct a statement
@@ -470,12 +380,10 @@ impl SessionSource {
     /// ### Returns
     ///
     /// A vector containing tuples of the inner expressions' names, types, and storage locations.
-    pub fn get_statement_definitions(
-        statement: &pt::Statement,
-    ) -> Vec<(&str, &pt::Expression, Option<&pt::StorageLocation>)> {
+    pub fn get_statement_definitions(statement: &pt::Statement) -> Vec<(String, pt::Expression)> {
         match statement {
             pt::Statement::VariableDefinition(_, def, _) => {
-                vec![(def.name.name.as_str(), &def.ty, def.storage.as_ref())]
+                vec![(def.name.name.clone(), def.ty.clone())]
             }
             pt::Statement::Expression(_, pt::Expression::Assign(_, left, _)) => {
                 if let pt::Expression::List(_, list) = left.as_ref() {
@@ -485,7 +393,7 @@ impl SessionSource {
                                 param
                                     .name
                                     .as_ref()
-                                    .map(|name| (name.name.as_str(), &param.ty, None))
+                                    .map(|name| (name.name.clone(), param.ty.clone()))
                             })
                         })
                         .collect()
@@ -555,6 +463,30 @@ contract {} {{
     }
 }
 
+impl IntermediateOutput {
+    /// Helper function that returns the body of the REPL contract's "run" function.
+    ///
+    /// ### Returns
+    ///
+    /// Optionally, the last statement within the "run" function of the REPL contract.
+    pub fn run_func_body(&self) -> Result<Vec<pt::Statement>> {
+        match self
+            .intermediate_contracts
+            .get("REPL")
+            .ok_or(eyre::eyre!("Could not find REPL intermediate contract!"))?
+            .function_definitions
+            .get("run")
+            .ok_or(eyre::eyre!("Could not find run function definition in REPL contract!"))?
+            .body
+            .as_ref()
+            .ok_or(eyre::eyre!("Could not find run function body!"))?
+        {
+            pt::Statement::Block { statements, .. } => Ok(statements.to_vec()),
+            _ => eyre::bail!("Could not find statements within run function body!"),
+        }
+    }
+}
+
 /// A Parse Tree Fragment
 ///
 /// Used to determine whether an input will go to the "run()" function,
@@ -562,11 +494,11 @@ contract {} {{
 #[derive(Debug)]
 pub enum ParseTreeFragment {
     /// Code for the global scope
-    Source(Vec<pt::SourceUnitPart>),
+    Source,
     /// Code for the top level of the contract
-    Contract(Vec<pt::ContractPart>),
+    Contract,
     /// Code for the "run()" function
-    Function(Vec<pt::Statement>),
+    Function,
 }
 
 /// Parses a fragment of solidity code with solang_parser and assigns
@@ -578,18 +510,14 @@ pub fn parse_fragment(
 ) -> Option<ParseTreeFragment> {
     let base = SessionSource::new(solc, config);
 
-    if let Ok((_, _, statements)) = base.clone().with_run_code(buffer).parse_and_decompose() {
-        return Some(ParseTreeFragment::Function(statements))
+    if base.clone().with_run_code(buffer).parse().is_ok() {
+        return Some(ParseTreeFragment::Function)
     }
-    if let Ok((_, contract_parts, _)) =
-        base.clone().with_top_level_code(buffer).parse_and_decompose()
-    {
-        return Some(ParseTreeFragment::Contract(contract_parts))
+    if base.clone().with_top_level_code(buffer).parse().is_ok() {
+        return Some(ParseTreeFragment::Contract)
     }
-    if let Ok((source_unit_parts, _, _)) =
-        base.clone().with_global_code(buffer).parse_and_decompose()
-    {
-        return Some(ParseTreeFragment::Source(source_unit_parts))
+    if base.clone().with_global_code(buffer).parse().is_ok() {
+        return Some(ParseTreeFragment::Source)
     }
 
     None

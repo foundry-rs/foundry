@@ -11,10 +11,12 @@ Chisel is a fast, utilitarian, and verbose solidity REPL. It is heavily inspired
     - [x] Implement `forge-std/Test.sol` so that cheatcodes, etc. can be used.
   - [x] Utilize foundry's `evm` module for REPL env.
     - [x] Implement network forking.
-  - [ ] Expression evaluation / inspection (i.e. the input `0x01 << 0x08` should inspect a `uint` of value `256`)
+  - [x] Expression evaluation / inspection (i.e. the input `0x01 << 0x08` should inspect a `uint` of value `256`)
     - [x] Support for primitive type expressions (i.e. primitive types, arithmetic ops, bitwise ops, boolean ops, global vars (`msg`, `tx`, `block`, & `abi`))
-    - [ ] Support for function call expressions (both local and external to the REPL contract)
-    - [ ] Clean up how this is done, not a huge fan of the current solution
+    - [x] Support for function call expressions (both local and external to the REPL contract)
+    - [x] Support for array indexing (external + local)
+    - [x] Support for mapping indexing (external + local)
+    - [ ] Clean up refactor
   - [x] Input history.
   - [x] Use forge fmt module to format source code when printing via the `!source` command or exporting to a Script file (?)
 - [x] Cache REPL History

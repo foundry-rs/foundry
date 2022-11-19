@@ -37,9 +37,12 @@ impl SessionSource {
                         .get_deployed_bytecode_bytes()
                         .expect("No deployed bytecode for contract.");
 
+                    // Fetch the run function's body statement
+                    let run_func_statements = compiled.intermediate.run_func_body()?;
+
                     // Find the last statement within the "run()" method and get the program
                     // counter via the source map.
-                    if let Some(final_statement) = compiled.intermediate.statements.last() {
+                    if let Some(final_statement) = run_func_statements.last() {
                         let final_pc = {
                             let source_loc = final_statement.loc();
                             let offset = source_loc.start();
@@ -82,20 +85,23 @@ impl SessionSource {
             Ok((mut source, _)) => match source.execute().await {
                 Ok((_, res)) => {
                     if let Some((stack, memory, _)) = &res.state {
-                        let generated_output = source.generated_output.as_ref().unwrap();
+                        let generated_output = source
+                            .generated_output
+                            .as_ref()
+                            .ok_or(eyre::eyre!("Could not find generated output!"))?;
 
                         // If the expression is a variable declaration within the REPL contract,
                         // use its type- otherwise, attempt to infer the type.
-                        let ty_opt = if let Some((expr, _)) =
-                            generated_output.intermediate.variable_definitions.get(item)
+                        let ty_opt = if let Some(expr) =
+                            generated_output.intermediate.repl_contract_expressions.get(item)
                         {
-                            Type::from_expression(expr)
+                            Type::from_expression(&expr)
                         } else {
                             self.infer_inner_expr_type(&source)
                         };
 
                         let ty = if let Some(ty) =
-                            ty_opt.and_then(|ty| ty.as_ethabi(&generated_output.intermediate))
+                            ty_opt.and_then(|ty| ty.try_as_ethabi(&generated_output.intermediate))
                         {
                             ty
                         } else {
@@ -144,7 +150,8 @@ impl SessionSource {
             _,
             _,
             Some(pt::Expression::FunctionCall(_, _, expressions)),
-        )) = source.generated_output.as_ref().unwrap().intermediate.statements.last()
+        )) =
+            source.generated_output.as_ref().unwrap().intermediate.run_func_body().unwrap().last()
         {
             // We can safely unwrap the first expression because this function
             // will only be called on a session source that has just had an
@@ -245,24 +252,36 @@ fn format_token(token: Token) -> String {
             )
         }
         Token::FixedArray(tokens) | Token::Array(tokens) => {
-            let mut out = format!("{}", Paint::red(format!("array[{}]", tokens.len())));
-            out.push_str(" = [");
+            let mut out = format!(
+                "{}({}) = {}",
+                Paint::red("array"),
+                Paint::yellow(format!("{}", tokens.len())),
+                Paint::red('[')
+            );
             for token in tokens {
                 out.push_str("\n  ├ ");
                 out.push_str(&format!("{}", format_token(token).replace('\n', "\n  ")));
                 out.push_str("\n");
             }
-            out.push(']');
+            out.push_str(&Paint::red(']').to_string());
             out
         }
         Token::Tuple(tokens) => {
-            let mut out = format!("{}", Paint::red(format!("tuple({}) = (", tokens.len())));
+            let mut out = format!(
+                "{}({}) = {}",
+                Paint::red("tuple"),
+                Paint::yellow(format!(
+                    "{}",
+                    tokens.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(",")
+                )),
+                Paint::red('(')
+            );
             for token in tokens {
                 out.push_str("\n  ├ ");
                 out.push_str(&format!("{}", format_token(token).replace('\n', "\n  ")));
                 out.push_str("\n");
             }
-            out.push(')');
+            out.push_str(&Paint::red(')').to_string());
             out
         }
     }
@@ -277,7 +296,6 @@ enum Type {
     Builtin(ParamType),
     Array(Box<Type>),
     FixedArray(Box<Type>, usize),
-    Map(Box<Type>, Box<Type>),
     Custom(Vec<String>),
 }
 
@@ -294,16 +312,11 @@ impl Type {
                 pt::Type::Uint(size) => Self::Builtin(ParamType::Uint(*size as usize)),
                 pt::Type::Bytes(size) => Self::Builtin(ParamType::FixedBytes(*size as usize)),
                 pt::Type::DynamicBytes => Self::Builtin(ParamType::Bytes),
-                pt::Type::Mapping(_, left, right) => Self::Map(
-                    Box::new(Self::from_expression(left)?),
-                    Box::new(Self::from_expression(right)?),
-                ),
+                pt::Type::Mapping(_, _, right) => Self::from_expression(right)?,
                 _ => return None,
             },
             pt::Expression::Variable(ident) => Self::Custom(vec![ident.name.clone()]),
             pt::Expression::ArraySubscript(_, expr, num) => {
-                // TODO: Handle array / mapping index expressions.
-
                 let num = num.as_ref().and_then(|num| {
                     if let pt::Expression::NumberLiteral(_, num, exp) = num.as_ref() {
                         let num = if num.is_empty() { 0usize } else { num.parse().ok()? };
@@ -313,6 +326,7 @@ impl Type {
                         None
                     }
                 });
+
                 let ty = Self::from_expression(expr)?;
                 if let Some(num) = num {
                     Self::FixedArray(Box::new(ty), num)
@@ -395,7 +409,7 @@ impl Type {
     /// If failed, an `Err(e)` variant.
     fn infer_custom_type(
         intermediate: &IntermediateOutput,
-        mut custom_type: Vec<String>,
+        custom_type: &mut Vec<String>,
         contract_name: Option<String>,
     ) -> Result<Option<ParamType>> {
         // First, check if the contract name has been defined
@@ -404,7 +418,7 @@ impl Type {
             if let Some(intermediate_contract) =
                 intermediate.intermediate_contracts.get(&contract_name)
             {
-                let cur_type = custom_type.last().unwrap();
+                let cur_type = custom_type.last().ok_or(eyre::eyre!(""))?;
 
                 if let Some(func) = intermediate_contract.function_definitions.get(cur_type) {
                     // Because tuple types cannot be passed to `abi.encode`, we will only be
@@ -412,17 +426,22 @@ impl Type {
                     // here.
                     if func.returns.len() == 0 {
                         eyre::bail!(
-                            "This function does not return any values to inspect. Insert as statement."
+                            "This call expression does not return any values to inspect. Insert as statement."
                         )
                     } else {
                         // TODO: yuck
-                        let return_ty = &func.returns.get(0).unwrap().1.as_ref().unwrap().ty;
+                        let return_ty = &func
+                            .returns
+                            .get(0)
+                            .ok_or(eyre::eyre!("Could not find return type!"))?
+                            .1
+                            .as_ref()
+                            .ok_or(eyre::eyre!("Could not pull expression from return type!"))?
+                            .ty;
 
                         // If the return type is a variable (not a type expression), re-enter the
                         // recursion on the same contract for a variable / struct search. It could
-                        // be either a contract or a struct.
-                        //
-                        // TODO: Prob other things too.
+                        // be a contract, struct, array, etc.
                         if let pt::Expression::Variable(pt::Identifier { loc: _, name: ident }) =
                             return_ty
                         {
@@ -455,45 +474,59 @@ impl Type {
                             eyre::bail!("This function mutates state. Insert as a statement.")
                         }
 
-                        return Ok(Type::from_expression(return_ty).unwrap().as_ethabi(intermediate))
+                        return Ok(Type::from_expression(return_ty)
+                            .unwrap()
+                            .try_as_ethabi(intermediate))
                     }
                 } else if let Some(var_def) =
                     intermediate_contract.variable_definitions.get(cur_type)
                 {
-                    if let pt::Expression::Variable(pt::Identifier { loc: _, name: ident }) =
-                        &var_def.ty
-                    {
-                        if intermediate_contract.struct_definitions.get(ident).is_some() {
-                            // A struct type was found- we set the custom type to just the struct's
-                            // name and re-enter the recursion one last time.
-                            custom_type = vec![ident.clone()];
-                            return Self::infer_custom_type(
-                                intermediate,
-                                custom_type,
-                                Some(contract_name),
-                            )
-                        } else if intermediate.intermediate_contracts.get(ident).is_some() {
-                            if custom_type.len() > 1 {
-                                // There is still some recursing left to do- jump into the
-                                // contract.
-                                custom_type.pop();
+                    match &var_def.ty {
+                        // If we're here, we're indexing an array within this contract. Use the
+                        // inner type.
+                        pt::Expression::ArraySubscript(_, expr, _) => {
+                            return Ok(Type::from_expression(expr)
+                                .unwrap()
+                                .try_as_ethabi(intermediate))
+                        }
+                        // Custom variable handling
+                        pt::Expression::Variable(pt::Identifier { loc: _, name: ident }) => {
+                            if intermediate_contract.struct_definitions.get(ident).is_some() {
+                                // A struct type was found- we set the custom type to just the
+                                // struct's name and re-enter the
+                                // recursion one last time.
+                                custom_type.clear();
+                                custom_type.push(ident.to_owned());
+
                                 return Self::infer_custom_type(
                                     intermediate,
                                     custom_type,
-                                    Some(ident.clone()),
+                                    Some(contract_name),
                                 )
+                            } else if intermediate.intermediate_contracts.get(ident).is_some() {
+                                if custom_type.len() > 1 {
+                                    // There is still some recursing left to do- jump into the
+                                    // contract.
+                                    custom_type.pop();
+                                    return Self::infer_custom_type(
+                                        intermediate,
+                                        custom_type,
+                                        Some(ident.clone()),
+                                    )
+                                } else {
+                                    // We have no types left to recurse- return the address of the
+                                    // contract.
+                                    return Ok(Some(ParamType::Address))
+                                }
                             } else {
-                                // We have no types left to recurse- return the address of the
-                                // contract.
-                                return Ok(Some(ParamType::Address))
+                                eyre::bail!("Could not infer variable type")
                             }
-                        } else {
-                            eyre::bail!("")
                         }
-                    } else {
-                        return Ok(Type::from_expression(&var_def.ty)
-                            .unwrap()
-                            .as_ethabi(intermediate))
+                        _ => {
+                            return Ok(Type::from_expression(&var_def.ty)
+                                .unwrap()
+                                .try_as_ethabi(intermediate))
+                        }
                     }
                 } else if let Some(struct_def) =
                     intermediate_contract.struct_definitions.get(cur_type)
@@ -503,7 +536,10 @@ impl Type {
                         .iter()
                         .map(|var| {
                             // TODO: Check safety of these unwraps
-                            Type::from_expression(&var.ty).unwrap().as_ethabi(intermediate).unwrap()
+                            Type::from_expression(&var.ty)
+                                .unwrap()
+                                .try_as_ethabi(intermediate)
+                                .unwrap()
                         })
                         .collect::<Vec<_>>();
                     return Ok(Some(ParamType::Tuple(inner_types)))
@@ -517,7 +553,7 @@ impl Type {
             // Check if the custom type is a variable or function within the REPL contract before
             // anything. If it is, we can stop here.
             if let Ok(res) =
-                Self::infer_custom_type(intermediate, custom_type.clone(), Some("REPL".to_owned()))
+                Self::infer_custom_type(intermediate, custom_type, Some("REPL".to_owned()))
             {
                 return Ok(res)
             }
@@ -533,19 +569,24 @@ impl Type {
             // that variable could be a contract itself, so we recurse back into this function
             // with a contract name set.
             //
-            // If this variable is not a contract name, it is a primitive type such as an
-            // `address(...)` call.
-            if let Some((
-                pt::Expression::Variable(pt::Identifier { loc: _, name: contract_name }),
-                _,
-            )) = intermediate.variable_definitions.get(custom_type.last().unwrap())
-            {
-                custom_type.pop();
-                return Self::infer_custom_type(
-                    intermediate,
-                    custom_type,
-                    Some(contract_name.clone()),
-                )
+            // We also check for an array subscript here, which could be an indexing of a mapping
+            // or array. In this case, we return the type of the array.
+            let var_def = intermediate.repl_contract_expressions.get(custom_type.last().unwrap());
+            if let Some(var_def) = var_def {
+                match &var_def {
+                    pt::Expression::Variable(pt::Identifier { loc: _, name: contract_name }) => {
+                        custom_type.pop();
+                        return Self::infer_custom_type(
+                            intermediate,
+                            custom_type,
+                            Some(contract_name.clone()),
+                        )
+                    }
+                    pt::Expression::ArraySubscript(_, expr, _) => {
+                        return Ok(Type::from_expression(expr).unwrap().try_as_ethabi(intermediate))
+                    }
+                    _ => {}
+                }
             }
 
             // The first element of our custom type was neither a variable or a function within the
@@ -554,18 +595,35 @@ impl Type {
         }
     }
 
-    fn as_ethabi(&self, intermediate: &IntermediateOutput) -> Option<ParamType> {
+    /// Attempt to convert this type into a [ParamType]
+    ///
+    /// ### Takes
+    /// An immutable reference to an [IntermediateOutput]
+    ///
+    /// ### Returns
+    /// Optionally, a [ParamType]
+    fn try_as_ethabi(self, intermediate: &IntermediateOutput) -> Option<ParamType> {
         match self {
-            Self::Builtin(param) => Some(param.clone()),
-            Self::Array(inner) => {
-                inner.as_ethabi(intermediate).map(|inner| ParamType::Array(Box::new(inner)))
-            }
-            Self::FixedArray(inner, size) => inner
-                .as_ethabi(intermediate)
-                .map(|inner| ParamType::FixedArray(Box::new(inner), *size)),
-            Self::Custom(types) => {
+            Self::Builtin(param) => Some(param),
+            Self::Array(inner) => match *inner {
+                Self::Custom(mut types) => {
+                    Self::infer_custom_type(intermediate, &mut types, None).unwrap_or(None)
+                }
+                _ => {
+                    inner.try_as_ethabi(intermediate).map(|inner| ParamType::Array(Box::new(inner)))
+                }
+            },
+            Self::FixedArray(inner, size) => match *inner {
+                Self::Custom(mut types) => {
+                    Self::infer_custom_type(intermediate, &mut types, None).unwrap_or(None)
+                }
+                _ => inner
+                    .try_as_ethabi(intermediate)
+                    .map(|inner| ParamType::FixedArray(Box::new(inner), size)),
+            },
+            Self::Custom(mut types) => {
                 // Cover any local non-state-modifying function call expressions
-                match Self::infer_custom_type(intermediate, types.clone(), None) {
+                match Self::infer_custom_type(intermediate, &mut types, None) {
                     Ok(opt) => match opt {
                         Some(_) => return opt,
                         None => { /* Continue */ }
@@ -622,14 +680,13 @@ impl Type {
                             "min" | "max" => Some(ParamType::Uint(256)),
                             _ => None,
                         },
-                        // TODO: Other member access cases!
+                        // TODO: Any other member access cases!
                         _ => None,
                     }
                 } else {
                     None
                 }
             }
-            _ => None,
         }
     }
 }

@@ -395,7 +395,7 @@ impl ChiselDisptacher {
                                 DispatchResult::CommandSuccess(None)
                             } else {
                                 DispatchResult::CommandFailed(Self::make_error(
-                                    "State not present.",
+                                    "Run function is empty.",
                                 ))
                             }
                         }
@@ -632,7 +632,7 @@ impl ChiselDisptacher {
             Err(e) => {
                 // If there was an explicit error thrown, hault here.
                 self.errored = true;
-                return DispatchResult::CommandFailed(e.to_string())
+                return DispatchResult::CommandFailed(Self::make_error(e))
             }
         }
 
