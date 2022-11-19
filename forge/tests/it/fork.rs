@@ -56,3 +56,10 @@ fn test_transact_fork() {
     let filter = Filter::new(".*", ".*", &format!(".*fork{RE_PATH_SEPARATOR}Transact"));
     TestConfig::filter(filter).run();
 }
+
+/// Tests that we can create the same fork (provider,block) concurretnly in different tests
+#[test]
+fn test_create_same_fork() {
+    let filter = Filter::new(".*", ".*", &format!(".*fork{RE_PATH_SEPARATOR}ForkSame"));
+    TestConfig::filter(filter).run();
+}

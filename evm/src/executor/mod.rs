@@ -194,6 +194,11 @@ impl Executor {
         self
     }
 
+    pub fn set_trace_printer(&mut self, trace_printer: bool) -> &mut Self {
+        self.inspector_config.trace_printer = trace_printer;
+        self
+    }
+
     pub fn set_gas_limit(&mut self, gas_limit: U256) -> &mut Self {
         self.gas_limit = gas_limit;
         self

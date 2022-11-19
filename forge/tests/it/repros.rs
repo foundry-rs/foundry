@@ -189,10 +189,22 @@ fn test_issue_3616() {
     test_repro!("Issue3616");
 }
 
+// <https://github.com/foundry-rs/foundry/issues/3685>
+#[test]
+fn test_issue_3685() {
+    test_repro!("Issue3685");
+}
+
 // <https://github.com/foundry-rs/foundry/issues/3653>
 #[test]
 fn test_issue_3653() {
     test_repro!("Issue3653");
+}
+
+// <https://github.com/foundry-rs/foundry/issues/3596>
+#[test]
+fn test_issue_3596() {
+    test_repro!("Issue3596", true, None);
 }
 
 // <https://github.com/foundry-rs/foundry/issues/3661>
@@ -208,4 +220,10 @@ fn test_issue_3674() {
         "Issue3674",
         Address::from_str("0xF0959944122fb1ed4CfaBA645eA06EED30427BAA").unwrap()
     );
+}
+
+// <https://github.com/foundry-rs/foundry/issues/3703>
+#[test]
+fn test_issue_3703() {
+    test_repro!("Issue3703");
 }

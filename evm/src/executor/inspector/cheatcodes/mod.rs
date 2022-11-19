@@ -32,6 +32,7 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
+use tracing::trace;
 
 /// Cheatcodes related to the execution environment.
 mod env;
@@ -140,6 +141,9 @@ pub struct Cheatcodes {
     pub fs_commit: bool,
 
     pub serialized_jsons: HashMap<String, HashMap<String, Value>>,
+
+    /// Records all eth deals
+    pub eth_deals: Vec<DealRecord>,
 }
 
 impl Cheatcodes {
@@ -205,6 +209,33 @@ impl Cheatcodes {
         }
 
         data.db.allow_cheatcode_access(created_address);
+    }
+
+    /// Called when there was a revert.
+    ///
+    /// Cleanup any previously applied cheatcodes that altered the state in such a way that revm's
+    /// revert would run into issues.
+    pub fn on_revert<DB: DatabaseExt>(&mut self, data: &mut EVMData<'_, DB>) {
+        trace!(deals=?self.eth_deals.len(), "Rolling back deals");
+
+        // Delay revert clean up until expected revert is handled, if set.
+        if self.expected_revert.is_some() {
+            return
+        }
+
+        // we only want to apply cleanup top level
+        if data.journaled_state.depth() > 0 {
+            return
+        }
+
+        // Roll back all previously applied deals
+        // This will prevent overflow issues in revm's [`JournaledState::journal_revert`] routine
+        // which rolls back any transfers.
+        while let Some(record) = self.eth_deals.pop() {
+            if let Some(acc) = data.journaled_state.state.get_mut(&record.address) {
+                acc.info.balance = record.old_balance;
+            }
+        }
     }
 }
 
@@ -442,7 +473,10 @@ where
                     status,
                     retdata,
                 ) {
-                    Err(retdata) => (Return::Revert, remaining_gas, retdata),
+                    Err(retdata) => {
+                        trace!(expected=?expected_revert, actual=%hex::encode(&retdata), "Expected revert mismatch");
+                        (Return::Revert, remaining_gas, retdata)
+                    }
                     Ok((_, retdata)) => (Return::Return, remaining_gas, retdata),
                 }
             }
@@ -645,4 +679,15 @@ impl Clone for Context {
     fn clone(&self) -> Self {
         Default::default()
     }
+}
+
+/// Records `deal` cheatcodes
+#[derive(Debug, Clone)]
+pub struct DealRecord {
+    /// Target of the deal.
+    pub address: Address,
+    /// The balance of the address before deal was applied
+    pub old_balance: U256,
+    /// Balance after deal was applied
+    pub new_balance: U256,
 }
