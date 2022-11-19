@@ -64,7 +64,7 @@ pub struct EvmArgs {
     /// This flag overrides the project's configuration file.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork_url")]
+    #[clap(long)]
     #[serde(skip)]
     pub no_storage_caching: bool,
 
