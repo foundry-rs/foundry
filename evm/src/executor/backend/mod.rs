@@ -9,7 +9,7 @@ use crate::{
     CALLER, TEST_CONTRACT_ADDRESS,
 };
 use ethers::{
-    prelude::{H160, H256, U256},
+    prelude::{Block, H160, H256, U256},
     types::{Address, BlockNumber, Transaction, U64},
     utils::keccak256,
 };
@@ -723,28 +723,30 @@ impl Backend {
     }
 
     /// Returns the block numbers required for replaying a transaction
-    fn get_block_numbers_for_transaction(
+    fn get_block_number_and_block_for_transaction(
         &self,
         id: LocalForkId,
         transaction: H256,
-    ) -> eyre::Result<(U64, U64)> {
+    ) -> eyre::Result<(U64, Block<Transaction>)> {
         let fork = self.inner.get_fork_by_id(id)?;
         let tx = fork.db.db.get_transaction(transaction)?;
 
         // get the block number we need to fork
         if let Some(tx_block) = tx.block_number {
+            let block = fork.db.db.get_full_block(BlockNumber::Number(tx_block))?;
+
             // we need to subtract 1 here because we want the state before the transaction
             // was mined
             let fork_block = tx_block - 1;
-            Ok((fork_block, tx_block))
+            Ok((fork_block, block))
         } else {
-            let block = fork
-                .db
-                .db
-                .get_full_block(BlockNumber::Latest)?
+            let block = fork.db.db.get_full_block(BlockNumber::Latest)?;
+
+            let number = block
                 .number
                 .ok_or_else(|| DatabaseError::BlockNotFound(BlockNumber::Latest.into()))?;
-            Ok((block, block))
+
+            Ok((number, block))
         }
     }
 
@@ -758,6 +760,8 @@ impl Backend {
         tx_hash: H256,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<Option<Transaction>> {
+        trace!(?id, ?tx_hash, "replay until transaction");
+
         let fork = self.inner.get_fork_by_id_mut(id)?;
         let full_block =
             fork.db.db.get_full_block(BlockNumber::Number(env.block.number.as_u64().into()))?;
@@ -767,6 +771,7 @@ impl Backend {
                 // found the target transaction
                 return Ok(Some(tx))
             }
+            trace!(tx=?tx.hash, "committing transaction");
 
             commit_transaction(tx, env.clone(), journaled_state, fork);
         }
@@ -901,32 +906,24 @@ impl DatabaseExt for Backend {
             .get_env(fork_id)?
             .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exit", id))?;
 
-        let launched_with_fork = self.inner.launched_with_fork.is_some();
-
         // If we're currently in forking mode we need to update the journaled_state to this point,
         // this ensures the changes performed while the fork was active are recorded
         if let Some(active) = self.active_fork_mut() {
             active.journaled_state = active_journaled_state.clone();
 
-            // if the Backend was launched in forking mode, then we also need to adjust the depth of
-            // the `JournalState` at this point
-            if launched_with_fork {
-                let caller = env.tx.caller;
-                let caller_account = active.journaled_state.state.get(&env.tx.caller).cloned();
-                let target_fork = self.inner.get_fork_mut(idx);
+            let caller = env.tx.caller;
+            let caller_account = active.journaled_state.state.get(&env.tx.caller).cloned();
+            let target_fork = self.inner.get_fork_mut(idx);
 
-                // depth 0 will be the default value when the fork was created
-                if target_fork.journaled_state.depth == 0 {
-                    // Initialize caller with its fork info
-                    if let (Some(mut acc), None) =
-                        (caller_account, target_fork.journaled_state.state.get(&caller))
-                    {
-                        let fork_account = Database::basic(&mut target_fork.db, caller)?
-                            .ok_or(DatabaseError::MissingAccount(caller))?;
+            // depth 0 will be the default value when the fork was created
+            if target_fork.journaled_state.depth == 0 {
+                // Initialize caller with its fork info
+                if let Some(mut acc) = caller_account {
+                    let fork_account = Database::basic(&mut target_fork.db, caller)?
+                        .ok_or(DatabaseError::MissingAccount(caller))?;
 
-                        acc.info = fork_account;
-                        target_fork.journaled_state.state.insert(caller, acc);
-                    }
+                    acc.info = fork_account;
+                    target_fork.journaled_state.state.insert(caller, acc);
                 }
             }
         } else {
@@ -938,6 +935,9 @@ impl DatabaseExt for Backend {
             trace!("recording fork init journaled_state");
             self.fork_init_journaled_state = active_journaled_state.clone();
             self.prepare_init_journal_state()?;
+
+            // Make sure that the next created fork has a depth of 0.
+            self.fork_init_journaled_state.depth = 0;
         }
 
         {
@@ -1033,14 +1033,24 @@ impl DatabaseExt for Backend {
         trace!(?id, ?transaction, "roll fork to transaction");
         let id = self.ensure_fork(id)?;
 
-        let (fork_block, tx_block) = self.get_block_numbers_for_transaction(id, transaction)?;
+        let (fork_block, block) =
+            self.get_block_number_and_block_for_transaction(id, transaction)?;
 
         // roll the fork to the transaction's block or latest if it's pending
         self.roll_fork(Some(id), fork_block.as_u64().into(), env, journaled_state)?;
 
         // replay all transactions that came before
         let mut env = env.clone();
-        env.block.number = tx_block.as_u64().into();
+
+        // update the block's env accordingly
+        env.block.timestamp = block.timestamp;
+        env.block.coinbase = block.author.unwrap_or_default();
+        env.block.difficulty = block.difficulty;
+        env.block.prevrandao = block.mix_hash;
+        env.block.basefee = block.base_fee_per_gas.unwrap_or_default();
+        env.block.gas_limit = block.gas_limit;
+        env.block.number = block.number.unwrap_or(fork_block).as_u64().into();
+
         self.replay_until(id, env, transaction, journaled_state)?;
 
         Ok(())

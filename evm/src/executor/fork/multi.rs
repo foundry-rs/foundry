@@ -194,7 +194,7 @@ enum Request {
 
 enum ForkTask {
     /// Contains the future that will establish a new fork
-    Create(CreateFuture, ForkId, CreateSender),
+    Create(CreateFuture, ForkId, CreateSender, Vec<CreateSender>),
 }
 
 /// The type that manages connections in the background
@@ -247,6 +247,19 @@ impl MultiForkHandler {
         self
     }
 
+    /// Returns the list of additional senders of a matching task for the given id, if any.
+    fn find_in_progress_task(&mut self, id: &ForkId) -> Option<&mut Vec<CreateSender>> {
+        for task in self.pending_tasks.iter_mut() {
+            #[allow(irrefutable_let_patterns)]
+            if let ForkTask::Create(_, in_progress, _, additional) = task {
+                if in_progress == id {
+                    return Some(additional)
+                }
+            }
+        }
+        None
+    }
+
     fn create_fork(&mut self, fork: CreateFork, sender: CreateSender) {
         let fork_id = create_fork_id(&fork.url, fork.evm_opts.fork_block_number);
         trace!(?fork_id, "created new forkId");
@@ -255,11 +268,17 @@ impl MultiForkHandler {
             fork.num_senders += 1;
             let _ = sender.send(Ok((fork_id, fork.backend.clone(), fork.opts.env.clone())));
         } else {
+            // there could already be a task for the requested fork in progress
+            if let Some(in_progress) = self.find_in_progress_task(&fork_id) {
+                in_progress.push(sender);
+                return
+            }
+
             let retries = self.retries;
             let backoff = self.backoff;
             // need to create a new fork
             let task = Box::pin(async move { create_fork(fork, retries, backoff).await });
-            self.pending_tasks.push(ForkTask::Create(task, fork_id, sender));
+            self.pending_tasks.push(ForkTask::Create(task, fork_id, sender, Vec::new()));
         }
     }
 
@@ -325,7 +344,7 @@ impl Future for MultiForkHandler {
         for n in (0..pin.pending_tasks.len()).rev() {
             let task = pin.pending_tasks.swap_remove(n);
             match task {
-                ForkTask::Create(mut fut, id, sender) => {
+                ForkTask::Create(mut fut, id, sender, additional_senders) => {
                     if let Poll::Ready(resp) = fut.poll_unpin(cx) {
                         match resp {
                             Ok((fork, handler)) => {
@@ -333,14 +352,29 @@ impl Future for MultiForkHandler {
                                 let backend = fork.backend.clone();
                                 let env = fork.opts.env.clone();
                                 pin.forks.insert(id.clone(), fork);
-                                let _ = sender.send(Ok((id, backend, env)));
+
+                                let _ = sender.send(Ok((id.clone(), backend.clone(), env.clone())));
+
+                                // also notify all additional senders
+                                for sender in additional_senders {
+                                    let _ =
+                                        sender.send(Ok((id.clone(), backend.clone(), env.clone())));
+                                }
                             }
                             Err(err) => {
-                                let _ = sender.send(Err(err));
+                                let _ = sender.send(Err(eyre::eyre!("{err}")));
+                                for sender in additional_senders {
+                                    let _ = sender.send(Err(eyre::eyre!("{err}")));
+                                }
                             }
                         }
                     } else {
-                        pin.pending_tasks.push(ForkTask::Create(fut, id, sender));
+                        pin.pending_tasks.push(ForkTask::Create(
+                            fut,
+                            id,
+                            sender,
+                            additional_senders,
+                        ));
                     }
                 }
             }

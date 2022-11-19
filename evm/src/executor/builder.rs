@@ -54,6 +54,13 @@ impl ExecutorBuilder {
         self
     }
 
+    /// Enables or disabled trace printer.
+    #[must_use]
+    pub fn set_trace_printer(mut self, enable: bool) -> Self {
+        self.inspector_config.trace_printer = enable;
+        self
+    }
+
     /// Enables the fuzzer for data collection and maybe call overriding
     #[must_use]
     pub fn with_fuzzer(

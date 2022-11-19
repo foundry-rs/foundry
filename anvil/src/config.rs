@@ -785,6 +785,7 @@ impl NodeConfig {
                     number: fork_block_number.into(),
                     timestamp: block.timestamp,
                     difficulty: block.difficulty,
+                    prevrandao: block.mix_hash,
                     gas_limit,
                     // Keep previous `coinbase` and `basefee` value
                     coinbase: env.block.coinbase,

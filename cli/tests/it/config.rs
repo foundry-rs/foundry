@@ -3,7 +3,7 @@ use crate::forge_utils;
 use ethers::{
     prelude::artifacts::YulDetails,
     solc::artifacts::RevertStrings,
-    types::{Address, U256},
+    types::{Address, H256, U256},
 };
 use forge::executor::opts::EvmOpts;
 use foundry_cli_test_utils::{
@@ -79,6 +79,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         block_coinbase: Address::random(),
         block_timestamp: 10,
         block_difficulty: 10,
+        block_prevrandao: H256::random(),
         block_gas_limit: Some(100u64.into()),
         memory_limit: 2u64.pow(25),
         eth_rpc_url: Some("localhost".to_string()),

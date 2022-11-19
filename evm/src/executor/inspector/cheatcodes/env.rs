@@ -4,7 +4,10 @@ use super::Cheatcodes;
 use crate::{
     abi::HEVMCalls,
     error::SolError,
-    executor::{backend::DatabaseExt, inspector::cheatcodes::util::with_journaled_account},
+    executor::{
+        backend::DatabaseExt,
+        inspector::cheatcodes::{util::with_journaled_account, DealRecord},
+    },
 };
 use bytes::Bytes;
 use ethers::{
@@ -247,8 +250,15 @@ pub fn apply<DB: DatabaseExt>(
             let who = inner.0;
             let value = inner.1;
             trace!(?who, ?value, "deal cheatcode");
-
             with_journaled_account(&mut data.journaled_state, data.db, who, |account| {
+                // record the deal
+                let record = DealRecord {
+                    address: who,
+                    old_balance: account.info.balance,
+                    new_balance: value,
+                };
+                state.eth_deals.push(record);
+
                 account.info.balance = value;
             })
             .map_err(|err| err.encode_string())?;

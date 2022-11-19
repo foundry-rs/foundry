@@ -2,7 +2,7 @@
 #![deny(missing_docs, unsafe_code, unused_crate_dependencies)]
 
 use crate::cache::StorageCachingConfig;
-use ethers_core::types::{Address, Chain::Mainnet, H160, U256};
+use ethers_core::types::{Address, Chain::Mainnet, H160, H256, U256};
 pub use ethers_solc::artifacts::OptimizerDetails;
 use ethers_solc::{
     artifacts::{
@@ -256,6 +256,8 @@ pub struct Config {
     pub block_timestamp: u64,
     /// the `block.difficulty` value during EVM execution
     pub block_difficulty: u64,
+    /// Before merge the `block.max_hash` after merge it is `block.prevrandao`
+    pub block_prevrandao: H256,
     /// the `block.gaslimit` value during EVM execution
     pub block_gas_limit: Option<GasLimit>,
     /// The memory limit of the EVM (32 MB by default)
@@ -1705,6 +1707,7 @@ impl Default for Config {
             block_coinbase: Address::zero(),
             block_timestamp: 1,
             block_difficulty: 0,
+            block_prevrandao: Default::default(),
             block_gas_limit: None,
             memory_limit: 2u64.pow(25),
             eth_rpc_url: None,
@@ -3197,6 +3200,7 @@ mod tests {
                 block_base_fee_per_gas = 0
                 block_coinbase = '0x0000000000000000000000000000000000000000'
                 block_difficulty = 0
+                block_prevrandao = '0x0000000000000000000000000000000000000000000000000000000000000000'
                 block_number = 1
                 block_timestamp = 1
                 bytecode_hash = 'ipfs'

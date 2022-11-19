@@ -79,6 +79,9 @@ pub mod inspector;
 pub mod state;
 pub mod storage;
 
+// Gas per transaction not creating a contract.
+pub const MIN_TRANSACTION_GAS: U256 = U256([21_000, 0, 0, 0]);
+
 pub type State = foundry_evm::HashMap<Address, Account>;
 
 /// A block request, which includes the Pool Transactions if it's Pending
@@ -304,6 +307,7 @@ impl Backend {
                     timestamp: fork_block.timestamp,
                     gas_limit: fork_block.gas_limit,
                     difficulty: fork_block.difficulty,
+                    prevrandao: fork_block.mix_hash,
                     // Keep previous `coinbase` and `basefee` value
                     coinbase: env.block.coinbase,
                     basefee: env.block.basefee,
@@ -1301,6 +1305,7 @@ impl Backend {
                             coinbase: block.header.beneficiary,
                             timestamp: block.header.timestamp.into(),
                             difficulty: block.header.difficulty,
+                            prevrandao: Some(block.header.mix_hash),
                             basefee: block.header.base_fee_per_gas.unwrap_or_default(),
                             gas_limit: block.header.gas_limit,
                         };
@@ -1325,6 +1330,7 @@ impl Backend {
                     coinbase: block.header.beneficiary,
                     timestamp: block.header.timestamp.into(),
                     difficulty: block.header.difficulty,
+                    prevrandao: Some(block.header.mix_hash),
                     basefee: block.header.base_fee_per_gas.unwrap_or_default(),
                     gas_limit: block.header.gas_limit,
                 };
@@ -1810,6 +1816,11 @@ impl TransactionValidator for Backend {
                     return Err(InvalidTransactionError::InvalidChainId)
                 }
             }
+        }
+
+        if tx.gas_limit() < MIN_TRANSACTION_GAS {
+            warn!(target: "backend", "[{:?}] gas too low", tx.hash());
+            return Err(InvalidTransactionError::GasTooLow)
         }
 
         if tx.gas_limit() > env.block.gas_limit {

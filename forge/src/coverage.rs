@@ -1,4 +1,4 @@
-use comfy_table::{Attribute, Cell, Color, Row, Table};
+use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, Color, Row, Table};
 pub use foundry_evm::coverage::*;
 use std::io::Write;
 
@@ -18,6 +18,7 @@ pub struct SummaryReporter {
 impl Default for SummaryReporter {
     fn default() -> Self {
         let mut table = Table::new();
+        table.load_preset(ASCII_MARKDOWN);
         table.set_header(["File", "% Lines", "% Statements", "% Branches", "% Funcs"]);
 
         Self { table, total: CoverageSummary::default() }

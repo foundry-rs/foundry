@@ -1,4 +1,4 @@
-use super::{Cheatcodes, ChiselState, Debugger, Fuzzer, LogCollector, Tracer};
+use super::{Cheatcodes, Debugger, Fuzzer, LogCollector, TracePrinter, Tracer};
 use crate::{
     coverage::HitMaps,
     debug::DebugArena,
@@ -10,7 +10,10 @@ use ethers::{
     signers::LocalWallet,
     types::{Address, Log, H256},
 };
-use revm::{CallInputs, CreateInputs, EVMData, Gas, GasInspector, Inspector, Interpreter, Return};
+use revm::{
+    return_revert, CallInputs, CreateInputs, EVMData, Gas, GasInspector, Inspector, Interpreter,
+    Return,
+};
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 /// Helper macro to call the same method on multiple inspectors without resorting to dynamic
@@ -50,7 +53,7 @@ pub struct InspectorStack {
     pub debugger: Option<Debugger>,
     pub fuzzer: Option<Fuzzer>,
     pub coverage: Option<CoverageCollector>,
-    pub chisel_state: Option<ChiselState>,
+    pub printer: Option<TracePrinter>,
 }
 
 impl InspectorStack {
@@ -74,6 +77,49 @@ impl InspectorStack {
             chisel_state: self.chisel_state.unwrap_or_default().state,
         }
     }
+
+    fn do_call_end<DB: DatabaseExt>(
+        &mut self,
+        data: &mut EVMData<'_, DB>,
+        call: &CallInputs,
+        remaining_gas: Gas,
+        status: Return,
+        retdata: Bytes,
+        is_static: bool,
+    ) -> (Return, Gas, Bytes) {
+        call_inspectors!(
+            inspector,
+            [
+                &mut self.gas.as_deref().map(|gas| gas.borrow_mut()),
+                &mut self.fuzzer,
+                &mut self.debugger,
+                &mut self.tracer,
+                &mut self.coverage,
+                &mut self.logs,
+                &mut self.cheatcodes,
+                &mut self.printer
+            ],
+            {
+                let (new_status, new_gas, new_retdata) = inspector.call_end(
+                    data,
+                    call,
+                    remaining_gas,
+                    status,
+                    retdata.clone(),
+                    is_static,
+                );
+
+                // If the inspector returns a different status or a revert with a non-empty message,
+                // we assume it wants to tell us something
+                if new_status != status || (new_status == Return::Revert && new_retdata != retdata)
+                {
+                    return (new_status, new_gas, new_retdata)
+                }
+            }
+        );
+
+        (status, remaining_gas, retdata)
+    }
 }
 
 impl<DB> Inspector<DB> for InspectorStack
@@ -94,7 +140,8 @@ where
                 &mut self.coverage,
                 &mut self.tracer,
                 &mut self.logs,
-                &mut self.cheatcodes
+                &mut self.cheatcodes,
+                &mut self.printer
             ],
             {
                 let status = inspector.initialize_interp(interpreter, data, is_static);
@@ -124,7 +171,8 @@ where
                 &mut self.tracer,
                 &mut self.coverage,
                 &mut self.logs,
-                &mut self.cheatcodes
+                &mut self.cheatcodes,
+                &mut self.printer
             ],
             {
                 let status = inspector.step(interpreter, data, is_static);
@@ -146,9 +194,13 @@ where
         topics: &[H256],
         data: &Bytes,
     ) {
-        call_inspectors!(inspector, [&mut self.tracer, &mut self.logs, &mut self.cheatcodes], {
-            inspector.log(evm_data, address, topics, data);
-        });
+        call_inspectors!(
+            inspector,
+            [&mut self.tracer, &mut self.logs, &mut self.cheatcodes, &mut self.printer],
+            {
+                inspector.log(evm_data, address, topics, data);
+            }
+        );
     }
 
     fn step_end(
@@ -166,7 +218,7 @@ where
                 &mut self.tracer,
                 &mut self.logs,
                 &mut self.cheatcodes,
-                &mut self.chisel_state
+                &mut self.printer
             ],
             {
                 let status = inspector.step_end(interpreter, data, is_static, status);
@@ -196,7 +248,8 @@ where
                 &mut self.tracer,
                 &mut self.coverage,
                 &mut self.logs,
-                &mut self.cheatcodes
+                &mut self.cheatcodes,
+                &mut self.printer
             ],
             {
                 let (status, gas, retdata) = inspector.call(data, call, is_static);
@@ -220,37 +273,18 @@ where
         retdata: Bytes,
         is_static: bool,
     ) -> (Return, Gas, Bytes) {
-        call_inspectors!(
-            inspector,
-            [
-                &mut self.gas.as_deref().map(|gas| gas.borrow_mut()),
-                &mut self.fuzzer,
-                &mut self.debugger,
-                &mut self.tracer,
-                &mut self.coverage,
-                &mut self.logs,
-                &mut self.cheatcodes
-            ],
-            {
-                let (new_status, new_gas, new_retdata) = inspector.call_end(
-                    data,
-                    call,
-                    remaining_gas,
-                    status,
-                    retdata.clone(),
-                    is_static,
-                );
+        let res = self.do_call_end(data, call, remaining_gas, status, retdata, is_static);
 
-                // If the inspector returns a different status or a revert with a non-empty message,
-                // we assume it wants to tell us something
-                if new_status != status || (new_status == Return::Revert && new_retdata != retdata)
-                {
-                    return (new_status, new_gas, new_retdata)
-                }
+        if matches!(res.0, return_revert!()) {
+            // Encountered a revert, since cheatcodes may have altered the evm state in such a way
+            // that violates some constraints, e.g. `deal`, we need to manually roll back on revert
+            // before revm reverts the state itself
+            if let Some(cheats) = self.cheatcodes.as_mut() {
+                cheats.on_revert(data);
             }
-        );
+        }
 
-        (status, remaining_gas, retdata)
+        res
     }
 
     fn create(
@@ -266,7 +300,8 @@ where
                 &mut self.tracer,
                 &mut self.coverage,
                 &mut self.logs,
-                &mut self.cheatcodes
+                &mut self.cheatcodes,
+                &mut self.printer
             ],
             {
                 let (status, addr, gas, retdata) = inspector.create(data, call);
@@ -298,7 +333,8 @@ where
                 &mut self.tracer,
                 &mut self.coverage,
                 &mut self.logs,
-                &mut self.cheatcodes
+                &mut self.cheatcodes,
+                &mut self.printer
             ],
             {
                 let (new_status, new_address, new_gas, new_retdata) = inspector.create_end(
@@ -327,7 +363,7 @@ where
                 &mut self.tracer,
                 &mut self.logs,
                 &mut self.cheatcodes,
-                &mut self.chisel_state
+                &mut self.printer
             ],
             {
                 Inspector::<DB>::selfdestruct(inspector);
