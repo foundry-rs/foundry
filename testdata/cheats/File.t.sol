@@ -129,16 +129,28 @@ contract FileTest is DSTest {
     }
 
     function testFsMetadata() public {
-        // TODO: create folder/file/symlink just for this test
         string memory path = "../testdata/fixtures/File/";
         Cheats.FsMetadata memory metadata = cheats.fsMetadata(path);
         assertEq(metadata.isDir, true);
         assertEq(metadata.isSymlink, false);
-        // TODO: don't make assertions that break on other people's machines
-        assertEq(metadata.len, 96);
         assertEq(metadata.readOnly, false);
-        assertEq(metadata.modified, 1668898281);
-        assertEq(metadata.accessed, 1668898283);
-        assertEq(metadata.created, 1668808281);
+        assertGt(metadata.len, 0);
+        assertGt(metadata.modified, 0);
+        assertGt(metadata.accessed, 0);
+        assertGt(metadata.created, 0);
+
+        path = "../testdata/fixtures/File/read.txt";
+        metadata = cheats.fsMetadata(path);
+        assertEq(metadata.isDir, false);
+
+        path = "../testdata/fixtures/File/symlink";
+        metadata = cheats.fsMetadata(path);
+        assertEq(metadata.isSymlink, true);
+
+        cheats.expectRevert();
+        cheats.fsMetadata("../not-found");
+
+        cheats.expectRevert(FOUNDRY_READ_ERR);
+        cheats.fsMetadata("/etc/hosts");
     }
 }

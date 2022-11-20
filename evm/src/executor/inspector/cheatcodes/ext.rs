@@ -25,7 +25,7 @@ use std::{
     path::Path,
     process::Command,
     str::FromStr,
-    time::UNIX_EPOCH,
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tracing::{error, trace};
 /// Invokes a `Command` with the given args and returns the abi encoded response
@@ -301,16 +301,25 @@ fn fs_metadata(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, 
     let path =
         state.config.ensure_path_allowed(&path, FsAccessKind::Read).map_err(error::encode_error)?;
 
-    let metadata = path.metadata().expect("Metadata call failed");
+    let metadata = path.metadata().map_err(error::encode_error)?;
+
+    // These fields not available on all platforms; default to 0
+    let [modified, accessed, created] =
+        [metadata.modified(), metadata.accessed(), metadata.created()].map(|time| {
+            time.unwrap_or(SystemTime::from(UNIX_EPOCH))
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+        });
+
     let metadata = (
         metadata.is_dir(),
         metadata.is_symlink(),
         metadata.len(),
         metadata.permissions().readonly(),
-        // TODO: handle Errs like a non-starch
-        metadata.modified().expect("0").duration_since(UNIX_EPOCH).unwrap().as_secs(),
-        metadata.accessed().expect("0").duration_since(UNIX_EPOCH).unwrap().as_secs(),
-        metadata.created().expect("0").duration_since(UNIX_EPOCH).unwrap().as_secs(),
+        modified,
+        accessed,
+        created,
     );
     Ok(metadata.encode().into())
 }
