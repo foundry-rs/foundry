@@ -25,6 +25,7 @@ use std::{
     path::Path,
     process::Command,
     str::FromStr,
+    time::UNIX_EPOCH,
 };
 use tracing::{error, trace};
 /// Invokes a `Command` with the given args and returns the abi encoded response
@@ -296,6 +297,24 @@ fn remove_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, 
     Ok(Bytes::new())
 }
 
+fn fs_metadata(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
+    let path =
+        state.config.ensure_path_allowed(&path, FsAccessKind::Read).map_err(error::encode_error)?;
+
+    let metadata = path.metadata().expect("Metadata call failed");
+    let metadata = (
+        metadata.is_dir(),
+        metadata.is_symlink(),
+        metadata.len(),
+        metadata.permissions().readonly(),
+        // TODO: handle Errs like a non-starch
+        metadata.modified().expect("0").duration_since(UNIX_EPOCH).unwrap().as_secs(),
+        metadata.accessed().expect("0").duration_since(UNIX_EPOCH).unwrap().as_secs(),
+        metadata.created().expect("0").duration_since(UNIX_EPOCH).unwrap().as_secs(),
+    );
+    Ok(metadata.encode().into())
+}
+
 /// Converts a serde_json::Value to an abi::Token
 /// The function is designed to run recursively, so that in case of an object
 /// it will call itself to convert each of it's value and encode the whole as a
@@ -497,6 +516,7 @@ pub fn apply(
         HEVMCalls::WriteLine(inner) => write_line(state, &inner.0, &inner.1),
         HEVMCalls::CloseFile(inner) => close_file(state, &inner.0),
         HEVMCalls::RemoveFile(inner) => remove_file(state, &inner.0),
+        HEVMCalls::FsMetadata(inner) => fs_metadata(state, &inner.0),
         // If no key argument is passed, return the whole JSON object.
         // "$" is the JSONPath key for the root of the object
         HEVMCalls::ParseJson0(inner) => parse_json(state, &inner.0, "$"),

@@ -127,4 +127,18 @@ contract FileTest is DSTest {
         cheats.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
         cheats.writeFile("./../foundry.toml", "\nffi = true\n");
     }
+
+    function testFsMetadata() public {
+        // TODO: create folder/file/symlink just for this test
+        string memory path = "../testdata/fixtures/File/";
+        Cheats.FsMetadata memory metadata = cheats.fsMetadata(path);
+        assertEq(metadata.isDir, true);
+        assertEq(metadata.isSymlink, false);
+        // TODO: don't make assertions that break on other people's machines
+        assertEq(metadata.len, 96);
+        assertEq(metadata.readOnly, false);
+        assertEq(metadata.modified, 1668898281);
+        assertEq(metadata.accessed, 1668898283);
+        assertEq(metadata.created, 1668808281);
+    }
 }
