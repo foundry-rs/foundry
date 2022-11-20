@@ -25,7 +25,7 @@ use std::{
     path::Path,
     process::Command,
     str::FromStr,
-    time::{SystemTime, UNIX_EPOCH},
+    time::UNIX_EPOCH,
 };
 use tracing::{error, trace};
 /// Invokes a `Command` with the given args and returns the abi encoded response
@@ -297,6 +297,9 @@ fn remove_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, 
     Ok(Bytes::new())
 }
 
+/// Gets the metadata of a file/directory
+///
+/// This will return an error if no file/directory is found, or if the target path isn't allowed
 fn fs_metadata(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
     let path =
         state.config.ensure_path_allowed(&path, FsAccessKind::Read).map_err(error::encode_error)?;
@@ -306,10 +309,7 @@ fn fs_metadata(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, 
     // These fields not available on all platforms; default to 0
     let [modified, accessed, created] =
         [metadata.modified(), metadata.accessed(), metadata.created()].map(|time| {
-            time.unwrap_or(SystemTime::from(UNIX_EPOCH))
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()
+            time.unwrap_or(UNIX_EPOCH).duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
         });
 
     let metadata = (

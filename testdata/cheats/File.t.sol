@@ -129,15 +129,16 @@ contract FileTest is DSTest {
     }
 
     function testFsMetadata() public {
-        string memory path = "../testdata/fixtures/File/";
+        string memory path = "../testdata/fixtures/File";
         Cheats.FsMetadata memory metadata = cheats.fsMetadata(path);
         assertEq(metadata.isDir, true);
         assertEq(metadata.isSymlink, false);
         assertEq(metadata.readOnly, false);
         assertGt(metadata.len, 0);
-        assertGt(metadata.modified, 0);
-        assertGt(metadata.accessed, 0);
-        assertGt(metadata.created, 0);
+        // These fields aren't available on all platforms, default to zero
+        // assertGt(metadata.modified, 0);
+        // assertGt(metadata.accessed, 0);
+        // assertGt(metadata.created, 0);
 
         path = "../testdata/fixtures/File/read.txt";
         metadata = cheats.fsMetadata(path);
