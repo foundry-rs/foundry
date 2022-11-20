@@ -695,6 +695,8 @@ contract Script0 is Script {
         cmd.arg("script").arg(script).args([
             "--tc",
             "Script0",
+            "--sender",
+            "0x00a329c0648769A73afAc7F9381E08FB43dBEA72",
             "--rpc-url",
             handle.http_endpoint().as_str(),
         ]);
@@ -784,6 +786,8 @@ contract Script0 is Script {
         cmd.arg("script").arg(script).args([
             "--tc",
             "Script0",
+            "--sender",
+            "0x00a329c0648769A73afAc7F9381E08FB43dBEA72",
             "--rpc-url",
             handle.http_endpoint().as_str(),
         ]);
