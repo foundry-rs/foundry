@@ -8,6 +8,7 @@ use ethers::{
     utils::keccak256,
 };
 use forge::revm::KECCAK_EMPTY;
+use foundry_common::errors::FsPathError;
 use foundry_evm::{
     executor::{
         backend::{snapshot::StateSnapshot, DatabaseError, DatabaseResult, MemDb},
@@ -21,7 +22,7 @@ use foundry_evm::{
 };
 use hash_db::HashDB;
 use serde::{Deserialize, Serialize};
-use std::fmt;
+use std::{fmt, path::Path};
 
 /// Type alias for the `HashDB` representation of the Database
 pub type AsHashDB = Box<dyn HashDB<KeccakHasher, Vec<u8>>>;
@@ -276,6 +277,25 @@ impl MaybeHashDatabase for StateDb {
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct SerializableState {
     pub accounts: HashMap<Address, SerializableAccountRecord>,
+}
+
+// === impl SerializableState ===
+
+impl SerializableState {
+    /// Loads the `Genesis` object from the given json file path
+    pub fn load(path: impl AsRef<Path>) -> Result<Self, FsPathError> {
+        let path = path.as_ref();
+        if path.is_dir() {
+            foundry_common::fs::read_json_file(&path.join("state.json"))
+        } else {
+            foundry_common::fs::read_json_file(path)
+        }
+    }
+
+    /// This is used as the clap `value_parser` implementation
+    pub(crate) fn parse(path: &str) -> Result<Self, String> {
+        Self::load(path).map_err(|err| err.to_string())
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

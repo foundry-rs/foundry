@@ -535,19 +535,20 @@ impl Backend {
         Ok(self.db.write().await.revert(id))
     }
 
+    /// Get the current state.
+    pub async fn serialized_state(&self) -> Result<SerializableState, BlockchainError> {
+        let state = self.db.read().await.dump_state()?;
+        state.ok_or_else(|| {
+            RpcError::invalid_params("Dumping state not supported with the current configuration")
+                .into()
+        })
+    }
+
     /// Write all chain data to serialized bytes buffer
     pub async fn dump_state(&self) -> Result<Bytes, BlockchainError> {
-        self.db
-            .read()
-            .await
-            .dump_state()?
-            .map(|s| serde_json::to_vec(&s).unwrap_or_default().into())
-            .ok_or_else(|| {
-                RpcError::invalid_params(
-                    "Dumping state not supported with the current configuration",
-                )
-                .into()
-            })
+        let state = self.serialized_state().await?;
+        let content = serde_json::to_vec(&state).unwrap_or_default().into();
+        Ok(content)
     }
 
     /// Deserialize and add all chain data to the backend storage

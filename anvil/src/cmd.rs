@@ -1,5 +1,7 @@
 use crate::{
-    config::DEFAULT_MNEMONIC, eth::pool::transactions::TransactionOrder, genesis::Genesis,
+    config::DEFAULT_MNEMONIC,
+    eth::{backend::db::SerializableState, pool::transactions::TransactionOrder},
+    genesis::Genesis,
     AccountGenerator, Hardfork, NodeConfig, CHAIN_ID,
 };
 use anvil_server::ServerConfig;
@@ -9,6 +11,7 @@ use ethers::utils::WEI_IN_ETHER;
 use foundry_config::Chain;
 use std::{
     net::IpAddr,
+    path::PathBuf,
     str::FromStr,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -16,7 +19,7 @@ use std::{
     },
     time::Duration,
 };
-use tracing::log::trace;
+use tracing::{error, trace};
 
 #[derive(Clone, Debug, Parser)]
 pub struct NodeArgs {
@@ -128,6 +131,23 @@ pub struct NodeArgs {
 
     #[clap(
         long,
+        help = "Dump the state of chain on exit to the given file. If the value is a directory, the state will be written to `<VALUE>/state.json`.",
+        value_name = "PATH",
+        conflicts_with = "init"
+    )]
+    pub dump_state: Option<PathBuf>,
+
+    #[clap(
+        long,
+        help = "Initialize the chain from a previously saved state snapshot.",
+        value_name = "PATH",
+        value_parser = SerializableState::parse,
+        conflicts_with = "init"
+    )]
+    pub load_state: Option<SerializableState>,
+
+    #[clap(
+        long,
         help = IPC_HELP,
         value_name = "PATH",
         visible_alias = "ipcpath"
@@ -183,6 +203,7 @@ impl NodeArgs {
             .with_ipc(self.ipc)
             .with_code_size_limit(self.evm_opts.code_size_limit)
             .set_pruned_history(self.prune_history)
+            .with_init_state(self.load_state)
     }
 
     fn account_generator(&self) -> AccountGenerator {
@@ -202,6 +223,8 @@ impl NodeArgs {
     ///
     /// See also [crate::spawn()]
     pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+        let dump_state = self.dump_state.clone();
+
         let (api, mut handle) = crate::spawn(self.into_node_config()).await;
 
         // sets the signal handler to gracefully shutdown.
@@ -217,6 +240,27 @@ impl NodeArgs {
 
         task_manager.spawn(async move {
             on_shutdown.await;
+
+            // If set, dump the current state on shutdown
+            if let Some(mut dump_state) = dump_state {
+                if dump_state.is_dir() {
+                    dump_state = dump_state.join("state.json");
+                }
+                trace!(path=?dump_state, "Dumping state on shutdown");
+                match api.serialized_state().await {
+                    Ok(state) => {
+                        if let Err(err) = foundry_common::fs::write_json_file(&dump_state, &state) {
+                            error!(?err, "Failed to dump state");
+                        } else {
+                            trace!(path=?dump_state, "Dumped state on shutdown");
+                        }
+                    }
+                    Err(err) => {
+                        error!(?err, "Failed to extract state");
+                    }
+                }
+            }
+
             // cleaning up and shutting down
             // this will make sure that the fork RPC cache is flushed if caching is configured
             if let Some(fork) = fork.take() {
