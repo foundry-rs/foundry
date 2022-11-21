@@ -13,11 +13,15 @@ RUN [[ "$TARGETARCH" = "arm64" ]] && echo "export CFLAGS=-mno-outline-atomics" >
 WORKDIR /opt/foundry
 COPY . .
 
-RUN --mount=type=cache,target=/root/.cargo/registry --mount=type=cache,target=/root/.cargo/git \
+RUN --mount=type=cache,target=/root/.cargo/registry --mount=type=cache,target=/root/.cargo/git --mount=type=cache,target=/opt/foundry/target \
     source $HOME/.profile && cargo build --release \
-    && strip /opt/foundry/target/release/forge \
-    && strip /opt/foundry/target/release/cast \
-    && strip /opt/foundry/target/release/anvil
+    && mkdir out \
+    && cp target/release/forge out/forge \
+    && cp target/release/cast out/cast \
+    && cp target/release/anvil out/anvil \
+    && strip out/forge \
+    && strip out/cast \
+    && strip out/anvil
 
 FROM alpine as foundry-client
 ENV GLIBC_KEY=https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub
@@ -28,8 +32,8 @@ RUN apk add linux-headers gcompat git
 RUN wget -q -O ${GLIBC_KEY_FILE} ${GLIBC_KEY} \
     && wget -O glibc.apk ${GLIBC_RELEASE} \
     && apk add glibc.apk --force
-COPY --from=build-environment /opt/foundry/target/release/forge /usr/local/bin/forge
-COPY --from=build-environment /opt/foundry/target/release/cast /usr/local/bin/cast
-COPY --from=build-environment /opt/foundry/target/release/anvil /usr/local/bin/anvil
+COPY --from=build-environment /opt/foundry/out/forge /usr/local/bin/forge
+COPY --from=build-environment /opt/foundry/out/cast /usr/local/bin/cast
+COPY --from=build-environment /opt/foundry/out/anvil /usr/local/bin/anvil
 RUN adduser -Du 1000 foundry
 ENTRYPOINT ["/bin/sh", "-c"]
