@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.4
+
 FROM alpine as build-environment
 ARG TARGETARCH
 WORKDIR /opt
@@ -10,7 +12,9 @@ RUN [[ "$TARGETARCH" = "arm64" ]] && echo "export CFLAGS=-mno-outline-atomics" >
 
 WORKDIR /opt/foundry
 COPY . .
-RUN source $HOME/.profile && cargo build --release \
+
+RUN --mount=type=cache,target=/root/.cargo/registry --mount=type=cache,target=/root/.cargo/git \
+    source $HOME/.profile && cargo build --release \
     && strip /opt/foundry/target/release/forge \
     && strip /opt/foundry/target/release/cast \
     && strip /opt/foundry/target/release/anvil
