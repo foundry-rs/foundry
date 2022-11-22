@@ -60,8 +60,12 @@ pub(crate) fn decode_cheatcode_inputs(
                 None
             } else {
                 let mut decoded = func.decode_input(&data[SELECTOR_LEN..]).ok()?;
-                let token = if func.name.as_str() == "parseJson" { "<JSON file>" } else { "<stringified JSON>" };
-                decoded[0] = Token::String("<JSON file>".to_string());
+                let token = if func.name.as_str() == "parseJson" {
+                    "<JSON file>"
+                } else {
+                    "<stringified JSON>"
+                };
+                decoded[0] = Token::String(token.to_string());
                 Some(decoded.iter().map(format_token).collect())
             }
         }
