@@ -30,6 +30,7 @@ pub(crate) fn decode_cheatcode_inputs(
     func: &Function,
     data: &[u8],
     errors: &Abi,
+    verbosity: u8,
 ) -> Option<Vec<String>> {
     match func.name.as_str() {
         "expectRevert" => {
@@ -54,13 +55,34 @@ pub(crate) fn decode_cheatcode_inputs(
             Some(decoded.iter().map(format_token).collect())
         }
         "deriveKey" => Some(vec!["<pk>".to_string()]),
-
+        "parseJson" => {
+            if verbosity == 5 {
+                None
+            } else {
+                let mut decoded = func.decode_input(&data[SELECTOR_LEN..]).ok()?;
+                decoded[0] = Token::String("<JSON file>".to_string());
+                Some(decoded.iter().map(format_token).collect())
+            }
+        }
+        "writeJson" => {
+            if verbosity == 5 {
+                None
+            } else {
+                let mut decoded = func.decode_input(&data[SELECTOR_LEN..]).ok()?;
+                decoded[0] = Token::String("<stringified JSON>".to_string());
+                Some(decoded.iter().map(format_token).collect())
+            }
+        }
         _ => None,
     }
 }
 
 /// Custom decoding of cheatcode return values
-pub(crate) fn decode_cheatcode_outputs(func: &Function, _data: &[u8]) -> Option<String> {
+pub(crate) fn decode_cheatcode_outputs(
+    func: &Function,
+    _data: &[u8],
+    verbosity: u8,
+) -> Option<String> {
     if func.name.starts_with("env") {
         // redacts the value stored in the env var
         return Some("<env var value>".to_string())
@@ -68,6 +90,12 @@ pub(crate) fn decode_cheatcode_outputs(func: &Function, _data: &[u8]) -> Option<
     if func.name == "deriveKey" {
         // redacts derived private key
         return Some("<pk>".to_string())
+    }
+    if func.name == "parseJson" && verbosity != 5 {
+        return Some("<encoded JSON value>".to_string())
+    }
+    if func.name == "readFile" && verbosity != 5 {
+        return Some("<file>".to_string())
     }
     None
 }
