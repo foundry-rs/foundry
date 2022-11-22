@@ -69,7 +69,9 @@ pub struct CallTraceDecoder {
     pub contracts: HashMap<Address, String>,
     /// Address labels
     pub labels: HashMap<Address, String>,
-    /// A mapping of addresses to their known functions
+    /// Information whether the contract address has a receive function
+    pub receive_contracts: HashMap<Address, bool>,
+    /// A mapping of signatures to their known functions
     pub functions: BTreeMap<[u8; 4], Vec<Function>>,
     /// All known events
     pub events: BTreeMap<(H256, usize), Vec<Event>>,
@@ -178,6 +180,7 @@ impl CallTraceDecoder {
                 .collect::<BTreeMap<(H256, usize), Vec<Event>>>(),
             errors: Abi::default(),
             signature_identifier: None,
+            receive_contracts: Default::default(),
         }
     }
 
@@ -230,6 +233,8 @@ impl CallTraceDecoder {
                         .or_insert_with(Default::default);
                     entry.push(error.clone());
                 });
+
+                self.receive_contracts.entry(address).or_insert(abi.receive);
             }
         });
     }
@@ -264,11 +269,16 @@ impl CallTraceDecoder {
                         }
                     }
                 } else {
-                    node.trace.data = RawOrDecodedCall::Decoded(
-                        "fallback".to_string(),
-                        String::new(),
-                        Vec::new(),
-                    );
+                    let has_receive = self
+                        .receive_contracts
+                        .get(&node.trace.address)
+                        .copied()
+                        .unwrap_or_default();
+                    let func_name =
+                        if bytes.is_empty() && has_receive { "receive" } else { "fallback" };
+
+                    node.trace.data =
+                        RawOrDecodedCall::Decoded(func_name.to_string(), String::new(), Vec::new());
 
                     if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
                         if !node.trace.success {
