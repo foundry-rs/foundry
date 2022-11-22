@@ -62,6 +62,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ahash"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf6ccdb167abbf410dcb915cabd428929d7f6a04980b54a11f26a39f1c7f7107"
+dependencies = [
+ "cfg-if 1.0.0",
+ "once_cell",
+ "version_check",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "0.7.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -598,9 +609,9 @@ checksum = "14c189c53d098945499cdfa7ecc63567cf3886b3332b312a5b4585d8d3a6a610"
 
 [[package]]
 name = "bytes"
-version = "1.2.1"
+version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec8a7b6a70fde80372154c65702f00a0f56f3e1c36abbc6c440484be248856db"
+checksum = "dfb24e866b15a1af2a1b663f10c6b6b8f397a84aadb828f12e5b289ec23a3a3c"
 dependencies = [
  "serde",
 ]
@@ -646,9 +657,9 @@ dependencies = [
 
 [[package]]
 name = "cargo_metadata"
-version = "0.15.1"
+version = "0.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "406c859255d568f4f742b3146d51851f3bfd49f734a2c289d9107c4395ee0062"
+checksum = "982a0cf6a99c350d7246035613882e376d58cebe571785abc5da4f648d53ac0a"
 dependencies = [
  "camino",
  "cargo-platform",
@@ -1649,9 +1660,9 @@ dependencies = [
 
 [[package]]
 name = "ethabi"
-version = "17.2.0"
+version = "18.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4966fba78396ff92db3b817ee71143eccd98acf0f876b8d600e585a670c5d1b"
+checksum = "7413c5f74cc903ea37386a8965a936cbeb334bd270862fdece542c1b2dcbc898"
 dependencies = [
  "ethereum-types",
  "hex",
@@ -1666,12 +1677,12 @@ dependencies = [
 
 [[package]]
 name = "ethbloom"
-version = "0.12.1"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11da94e443c60508eb62cf256243a64da87304c2802ac2528847f79d750007ef"
+checksum = "c22d4b5885b6aa2fe5e8b9329fb8d232bf739e434e6b87347c63bdd00c120f60"
 dependencies = [
  "crunchy",
- "fixed-hash",
+ "fixed-hash 0.8.0",
  "impl-codec",
  "impl-rlp",
  "impl-serde",
@@ -1688,22 +1699,22 @@ dependencies = [
  "crc 1.8.1",
  "fastrlp",
  "maplit",
- "primitive-types",
+ "primitive-types 0.11.1",
  "thiserror",
 ]
 
 [[package]]
 name = "ethereum-types"
-version = "0.13.1"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2827b94c556145446fcce834ca86b7abf0c39a805883fe20e72c5bfdb5a0dc6"
+checksum = "81224dc661606574f5a0f28c9947d0ee1d93ff11c5f1c4e7272f52e8c0b5483c"
 dependencies = [
  "ethbloom",
- "fixed-hash",
+ "fixed-hash 0.8.0",
  "impl-codec",
  "impl-rlp",
  "impl-serde",
- "primitive-types",
+ "primitive-types 0.12.1",
  "scale-info",
  "uint",
 ]
@@ -1711,7 +1722,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "1.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#921dfa6b1c5ad9ba5f24033a414041f04da624ad"
+source = "git+https://github.com/gakonst/ethers-rs#c17c0c3c956f12d205a5ede3176599d8a30ca739"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1726,7 +1737,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "1.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#921dfa6b1c5ad9ba5f24033a414041f04da624ad"
+source = "git+https://github.com/gakonst/ethers-rs#c17c0c3c956f12d205a5ede3176599d8a30ca739"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1737,7 +1748,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "1.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#921dfa6b1c5ad9ba5f24033a414041f04da624ad"
+source = "git+https://github.com/gakonst/ethers-rs#c17c0c3c956f12d205a5ede3176599d8a30ca739"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1755,7 +1766,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "1.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#921dfa6b1c5ad9ba5f24033a414041f04da624ad"
+source = "git+https://github.com/gakonst/ethers-rs#c17c0c3c956f12d205a5ede3176599d8a30ca739"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -1771,6 +1782,7 @@ dependencies = [
  "serde",
  "serde_json",
  "syn",
+ "toml",
  "url",
  "walkdir",
 ]
@@ -1778,7 +1790,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "1.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#921dfa6b1c5ad9ba5f24033a414041f04da624ad"
+source = "git+https://github.com/gakonst/ethers-rs#c17c0c3c956f12d205a5ede3176599d8a30ca739"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1792,7 +1804,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "1.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#921dfa6b1c5ad9ba5f24033a414041f04da624ad"
+source = "git+https://github.com/gakonst/ethers-rs#c17c0c3c956f12d205a5ede3176599d8a30ca739"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1822,7 +1834,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "1.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#921dfa6b1c5ad9ba5f24033a414041f04da624ad"
+source = "git+https://github.com/gakonst/ethers-rs#c17c0c3c956f12d205a5ede3176599d8a30ca739"
 dependencies = [
  "ethers-core",
  "ethers-solc",
@@ -1839,7 +1851,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "1.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#921dfa6b1c5ad9ba5f24033a414041f04da624ad"
+source = "git+https://github.com/gakonst/ethers-rs#c17c0c3c956f12d205a5ede3176599d8a30ca739"
 dependencies = [
  "async-trait",
  "auto_impl 0.5.0",
@@ -1864,7 +1876,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "1.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#921dfa6b1c5ad9ba5f24033a414041f04da624ad"
+source = "git+https://github.com/gakonst/ethers-rs#c17c0c3c956f12d205a5ede3176599d8a30ca739"
 dependencies = [
  "async-trait",
  "auto_impl 1.0.1",
@@ -1901,7 +1913,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "1.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#921dfa6b1c5ad9ba5f24033a414041f04da624ad"
+source = "git+https://github.com/gakonst/ethers-rs#c17c0c3c956f12d205a5ede3176599d8a30ca739"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1924,7 +1936,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "1.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#921dfa6b1c5ad9ba5f24033a414041f04da624ad"
+source = "git+https://github.com/gakonst/ethers-rs#c17c0c3c956f12d205a5ede3176599d8a30ca739"
 dependencies = [
  "cfg-if 1.0.0",
  "dunce",
@@ -2065,6 +2077,15 @@ name = "fixed-hash"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfcf0ed7fe52a17a03854ec54a9f76d6d84508d1c0e66bc1793301c73fc8493c"
+dependencies = [
+ "static_assertions",
+]
+
+[[package]]
+name = "fixed-hash"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "835c052cb0c08c1acf6ffd71c022172e18723949c8282f2b9f27efbc51e64534"
 dependencies = [
  "byteorder",
  "rand 0.8.5",
@@ -2330,7 +2351,7 @@ dependencies = [
  "foundry-config",
  "foundry-utils",
  "futures",
- "hashbrown 0.12.0",
+ "hashbrown 0.13.1",
  "hex",
  "itertools",
  "jsonpath_lib",
@@ -2854,7 +2875,16 @@ version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c21d40587b92fa6a6c6e3c1bdbf87d75511db5672f9c93175574b3a00df1758"
 dependencies = [
- "ahash",
+ "ahash 0.7.6",
+]
+
+[[package]]
+name = "hashbrown"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33ff8ae62cd3a9102e5637afc8452c55acf3844001bd5374e0b0bd7b6616c038"
+dependencies = [
+ "ahash 0.8.2",
  "serde",
 ]
 
@@ -3089,9 +3119,9 @@ dependencies = [
 
 [[package]]
 name = "impl-serde"
-version = "0.3.2"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4551f042f3438e64dbd6226b20527fc84a6e1fe65688b58746a2f53623f25f5c"
+checksum = "ebc88fc67028ae3db0c853baa36269d398d5f45b6982f95549ff5def78c935cd"
 dependencies = [
  "serde",
 ]
@@ -3831,9 +3861,9 @@ checksum = "624a8340c38c1b80fd549087862da4ba43e08858af025b236e509b6649fc13d5"
 
 [[package]]
 name = "open-fastrlp"
-version = "0.1.2"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "131de184f045153e72c537ef4f1d57babddf2a897ca19e67bdff697aebba7f3d"
+checksum = "786393f80485445794f6043fd3138854dd109cc6c4bd1a6383db304c9ce9b9ce"
 dependencies = [
  "arrayvec 0.7.2",
  "auto_impl 1.0.1",
@@ -4325,7 +4355,17 @@ version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e28720988bff275df1f51b171e1b2a18c30d194c4d2b61defdacecd625a5d94a"
 dependencies = [
- "fixed-hash",
+ "fixed-hash 0.7.0",
+ "uint",
+]
+
+[[package]]
+name = "primitive-types"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f3486ccba82358b11a77516035647c34ba167dfa53312630de83b12bd4f3d66"
+dependencies = [
+ "fixed-hash 0.8.0",
  "impl-codec",
  "impl-rlp",
  "impl-serde",
@@ -4557,11 +4597,10 @@ dependencies = [
 
 [[package]]
 name = "rayon"
-version = "1.5.3"
+version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bd99e5772ead8baa5215278c9b15bf92087709e9c1b2d1f97cdb5a183c933a7d"
+checksum = "1e060280438193c554f654141c9ea9417886713b7acd75974c85b18a69a88e0b"
 dependencies = [
- "autocfg",
  "crossbeam-deque",
  "either",
  "rayon-core",
@@ -4569,9 +4608,9 @@ dependencies = [
 
 [[package]]
 name = "rayon-core"
-version = "1.9.2"
+version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f51245e1e62e1f1629cbfec37b5793bbabcaeb90f30e94d2ba03564687353e4"
+checksum = "cac410af5d00ab6884528b4ab69d1e8e146e8d471201800fa1b4524126de6ad3"
 dependencies = [
  "crossbeam-channel",
  "crossbeam-deque",
@@ -4650,9 +4689,9 @@ dependencies = [
 
 [[package]]
 name = "reqwest"
-version = "0.11.12"
+version = "0.11.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "431949c384f4e2ae07605ccaa56d1d9d2ecdb5cadd4f9577ccfab29f2e5149fc"
+checksum = "68cc60575865c7831548863cc02356512e3f1dc2f3f82cb837d7fc4cc8f3c97c"
 dependencies = [
  "base64 0.13.0",
  "bytes",
@@ -4693,17 +4732,17 @@ dependencies = [
 
 [[package]]
 name = "revm"
-version = "2.3.0"
+version = "2.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3d296f0199135e573ba817ed0024d0d4eafa7add1c9a8dd08488c3515598156"
+checksum = "73d84c8f9836efb0f5f5f8de4700a953c4e1f3119e5cfcb0aad8e5be73daf991"
 dependencies = [
  "arrayref",
  "auto_impl 1.0.1",
  "bytes",
- "hashbrown 0.12.0",
+ "hashbrown 0.13.1",
  "hex",
  "num_enum",
- "primitive-types",
+ "primitive-types 0.12.1",
  "revm_precompiles",
  "rlp",
  "serde",
@@ -4712,16 +4751,16 @@ dependencies = [
 
 [[package]]
 name = "revm_precompiles"
-version = "1.1.1"
+version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00e68901326fe20437526cb6d64a2898d2976383b7d222329dfce1717902da50"
+checksum = "0353d456ef3e989dc9190f42c6020f09bc2025930c37895826029304413204b5"
 dependencies = [
  "bytes",
- "hashbrown 0.12.0",
+ "hashbrown 0.13.1",
  "k256",
  "num",
  "once_cell",
- "primitive-types",
+ "primitive-types 0.12.1",
  "ripemd",
  "secp256k1",
  "sha2 0.10.6",
@@ -5058,9 +5097,9 @@ dependencies = [
 
 [[package]]
 name = "serde-aux"
-version = "4.1.0"
+version = "4.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb6a3148cb21f1afb585b9ce6aeea9e58bd02c37ddb336277af10396ca3574fd"
+checksum = "c599b3fd89a75e0c18d6d2be693ddb12cccaf771db4ff9e39097104808a014c0"
 dependencies = [
  "serde",
  "serde_json",
@@ -5895,15 +5934,15 @@ dependencies = [
 
 [[package]]
 name = "trezor-client"
-version = "0.0.6"
+version = "0.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "659ac74f0f26e4150ad6ffe155db8ee1727ea13a1b1b0ff0e7807e5befdb3aaf"
+checksum = "3d3e4b569b95a8d24d10b2e8f60196348eb15023d50d2b38a4463e7f150afd27"
 dependencies = [
  "byteorder",
  "hex",
  "hidapi-rusb",
  "log",
- "primitive-types",
+ "primitive-types 0.12.1",
  "protobuf",
  "rusb",
 ]
