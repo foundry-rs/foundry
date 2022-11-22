@@ -55,21 +55,13 @@ pub(crate) fn decode_cheatcode_inputs(
             Some(decoded.iter().map(format_token).collect())
         }
         "deriveKey" => Some(vec!["<pk>".to_string()]),
-        "parseJson" => {
+        "parseJson" | "writeJson" => {
             if verbosity == 5 {
                 None
             } else {
                 let mut decoded = func.decode_input(&data[SELECTOR_LEN..]).ok()?;
+                let token = if func.name.as_str() == "parseJson" { "<JSON file>" } else { "<stringified JSON>" };
                 decoded[0] = Token::String("<JSON file>".to_string());
-                Some(decoded.iter().map(format_token).collect())
-            }
-        }
-        "writeJson" => {
-            if verbosity == 5 {
-                None
-            } else {
-                let mut decoded = func.decode_input(&data[SELECTOR_LEN..]).ok()?;
-                decoded[0] = Token::String("<stringified JSON>".to_string());
                 Some(decoded.iter().map(format_token).collect())
             }
         }
