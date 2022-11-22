@@ -2,7 +2,7 @@
 #![deny(missing_docs, unsafe_code, unused_crate_dependencies)]
 
 use crate::cache::StorageCachingConfig;
-use ethers_core::types::{Address, Chain::Mainnet, H160, U256};
+use ethers_core::types::{Address, Chain::Mainnet, H160, H256, U256};
 pub use ethers_solc::artifacts::OptimizerDetails;
 use ethers_solc::{
     artifacts::{
@@ -256,6 +256,8 @@ pub struct Config {
     pub block_timestamp: u64,
     /// the `block.difficulty` value during EVM execution
     pub block_difficulty: u64,
+    /// Before merge the `block.max_hash` after merge it is `block.prevrandao`
+    pub block_prevrandao: H256,
     /// the `block.gaslimit` value during EVM execution
     pub block_gas_limit: Option<GasLimit>,
     /// The memory limit of the EVM (32 MB by default)
@@ -390,9 +392,10 @@ impl Config {
 
     /// Default address for tx.origin
     ///
-    /// `0x00a329c0648769a73afac7f9381e08fb43dbea72`
+    /// `0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38`
     pub const DEFAULT_SENDER: H160 = H160([
-        0, 163, 41, 192, 100, 135, 105, 167, 58, 250, 199, 249, 56, 30, 8, 251, 67, 219, 234, 114,
+        0x18, 0x04, 0xc8, 0xAB, 0x1F, 0x12, 0xE6, 0xbb, 0xF3, 0x89, 0x4D, 0x40, 0x83, 0xF3, 0x3E,
+        0x07, 0x30, 0x9D, 0x1F, 0x38,
     ]);
 
     /// Returns the current `Config`
@@ -1705,6 +1708,7 @@ impl Default for Config {
             block_coinbase: Address::zero(),
             block_timestamp: 1,
             block_difficulty: 0,
+            block_prevrandao: Default::default(),
             block_gas_limit: None,
             memory_limit: 2u64.pow(25),
             eth_rpc_url: None,
@@ -2415,7 +2419,7 @@ mod tests {
     fn default_sender() {
         assert_eq!(
             Config::DEFAULT_SENDER,
-            "0x00a329c0648769a73afac7f9381e08fb43dbea72".parse().unwrap()
+            "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38".parse().unwrap()
         );
     }
 
@@ -3197,6 +3201,7 @@ mod tests {
                 block_base_fee_per_gas = 0
                 block_coinbase = '0x0000000000000000000000000000000000000000'
                 block_difficulty = 0
+                block_prevrandao = '0x0000000000000000000000000000000000000000000000000000000000000000'
                 block_number = 1
                 block_timestamp = 1
                 bytecode_hash = 'ipfs'
@@ -3223,12 +3228,12 @@ mod tests {
                 optimizer_runs = 200
                 out = 'out'
                 remappings = ['nested/=lib/nested/']
-                sender = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
+                sender = '0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38'
                 sizes = false
                 sparse_mode = false
                 src = 'src'
                 test = 'test'
-                tx_origin = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
+                tx_origin = '0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38'
                 verbosity = 0
                 via_ir = false
                 

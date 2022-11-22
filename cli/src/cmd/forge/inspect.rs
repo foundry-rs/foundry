@@ -3,7 +3,7 @@ use crate::{
     opts::forge::CompilerArgs,
 };
 use clap::Parser;
-use comfy_table::Table;
+use comfy_table::{presets::ASCII_MARKDOWN, Table};
 use ethers::{
     prelude::{
         artifacts::output_selection::{
@@ -200,13 +200,16 @@ pub fn print_storage_layout(
     if storage_layout.is_none() {
         eyre::bail!("Could not get storage layout")
     }
+
+    let storage_layout = storage_layout.as_ref().unwrap();
+
     if !pretty {
         println!("{}", serde_json::to_string_pretty(&to_value(storage_layout)?)?);
         return Ok(())
     }
 
-    let storage_layout = storage_layout.as_ref().unwrap();
     let mut table = Table::new();
+    table.load_preset(ASCII_MARKDOWN);
     table.set_header(vec!["Name", "Type", "Slot", "Offset", "Bytes", "Contract"]);
 
     for slot in &storage_layout.storage {
@@ -221,7 +224,7 @@ pub fn print_storage_layout(
         ]);
     }
 
-    println!("{}", table);
+    println!("{table}");
 
     Ok(())
 }

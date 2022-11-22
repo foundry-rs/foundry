@@ -893,3 +893,23 @@ async fn estimates_gas_on_pending_by_default() {
         TransactionRequest::new().from(recipient).to(sender).value(1e10 as u64).data(vec![0x42]);
     api.estimate_gas(tx.into(), None).await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reject_gas_too_low() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let account = handle.dev_accounts().next().unwrap();
+
+    let gas = 21_000u64 - 1;
+    let tx = TransactionRequest::new()
+        .to(Address::random())
+        .value(U256::from(1337u64))
+        .from(account)
+        .gas(gas);
+
+    let resp = provider.send_transaction(tx, None).await;
+
+    let err = resp.unwrap_err().to_string();
+    assert!(err.contains("intrinsic gas too low"));
+}

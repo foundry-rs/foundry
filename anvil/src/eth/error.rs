@@ -215,6 +215,14 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                             data: serde_json::to_value(data).ok(),
                         }
                     }
+                    InvalidTransactionError::GasTooLow | InvalidTransactionError::GasTooHigh => {
+                        // <https://eips.ethereum.org/EIPS/eip-1898>
+                        RpcError {
+                            code: ErrorCode::ServerError(-32000),
+                            message: err.to_string().into(),
+                            data: None,
+                        }
+                    }
                     _ => RpcError::transaction_rejected(err.to_string()),
                 },
                 BlockchainError::FeeHistory(err) => RpcError::invalid_params(err.to_string()),

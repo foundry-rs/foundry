@@ -21,12 +21,12 @@ pub struct SourcifyVerificationProvider;
 
 #[async_trait]
 impl VerificationProvider for SourcifyVerificationProvider {
-    async fn preflight_check(&self, args: VerifyArgs) -> eyre::Result<()> {
+    async fn preflight_check(&mut self, args: VerifyArgs) -> eyre::Result<()> {
         let _ = self.prepare_request(&args)?;
         Ok(())
     }
 
-    async fn verify(&self, args: VerifyArgs) -> eyre::Result<()> {
+    async fn verify(&mut self, args: VerifyArgs) -> eyre::Result<()> {
         let body = self.prepare_request(&args)?;
 
         trace!("submitting verification request {:?}", body);

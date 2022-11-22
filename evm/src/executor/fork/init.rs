@@ -60,6 +60,7 @@ where
             timestamp: block.timestamp,
             coinbase: block.author.unwrap_or_default(),
             difficulty: block.difficulty,
+            prevrandao: block.mix_hash,
             basefee: block.base_fee_per_gas.unwrap_or_default(),
             gas_limit: block.gas_limit,
         },
