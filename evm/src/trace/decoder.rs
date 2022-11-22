@@ -274,7 +274,8 @@ impl CallTraceDecoder {
                         .get(&node.trace.address)
                         .copied()
                         .unwrap_or_default();
-                    let func_name = if has_receive { "receive" } else { "fallback" };
+                    let func_name =
+                        if bytes.is_empty() && has_receive { "receive" } else { "fallback" };
 
                     node.trace.data =
                         RawOrDecodedCall::Decoded(func_name.to_string(), String::new(), Vec::new());
