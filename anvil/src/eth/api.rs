@@ -2039,6 +2039,15 @@ impl EthApi {
         block_number: Option<BlockId>,
     ) -> Result<U256> {
         let block_request = self.block_request(block_number).await?;
+
+        if let BlockRequest::Number(number) = &block_request {
+            if let Some(fork) = self.get_fork() {
+                if fork.predates_fork_inclusive(number.as_u64()) {
+                    return Ok(fork.get_nonce(address, number.as_u64()).await?)
+                }
+            }
+        }
+
         let nonce = self.backend.get_nonce(address, Some(block_request)).await?;
 
         Ok(nonce)
