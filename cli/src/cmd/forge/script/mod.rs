@@ -202,14 +202,17 @@ impl ScriptArgs {
         result: &mut ScriptResult,
         known_contracts: &ContractsByArtifact,
     ) -> eyre::Result<CallTraceDecoder> {
+        let verbosity = script_config.evm_opts.verbosity;
         let mut etherscan_identifier = EtherscanIdentifier::new(
             &script_config.config,
             script_config.evm_opts.get_remote_chain_id(),
         )?;
 
         let mut local_identifier = LocalTraceIdentifier::new(known_contracts);
-        let mut decoder =
-            CallTraceDecoderBuilder::new().with_labels(result.labeled_addresses.clone()).build();
+        let mut decoder = CallTraceDecoderBuilder::new()
+            .with_labels(result.labeled_addresses.clone())
+            .with_verbosity(verbosity)
+            .build();
 
         decoder.add_signature_identifier(SignaturesIdentifier::new(
             Config::foundry_cache_dir(),
