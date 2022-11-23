@@ -51,7 +51,7 @@ impl Cmd for InspectArgs {
     fn run(self) -> eyre::Result<Self::Output> {
         let InspectArgs { mut contract, field, build, pretty } = self;
 
-        trace!(?field, ?contract, target = "forge", "running forge inspect");
+        trace!(target : "forge", ?field, ?contract, "running forge inspect");
 
         // Map field to ContractOutputSelection
         let mut cos = build.compiler.extra_output;
@@ -85,7 +85,7 @@ impl Cmd for InspectArgs {
         // Find the artifact
         let found_artifact = outcome.find_contract(&contract);
 
-        trace!(artifact=?found_artifact, input=?contract, target = "forge", "Found contract");
+        trace!(target : "forge", artifact=?found_artifact, input=?contract, "Found contract");
 
         // Unwrap the inner artifact
         let artifact = found_artifact.ok_or_else(|| {
