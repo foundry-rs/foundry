@@ -203,7 +203,7 @@ impl ChiselSession {
     pub fn list_sessions() -> Result<Vec<(String, String)>> {
         // Read the cache directory entries
         let cache_dir = Self::cache_dir()?;
-        let entries = std::fs::read_dir(&cache_dir)?;
+        let entries = std::fs::read_dir(cache_dir)?;
 
         // For each entry, get the file name and modified time
         let mut sessions = Vec::new();

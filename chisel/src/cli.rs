@@ -75,6 +75,9 @@ async fn main() {
         backend: None,
     });
 
+    // Print intro header
+    println!("Welcome to Chisel! Type `{}` to show available commands.", Paint::green("!help"));
+
     // Check for chisel subcommands
     match &args.sub {
         Some(ChiselParserSub::List) => {
@@ -90,7 +93,7 @@ async fn main() {
         }
         Some(ChiselParserSub::Load { id }) | Some(ChiselParserSub::View { id }) => {
             // For both of these subcommands, we need to attempt to load the session from cache
-            match dispatcher.dispatch_command(ChiselCommand::Load, &[&id]).await {
+            match dispatcher.dispatch_command(ChiselCommand::Load, &[id]).await {
                 DispatchResult::CommandSuccess(_) => { /* Continue */ }
                 DispatchResult::CommandFailed(error) => {
                     eprintln!("{}", error);

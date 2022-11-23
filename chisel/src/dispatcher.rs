@@ -92,18 +92,18 @@ macro_rules! format_param {
 }
 
 /// Helper function that formats solidity source with the given [FormatterConfig]
-pub fn format_source(source: &str, config: FormatterConfig) -> Result<String, ()> {
+pub fn format_source(source: &str, config: FormatterConfig) -> eyre::Result<String> {
     match forge_fmt::parse(source) {
         Ok(parsed) => {
             let mut formatted_source = String::default();
 
-            if let Err(_) = forge_fmt::format(&mut formatted_source, parsed, config) {
-                return Err(())
+            if forge_fmt::format(&mut formatted_source, parsed, config).is_err() {
+                eyre::bail!("Could not format source!");
             }
 
             Ok(formatted_source)
         }
-        Err(_) => Err(()),
+        Err(_) => eyre::bail!("Formatter could not parse source!"),
     }
 }
 
@@ -118,7 +118,7 @@ impl ChiselDisptacher {
         format!(
             "{}{} ",
             if let Some(id) = self.session.id.as_ref() {
-                format!("({}) ", format!("{}: {}", Paint::cyan("ID"), Paint::yellow(id)))
+                format!("({}: {}) ", Paint::cyan("ID"), Paint::yellow(id))
             } else {
                 String::default()
             },
@@ -130,9 +130,8 @@ impl ChiselDisptacher {
     pub async fn dispatch_command(&mut self, cmd: ChiselCommand, args: &[&str]) -> DispatchResult {
         match cmd {
             ChiselCommand::Help => {
-                let all_descriptors = ChiselCommand::iter()
-                    .map(|cmd| CmdDescriptor::from(cmd))
-                    .collect::<Vec<CmdDescriptor>>();
+                let all_descriptors =
+                    ChiselCommand::iter().map(CmdDescriptor::from).collect::<Vec<CmdDescriptor>>();
                 return DispatchResult::CommandSuccess(Some(format!(
                     "{}\n{}",
                     Paint::cyan(format!("{} Chisel help\n=============", CHISEL_CHAR)),
@@ -151,10 +150,10 @@ impl ChiselDisptacher {
                                 "{}\n{}\n",
                                 Paint::magenta(cat),
                                 cat_cmds
-                                    .into_iter()
+                                    .iter()
                                     .map(|(cmds, desc, _)| format!(
                                         "\t{} - {}",
-                                        cmds.into_iter()
+                                        cmds.iter()
                                             .map(|cmd| format!("!{}", Paint::green(cmd)))
                                             .collect::<Vec<_>>()
                                             .join(" | "),
@@ -175,9 +174,9 @@ impl ChiselDisptacher {
                     session_source.drain_global_code();
                     session_source.drain_top_level_code();
 
-                    return DispatchResult::CommandSuccess(Some(String::from("Cleared session!")))
+                    DispatchResult::CommandSuccess(Some(String::from("Cleared session!")))
                 } else {
-                    return DispatchResult::CommandFailed(
+                    DispatchResult::CommandFailed(
                         Paint::red("Session source not present!").to_string(),
                     )
                 }
@@ -194,10 +193,10 @@ impl ChiselDisptacher {
                     if let Err(e) = self.session.write() {
                         return DispatchResult::FileIoError(e.into())
                     }
-                    return DispatchResult::CommandSuccess(Some(String::from(format!(
+                    return DispatchResult::CommandSuccess(Some(format!(
                         "Saved session to cache with ID = {}",
                         self.session.id.as_ref().unwrap()
-                    ))))
+                    )))
                 } else {
                     DispatchResult::CommandFailed(Self::make_error("Too many arguments supplied!"))
                 }
@@ -238,14 +237,12 @@ impl ChiselDisptacher {
                     new_session.session_source.as_mut().unwrap().build().unwrap();
 
                     self.session = new_session;
-                    return DispatchResult::CommandSuccess(Some(format!(
+                    DispatchResult::CommandSuccess(Some(format!(
                         "Loaded Chisel session! (ID = {})",
                         self.session.id.as_ref().unwrap()
                     )))
                 } else {
-                    return DispatchResult::CommandFailed(Self::make_error(
-                        "Failed to load session!",
-                    ))
+                    DispatchResult::CommandFailed(Self::make_error("Failed to load session!"))
                 }
             }
             ChiselCommand::ListSessions => match ChiselSession::list_sessions() {
@@ -262,11 +259,9 @@ impl ChiselDisptacher {
                             .join("\n")
                     )))
                 }
-                Err(_) => {
-                    return DispatchResult::CommandFailed(Self::make_error(
-                        "No sessions found. Use the `!save` command to save a session.",
-                    ))
-                }
+                Err(_) => DispatchResult::CommandFailed(Self::make_error(
+                    "No sessions found. Use the `!save` command to save a session.",
+                )),
             },
             ChiselCommand::Source => {
                 if let Some(session_source) = self.session.session_source.as_ref() {
@@ -288,17 +283,13 @@ impl ChiselDisptacher {
             ChiselCommand::ClearCache => match ChiselSession::clear_cache() {
                 Ok(_) => {
                     self.session.id = None;
-                    return DispatchResult::CommandSuccess(Some(String::from(
-                        "Cleared chisel cache!",
-                    )))
+                    DispatchResult::CommandSuccess(Some(String::from("Cleared chisel cache!")))
                 }
-                Err(_) => {
-                    return DispatchResult::CommandFailed(Self::make_error("Failed to clear cache!"))
-                }
+                Err(_) => DispatchResult::CommandFailed(Self::make_error("Failed to clear cache!")),
             },
             ChiselCommand::Fork => {
                 if let Some(session_source) = self.session.session_source.as_mut() {
-                    if args.len() == 0 {
+                    if args.is_empty() {
                         session_source.config.evm_opts.fork_url = None;
                         return DispatchResult::CommandSuccess(Some(String::from(
                             "Now using local environment.",
@@ -552,7 +543,7 @@ impl ChiselDisptacher {
                                     ));
                                 });
                                 // Close interface definition
-                                interface.push_str("}");
+                                interface.push('}');
 
                                 // Add the interface to the source outright - no need to verify
                                 // syntax via compilation and/or
@@ -568,7 +559,7 @@ impl ChiselDisptacher {
                                     args[0], args[1]
                                 )))
                             } else {
-                                return DispatchResult::CommandFailed(Self::make_error(
+                                DispatchResult::CommandFailed(Self::make_error(
                                     "Contract is not verified!",
                                 ))
                             }
@@ -751,12 +742,7 @@ impl ChiselDisptacher {
         println!("{}", Paint::green("Traces:"));
         for (kind, trace) in &mut result.traces {
             // Display all Setup + Execution traces.
-            let should_include = match kind {
-                TraceKind::Setup | TraceKind::Execution => true,
-                _ => false,
-            };
-
-            if should_include {
+            if matches!(kind, TraceKind::Setup | TraceKind::Execution) {
                 decoder.decode(trace).await;
                 println!("{trace}");
             }
@@ -828,11 +814,10 @@ impl FromStr for ChiselCommand {
             "stackdump" => Ok(ChiselCommand::StackDump),
             "export" => Ok(ChiselCommand::Export),
             "fetch" => Ok(ChiselCommand::Fetch),
-            _ => Err(ChiselDisptacher::make_error(&format!(
+            _ => Err(ChiselDisptacher::make_error(format!(
                 "Unknown command \"{}\"! See available commands with `!help`.",
                 s
             ))
-            .to_string()
             .into()),
         }
     }

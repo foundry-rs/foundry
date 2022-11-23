@@ -95,7 +95,7 @@ impl SessionSource {
                         let ty_opt = if let Some(expr) =
                             generated_output.intermediate.repl_contract_expressions.get(item)
                         {
-                            Type::from_expression(&expr)
+                            Type::from_expression(expr)
                         } else {
                             self.infer_inner_expr_type(&source)
                         };
@@ -260,8 +260,8 @@ fn format_token(token: Token) -> String {
             );
             for token in tokens {
                 out.push_str("\n  ├ ");
-                out.push_str(&format!("{}", format_token(token).replace('\n', "\n  ")));
-                out.push_str("\n");
+                out.push_str(&format_token(token).replace('\n', "\n  "));
+                out.push('\n');
             }
             out.push_str(&Paint::red(']').to_string());
             out
@@ -270,16 +270,13 @@ fn format_token(token: Token) -> String {
             let mut out = format!(
                 "{}({}) = {}",
                 Paint::red("tuple"),
-                Paint::yellow(format!(
-                    "{}",
-                    tokens.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(",")
-                )),
+                Paint::yellow(tokens.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(",")),
                 Paint::red('(')
             );
             for token in tokens {
                 out.push_str("\n  ├ ");
-                out.push_str(&format!("{}", format_token(token).replace('\n', "\n  ")));
-                out.push_str("\n");
+                out.push_str(&format_token(token).replace('\n', "\n  "));
+                out.push('\n');
             }
             out.push_str(&Paint::red(')').to_string());
             out
@@ -424,7 +421,7 @@ impl Type {
                     // Because tuple types cannot be passed to `abi.encode`, we will only be
                     // receiving functions that have 0 or 1 return parameters
                     // here.
-                    if func.returns.len() == 0 {
+                    if func.returns.is_empty() {
                         eyre::bail!(
                             "This call expression does not return any values to inspect. Insert as statement."
                         )
@@ -462,21 +459,14 @@ impl Type {
                             .iter()
                             .find(|attr| matches!(attr, pt::FunctionAttribute::Mutability(_)))
                         {
-                            match _mut {
-                                pt::Mutability::Payable(_) => {
-                                    eyre::bail!(
-                                        "This function mutates state. Insert as a statement."
-                                    )
-                                }
-                                _ => { /* Continue */ }
+                            if let pt::Mutability::Payable(_) = _mut {
+                                eyre::bail!("This function mutates state. Insert as a statement.")
                             }
                         } else {
                             eyre::bail!("This function mutates state. Insert as a statement.")
                         }
 
-                        return Ok(Type::from_expression(return_ty)
-                            .unwrap()
-                            .try_as_ethabi(intermediate))
+                        Ok(Type::from_expression(return_ty).unwrap().try_as_ethabi(intermediate))
                     }
                 } else if let Some(var_def) =
                     intermediate_contract.variable_definitions.get(cur_type)
@@ -624,10 +614,11 @@ impl Type {
             Self::Custom(mut types) => {
                 // Cover any local non-state-modifying function call expressions
                 match Self::infer_custom_type(intermediate, &mut types, None) {
-                    Ok(opt) => match opt {
-                        Some(_) => return opt,
-                        None => { /* Continue */ }
-                    },
+                    Ok(opt) => {
+                        if opt.is_some() {
+                            return opt
+                        }
+                    }
                     Err(_) => return None,
                 }
 

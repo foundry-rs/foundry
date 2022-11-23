@@ -14,10 +14,10 @@ use foundry_config::Config;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use solang_parser::pt;
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, fs, path::PathBuf};
 
 /// Solidity source for the `Vm` interface in [forge-std](https://github.com/foundry-rs/forge-std)
-static VM_SOURCE: &'static str = include_str!("../../testdata/lib/forge-std/src/Vm.sol");
+static VM_SOURCE: &str = include_str!("../../testdata/lib/forge-std/src/Vm.sol");
 
 /// Intermediate output for the compiled [SessionSource]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -164,7 +164,7 @@ impl SessionSource {
                 parse_fragment(
                     &new_source.solc,
                     &new_source.config,
-                    &content.trim_end().trim_end_matches(';').to_string(),
+                    content.trim_end().trim_end_matches(';'),
                 )
             })
         {
@@ -250,59 +250,80 @@ impl SessionSource {
     pub fn parse(&self) -> Result<pt::SourceUnit, Vec<solang_parser::diagnostics::Diagnostic>> {
         solang_parser::parse(&self.to_repl_source(), 0).map(|(pt, _)| pt)
     }
-    /// Generate intermediate contracts for all contract definitions in the compilation source.
+
+    /// Gets the [IntermediateContract] for a Solidity source string and inserts it into the
+    /// passed `res_map`. In addition, recurses on any imported files as well.
     ///
-    /// TODO: Clean - we don't need to re-parse the REPL source. Should pass this in.
+    /// ### Takes
+    /// - `content` - A Solidity source string
+    /// - `res_map` - A mutable reference to a map of contract names to [IntermediateContract]s
+    fn get_intermediate_contract(
+        content: &str,
+        res_map: &mut HashMap<String, IntermediateContract>,
+    ) {
+        if let Ok((pt::SourceUnit(source_unit_parts), _)) = solang_parser::parse(content, 0) {
+            let func_defs = source_unit_parts
+                .into_iter()
+                .filter_map(|sup| match sup {
+                    pt::SourceUnitPart::ImportDirective(i) => match i {
+                        pt::Import::Plain(s, _) |
+                        pt::Import::Rename(s, _, _) |
+                        pt::Import::GlobalSymbol(s, _, _) => {
+                            let path = PathBuf::from(s.string);
+
+                            match fs::read_to_string(path) {
+                                Ok(source) => {
+                                    Self::get_intermediate_contract(&source, res_map);
+                                    None
+                                }
+                                Err(_) => None,
+                            }
+                        }
+                    },
+                    pt::SourceUnitPart::ContractDefinition(cd) => {
+                        let mut intermediate = IntermediateContract::default();
+
+                        cd.parts.into_iter().for_each(|part| match part {
+                            pt::ContractPart::FunctionDefinition(def) => {
+                                // Only match normal function definitions here.
+                                if matches!(def.ty, pt::FunctionTy::Function) {
+                                    intermediate
+                                        .function_definitions
+                                        .insert(def.name.clone().unwrap().name, def);
+                                }
+                            }
+                            pt::ContractPart::EventDefinition(def) => {
+                                intermediate.event_definitions.insert(def.name.name.clone(), def);
+                            }
+                            pt::ContractPart::StructDefinition(def) => {
+                                intermediate.struct_definitions.insert(def.name.name.clone(), def);
+                            }
+                            pt::ContractPart::VariableDefinition(def) => {
+                                intermediate
+                                    .variable_definitions
+                                    .insert(def.name.name.clone(), def);
+                            }
+                            _ => {}
+                        });
+                        Some((cd.name.name, intermediate))
+                    }
+                    _ => None,
+                })
+                .collect::<HashMap<String, IntermediateContract>>();
+            res_map.extend(func_defs);
+        }
+    }
+
+    /// Generate intermediate contracts for all contract definitions in the compilation source.
     ///
     /// ### Returns
     ///
     /// Optionally, a map of contract names to a vec of [IntermediateContract]s.
-    pub fn generate_intermediate_contracts(&self) -> Result<HashMap<String, IntermediateContract>> {
+    fn generate_intermediate_contracts(&self) -> Result<HashMap<String, IntermediateContract>> {
         let mut res_map = HashMap::new();
         let parsed_map = self.compiler_input().sources;
         for source in parsed_map.values() {
-            if let Ok((pt::SourceUnit(source_unit_parts), _)) =
-                solang_parser::parse(&source.content, 0)
-            {
-                let func_defs = source_unit_parts
-                    .into_iter()
-                    .filter_map(|sup| match sup {
-                        pt::SourceUnitPart::ContractDefinition(cd) => {
-                            let mut intermediate = IntermediateContract::default();
-
-                            cd.parts.into_iter().for_each(|part| match part {
-                                pt::ContractPart::FunctionDefinition(def) => {
-                                    // Only match normal function definitions here.
-                                    if matches!(def.ty, pt::FunctionTy::Function) {
-                                        intermediate
-                                            .function_definitions
-                                            .insert(def.name.clone().unwrap().name, def);
-                                    }
-                                }
-                                pt::ContractPart::EventDefinition(def) => {
-                                    intermediate
-                                        .event_definitions
-                                        .insert(def.name.name.clone(), def);
-                                }
-                                pt::ContractPart::StructDefinition(def) => {
-                                    intermediate
-                                        .struct_definitions
-                                        .insert(def.name.name.clone(), def);
-                                }
-                                pt::ContractPart::VariableDefinition(def) => {
-                                    intermediate
-                                        .variable_definitions
-                                        .insert(def.name.name.clone(), def);
-                                }
-                                _ => {}
-                            });
-                            Some((cd.name.name, intermediate))
-                        }
-                        _ => None,
-                    })
-                    .collect::<HashMap<String, IntermediateContract>>();
-                res_map.extend(func_defs);
-            }
+            Self::get_intermediate_contract(&source.content, &mut res_map);
         }
         Ok(res_map)
     }
@@ -508,7 +529,7 @@ pub fn parse_fragment(
     config: &SessionSourceConfig,
     buffer: &str,
 ) -> Option<ParseTreeFragment> {
-    let base = SessionSource::new(solc, config);
+    let mut base = SessionSource::new(solc, config);
 
     if base.clone().with_run_code(buffer).parse().is_ok() {
         return Some(ParseTreeFragment::Function)
@@ -516,7 +537,7 @@ pub fn parse_fragment(
     if base.clone().with_top_level_code(buffer).parse().is_ok() {
         return Some(ParseTreeFragment::Contract)
     }
-    if base.clone().with_global_code(buffer).parse().is_ok() {
+    if base.with_global_code(buffer).parse().is_ok() {
         return Some(ParseTreeFragment::Source)
     }
 
