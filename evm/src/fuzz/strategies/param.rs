@@ -103,19 +103,18 @@ pub fn fuzz_param_from_state(param: &ParamType, arc_state: EvmFuzzState) -> Boxe
                 )
             })
             .boxed(),
-        ParamType::Array(param) => proptest::collection::vec(
-            fuzz_param_from_state(param, arc_state.clone()),
-            0..MAX_ARRAY_LEN,
-        )
-        .prop_map(Token::Array)
-        .boxed(),
+        ParamType::Array(param) => {
+            proptest::collection::vec(fuzz_param_from_state(param, arc_state), 0..MAX_ARRAY_LEN)
+                .prop_map(Token::Array)
+                .boxed()
+        }
         ParamType::FixedBytes(size) => {
             let size = *size;
             value.prop_map(move |value| Token::FixedBytes(value[32 - size..].to_vec())).boxed()
         }
         ParamType::FixedArray(param, size) => {
             let fixed_size = *size;
-            proptest::collection::vec(fuzz_param_from_state(param, arc_state.clone()), fixed_size)
+            proptest::collection::vec(fuzz_param_from_state(param, arc_state), fixed_size)
                 .prop_map(Token::FixedArray)
                 .boxed()
         }

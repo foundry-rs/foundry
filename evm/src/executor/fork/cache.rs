@@ -218,8 +218,8 @@ impl MemDb {
 impl Clone for MemDb {
     fn clone(&self) -> Self {
         Self {
-            accounts: RwLock::new(self.accounts.read().clone()),
             storage: RwLock::new(self.storage.read().clone()),
+            accounts: RwLock::new(self.accounts.read().clone()),
             block_hashes: RwLock::new(self.block_hashes.read().clone()),
         }
     }
