@@ -33,7 +33,7 @@ impl BlockchainDb {
     ///   - the file contains malformed data, or if it couldn't be read
     ///   - the provided `meta` differs from [BlockchainDbMeta] that's stored on disk
     pub fn new(meta: BlockchainDbMeta, cache_path: Option<PathBuf>) -> Self {
-        trace!(target = "cache", cache=?cache_path, "initialising blockchain db");
+        trace!(target : "forge::cache", cache=?cache_path, "initialising blockchain db");
         // read cache and check if metadata matches
         let cache = cache_path
             .as_ref()

@@ -840,7 +840,7 @@ impl EthApi {
 
         let (exit, out, gas, _) =
             self.backend.call(request, fees, Some(block_request), overrides).await?;
-        trace!(target = "node", "Call status {:?}, gas {}", exit, gas);
+        trace!(target : "node", "Call status {:?}, gas {}", exit, gas);
 
         ensure_return_ok(exit, &out)
     }
