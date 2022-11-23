@@ -234,7 +234,7 @@ impl Executor {
                 if success {
                     Ok(res)
                 } else {
-                    Err(EvmError::Execution {
+                    Err(EvmError::Execution(Box::new(ExecutionErr {
                         reverted: res.reverted,
                         reason: "execution error".to_owned(),
                         traces: res.traces,
@@ -247,7 +247,7 @@ impl Executor {
                         state_changeset: None,
                         transactions: None,
                         script_wallets: res.script_wallets,
-                    })
+                    })))
                 }
             }
             None => Ok(res),
@@ -422,7 +422,7 @@ impl Executor {
                 if let TransactOut::Create(_, Some(addr)) = out {
                     addr
                 } else {
-                    return Err(EvmError::Execution {
+                    return Err(EvmError::Execution(Box::new(ExecutionErr {
                         reverted: true,
                         reason: "Deployment succeeded, but no address was returned. This is a bug, please report it".to_string(),
                         traces,
@@ -435,13 +435,13 @@ impl Executor {
                         state_changeset: None,
                         transactions: None,
                         script_wallets
-                    });
+                    })));
                 }
             }
             _ => {
                 let reason = decode::decode_revert(result.as_ref(), abi, Some(exit_reason))
                     .unwrap_or_else(|_| format!("{exit_reason:?}"));
-                return Err(EvmError::Execution {
+                return Err(EvmError::Execution(Box::new(ExecutionErr {
                     reverted: true,
                     reason,
                     traces,
@@ -454,7 +454,7 @@ impl Executor {
                     state_changeset: None,
                     transactions: None,
                     script_wallets,
-                })
+                })))
             }
         };
 
@@ -586,25 +586,30 @@ impl Executor {
     }
 }
 
+/// Represents the context after an execution error occurred.
+#[derive(thiserror::Error, Debug)]
+#[error("Execution reverted: {reason} (gas: {gas_used})")]
+pub struct ExecutionErr {
+    pub reverted: bool,
+    pub reason: String,
+    pub gas_used: u64,
+    pub gas_refunded: u64,
+    pub stipend: u64,
+    pub logs: Vec<Log>,
+    pub traces: Option<CallTraceArena>,
+    pub debug: Option<DebugArena>,
+    pub labels: BTreeMap<Address, String>,
+    pub transactions: Option<BroadcastableTransactions>,
+    pub state_changeset: Option<StateChangeset>,
+    pub script_wallets: Vec<LocalWallet>,
+}
+
 #[derive(thiserror::Error, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum EvmError {
     /// Error which occurred during execution of a transaction
-    #[error("Execution reverted: {reason} (gas: {gas_used})")]
-    Execution {
-        reverted: bool,
-        reason: String,
-        gas_used: u64,
-        gas_refunded: u64,
-        stipend: u64,
-        logs: Vec<Log>,
-        traces: Option<CallTraceArena>,
-        debug: Option<DebugArena>,
-        labels: BTreeMap<Address, String>,
-        transactions: Option<BroadcastableTransactions>,
-        state_changeset: Option<StateChangeset>,
-        script_wallets: Vec<LocalWallet>,
-    },
+    #[error(transparent)]
+    Execution(Box<ExecutionErr>),
     /// Error which occurred during ABI encoding/decoding
     #[error(transparent)]
     AbiError(#[from] ethers::contract::AbiError),
@@ -834,7 +839,7 @@ fn convert_call_result<D: Detokenize>(
         _ => {
             let reason = decode::decode_revert(result.as_ref(), abi, Some(status))
                 .unwrap_or_else(|_| format!("{status:?}"));
-            Err(EvmError::Execution {
+            Err(EvmError::Execution(Box::new(ExecutionErr {
                 reverted,
                 reason,
                 gas_used,
@@ -847,7 +852,7 @@ fn convert_call_result<D: Detokenize>(
                 transactions,
                 state_changeset,
                 script_wallets,
-            })
+            })))
         }
     }
 }
