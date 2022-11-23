@@ -20,7 +20,7 @@ use foundry_config::{Config, RpcEndpoint};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use solang_parser::diagnostics::Diagnostic;
-use std::{error::Error, path::PathBuf, str::FromStr};
+use std::{error::Error, io::Write, path::PathBuf, process::Command, str::FromStr};
 use strum::{EnumIter, IntoEnumIterator};
 use yansi::Paint;
 
@@ -127,6 +127,15 @@ impl ChiselDisptacher {
     }
 
     /// Dispatches a [ChiselCommand]
+    ///
+    /// ### Takes
+    ///
+    /// - A [ChiselCommand]
+    /// - An array of arguments
+    ///
+    /// ### Returns
+    ///
+    /// A [DispatchResult] containing feedback on the dispatch's execution.
     pub async fn dispatch_command(&mut self, cmd: ChiselCommand, args: &[&str]) -> DispatchResult {
         match cmd {
             ChiselCommand::Help => {
@@ -575,6 +584,24 @@ impl ChiselDisptacher {
                     )),
                 }
             }
+            ChiselCommand::Exec => {
+                if args.is_empty() {
+                    return DispatchResult::CommandFailed(Self::make_error("No command supplied!"))
+                }
+
+                let mut cmd = Command::new(args[0]);
+                if args.len() > 1 {
+                    cmd.args(args[1..].iter().copied());
+                }
+
+                match cmd.output() {
+                    Ok(output) => {
+                        std::io::stdout().write_all(&output.stdout).unwrap();
+                        DispatchResult::CommandSuccess(None)
+                    }
+                    Err(e) => DispatchResult::CommandFailed(e.to_string()),
+                }
+            }
         }
     }
 
@@ -597,12 +624,13 @@ impl ChiselDisptacher {
                     DispatchResult::UnrecognizedCommand(e)
                 }
             }
+        } else if input.is_empty() {
+            return DispatchResult::CommandFailed(Self::make_error("Input is empty."))
         }
 
-        // Get a reference to the session source
-        let source = match self.session.session_source.as_mut().ok_or_else(|| {
-            DispatchResult::Failure(Some(Self::make_error("Session source missing!")))
-        }) {
+        // Get a mutable reference to the session source
+        let source = match self.session.session_source.as_mut().ok_or(DispatchResult::Failure(None))
+        {
             Ok(project) => project,
             Err(e) => {
                 self.errored = true;
@@ -703,6 +731,15 @@ impl ChiselDisptacher {
 
     /// Decodes traces in the [ChiselResult]
     /// TODO: Add `known_contracts` back in.
+    ///
+    /// ### Takes
+    ///
+    /// - A reference to a [SessionSourceConfig]
+    /// - A mutable reference to a [ChiselResult]
+    ///
+    /// ### Returns
+    ///
+    /// Optionally, a [CallTraceDecoder]
     pub fn decode_traces(
         &self,
         session_config: &SessionSourceConfig,
@@ -730,6 +767,15 @@ impl ChiselDisptacher {
     }
 
     /// Display the gathered traces of a REPL execution.
+    ///
+    /// ### Takes
+    ///
+    /// - A reference to a [CallTraceDecoder]
+    /// - A mutable reference to a [ChiselResult]
+    ///
+    /// ### Returns
+    ///
+    /// Optionally, a unit type signifying a successful result.
     pub async fn show_traces(
         &self,
         decoder: &CallTraceDecoder,
@@ -752,6 +798,14 @@ impl ChiselDisptacher {
     }
 
     /// Format a type that implements [fmt::Display] as a chisel error string.
+    ///
+    /// ### Takes
+    ///
+    /// A generic type implementing the [std::fmt::Display] trait.
+    ///
+    /// ### Returns
+    ///
+    /// A formatted error [String].
     fn make_error<T: std::fmt::Display>(msg: T) -> String {
         format!("{} {}", Paint::red(format!("{} Chisel Error:", CHISEL_CHAR)), Paint::red(msg))
     }
@@ -793,6 +847,8 @@ pub enum ChiselCommand {
     /// Fetch an interface of a verified contract on Etherscan
     /// Takes: <addr> <interface-name>
     Fetch,
+    /// Executes a shell command
+    Exec,
 }
 
 /// Attempt to convert a string slice to a `ChiselCommand`
@@ -805,15 +861,16 @@ impl FromStr for ChiselCommand {
             "clear" | "c" => Ok(ChiselCommand::Clear),
             "source" | "so" => Ok(ChiselCommand::Source),
             "save" | "s" => Ok(ChiselCommand::Save),
-            "list" => Ok(ChiselCommand::ListSessions),
+            "list" | "ls" => Ok(ChiselCommand::ListSessions),
             "load" | "l" => Ok(ChiselCommand::Load),
-            "clearcache" => Ok(ChiselCommand::ClearCache),
+            "clearcache" | "cc" => Ok(ChiselCommand::ClearCache),
             "fork" | "f" => Ok(ChiselCommand::Fork),
             "traces" | "t" => Ok(ChiselCommand::Traces),
-            "memdump" => Ok(ChiselCommand::MemDump),
-            "stackdump" => Ok(ChiselCommand::StackDump),
-            "export" => Ok(ChiselCommand::Export),
-            "fetch" => Ok(ChiselCommand::Fetch),
+            "memdump" | "md" => Ok(ChiselCommand::MemDump),
+            "stackdump" | "sd" => Ok(ChiselCommand::StackDump),
+            "export" | "ex" => Ok(ChiselCommand::Export),
+            "fetch" | "fe" => Ok(ChiselCommand::Fetch),
+            "exec" | "e" => Ok(ChiselCommand::Exec),
             _ => Err(ChiselDisptacher::make_error(format!(
                 "Unknown command \"{}\"! See available commands with `!help`.",
                 s
@@ -857,21 +914,22 @@ impl From<ChiselCommand> for CmdDescriptor {
         match cmd {
             // General
             ChiselCommand::Help => (&["help", "h"], "Display all commands", CmdCategory::General),
+            ChiselCommand::Exec => (&["exec <command> [args]", "e <command> [args]"], "Execute a shell command and print the output", CmdCategory::General),
             // Session
             ChiselCommand::Clear => (&["clear", "c"], "Clear current session source", CmdCategory::Session),
             ChiselCommand::Source => (&["source", "so"], "Display the source code of the current session", CmdCategory::Session),
             ChiselCommand::Save => (&["save [id]", "s [id]"], "Save the current session to cache", CmdCategory::Session),
             ChiselCommand::Load => (&["load <id>", "l <id>"], "Load a previous session ID from cache", CmdCategory::Session),
-            ChiselCommand::ListSessions => (&["list"], "List all cached sessions", CmdCategory::Session),
-            ChiselCommand::ClearCache => (&["clearcache"], "Clear the chisel cache of all stored sessions", CmdCategory::Session),
-            ChiselCommand::Export => (&["export"], "Export the current session source to a script file", CmdCategory::Session),
-            ChiselCommand::Fetch => (&["fetch <addr> <name>"], "Fetch the interface of a verified contract on Etherscan", CmdCategory::Session),
+            ChiselCommand::ListSessions => (&["list", "ls"], "List all cached sessions", CmdCategory::Session),
+            ChiselCommand::ClearCache => (&["clearcache", "cc"], "Clear the chisel cache of all stored sessions", CmdCategory::Session),
+            ChiselCommand::Export => (&["export", "ex"], "Export the current session source to a script file", CmdCategory::Session),
+            ChiselCommand::Fetch => (&["fetch <addr> <name>", "fe <addr> <name>"], "Fetch the interface of a verified contract on Etherscan", CmdCategory::Session),
             // Environment
             ChiselCommand::Fork => (&["fork <url>", "f <url>"], "Fork an RPC for the current session. Supply 0 arguments to return to a local network", CmdCategory::Env),
             ChiselCommand::Traces => (&["traces", "t"], "Enable / disable traces for the current session", CmdCategory::Env),
             // Debug
-            ChiselCommand::MemDump => (&["memdump"], "Dump the raw memory of the current state", CmdCategory::Debug),
-            ChiselCommand::StackDump => (&["stackdump"], "Dump the raw stack of the current state", CmdCategory::Debug),
+            ChiselCommand::MemDump => (&["memdump", "md"], "Dump the raw memory of the current state", CmdCategory::Debug),
+            ChiselCommand::StackDump => (&["stackdump", "sd"], "Dump the raw stack of the current state", CmdCategory::Debug),
         }
     }
 }

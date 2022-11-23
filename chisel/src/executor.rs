@@ -21,6 +21,11 @@ use yansi::Paint;
 /// Executor implementation for [SessionSource]
 impl SessionSource {
     /// Runs the source with the [ChiselRunner]
+    ///
+    /// ### Returns
+    ///
+    /// Optionally, a tuple containing the [Address] of the deployed REPL contract as well as
+    /// the [ChiselResult].
     pub async fn execute(&mut self) -> Result<(Address, ChiselResult)> {
         // Recompile the project and ensure no errors occurred.
         match self.build() {
@@ -80,6 +85,16 @@ impl SessionSource {
     }
 
     /// Inspect a contract element inside of the current session
+    ///
+    /// ### Takes
+    ///
+    /// A solidity snippet
+    ///
+    /// ### Returns
+    ///
+    /// If successful, a formatted inspection output.
+    /// If unsuccessful but valid source, `Some(None)`
+    /// If unsuccessful, `Err(e)`
     pub async fn inspect(&mut self, item: &str) -> Result<Option<String>> {
         match self.clone_with_new_line(format!("bytes memory inspectoor = abi.encode({item})")) {
             Ok((mut source, _)) => match source.execute().await {
@@ -145,6 +160,14 @@ impl SessionSource {
 
     /// Gracefully attempts to extract the type of the expression within the `abi.encode(...)`
     /// call inserted by the inspect function.
+    ///
+    /// ### Takes
+    ///
+    /// A reference to a [SessionSource]
+    ///
+    /// ### Returns
+    ///
+    /// Optionally, a [Type]
     fn infer_inner_expr_type(&mut self, source: &SessionSource) -> Option<Type> {
         if let Some(pt::Statement::VariableDefinition(
             _,
@@ -163,6 +186,14 @@ impl SessionSource {
     }
 
     /// Prepare a runner for the Chisel REPL environment
+    ///
+    /// ### Takes
+    ///
+    /// The final statement's program counter for the [ChiselInspector]
+    ///
+    /// ### Returns
+    ///
+    /// A configured [ChiselRunner]
     async fn prepare_runner(&mut self, final_pc: usize) -> ChiselRunner {
         let env = self.config.evm_opts.evm_env().await;
 
@@ -192,6 +223,15 @@ impl SessionSource {
 }
 
 /// Formats a [Token] into an inspection message
+///
+/// ### Takes
+///
+/// An owned [Token]
+///
+/// ### Returns
+///
+/// A formatted [Token] for use in inspection output.
+///
 /// TODO: Verbosity option
 fn format_token(token: Token) -> String {
     match token {
@@ -297,6 +337,15 @@ enum Type {
 }
 
 impl Type {
+    /// Convert an [pt::Expression] to a [Type]
+    ///
+    /// ### Takes
+    ///
+    /// A reference to a [pt::Expression] to convert.
+    ///
+    /// ### Returns
+    ///
+    /// Optionally, an owned [Type]
     fn from_expression(expr: &pt::Expression) -> Option<Self> {
         Some(match expr {
             pt::Expression::Type(_, ty) => match ty {
@@ -359,7 +408,7 @@ impl Type {
                 }
                 Self::Custom(out)
             }
-            // Expression inspection matching
+            pt::Expression::Parenthesis(_, inner) => Self::from_expression(inner)?,
             pt::Expression::Add(_, _, _) |
             pt::Expression::Subtract(_, _, _) |
             pt::Expression::Multiply(_, _, _) |

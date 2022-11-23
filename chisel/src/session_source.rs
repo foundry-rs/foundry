@@ -251,69 +251,6 @@ impl SessionSource {
         solang_parser::parse(&self.to_repl_source(), 0).map(|(pt, _)| pt)
     }
 
-    /// Gets the [IntermediateContract] for a Solidity source string and inserts it into the
-    /// passed `res_map`. In addition, recurses on any imported files as well.
-    ///
-    /// ### Takes
-    /// - `content` - A Solidity source string
-    /// - `res_map` - A mutable reference to a map of contract names to [IntermediateContract]s
-    fn get_intermediate_contract(
-        content: &str,
-        res_map: &mut HashMap<String, IntermediateContract>,
-    ) {
-        if let Ok((pt::SourceUnit(source_unit_parts), _)) = solang_parser::parse(content, 0) {
-            let func_defs = source_unit_parts
-                .into_iter()
-                .filter_map(|sup| match sup {
-                    pt::SourceUnitPart::ImportDirective(i) => match i {
-                        pt::Import::Plain(s, _) |
-                        pt::Import::Rename(s, _, _) |
-                        pt::Import::GlobalSymbol(s, _, _) => {
-                            let path = PathBuf::from(s.string);
-
-                            match fs::read_to_string(path) {
-                                Ok(source) => {
-                                    Self::get_intermediate_contract(&source, res_map);
-                                    None
-                                }
-                                Err(_) => None,
-                            }
-                        }
-                    },
-                    pt::SourceUnitPart::ContractDefinition(cd) => {
-                        let mut intermediate = IntermediateContract::default();
-
-                        cd.parts.into_iter().for_each(|part| match part {
-                            pt::ContractPart::FunctionDefinition(def) => {
-                                // Only match normal function definitions here.
-                                if matches!(def.ty, pt::FunctionTy::Function) {
-                                    intermediate
-                                        .function_definitions
-                                        .insert(def.name.clone().unwrap().name, def);
-                                }
-                            }
-                            pt::ContractPart::EventDefinition(def) => {
-                                intermediate.event_definitions.insert(def.name.name.clone(), def);
-                            }
-                            pt::ContractPart::StructDefinition(def) => {
-                                intermediate.struct_definitions.insert(def.name.name.clone(), def);
-                            }
-                            pt::ContractPart::VariableDefinition(def) => {
-                                intermediate
-                                    .variable_definitions
-                                    .insert(def.name.name.clone(), def);
-                            }
-                            _ => {}
-                        });
-                        Some((cd.name.name, intermediate))
-                    }
-                    _ => None,
-                })
-                .collect::<HashMap<String, IntermediateContract>>();
-            res_map.extend(func_defs);
-        }
-    }
-
     /// Generate intermediate contracts for all contract definitions in the compilation source.
     ///
     /// ### Returns
@@ -392,40 +329,6 @@ impl SessionSource {
         Ok(generated_output)
     }
 
-    /// Helper to deconstruct a statement
-    ///
-    /// ### Takes
-    ///
-    /// A reference to a [pt::Statement]
-    ///
-    /// ### Returns
-    ///
-    /// A vector containing tuples of the inner expressions' names, types, and storage locations.
-    pub fn get_statement_definitions(statement: &pt::Statement) -> Vec<(String, pt::Expression)> {
-        match statement {
-            pt::Statement::VariableDefinition(_, def, _) => {
-                vec![(def.name.name.clone(), def.ty.clone())]
-            }
-            pt::Statement::Expression(_, pt::Expression::Assign(_, left, _)) => {
-                if let pt::Expression::List(_, list) = left.as_ref() {
-                    list.iter()
-                        .filter_map(|(_, param)| {
-                            param.as_ref().and_then(|param| {
-                                param
-                                    .name
-                                    .as_ref()
-                                    .map(|name| (name.name.clone(), param.ty.clone()))
-                            })
-                        })
-                        .collect()
-                } else {
-                    Vec::default()
-                }
-            }
-            _ => Vec::default(),
-        }
-    }
-
     /// Convert the [SessionSource] to a valid Script contract
     ///
     /// ### Returns
@@ -481,6 +384,103 @@ contract {} {{
             "#,
             self.global_code, self.contract_name, self.top_level_code, self.run_code,
         )
+    }
+
+    /// Gets the [IntermediateContract] for a Solidity source string and inserts it into the
+    /// passed `res_map`. In addition, recurses on any imported files as well.
+    ///
+    /// ### Takes
+    /// - `content` - A Solidity source string
+    /// - `res_map` - A mutable reference to a map of contract names to [IntermediateContract]s
+    fn get_intermediate_contract(
+        content: &str,
+        res_map: &mut HashMap<String, IntermediateContract>,
+    ) {
+        if let Ok((pt::SourceUnit(source_unit_parts), _)) = solang_parser::parse(content, 0) {
+            let func_defs = source_unit_parts
+                .into_iter()
+                .filter_map(|sup| match sup {
+                    pt::SourceUnitPart::ImportDirective(i) => match i {
+                        pt::Import::Plain(s, _) |
+                        pt::Import::Rename(s, _, _) |
+                        pt::Import::GlobalSymbol(s, _, _) => {
+                            let path = PathBuf::from(s.string);
+
+                            match fs::read_to_string(path) {
+                                Ok(source) => {
+                                    Self::get_intermediate_contract(&source, res_map);
+                                    None
+                                }
+                                Err(_) => None,
+                            }
+                        }
+                    },
+                    pt::SourceUnitPart::ContractDefinition(cd) => {
+                        let mut intermediate = IntermediateContract::default();
+
+                        cd.parts.into_iter().for_each(|part| match part {
+                            pt::ContractPart::FunctionDefinition(def) => {
+                                // Only match normal function definitions here.
+                                if matches!(def.ty, pt::FunctionTy::Function) {
+                                    intermediate
+                                        .function_definitions
+                                        .insert(def.name.clone().unwrap().name, def);
+                                }
+                            }
+                            pt::ContractPart::EventDefinition(def) => {
+                                intermediate.event_definitions.insert(def.name.name.clone(), def);
+                            }
+                            pt::ContractPart::StructDefinition(def) => {
+                                intermediate.struct_definitions.insert(def.name.name.clone(), def);
+                            }
+                            pt::ContractPart::VariableDefinition(def) => {
+                                intermediate
+                                    .variable_definitions
+                                    .insert(def.name.name.clone(), def);
+                            }
+                            _ => {}
+                        });
+                        Some((cd.name.name, intermediate))
+                    }
+                    _ => None,
+                })
+                .collect::<HashMap<String, IntermediateContract>>();
+            res_map.extend(func_defs);
+        }
+    }
+
+    /// Helper to deconstruct a statement
+    ///
+    /// ### Takes
+    ///
+    /// A reference to a [pt::Statement]
+    ///
+    /// ### Returns
+    ///
+    /// A vector containing tuples of the inner expressions' names, types, and storage locations.
+    pub fn get_statement_definitions(statement: &pt::Statement) -> Vec<(String, pt::Expression)> {
+        match statement {
+            pt::Statement::VariableDefinition(_, def, _) => {
+                vec![(def.name.name.clone(), def.ty.clone())]
+            }
+            pt::Statement::Expression(_, pt::Expression::Assign(_, left, _)) => {
+                if let pt::Expression::List(_, list) = left.as_ref() {
+                    list.iter()
+                        .filter_map(|(_, param)| {
+                            param.as_ref().and_then(|param| {
+                                param
+                                    .name
+                                    .as_ref()
+                                    .map(|name| (name.name.clone(), param.ty.clone()))
+                            })
+                        })
+                        .collect()
+                } else {
+                    Vec::default()
+                }
+            }
+            _ => Vec::default(),
+        }
     }
 }
 

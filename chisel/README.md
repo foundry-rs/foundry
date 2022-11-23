@@ -54,6 +54,7 @@ Chisel is a fast, utilitarian, and verbose solidity REPL. It is heavily inspired
   - [ ] Speed up REPL execution time.
     - [ ] Use flamegraph to determine plan of attack.
     - [ ] Rework SessionSource clone, does not need to be a full deep copy.
+    - [ ] Cache the backend within the executor so that it is not regenerated on each run. This causes lag with forks especially. We should keep the option to refresh each time to keep live state, but disable this by default.
 - [ ] Finish README.
   - [ ] Examples
   - [ ] Migration from existing REPLs
@@ -116,24 +117,25 @@ If you do not have `foundryup` installed, reference the Foundry [installation gu
 =============
 General
         !help | !h - Display all commands
+        !exec <command> [args] | !e <command> [args] - Execute a shell command and print the output
 
 Session
         !clear | !c - Clear current session source
         !source | !so - Display the source code of the current session
         !save [id] | !s [id] - Save the current session to cache
         !load <id> | !l <id> - Load a previous session ID from cache
-        !list - List all cached sessions
-        !clearcache - Clear the chisel cache of all stored sessions
-        !export - Export the current session source to a script file
-        !fetch <addr> <name> - Fetch the interface of a verified contract on Etherscan
+        !list | !ls - List all cached sessions
+        !clearcache | !cc - Clear the chisel cache of all stored sessions
+        !export | !ex - Export the current session source to a script file
+        !fetch <addr> <name> | !fe <addr> <name> - Fetch the interface of a verified contract on Etherscan
 
 Environment
         !fork <url> | !f <url> - Fork an RPC for the current session. Supply 0 arguments to return to a local network
         !traces | !t - Enable / disable traces for the current session
 
 Debug
-        !memdump - Dump the raw memory of the current state
-        !stackdump - Dump the raw stack of the current state
+        !memdump | !md - Dump the raw memory of the current state
+        !stackdump | !sd - Dump the raw stack of the current state
 ```
 
 ### Cache Session
@@ -226,3 +228,48 @@ To fork a network within your chisel session, use the `!fork <rpc-url>` command 
 to the chisel binary. The `!fork` command also accepts aliases from the `[rpc_endpoints]` section of your `foundry.toml`
 if chisel was launched in the root of a foundry project (ex. `!fork mainnet`), as well as interpolated environment variables
 (ex. `!fork https://https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}`).
+
+### Fetching an Interface of a Verified Contract
+
+To fetch an interface of a verified contract on Etherscan, use the `!fetch` / `!f` command.
+
+> *Note*
+> At the moment, only contracts that are deployed and verified on mainnet can be fetched. Support for other
+> networks with Etherscan explorers coming soon.
+
+```
+➜ !fetch 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2 IWETH
+Added 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2's interface to source as `IWETH`
+```
+
+### Executing a Shell Command
+
+Shell commands can be executed within Chisel with the `!exec` / `!e` command.
+
+```
+➜ !e ls
+anvil
+binder
+Cargo.lock
+Cargo.toml
+cast
+chisel
+cli
+common
+config
+CONTRIBUTING.md
+Dockerfile
+docs
+evm
+fmt
+forge
+foundryup
+LICENSE-APACHE
+LICENSE-MIT
+README.md
+rustfmt.toml
+target
+testdata
+ui
+utils
+```

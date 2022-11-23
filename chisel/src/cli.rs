@@ -144,14 +144,14 @@ async fn main() {
 
                 // Dispatch and match results
                 match dispatcher.dispatch(&line).await {
-                    DispatchResult::Success(Some(msg))
-                    | DispatchResult::CommandSuccess(Some(msg)) => println!("{}", Paint::green(msg)),
+                    DispatchResult::Success(msg) | DispatchResult::CommandSuccess(msg) => if let Some(msg) = msg {
+                        println!("{}", Paint::green(msg));
+                    },
                     DispatchResult::UnrecognizedCommand(e) => eprintln!("{}", e),
                     DispatchResult::SolangParserFailed(e) => {
                         eprintln!("{}", Paint::red("Compilation error"));
                         eprintln!("{}", Paint::red(format!("{:?}", e)));
                     }
-                    DispatchResult::Success(None) | DispatchResult::CommandSuccess(None) => { /* Do nothing */ }
                     DispatchResult::FileIoError(e) => eprintln!("{}", Paint::red(format!("⚒️ Chisel File IO Error - {}", e))),
                     DispatchResult::CommandFailed(msg) | DispatchResult::Failure(Some(msg)) => eprintln!("{}", Paint::red(msg)),
                     DispatchResult::Failure(None) => eprintln!("{}\nPlease Report this bug as a github issue if it persists: https://github.com/foundry-rs/foundry/issues/new/choose", Paint::red("⚒️ Unknown Chisel Error ⚒️")),
