@@ -19,7 +19,7 @@ interface Cheats {
     struct FsMetadata {
         bool isDir;
         bool isSymlink;
-        uint256 len;
+        uint256 length;
         bool readOnly;
         uint256 modified;
         uint256 accessed;

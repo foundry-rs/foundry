@@ -134,7 +134,7 @@ contract FileTest is DSTest {
         assertEq(metadata.isDir, true);
         assertEq(metadata.isSymlink, false);
         assertEq(metadata.readOnly, false);
-        assertGt(metadata.len, 0);
+        assertGt(metadata.length, 0);
         // These fields aren't available on all platforms, default to zero
         // assertGt(metadata.modified, 0);
         // assertGt(metadata.accessed, 0);
