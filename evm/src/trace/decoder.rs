@@ -46,6 +46,11 @@ impl CallTraceDecoderBuilder {
         self
     }
 
+    pub fn with_verbosity(mut self, level: u8) -> Self {
+        self.decoder.verbosity = level;
+        self
+    }
+
     /// Build the decoder.
     pub fn build(self) -> CallTraceDecoder {
         self.decoder
@@ -79,6 +84,8 @@ pub struct CallTraceDecoder {
     pub errors: Abi,
     /// A signature identifier for events and functions.
     pub signature_identifier: Option<SingleSignaturesIdentifier>,
+    /// Verbosity level
+    pub verbosity: u8,
 }
 
 impl CallTraceDecoder {
@@ -181,6 +188,7 @@ impl CallTraceDecoder {
             errors: Abi::default(),
             signature_identifier: None,
             receive_contracts: Default::default(),
+            verbosity: u8::default(),
         }
     }
 
@@ -257,7 +265,7 @@ impl CallTraceDecoder {
             } else if let RawOrDecodedCall::Raw(ref bytes) = node.trace.data {
                 if bytes.len() >= 4 {
                     if let Some(funcs) = self.functions.get(&bytes[..SELECTOR_LEN]) {
-                        node.decode_function(funcs, &self.labels, &self.errors);
+                        node.decode_function(funcs, &self.labels, &self.errors, self.verbosity);
                     } else if node.trace.address == DEFAULT_CREATE2_DEPLOYER {
                         node.trace.data =
                             RawOrDecodedCall::Decoded("create2".to_string(), String::new(), vec![]);
@@ -265,7 +273,12 @@ impl CallTraceDecoder {
                         if let Some(function) =
                             identifier.write().await.identify_function(&bytes[..SELECTOR_LEN]).await
                         {
-                            node.decode_function(&[function], &self.labels, &self.errors);
+                            node.decode_function(
+                                &[function],
+                                &self.labels,
+                                &self.errors,
+                                self.verbosity,
+                            );
                         }
                     }
                 } else {
