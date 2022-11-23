@@ -1,4 +1,5 @@
 use super::*;
+use cast::executor::ExecutionErr;
 use ethers::types::{Address, Bytes, NameOrAddress, U256};
 use forge::{
     executor::{CallResult, DeployResult, EvmError, Executor, RawCallResult},
@@ -108,17 +109,6 @@ impl ScriptRunner {
                     transactions,
                     script_wallets,
                     ..
-                }) |
-                Err(EvmError::Execution {
-                    reverted,
-                    traces: setup_traces,
-                    labels,
-                    logs: setup_logs,
-                    debug,
-                    gas_used,
-                    transactions,
-                    script_wallets,
-                    ..
                 }) => {
                     traces
                         .extend(setup_traces.map(|traces| (TraceKind::Setup, traces)).into_iter());
@@ -133,7 +123,40 @@ impl ScriptRunner {
                             sender_nonce.as_u64() + libraries.len() as u64,
                         )?;
                     }
+                    (
+                        !reverted,
+                        gas_used,
+                        labels,
+                        transactions,
+                        vec![constructor_debug, debug].into_iter().collect(),
+                        script_wallets,
+                    )
+                }
+                Err(EvmError::Execution(err)) => {
+                    let ExecutionErr {
+                        reverted,
+                        traces: setup_traces,
+                        labels,
+                        logs: setup_logs,
+                        debug,
+                        gas_used,
+                        transactions,
+                        script_wallets,
+                        ..
+                    } = *err;
+                    traces
+                        .extend(setup_traces.map(|traces| (TraceKind::Setup, traces)).into_iter());
+                    logs.extend_from_slice(&setup_logs);
 
+                    // We call the `setUp()` function with self.sender, and if there haven't been
+                    // any broadcasts, then the EVM cheatcode module hasn't corrected the nonce.
+                    // So we have to
+                    if transactions.is_none() || transactions.as_ref().unwrap().is_empty() {
+                        self.executor.set_nonce(
+                            self.sender,
+                            sender_nonce.as_u64() + libraries.len() as u64,
+                        )?;
+                    }
                     (
                         !reverted,
                         gas_used,
@@ -189,7 +212,8 @@ impl ScriptRunner {
                 Ok(DeployResult { address, gas_used, logs, traces, debug, .. }) => {
                     (address, gas_used, logs, traces, debug)
                 }
-                Err(EvmError::Execution { reason, traces, gas_used, logs, debug, .. }) => {
+                Err(EvmError::Execution(err)) => {
+                    let ExecutionErr { reason, traces, gas_used, logs, debug, .. } = *err;
                     println!("{}", Paint::red(format!("\nFailed with `{reason}`:\n")));
 
                     (Address::zero(), gas_used, logs, traces, debug)

@@ -121,9 +121,7 @@ impl CachedEndpoints {
 impl PartialEq for CachedEndpoints {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (&CachedEndpoints::Pattern(ref a), &CachedEndpoints::Pattern(ref b)) => {
-                a.as_str() == b.as_str()
-            }
+            (CachedEndpoints::Pattern(a), CachedEndpoints::Pattern(b)) => a.as_str() == b.as_str(),
             (&CachedEndpoints::All, &CachedEndpoints::All) => true,
             (&CachedEndpoints::Remote, &CachedEndpoints::Remote) => true,
             _ => false,
