@@ -1,7 +1,9 @@
 //! forge tests for core functionality
 
 use crate::{config::*, test_helpers::filter::Filter};
+
 use forge::result::SuiteResult;
+
 use foundry_evm::trace::TraceKind;
 use std::{collections::BTreeMap, env};
 

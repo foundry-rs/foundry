@@ -15,6 +15,17 @@ interface Cheats {
         string url;
     }
 
+    // Used in fsMetadata
+    struct FsMetadata {
+        bool isDir;
+        bool isSymlink;
+        uint256 length;
+        bool readOnly;
+        uint256 modified;
+        uint256 accessed;
+        uint256 created;
+    }
+
     // Set block.timestamp (newTimestamp)
     function warp(uint256) external;
     // Set block.difficulty (newDifficulty)
@@ -140,6 +151,8 @@ interface Cheats {
     function readFileBinary(string calldata) external returns (bytes memory);
     // Get the path of the current project root
     function projectRoot() external returns (string memory);
+    // Get the metadata for a file/directory
+    function fsMetadata(string calldata) external returns (FsMetadata memory);
     // Reads next line of file to string, (path) => (line)
     function readLine(string calldata) external returns (string memory);
     // Writes data to file, creating a file if it does not exist, and entirely replacing its contents if it does.

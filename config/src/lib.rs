@@ -392,9 +392,10 @@ impl Config {
 
     /// Default address for tx.origin
     ///
-    /// `0x00a329c0648769a73afac7f9381e08fb43dbea72`
+    /// `0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38`
     pub const DEFAULT_SENDER: H160 = H160([
-        0, 163, 41, 192, 100, 135, 105, 167, 58, 250, 199, 249, 56, 30, 8, 251, 67, 219, 234, 114,
+        0x18, 0x04, 0xc8, 0xAB, 0x1F, 0x12, 0xE6, 0xbb, 0xF3, 0x89, 0x4D, 0x40, 0x83, 0xF3, 0x3E,
+        0x07, 0x30, 0x9D, 0x1F, 0x38,
     ]);
 
     /// Returns the current `Config`
@@ -2418,7 +2419,7 @@ mod tests {
     fn default_sender() {
         assert_eq!(
             Config::DEFAULT_SENDER,
-            "0x00a329c0648769a73afac7f9381e08fb43dbea72".parse().unwrap()
+            "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38".parse().unwrap()
         );
     }
 
@@ -3227,12 +3228,12 @@ mod tests {
                 optimizer_runs = 200
                 out = 'out'
                 remappings = ['nested/=lib/nested/']
-                sender = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
+                sender = '0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38'
                 sizes = false
                 sparse_mode = false
                 src = 'src'
                 test = 'test'
-                tx_origin = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
+                tx_origin = '0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38'
                 verbosity = 0
                 via_ir = false
                 

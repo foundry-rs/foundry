@@ -38,7 +38,7 @@ impl EtherscanSourceProvider for EtherscanStandardJsonSource {
         let source =
             serde_json::to_string(&input).wrap_err("Failed to parse standard json input")?;
 
-        trace!(standard_json = source, target = "forge::verify", "determined standard json input");
+        trace!(target : "forge::verify",  standard_json = source, "determined standard json input");
 
         let name = format!(
             "{}:{}",
