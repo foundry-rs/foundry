@@ -474,7 +474,7 @@ where
                     retdata,
                 ) {
                     Err(retdata) => {
-                        trace!(expected=?expected_revert, actual=%hex::encode(&retdata), "Expected revert mismatch");
+                        trace!(expected=?expected_revert, actual=%hex::encode(&retdata), ?status, "Expected revert mismatch");
                         (Return::Revert, remaining_gas, retdata)
                     }
                     Ok((_, retdata)) => (Return::Return, remaining_gas, retdata),

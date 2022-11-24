@@ -20,6 +20,7 @@ use foundry_common::{fmt::*, RpcUrl};
 use hex::FromHex;
 use revm::{Account, CreateInputs, Database, EVMData, JournaledState, TransactTo};
 use std::{collections::VecDeque, str::FromStr};
+use tracing::trace;
 
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 
@@ -201,11 +202,13 @@ where
             match &info.code {
                 Some(code) => {
                     if code.is_empty() {
+                        trace!(create2=?DEFAULT_CREATE2_DEPLOYER, "Empty Create 2 deployer code");
                         return Err(DatabaseError::MissingCreate2Deployer)
                     }
                 }
                 None => {
                     // forked db
+                    trace!(create2=?DEFAULT_CREATE2_DEPLOYER, "Missing Create 2 deployer code");
                     if data.db.code_by_hash(info.code_hash)?.is_empty() {
                         return Err(DatabaseError::MissingCreate2Deployer)
                     }

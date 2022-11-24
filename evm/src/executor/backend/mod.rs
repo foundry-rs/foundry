@@ -1632,7 +1632,14 @@ fn merge_db_account_data<ExtDB: DatabaseRef>(
     fork_db: &mut ForkDB,
 ) {
     trace!(?addr, "merging database data");
-    let mut acc = active.accounts.get(&addr).cloned().unwrap_or_default();
+
+    let mut acc = if let Some(acc) = active.accounts.get(&addr).cloned() {
+        acc
+    } else {
+        // Account does not exist
+        return
+    };
+
     if let Some(code) = active.contracts.get(&acc.info.code_hash).cloned() {
         fork_db.contracts.insert(acc.info.code_hash, code);
     }
