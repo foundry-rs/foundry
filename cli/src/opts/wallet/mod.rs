@@ -318,7 +318,7 @@ pub trait WalletTrait {
             bail!("Keystore password file `{password_file:?}` does not exist")
         }
 
-        Ok(fs::read_to_string(password_file)?.trim_end_matches('\n').to_string())
+        Ok(fs::read_to_string(password_file)?.trim_end().to_string())
     }
 }
 
