@@ -132,7 +132,7 @@ impl Executor {
 
     /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
     pub fn deploy_create2_deployer(&mut self) -> eyre::Result<()> {
-        trace!("deploying create2 deployer");
+        trace!("deploying local create2 deployer");
         let create2_deployer_account = self
             .backend_mut()
             .basic(DEFAULT_CREATE2_DEPLOYER)?
@@ -153,7 +153,7 @@ impl Executor {
                 U256::zero(),
                 None
             )?;
-            trace!(create2=?res.address, "deployed create2 deployer");
+            trace!(create2=?res.address, "deployed local create2 deployer");
 
             self.set_balance(creator, initial_balance)?;
         }
