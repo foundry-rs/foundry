@@ -524,9 +524,7 @@ impl Type {
                         // If we're here, we're indexing an array within this contract. Use the
                         // inner type.
                         pt::Expression::ArraySubscript(_, expr, _) => {
-                            return Ok(Type::from_expression(expr)
-                                .unwrap()
-                                .try_as_ethabi(intermediate))
+                            Ok(Type::from_expression(expr).unwrap().try_as_ethabi(intermediate))
                         }
                         // Custom variable handling
                         pt::Expression::Variable(pt::Identifier { loc: _, name: ident }) => {
@@ -537,7 +535,7 @@ impl Type {
                                 custom_type.clear();
                                 custom_type.push(ident.to_owned());
 
-                                return Self::infer_custom_type(
+                                Self::infer_custom_type(
                                     intermediate,
                                     custom_type,
                                     Some(contract_name),
@@ -547,7 +545,7 @@ impl Type {
                                     // There is still some recursing left to do- jump into the
                                     // contract.
                                     custom_type.pop();
-                                    return Self::infer_custom_type(
+                                    Self::infer_custom_type(
                                         intermediate,
                                         custom_type,
                                         Some(ident.clone()),
@@ -555,17 +553,15 @@ impl Type {
                                 } else {
                                     // We have no types left to recurse- return the address of the
                                     // contract.
-                                    return Ok(Some(ParamType::Address))
+                                    Ok(Some(ParamType::Address))
                                 }
                             } else {
                                 eyre::bail!("Could not infer variable type")
                             }
                         }
-                        _ => {
-                            return Ok(Type::from_expression(&var_def.ty)
-                                .unwrap()
-                                .try_as_ethabi(intermediate))
-                        }
+                        _ => Ok(Type::from_expression(&var_def.ty)
+                            .unwrap()
+                            .try_as_ethabi(intermediate)),
                     }
                 } else if let Some(struct_def) =
                     intermediate_contract.struct_definitions.get(cur_type)
@@ -581,7 +577,7 @@ impl Type {
                                 .unwrap()
                         })
                         .collect::<Vec<_>>();
-                    return Ok(Some(ParamType::Tuple(inner_types)))
+                    Ok(Some(ParamType::Tuple(inner_types)))
                 } else {
                     eyre::bail!("Could not find function definitions for contract!")
                 }

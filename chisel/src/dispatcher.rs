@@ -141,7 +141,7 @@ impl ChiselDisptacher {
             ChiselCommand::Help => {
                 let all_descriptors =
                     ChiselCommand::iter().map(CmdDescriptor::from).collect::<Vec<CmdDescriptor>>();
-                return DispatchResult::CommandSuccess(Some(format!(
+                DispatchResult::CommandSuccess(Some(format!(
                     "{}\n{}",
                     Paint::cyan(format!("{} Chisel help\n=============", CHISEL_CHAR)),
                     CmdCategory::iter()
@@ -202,7 +202,7 @@ impl ChiselDisptacher {
                     if let Err(e) = self.session.write() {
                         return DispatchResult::FileIoError(e.into())
                     }
-                    return DispatchResult::CommandSuccess(Some(format!(
+                    DispatchResult::CommandSuccess(Some(format!(
                         "Saved session to cache with ID = {}",
                         self.session.id.as_ref().unwrap()
                     )))
@@ -255,19 +255,17 @@ impl ChiselDisptacher {
                 }
             }
             ChiselCommand::ListSessions => match ChiselSession::list_sessions() {
-                Ok(sessions) => {
-                    return DispatchResult::CommandSuccess(Some(format!(
-                        "{}\n{}",
-                        Paint::cyan(format!("{} Chisel Sessions", CHISEL_CHAR)),
-                        sessions
-                            .iter()
-                            .map(|(time, name)| {
-                                format!("{} - {}", Paint::blue(format!("{:?}", time)), name)
-                            })
-                            .collect::<Vec<String>>()
-                            .join("\n")
-                    )))
-                }
+                Ok(sessions) => DispatchResult::CommandSuccess(Some(format!(
+                    "{}\n{}",
+                    Paint::cyan(format!("{} Chisel Sessions", CHISEL_CHAR)),
+                    sessions
+                        .iter()
+                        .map(|(time, name)| {
+                            format!("{} - {}", Paint::blue(format!("{:?}", time)), name)
+                        })
+                        .collect::<Vec<String>>()
+                        .join("\n")
+                ))),
                 Err(_) => DispatchResult::CommandFailed(Self::make_error(
                     "No sessions found. Use the `!save` command to save a session.",
                 )),
@@ -573,7 +571,7 @@ impl ChiselDisptacher {
                                 ))
                             }
                         } else {
-                            return DispatchResult::CommandFailed(Self::make_error(format!(
+                            DispatchResult::CommandFailed(Self::make_error(format!(
                                 "Coult not fetch interface - \"{}\"",
                                 json.message
                             )))
