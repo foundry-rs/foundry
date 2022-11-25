@@ -25,6 +25,7 @@ use std::{
     path::Path,
     process::Command,
     str::FromStr,
+    time::UNIX_EPOCH,
 };
 use tracing::{error, trace};
 /// Invokes a `Command` with the given args and returns the abi encoded response
@@ -296,6 +297,33 @@ fn remove_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, 
     Ok(Bytes::new())
 }
 
+/// Gets the metadata of a file/directory
+///
+/// This will return an error if no file/directory is found, or if the target path isn't allowed
+fn fs_metadata(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
+    let path =
+        state.config.ensure_path_allowed(&path, FsAccessKind::Read).map_err(error::encode_error)?;
+
+    let metadata = path.metadata().map_err(error::encode_error)?;
+
+    // These fields not available on all platforms; default to 0
+    let [modified, accessed, created] =
+        [metadata.modified(), metadata.accessed(), metadata.created()].map(|time| {
+            time.unwrap_or(UNIX_EPOCH).duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+        });
+
+    let metadata = (
+        metadata.is_dir(),
+        metadata.is_symlink(),
+        metadata.len(),
+        metadata.permissions().readonly(),
+        modified,
+        accessed,
+        created,
+    );
+    Ok(metadata.encode().into())
+}
+
 /// Converts a serde_json::Value to an abi::Token
 /// The function is designed to run recursively, so that in case of an object
 /// it will call itself to convert each of it's value and encode the whole as a
@@ -375,7 +403,8 @@ fn serialize_json(
     value_key: &str,
     value: &str,
 ) -> Result<Bytes, Bytes> {
-    let parsed_value = serde_json::from_str(value).unwrap_or(Value::String(value.to_string()));
+    let parsed_value =
+        serde_json::from_str(value).unwrap_or_else(|_| Value::String(value.to_string()));
     let json = if let Some(serialization) = state.serialized_jsons.get_mut(object_key) {
         serialization.insert(value_key.to_string(), parsed_value);
         serialization.clone()
@@ -436,7 +465,8 @@ fn write_json(
     path: impl AsRef<Path>,
     json_path_or_none: Option<&str>,
 ) -> Result<Bytes, Bytes> {
-    let json: Value = serde_json::from_str(object).unwrap_or(Value::String(object.to_owned()));
+    let json: Value =
+        serde_json::from_str(object).unwrap_or_else(|_| Value::String(object.to_owned()));
     let json_string = serde_json::to_string_pretty(&if let Some(json_path) = json_path_or_none {
         let path = _state
             .config
@@ -444,10 +474,8 @@ fn write_json(
             .map_err(error::encode_error)?;
         let data = serde_json::from_str(&fs::read_to_string(path).map_err(error::encode_error)?)
             .map_err(error::encode_error)?;
-        let result =
-            jsonpath_lib::replace_with(data, &format!("${json_path}"), &mut |_| Some(json.clone()))
-                .map_err(error::encode_error)?;
-        result
+        jsonpath_lib::replace_with(data, &format!("${json_path}"), &mut |_| Some(json.clone()))
+            .map_err(error::encode_error)?
     } else {
         json
     })
@@ -497,6 +525,7 @@ pub fn apply(
         HEVMCalls::WriteLine(inner) => write_line(state, &inner.0, &inner.1),
         HEVMCalls::CloseFile(inner) => close_file(state, &inner.0),
         HEVMCalls::RemoveFile(inner) => remove_file(state, &inner.0),
+        HEVMCalls::FsMetadata(inner) => fs_metadata(state, &inner.0),
         // If no key argument is passed, return the whole JSON object.
         // "$" is the JSONPath key for the root of the object
         HEVMCalls::ParseJson0(inner) => parse_json(state, &inner.0, "$"),

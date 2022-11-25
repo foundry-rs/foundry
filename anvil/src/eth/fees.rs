@@ -237,13 +237,13 @@ impl FeeHistoryService {
                 .map(|(i, receipt)| {
                     let gas_used = receipt.gas_used().as_u64();
                     let effective_reward = match block.transactions.get(i) {
-                        Some(&TypedTransaction::Legacy(ref t)) => {
+                        Some(TypedTransaction::Legacy(t)) => {
                             t.gas_price.saturating_sub(base_fee).as_u64()
                         }
-                        Some(&TypedTransaction::EIP2930(ref t)) => {
+                        Some(TypedTransaction::EIP2930(t)) => {
                             t.gas_price.saturating_sub(base_fee).as_u64()
                         }
-                        Some(&TypedTransaction::EIP1559(ref t)) => t
+                        Some(TypedTransaction::EIP1559(t)) => t
                             .max_priority_fee_per_gas
                             .min(t.max_fee_per_gas.saturating_sub(base_fee))
                             .as_u64(),

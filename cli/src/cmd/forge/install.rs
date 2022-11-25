@@ -124,7 +124,7 @@ pub(crate) fn install(
 
     if dependencies.is_empty() && !opts.no_git {
         let mut cmd = Command::new("git");
-        cmd.args([
+        cmd.current_dir(&root).args([
             "submodule",
             "update",
             "--init",
@@ -153,14 +153,14 @@ pub(crate) fn install(
             if !no_commit {
                 ensure_git_status_clean(&root)?;
             }
-            installed_tag = install_as_submodule(&dep, &libs, target_dir, no_commit)?;
+            installed_tag = install_as_submodule(&root, &dep, &libs, target_dir, no_commit)?;
 
             // Pin branch to submodule if branch is used
             if let Some(ref branch) = installed_tag {
                 if !branch.is_empty() {
                     let libs = libs.strip_prefix(&root).unwrap_or(&libs);
                     let mut cmd = Command::new("git");
-                    cmd.args([
+                    cmd.current_dir(&root).args([
                         "submodule",
                         "set-branch",
                         "-b",
@@ -245,6 +245,7 @@ fn install_as_folder(
 /// This will add the git submodule to the given dir, initialize it and checkout the tag if provided
 /// or try to find the latest semver, release tag.
 fn install_as_submodule(
+    root: &Path,
     dep: &Dependency,
     libs: &Path,
     target_dir: &str,
@@ -265,7 +266,10 @@ fn install_as_submodule(
         git_checkout(&dep, libs, target_dir, true)?;
         if !no_commit {
             trace!("git add {:?}", libs);
-            Command::new("git").args(["add", &libs.display().to_string()]).exec()?;
+            Command::new("git")
+                .current_dir(root)
+                .args(["add", &libs.display().to_string()])
+                .exec()?;
         }
     }
 

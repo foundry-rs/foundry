@@ -112,7 +112,7 @@ If you do not have `foundryup` installed, reference the Foundry [installation gu
 
 ### REPL Commands
 
-```
+```text
 ⚒️ Chisel help
 =============
 General
@@ -144,7 +144,7 @@ While chisel sessions are not persistent by default, they can be saved to the ca
 
 Sessions can also be named by supplying a single argument to the `save` command, i.e. `!save my_session`.
 
-```bash
+```text
 $ chisel
 ➜ uint a = 1;
 ➜ uint b = a << 0x08;
@@ -162,7 +162,7 @@ You can also run `chisel view <id>` or `!view <id>` to view the contents of a sp
 
 To load a session, run `chisel load <id>` or use the `!load <id>` where `<id>` is a valid session index (eg 2 in the example below).
 
-```bash
+```text
 $ chisel list
 ⚒️ Chisel Sessions
 "2022-10-27 14:46:29" - chisel-0.json
@@ -186,7 +186,7 @@ $ chisel load 1
 
 To clear Chisel's cache (stored in `~/.foundry/cache/chisel`), use the `chisel clear-cache` or `!clearcache` command.
 
-```bash
+```text
 ➜ !clearcache
 Cleared chisel cache!
 ```
@@ -197,7 +197,7 @@ By default, traces will only be shown if an input causes the call to the REPL co
 regardless of the call result, use the `!traces` command or pass in a verbosity option of any level (`-v<vvvv>`) to
 the chisel binary.
 
-```bash
+```text
 ➜ uint a
 ➜ contract Test {
     function get() external view returns (uint) {
@@ -237,7 +237,7 @@ To fetch an interface of a verified contract on Etherscan, use the `!fetch` / `!
 > At the moment, only contracts that are deployed and verified on mainnet can be fetched. Support for other
 > networks with Etherscan explorers coming soon.
 
-```
+```text
 ➜ !fetch 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2 IWETH
 Added 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2's interface to source as `IWETH`
 ```
@@ -246,7 +246,7 @@ Added 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2's interface to source as `IWETH
 
 Shell commands can be executed within Chisel with the `!exec` / `!e` command.
 
-```
+```text
 ➜ !e ls
 anvil
 binder

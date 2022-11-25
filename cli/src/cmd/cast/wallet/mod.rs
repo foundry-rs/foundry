@@ -133,7 +133,7 @@ impl WalletSubcommands {
                     WalletType::Local(signer) => signer.address(),
                     WalletType::Trezor(signer) => signer.address(),
                 };
-                println!("Address: {}", SimpleCast::to_checksum_address(&addr));
+                println!("{}", SimpleCast::to_checksum_address(&addr));
             }
             WalletSubcommands::Sign { message, wallet } => {
                 let wallet = EthereumOpts {

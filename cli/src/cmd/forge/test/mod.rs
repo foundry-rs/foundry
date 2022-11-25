@@ -544,6 +544,7 @@ fn test(
                     let mut decoder = CallTraceDecoderBuilder::new()
                         .with_labels(result.labeled_addresses.clone())
                         .with_events(local_identifier.events())
+                        .with_verbosity(verbosity)
                         .build();
 
                     // Signatures are of no value for gas reports

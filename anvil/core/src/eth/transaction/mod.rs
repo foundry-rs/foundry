@@ -1088,7 +1088,7 @@ impl PendingTransaction {
 }
 
 /// Represents all relevant information of an executed transaction
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct TransactionInfo {
     pub transaction_hash: H256,
     pub transaction_index: u32,
