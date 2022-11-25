@@ -8,8 +8,9 @@ use std::fmt::Display;
 // keccak(Error(string))
 pub static REVERT_PREFIX: [u8; 4] = [8, 195, 121, 160];
 
-/// Custom error prefiix
-pub static ERROR_PREFIX: Lazy<[u8; 32]> = Lazy::new(|| keccak256("CheatCodeError"));
+/// Custom error prefix
+/// keccak(CheatCodeError)
+pub static ERROR_PREFIX: [u8; 4] = [11, 196, 69, 3];
 
 /// An extension trait for `std::error::Error` that can abi-encode itself
 pub trait SolError: std::error::Error {
