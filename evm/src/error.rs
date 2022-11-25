@@ -1,8 +1,7 @@
 //! error handling and support
 
 use bytes::Bytes;
-use ethers::{abi::AbiEncode, utils::keccak256};
-use once_cell::sync::Lazy;
+use ethers::abi::AbiEncode;
 use std::fmt::Display;
 
 // keccak(Error(string))
