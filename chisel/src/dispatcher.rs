@@ -595,6 +595,7 @@ impl ChiselDisptacher {
                 match cmd.output() {
                     Ok(output) => {
                         std::io::stdout().write_all(&output.stdout).unwrap();
+                        std::io::stdout().write_all(&output.stderr).unwrap();
                         DispatchResult::CommandSuccess(None)
                     }
                     Err(e) => DispatchResult::CommandFailed(e.to_string()),
