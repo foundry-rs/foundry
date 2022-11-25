@@ -50,9 +50,13 @@ pub struct ChiselParser {
 /// Chisel binary subcommands
 #[derive(clap::Subcommand, Debug)]
 pub enum ChiselParserSub {
+    /// List all cached sessions
     List,
+    /// Load a cached session
     Load { id: String },
+    /// View the source of a cached session
     View { id: String },
+    /// Clear all cached chisel sessions from the cache directory
     ClearCache,
 }
 

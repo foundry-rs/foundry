@@ -4,68 +4,6 @@ Chisel is a fast, utilitarian, and verbose solidity REPL. It is heavily inspired
 
 ![preview](./assets/preview.gif)
 
-## Checklist
-
-- [ ] REPL functionality
-  - [x] Create temporary REPL contract (in memory, or temp file?).
-    - [x] Implement `forge-std/Test.sol` so that cheatcodes, etc. can be used.
-  - [x] Utilize foundry's `evm` module for REPL env.
-    - [x] Implement network forking.
-  - [x] Expression evaluation / inspection (i.e. the input `0x01 << 0x08` should inspect a `uint` of value `256`)
-    - [x] Support for primitive type expressions (i.e. primitive types, arithmetic ops, bitwise ops, boolean ops, global vars (`msg`, `tx`, `block`, & `abi`))
-    - [x] Support for function call expressions (both local and external to the REPL contract)
-    - [x] Support for array indexing (external + local)
-    - [x] Support for mapping indexing (external + local)
-    - [ ] Clean up refactor
-  - [x] Input history.
-  - [x] Use forge fmt module to format source code when printing via the `!source` command or exporting to a Script file (?)
-- [x] Cache REPL History
-  - [x] Allow a user to save/load sessions from their Chisel history.
-    - [x] Fix session loading bug wrt non-serializable `IntermediateOutput` component.
-- [ ] Custom commands / cmd flags
-  - [x] Inspect variable
-    - [x] Inspect raw stack
-  - [x] Inspect memory vars
-    - [x] Inspect raw memory
-  - [x] Inspect storage vars
-    - [ ] Inspect raw storage slots / storage layout
-  - [ ] Inspection verbosity configuration
-  - [ ] Undo
-  - [ ] Inspect bytecode / mnenomic of local or remote contracts.
-    - [ ] Possibly use the forge debugger for this?
-  - [x] Fetch contract interface from Etherscan ABI
-  - [ ] Import remote sources from GitHub
-  - [x] Enable / disable call trace printing
-    - [x] Rip trace printing code from another module of foundry.
-  - [x] On-the-fly network forking
-  - [x] Export to file
-    - [x] Export session to script contract if within project.
-- [x] [Syntax highlighting](https://docs.rs/rustyline/10.0.0/rustyline/highlight/trait.Highlighter.html)
-- [x] Binary subcommands
-- [x] Tests.
-  - [x] Cache
-- [x] Benchmarks.
-  - [x] Session Source
-    - [x] Building
-    - [x] Executor
-    - [x] Inspection
-    - [x] Cloning
-- [ ] Optimizations (after MVP).
-  - [ ] Speed up REPL execution time.
-    - [ ] Use flamegraph to determine plan of attack.
-    - [ ] Rework SessionSource clone, does not need to be a full deep copy.
-    - [ ] Cache the backend within the executor so that it is not regenerated on each run. This causes lag with forks especially. We should keep the option to refresh each time to keep live state, but disable this by default.
-- [ ] Finish README.
-  - [ ] Examples
-  - [ ] Migration from existing REPLs
-- [ ] First review.
-  - [x] Support ENV var interpolation in fork urls
-  - [x] Allow named sessions
-  - [x] Rename `!flush` to `!save`
-  - [x] Check fork URL validity
-  - [x] Add builtin command shorthands
-  - [ ] ...
-
 ## Why?
 
 Ever wanted to quickly test a small feature in solidity?
@@ -98,13 +36,12 @@ Chisel aims to improve upon existing Solidity REPLs by integrating with foundry 
 
 ### Migrating from [soli](https://github.com/jpopesculian/soli) or [solidity-shell](https://github.com/tintinweb/solidity-shell)
 
-_TODO_
+Migration from existing Solidity REPLs such as [soli](https://github.com/jpopesculian/soli) or [solidity-shell](https://github.com/tintinweb/solidity-shell) is as
+simple as installing Chisel via `foundryup`. For information on features, usage, and configuration, see the [Usage](#usage) section as well as the chisel manpage (`man chisel` or `chisel --help`).
 
 ## Installation
 
-`chisel` is installed alongside Foundry cli commands!
-
-Simply run `foundryup` to install `chisel`!
+To install `chisel`, simply run `foundryup`!
 
 If you do not have `foundryup` installed, reference the Foundry [installation guide](../README.md#installation).
 
@@ -233,7 +170,7 @@ if chisel was launched in the root of a foundry project (ex. `!fork mainnet`), a
 
 To fetch an interface of a verified contract on Etherscan, use the `!fetch` / `!f` command.
 
-> *Note*
+> **Note**
 > At the moment, only contracts that are deployed and verified on mainnet can be fetched. Support for other
 > networks with Etherscan explorers coming soon.
 
