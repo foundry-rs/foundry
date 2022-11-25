@@ -1,6 +1,6 @@
 [package]
 name = "chisel"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = [
     "clabby <https://github.com/clabby>",
@@ -49,6 +49,10 @@ reqwest = "0.11.12"
 [dev-dependencies]
 serial_test = "0.9.0"
 criterion = "0.4.0"
+
+[build-dependencies]
+# used to generate constants
+vergen = { version = "7.0", default-features = false, features = ["build", "rustc", "git"] }
 
 [[bench]]
 name = "session_source"
