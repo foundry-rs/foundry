@@ -89,9 +89,6 @@ async fn main() {
         backend: None,
     });
 
-    // Print intro header
-    println!("Welcome to Chisel! Type `{}` to show available commands.", Paint::green("!help"));
-
     // Check for chisel subcommands
     match &args.sub {
         Some(ChiselParserSub::List) => {
@@ -137,6 +134,9 @@ async fn main() {
         }
         None => { /* No chisel subcommand present; Continue */ }
     }
+
+    // Print welcome header
+    println!("Welcome to Chisel! Type `{}` to show available commands.", Paint::green("!help"));
 
     // Begin Rustyline loop
     loop {

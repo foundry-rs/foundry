@@ -42,9 +42,9 @@ impl SolidityHelper {
             .collect::<Vec<_>>();
         for comment in comments {
             let loc = match comment {
-                pt::Comment::Line(loc, _) => loc,
-                pt::Comment::Block(loc, _) => loc,
-                pt::Comment::DocLine(loc, _) => loc,
+                pt::Comment::Line(loc, _) |
+                pt::Comment::Block(loc, _) |
+                pt::Comment::DocLine(loc, _) |
                 pt::Comment::DocBlock(loc, _) => loc,
             };
             out.push((loc.start(), Style::default().dimmed(), loc.end()))
