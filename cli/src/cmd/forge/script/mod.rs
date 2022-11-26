@@ -536,7 +536,7 @@ impl ScriptArgs {
                 // Output is the runtime code
                 if let RawOrDecodedReturnData::Raw(ref deployed_code) = node.trace.output {
                     // Only push if it was not present already
-                    if !bytecodes.iter().any(|(_, b, _)| b == init_code) {
+                    if !bytecodes.iter().any(|(_, b, _)| *b == init_code.as_ref()) {
                         bytecodes.push((format!("Unknown{unknown_c}"), init_code, deployed_code));
                         unknown_c += 1;
                     }
