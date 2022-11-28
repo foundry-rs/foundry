@@ -1,14 +1,16 @@
 //! tests for custom anvil endpoints
 use crate::{abi::*, fork::fork_config};
-use anvil::{spawn, Hardfork, NodeConfig};
+use anvil::{eth::api::NodeInfo, spawn, Hardfork, NodeConfig};
 use anvil_core::eth::EthRequest;
 use ethers::{
     abi::{ethereum_types::BigEndianHash, AbiDecode},
     prelude::{Middleware, SignerMiddleware},
-    types::{Address, BlockNumber, TransactionRequest, H256, U256},
+    types::{Address, BlockNumber, TransactionRequest, H256, U256, U64},
     utils::hex,
 };
+use forge::revm::SpecId;
 use std::{
+    str::FromStr,
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -284,21 +286,29 @@ async fn test_can_set_storage_bsc_fork() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_node_info() {
-    let (api, _) = spawn(NodeConfig::test()).await;
+    let (api, handle) = spawn(NodeConfig::test()).await;
 
     let node_info = api.anvil_node_info().await.unwrap();
-    assert!(node_info.is_object());
-    assert_eq!(node_info["current_block_number"], "0x0");
-    assert_eq!(node_info["current_block_timestamp"], 1);
-    assert_eq!(node_info["hard_fork"], "LATEST");
-    assert_eq!(node_info["transaction_order"], "fees");
-    assert_eq!(node_info["environment"]["chain_id"], "0x7a69");
-    assert_eq!(node_info["environment"]["base_fee"], "0x3b9aca00");
-    assert_eq!(node_info["environment"]["gas_limit"], "0x1c9c380");
-    assert_eq!(node_info["environment"]["gas_price"], "0x77359400");
 
-    // Assert fork config as null as the node spawned is not from a fork
-    assert_eq!(node_info["fork_config"]["fork_url"], serde_json::value::Value::Null);
-    assert_eq!(node_info["fork_config"]["fork_block_number"], serde_json::value::Value::Null);
-    assert_eq!(node_info["fork_config"]["fork_retry_backoff"], serde_json::value::Value::Null);
+    let provider = handle.http_provider();
+
+    let block_number = provider.get_block_number().await.unwrap();
+    let block = provider.get_block(block_number).await.unwrap().unwrap();
+
+    let expected_node_info = NodeInfo::new(
+        U64([0]),
+        1,
+        block.hash.unwrap(),
+        SpecId::LATEST,
+        "fees".to_owned(),
+        U256::from_str("0x3b9aca00").unwrap(),
+        U256::from_str("0x7a69").unwrap(),
+        U256::from_str("0x1c9c380").unwrap(),
+        U256::from_str("0x77359400").unwrap(),
+        None,
+        None,
+        None,
+    );
+
+    assert_eq!(node_info, expected_node_info);
 }
