@@ -57,7 +57,9 @@ pub async fn wait_for_receipts(
                     receipts.push(receipt)
                 }
                 Ok(None) => {
-                    errors.push(format!("Received an empty receipt for {tx_hash:?}"));
+                    errors.push(format!(
+                        "Transaction unavailable in mempool but not confirmed: {tx_hash:?}. This commonly occurs when connected to public RPCs."
+                    ));
                 }
                 Err(err) => {
                     errors.push(format!("Failure on receiving a receipt for {tx_hash:?}:\n{err}"));
