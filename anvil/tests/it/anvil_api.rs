@@ -281,3 +281,24 @@ async fn test_can_set_storage_bsc_fork() {
     let balance = busd.balance_of(call.0).call().await.unwrap();
     assert_eq!(balance, U256::from(12345u64));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_node_info() {
+    let (api, _) = spawn(NodeConfig::test()).await;
+
+    let node_info = api.anvil_node_info().await.unwrap();
+    assert!(node_info.is_object());
+    assert_eq!(node_info["current_block_number"], "0x0");
+    assert_eq!(node_info["current_block_timestamp"], 1);
+    assert_eq!(node_info["hard_fork"], "LATEST");
+    assert_eq!(node_info["transaction_order"], "fees");
+    assert_eq!(node_info["environment"]["chain_id"], "0x7a69");
+    assert_eq!(node_info["environment"]["base_fee"], "0x3b9aca00");
+    assert_eq!(node_info["environment"]["gas_limit"], "0x1c9c380");
+    assert_eq!(node_info["environment"]["gas_price"], "0x77359400");
+
+    // Assert fork config as null as the node spawned is not from a fork
+    assert_eq!(node_info["fork_config"]["fork_url"], serde_json::value::Value::Null);
+    assert_eq!(node_info["fork_config"]["fork_block_number"], serde_json::value::Value::Null);
+    assert_eq!(node_info["fork_config"]["fork_retry_backoff"], serde_json::value::Value::Null);
+}
