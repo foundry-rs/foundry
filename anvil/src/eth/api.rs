@@ -85,6 +85,28 @@ pub struct NodeInfo {
     fork_config: NodeForkConfig,
 }
 
+impl NodeInfo {
+    pub fn new(
+        current_block_number: U64,
+        current_block_timestamp: u64,
+        current_block_hash: H256,
+        hard_fork: SpecId,
+        transaction_order: String,
+        environment: NodeEnvironment,
+        fork_config: NodeForkConfig,
+    ) -> NodeInfo {
+        NodeInfo {
+            current_block_number,
+            current_block_timestamp,
+            current_block_hash,
+            hard_fork,
+            transaction_order,
+            environment,
+            fork_config,
+        }
+    }
+}
+
 #[derive(Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeEnvironment {
@@ -92,6 +114,17 @@ pub struct NodeEnvironment {
     chain_id: U256,
     gas_limit: U256,
     gas_price: U256,
+}
+
+impl NodeEnvironment {
+    pub fn new(
+        base_fee: U256,
+        chain_id: U256,
+        gas_limit: U256,
+        gas_price: U256,
+    ) -> NodeEnvironment {
+        NodeEnvironment { base_fee, chain_id, gas_limit, gas_price }
+    }
 }
 
 #[derive(Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -102,33 +135,15 @@ pub struct NodeForkConfig {
     fork_retry_backoff: Option<u128>,
 }
 
-impl NodeInfo {
+impl NodeForkConfig {
     pub fn new(
-        current_block_number: U64,
-        current_block_timestamp: u64,
-        current_block_hash: H256,
-        hard_fork: SpecId,
-        transaction_order: String,
-        base_fee: U256,
-        chain_id: U256,
-        gas_limit: U256,
-        gas_price: U256,
         fork_url: Option<String>,
         fork_block_number: Option<u64>,
         fork_retry_backoff: Option<u128>,
-    ) -> NodeInfo {
-        NodeInfo {
-            current_block_number,
-            current_block_timestamp,
-            current_block_hash,
-            hard_fork,
-            transaction_order,
-            environment: NodeEnvironment { base_fee, chain_id, gas_limit, gas_price },
-            fork_config: NodeForkConfig { fork_url, fork_block_number, fork_retry_backoff },
-        }
+    ) -> NodeForkConfig {
+        NodeForkConfig { fork_url, fork_block_number, fork_retry_backoff }
     }
 }
-
 /// The entry point for executing eth api RPC call - The Eth RPC interface.
 ///
 /// This type is cheap to clone and can be used concurrently
@@ -1545,19 +1560,6 @@ impl EthApi {
         let env = self.backend.env().read();
         let fork_config = self.backend.get_fork();
         let tx_order = self.transaction_order.read();
-        let fork_config = match fork_config {
-            Some(fork) => {
-                let config = fork.config.read();
-                NodeForkConfig {
-                    fork_url: Some(config.eth_rpc_url.clone()),
-                    fork_block_number: Some(config.block_number),
-                    fork_retry_backoff: Some(config.backoff.as_millis()),
-                }
-            }
-            None => {
-                NodeForkConfig { fork_url: None, fork_block_number: None, fork_retry_backoff: None }
-            }
-        };
 
         Ok(NodeInfo::new(
             self.backend.best_number(),
@@ -1568,13 +1570,27 @@ impl EthApi {
                 TransactionOrder::Fifo => "fifo".to_owned(),
                 TransactionOrder::Fees => "fees".to_owned(),
             },
-            self.backend.base_fee(),
-            self.backend.chain_id(),
-            self.backend.gas_limit(),
-            self.backend.gas_price(),
-            fork_config.fork_url,
-            fork_config.fork_block_number,
-            fork_config.fork_retry_backoff,
+            NodeEnvironment {
+                base_fee: self.backend.base_fee(),
+                chain_id: self.backend.chain_id(),
+                gas_limit: self.backend.gas_limit(),
+                gas_price: self.backend.gas_price(),
+            },
+            match fork_config {
+                Some(fork) => {
+                    let config = fork.config.read();
+                    NodeForkConfig {
+                        fork_url: Some(config.eth_rpc_url.clone()),
+                        fork_block_number: Some(config.block_number),
+                        fork_retry_backoff: Some(config.backoff.as_millis()),
+                    }
+                }
+                None => NodeForkConfig {
+                    fork_url: None,
+                    fork_block_number: None,
+                    fork_retry_backoff: None,
+                },
+            },
         ))
     }
 

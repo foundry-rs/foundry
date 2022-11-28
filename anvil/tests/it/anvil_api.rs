@@ -1,6 +1,9 @@
 //! tests for custom anvil endpoints
 use crate::{abi::*, fork::fork_config};
-use anvil::{eth::api::NodeInfo, spawn, Hardfork, NodeConfig};
+use anvil::{
+    eth::api::{NodeEnvironment, NodeForkConfig, NodeInfo},
+    spawn, Hardfork, NodeConfig,
+};
 use anvil_core::eth::EthRequest;
 use ethers::{
     abi::{ethereum_types::BigEndianHash, AbiDecode},
@@ -301,13 +304,13 @@ async fn can_get_node_info() {
         block.hash.unwrap(),
         SpecId::LATEST,
         "fees".to_owned(),
-        U256::from_str("0x3b9aca00").unwrap(),
-        U256::from_str("0x7a69").unwrap(),
-        U256::from_str("0x1c9c380").unwrap(),
-        U256::from_str("0x77359400").unwrap(),
-        None,
-        None,
-        None,
+        NodeEnvironment::new(
+            U256::from_str("0x3b9aca00").unwrap(),
+            U256::from_str("0x7a69").unwrap(),
+            U256::from_str("0x1c9c380").unwrap(),
+            U256::from_str("0x77359400").unwrap(),
+        ),
+        NodeForkConfig::new(None, None, None),
     );
 
     assert_eq!(node_info, expected_node_info);
