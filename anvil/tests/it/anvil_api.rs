@@ -1,10 +1,10 @@
 //! tests for custom anvil endpoints
 use crate::{abi::*, fork::fork_config};
-use anvil::{
-    eth::api::{NodeEnvironment, NodeForkConfig, NodeInfo},
-    spawn, Hardfork, NodeConfig,
+use anvil::{spawn, Hardfork, NodeConfig};
+use anvil_core::{
+    eth::EthRequest,
+    types::{NodeEnvironment, NodeForkConfig, NodeInfo},
 };
-use anvil_core::eth::EthRequest;
 use ethers::{
     abi::{ethereum_types::BigEndianHash, AbiDecode},
     prelude::{Middleware, SignerMiddleware},
@@ -298,20 +298,24 @@ async fn can_get_node_info() {
     let block_number = provider.get_block_number().await.unwrap();
     let block = provider.get_block(block_number).await.unwrap().unwrap();
 
-    let expected_node_info = NodeInfo::new(
-        U64([0]),
-        1,
-        block.hash.unwrap(),
-        SpecId::LATEST,
-        "fees".to_owned(),
-        NodeEnvironment::new(
-            U256::from_str("0x3b9aca00").unwrap(),
-            U256::from_str("0x7a69").unwrap(),
-            U256::from_str("0x1c9c380").unwrap(),
-            U256::from_str("0x77359400").unwrap(),
-        ),
-        NodeForkConfig::new(None, None, None),
-    );
+    let expected_node_info = NodeInfo {
+        current_block_number: U64([0]),
+        current_block_timestamp: 1,
+        current_block_hash: block.hash.unwrap(),
+        hard_fork: SpecId::LATEST,
+        transaction_order: "fees".to_owned(),
+        environment: NodeEnvironment {
+            base_fee: U256::from_str("0x3b9aca00").unwrap(),
+            chain_id: U256::from_str("0x7a69").unwrap(),
+            gas_limit: U256::from_str("0x1c9c380").unwrap(),
+            gas_price: U256::from_str("0x77359400").unwrap(),
+        },
+        fork_config: NodeForkConfig {
+            fork_url: None,
+            fork_block_number: None,
+            fork_retry_backoff: None,
+        },
+    };
 
     assert_eq!(node_info, expected_node_info);
 }

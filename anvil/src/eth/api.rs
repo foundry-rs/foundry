@@ -36,7 +36,7 @@ use anvil_core::{
         },
         EthRequest,
     },
-    types::{EvmMineOptions, Forking, Index, Work},
+    types::{EvmMineOptions, Forking, Index, NodeEnvironment, NodeForkConfig, NodeInfo, Work},
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use ethers::{
@@ -54,10 +54,7 @@ use ethers::{
     },
     utils::rlp,
 };
-use forge::{
-    executor::DatabaseRef,
-    revm::{BlockEnv, SpecId},
-};
+use forge::{executor::DatabaseRef, revm::BlockEnv};
 use foundry_common::ProviderBuilder;
 use foundry_evm::{
     executor::backend::DatabaseError,
@@ -73,77 +70,6 @@ use super::backend::mem::BlockRequest;
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
 
-#[derive(Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NodeInfo {
-    current_block_number: U64,
-    current_block_timestamp: u64,
-    current_block_hash: H256,
-    hard_fork: SpecId,
-    transaction_order: String,
-    environment: NodeEnvironment,
-    fork_config: NodeForkConfig,
-}
-
-impl NodeInfo {
-    pub fn new(
-        current_block_number: U64,
-        current_block_timestamp: u64,
-        current_block_hash: H256,
-        hard_fork: SpecId,
-        transaction_order: String,
-        environment: NodeEnvironment,
-        fork_config: NodeForkConfig,
-    ) -> NodeInfo {
-        NodeInfo {
-            current_block_number,
-            current_block_timestamp,
-            current_block_hash,
-            hard_fork,
-            transaction_order,
-            environment,
-            fork_config,
-        }
-    }
-}
-
-#[derive(Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NodeEnvironment {
-    base_fee: U256,
-    chain_id: U256,
-    gas_limit: U256,
-    gas_price: U256,
-}
-
-impl NodeEnvironment {
-    pub fn new(
-        base_fee: U256,
-        chain_id: U256,
-        gas_limit: U256,
-        gas_price: U256,
-    ) -> NodeEnvironment {
-        NodeEnvironment { base_fee, chain_id, gas_limit, gas_price }
-    }
-}
-
-#[derive(Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NodeForkConfig {
-    fork_url: Option<String>,
-    fork_block_number: Option<u64>,
-    fork_retry_backoff: Option<u128>,
-}
-
-impl NodeForkConfig {
-    pub fn new(
-        fork_url: Option<String>,
-        fork_block_number: Option<u64>,
-        fork_retry_backoff: Option<u128>,
-    ) -> NodeForkConfig {
-        NodeForkConfig { fork_url, fork_block_number, fork_retry_backoff }
-    }
-}
 /// The entry point for executing eth api RPC call - The Eth RPC interface.
 ///
 /// This type is cheap to clone and can be used concurrently
@@ -1561,22 +1487,22 @@ impl EthApi {
         let fork_config = self.backend.get_fork();
         let tx_order = self.transaction_order.read();
 
-        Ok(NodeInfo::new(
-            self.backend.best_number(),
-            env.block.timestamp.try_into().unwrap_or(u64::MAX),
-            self.backend.best_hash(),
-            env.cfg.spec_id,
-            match *tx_order {
+        Ok(NodeInfo {
+            current_block_number: self.backend.best_number(),
+            current_block_timestamp: env.block.timestamp.try_into().unwrap_or(u64::MAX),
+            current_block_hash: self.backend.best_hash(),
+            hard_fork: env.cfg.spec_id,
+            transaction_order: match *tx_order {
                 TransactionOrder::Fifo => "fifo".to_owned(),
                 TransactionOrder::Fees => "fees".to_owned(),
             },
-            NodeEnvironment {
+            environment: NodeEnvironment {
                 base_fee: self.backend.base_fee(),
                 chain_id: self.backend.chain_id(),
                 gas_limit: self.backend.gas_limit(),
                 gas_price: self.backend.gas_price(),
             },
-            match fork_config {
+            fork_config: match fork_config {
                 Some(fork) => {
                     let config = fork.config.read();
                     NodeForkConfig {
@@ -1591,7 +1517,7 @@ impl EthApi {
                     fork_retry_backoff: None,
                 },
             },
-        ))
+        })
     }
 
     /// Snapshot the state of the blockchain at the current block.
