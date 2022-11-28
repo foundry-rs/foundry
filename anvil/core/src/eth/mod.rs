@@ -441,6 +441,10 @@ pub enum EthRequest {
     )]
     LoadState(Bytes),
 
+    /// Retrieves the Anvil node configuration params
+    #[cfg_attr(feature = "serde", serde(rename = "anvil_nodeInfo", with = "empty_params"))]
+    NodeInfo(()),
+
     // Ganache compatible calls
     /// Snapshot the state of the blockchain at the current block.
     #[cfg_attr(
