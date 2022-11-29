@@ -74,6 +74,36 @@ impl CommentWithMetadata {
         }
     }
 
+    /// Return a flag indicating whether this comment can be extended
+    /// with the contents of another comment
+    pub fn can_be_extended(&self, other: &CommentWithMetadata) -> bool {
+        let other_first_ch = other.contents().trim_start().chars().next();
+        return self.ty == other.ty &&
+            self.position == other.position &&
+            self.loc.start() < other.loc.end() &&
+            other_first_ch.map(|ch| ch.is_alphanumeric()).unwrap_or_default()
+    }
+
+    /// Extends the comment with another comment contents
+    /// and metadata. Does not perform any additional validation
+    pub fn extend(&self, other: &CommentWithMetadata) -> Self {
+        let other_contents = other.contents();
+        let needs_space =
+            other_contents.chars().next().map(|ch| !ch.is_whitespace()).unwrap_or_default();
+        let comment =
+            format!("{}{}{}", self.comment, if needs_space { " " } else { "" }, other_contents);
+        let mut loc = self.loc;
+        loc.use_end_from(&other.loc);
+        Self {
+            comment,
+            ty: self.ty,
+            loc,
+            position: self.position,
+            has_newline_before: self.has_newline_before,
+            indent_len: self.indent_len,
+        }
+    }
+
     /// Construct a comment with metadata by analyzing its surrounding source code
     fn from_comment_and_src(
         comment: Comment,
@@ -212,7 +242,7 @@ impl CommentWithMetadata {
 }
 
 /// A list of comments
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Comments {
     prefixes: VecDeque<CommentWithMetadata>,
     postfixes: VecDeque<CommentWithMetadata>,

@@ -126,3 +126,78 @@ contract HelloWorld {
  * }
  */
 function freeFloatingMultilineIndent() {}
+
+/// @notice A proof-of-concept
+/// implementation demonstrating how
+/// Flexible Voting can be used to allow
+/// holders of governance tokens to use
+/// them in DeFi but still participate
+/// in governance. The FractionalPool
+/// simulates a lending protocol, such
+/// as Compound Finance or Aave, in
+/// that:
+///
+/// - Tokens can be deposited into the
+///   Pool by suppliers
+/// - Tokens can be withdrawn from the
+///   Pool by borrowers
+/// - Depositors are able to express
+///   their vote preferences on
+///   individual governance proposals
+/// - The vote preferences of all
+///   Depositors are expressed
+///   proportionally across any tokens
+///   held by the pool, and rolled up
+///   into a single delegated vote made
+///   by the pool before the proposal is
+///   completed
+contract FractionalPool {
+    /// @notice A proof-of-concept
+    /// implementation demonstrating
+    /// how Flexible Voting can be used
+    /// to allow holders of governance
+    /// tokens to use them in DeFi but
+    /// still participate in governance.
+    /// The FractionalPool simulates a
+    /// lending protocol, such as
+    /// Compound Finance or Aave, in
+    /// that:
+    function testDocWrap() external {}
+
+    // @notice A proof-of-concept
+    // implementation demonstrating how
+    // Flexible Voting can be used to
+    // allow holders of governance
+    // tokens to use them in DeFi but
+    // still participate in governance.
+    // The FractionalPool simulates a
+    // lending protocol, such as
+    // Compound Finance or Aave, in
+    // that:
+    function testLineWrap() external {}
+}
+
+// @notice A proof-of-concept
+// implementation demonstrating how
+// Flexible Voting can be used to allow
+// holders of governance tokens to use
+// them in DeFi but still participate
+// in governance. The FractionalPool
+// simulates a lending protocol, such
+// as Compound Finance or Aave, in that:
+//
+// - Tokens can be deposited into the
+//   Pool by suppliers
+// - Tokens can be withdrawn from the
+//   Pool by borrowers
+// - Depositors are able to express
+//   their vote preferences on
+//   individual governance proposals
+// - The vote preferences of all
+//   Depositors are expressed
+//   proportionally across any tokens
+//   held by the pool, and rolled up
+//   into a single delegated vote made
+//   by the pool before the proposal is
+//   completed
+contract FractionalPool2 {}

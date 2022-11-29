@@ -6,6 +6,7 @@ use crate::{
     comments::{
         CommentPosition, CommentState, CommentStringExt, CommentType, CommentWithMetadata, Comments,
     },
+    helpers::LinedItems,
     macros::*,
     solang_ext::*,
     string::{QuoteState, QuotedStringExt},
@@ -16,7 +17,11 @@ use ethers_core::{types::H160, utils::to_checksum};
 use foundry_config::fmt::{MultilineFuncHeaderStyle, SingleLineBlockStyle};
 use itertools::{Either, Itertools};
 use solang_parser::pt::*;
-use std::{fmt::Write, str::FromStr};
+use std::{
+    fmt::Write,
+    iter::Peekable,
+    str::{FromStr, Lines},
+};
 use thiserror::Error;
 
 type Result<T, E = FormatterError> = std::result::Result<T, E>;
@@ -428,6 +433,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(out.into_iter().map(|(_, c)| c).collect_vec())
     }
 
+    // TODO: remove
     /// Write a comment to the buffer formatted.
     /// WARNING: This may introduce a newline if the comment is a Line comment
     /// or if the comment are wrapped
@@ -607,14 +613,15 @@ impl<'a, W: Write> Formatter<'a, W> {
     fn write_comments<'b>(
         &mut self,
         comments: impl IntoIterator<Item = &'b CommentWithMetadata>,
+        is_first: Option<bool>,
     ) -> Result<()> {
         let mut comments = comments.into_iter().peekable();
         let mut last_byte_written = match comments.peek() {
             Some(comment) => comment.loc.start(),
             None => return Ok(()),
         };
-        let mut is_first = true;
-        for comment in comments {
+        let mut is_first = is_first.unwrap_or(true);
+        while let Some(comment) = comments.next() {
             let unwritten_whitespace_loc =
                 Loc::File(comment.loc.file_no(), last_byte_written, comment.loc.start());
             if self.inline_config.is_disabled(unwritten_whitespace_loc) {
@@ -626,6 +633,18 @@ impl<'a, W: Write> Formatter<'a, W> {
                     comment.loc.end()
                 };
             } else {
+                // TODO:
+                // println!("WRITING {}", comment.contents());
+                // let mut extended = None;
+                // println!("HAS NEXT {}", comments.peek().is_some());
+                // if let Some(next) = comments.peek() {
+                //     println!("CAN BE EXTENDED {}", comment.can_be_extended(next));
+                //     if comment.can_be_extended(next) {
+                //         extended = Some(comment.extend(next));
+                //         comments.next();
+                //     }
+                // }
+                // self.write_comment(extended.as_ref().unwrap_or(comment), is_first)?;
                 self.write_comment(comment, is_first)?;
             }
             is_first = false;
@@ -636,13 +655,13 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// Write a postfix comments before a given location
     fn write_postfix_comments_before(&mut self, byte_end: usize) -> Result<()> {
         let comments = self.comments.remove_postfixes_before(byte_end);
-        self.write_comments(&comments)
+        self.write_comments(&comments, None)
     }
 
     /// Write all prefix comments before a given location
     fn write_prefix_comments_before(&mut self, byte_end: usize) -> Result<()> {
         let comments = self.comments.remove_prefixes_before(byte_end);
-        self.write_comments(&comments)
+        self.write_comments(&comments, None)
     }
 
     /// Check if a chunk will fit on the current line
@@ -677,8 +696,8 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// to the next line
     fn write_chunk(&mut self, chunk: &Chunk) -> Result<()> {
         // handle comments before chunk
-        self.write_comments(&chunk.postfixes_before)?;
-        self.write_comments(&chunk.prefixes)?;
+        self.write_comments(&chunk.postfixes_before, None)?;
+        self.write_comments(&chunk.prefixes, None)?;
 
         // trim chunk start
         let content = if chunk.content.starts_with('\n') {
@@ -711,7 +730,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
 
         // write any postfix comments
-        self.write_comments(&chunk.postfixes)?;
+        self.write_comments(&chunk.postfixes, None)?;
 
         Ok(())
     }
@@ -729,7 +748,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             let mut chunk = chunk.clone();
 
             // handle postfixes before and add newline if necessary
-            self.write_comments(&std::mem::take(&mut chunk.postfixes_before))?;
+            self.write_comments(&std::mem::take(&mut chunk.postfixes_before), None)?;
             if multiline && !self.is_beginning_of_line() {
                 writeln!(self.buf())?;
             }
@@ -742,12 +761,12 @@ impl<'a, W: Write> Formatter<'a, W> {
             // add separator
             if chunks.peek().is_some() {
                 write!(self.buf(), "{separator}")?;
-                self.write_comments(&postfixes)?;
+                self.write_comments(&postfixes, None)?;
                 if multiline && !self.is_beginning_of_line() {
                     writeln!(self.buf())?;
                 }
             } else {
-                self.write_comments(&postfixes)?;
+                self.write_comments(&postfixes, None)?;
             }
         }
         Ok(())
@@ -921,28 +940,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         V: Visitable + LineOfCode + 'b,
         F: Fn(&V, &V) -> bool,
     {
-        let mut items = items.collect::<Vec<_>>();
-        items.reverse();
-        // get next item
-        let pop_next = |fmt: &mut Self, items: &mut Vec<&'b mut V>| {
-            let comment =
-                fmt.comments.iter().next().filter(|comment| comment.loc.end() < loc.end());
-            let item = items.last();
-            if let (Some(comment), Some(item)) = (comment, item) {
-                if comment.loc < item.loc() {
-                    Some(Either::Left(fmt.comments.pop().unwrap()))
-                } else {
-                    Some(Either::Right(items.pop().unwrap()))
-                }
-            } else if comment.is_some() {
-                Some(Either::Left(fmt.comments.pop().unwrap()))
-            } else if item.is_some() {
-                Some(Either::Right(items.pop().unwrap()))
-            } else {
-                None
-            }
-        };
-        // get whitespace between to offsets. this needs to account for possible left over
+        // Get whitespace between to offsets. this needs to account for possible left over
         // semicolons which are not included in the `Loc`
         let unwritten_whitespace = |from: usize, to: usize| {
             let to = to.max(from);
@@ -954,37 +952,32 @@ impl<'a, W: Write> Formatter<'a, W> {
             (loc, &self.source[loc.range()])
         };
 
-        let mut last_byte_written = match (
-            self.comments.iter().next().filter(|comment| comment.loc.end() < loc.end()),
-            items.last(),
-        ) {
-            (Some(comment), Some(item)) => comment.loc.min(item.loc()),
-            (None, Some(item)) => item.loc(),
-            (Some(comment), None) => comment.loc,
-            (None, None) => return Ok(()),
-        }
-        .start();
         let mut last_loc: Option<Loc> = None;
         let mut needs_space = false;
-        while let Some(mut line_item) = pop_next(self, &mut items) {
+        // Get dirty iterator over lined items
+        let mut lined_items = LinedItems::new(items, loc, self.config.wrap_comments);
+        let mut last_byte_written = match lined_items.last_byte_written(&self.comments) {
+            Some(last) => last,
+            _ => return Ok(()),
+        };
+        // Iterate over lined items and comments
+        while let Some(mut line_item) = lined_items.next(&mut self.comments) {
             let loc = line_item.as_ref().either(|c| c.loc, |i| i.loc());
-            let (unwritten_whitespace_loc, unwritten_whitespace) =
+            let (unwritten_ws_loc, unwritten_ws) =
                 unwritten_whitespace(last_byte_written, loc.start());
-            let ignore_whitespace = if self.inline_config.is_disabled(unwritten_whitespace_loc) {
-                self.write_raw(unwritten_whitespace)?;
-                true
-            } else {
-                false
-            };
+            let ignore_whitespace = self.inline_config.is_disabled(unwritten_ws_loc);
+            if ignore_whitespace {
+                self.write_raw(unwritten_ws)?;
+            }
             match line_item.as_mut() {
                 Either::Left(comment) => {
                     if ignore_whitespace {
                         self.write_raw_comment(comment)?;
-                        if unwritten_whitespace.contains('\n') {
+                        if unwritten_ws.contains('\n') {
                             needs_space = false;
                         }
                     } else {
-                        self.write_comment(comment, last_loc.is_none())?;
+                        self.write_comments(std::iter::once(&*comment), Some(last_loc.is_none()))?;
                         if last_loc.is_some() && comment.has_newline_before {
                             needs_space = false;
                         }
@@ -999,7 +992,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                             }
                         }
                     }
-                    if let Some(next_item) = items.last() {
+                    if let Some(next_item) = lined_items.last() {
                         needs_space = needs_space_fn(item, next_item);
                     }
                     item.visit(self)?;
@@ -1018,9 +1011,7 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         // write manually to avoid eof comment being detected as first
         let comments = self.comments.remove_prefixes_before(loc.end());
-        for comment in comments {
-            self.write_comment(&comment, false)?;
-        }
+        self.write_comments(&comments, Some(false))?;
 
         let (unwritten_src_loc, mut unwritten_whitespace) =
             unwritten_whitespace(last_byte_written, loc.end());

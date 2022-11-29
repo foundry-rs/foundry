@@ -1,8 +1,10 @@
 use crate::{
+    comments::CommentWithMetadata,
     inline_config::{InlineConfig, InvalidInlineConfigItem},
+    solang_ext::LineOfCode,
     Comments, Formatter, FormatterConfig, FormatterError, Visitable,
 };
-use itertools::Itertools;
+use itertools::{Either, Itertools};
 use solang_parser::pt::*;
 
 /// Result of parsing the source code
@@ -67,4 +69,80 @@ pub fn offset_to_line_column(content: &str, start: usize) -> (usize, usize) {
     }
 
     unreachable!("content.len() > start")
+}
+
+/// TODO: docs
+pub struct LinedItems<'a, V: Visitable + LineOfCode> {
+    items: Vec<&'a mut V>,
+    loc: Loc,
+    can_extend_comments: bool,
+}
+
+impl<'a, V: Visitable + LineOfCode> LinedItems<'a, V> {
+    pub fn new<I>(items: I, loc: Loc, can_extend_comments: bool) -> Self
+    where
+        I: Iterator<Item = &'a mut V>,
+    {
+        let mut items = items.collect::<Vec<_>>();
+        items.reverse();
+        Self { items, loc, can_extend_comments }
+    }
+
+    fn next_comment(&self, comments: &'a Comments) -> Option<&'a CommentWithMetadata> {
+        comments.iter().next().filter(|comment| comment.loc.end() < self.loc.end())
+    }
+
+    pub fn last_byte_written(&self, comments: &Comments) -> Option<usize> {
+        let loc = match (self.next_comment(comments), self.items.last()) {
+            (Some(comment), Some(item)) => comment.loc.min(item.loc()),
+            (None, Some(item)) => item.loc(),
+            (Some(comment), None) => comment.loc,
+            (None, None) => return None,
+        };
+        Some(loc.start())
+    }
+
+    pub fn last(&self) -> Option<&&mut V> {
+        self.items.last()
+    }
+
+    pub fn next(
+        &mut self,
+        comments: &mut Comments,
+    ) -> Option<Either<CommentWithMetadata, &'a mut V>> {
+        match (self.next_comment(comments), self.items.last()) {
+            (Some(comment), Some(item)) => {
+                if comment.loc < item.loc() {
+                    Some(Either::Left(self.extend_comment(comments, Some(item.loc()))))
+                } else {
+                    Some(Either::Right(self.items.pop()?))
+                }
+            }
+            (Some(_comment), None) => Some(Either::Left(self.extend_comment(comments, None))),
+            (None, Some(_item)) => Some(Either::Right(self.items.pop()?)),
+            _ => None,
+        }
+    }
+
+    fn extend_comment(
+        &self,
+        comments: &mut Comments,
+        next_item_loc: Option<Loc>,
+    ) -> CommentWithMetadata {
+        let mut result = comments.pop().unwrap();
+        if !self.can_extend_comments {
+            return result
+        }
+
+        while let Some(comment) = self.next_comment(comments) {
+            if next_item_loc.map(|loc| comment.loc >= loc).unwrap_or_default() ||
+                !result.can_be_extended(comment)
+            {
+                return result
+            }
+
+            result = result.extend(&comments.pop().unwrap())
+        }
+        result
+    }
 }
