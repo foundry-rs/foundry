@@ -3,7 +3,6 @@ use crate::cmd::{
     Cmd, LoadConfig,
 };
 use clap::{Parser, ValueHint};
-use ethers::solc::artifacts::Severity;
 use foundry_common::fs;
 use std::path::PathBuf;
 
@@ -37,7 +36,7 @@ impl Cmd for FlattenArgs {
             out_path: Default::default(),
             compiler: Default::default(),
             ignored_error_codes: vec![],
-            compiler_severity_filter: Severity::Error.to_string(),
+            deny_warnings: false,
             no_auto_detect: false,
             use_solc: None,
             offline: false,

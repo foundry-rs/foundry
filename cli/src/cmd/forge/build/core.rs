@@ -4,7 +4,7 @@ use crate::{
 };
 use clap::{Parser, ValueHint};
 use ethers::solc::{
-    artifacts::{RevertStrings, Severity}, remappings::Remapping, utils::canonicalized, Project,
+    artifacts::{RevertStrings}, remappings::Remapping, utils::canonicalized, Project,
 };
 use foundry_config::{
     figment,
@@ -54,13 +54,11 @@ pub struct CoreBuildArgs {
 
     #[clap(
         help_heading = "COMPILER OPTIONS",
-        help = "The minimum severity level that is treated as a compiler error",
+        help = "Warnings will trigger a compiler error",
         long,
-        value_name = "SEVERITY",
-        default_value_t=Severity::Error.to_string()
     )]
     #[serde(skip)]
-    pub compiler_severity_filter: String,
+    pub deny_warnings: bool,
 
     #[clap(help_heading = "COMPILER OPTIONS", help = "Do not auto-detect solc.", long)]
     #[serde(skip)]

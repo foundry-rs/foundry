@@ -5,7 +5,7 @@ use clap::CommandFactory;
 use ethers::{
     prelude::remappings::Remapping,
     solc::{
-        artifacts::{BytecodeHash, Metadata, Severity},
+        artifacts::{BytecodeHash, Metadata},
         ConfigurableContractArtifact,
     },
 };
@@ -646,7 +646,7 @@ contract A {
 forgetest!(can_fail_compile_with_warnings, |prj: TestProject, mut cmd: TestCommand| {
     let config = Config {
         ignored_error_codes: vec![],
-        compiler_severity_filter: Severity::Error,
+        deny_warnings: false,
         ..Default::default()
     };
     prj.write_config(config);
@@ -671,7 +671,7 @@ contract A {
     // warning fails to compile
     let config = Config {
         ignored_error_codes: vec![],
-        compiler_severity_filter: Severity::Warning,
+        deny_warnings: true,
         ..Default::default()
     };
     prj.write_config(config);
@@ -679,7 +679,7 @@ contract A {
 
 
     // ignores error code and compiles
-    let config = Config { ignored_error_codes: vec![SolidityErrorCode::SpdxLicenseNotProvided], compiler_severity_filter: Severity::Warning, ..Default::default() };
+    let config = Config { ignored_error_codes: vec![SolidityErrorCode::SpdxLicenseNotProvided], deny_warnings: true, ..Default::default() };
     prj.write_config(config);
     let out = cmd.stdout();
 
