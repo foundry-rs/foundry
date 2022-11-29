@@ -4,7 +4,7 @@ use crate::{
 };
 use clap::{Parser, ValueHint};
 use ethers::solc::{
-    artifacts::RevertStrings, remappings::Remapping, utils::canonicalized, Project,
+    artifacts::{RevertStrings, Severity}, remappings::Remapping, utils::canonicalized, Project,
 };
 use foundry_config::{
     figment,
@@ -51,6 +51,16 @@ pub struct CoreBuildArgs {
     )]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub ignored_error_codes: Vec<u64>,
+
+    #[clap(
+        help_heading = "COMPILER OPTIONS",
+        help = "The minimum severity level that is treated as a compiler error",
+        long,
+        value_name = "SEVERITY",
+        default_value_t=Severity::Error.to_string()
+    )]
+    #[serde(skip)]
+    pub compiler_severity_filter: String,
 
     #[clap(help_heading = "COMPILER OPTIONS", help = "Do not auto-detect solc.", long)]
     #[serde(skip)]

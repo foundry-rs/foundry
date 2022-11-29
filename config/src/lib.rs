@@ -8,7 +8,7 @@ use ethers_solc::{
     artifacts::{
         output_selection::ContractOutputSelection, serde_helpers, BytecodeHash, DebuggingSettings,
         Libraries, ModelCheckerSettings, ModelCheckerTarget, Optimizer, RevertStrings, Settings,
-        SettingsMetadata,
+        SettingsMetadata, Severity,
     },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     error::SolcError,
@@ -203,6 +203,8 @@ pub struct Config {
     pub etherscan: EtherscanConfigs,
     /// list of solidity error codes to always silence in the compiler output
     pub ignored_error_codes: Vec<SolidityErrorCode>,
+    /// The minimum severity level that is treated as a compiler error
+    pub compiler_severity_filter: Severity,
     /// Only run test functions matching the specified regex pattern.
     #[serde(rename = "match_test")]
     pub test_pattern: Option<RegexWrapper>,
@@ -607,6 +609,7 @@ impl Config {
             .include_paths(&self.include_paths)
             .solc_config(SolcConfig::builder().settings(self.solc_settings()?).build())
             .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
+            .set_compiler_severity_filter(self.compiler_severity_filter.clone())
             .set_auto_detect(self.is_auto_detect())
             .set_offline(self.offline)
             .set_cached(cached)
@@ -1721,6 +1724,7 @@ impl Default for Config {
                 SolidityErrorCode::SpdxLicenseNotProvided,
                 SolidityErrorCode::ContractExceeds24576Bytes,
             ],
+            compiler_severity_filter: Severity::Error,
             via_ir: false,
             rpc_storage_caching: Default::default(),
             rpc_endpoints: Default::default(),
@@ -3217,6 +3221,7 @@ mod tests {
                 gas_price = 0
                 gas_reports = ['*']
                 ignored_error_codes = [1878]
+                compiler_severity_filter = 'error'
                 initial_balance = '0xffffffffffffffffffffffff'
                 libraries = []
                 libs = ['lib']
