@@ -1502,21 +1502,17 @@ impl EthApi {
                 gas_limit: self.backend.gas_limit(),
                 gas_price: self.backend.gas_price(),
             },
-            fork_config: match fork_config {
-                Some(fork) => {
+            fork_config: fork_config
+                .map(|fork| {
                     let config = fork.config.read();
+
                     NodeForkConfig {
                         fork_url: Some(config.eth_rpc_url.clone()),
                         fork_block_number: Some(config.block_number),
                         fork_retry_backoff: Some(config.backoff.as_millis()),
                     }
-                }
-                None => NodeForkConfig {
-                    fork_url: None,
-                    fork_block_number: None,
-                    fork_retry_backoff: None,
-                },
-            },
+                })
+                .unwrap_or_default(),
         })
     }
 
