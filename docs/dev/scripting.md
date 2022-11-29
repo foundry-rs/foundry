@@ -1,5 +1,11 @@
 
-# High level Flow Diagram
+# Scripting - Flow Diagrams
+
+1. [High level overview](#high-level-overview)
+    1. [Notes](#notes)
+2. [Script Execution](#script-execution)
+
+## High level overview
 
 ```mermaid
 graph TD;
@@ -40,7 +46,7 @@ graph TD;
 
 ```
 
-### IMPORTANT NOTES
+### Notes
 1) `[..]` - concurrently executed
 
 2) The bit below does not actually influence the state initially defined by `--broadcast`. It only happens because there might be private keys declared inside the script that need to be collected again. `--resume` only resumes **publishing** the transactions, nothing more!
@@ -53,7 +59,7 @@ ScriptArgs::execute-- "(resume || verify) && !broadcast" -->ScriptArgs::resume_d
 
 
 
-# Script Execution Flow Diagram
+## Script Execution
 ```mermaid
 graph TD;
 subgraph ScriptArgs::execute
