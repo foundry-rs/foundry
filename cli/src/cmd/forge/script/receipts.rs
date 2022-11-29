@@ -12,7 +12,7 @@ use futures::StreamExt;
 use std::sync::Arc;
 use tracing::{trace, warn};
 
-/// Convenince enum for internal signalling of transaction status
+/// Convenience enum for internal signalling of transaction status
 enum TxStatus {
     Dropped,
     Success(TransactionReceipt),
@@ -30,7 +30,7 @@ impl From<TransactionReceipt> for TxStatus {
     }
 }
 
-/// Gets the receipts of previously pending transactions, or removes them fro
+/// Gets the receipts of previously pending transactions, or removes them from
 /// the deploy sequence's pending vector
 pub async fn wait_for_pending(
     provider: Arc<RetryProvider>,
