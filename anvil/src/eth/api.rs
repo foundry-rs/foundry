@@ -1493,8 +1493,8 @@ impl EthApi {
             current_block_hash: self.backend.best_hash(),
             hard_fork: env.cfg.spec_id,
             transaction_order: match *tx_order {
-                TransactionOrder::Fifo => "fifo".to_owned(),
-                TransactionOrder::Fees => "fees".to_owned(),
+                TransactionOrder::Fifo => "fifo".to_string(),
+                TransactionOrder::Fees => "fees".to_string(),
             },
             environment: NodeEnvironment {
                 base_fee: self.backend.base_fee(),

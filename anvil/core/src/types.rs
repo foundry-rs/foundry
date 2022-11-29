@@ -168,7 +168,7 @@ pub struct NodeInfo {
     pub fork_config: NodeForkConfig,
 }
 
-#[derive(Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeEnvironment {
     pub base_fee: U256,
@@ -177,7 +177,7 @@ pub struct NodeEnvironment {
     pub gas_price: U256,
 }
 
-#[derive(Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeForkConfig {
     pub fork_url: Option<String>,
