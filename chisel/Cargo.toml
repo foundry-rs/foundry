@@ -18,7 +18,7 @@ doctest = false
 
 [[bin]]
 name = "chisel"
-path = "src/cli.rs"
+path = "src/bin/chisel.rs"
 
 [dependencies]
 foundry-evm = { path = "../evm" }
@@ -38,7 +38,6 @@ strum = { version = "0.24.1", features = ["derive"] }
 serde = "1.0.145"
 serde_json = { version = "1.0.85", features = ["raw_value"] }
 semver = "1.0.14"
-tracing = "0.1.37"
 bytes = "1.2.1"
 revm = "2.1.0"
 eyre = "0.6.8"

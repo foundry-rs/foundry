@@ -7,6 +7,9 @@
 /// REPL input dispatcher module
 pub mod dispatcher;
 
+/// Builtin Chisel commands
+pub mod cmd;
+
 /// Chisel Environment Module
 pub mod session;
 
@@ -24,5 +27,7 @@ pub mod solidity_helper;
 
 /// Prelude of all chisel modules
 pub mod prelude {
-    pub use crate::{dispatcher::*, runner::*, session::*, session_source::*, solidity_helper::*};
+    pub use crate::{
+        cmd::*, dispatcher::*, runner::*, session::*, session_source::*, solidity_helper::*,
+    };
 }

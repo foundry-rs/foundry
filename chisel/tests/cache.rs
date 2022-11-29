@@ -43,7 +43,8 @@ fn test_write_session() {
         evm_opts: EvmOpts::default(),
         backend: None,
         traces: false,
-    });
+    })
+    .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
 
     // Write the session
     let cached_session_name = env.write().unwrap();
@@ -64,7 +65,8 @@ fn test_write_session_with_name() {
     ChiselSession::create_cache_dir().unwrap();
 
     // Create a new session
-    let mut env = ChiselSession::new(&chisel::session_source::SessionSourceConfig::default());
+    let mut env = ChiselSession::new(&chisel::session_source::SessionSourceConfig::default())
+        .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
     env.id = Some(String::from("test"));
 
     // Write the session
@@ -80,7 +82,8 @@ fn test_clear_cache() {
     // Create a session to validate clearing a non-empty cache directory
     let cache_dir = ChiselSession::cache_dir().unwrap();
     ChiselSession::create_cache_dir().unwrap();
-    let mut env = ChiselSession::new(&SessionSourceConfig::default());
+    let mut env = ChiselSession::new(&SessionSourceConfig::default())
+        .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
     env.write().unwrap();
 
     // Clear the cache
@@ -99,7 +102,8 @@ fn test_list_sessions() {
     ChiselSession::clear_cache().unwrap();
 
     // Create a new session
-    let mut env = ChiselSession::new(&SessionSourceConfig::default());
+    let mut env = ChiselSession::new(&SessionSourceConfig::default())
+        .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
 
     env.write().unwrap();
 
@@ -119,7 +123,8 @@ fn test_load_cache() {
     ChiselSession::clear_cache().unwrap();
 
     // Create a new session
-    let mut env = ChiselSession::new(&SessionSourceConfig::default());
+    let mut env = ChiselSession::new(&SessionSourceConfig::default())
+        .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
     env.write().unwrap();
 
     // Load the session
@@ -143,7 +148,8 @@ fn test_write_same_session_multiple_times() {
     ChiselSession::clear_cache().unwrap();
 
     // Create a new session
-    let mut env = ChiselSession::new(&SessionSourceConfig::default());
+    let mut env = ChiselSession::new(&SessionSourceConfig::default())
+        .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
     env.write().unwrap();
     env.write().unwrap();
     env.write().unwrap();
@@ -159,13 +165,15 @@ fn test_load_latest_cache() {
     ChiselSession::clear_cache().unwrap();
 
     // Create sessions
-    let mut env = ChiselSession::new(&SessionSourceConfig::default());
+    let mut env = ChiselSession::new(&SessionSourceConfig::default())
+        .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
     env.write().unwrap();
 
     let wait_time = std::time::Duration::from_millis(100);
     std::thread::sleep(wait_time);
 
-    let mut env2 = ChiselSession::new(&SessionSourceConfig::default());
+    let mut env2 = ChiselSession::new(&SessionSourceConfig::default())
+        .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
     env2.write().unwrap();
 
     // Load the latest session

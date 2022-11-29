@@ -3,7 +3,7 @@
 //! This module contains the `SolidityHelper`, a [rustyline::Helper] implementation for
 //! usage in Chisel. It is ported from [soli](https://github.com/jpopesculian/soli/blob/master/src/main.rs).
 
-use crate::dispatcher::ChiselCommand;
+use crate::prelude::ChiselCommand;
 use rustyline::{
     completion::Completer,
     highlight::Highlighter,

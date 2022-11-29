@@ -2,10 +2,7 @@
 //!
 //! This module contains the execution logic for the [SessionSource].
 
-use crate::{
-    prelude::{ChiselResult, ChiselRunner, SessionSource},
-    session_source::IntermediateOutput,
-};
+use crate::prelude::{ChiselResult, ChiselRunner, IntermediateOutput, SessionSource};
 use core::fmt::Debug;
 use ethers::{
     abi::{ethabi, ParamType, Token},
@@ -13,7 +10,7 @@ use ethers::{
     utils::hex,
 };
 use ethers_solc::Artifact;
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use forge::executor::{inspector::CheatsConfig, Backend, ExecutorBuilder};
 use solang_parser::pt::{self, CodeLocation};
 use yansi::Paint;
@@ -28,59 +25,51 @@ impl SessionSource {
     /// the [ChiselResult].
     pub async fn execute(&mut self) -> Result<(Address, ChiselResult)> {
         // Recompile the project and ensure no errors occurred.
-        match self.build() {
-            Ok(compiled) => {
-                if let Some((_, contract)) = compiled
-                    .compiler_output
-                    .contracts_into_iter()
-                    .find(|(name, _)| name.eq(&"REPL"))
-                {
-                    // These *should* never panic after a successful compilation.
-                    let bytecode =
-                        contract.get_bytecode_bytes().expect("No bytecode for contract.");
-                    let deployed_bytecode = contract
-                        .get_deployed_bytecode_bytes()
-                        .expect("No deployed bytecode for contract.");
+        let compiled = self.build()?;
+        if let Some((_, contract)) =
+            compiled.compiler_output.contracts_into_iter().find(|(name, _)| name.eq(&"REPL"))
+        {
+            // These *should* never panic after a successful compilation.
+            let bytecode = contract.get_bytecode_bytes().expect("No bytecode for contract.");
+            let deployed_bytecode =
+                contract.get_deployed_bytecode_bytes().expect("No deployed bytecode for contract.");
 
-                    // Fetch the run function's body statement
-                    let run_func_statements = compiled.intermediate.run_func_body()?;
+            // Fetch the run function's body statement
+            let run_func_statements = compiled.intermediate.run_func_body()?;
 
-                    // Find the last statement within the "run()" method and get the program
-                    // counter via the source map.
-                    if let Some(final_statement) = run_func_statements.last() {
-                        let final_pc = {
-                            let source_loc = final_statement.loc();
-                            let offset = source_loc.start();
-                            let length = source_loc.end() - source_loc.start();
-                            contract
-                                .get_source_map_deployed()
-                                .unwrap()
-                                .unwrap()
-                                .into_iter()
-                                .zip(InstructionIter::new(&deployed_bytecode))
-                                .filter(|(s, _)| s.offset == offset && s.length == length)
-                                .map(|(_, i)| i.pc)
-                                .max()
-                                .unwrap_or_default()
-                        };
+            // Find the last statement within the "run()" method and get the program
+            // counter via the source map.
+            if let Some(final_statement) = run_func_statements.last() {
+                let final_pc = {
+                    let source_loc = final_statement.loc();
+                    let offset = source_loc.start();
+                    let length = source_loc.end() - source_loc.start();
+                    contract
+                        .get_source_map_deployed()
+                        .unwrap()
+                        .unwrap()
+                        .into_iter()
+                        .zip(InstructionIter::new(&deployed_bytecode))
+                        .filter(|(s, _)| s.offset == offset && s.length == length)
+                        .map(|(_, i)| i.pc)
+                        .max()
+                        .unwrap_or_default()
+                };
 
-                        // Create a new runner
-                        let mut runner = self.prepare_runner(final_pc).await;
+                // Create a new runner
+                let mut runner = self.prepare_runner(final_pc).await;
 
-                        // Return [ChiselResult] or bubble up error
-                        match runner.run(bytecode.into_owned()) {
-                            Ok(res) => Ok(res),
-                            Err(e) => Err(e),
-                        }
-                    } else {
-                        // Return a default result if no statements are present.
-                        Ok((Address::zero(), ChiselResult::default()))
-                    }
-                } else {
-                    eyre::bail!("Failed to find REPL contract!")
+                // Return [ChiselResult] or bubble up error
+                match runner.run(bytecode.into_owned()) {
+                    Ok(res) => Ok(res),
+                    Err(e) => Err(e),
                 }
+            } else {
+                // Return a default result if no statements are present.
+                Ok((Address::zero(), ChiselResult::default()))
             }
-            Err(e) => Err(e),
+        } else {
+            eyre::bail!("Failed to find REPL contract!")
         }
     }
 
@@ -96,65 +85,56 @@ impl SessionSource {
     /// If unsuccessful but valid source, `Some(None)`
     /// If unsuccessful, `Err(e)`
     pub async fn inspect(&mut self, item: &str) -> Result<Option<String>> {
-        match self.clone_with_new_line(format!("bytes memory inspectoor = abi.encode({item})")) {
-            Ok((mut source, _)) => match source.execute().await {
-                Ok((_, res)) => {
-                    if let Some((stack, memory, _)) = &res.state {
-                        let generated_output = source
-                            .generated_output
-                            .as_ref()
-                            .ok_or(eyre::eyre!("Could not find generated output!"))?;
+        let mut source = if let Ok((source, _)) =
+            self.clone_with_new_line(format!("bytes memory inspectoor = abi.encode({item})"))
+        {
+            source
+        } else {
+            return Ok(None)
+        };
 
-                        // If the expression is a variable declaration within the REPL contract,
-                        // use its type- otherwise, attempt to infer the type.
-                        let ty_opt = if let Some(expr) =
-                            generated_output.intermediate.repl_contract_expressions.get(item)
-                        {
-                            Type::from_expression(expr)
-                        } else {
-                            self.infer_inner_expr_type(&source)
-                        };
+        let res = if let Ok((_, res)) = source.execute().await { res } else { return Ok(None) };
 
-                        let ty = if let Some(ty) =
-                            ty_opt.and_then(|ty| ty.try_as_ethabi(&generated_output.intermediate))
-                        {
-                            ty
-                        } else {
-                            // Move on gracefully; This type was denied for inspection.
-                            return Ok(None)
-                        };
-                        let memory_offset = if let Some(offset) = stack.data().last() {
-                            offset.as_usize()
-                        } else {
-                            eyre::bail!("No result found");
-                        };
-                        if memory_offset + 32 > memory.len() {
-                            eyre::bail!("Memory size insufficient");
-                        }
-                        let data = &memory.data()[memory_offset + 32..];
-                        let token = match ethabi::decode(&[ty], data) {
-                            Ok(mut tokens) => {
-                                if let Some(token) = tokens.pop() {
-                                    token
-                                } else {
-                                    eyre::bail!("No tokens decoded");
-                                }
-                            }
-                            Err(err) => {
-                                eyre::bail!("Could not decode ABI: {err}")
-                            }
-                        };
+        if let Some((stack, memory, _)) = &res.state {
+            let generated_output = source
+                .generated_output
+                .as_ref()
+                .ok_or(eyre::eyre!("Could not find generated output!"))?;
 
-                        Ok(Some(format_token(token)))
-                    } else {
-                        eyre::bail!("No state present")
-                    }
-                }
-                // Failed to compile item inside of an `abi.encode` call. Move on gracefully.
-                Err(_) => Ok(None),
-            },
-            // Failed to parse the item inside of an `abi.encode` call. Move on gracefully.
-            Err(_) => Ok(None),
+            // If the expression is a variable declaration within the REPL contract,
+            // use its type- otherwise, attempt to infer the type.
+            let ty_opt = if let Some(expr) =
+                generated_output.intermediate.repl_contract_expressions.get(item)
+            {
+                Type::from_expression(expr)
+            } else {
+                self.infer_inner_expr_type(&source)
+            };
+
+            let ty = if let Some(ty) =
+                ty_opt.and_then(|ty| ty.try_as_ethabi(&generated_output.intermediate))
+            {
+                ty
+            } else {
+                // Move on gracefully; This type was denied for inspection.
+                return Ok(None)
+            };
+            let memory_offset = if let Some(offset) = stack.data().last() {
+                offset.as_usize()
+            } else {
+                eyre::bail!("No result found");
+            };
+            if memory_offset + 32 > memory.len() {
+                eyre::bail!("Memory size insufficient");
+            }
+            let data = &memory.data()[memory_offset + 32..];
+            let mut tokens = ethabi::decode(&[ty], data).wrap_err("Could not decode ABI")?;
+
+            tokens.pop().map_or(Err(eyre::eyre!("No tokens decoded")), |token| {
+                Ok(Some(format_token(token)))
+            })
+        } else {
+            eyre::bail!("No state present")
         }
     }
 

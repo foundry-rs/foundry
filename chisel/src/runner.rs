@@ -96,10 +96,7 @@ impl ChiselRunner {
         // Call the "run()" function of the REPL contract
         let call_res = self.call(self.sender, address, Bytes::from(RUN_SELECTOR), 0.into(), true);
 
-        match call_res {
-            Ok(call_res) => Ok((address, call_res)),
-            Err(e) => Err(e),
-        }
+        call_res.map(|res| (address, res))
     }
 
     /// Executes the call

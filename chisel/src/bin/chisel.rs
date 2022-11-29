@@ -3,10 +3,7 @@
 //! This module contains the core readline loop for the Chisel CLI as well as the
 //! executable's `main` function.
 
-use chisel::{
-    prelude::{ChiselCommand, ChiselDisptacher, DispatchResult},
-    solidity_helper::SolidityHelper,
-};
+use chisel::prelude::{ChiselCommand, ChiselDisptacher, DispatchResult, SolidityHelper};
 use clap::Parser;
 use foundry_cli::cmd::{forge::build::BuildArgs, LoadConfig};
 use foundry_common::evm::EvmArgs;
@@ -61,7 +58,7 @@ pub enum ChiselParserSub {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> eyre::Result<()> {
     // Parse command args
     let args = ChiselParser::parse();
 
@@ -69,16 +66,11 @@ async fn main() {
     let mut interrupt = false;
 
     // Create a new rustyline Editor
-    let mut rl = Editor::<SolidityHelper>::new().unwrap_or_else(|e| {
-        tracing::error!(target: "chisel-env", "Failed to initialize rustyline Editor! {}", e);
-        panic!("Failed to create a rustyline Editor for the chisel environment! {e}");
-    });
+    let mut rl = Editor::<SolidityHelper>::new()?;
     rl.set_helper(Some(SolidityHelper));
 
-    let (config, evm_opts) = args.load_config_and_evm_opts().unwrap_or_else(|e| {
-        tracing::error!(target: "chisel-env", "Failed to load Foundry config! {}", e);
-        panic!("Failed to load foundry config! {}", e)
-    });
+    // Load configuration
+    let (config, evm_opts) = args.load_config_and_evm_opts()?;
 
     // Create a new cli dispatcher
     let mut dispatcher = ChiselDisptacher::new(&chisel::session_source::SessionSourceConfig {
@@ -87,7 +79,7 @@ async fn main() {
         foundry_config: config,
         evm_opts,
         backend: None,
-    });
+    })?;
 
     // Check for chisel subcommands
     match &args.sub {
@@ -100,7 +92,7 @@ async fn main() {
                 DispatchResult::CommandFailed(error) => eprintln!("{}", error),
                 _ => panic!("Unexpected result: Please report this bug."),
             }
-            return
+            return Ok(())
         }
         Some(ChiselParserSub::Load { id }) | Some(ChiselParserSub::View { id }) => {
             // For both of these subcommands, we need to attempt to load the session from cache
@@ -108,7 +100,7 @@ async fn main() {
                 DispatchResult::CommandSuccess(_) => { /* Continue */ }
                 DispatchResult::CommandFailed(error) => {
                     eprintln!("{}", error);
-                    return
+                    return Ok(())
                 }
                 _ => panic!("Unexpected result! Please report this bug."),
             }
@@ -121,7 +113,7 @@ async fn main() {
                     }
                     _ => panic!("Unexpected result! Please report this bug."),
                 }
-                return
+                return Ok(())
             }
         }
         Some(ChiselParserSub::ClearCache) => {
@@ -130,7 +122,7 @@ async fn main() {
                 DispatchResult::CommandFailed(error) => eprintln!("{}", error),
                 _ => panic!("Unexpected result! Please report this bug."),
             }
-            return
+            return Ok(())
         }
         None => { /* No chisel subcommand present; Continue */ }
     }
@@ -186,6 +178,8 @@ async fn main() {
             }
         }
     }
+
+    Ok(())
 }
 
 /// [Provider] impl

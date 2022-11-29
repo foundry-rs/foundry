@@ -3,7 +3,7 @@
 //! This module contains the `ChiselSession` struct, which is the top-level
 //! wrapper for a serializable REPL session.
 
-use crate::{prelude::SessionSource, session_source::SessionSourceConfig};
+use crate::prelude::{SessionSource, SessionSourceConfig};
 use ethers_solc::Solc;
 use eyre::Result;
 use foundry_config::SolcReq;
@@ -25,10 +25,14 @@ pub struct ChiselSession {
 impl ChiselSession {
     /// Create a new `ChiselSession` with a specified `solc` version and configuration.
     ///
-    /// ### Panics
+    /// ### Takes
     ///
-    /// Panics if there is a failure to install the requested Solc version.
-    pub fn new(config: &SessionSourceConfig) -> Self {
+    /// A reference to a [SessionSourceConfig]
+    ///
+    /// ### Returns
+    ///
+    /// An owned [ChiselSession]
+    pub fn new(config: &SessionSourceConfig) -> Result<Self> {
         // Solc version precidence
         // - Foundry configuration / `--use` flag
         // - Latest installed version via SVM
@@ -60,11 +64,8 @@ impl ChiselSession {
         );
 
         // Return initialized ChiselSession with set solc version
-        if let Ok(solc) = solc {
-            Self { session_source: Some(SessionSource::new(&solc, config)), id: None }
-        } else {
-            panic!("Failed to install solidity via svm!");
-        }
+        solc.map(|solc| Self { session_source: Some(SessionSource::new(&solc, config)), id: None })
+            .map_err(|e| eyre::eyre!(e))
     }
 
     /// Render the full source code for the current session.
