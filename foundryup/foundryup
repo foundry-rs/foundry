@@ -179,7 +179,7 @@ main() {
     RUSTFLAGS="-C target-cpu=native" ensure cargo install --path ./cli --bins --locked --force --root $FOUNDRY_DIR
     # install anvil
     RUSTFLAGS="-C target-cpu=native" ensure cargo install --path ./anvil --bin anvil --locked --force --root $FOUNDRY_DIR
-    # install anvil
+    # install chisel
     RUSTFLAGS="-C target-cpu=native" ensure cargo install --path ./chisel --bin chisel --locked --force --root $FOUNDRY_DIR
 
     # If help2man is installed, use it to add Foundry man pages.
