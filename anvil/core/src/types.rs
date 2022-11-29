@@ -156,7 +156,7 @@ impl<'a> serde::Deserialize<'a> for Index {
     }
 }
 
-#[derive(Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeInfo {
     pub current_block_number: U64,
