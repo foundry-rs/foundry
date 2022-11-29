@@ -154,4 +154,14 @@ contract FileTest is DSTest {
         cheats.expectRevert(FOUNDRY_READ_ERR);
         cheats.fsMetadata("/etc/hosts");
     }
+
+    // not testing file cheatcodes per se
+    function testCheatCodeErrorPrefix() public {
+        try cheats.readFile("/etc/hosts") {
+            emit log("Error: reading /etc/hosts should revert");
+            fail();
+        } catch (bytes memory err) {
+            assertEq(err, abi.encodeWithSignature("CheatCodeError", FOUNDRY_READ_ERR));
+        }
+    }
 }

@@ -36,6 +36,6 @@ pub trait TraceIdentifier {
     #[allow(clippy::type_complexity)]
     fn identify_addresses(
         &mut self,
-        addresses: Vec<(&Address, Option<&Vec<u8>>)>,
+        addresses: Vec<(&Address, Option<&[u8]>)>,
     ) -> Vec<AddressIdentity>;
 }

@@ -1,12 +1,3 @@
-/// Call trace address identifiers.
-///
-/// Identifiers figure out what ABIs and labels belong to all the addresses of the trace.
-pub mod identifier;
-
-mod decoder;
-pub mod node;
-mod utils;
-
 use crate::{
     abi::CHEATCODE_ADDRESS, debug::Instruction, trace::identifier::LocalTraceIdentifier, CallKind,
 };
@@ -14,7 +5,7 @@ pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 use ethers::{
     abi::{ethereum_types::BigEndianHash, Address, RawLog},
     core::utils::to_checksum,
-    types::{GethDebugTracingOptions, GethTrace, StructLog, H256, U256},
+    types::{Bytes, GethDebugTracingOptions, GethTrace, StructLog, H256, U256},
 };
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use hashbrown::HashMap;
@@ -26,6 +17,15 @@ use std::{
     fmt::{self, Write},
 };
 use yansi::{Color, Paint};
+
+/// Call trace address identifiers.
+///
+/// Identifiers figure out what ABIs and labels belong to all the addresses of the trace.
+pub mod identifier;
+
+mod decoder;
+pub mod node;
+mod utils;
 
 pub type Traces = Vec<(TraceKind, CallTraceArena)>;
 
@@ -76,13 +76,13 @@ impl CallTraceArena {
         }
     }
 
-    pub fn addresses(&self) -> HashSet<(&Address, Option<&Vec<u8>>)> {
+    pub fn addresses(&self) -> HashSet<(&Address, Option<&[u8]>)> {
         self.arena
             .iter()
             .map(|node| {
                 if node.trace.created() {
-                    if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
-                        return (&node.trace.address, Some(bytes))
+                    if let RawOrDecodedReturnData::Raw(ref bytes) = node.trace.output {
+                        return (&node.trace.address, Some(bytes.as_ref()))
                     }
                 }
 
@@ -260,12 +260,11 @@ pub enum LogCallOrder {
     Call(usize),
 }
 
-// TODO: Maybe unify with output
 /// Raw or decoded calldata.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum RawOrDecodedCall {
     /// Raw calldata
-    Raw(Vec<u8>),
+    Raw(Bytes),
     /// Decoded calldata.
     ///
     /// The first element in the tuple is the function name, second is the function signature and
@@ -276,7 +275,7 @@ pub enum RawOrDecodedCall {
 impl RawOrDecodedCall {
     pub fn to_raw(&self) -> Vec<u8> {
         match self {
-            RawOrDecodedCall::Raw(raw) => raw.clone(),
+            RawOrDecodedCall::Raw(raw) => raw.to_vec(),
             RawOrDecodedCall::Decoded(_, _, _) => {
                 vec![]
             }
@@ -286,7 +285,7 @@ impl RawOrDecodedCall {
 
 impl Default for RawOrDecodedCall {
     fn default() -> Self {
-        RawOrDecodedCall::Raw(Vec::new())
+        RawOrDecodedCall::Raw(Default::default())
     }
 }
 
@@ -294,7 +293,7 @@ impl Default for RawOrDecodedCall {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum RawOrDecodedReturnData {
     /// Raw return data
-    Raw(Vec<u8>),
+    Raw(Bytes),
     /// Decoded return data
     Decoded(String),
 }
@@ -302,7 +301,7 @@ pub enum RawOrDecodedReturnData {
 impl RawOrDecodedReturnData {
     pub fn to_raw(&self) -> Vec<u8> {
         match self {
-            RawOrDecodedReturnData::Raw(raw) => raw.clone(),
+            RawOrDecodedReturnData::Raw(raw) => raw.to_vec(),
             RawOrDecodedReturnData::Decoded(val) => val.as_bytes().to_vec(),
         }
     }
@@ -310,7 +309,7 @@ impl RawOrDecodedReturnData {
 
 impl Default for RawOrDecodedReturnData {
     fn default() -> Self {
-        RawOrDecodedReturnData::Raw(Vec::new())
+        RawOrDecodedReturnData::Raw(Default::default())
     }
 }
 
@@ -354,7 +353,7 @@ pub struct CallTraceStep {
     pub gas_cost: u64,
     /// Change of the contract state after step execution (effect of the SLOAD/SSTORE instructions)
     pub state_diff: Option<(U256, U256)>,
-    /// Error (if any) after after step execution
+    /// Error (if any) after step execution
     pub error: Option<String>,
 }
 
