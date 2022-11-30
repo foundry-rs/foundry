@@ -1,11 +1,11 @@
 //! forge tests for core functionality
 
 use crate::{config::*, test_helpers::filter::Filter};
-use ethers::types::Address;
+
 use forge::result::SuiteResult;
-use foundry_config::Config;
+
 use foundry_evm::trace::TraceKind;
-use std::{collections::BTreeMap, env, str::FromStr};
+use std::{collections::BTreeMap, env};
 
 #[test]
 fn test_core() {

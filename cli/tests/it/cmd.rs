@@ -278,6 +278,15 @@ forgetest!(can_init_quiet, |prj: TestProject, mut cmd: TestCommand| {
     let _ = cmd.output();
 });
 
+// `forge init foobar` works with dir argument
+forgetest!(can_init_with_dir, |prj: TestProject, mut cmd: TestCommand| {
+    prj.create_file("README.md", "non-empty dir");
+    cmd.args(["init", "foobar"]);
+
+    cmd.assert_success();
+    assert!(prj.root().join("foobar").exists());
+});
+
 // `forge init` does only work on non-empty dirs
 forgetest!(can_init_non_empty, |prj: TestProject, mut cmd: TestCommand| {
     prj.create_file("README.md", "non-empty dir");

@@ -36,7 +36,7 @@ use anvil_core::{
         },
         EthRequest,
     },
-    types::{EvmMineOptions, Forking, Index, Work},
+    types::{EvmMineOptions, Forking, Index, NodeEnvironment, NodeForkConfig, NodeInfo, Work},
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use ethers::{
@@ -296,6 +296,7 @@ impl EthApi {
             }
             EthRequest::DumpState(_) => self.anvil_dump_state().await.to_rpc_result(),
             EthRequest::LoadState(buf) => self.anvil_load_state(buf).await.to_rpc_result(),
+            EthRequest::NodeInfo(_) => self.anvil_node_info().await.to_rpc_result(),
             EthRequest::EvmSnapshot(_) => self.evm_snapshot().await.to_rpc_result(),
             EthRequest::EvmRevert(id) => self.evm_revert(id).await.to_rpc_result(),
             EthRequest::EvmIncreaseTime(time) => self.evm_increase_time(time).await.to_rpc_result(),
@@ -740,7 +741,7 @@ impl EthApi {
             let bypass_signature = self.backend.cheats().bypass_signature();
             let transaction = sign::build_typed_transaction(request, bypass_signature)?;
             trace!(target : "node", ?from, "eth_sendTransaction: impersonating");
-            PendingTransaction::with_sender(transaction, from)
+            PendingTransaction::with_impersonated(transaction, from)
         } else {
             let transaction = self.sign_request(&from, request)?;
             PendingTransaction::new(transaction)?
@@ -840,7 +841,7 @@ impl EthApi {
 
         let (exit, out, gas, _) =
             self.backend.call(request, fees, Some(block_request), overrides).await?;
-        trace!(target = "node", "Call status {:?}, gas {}", exit, gas);
+        trace!(target : "node", "Call status {:?}, gas {}", exit, gas);
 
         ensure_return_ok(exit, &out)
     }
@@ -1481,6 +1482,45 @@ impl EthApi {
         self.backend.load_state(buf).await
     }
 
+    /// Retrieves the Anvil node configuration params.
+    ///
+    /// Handler for RPC call: `anvil_nodeInfo`
+    pub async fn anvil_node_info(&self) -> Result<NodeInfo> {
+        node_info!("anvil_nodeInfo");
+
+        let env = self.backend.env().read();
+        let fork_config = self.backend.get_fork();
+        let tx_order = self.transaction_order.read();
+
+        Ok(NodeInfo {
+            current_block_number: self.backend.best_number(),
+            current_block_timestamp: env.block.timestamp.try_into().unwrap_or(u64::MAX),
+            current_block_hash: self.backend.best_hash(),
+            hard_fork: env.cfg.spec_id,
+            transaction_order: match *tx_order {
+                TransactionOrder::Fifo => "fifo".to_string(),
+                TransactionOrder::Fees => "fees".to_string(),
+            },
+            environment: NodeEnvironment {
+                base_fee: self.backend.base_fee(),
+                chain_id: self.backend.chain_id(),
+                gas_limit: self.backend.gas_limit(),
+                gas_price: self.backend.gas_price(),
+            },
+            fork_config: fork_config
+                .map(|fork| {
+                    let config = fork.config.read();
+
+                    NodeForkConfig {
+                        fork_url: Some(config.eth_rpc_url.clone()),
+                        fork_block_number: Some(config.block_number),
+                        fork_retry_backoff: Some(config.backoff.as_millis()),
+                    }
+                })
+                .unwrap_or_default(),
+        })
+    }
+
     /// Snapshot the state of the blockchain at the current block.
     ///
     /// Handler for RPC call: `evm_snapshot`
@@ -1635,7 +1675,7 @@ impl EthApi {
         let bypass_signature = self.backend.cheats().bypass_signature();
         let transaction = sign::build_typed_transaction(request, bypass_signature)?;
 
-        let pending_transaction = PendingTransaction::with_sender(transaction, from);
+        let pending_transaction = PendingTransaction::with_impersonated(transaction, from);
 
         // pre-validate
         self.backend.validate_pool_transaction(&pending_transaction).await?;
@@ -2044,6 +2084,15 @@ impl EthApi {
         block_number: Option<BlockId>,
     ) -> Result<U256> {
         let block_request = self.block_request(block_number).await?;
+
+        if let BlockRequest::Number(number) = &block_request {
+            if let Some(fork) = self.get_fork() {
+                if fork.predates_fork_inclusive(number.as_u64()) {
+                    return Ok(fork.get_nonce(address, number.as_u64()).await?)
+                }
+            }
+        }
+
         let nonce = self.backend.get_nonce(address, Some(block_request)).await?;
 
         Ok(nonce)

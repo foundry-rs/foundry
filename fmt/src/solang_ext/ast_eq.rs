@@ -17,11 +17,7 @@ fn to_num_reversed(string: &str) -> U256 {
     if string.is_empty() {
         return U256::from(0)
     }
-    let mut string = dbg!(string.replace('_', ""));
-    unsafe {
-        string.as_mut_vec().reverse();
-    }
-    dbg!(dbg!(string).trim().parse().unwrap())
+    string.replace('_', "").trim().chars().rev().collect::<String>().parse().unwrap()
 }
 
 /// Helper to filter [ParameterList] to omit empty

@@ -1,4 +1,5 @@
-use ethers_core::types::H256;
+use ethers_core::types::{H256, U256, U64};
+use revm::SpecId;
 
 #[cfg(feature = "serde")]
 use serde::{de::Error, Deserializer, Serializer};
@@ -85,8 +86,6 @@ impl serde::Serialize for Work {
     where
         S: Serializer,
     {
-        use ethers_core::types::U256;
-
         if let Some(num) = self.number {
             (&self.pow_hash, &self.seed_hash, &self.target, U256::from(num)).serialize(s)
         } else {
@@ -155,4 +154,33 @@ impl<'a> serde::Deserialize<'a> for Index {
 
         deserializer.deserialize_any(IndexVisitor)
     }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeInfo {
+    pub current_block_number: U64,
+    pub current_block_timestamp: u64,
+    pub current_block_hash: H256,
+    pub hard_fork: SpecId,
+    pub transaction_order: String,
+    pub environment: NodeEnvironment,
+    pub fork_config: NodeForkConfig,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeEnvironment {
+    pub base_fee: U256,
+    pub chain_id: U256,
+    pub gas_limit: U256,
+    pub gas_price: U256,
+}
+
+#[derive(Debug, Clone, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeForkConfig {
+    pub fork_url: Option<String>,
+    pub fork_block_number: Option<u64>,
+    pub fork_retry_backoff: Option<u128>,
 }

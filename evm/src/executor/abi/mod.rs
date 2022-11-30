@@ -17,6 +17,7 @@ ethers::contract::abigen!(
     r#"[
             struct Log {bytes32[] topics; bytes data;}
             struct Rpc {string name; string url;}
+            struct FsMetadata {bool isDir; bool isSymlink; uint256 length; bool readOnly; uint256 modified; uint256 accessed; uint256 created;}
             roll(uint256)
             warp(uint256)
             difficulty(uint256)
@@ -90,6 +91,7 @@ ethers::contract::abigen!(
             writeLine(string,string)
             closeFile(string)
             removeFile(string)
+            fsMetadata(string)(FsMetadata)
             toString(bytes)
             toString(address)
             toString(uint256)
