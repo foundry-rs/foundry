@@ -149,6 +149,11 @@ const IPC_HELP: &str = "Launch an ipc server at the given path or default path =
 impl NodeArgs {
     pub fn into_node_config(self) -> NodeConfig {
         let genesis_balance = WEI_IN_ETHER.saturating_mul(self.balance.into());
+        let compute_units_per_second = if self.evm_opts.no_rate_limit {
+            Some(u64::MAX)
+        } else {
+            self.evm_opts.compute_units_per_second
+        };
 
         NodeConfig::default()
             .with_gas_limit(self.evm_opts.gas_limit)
@@ -168,7 +173,7 @@ impl NodeArgs {
             .fork_request_timeout(self.evm_opts.fork_request_timeout.map(Duration::from_millis))
             .fork_request_retries(self.evm_opts.fork_request_retries)
             .fork_retry_backoff(self.evm_opts.fork_retry_backoff.map(Duration::from_millis))
-            .fork_compute_units_per_second(self.evm_opts.compute_units_per_second)
+            .fork_compute_units_per_second(compute_units_per_second)
             .with_eth_rpc_url(self.evm_opts.fork_url.map(|fork| fork.url))
             .with_base_fee(self.evm_opts.block_base_fee_per_gas)
             .with_storage_caching(self.evm_opts.no_storage_caching)
@@ -304,6 +309,21 @@ pub struct AnvilEvmArgs {
         help_heading = "FORK CONFIG"
     )]
     pub compute_units_per_second: Option<u64>,
+
+    /// Disables rate limiting for this node's provider.
+    ///
+    /// default value: false
+    ///
+    /// See --fork-url.
+    /// See also, https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups
+    #[clap(
+        long,
+        requires = "fork_url",
+        value_name = "NO_RATE_LIMITS",
+        help = "Disables rate limiting for this node provider.",
+        help_heading = "FORK CONFIG"
+    )]
+    pub no_rate_limit: bool,
 
     /// Explicitly disables the use of RPC caching.
     ///
