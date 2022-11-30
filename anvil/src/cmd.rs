@@ -149,7 +149,7 @@ const IPC_HELP: &str = "Launch an ipc server at the given path or default path =
 impl NodeArgs {
     pub fn into_node_config(self) -> NodeConfig {
         let genesis_balance = WEI_IN_ETHER.saturating_mul(self.balance.into());
-        let compute_units_per_second = if self.evm_opts.no_rate_limits {
+        let compute_units_per_second = if self.evm_opts.no_rate_limit {
             Some(u64::MAX)
         } else {
             self.evm_opts.compute_units_per_second
@@ -323,7 +323,7 @@ pub struct AnvilEvmArgs {
         help = "Disables rate limiting for this node provider.",
         help_heading = "FORK CONFIG"
     )]
-    pub no_rate_limits: bool,
+    pub no_rate_limit: bool,
 
     /// Explicitly disables the use of RPC caching.
     ///
