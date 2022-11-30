@@ -144,6 +144,14 @@ pub struct NodeArgs {
     pub state: Option<StateFile>,
 
     #[clap(
+        short,
+        long,
+        help = "Interval in seconds at which the status is to be dumped to disk. See --state and --dump-state",
+        value_name = "SECONDS"
+    )]
+    pub state_interval: Option<u64>,
+
+    #[clap(
         long,
         help = "Dump the state of chain on exit to the given file. If the value is a directory, the state will be written to `<VALUE>/state.json`.",
         value_name = "PATH",
@@ -180,6 +188,9 @@ const IPC_HELP: &str =
 #[cfg(not(windows))]
 const IPC_HELP: &str = "Launch an ipc server at the given path or default path = `/tmp/anvil.ipc`";
 
+/// Default interval for periodically dumping the state.
+const DEFAULT_DUMP_INTERVAL: Duration = Duration::from_secs(60);
+
 impl NodeArgs {
     pub fn into_node_config(self) -> NodeConfig {
         let genesis_balance = WEI_IN_ETHER.saturating_mul(self.balance.into());
@@ -188,7 +199,7 @@ impl NodeArgs {
             .with_gas_limit(self.evm_opts.gas_limit)
             .with_gas_price(self.evm_opts.gas_price)
             .with_hardfork(self.hardfork)
-            .with_blocktime(self.block_time.map(std::time::Duration::from_secs))
+            .with_blocktime(self.block_time.map(Duration::from_secs))
             .with_no_mining(self.no_mining)
             .with_account_generator(self.account_generator())
             .with_genesis_balance(genesis_balance)
@@ -244,6 +255,8 @@ impl NodeArgs {
     /// See also [crate::spawn()]
     pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
         let dump_state = self.dump_state_path();
+        let dump_interval =
+            self.state_interval.map(Duration::from_secs).unwrap_or(DEFAULT_DUMP_INTERVAL);
 
         let (api, mut handle) = crate::spawn(self.into_node_config()).await;
 
@@ -258,7 +271,7 @@ impl NodeArgs {
         let task_manager = handle.task_manager();
         let mut on_shutdown = task_manager.on_shutdown();
 
-        let mut state_dumper = PeriodicStateDumper::new(api, dump_state);
+        let mut state_dumper = PeriodicStateDumper::new(api, dump_state, dump_interval);
 
         task_manager.spawn(async move {
             // await shutdown signal but also periodically flush state
@@ -411,7 +424,7 @@ struct PeriodicStateDumper {
 }
 
 impl PeriodicStateDumper {
-    fn new(api: EthApi, dump_state: Option<PathBuf>) -> Self {
+    fn new(api: EthApi, dump_state: Option<PathBuf>, interval: Duration) -> Self {
         let dump_state = dump_state.map(|mut dump_state| {
             if dump_state.is_dir() {
                 dump_state = dump_state.join("state.json");
@@ -420,7 +433,6 @@ impl PeriodicStateDumper {
         });
 
         // periodically flush the state
-        let interval = Duration::from_secs(60);
         let interval = tokio::time::interval_at(Instant::now() + interval, interval);
         Self { in_progress_dump: None, api, dump_state, interval }
     }
