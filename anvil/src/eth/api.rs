@@ -2,7 +2,7 @@ use crate::{
     eth::{
         backend,
         backend::{
-            mem::MIN_TRANSACTION_GAS, notifications::NewBlockNotifications,
+            db::SerializableState, mem::MIN_TRANSACTION_GAS, notifications::NewBlockNotifications,
             validate::TransactionValidator,
         },
         error::{
@@ -1466,6 +1466,11 @@ impl EthApi {
     pub async fn anvil_dump_state(&self) -> Result<Bytes> {
         node_info!("anvil_dumpState");
         self.backend.dump_state().await
+    }
+
+    /// Returns the current state
+    pub async fn serialized_state(&self) -> Result<SerializableState> {
+        self.backend.serialized_state().await
     }
 
     /// Append chain state buffer to current chain. Will overwrite any conflicting addresses or

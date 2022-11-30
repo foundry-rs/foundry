@@ -1,5 +1,7 @@
 use crate::{
-    config::DEFAULT_MNEMONIC, eth::pool::transactions::TransactionOrder, genesis::Genesis,
+    config::DEFAULT_MNEMONIC,
+    eth::{backend::db::SerializableState, pool::transactions::TransactionOrder, EthApi},
+    genesis::Genesis,
     AccountGenerator, Hardfork, NodeConfig, CHAIN_ID,
 };
 use anvil_server::ServerConfig;
@@ -7,16 +9,22 @@ use clap::Parser;
 use core::fmt;
 use ethers::utils::WEI_IN_ETHER;
 use foundry_config::Chain;
+use futures::FutureExt;
 use std::{
+    future::Future,
     net::IpAddr,
+    path::PathBuf,
+    pin::Pin,
     str::FromStr,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
+    task::{Context, Poll},
     time::Duration,
 };
-use tracing::log::trace;
+use tokio::time::{Instant, Interval};
+use tracing::{error, trace};
 
 #[derive(Clone, Debug, Parser)]
 pub struct NodeArgs {
@@ -128,6 +136,40 @@ pub struct NodeArgs {
 
     #[clap(
         long,
+        help = "This is an alias for bot --load-state and --dump-state. It initializes the chain with the state stored at the file, if it exists, and dumps the chain's state on exit",
+        value_name = "PATH",
+        value_parser = StateFile::parse,
+        conflicts_with_all = &["init", "dump_state", "load_state"]
+    )]
+    pub state: Option<StateFile>,
+
+    #[clap(
+        short,
+        long,
+        help = "Interval in seconds at which the status is to be dumped to disk. See --state and --dump-state",
+        value_name = "SECONDS"
+    )]
+    pub state_interval: Option<u64>,
+
+    #[clap(
+        long,
+        help = "Dump the state of chain on exit to the given file. If the value is a directory, the state will be written to `<VALUE>/state.json`.",
+        value_name = "PATH",
+        conflicts_with = "init"
+    )]
+    pub dump_state: Option<PathBuf>,
+
+    #[clap(
+        long,
+        help = "Initialize the chain from a previously saved state snapshot.",
+        value_name = "PATH",
+        value_parser = SerializableState::parse,
+        conflicts_with = "init"
+    )]
+    pub load_state: Option<SerializableState>,
+
+    #[clap(
+        long,
         help = IPC_HELP,
         value_name = "PATH",
         visible_alias = "ipcpath"
@@ -146,6 +188,9 @@ const IPC_HELP: &str =
 #[cfg(not(windows))]
 const IPC_HELP: &str = "Launch an ipc server at the given path or default path = `/tmp/anvil.ipc`";
 
+/// Default interval for periodically dumping the state.
+const DEFAULT_DUMP_INTERVAL: Duration = Duration::from_secs(60);
+
 impl NodeArgs {
     pub fn into_node_config(self) -> NodeConfig {
         let genesis_balance = WEI_IN_ETHER.saturating_mul(self.balance.into());
@@ -159,7 +204,7 @@ impl NodeArgs {
             .with_gas_limit(self.evm_opts.gas_limit)
             .with_gas_price(self.evm_opts.gas_price)
             .with_hardfork(self.hardfork)
-            .with_blocktime(self.block_time.map(std::time::Duration::from_secs))
+            .with_blocktime(self.block_time.map(Duration::from_secs))
             .with_no_mining(self.no_mining)
             .with_account_generator(self.account_generator())
             .with_genesis_balance(genesis_balance)
@@ -188,6 +233,8 @@ impl NodeArgs {
             .with_ipc(self.ipc)
             .with_code_size_limit(self.evm_opts.code_size_limit)
             .set_pruned_history(self.prune_history)
+            .with_init_state(self.load_state)
+            .with_init_state(self.state.and_then(|s| s.state))
     }
 
     fn account_generator(&self) -> AccountGenerator {
@@ -203,10 +250,19 @@ impl NodeArgs {
         gen
     }
 
+    /// Returns the location where to dump the state to.
+    fn dump_state_path(&self) -> Option<PathBuf> {
+        self.dump_state.as_ref().or_else(|| self.state.as_ref().map(|s| &s.path)).cloned()
+    }
+
     /// Starts the node
     ///
     /// See also [crate::spawn()]
     pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+        let dump_state = self.dump_state_path();
+        let dump_interval =
+            self.state_interval.map(Duration::from_secs).unwrap_or(DEFAULT_DUMP_INTERVAL);
+
         let (api, mut handle) = crate::spawn(self.into_node_config()).await;
 
         // sets the signal handler to gracefully shutdown.
@@ -218,10 +274,20 @@ impl NodeArgs {
         let mut signal = handle.shutdown_signal_mut().take();
 
         let task_manager = handle.task_manager();
-        let on_shutdown = task_manager.on_shutdown();
+        let mut on_shutdown = task_manager.on_shutdown();
+
+        let mut state_dumper = PeriodicStateDumper::new(api, dump_state, dump_interval);
 
         task_manager.spawn(async move {
-            on_shutdown.await;
+            // await shutdown signal but also periodically flush state
+            tokio::select! {
+                _ = &mut on_shutdown =>{}
+                _ = &mut state_dumper =>{}
+            }
+
+            // shutdown received
+            state_dumper.dump().await;
+
             // cleaning up and shutting down
             // this will make sure that the fork RPC cache is flushed if caching is configured
             if let Some(fork) = fork.take() {
@@ -367,6 +433,115 @@ pub struct AnvilEvmArgs {
         visible_alias = "tracing"
     )]
     pub steps_tracing: bool,
+}
+
+/// Helper type to periodically dump the state of the chain to disk
+struct PeriodicStateDumper {
+    in_progress_dump: Option<Pin<Box<dyn Future<Output = ()> + Send + Sync + 'static>>>,
+    api: EthApi,
+    dump_state: Option<PathBuf>,
+    interval: Interval,
+}
+
+impl PeriodicStateDumper {
+    fn new(api: EthApi, dump_state: Option<PathBuf>, interval: Duration) -> Self {
+        let dump_state = dump_state.map(|mut dump_state| {
+            if dump_state.is_dir() {
+                dump_state = dump_state.join("state.json");
+            }
+            dump_state
+        });
+
+        // periodically flush the state
+        let interval = tokio::time::interval_at(Instant::now() + interval, interval);
+        Self { in_progress_dump: None, api, dump_state, interval }
+    }
+
+    async fn dump(&self) {
+        if let Some(state) = self.dump_state.clone() {
+            Self::dump_state(self.api.clone(), state).await
+        }
+    }
+
+    /// Infallible state dump
+    async fn dump_state(api: EthApi, dump_state: PathBuf) {
+        trace!(path=?dump_state, "Dumping state on shutdown");
+        match api.serialized_state().await {
+            Ok(state) => {
+                if let Err(err) = foundry_common::fs::write_json_file(&dump_state, &state) {
+                    error!(?err, "Failed to dump state");
+                } else {
+                    trace!(path=?dump_state, "Dumped state on shutdown");
+                }
+            }
+            Err(err) => {
+                error!(?err, "Failed to extract state");
+            }
+        }
+    }
+}
+
+// An endless future that periodically dumps the state to disk if configured.
+impl Future for PeriodicStateDumper {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        if this.dump_state.is_none() {
+            return Poll::Pending
+        }
+
+        loop {
+            if let Some(mut flush) = this.in_progress_dump.take() {
+                match flush.poll_unpin(cx) {
+                    Poll::Ready(_) => {
+                        this.interval.reset();
+                    }
+                    Poll::Pending => {
+                        this.in_progress_dump = Some(flush);
+                        return Poll::Pending
+                    }
+                }
+            }
+
+            if this.interval.poll_tick(cx).is_ready() {
+                let api = this.api.clone();
+                let path = this.dump_state.clone().expect("exists; see above");
+                this.in_progress_dump =
+                    Some(Box::pin(async move { PeriodicStateDumper::dump_state(api, path).await }));
+            } else {
+                break
+            }
+        }
+
+        Poll::Pending
+    }
+}
+
+/// Represents the --state flag and where to load from, or dump the state to
+#[derive(Debug, Clone)]
+pub struct StateFile {
+    pub path: PathBuf,
+    pub state: Option<SerializableState>,
+}
+
+impl StateFile {
+    /// This is used as the clap `value_parser` implementation to parse from file but only if it
+    /// exists
+    fn parse(path: &str) -> Result<Self, String> {
+        let mut path = PathBuf::from(path);
+        if path.is_dir() {
+            path = path.join("state.json");
+        }
+        let mut state = Self { path, state: None };
+        if !state.path.exists() {
+            return Ok(state)
+        }
+
+        state.state = Some(SerializableState::load(&state.path).map_err(|err| err.to_string())?);
+
+        Ok(state)
+    }
 }
 
 /// Represents the input URL for a fork with an optional trailing block number:
