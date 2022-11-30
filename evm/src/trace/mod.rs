@@ -10,7 +10,7 @@ use ethers::{
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use hashbrown::HashMap;
 use node::CallTraceNode;
-use revm::{CallContext, Memory, Return, Stack};
+use revm::{opcode, CallContext, Memory, Return, Stack};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
@@ -91,40 +91,84 @@ impl CallTraceArena {
             .collect()
     }
 
-    pub fn geth_trace(&self, receipt_gas_used: U256, opts: GethDebugTracingOptions) -> GethTrace {
-        let mut storage = HashMap::<Address, BTreeMap<H256, H256>>::new();
-        let mut trace = self.arena.iter().fold(GethTrace::default(), |mut acc, trace| {
-            acc.failed |= !trace.trace.success;
+    // Recursively fill in the geth trace by going through the traces
+    fn add_to_geth_trace(
+        &self,
+        storage: &mut HashMap<Address, BTreeMap<H256, H256>>,
+        trace_node: &CallTraceNode,
+        struct_logs: &mut Vec<StructLog>,
+        opts: &GethDebugTracingOptions,
+    ) {
+        let mut child_id = 0;
+        // Iterate over the steps inside the given trace
+        for step in trace_node.trace.steps.iter() {
+            let mut log: StructLog = step.into();
 
-            acc.struct_logs.extend(trace.trace.steps.iter().map(|step| {
-                let mut log: StructLog = step.into();
+            // Fill in memory and storage depending on the options
+            if !opts.disable_storage.unwrap_or_default() {
+                let contract_storage = storage.entry(step.contract).or_default();
+                if let Some((key, value)) = step.state_diff {
+                    contract_storage.insert(H256::from_uint(&key), H256::from_uint(&value));
+                    log.storage = Some(contract_storage.clone());
+                }
+            }
+            if opts.disable_stack.unwrap_or_default() {
+                log.stack = None;
+            }
+            if !opts.enable_memory.unwrap_or_default() {
+                log.memory = None;
+            }
 
-                if !opts.disable_storage.unwrap_or_default() {
-                    let contract_storage = storage.entry(step.contract).or_default();
-                    if let Some((key, value)) = step.state_diff {
-                        contract_storage.insert(H256::from_uint(&key), H256::from_uint(&value));
-                        log.storage = Some(contract_storage.clone());
+            // Add step to geth trace
+            struct_logs.push(log);
+
+            // Check if the step was a call
+            match step.op {
+                Instruction::OpCode(opc) => {
+                    match opc {
+                        // If yes, descend into a child trace
+                        opcode::DELEGATECALL |
+                        opcode::CALL |
+                        opcode::STATICCALL |
+                        opcode::CALLCODE => {
+                            self.add_to_geth_trace(
+                                storage,
+                                &self.arena[trace_node.children[child_id]],
+                                struct_logs,
+                                opts,
+                            );
+                            child_id += 1;
+                        }
+                        _ => {}
                     }
                 }
-                if opts.disable_stack.unwrap_or_default() {
-                    log.stack = None;
-                }
-                if !opts.enable_memory.unwrap_or_default() {
-                    log.memory = None;
-                }
+                Instruction::Cheatcode(_) => {}
+            }
+        }
+    }
 
-                log
-            }));
-
-            acc
-        });
-
-        trace.gas = receipt_gas_used.as_u64();
-        if let Some(last_trace) = self.arena.first() {
-            trace.return_value = last_trace.trace.output.to_raw().into();
+    /// Generate a geth-style trace e.g. for debug_traceTransaction
+    pub fn geth_trace(&self, receipt_gas_used: U256, opts: GethDebugTracingOptions) -> GethTrace {
+        if self.arena.is_empty() {
+            return Default::default()
         }
 
-        trace
+        let mut storage = HashMap::new();
+        // Fetch top-level trace
+        let main_trace_node = &self.arena[0];
+        let main_trace = &main_trace_node.trace;
+        // Start geth trace
+        let mut acc = GethTrace {
+            // If the top-level trace succeeded, then it was a success
+            failed: !main_trace.success,
+            gas: receipt_gas_used.as_u64(),
+            return_value: main_trace.output.to_bytes(),
+            ..Default::default()
+        };
+
+        self.add_to_geth_trace(&mut storage, main_trace_node, &mut acc.struct_logs, &opts);
+
+        acc
     }
 }
 
@@ -299,11 +343,16 @@ pub enum RawOrDecodedReturnData {
 }
 
 impl RawOrDecodedReturnData {
-    pub fn to_raw(&self) -> Vec<u8> {
+    /// Returns the data as [`Bytes`]
+    pub fn to_bytes(&self) -> Bytes {
         match self {
-            RawOrDecodedReturnData::Raw(raw) => raw.to_vec(),
-            RawOrDecodedReturnData::Decoded(val) => val.as_bytes().to_vec(),
+            RawOrDecodedReturnData::Raw(raw) => raw.clone(),
+            RawOrDecodedReturnData::Decoded(val) => val.as_bytes().to_vec().into(),
         }
+    }
+
+    pub fn to_raw(&self) -> Vec<u8> {
+        self.to_bytes().to_vec()
     }
 }
 
