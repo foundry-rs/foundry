@@ -10,7 +10,7 @@ use ethers::{
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use hashbrown::HashMap;
 use node::CallTraceNode;
-use revm::{CallContext, Memory, Return, Stack};
+use revm::{opcode, CallContext, Memory, Return, Stack};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
@@ -82,7 +82,7 @@ impl CallTraceArena {
             .map(|node| {
                 if node.trace.created() {
                     if let RawOrDecodedReturnData::Raw(ref bytes) = node.trace.output {
-                        return (&node.trace.address, Some(bytes.as_ref()))
+                        return (&node.trace.address, Some(bytes.as_ref()));
                     }
                 }
 
@@ -91,40 +91,78 @@ impl CallTraceArena {
             .collect()
     }
 
-    pub fn geth_trace(&self, receipt_gas_used: U256, opts: GethDebugTracingOptions) -> GethTrace {
-        let mut storage = HashMap::<Address, BTreeMap<H256, H256>>::new();
-        let mut trace = self.arena.iter().fold(GethTrace::default(), |mut acc, trace| {
-            acc.failed |= !trace.trace.success;
+    // Recursively fill in the geth trace by going through the traces
+    fn add_to_geth_trace(
+        &self,
+        storage: &mut HashMap<Address, BTreeMap<H256, H256>>,
+        trace_node: &CallTraceNode,
+        acc: &mut GethTrace,
+        opts: &GethDebugTracingOptions,
+    ) {
+        let mut child_id = 0;
+        // Iterate over the steps inside the given trace
+        for step in trace_node.trace.steps.iter() {
+            let mut log: StructLog = step.into();
 
-            acc.struct_logs.extend(trace.trace.steps.iter().map(|step| {
-                let mut log: StructLog = step.into();
+            // Fill in memory and storage depending on the options
+            if !opts.disable_storage.unwrap_or_default() {
+                let contract_storage = storage.entry(step.contract).or_default();
+                if let Some((key, value)) = step.state_diff {
+                    contract_storage.insert(H256::from_uint(&key), H256::from_uint(&value));
+                    log.storage = Some(contract_storage.clone());
+                }
+            }
+            if opts.disable_stack.unwrap_or_default() {
+                log.stack = None;
+            }
+            if !opts.enable_memory.unwrap_or_default() {
+                log.memory = None;
+            }
 
-                if !opts.disable_storage.unwrap_or_default() {
-                    let contract_storage = storage.entry(step.contract).or_default();
-                    if let Some((key, value)) = step.state_diff {
-                        contract_storage.insert(H256::from_uint(&key), H256::from_uint(&value));
-                        log.storage = Some(contract_storage.clone());
+            // Add step to geth trace
+            acc.struct_logs.push(log);
+
+            // Check if the step was a call
+            match step.op {
+                Instruction::OpCode(opc) => {
+                    match opc {
+                        // If yes, decend into a child trace
+                        opcode::DELEGATECALL
+                        | opcode::CALL
+                        | opcode::STATICCALL
+                        | opcode::CALLCODE => {
+                            self.add_to_geth_trace(
+                                storage,
+                                &self.arena[trace_node.children[child_id]],
+                                acc,
+                                opts,
+                            );
+                            child_id += 1;
+                        }
+                        _ => {}
                     }
                 }
-                if opts.disable_stack.unwrap_or_default() {
-                    log.stack = None;
-                }
-                if !opts.enable_memory.unwrap_or_default() {
-                    log.memory = None;
-                }
-
-                log
-            }));
-
-            acc
-        });
-
-        trace.gas = receipt_gas_used.as_u64();
-        if let Some(last_trace) = self.arena.first() {
-            trace.return_value = last_trace.trace.output.to_raw().into();
+                Instruction::Cheatcode(_) => {}
+            }
         }
+    }
 
-        trace
+    // Generate a geth-style trace e.g. for debug_traceTransaction
+    pub fn geth_trace(&self, receipt_gas_used: U256, opts: GethDebugTracingOptions) -> GethTrace {
+        let mut storage = HashMap::<Address, BTreeMap<H256, H256>>::new();
+        // Fetch top-level trace
+        let main_trace_node = &self.arena[0];
+        let main_trace = &main_trace_node.trace;
+        // Start geth trace
+        let mut acc = GethTrace::default();
+        // If the top-level trace succeeded, then it was a success
+        acc.failed = !main_trace.success;
+        self.add_to_geth_trace(&mut storage, &main_trace_node, &mut acc, &opts);
+
+        acc.gas = receipt_gas_used.as_u64();
+        acc.return_value = main_trace.output.to_raw().into();
+
+        acc
     }
 }
 
@@ -539,7 +577,7 @@ pub fn load_contracts(
             .iter()
             .filter_map(|(addr, name)| {
                 if let Ok(Some((_, (abi, _)))) = contracts.find_by_name_or_identifier(name) {
-                    return Some((*addr, (name.clone(), abi.clone())))
+                    return Some((*addr, (name.clone(), abi.clone())));
                 }
                 None
             })
