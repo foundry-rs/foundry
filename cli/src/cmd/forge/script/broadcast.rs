@@ -2,7 +2,7 @@ use super::{multi::MultiChainSequence, providers::ProvidersManager, sequence::Sc
 use crate::{
     cmd::{
         forge::script::{
-            receipts::wait_for_receipts, transaction::TransactionWithMetadata, verify::VerifyBundle,
+            receipts::clear_pendings, transaction::TransactionWithMetadata, verify::VerifyBundle,
         },
         has_batch_support, has_different_gas_calc,
     },
@@ -153,7 +153,7 @@ impl ScriptArgs {
                         update_progress!(pb, (index + already_broadcasted));
                         index += 1;
 
-                        wait_for_receipts(vec![tx_hash], deployment_sequence, provider.clone())
+                        clear_pendings(provider.clone(), deployment_sequence, Some(vec![tx_hash]))
                             .await?;
                     } else {
                         pending_transactions.push(tx_hash);
@@ -163,12 +163,9 @@ impl ScriptArgs {
                 if !pending_transactions.is_empty() {
                     let mut buffer = futures::stream::iter(pending_transactions).buffered(7);
 
-                    let mut tx_hashes = vec![];
-
                     while let Some(tx_hash) = buffer.next().await {
                         let tx_hash = tx_hash?;
                         deployment_sequence.add_pending(index, tx_hash);
-                        tx_hashes.push(tx_hash);
 
                         update_progress!(pb, (index + already_broadcasted));
                         index += 1;
@@ -179,7 +176,7 @@ impl ScriptArgs {
 
                     if !sequential_broadcast {
                         println!("##\nWaiting for receipts.");
-                        wait_for_receipts(tx_hashes, deployment_sequence, provider.clone()).await?;
+                        clear_pendings(provider.clone(), deployment_sequence, None).await?;
                     }
                 }
 
