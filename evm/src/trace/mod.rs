@@ -82,7 +82,7 @@ impl CallTraceArena {
             .map(|node| {
                 if node.trace.created() {
                     if let RawOrDecodedReturnData::Raw(ref bytes) = node.trace.output {
-                        return (&node.trace.address, Some(bytes.as_ref()));
+                        return (&node.trace.address, Some(bytes.as_ref()))
                     }
                 }
 
@@ -96,7 +96,7 @@ impl CallTraceArena {
         &self,
         storage: &mut HashMap<Address, BTreeMap<H256, H256>>,
         trace_node: &CallTraceNode,
-        acc: &mut GethTrace,
+        struct_logs: &mut Vec<StructLog>,
         opts: &GethDebugTracingOptions,
     ) {
         let mut child_id = 0;
@@ -120,21 +120,21 @@ impl CallTraceArena {
             }
 
             // Add step to geth trace
-            acc.struct_logs.push(log);
+            struct_logs.push(log);
 
             // Check if the step was a call
             match step.op {
                 Instruction::OpCode(opc) => {
                     match opc {
-                        // If yes, decend into a child trace
-                        opcode::DELEGATECALL
-                        | opcode::CALL
-                        | opcode::STATICCALL
-                        | opcode::CALLCODE => {
+                        // If yes, descend into a child trace
+                        opcode::DELEGATECALL |
+                        opcode::CALL |
+                        opcode::STATICCALL |
+                        opcode::CALLCODE => {
                             self.add_to_geth_trace(
                                 storage,
                                 &self.arena[trace_node.children[child_id]],
-                                acc,
+                                struct_logs,
                                 opts,
                             );
                             child_id += 1;
@@ -147,20 +147,26 @@ impl CallTraceArena {
         }
     }
 
-    // Generate a geth-style trace e.g. for debug_traceTransaction
+    /// Generate a geth-style trace e.g. for debug_traceTransaction
     pub fn geth_trace(&self, receipt_gas_used: U256, opts: GethDebugTracingOptions) -> GethTrace {
-        let mut storage = HashMap::<Address, BTreeMap<H256, H256>>::new();
+        if self.arena.is_empty() {
+            return Default::default()
+        }
+
+        let mut storage = HashMap::new();
         // Fetch top-level trace
         let main_trace_node = &self.arena[0];
         let main_trace = &main_trace_node.trace;
         // Start geth trace
-        let mut acc = GethTrace::default();
-        // If the top-level trace succeeded, then it was a success
-        acc.failed = !main_trace.success;
-        self.add_to_geth_trace(&mut storage, &main_trace_node, &mut acc, &opts);
+        let mut acc = GethTrace {
+            // If the top-level trace succeeded, then it was a success
+            failed: !main_trace.success,
+            gas: receipt_gas_used.as_u64(),
+            return_value: main_trace.output.to_bytes(),
+            ..Default::default()
+        };
 
-        acc.gas = receipt_gas_used.as_u64();
-        acc.return_value = main_trace.output.to_raw().into();
+        self.add_to_geth_trace(&mut storage, main_trace_node, &mut acc.struct_logs, &opts);
 
         acc
     }
@@ -337,11 +343,16 @@ pub enum RawOrDecodedReturnData {
 }
 
 impl RawOrDecodedReturnData {
-    pub fn to_raw(&self) -> Vec<u8> {
+    /// Returns the data as [`Bytes`]
+    pub fn to_bytes(&self) -> Bytes {
         match self {
-            RawOrDecodedReturnData::Raw(raw) => raw.to_vec(),
-            RawOrDecodedReturnData::Decoded(val) => val.as_bytes().to_vec(),
+            RawOrDecodedReturnData::Raw(raw) => raw.clone(),
+            RawOrDecodedReturnData::Decoded(val) => val.as_bytes().to_vec().into(),
         }
+    }
+
+    pub fn to_raw(&self) -> Vec<u8> {
+        self.to_bytes().to_vec()
     }
 }
 
@@ -577,7 +588,7 @@ pub fn load_contracts(
             .iter()
             .filter_map(|(addr, name)| {
                 if let Ok(Some((_, (abi, _)))) = contracts.find_by_name_or_identifier(name) {
-                    return Some((*addr, (name.clone(), abi.clone())));
+                    return Some((*addr, (name.clone(), abi.clone())))
                 }
                 None
             })
