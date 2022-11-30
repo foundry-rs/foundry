@@ -170,6 +170,51 @@ async fn can_impersonate_gnosis_safe() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_impersonate_multiple_account() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let impersonate0 = Address::random();
+    let impersonate1 = Address::random();
+    let to = Address::random();
+
+    let val = 1337u64;
+    let funding = U256::from(1e18 as u64);
+    // fund the impersonated accounts
+    api.anvil_set_balance(impersonate0, funding).await.unwrap();
+    api.anvil_set_balance(impersonate1, funding).await.unwrap();
+
+    let tx = TransactionRequest::new().from(impersonate0).to(to).value(val);
+
+    api.anvil_impersonate_account(impersonate0).await.unwrap();
+    api.anvil_impersonate_account(impersonate1).await.unwrap();
+
+    let res0 = provider.send_transaction(tx.clone(), None).await.unwrap().await.unwrap().unwrap();
+    assert_eq!(res0.from, impersonate0);
+
+    let nonce = provider.get_transaction_count(impersonate0, None).await.unwrap();
+    assert_eq!(nonce, 1u64.into());
+
+    let receipt = provider.get_transaction_receipt(res0.transaction_hash).await.unwrap().unwrap();
+    assert_eq!(res0, receipt);
+
+    let res1 = provider
+        .send_transaction(tx.from(impersonate1), None)
+        .await
+        .unwrap()
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(res1.from, impersonate1);
+
+    let nonce = provider.get_transaction_count(impersonate1, None).await.unwrap();
+    assert_eq!(nonce, 1u64.into());
+
+    let receipt = provider.get_transaction_receipt(res1.transaction_hash).await.unwrap().unwrap();
+    assert_eq!(res1, receipt);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_mine_manually() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
