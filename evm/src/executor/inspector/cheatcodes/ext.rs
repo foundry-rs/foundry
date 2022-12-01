@@ -156,9 +156,18 @@ fn set_env(key: &str, val: &str) -> Result<Bytes, Bytes> {
     }
 }
 
-fn get_env(key: &str, r#type: ParamType, delim: Option<&str>) -> Result<Bytes, Bytes> {
+fn get_env(
+    key: &str,
+    r#type: ParamType,
+    delim: Option<&str>,
+    default: Option<&String>,
+) -> Result<Bytes, Bytes> {
     let msg = format!("Failed to get environment variable `{key}` as type `{}`", &r#type);
-    let val = env::var(key).map_err::<Bytes, _>(|e| format!("{msg}: {e}").encode().into())?;
+    let val = if let Some(value) = default {
+        env::var(key).unwrap_or(value.clone())
+    } else {
+        env::var(key).map_err::<Bytes, _>(|e| format!("{msg}: {e}").encode().into())?
+    };
     let val = if let Some(d) = delim {
         val.split(d).map(|v| v.trim().to_string()).collect()
     } else {
@@ -500,22 +509,85 @@ pub fn apply(
         HEVMCalls::GetCode(inner) => get_code(state, &inner.0),
         HEVMCalls::GetDeployedCode(inner) => get_deployed_code(state, &inner.0),
         HEVMCalls::SetEnv(inner) => set_env(&inner.0, &inner.1),
-        HEVMCalls::EnvBool0(inner) => get_env(&inner.0, ParamType::Bool, None),
-        HEVMCalls::EnvUint0(inner) => get_env(&inner.0, ParamType::Uint(256), None),
-        HEVMCalls::EnvInt0(inner) => get_env(&inner.0, ParamType::Int(256), None),
-        HEVMCalls::EnvAddress0(inner) => get_env(&inner.0, ParamType::Address, None),
-        HEVMCalls::EnvBytes320(inner) => get_env(&inner.0, ParamType::FixedBytes(32), None),
-        HEVMCalls::EnvString0(inner) => get_env(&inner.0, ParamType::String, None),
-        HEVMCalls::EnvBytes0(inner) => get_env(&inner.0, ParamType::Bytes, None),
-        HEVMCalls::EnvBool1(inner) => get_env(&inner.0, ParamType::Bool, Some(&inner.1)),
-        HEVMCalls::EnvUint1(inner) => get_env(&inner.0, ParamType::Uint(256), Some(&inner.1)),
-        HEVMCalls::EnvInt1(inner) => get_env(&inner.0, ParamType::Int(256), Some(&inner.1)),
-        HEVMCalls::EnvAddress1(inner) => get_env(&inner.0, ParamType::Address, Some(&inner.1)),
-        HEVMCalls::EnvBytes321(inner) => {
-            get_env(&inner.0, ParamType::FixedBytes(32), Some(&inner.1))
+        HEVMCalls::EnvBool0(inner) => get_env(&inner.0, ParamType::Bool, None, None),
+        HEVMCalls::EnvUint0(inner) => get_env(&inner.0, ParamType::Uint(256), None, None),
+        HEVMCalls::EnvInt0(inner) => get_env(&inner.0, ParamType::Int(256), None, None),
+        HEVMCalls::EnvAddress0(inner) => get_env(&inner.0, ParamType::Address, None, None),
+        HEVMCalls::EnvBytes320(inner) => get_env(&inner.0, ParamType::FixedBytes(32), None, None),
+        HEVMCalls::EnvString0(inner) => get_env(&inner.0, ParamType::String, None, None),
+        HEVMCalls::EnvBytes0(inner) => get_env(&inner.0, ParamType::Bytes, None, None),
+        HEVMCalls::EnvBool1(inner) => get_env(&inner.0, ParamType::Bool, Some(&inner.1), None),
+        HEVMCalls::EnvUint1(inner) => get_env(&inner.0, ParamType::Uint(256), Some(&inner.1), None),
+        HEVMCalls::EnvInt1(inner) => get_env(&inner.0, ParamType::Int(256), Some(&inner.1), None),
+        HEVMCalls::EnvAddress1(inner) => {
+            get_env(&inner.0, ParamType::Address, Some(&inner.1), None)
         }
-        HEVMCalls::EnvString1(inner) => get_env(&inner.0, ParamType::String, Some(&inner.1)),
-        HEVMCalls::EnvBytes1(inner) => get_env(&inner.0, ParamType::Bytes, Some(&inner.1)),
+        HEVMCalls::EnvBytes321(inner) => {
+            get_env(&inner.0, ParamType::FixedBytes(32), Some(&inner.1), None)
+        }
+        HEVMCalls::EnvString1(inner) => get_env(&inner.0, ParamType::String, Some(&inner.1), None),
+        HEVMCalls::EnvBytes1(inner) => get_env(&inner.0, ParamType::Bytes, Some(&inner.1), None),
+        HEVMCalls::EnvWithDefault0(inner) => {
+            get_env(&inner.0, ParamType::Bool, None, Some(&inner.1.to_string()))
+        }
+        HEVMCalls::EnvWithDefault1(inner) => {
+            get_env(&inner.0, ParamType::Uint(256), None, Some(&inner.1.to_string()))
+        }
+        HEVMCalls::EnvWithDefault2(inner) => {
+            get_env(&inner.0, ParamType::Int(256), None, Some(&inner.1.to_string()))
+        }
+        HEVMCalls::EnvWithDefault3(inner) => {
+            get_env(&inner.0, ParamType::Address, None, Some(&hex::encode(inner.1)))
+        }
+        HEVMCalls::EnvWithDefault4(inner) => {
+            get_env(&inner.0, ParamType::FixedBytes(32), None, Some(&hex::encode(inner.1)))
+        }
+        HEVMCalls::EnvWithDefault5(inner) => {
+            get_env(&inner.0, ParamType::String, None, Some(&inner.1))
+        }
+        HEVMCalls::EnvWithDefault6(inner) => {
+            get_env(&inner.0, ParamType::Bytes, None, Some(&hex::encode(&inner.1)))
+        }
+        HEVMCalls::EnvWithDefault7(inner) => get_env(
+            &inner.0,
+            ParamType::Bool,
+            Some(&inner.1),
+            Some(&inner.2.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(&inner.1)),
+        ),
+        HEVMCalls::EnvWithDefault8(inner) => get_env(
+            &inner.0,
+            ParamType::Uint(256),
+            Some(&inner.1),
+            Some(&inner.2.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(&inner.1)),
+        ),
+        HEVMCalls::EnvWithDefault9(inner) => get_env(
+            &inner.0,
+            ParamType::Int(256),
+            Some(&inner.1),
+            Some(&inner.2.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(&inner.1)),
+        ),
+        HEVMCalls::EnvWithDefault10(inner) => get_env(
+            &inner.0,
+            ParamType::Address,
+            Some(&inner.1),
+            Some(&inner.2.iter().map(hex::encode).collect::<Vec<_>>().join(&inner.1)),
+        ),
+        HEVMCalls::EnvWithDefault11(inner) => get_env(
+            &inner.0,
+            ParamType::FixedBytes(32),
+            Some(&inner.1),
+            Some(&inner.2.iter().map(hex::encode).collect::<Vec<_>>().join(&inner.1)),
+        ),
+        HEVMCalls::EnvWithDefault12(inner) => {
+            get_env(&inner.0, ParamType::String, Some(&inner.1), Some(&inner.2.join(&inner.1)))
+        }
+        HEVMCalls::EnvWithDefault13(inner) => get_env(
+            &inner.0,
+            ParamType::Bytes,
+            Some(&inner.1),
+            Some(&inner.2.iter().map(hex::encode).collect::<Vec<_>>().join(&inner.1)),
+        ),
+
         HEVMCalls::ProjectRoot(_) => project_root(state),
         HEVMCalls::ReadFile(inner) => read_file(state, &inner.0),
         HEVMCalls::ReadFileBinary(inner) => read_file_binary(state, &inner.0),
