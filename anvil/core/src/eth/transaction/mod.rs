@@ -984,20 +984,12 @@ impl PendingTransaction {
     /// Creates a new pending transaction and tries to verify transaction and recover sender.
     pub fn new(transaction: TypedTransaction) -> Result<Self, SignatureError> {
         let sender = transaction.recover()?;
-        Ok(Self { hash: transaction.hash(), transaction, sender })
+        Ok(Self::with_sender(transaction, sender))
     }
 
-    /// Creates a new transaction with the given sender.
-    ///
-    /// In order to prevent collisions from multiple different impersonated accounts, we update the
-    /// transaction's hash with the address to make it unique.
-    ///
-    /// See: <https://github.com/foundry-rs/foundry/issues/3759>
-    pub fn with_impersonated(transaction: TypedTransaction, sender: Address) -> Self {
-        let mut bytes = rlp::encode(&transaction);
-        bytes.extend_from_slice(sender.as_ref());
-        let hash = H256::from_slice(keccak256(&bytes).as_slice());
-        Self { hash, transaction, sender }
+    /// Creates a new transaction with the given sender
+    pub fn with_sender(transaction: TypedTransaction, sender: Address) -> Self {
+        Self { hash: transaction.hash(), transaction, sender }
     }
 
     pub fn nonce(&self) -> &U256 {

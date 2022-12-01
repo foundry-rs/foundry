@@ -170,6 +170,8 @@ async fn can_impersonate_gnosis_safe() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
+// <https://github.com/foundry-rs/foundry/issues/3759>
 async fn can_impersonate_multiple_account() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
