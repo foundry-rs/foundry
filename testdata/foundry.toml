@@ -20,6 +20,7 @@ gas_limit = 9223372036854775807
 gas_price = 0
 gas_reports = ['*']
 ignored_error_codes = [1878]
+deny_warnings = false
 initial_balance = '0xffffffffffffffffffffffff'
 libraries = []
 libs = ['lib']
