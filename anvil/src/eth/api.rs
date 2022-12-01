@@ -927,7 +927,18 @@ impl EthApi {
     pub async fn transaction_by_hash(&self, hash: H256) -> Result<Option<Transaction>> {
         node_info!("eth_getTransactionByHash");
         let mut tx = self.pool.get_transaction(hash).map(|pending| {
-            transaction_build(pending.transaction, None, None, true, Some(self.backend.base_fee()))
+            let from = *pending.sender();
+            let mut tx = transaction_build(
+                pending.transaction,
+                None,
+                None,
+                true,
+                Some(self.backend.base_fee()),
+            );
+            // we set the from field here explicitly to the set sender of the pending transaction,
+            // in case the transaction is impersonated.
+            tx.from = from;
+            tx
         });
         if tx.is_none() {
             tx = self.backend.transaction_by_hash(hash).await?
@@ -1744,7 +1755,19 @@ impl EthApi {
         node_info!("txpool_content");
         let mut content = TxpoolContent::default();
         fn convert(tx: Arc<PoolTransaction>) -> Transaction {
-            transaction_build(tx.pending_transaction.transaction.clone(), None, None, true, None)
+            let from = *tx.pending_transaction.sender();
+            let mut tx = transaction_build(
+                tx.pending_transaction.transaction.clone(),
+                None,
+                None,
+                true,
+                None,
+            );
+
+            // we set the from field here explicitly to the set sender of the pending transaction,
+            // in case the transaction is impersonated.
+            tx.from = from;
+            tx
         }
 
         for pending in self.pool.ready_transactions() {
