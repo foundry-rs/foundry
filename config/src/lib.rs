@@ -609,7 +609,11 @@ impl Config {
             .include_paths(&self.include_paths)
             .solc_config(SolcConfig::builder().settings(self.solc_settings()?).build())
             .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
-            .set_compiler_severity_filter(if self.deny_warnings {Severity::Warning} else {Severity::Error})
+            .set_compiler_severity_filter(if self.deny_warnings {
+                Severity::Warning
+            } else {
+                Severity::Error
+            })
             .set_auto_detect(self.is_auto_detect())
             .set_offline(self.offline)
             .set_cached(cached)

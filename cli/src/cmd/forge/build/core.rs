@@ -4,7 +4,7 @@ use crate::{
 };
 use clap::{Parser, ValueHint};
 use ethers::solc::{
-    artifacts::{RevertStrings}, remappings::Remapping, utils::canonicalized, Project,
+    artifacts::RevertStrings, remappings::Remapping, utils::canonicalized, Project,
 };
 use foundry_config::{
     figment,
@@ -55,7 +55,7 @@ pub struct CoreBuildArgs {
     #[clap(
         help_heading = "COMPILER OPTIONS",
         help = "Warnings will trigger a compiler error",
-        long,
+        long
     )]
     #[serde(skip)]
     pub deny_warnings: bool,
