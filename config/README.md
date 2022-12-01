@@ -120,6 +120,7 @@ block_number = 0
 fork_block_number = 0
 chain_id = 1
 # NOTE due to a toml-rs limitation, this value needs to be a string if the desired gas limit exceeds `i64::MAX` (9223372036854775807)
+# `gas_limit = "Max"` is equivalent to `gas_limit = "18446744073709551615"`
 gas_limit = 9223372036854775807
 gas_price = 0
 block_base_fee_per_gas = 0
