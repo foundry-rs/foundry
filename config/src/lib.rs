@@ -1810,7 +1810,10 @@ impl<'de> Deserialize<'de> for GasLimit {
 
         let gas = match Gas::deserialize(deserializer)? {
             Gas::Number(num) => GasLimit(num),
-            Gas::Text(s) => GasLimit(s.parse().map_err(D::Error::custom)?),
+            Gas::Text(s) => match s.as_str() {
+                "max" | "MAX" | "Max" | "u64::MAX" | "u64::Max" => GasLimit(u64::MAX),
+                s => GasLimit(s.parse().map_err(D::Error::custom)?),
+            },
         };
 
         Ok(gas)
