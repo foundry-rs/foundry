@@ -897,10 +897,14 @@ impl Tui {
             }
         }
 
+        let height = area.height as usize;
+        let end_line = draw_mem.current_mem_startline + height;
+
         let text: Vec<Spans> = memory
             .chunks(32)
             .enumerate()
             .skip(draw_mem.current_mem_startline)
+            .take_while(|(i, _)| i < &end_line)
             .map(|(i, mem_word)| {
                 let words: Vec<Span> = mem_word
                     .iter()
