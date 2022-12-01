@@ -80,8 +80,8 @@ interface Cheats {
     function envWithDefault(string calldata, bytes calldata) external returns (bytes memory);
     // Read environment variables as arrays with default value, (name, value[]) => (value[])
     function envWithDefault(string calldata, string calldata, bool[] calldata) external returns (bool[] memory);
-    function envWithDefault(string calldata, string calldata, uint256[] calldata) external returns (uint256[]memory);
-    function envWithDefault(string calldata, string calldata, int256[] calldata) external returns (int256[]memory);
+    function envWithDefault(string calldata, string calldata, uint256[] calldata) external returns (uint256[] memory);
+    function envWithDefault(string calldata, string calldata, int256[] calldata) external returns (int256[] memory);
     function envWithDefault(string calldata, string calldata, address[] calldata) external returns (address[] memory);
     function envWithDefault(string calldata, string calldata, bytes32[] calldata) external returns (bytes32[] memory);
     function envWithDefault(string calldata, string calldata, string[] calldata) external returns (string[] memory);
