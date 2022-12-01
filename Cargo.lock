@@ -358,7 +358,7 @@ dependencies = [
  "sha-1",
  "sync_wrapper",
  "tokio",
- "tokio-tungstenite",
+ "tokio-tungstenite 0.17.2",
  "tower",
  "tower-http",
  "tower-layer",
@@ -1596,6 +1596,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "enr"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "492a7e5fc2504d5fdce8e124d3e263b244a68b283cac67a69eda0cd43e0aebad"
+dependencies = [
+ "base64 0.13.0",
+ "bs58",
+ "bytes",
+ "hex",
+ "k256",
+ "log",
+ "rand 0.8.5",
+ "rlp",
+ "serde",
+ "sha3",
+ "zeroize",
+]
+
+[[package]]
 name = "enum-iterator"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1722,7 +1741,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#d48187ac0d314c8ed498d86b01d0ee53b0266166"
+source = "git+https://github.com/gakonst/ethers-rs#0ce6b107d675aaf9ebd36529bb7e8b1e5e7a805f"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1737,7 +1756,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#d48187ac0d314c8ed498d86b01d0ee53b0266166"
+source = "git+https://github.com/gakonst/ethers-rs#0ce6b107d675aaf9ebd36529bb7e8b1e5e7a805f"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1748,7 +1767,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#d48187ac0d314c8ed498d86b01d0ee53b0266166"
+source = "git+https://github.com/gakonst/ethers-rs#0ce6b107d675aaf9ebd36529bb7e8b1e5e7a805f"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1766,7 +1785,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#d48187ac0d314c8ed498d86b01d0ee53b0266166"
+source = "git+https://github.com/gakonst/ethers-rs#0ce6b107d675aaf9ebd36529bb7e8b1e5e7a805f"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -1790,7 +1809,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#d48187ac0d314c8ed498d86b01d0ee53b0266166"
+source = "git+https://github.com/gakonst/ethers-rs#0ce6b107d675aaf9ebd36529bb7e8b1e5e7a805f"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1804,7 +1823,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#d48187ac0d314c8ed498d86b01d0ee53b0266166"
+source = "git+https://github.com/gakonst/ethers-rs#0ce6b107d675aaf9ebd36529bb7e8b1e5e7a805f"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1834,7 +1853,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#d48187ac0d314c8ed498d86b01d0ee53b0266166"
+source = "git+https://github.com/gakonst/ethers-rs#0ce6b107d675aaf9ebd36529bb7e8b1e5e7a805f"
 dependencies = [
  "ethers-core",
  "ethers-solc",
@@ -1851,7 +1870,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#d48187ac0d314c8ed498d86b01d0ee53b0266166"
+source = "git+https://github.com/gakonst/ethers-rs#0ce6b107d675aaf9ebd36529bb7e8b1e5e7a805f"
 dependencies = [
  "async-trait",
  "auto_impl 0.5.0",
@@ -1876,12 +1895,13 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#d48187ac0d314c8ed498d86b01d0ee53b0266166"
+source = "git+https://github.com/gakonst/ethers-rs#0ce6b107d675aaf9ebd36529bb7e8b1e5e7a805f"
 dependencies = [
  "async-trait",
  "auto_impl 1.0.1",
  "base64 0.13.0",
  "bytes",
+ "enr",
  "ethers-core",
  "futures-channel",
  "futures-core",
@@ -1899,7 +1919,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
- "tokio-tungstenite",
+ "tokio-tungstenite 0.18.0",
  "tracing",
  "tracing-futures",
  "url",
@@ -1913,7 +1933,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#d48187ac0d314c8ed498d86b01d0ee53b0266166"
+source = "git+https://github.com/gakonst/ethers-rs#0ce6b107d675aaf9ebd36529bb7e8b1e5e7a805f"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1936,7 +1956,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#d48187ac0d314c8ed498d86b01d0ee53b0266166"
+source = "git+https://github.com/gakonst/ethers-rs#0ce6b107d675aaf9ebd36529bb7e8b1e5e7a805f"
 dependencies = [
  "cfg-if 1.0.0",
  "dunce",
@@ -5755,12 +5775,24 @@ checksum = "f714dd15bead90401d77e04243611caec13726c2408afd5b31901dfcdcb3b181"
 dependencies = [
  "futures-util",
  "log",
+ "tokio",
+ "tungstenite 0.17.3",
+]
+
+[[package]]
+name = "tokio-tungstenite"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54319c93411147bced34cb5609a80e0a8e44c5999c93903a81cd866630ec0bfd"
+dependencies = [
+ "futures-util",
+ "log",
  "native-tls",
  "rustls",
  "tokio",
  "tokio-native-tls",
  "tokio-rustls",
- "tungstenite",
+ "tungstenite 0.18.0",
  "webpki",
  "webpki-roots",
 ]
@@ -6010,10 +6042,29 @@ dependencies = [
  "http",
  "httparse",
  "log",
+ "rand 0.8.5",
+ "sha-1",
+ "thiserror",
+ "url",
+ "utf-8",
+]
+
+[[package]]
+name = "tungstenite"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30ee6ab729cd4cf0fd55218530c4522ed30b7b6081752839b68fcec8d0960788"
+dependencies = [
+ "base64 0.13.0",
+ "byteorder",
+ "bytes",
+ "http",
+ "httparse",
+ "log",
  "native-tls",
  "rand 0.8.5",
  "rustls",
- "sha-1",
+ "sha1",
  "thiserror",
  "url",
  "utf-8",
