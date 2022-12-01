@@ -241,7 +241,7 @@ contract EnvTest is DSTest {
         bool[numEnvBoolTests] memory expected = [true, false, true, false];
         for (uint256 i = 0; i < numEnvBoolTests; ++i) {
             cheats.setEnv(key, values[i]);
-            bool output = cheats.envWithDefault(key, expected[i]);
+            bool output = cheats.envOr(key, expected[i]);
             require(output == expected[i], "envWithDefaultBoolKey failed");
         }
     }
@@ -250,7 +250,7 @@ contract EnvTest is DSTest {
         string memory key = "_foundryCheatcodeEnvWithDefaultBoolTestDefault";
         bool[numEnvBoolTests] memory expected = [true, false, true, false];
         for (uint256 i = 0; i < numEnvBoolTests; ++i) {
-            bool output = cheats.envWithDefault(key, expected[i]);
+            bool output = cheats.envOr(key, expected[i]);
             require(output == expected[i], "envWithDefaultBoolDefault failed");
         }
     }
@@ -275,7 +275,7 @@ contract EnvTest is DSTest {
         ];
         for (uint256 i = 0; i < numEnvUintTests; ++i) {
             cheats.setEnv(key, values[i]);
-            uint256 output = cheats.envWithDefault(key, expected[i]);
+            uint256 output = cheats.envOr(key, expected[i]);
             require(output == expected[i], "envWithDefaultUintKey failed");
         }
     }
@@ -291,7 +291,7 @@ contract EnvTest is DSTest {
             type(uint256).max
         ];
         for (uint256 i = 0; i < numEnvUintTests; ++i) {
-            uint256 output = cheats.envWithDefault(key, expected[i]);
+            uint256 output = cheats.envOr(key, expected[i]);
             require(output == expected[i], "envWithDefaultUintDefault failed");
         }
     }
@@ -308,7 +308,7 @@ contract EnvTest is DSTest {
             [type(int256).min, type(int256).max, type(int256).min, type(int256).max];
         for (uint256 i = 0; i < numEnvIntTests; ++i) {
             cheats.setEnv(key, values[i]);
-            int256 output = cheats.envWithDefault(key, expected[i]);
+            int256 output = cheats.envOr(key, expected[i]);
             require(output == expected[i], "envWithDefaultIntKey failed");
         }
     }
@@ -318,7 +318,7 @@ contract EnvTest is DSTest {
         int256[numEnvIntTests] memory expected =
             [type(int256).min, type(int256).max, type(int256).min, type(int256).max];
         for (uint256 i = 0; i < numEnvIntTests; ++i) {
-            int256 output = cheats.envWithDefault(key, expected[i]);
+            int256 output = cheats.envOr(key, expected[i]);
             require(output == expected[i], "envWithDefaultIntDefault failed");
         }
     }
@@ -331,7 +331,7 @@ contract EnvTest is DSTest {
             [0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, 0x0000000000000000000000000000000000000000];
         for (uint256 i = 0; i < numEnvAddressTests; ++i) {
             cheats.setEnv(key, values[i]);
-            address output = cheats.envWithDefault(key, expected[i]);
+            address output = cheats.envOr(key, expected[i]);
             require(output == expected[i], "envWithDefaultAddressKey failed");
         }
     }
@@ -341,7 +341,7 @@ contract EnvTest is DSTest {
         address[numEnvAddressTests] memory expected =
             [0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, 0x0000000000000000000000000000000000000000];
         for (uint256 i = 0; i < numEnvAddressTests; ++i) {
-            address output = cheats.envWithDefault(key, expected[i]);
+            address output = cheats.envOr(key, expected[i]);
             require(output == expected[i], "envWithDefaultAddressDefault failed");
         }
     }
@@ -355,7 +355,7 @@ contract EnvTest is DSTest {
         ];
         for (uint256 i = 0; i < numEnvBytes32Tests; ++i) {
             cheats.setEnv(key, values[i]);
-            bytes32 output = cheats.envWithDefault(key, expected[i]);
+            bytes32 output = cheats.envOr(key, expected[i]);
             require(output == expected[i], "envWithDefaultBytes32Key failed");
         }
     }
@@ -367,7 +367,7 @@ contract EnvTest is DSTest {
             bytes32(0x0000000000000000000000000000000000000000000000000000000000000000)
         ];
         for (uint256 i = 0; i < numEnvBytes32Tests; ++i) {
-            bytes32 output = cheats.envWithDefault(key, expected[i]);
+            bytes32 output = cheats.envOr(key, expected[i]);
             require(output == expected[i], "envWithDefaultBytes32Default failed");
         }
     }
@@ -378,7 +378,7 @@ contract EnvTest is DSTest {
         string[numEnvStringTests] memory expected = ["hello, world!", "0x7109709ECfa91a80626fF3989D68f67F5b1DD12D"];
         for (uint256 i = 0; i < numEnvStringTests; ++i) {
             cheats.setEnv(key, values[i]);
-            string memory output = cheats.envWithDefault(key, expected[i]);
+            string memory output = cheats.envOr(key, expected[i]);
             assertEq(output, expected[i], "envWithDefaultStringKey failed");
         }
     }
@@ -387,7 +387,7 @@ contract EnvTest is DSTest {
         string memory key = "_foundryCheatcodeEnvWithDefaultStringTestDefault";
         string[numEnvStringTests] memory expected = ["hello, world!", "0x7109709ECfa91a80626fF3989D68f67F5b1DD12D"];
         for (uint256 i = 0; i < numEnvStringTests; ++i) {
-            string memory output = cheats.envWithDefault(key, expected[i]);
+            string memory output = cheats.envOr(key, expected[i]);
             assertEq(output, expected[i], "envWithDefaultStringDefault failed");
         }
     }
@@ -400,7 +400,7 @@ contract EnvTest is DSTest {
         expected[1] = hex"00";
         for (uint256 i = 0; i < numEnvBytesTests; ++i) {
             cheats.setEnv(key, values[i]);
-            bytes memory output = cheats.envWithDefault(key, expected[i]);
+            bytes memory output = cheats.envOr(key, expected[i]);
             require(
                 keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected[i]))),
                 "envWithDefaultBytesKey failed"
@@ -414,7 +414,7 @@ contract EnvTest is DSTest {
         expected[0] = hex"7109709ECfa91a80626fF3989D68f67F5b1DD12D";
         expected[1] = hex"00";
         for (uint256 i = 0; i < numEnvBytesTests; ++i) {
-            bytes memory output = cheats.envWithDefault(key, expected[i]);
+            bytes memory output = cheats.envOr(key, expected[i]);
             require(
                 keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected[i]))),
                 "envWithDefaultBytesDefault failed"
@@ -434,7 +434,7 @@ contract EnvTest is DSTest {
 
         cheats.setEnv(key, value);
         string memory delimiter = ",";
-        bool[] memory output = cheats.envWithDefault(key, delimiter, defaultValues);
+        bool[] memory output = cheats.envOr(key, delimiter, defaultValues);
         require(
             keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))),
             "envWithDefaultBoolArrKey failed"
@@ -452,7 +452,7 @@ contract EnvTest is DSTest {
         defaultValues[3] = false;
 
         string memory delimiter = ",";
-        bool[] memory output = cheats.envWithDefault(key, delimiter, defaultValues);
+        bool[] memory output = cheats.envOr(key, delimiter, defaultValues);
         require(
             keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))),
             "envWithDefaultBoolArrDefault failed"
@@ -473,7 +473,7 @@ contract EnvTest is DSTest {
 
         cheats.setEnv(key, value);
         string memory delimiter = ",";
-        uint256[] memory output = cheats.envWithDefault(key, delimiter, defaultValues);
+        uint256[] memory output = cheats.envOr(key, delimiter, defaultValues);
         require(
             keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))),
             "envWithDefaultUintArrKey failed"
@@ -493,7 +493,7 @@ contract EnvTest is DSTest {
         defaultValues[3] = type(uint256).max;
 
         string memory delimiter = ",";
-        uint256[] memory output = cheats.envWithDefault(key, delimiter, defaultValues);
+        uint256[] memory output = cheats.envOr(key, delimiter, defaultValues);
         require(
             keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))),
             "envWithDefaultUintArrDefault failed"
@@ -515,7 +515,7 @@ contract EnvTest is DSTest {
 
         cheats.setEnv(key, value);
         string memory delimiter = ",";
-        int256[] memory output = cheats.envWithDefault(key, delimiter, defaultValues);
+        int256[] memory output = cheats.envOr(key, delimiter, defaultValues);
         require(
             keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))),
             "envWithDefaultIntArrKey failed"
@@ -536,7 +536,7 @@ contract EnvTest is DSTest {
         defaultValues[3] = type(int256).max;
 
         string memory delimiter = ",";
-        int256[] memory output = cheats.envWithDefault(key, delimiter, defaultValues);
+        int256[] memory output = cheats.envOr(key, delimiter, defaultValues);
         require(
             keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))),
             "envWithDefaultIntArrDefault failed"
@@ -554,7 +554,7 @@ contract EnvTest is DSTest {
 
         cheats.setEnv(key, value);
         string memory delimiter = ",";
-        address[] memory output = cheats.envWithDefault(key, delimiter, defaultValues);
+        address[] memory output = cheats.envOr(key, delimiter, defaultValues);
         require(
             keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))),
             "envWithDefaultAddressArrKey failed"
@@ -571,7 +571,7 @@ contract EnvTest is DSTest {
         defaultValues[1] = 0x0000000000000000000000000000000000000000;
 
         string memory delimiter = ",";
-        address[] memory output = cheats.envWithDefault(key, delimiter, defaultValues);
+        address[] memory output = cheats.envOr(key, delimiter, defaultValues);
         require(
             keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))),
             "envWithDefaultAddressArrDefault failed"
@@ -591,7 +591,7 @@ contract EnvTest is DSTest {
 
         cheats.setEnv(key, value);
         string memory delimiter = ",";
-        bytes32[] memory output = cheats.envWithDefault(key, delimiter, defaultValues);
+        bytes32[] memory output = cheats.envOr(key, delimiter, defaultValues);
         require(
             keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))),
             "envWithDefaultBytes32ArrKey failed"
@@ -610,7 +610,7 @@ contract EnvTest is DSTest {
         defaultValues[1] = bytes32(0x0000000000000000000000000000000000000000000000000000000000000000);
 
         string memory delimiter = ",";
-        bytes32[] memory output = cheats.envWithDefault(key, delimiter, defaultValues);
+        bytes32[] memory output = cheats.envOr(key, delimiter, defaultValues);
         require(
             keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))),
             "envWithDefaultBytes32ArrDefault failed"
@@ -627,7 +627,7 @@ contract EnvTest is DSTest {
 
         cheats.setEnv(key, value);
         string memory delimiter = "|";
-        string[] memory output = cheats.envWithDefault(key, delimiter, defaultValues);
+        string[] memory output = cheats.envOr(key, delimiter, defaultValues);
         for (uint256 i = 0; i < expected.length; ++i) {
             require(
                 keccak256(abi.encodePacked((output[i]))) == keccak256(abi.encodePacked((expected[i]))),
@@ -645,7 +645,7 @@ contract EnvTest is DSTest {
         defaultValues[1] = "0x7109709ECfa91a80626fF3989D68f67F5b1DD12D";
 
         string memory delimiter = "|";
-        string[] memory output = cheats.envWithDefault(key, delimiter, defaultValues);
+        string[] memory output = cheats.envOr(key, delimiter, defaultValues);
         for (uint256 i = 0; i < expected.length; ++i) {
             require(
                 keccak256(abi.encodePacked((output[i]))) == keccak256(abi.encodePacked((expected[i]))),
@@ -663,7 +663,7 @@ contract EnvTest is DSTest {
 
         cheats.setEnv(key, value);
         string memory delimiter = ",";
-        bytes[] memory output = cheats.envWithDefault(key, delimiter, expected);
+        bytes[] memory output = cheats.envOr(key, delimiter, expected);
         for (uint256 i = 0; i < expected.length; ++i) {
             require(
                 keccak256(abi.encodePacked((output[i]))) == keccak256(abi.encodePacked((expected[i]))),
@@ -680,7 +680,7 @@ contract EnvTest is DSTest {
         expected[1] = hex"00";
 
         string memory delimiter = ",";
-        bytes[] memory output = cheats.envWithDefault(key, delimiter, expected);
+        bytes[] memory output = cheats.envOr(key, delimiter, expected);
         for (uint256 i = 0; i < expected.length; ++i) {
             require(
                 keccak256(abi.encodePacked((output[i]))) == keccak256(abi.encodePacked((expected[i]))),
