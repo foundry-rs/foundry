@@ -125,7 +125,18 @@ impl BindArgs {
         if !self.skip.is_empty() {
             return ExcludeContracts::default().extend_regex(self.skip.clone()).into()
         }
-        ExcludeContracts::default().add_pattern(".*Test").add_pattern(".*Script").into()
+        // This excludes all Test/Script and forge-std contracts
+        ExcludeContracts::default()
+            .extend_pattern([
+                ".*Test.*",
+                ".*Script",
+                "console[2]?",
+                "CommonBase",
+                "Components",
+                "[Ss]td(Math|Error|Json|Utils|Cheats|Assertions|Storage(Safe)?)",
+                "[Vv]m.*",
+            ])
+            .into()
     }
 
     /// Instantiate the multi-abigen
