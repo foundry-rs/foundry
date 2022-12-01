@@ -216,6 +216,10 @@ impl Provider for CoreBuildArgs {
             dict.insert("offline".to_string(), true.into());
         }
 
+        if self.deny_warnings {
+            dict.insert("deny_warnings".to_string(), true.into());
+        }
+
         if self.via_ir {
             dict.insert("via_ir".to_string(), true.into());
         }
