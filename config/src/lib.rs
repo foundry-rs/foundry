@@ -203,7 +203,7 @@ pub struct Config {
     pub etherscan: EtherscanConfigs,
     /// list of solidity error codes to always silence in the compiler output
     pub ignored_error_codes: Vec<SolidityErrorCode>,
-    /// The minimum severity level that is treated as a compiler error
+    /// When true, compiler warnings are treated as errors
     pub deny_warnings: bool,
     /// Only run test functions matching the specified regex pattern.
     #[serde(rename = "match_test")]
