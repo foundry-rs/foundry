@@ -181,10 +181,10 @@ contract FractionalPool {
 // implementation demonstrating how
 // Flexible Voting can be used to allow
 // holders of governance tokens to use
-// them in DeFi but still participate
-// in governance. The FractionalPool
-// simulates a lending protocol, such
-// as Compound Finance or Aave, in that:
+// them in DeFi but still participate in
+// governance. The FractionalPool
+// simulates a lending protocol, such as
+// Compound Finance or Aave, in that:
 //
 // - Tokens can be deposited into the
 //   Pool by suppliers

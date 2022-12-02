@@ -17,11 +17,7 @@ use ethers_core::{types::H160, utils::to_checksum};
 use foundry_config::fmt::{MultilineFuncHeaderStyle, SingleLineBlockStyle};
 use itertools::{Either, Itertools};
 use solang_parser::pt::*;
-use std::{
-    fmt::Write,
-    iter::Peekable,
-    str::{FromStr, Lines},
-};
+use std::{fmt::Write, str::FromStr};
 use thiserror::Error;
 
 type Result<T, E = FormatterError> = std::result::Result<T, E>;
@@ -437,16 +433,7 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// Write a comment to the buffer formatted.
     /// WARNING: This may introduce a newline if the comment is a Line comment
     /// or if the comment are wrapped
-    fn write_comment(&mut self, comment: &CommentWithMetadata, is_first: bool) -> Result<()> {
-        if self.inline_config.is_disabled(comment.loc) {
-            return self.write_raw_comment(comment)
-        }
-
-        match comment.position {
-            CommentPosition::Prefix => self.write_prefix_comment(comment, is_first),
-            CommentPosition::Postfix => self.write_postfix_comment(comment),
-        }
-    }
+    // fn write_comment(&mut self, comment: &CommentWithMetadata, is_first: bool) -> Result<()> {}
 
     /// Write a comment with position [CommentPosition::Prefix]
     fn write_prefix_comment(
@@ -462,7 +449,8 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
 
         if matches!(comment.ty, CommentType::DocBlock) {
-            let mut lines = comment.contents().trim().lines();
+            // TODO:
+            let mut lines = comment.contents().next().unwrap().trim().lines();
             writeln!(self.buf(), "{}", comment.start_token())?;
             lines.try_for_each(|l| self.write_doc_block_line(comment, l))?;
             write!(self.buf(), " {}", comment.end_token().unwrap())?;
@@ -472,11 +460,29 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         write!(self.buf(), "{}", comment.start_token())?;
 
-        let mut lines = comment.contents().lines().peekable();
-        while let Some(line) = lines.next() {
-            self.write_comment_line(comment, line)?;
-            if lines.peek().is_some() {
-                self.write_preserved_line()?;
+        // TODO:
+        let mut contents = comment.contents().peekable();
+        while let Some(content) = contents.next() {
+            let mut lines = content.lines().peekable();
+            let mut last_line_wrapped = false;
+            while let Some(line) = lines.next() {
+                last_line_wrapped = self.write_comment_line(line, comment.wrap_token(), true)?;
+                if lines.peek().is_some() {
+                    self.write_preserved_line()?;
+                }
+            }
+            if let Some(next_content) = contents.peek() {
+                let next_line = next_content.lines().next();
+                let next_word_fits = self.config.wrap_comments &&
+                    last_line_wrapped &&
+                    next_line
+                        .and_then(|l| l.trim_start().split(' ').next())
+                        .and_then(|word| Some(self.will_it_fit(word)))
+                        .unwrap_or_default();
+                if !next_word_fits {
+                    self.write_preserved_line()?;
+                    write!(self.buf(), "{}", comment.wrap_token())?;
+                }
             }
         }
 
@@ -501,16 +507,20 @@ impl<'a, W: Write> Formatter<'a, W> {
             write!(fmt.buf(), "{}", comment.start_token())?;
             let start_token_pos = fmt.current_line_len();
 
-            let mut lines = comment.contents().lines().peekable();
-            fmt.grouped(|fmt| {
-                while let Some(line) = lines.next() {
-                    fmt.write_comment_line(comment, line)?;
-                    if lines.peek().is_some() {
-                        fmt.write_whitespace_separator(true)?;
+            // TODO:
+            let mut contents_iter = comment.contents().peekable();
+            while let Some(content) = contents_iter.next() {
+                let mut lines = content.lines().peekable();
+                fmt.grouped(|fmt| {
+                    while let Some(line) = lines.next() {
+                        fmt.write_comment_line(line, comment.wrap_token(), true)?;
+                        if lines.peek().is_some() {
+                            fmt.write_whitespace_separator(true)?;
+                        }
                     }
-                }
-                Ok(())
-            })?;
+                    Ok(())
+                })?;
+            }
 
             if let Some(end) = comment.end_token() {
                 // If comment is not multiline, end token has to be aligned with the start
@@ -534,7 +544,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             let line = line.trim().trim_start_matches('*');
             let needs_space = line.chars().next().map_or(false, |ch| !ch.is_whitespace());
             write!(self.buf(), " *{}", if needs_space { " " } else { "" })?;
-            self.write_comment_line(comment, line)?;
+            self.write_comment_line(line, comment.wrap_token(), true)?;
             self.write_whitespace_separator(true)?;
             return Ok(())
         }
@@ -545,20 +555,20 @@ impl<'a, W: Write> Formatter<'a, W> {
             .count();
         let to_skip = indent_whitespace_count - indent_whitespace_count % self.config.tab_width;
         write!(self.buf(), " * ")?;
-        self.write_comment_line(comment, &line[to_skip..])?;
+        self.write_comment_line(&line[to_skip..], comment.wrap_token(), true)?;
         self.write_whitespace_separator(true)?;
         Ok(())
     }
 
     /// Write a comment line that might potentially overflow the maximum line length
     /// and, if configured, will be wrapped to the next line
-    fn write_comment_line(&mut self, comment: &CommentWithMetadata, line: &str) -> Result<()> {
+    fn write_comment_line(&mut self, line: &str, wrap_token: &str, is_first: bool) -> Result<bool> {
         if self.will_it_fit(line) || !self.config.wrap_comments {
             let start_with_ws =
                 line.chars().next().map(|ch| ch.is_whitespace()).unwrap_or_default();
             if !self.is_beginning_of_line() || !start_with_ws {
                 write!(self.buf(), "{line}")?;
-                return Ok(())
+                return Ok(!is_first)
             }
 
             // if this is the beginning of the line,
@@ -570,13 +580,20 @@ impl<'a, W: Write> Formatter<'a, W> {
                 .map(|(_, ch)| ch);
             let padded = format!("{}{}", " ".repeat(indent), chars.join(""));
             self.write_raw(padded)?;
-            return Ok(())
+            return Ok(!is_first)
         }
 
         let mut words = line.split(' ').peekable();
         while let Some(word) = words.next() {
             if self.is_beginning_of_line() {
                 write!(self.buf(), "{}", word.trim_start())?;
+            } else if word
+                .chars()
+                .next()
+                .map(|ch| self.next_char_needs_space(ch))
+                .unwrap_or_default()
+            {
+                self.write_raw(&format!(" {word}"))?;
             } else {
                 self.write_raw(word)?;
             }
@@ -587,23 +604,24 @@ impl<'a, W: Write> Formatter<'a, W> {
                     // write remaining words on the next
                     self.write_whitespace_separator(true)?;
                     // write newline wrap token
-                    write!(self.buf(), "{}", comment.wrap_token())?;
-                    self.write_comment_line(comment, &words.join(" "))?;
-                    return Ok(())
+                    write!(self.buf(), "{}", wrap_token)?;
+                    return Ok(self.write_comment_line(&words.join(" "), wrap_token, false)?)
                 }
 
                 self.write_whitespace_separator(false)?;
             }
         }
-        Ok(())
+        Ok(!is_first)
     }
 
     /// Write a raw comment. This is like [`write_comment`] but won't do any formatting or worry
     /// about whitespace behind the comment
     fn write_raw_comment(&mut self, comment: &CommentWithMetadata) -> Result<()> {
-        self.write_raw(&comment.comment)?;
-        if comment.is_line() {
-            self.write_preserved_line()?;
+        for content in comment.raw_contents.iter() {
+            self.write_raw(content)?;
+            if comment.is_line() {
+                self.write_preserved_line()?;
+            }
         }
         Ok(())
     }
@@ -632,20 +650,13 @@ impl<'a, W: Write> Formatter<'a, W> {
                 } else {
                     comment.loc.end()
                 };
+            } else if self.inline_config.is_disabled(comment.loc) {
+                self.write_raw_comment(comment)?;
             } else {
-                // TODO:
-                // println!("WRITING {}", comment.contents());
-                // let mut extended = None;
-                // println!("HAS NEXT {}", comments.peek().is_some());
-                // if let Some(next) = comments.peek() {
-                //     println!("CAN BE EXTENDED {}", comment.can_be_extended(next));
-                //     if comment.can_be_extended(next) {
-                //         extended = Some(comment.extend(next));
-                //         comments.next();
-                //     }
-                // }
-                // self.write_comment(extended.as_ref().unwrap_or(comment), is_first)?;
-                self.write_comment(comment, is_first)?;
+                match comment.position {
+                    CommentPosition::Prefix => self.write_prefix_comment(comment, is_first)?,
+                    CommentPosition::Postfix => self.write_postfix_comment(comment)?,
+                };
             }
             is_first = false;
         }
@@ -955,6 +966,8 @@ impl<'a, W: Write> Formatter<'a, W> {
         let mut last_loc: Option<Loc> = None;
         let mut needs_space = false;
         // Get dirty iterator over lined items
+        // TODO:
+        // println!("CAN WRAP {}", self.config.wrap_comments);
         let mut lined_items = LinedItems::new(items, loc, self.config.wrap_comments);
         let mut last_byte_written = match lined_items.last_byte_written(&self.comments) {
             Some(last) => last,

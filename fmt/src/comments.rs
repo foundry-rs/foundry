@@ -4,7 +4,7 @@ use crate::{
 };
 use itertools::Itertools;
 use solang_parser::pt::*;
-use std::collections::VecDeque;
+use std::{collections::VecDeque, slice::Iter};
 
 /// The type of a Comment
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,7 +35,7 @@ pub struct CommentWithMetadata {
     pub loc: Loc,
     pub has_newline_before: bool,
     pub indent_len: usize,
-    pub comment: String,
+    pub raw_contents: Vec<String>,
     pub position: CommentPosition,
 }
 
@@ -65,7 +65,7 @@ impl CommentWithMetadata {
             Comment::DocBlock(loc, comment) => (CommentType::DocBlock, loc, comment),
         };
         Self {
-            comment: comment.trim_end().to_string(),
+            raw_contents: vec![comment.trim_end().to_string()],
             ty,
             loc,
             position,
@@ -77,25 +77,25 @@ impl CommentWithMetadata {
     /// Return a flag indicating whether this comment can be extended
     /// with the contents of another comment
     pub fn can_be_extended(&self, other: &CommentWithMetadata) -> bool {
-        let other_first_ch = other.contents().trim_start().chars().next();
-        return self.ty == other.ty &&
+        let other_first_ch =
+            other.contents().next().map(|c| c.trim_start().chars().next()).flatten();
+        self.is_line() &&
+            other.is_line() &&
             self.position == other.position &&
             self.loc.start() < other.loc.end() &&
+            !other.has_newline_before &&
             other_first_ch.map(|ch| ch.is_alphanumeric()).unwrap_or_default()
     }
 
     /// Extends the comment with another comment contents
     /// and metadata. Does not perform any additional validation
     pub fn extend(&self, other: &CommentWithMetadata) -> Self {
-        let other_contents = other.contents();
-        let needs_space =
-            other_contents.chars().next().map(|ch| !ch.is_whitespace()).unwrap_or_default();
-        let comment =
-            format!("{}{}{}", self.comment, if needs_space { " " } else { "" }, other_contents);
+        let mut comments = self.raw_contents.clone();
+        comments.extend(other.raw_contents.iter().cloned());
         let mut loc = self.loc;
         loc.use_end_from(&other.loc);
         Self {
-            comment,
+            raw_contents: comments,
             ty: self.ty,
             loc,
             position: self.position,
@@ -204,11 +204,8 @@ impl CommentWithMetadata {
         self.loc.start() < byte
     }
 
-    pub fn contents(&self) -> &str {
-        self.comment
-            .strip_prefix(self.start_token())
-            .map(|c| self.end_token().and_then(|end| c.strip_suffix(end)).unwrap_or(c))
-            .unwrap_or(&self.comment)
+    pub fn contents(&self) -> CommentContents<'_, Iter<'_, String>> {
+        CommentContents::new(self.raw_contents.iter(), self.start_token(), self.end_token())
     }
 
     /// The start token of the comment
@@ -241,8 +238,50 @@ impl CommentWithMetadata {
     }
 }
 
+/// Iterator over comment contents
+pub struct CommentContents<'a, I>
+where
+    I: Iterator<Item = &'a String>,
+{
+    comments: I,
+    start_token: &'a str,
+    end_token: Option<&'a str>,
+    is_first: bool,
+}
+
+impl<'a, I> CommentContents<'a, I>
+where
+    I: Iterator<Item = &'a String>,
+{
+    fn new(comments: I, start_token: &'a str, end_token: Option<&'a str>) -> Self {
+        Self { comments, start_token, end_token, is_first: true }
+    }
+}
+
+impl<'a, I: Iterator<Item = &'a String>> Iterator for CommentContents<'a, I> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(comment) = self.comments.next() {
+            let mut comment = comment.as_str();
+            comment = comment.strip_prefix(self.start_token).unwrap_or(&comment);
+            if let Some(end_token) = self.end_token {
+                comment = comment.strip_suffix(end_token).unwrap_or(&comment);
+            }
+            if !self.is_first {
+                comment = comment.trim_start();
+            } else {
+                self.is_first = false;
+            }
+            Some(comment)
+        } else {
+            None
+        }
+    }
+}
+
 /// A list of comments
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Comments {
     prefixes: VecDeque<CommentWithMetadata>,
     postfixes: VecDeque<CommentWithMetadata>,
@@ -323,7 +362,10 @@ impl Comments {
     {
         self.iter()
             .filter_map(|comment| {
-                Some((comment, comment.contents().trim_start().strip_prefix("forgefmt:")?.trim()))
+                Some((
+                    comment,
+                    comment.contents().next()?.trim_start().strip_prefix("forgefmt:")?.trim(),
+                ))
             })
             .map(|(comment, item)| {
                 let loc = comment.loc;
