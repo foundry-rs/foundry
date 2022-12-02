@@ -164,7 +164,7 @@ ethers::contract::abigen!(
             writeJson(string, string)
             writeJson(string, string, string)
             stopGasMetering()
-            startGasMetering()
+            resumeGasMetering()
     ]"#,
 );
 pub use hevm::{HEVMCalls, HEVM_ABI};

@@ -175,8 +175,14 @@ pub fn apply<DB: Database>(
         HEVMCalls::ParseInt(inner) => parse(vec![&inner.0], ParamType::Int(256), false),
         HEVMCalls::ParseBytes32(inner) => parse(vec![&inner.0], ParamType::FixedBytes(32), false),
         HEVMCalls::ParseBool(inner) => parse(vec![&inner.0], ParamType::Bool, false),
-        HEVMCalls::StopGasMetering(inner) => { state.gas_metering = Some(None); Ok(Bytes::new()) },
-        HEVMCalls::StartGasMetering(inner) => { state.gas_metering = None; Ok(Bytes::new()) },
+        HEVMCalls::StopGasMetering(_inner) => {
+            state.gas_metering = Some(None);
+            Ok(Bytes::new())
+        }
+        HEVMCalls::ResumeGasMetering(_inner) => {
+            state.gas_metering = None;
+            Ok(Bytes::new())
+        }
         _ => return None,
     })
 }

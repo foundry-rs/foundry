@@ -284,5 +284,5 @@ interface Cheats {
     function writeJson(string calldata, string calldata, string calldata) external;
 
     function stopGasMetering() external;
-    function startGasMetering() external;
+    function resumeGasMetering() external;
 }
