@@ -91,6 +91,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
             "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6".to_string()
         ],
         ignored_error_codes: vec![],
+        deny_warnings: false,
         via_ir: true,
         rpc_storage_caching: StorageCachingConfig {
             chains: CachedChains::None,

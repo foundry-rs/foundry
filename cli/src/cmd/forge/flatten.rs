@@ -36,6 +36,7 @@ impl Cmd for FlattenArgs {
             out_path: Default::default(),
             compiler: Default::default(),
             ignored_error_codes: vec![],
+            deny_warnings: false,
             no_auto_detect: false,
             use_solc: None,
             offline: false,

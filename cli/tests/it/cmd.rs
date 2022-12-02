@@ -642,6 +642,47 @@ contract A {
     );
 });
 
+// test that `forge build` compiles when severity set to error, fails when set to warning, and
+// handles ignored error codes as an exception
+forgetest!(can_fail_compile_with_warnings, |prj: TestProject, mut cmd: TestCommand| {
+    let config = Config { ignored_error_codes: vec![], deny_warnings: false, ..Default::default() };
+    prj.write_config(config);
+    prj.inner()
+        .add_source(
+            "A",
+            r#"
+pragma solidity 0.8.10;
+contract A {
+    function testExample() public {}
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.args(["build", "--force"]);
+    let out = cmd.stdout();
+    // there are no errors
+    assert!(out.trim().contains("Compiler run successful"));
+    assert!(out.trim().contains("Compiler run successful (with warnings)"));
+
+    // warning fails to compile
+    let config = Config { ignored_error_codes: vec![], deny_warnings: true, ..Default::default() };
+    prj.write_config(config);
+    cmd.assert_err();
+
+    // ignores error code and compiles
+    let config = Config {
+        ignored_error_codes: vec![SolidityErrorCode::SpdxLicenseNotProvided],
+        deny_warnings: true,
+        ..Default::default()
+    };
+    prj.write_config(config);
+    let out = cmd.stdout();
+
+    assert!(out.trim().contains("Compiler run successful"));
+    assert!(!out.trim().contains("Compiler run successful (with warnings)"));
+});
+
 // test against a local checkout, useful to debug with local ethers-rs patch
 forgetest!(
     #[ignore]

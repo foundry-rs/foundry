@@ -52,6 +52,14 @@ pub struct CoreBuildArgs {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub ignored_error_codes: Vec<u64>,
 
+    #[clap(
+        help_heading = "COMPILER OPTIONS",
+        help = "Warnings will trigger a compiler error",
+        long
+    )]
+    #[serde(skip)]
+    pub deny_warnings: bool,
+
     #[clap(help_heading = "COMPILER OPTIONS", help = "Do not auto-detect solc.", long)]
     #[serde(skip)]
     pub no_auto_detect: bool,
@@ -206,6 +214,10 @@ impl Provider for CoreBuildArgs {
 
         if self.offline {
             dict.insert("offline".to_string(), true.into());
+        }
+
+        if self.deny_warnings {
+            dict.insert("deny_warnings".to_string(), true.into());
         }
 
         if self.via_ir {

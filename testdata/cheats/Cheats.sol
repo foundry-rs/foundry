@@ -70,6 +70,22 @@ interface Cheats {
     function envBytes32(string calldata, string calldata) external returns (bytes32[] memory);
     function envString(string calldata, string calldata) external returns (string[] memory);
     function envBytes(string calldata, string calldata) external returns (bytes[] memory);
+    // Read environment variables with default value, (name, value) => (value)
+    function envOr(string calldata, bool) external returns (bool);
+    function envOr(string calldata, uint256) external returns (uint256);
+    function envOr(string calldata, int256) external returns (int256);
+    function envOr(string calldata, address) external returns (address);
+    function envOr(string calldata, bytes32) external returns (bytes32);
+    function envOr(string calldata, string calldata) external returns (string memory);
+    function envOr(string calldata, bytes calldata) external returns (bytes memory);
+    // Read environment variables as arrays with default value, (name, value[]) => (value[])
+    function envOr(string calldata, string calldata, bool[] calldata) external returns (bool[] memory);
+    function envOr(string calldata, string calldata, uint256[] calldata) external returns (uint256[] memory);
+    function envOr(string calldata, string calldata, int256[] calldata) external returns (int256[] memory);
+    function envOr(string calldata, string calldata, address[] calldata) external returns (address[] memory);
+    function envOr(string calldata, string calldata, bytes32[] calldata) external returns (bytes32[] memory);
+    function envOr(string calldata, string calldata, string[] calldata) external returns (string[] memory);
+    function envOr(string calldata, string calldata, bytes[] calldata) external returns (bytes[] memory);
     // Sets the *next* call's msg.sender to be the input address
     function prank(address) external;
     // Sets all subsequent calls' msg.sender to be the input address until `stopPrank` is called

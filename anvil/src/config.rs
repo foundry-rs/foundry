@@ -1,7 +1,7 @@
 use crate::{
     eth::{
         backend::{
-            db::Db,
+            db::{Db, SerializableState},
             fork::{ClientFork, ClientForkConfig},
             genesis::GenesisConfig,
             mem::fork_db::ForkedDatabase,
@@ -143,6 +143,8 @@ pub struct NodeConfig {
     pub code_size_limit: Option<usize>,
     /// If set to true, remove historic state entirely
     pub prune_history: bool,
+    /// The file where to load the state from
+    pub init_state: Option<SerializableState>,
 }
 
 impl NodeConfig {
@@ -359,6 +361,7 @@ impl Default for NodeConfig {
             ipc_path: None,
             code_size_limit: None,
             prune_history: false,
+            init_state: None,
         }
     }
 }
@@ -385,6 +388,13 @@ impl NodeConfig {
     #[must_use]
     pub fn with_code_size_limit(mut self, code_size_limit: Option<usize>) -> Self {
         self.code_size_limit = code_size_limit;
+        self
+    }
+
+    /// Sets a custom code size limit
+    #[must_use]
+    pub fn with_init_state(mut self, init_state: Option<SerializableState>) -> Self {
+        self.init_state = init_state;
         self
     }
 
@@ -891,7 +901,7 @@ impl NodeConfig {
         };
 
         // only memory based backend for now
-        mem::Backend::with_genesis(
+        let backend = mem::Backend::with_genesis(
             db,
             Arc::new(RwLock::new(env)),
             genesis,
@@ -900,7 +910,18 @@ impl NodeConfig {
             self.enable_steps_tracing,
             self.prune_history,
         )
-        .await
+        .await;
+
+        if let Some(ref state) = self.init_state {
+            backend
+                .get_db()
+                .write()
+                .await
+                .load_state(state.clone())
+                .expect("Failed to load init state");
+        }
+
+        backend
     }
 }
 
