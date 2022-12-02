@@ -145,10 +145,10 @@ pub struct Cheatcodes {
     /// Records all eth deals
     pub eth_deals: Vec<DealRecord>,
 
-    /// Holds the stored gas info for when we pause gas metering. It is an Option<Option<..>>
-    /// because the `call` callback in an [`Inspector`](revm::Inspector) doesn't get access to
-    /// the [`Interpreter`](revm::Interpreter) which holds the [`Gas`](revm::Gas) struct that
-    /// we need to copy. So we convert it to a Some(None) in `apply_cheatcode`, and once we have
+    /// Holds the stored gas info for when we pause gas metering. It is an `Option<Option<..>>`
+    /// because the `call` callback in an `Inspector` doesn't get access to
+    /// the `revm::Interpreter` which holds the `revm::Gas` struct that
+    /// we need to copy. So we convert it to a `Some(None)` in `apply_cheatcode`, and once we have
     /// the interpreter, we copy the gas struct. Then each time there is an execution of an
     /// operation, we reset the gas.
     pub gas_metering: Option<Option<revm::Gas>>,
