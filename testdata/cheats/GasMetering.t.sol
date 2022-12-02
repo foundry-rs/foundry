@@ -15,7 +15,7 @@ contract GasMeteringTest is DSTest {
         uint256 gas_end_normal = gas_start - gasleft();
 
 
-        cheats.stopGasMetering();
+        cheats.pauseGasMetering();
         uint256 gas_start_not_metered = gasleft();
 
         addInLoop();
