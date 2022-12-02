@@ -144,6 +144,8 @@ pub struct Cheatcodes {
 
     /// Records all eth deals
     pub eth_deals: Vec<DealRecord>,
+
+    pub gas_metering: Option<Option<revm::Gas>>,
 }
 
 impl Cheatcodes {
@@ -262,6 +264,18 @@ where
     }
 
     fn step(&mut self, interpreter: &mut Interpreter, _: &mut EVMData<'_, DB>, _: bool) -> Return {
+        // reset gas if gas metering is turned off
+        match self.gas_metering {
+            Some(None) => {
+                // need to store gas metering
+                self.gas_metering = Some(Some(interpreter.gas));
+            }
+            Some(Some(gas)) => {
+                interpreter.gas = gas;    
+            }
+            _ => {}
+        }
+
         // Record writes and reads if `record` has been called
         if let Some(storage_accesses) = &mut self.accesses {
             match interpreter.contract.bytecode.bytecode()[interpreter.program_counter()] {

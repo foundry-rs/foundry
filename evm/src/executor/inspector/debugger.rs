@@ -1,3 +1,4 @@
+use ethers::abi::AbiEncode;
 use crate::{
     debug::{DebugArena, DebugNode, DebugStep, Instruction},
     error::SolError,
@@ -114,11 +115,24 @@ where
             call.context.scheme.into(),
         );
         if call.contract == CHEATCODE_ADDRESS {
+            let cheatcode = Instruction::Cheatcode(
+                call.input[0..4].try_into().expect("malformed cheatcode call"),
+            );
+            // stopGasMetering() encoding
+            if matches!(cheatcode, Instruction::Cheatcode([101, 12, 183, 80])) {
+                return (
+                    Return::Revert,
+                    Gas::new(call.gas_limit),
+                    "You cannot stop gas metering with the debugger activated"
+                    .to_string()
+                    .encode()
+                    .into()
+                );
+            }
+
             self.arena.arena[self.head].steps.push(DebugStep {
                 memory: Memory::new(),
-                instruction: Instruction::Cheatcode(
-                    call.input[0..4].try_into().expect("malformed cheatcode call"),
-                ),
+                instruction: cheatcode,
                 ..Default::default()
             });
         }
