@@ -181,12 +181,17 @@ impl ScriptRunner {
         sender_initial_nonce: U256,
         libraries_len: usize,
     ) -> eyre::Result<()> {
-        if let Some(ref mut cheatcodes) = self.executor.inspector_config_mut().cheatcodes {
+        if let Some(ref cheatcodes) = self.executor.inspector_config().cheatcodes {
             if !cheatcodes.corrected_nonce {
                 self.executor
                     .set_nonce(self.sender, sender_initial_nonce.as_u64() + libraries_len as u64)?;
             }
-            cheatcodes.corrected_nonce = false;
+            self.executor
+                .inspector_config_mut()
+                .cheatcodes
+                .as_mut()
+                .expect("exists")
+                .corrected_nonce = false;
         }
         Ok(())
     }
