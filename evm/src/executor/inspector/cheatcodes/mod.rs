@@ -465,7 +465,7 @@ where
 
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
-            if data.journaled_state.depth() <= expected_revert.depth {
+            if data.journaled_state.depth() == expected_revert.depth {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match handle_expect_revert(
                     false,
@@ -649,7 +649,7 @@ where
 
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
-            if data.journaled_state.depth() <= expected_revert.depth {
+            if data.journaled_state.depth() == expected_revert.depth {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match handle_expect_revert(
                     true,
