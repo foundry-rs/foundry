@@ -31,6 +31,8 @@ pub struct ExpectedRevert {
     pub reason: Option<Bytes>,
     /// The depth at which the revert is expected
     pub depth: u64,
+    /// Call was made
+    pub call_was_made: bool,
 }
 
 fn expect_revert(
@@ -44,7 +46,7 @@ fn expect_revert(
             .encode()
             .into())
     } else {
-        state.expected_revert = Some(ExpectedRevert { reason, depth });
+        state.expected_revert = Some(ExpectedRevert { reason, depth, call_was_made: false });
         Ok(Bytes::new())
     }
 }
@@ -53,14 +55,22 @@ fn expect_revert(
 pub fn handle_expect_revert(
     is_create: bool,
     expected_revert: Option<&Bytes>,
+    call_was_made: bool,
     status: Return,
     retdata: Bytes,
 ) -> Result<(Option<Address>, Bytes), Bytes> {
     trace!("handle expect revert");
 
+    if !call_was_made {
+        return Err("Unhandled expectRevert: a call to a contract that uses expectRevert made no subsequent call and left a dangling expectRevert.".to_string().encode().into())
+    }
+
     if matches!(status, return_ok!()) {
         return Err("Call did not revert as expected".to_string().encode().into())
     }
+
+
+
     macro_rules! success_return {
         () => {
             Ok(if is_create {

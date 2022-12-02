@@ -29,7 +29,7 @@ contract Issue3220Test is DSTest {
         vm.selectFork(fork2);
 
         vm.expectRevert("This fails");
-        doRevert();
+        Issue3220Test(address(this)).doRevert();
     }
 
     function doRevert() public {

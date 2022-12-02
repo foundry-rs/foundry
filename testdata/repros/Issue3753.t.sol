@@ -10,10 +10,11 @@ contract Issue3753Test is DSTest {
 
     function test_repro() public {
         bool res;
+        vm.expectRevert();
         assembly {
-            res := staticcall(gas(), 4, 0, 0, 0, 0)
+            res := staticcall(1, 4, 0, 0, 0, 0)
         }
-        vm.expectRevert("require");
-        require(false, "require");
+        
+        require(res, "require");
     }
 }

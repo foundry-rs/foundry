@@ -320,6 +320,11 @@ where
         call: &mut CallInputs,
         is_static: bool,
     ) -> (Return, Gas, Bytes) {
+        // update expected revert
+        if let Some(expected_revert) = &mut self.expected_revert {
+            expected_revert.call_was_made = true;
+        }
+        
         if call.contract == CHEATCODE_ADDRESS {
             match self.apply_cheatcode(data, call.context.caller, call) {
                 Ok(retdata) => (Return::Return, Gas::new(call.gas_limit), retdata),
@@ -465,11 +470,12 @@ where
 
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
-            if data.journaled_state.depth() == expected_revert.depth {
+            if data.journaled_state.depth() <= expected_revert.depth {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match handle_expect_revert(
                     false,
                     expected_revert.reason.as_ref(),
+                    expected_revert.call_was_made,
                     status,
                     retdata,
                 ) {
@@ -582,6 +588,11 @@ where
             }
         }
 
+        // update expected revert
+        if let Some(expected_revert) = &mut self.expected_revert {
+            expected_revert.call_was_made = true;
+        }
+
         // Apply our broadcast
         if let Some(broadcast) = &self.broadcast {
             if data.journaled_state.depth() == broadcast.depth &&
@@ -649,11 +660,12 @@ where
 
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
-            if data.journaled_state.depth() == expected_revert.depth {
+            if data.journaled_state.depth() <= expected_revert.depth {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match handle_expect_revert(
                     true,
                     expected_revert.reason.as_ref(),
+                    expected_revert.call_was_made,
                     status,
                     retdata,
                 ) {
