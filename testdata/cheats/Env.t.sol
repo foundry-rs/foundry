@@ -235,6 +235,105 @@ contract EnvTest is DSTest {
         }
     }
 
+    function testEnvBoolEmptyArr() public {
+        string memory key = "_foundryCheatcodeEnvBoolEmptyArrTestKey";
+        string memory value = "";
+        bool[] memory expected = new bool[](0);
+
+        cheats.setEnv(key, value);
+        string memory delimiter = ",";
+        bool[] memory output = cheats.envBool(key, delimiter);
+        require(
+            keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))), "envBoolEmptyArr failed"
+        );
+    }
+
+    function testEnvUintEmptyArr() public {
+        string memory key = "_foundryCheatcodeEnvUintEmptyArrTestKey";
+        string memory value = "";
+        uint256[] memory expected = new uint256[](0);
+
+        cheats.setEnv(key, value);
+        string memory delimiter = ",";
+        uint256[] memory output = cheats.envUint(key, delimiter);
+        require(
+            keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))), "envUintEmptyArr failed"
+        );
+    }
+
+    function testEnvIntEmptyArr() public {
+        string memory key = "_foundryCheatcodeEnvIntEmptyArrTestKey";
+        string memory value = "";
+        int256[] memory expected = new int256[](0);
+
+        cheats.setEnv(key, value);
+        string memory delimiter = ",";
+        int256[] memory output = cheats.envInt(key, delimiter);
+        require(
+            keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))), "envIntEmptyArr failed"
+        );
+    }
+
+    function testEnvAddressEmptyArr() public {
+        string memory key = "_foundryCheatcodeEnvAddressEmptyArrTestKey";
+        string memory value = "";
+        address[] memory expected = new address[](0);
+
+        cheats.setEnv(key, value);
+        string memory delimiter = ",";
+        address[] memory output = cheats.envAddress(key, delimiter);
+        require(
+            keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))),
+            "envAddressEmptyArr failed"
+        );
+    }
+
+    function testEnvBytes32EmptyArr() public {
+        string memory key = "_foundryCheatcodeEnvBytes32EmptyArrTestKey";
+        string memory value = "";
+        bytes32[] memory expected = new bytes32[](0);
+
+        cheats.setEnv(key, value);
+        string memory delimiter = ",";
+        bytes32[] memory output = cheats.envBytes32(key, delimiter);
+        require(
+            keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))),
+            "envBytes32EmptyArr failed"
+        );
+    }
+
+    function testEnvStringEmptyArr() public {
+        string memory key = "_foundryCheatcodeEnvStringEmptyArrTestKey";
+        string memory value = "";
+        string[] memory expected = new string[](0);
+
+        cheats.setEnv(key, value);
+        string memory delimiter = "|";
+        string[] memory output = cheats.envString(key, delimiter);
+        for (uint256 i = 0; i < expected.length; ++i) {
+            require(
+                keccak256(abi.encodePacked((output[i]))) == keccak256(abi.encodePacked((expected[i]))),
+                "envStringEmptyArr failed"
+            );
+        }
+    }
+
+    function testEnvBytesEmptyArr() public {
+        string memory key = "_foundryCheatcodeEnvBytesEmptyArrTestKey";
+        string memory value = "";
+        bytes[] memory expected = new bytes[](0);
+
+        cheats.setEnv(key, value);
+        string memory delimiter = ",";
+        bytes[] memory output = cheats.envBytes(key, delimiter);
+        for (uint256 i = 0; i < expected.length; ++i) {
+            require(
+                keccak256(abi.encodePacked((output[i]))) == keccak256(abi.encodePacked((expected[i]))),
+                "envBytesEmptyArr failed"
+            );
+        }
+    }
+
     function testEnvWithDefaultBoolKey() public {
         string memory key = "_foundryCheatcodeEnvWithDefaultBoolTestKey";
         string[numEnvBoolTests] memory values = ["true", "false", "True", "False"];
@@ -685,6 +784,217 @@ contract EnvTest is DSTest {
             require(
                 keccak256(abi.encodePacked((output[i]))) == keccak256(abi.encodePacked((expected[i]))),
                 "envWithDefaulBytesArrDefault failed"
+            );
+        }
+    }
+
+    function testEnvWithDefaultBoolEmptyArrKey() public {
+        string memory key = "_foundryCheatcodeEnvBoolWithDefaultBoolEmptyArrTestKey";
+        string memory value = "";
+        bool[] memory expected = new bool[](0);
+        bool[] memory defaultValues = new bool[](0);
+
+        cheats.setEnv(key, value);
+        string memory delimiter = ",";
+        bool[] memory output = cheats.envOr(key, delimiter, defaultValues);
+        require(
+            keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))),
+            "envWithDefaultBoolEmptyArrKey failed"
+        );
+    }
+
+    function testEnvWithDefaultBoolEmptyArrDefault() public {
+        string memory key = "_foundryCheatcodeEnvBoolWithDefaultBoolEmptyArrTestDefault";
+        string memory value = "";
+        bool[] memory expected = new bool[](0);
+        bool[] memory defaultValues = new bool[](0);
+
+        string memory delimiter = ",";
+        bool[] memory output = cheats.envOr(key, delimiter, defaultValues);
+        require(
+            keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))),
+            "envWithDefaultBoolEmptyArrDefault failed"
+        );
+    }
+
+    function testEnvWithDefaultUintEmptyArrKey() public {
+        string memory key = "_foundryCheatcodeEnvWithDefaultUintEmptyArrTestKey";
+        string memory value = "";
+        uint256[] memory expected = new uint256[](0);
+        uint256[] memory defaultValues = new uint256[](0);
+
+        cheats.setEnv(key, value);
+        string memory delimiter = ",";
+        uint256[] memory output = cheats.envOr(key, delimiter, defaultValues);
+        require(
+            keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))),
+            "envWithDefaultUintEmptyArrKey failed"
+        );
+    }
+
+    function testEnvWithDefaultUintEmptyArrDefault() public {
+        string memory key = "_foundryCheatcodeEnvWithDefaultUintEmptyArrTestDefault";
+        string memory value = "";
+        uint256[] memory expected = new uint256[](0);
+        uint256[] memory defaultValues = new uint256[](0);
+
+        string memory delimiter = ",";
+        uint256[] memory output = cheats.envOr(key, delimiter, defaultValues);
+        require(
+            keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))),
+            "envWithDefaultUintEmptyArrDefault failed"
+        );
+    }
+
+    function testEnvWithDefaultIntEmptyArrKey() public {
+        string memory key = "_foundryCheatcodeEnvWithDefaultIntEmptyArrTestKey";
+        string memory value = "";
+        int256[] memory expected = new int256[](0);
+        int256[] memory defaultValues = new int256[](0);
+
+        cheats.setEnv(key, value);
+        string memory delimiter = ",";
+        int256[] memory output = cheats.envOr(key, delimiter, defaultValues);
+        require(
+            keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))),
+            "envWithDefaultIntEmptyArrKey failed"
+        );
+    }
+
+    function testEnvWithDefaultIntEmptyArrDefault() public {
+        string memory key = "_foundryCheatcodeEnvWithDefaultIntEmptyArrTestDefault";
+        string memory value = "";
+        int256[] memory expected = new int256[](0);
+        int256[] memory defaultValues = new int256[](0);
+
+        string memory delimiter = ",";
+        int256[] memory output = cheats.envOr(key, delimiter, defaultValues);
+        require(
+            keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))),
+            "envWithDefaultIntEmptyArrDefault failed"
+        );
+    }
+
+    function testEnvWithDefaultAddressEmptyArrKey() public {
+        string memory key = "_foundryCheatcodeEnvWithDefaultAddressEmptyArrTestKey";
+        string memory value = "";
+        address[] memory expected = new address[](0);
+        address[] memory defaultValues = new address[](0);
+
+        cheats.setEnv(key, value);
+        string memory delimiter = ",";
+        address[] memory output = cheats.envOr(key, delimiter, defaultValues);
+        require(
+            keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))),
+            "envWithDefaultAddressEmptyArrKey failed"
+        );
+    }
+
+    function testEnvWithDefaultAddressEmptyArrDefault() public {
+        string memory key = "_foundryCheatcodeEnvWithDefaultAddressEmptyArrTestDefault";
+        string memory value = "";
+        address[] memory expected = new address[](0);
+        address[] memory defaultValues = new address[](0);
+
+        string memory delimiter = ",";
+        address[] memory output = cheats.envOr(key, delimiter, defaultValues);
+        require(
+            keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))),
+            "envWithDefaultAddressEmptyArrDefault failed"
+        );
+    }
+
+    function testEnvWithDefaultBytes32EmptyArrKey() public {
+        string memory key = "_foundryCheatcodeEnvWithDefaultBytes32EmptyArrTestKey";
+        string memory value = "";
+        bytes32[] memory expected = new bytes32[](0);
+        bytes32[] memory defaultValues = new bytes32[](0);
+
+        cheats.setEnv(key, value);
+        string memory delimiter = ",";
+        bytes32[] memory output = cheats.envOr(key, delimiter, defaultValues);
+        require(
+            keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))),
+            "envWithDefaultBytes32EmptyArrKey failed"
+        );
+    }
+
+    function testEnvWithDefaultBytes32EmptyArrDefault() public {
+        string memory key = "_foundryCheatcodeEnvWithDefaultBytes32EmptyArrTestDefault";
+        string memory value = "";
+        bytes32[] memory expected = new bytes32[](0);
+        bytes32[] memory defaultValues = new bytes32[](0);
+
+        string memory delimiter = ",";
+        bytes32[] memory output = cheats.envOr(key, delimiter, defaultValues);
+        require(
+            keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))),
+            "envWithDefaultBytes32EmptyArrDefault failed"
+        );
+    }
+
+    function testEnvWithDefaultStringEmptyArrKey() public {
+        string memory key = "_foundryCheatcodeEnvWithDefaultStringEmptyArrTestKey";
+        string memory value = "";
+        string[] memory expected = new string[](0);
+        string[] memory defaultValues = new string[](0);
+
+        cheats.setEnv(key, value);
+        string memory delimiter = "|";
+        string[] memory output = cheats.envOr(key, delimiter, defaultValues);
+        for (uint256 i = 0; i < expected.length; ++i) {
+            require(
+                keccak256(abi.encodePacked((output[i]))) == keccak256(abi.encodePacked((expected[i]))),
+                "envWithDefaultStringEmptyArrKey failed"
+            );
+        }
+    }
+
+    function testEnvWithDefaultStringEmptyArrDefault() public {
+        string memory key = "_foundryCheatcodeEnvWithDefaultStringEmptyArrTestDefault";
+        string memory value = "";
+        string[] memory expected = new string[](0);
+        string[] memory defaultValues = new string[](0);
+
+        string memory delimiter = "|";
+        string[] memory output = cheats.envOr(key, delimiter, defaultValues);
+        for (uint256 i = 0; i < expected.length; ++i) {
+            require(
+                keccak256(abi.encodePacked((output[i]))) == keccak256(abi.encodePacked((expected[i]))),
+                "envWithDefaultStringEmptyArrDefault failed"
+            );
+        }
+    }
+
+    function testEnvWithDefaulBytesEmptyArrKey() public {
+        string memory key = "_foundryCheatcodeEnvWithDefaulBytesEmptyArrTestKey";
+        string memory value = "";
+        bytes[] memory expected = new bytes[](0);
+        bytes[] memory defaultValues = new bytes[](0);
+
+        cheats.setEnv(key, value);
+        string memory delimiter = ",";
+        bytes[] memory output = cheats.envOr(key, delimiter, expected);
+        for (uint256 i = 0; i < expected.length; ++i) {
+            require(
+                keccak256(abi.encodePacked((output[i]))) == keccak256(abi.encodePacked((expected[i]))),
+                "envWithDefaulBytesEmptyArrKey failed"
+            );
+        }
+    }
+
+    function testEnvWithDefaulBytesEmptyArrDefault() public {
+        string memory key = "_foundryCheatcodeEnvWithDefaulBytesEmptyArrTestDefault";
+        string memory value = "";
+        bytes[] memory expected = new bytes[](0);
+        bytes[] memory defaultValues = new bytes[](0);
+
+        string memory delimiter = ",";
+        bytes[] memory output = cheats.envOr(key, delimiter, expected);
+        for (uint256 i = 0; i < expected.length; ++i) {
+            require(
+                keccak256(abi.encodePacked((output[i]))) == keccak256(abi.encodePacked((expected[i]))),
+                "envWithDefaulBytesEmptyArrDefault failed"
             );
         }
     }
