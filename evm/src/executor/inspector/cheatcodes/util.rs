@@ -246,7 +246,7 @@ pub fn value_to_abi(
     r#type: ParamType,
     is_array: bool,
 ) -> Result<Bytes, String> {
-    if is_array && val.first().unwrap().as_ref().is_empty() {
+    if is_array && val.len() == 1 && val.first().unwrap().as_ref().is_empty() {
         return Ok(abi::encode(&[Token::String(String::from(""))]).into())
     }
     let parse_bool = |v: &str| v.to_lowercase().parse::<bool>();
