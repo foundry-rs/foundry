@@ -373,11 +373,11 @@ impl Executor {
         // Persist cheatcode state
         let mut cheatcodes = result.cheatcodes.take();
         if let Some(cheats) = cheatcodes.as_mut() {
-            if !cheats.broadcastable_transactions.is_empty() {
-                // Clear broadcast state from cheatcode state
-                cheats.broadcastable_transactions.clear();
-                cheats.corrected_nonce = false;
-            }
+            // Clear broadcastable transactions
+            cheats.broadcastable_transactions.clear();
+
+            // corrected_nonce value is needed outside of this context (setUp), so we don't
+            // reset it.
         }
         self.inspector_config.cheatcodes = cheatcodes;
     }
