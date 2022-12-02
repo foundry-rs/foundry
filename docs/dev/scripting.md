@@ -4,6 +4,7 @@
 1. [High level overview](#high-level-overview)
     1. [Notes](#notes)
 2. [Script Execution](#script-execution)
+3. [Nonce Management](#nonce-management)
 
 ## High level overview
 
@@ -84,3 +85,54 @@ Executor::call-. BroadcastableTransactions .->ScriptArgs::handle_broadcastable_t
 
 ```
 
+
+## Nonce Management
+
+During the first execution stage on `forge script`, foundry has to adjust the nonce from the sender to make sure the execution and state are as close as possible to its on-chain representation.
+
+Making sure that `msg.sender` is our signer when calling `setUp()` and `run()` and that its nonce is correct (decreased by one on each call) when calling `vm.broadcast` to create a contract.
+
+We skip this, if the user hasn't set a sender and they're using the `Config::DEFAULT_SENDER`.
+
+
+```mermaid
+graph TD
+
+    ScriptRunner::setup-->default_foundry_caller-deployScript;
+    default_foundry_caller-deployScript-->user_sender-deployLibs;
+    user_sender-deployLibs-->Contract.setUp;
+    Contract.setUp-->A0{Executor::call};
+    A0-->vm.broadcast;
+    A0-->vm.startBroadcast;
+    A0-->vm.getNonce;
+
+    vm.broadcast--> A{cheatcode.corrected_nonce}
+    vm.startBroadcast-->A
+    vm.getNonce-->A
+
+    A--true-->continue_setUp;
+    A--false-->B[sender_nonce=-1];
+    B-->C[cheatcode.corrected_nonce=true];
+    C-->continue_setUp;
+    continue_setUp-->end_setUp;
+    end_setUp-->D{cheatcode.corrected_nonce}
+    D--true-->E[cheatcode.corrected_nonce=false];
+    D--false-->F[sender_nonce=initial_nonce+predeployed_libraries_count];
+    E-->ScriptRunner::script;
+    F-->ScriptRunner::script;
+    ScriptRunner::script-->Contract.run;
+    Contract.run-->G{Executor::call};
+    G-->H[vm.broadcast];
+    G-->I[vm.startBroadcast];
+    G-->J[vm.getNonce];
+
+    H--> K{cheatcode.corrected_nonce}
+    I-->K
+    J-->K
+
+    K--true-->continue_run;
+    K--false-->L[sender_nonce=-1];
+    L-->M[cheatcode.corrected_nonce=true];
+    M-->continue_run;
+    continue_run-->end_run;
+```
