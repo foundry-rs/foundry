@@ -91,45 +91,41 @@ pub fn abi_to_solidity(contract_abi: &RawAbi, mut contract_name: &str) -> eyre::
     let sol = if structs.structs_types().is_empty() {
         if events.is_empty() {
             format!(
-                r#"interface {} {{
-    {}
+                r#"interface {contract_name} {{
+    {functions}
 }}
-"#,
-                contract_name, functions
+"#
             )
         } else {
             format!(
-                r#"interface {} {{
-    {}
+                r#"interface {contract_name} {{
+    {events}
 
-    {}
+    {functions}
 }}
-"#,
-                contract_name, events, functions
+"#
             )
         }
     } else {
         let structs = format_struct_types(&structs);
         match events.is_empty() {
             true => format!(
-                r#"interface {} {{
-    {}
+                r#"interface {contract_name} {{
+    {structs}
 
-    {}
+    {functions}
 }}
-"#,
-                contract_name, structs, functions
+"#
             ),
             false => format!(
-                r#"interface {} {{
-    {}
+                r#"interface {contract_name} {{
+    {events}
 
-    {}
+    {structs}
 
-    {}
+    {functions}
 }}
-"#,
-                contract_name, events, structs, functions
+"#
             ),
         }
     };

@@ -911,6 +911,7 @@ forgetest!(can_install_latest_release_tag, |prj: TestProject, mut cmd: TestComma
 // Tests that forge update doesn't break a working dependency by recursively updating nested
 // dependencies
 forgetest!(
+    #[ignore]
     can_update_library_with_outdated_nested_dependency,
     |prj: TestProject, mut cmd: TestCommand| {
         cmd.git_init();

@@ -652,8 +652,7 @@ where
             write!(
                 &mut msg,
                 "\n* attempted ssh-agent authentication, but \
-                 no usernames succeeded: {}",
-                names
+                 no usernames succeeded: {names}"
             )
             .expect("could not write to msg");
         }
