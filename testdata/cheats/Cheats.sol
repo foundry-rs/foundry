@@ -282,4 +282,9 @@ interface Cheats {
     function serializeBytes(string calldata, string calldata, bytes[] calldata) external returns (string memory);
     function writeJson(string calldata, string calldata) external;
     function writeJson(string calldata, string calldata, string calldata) external;
+
+    // Pauses gas metering (gas usage will not be counted)
+    function pauseGasMetering() external;
+    // Resumes gas metering from where it left off
+    function resumeGasMetering() external;
 }
