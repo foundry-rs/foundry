@@ -482,8 +482,7 @@ impl<'a> InvariantExecutor<'a> {
             }
         } else {
             let (name, abi) = self.setup_contracts.get(&address).wrap_err(format!(
-                "[targetSelectors] address does not have an associated contract: {}",
-                address
+                "[targetSelectors] address does not have an associated contract: {address}"
             ))?;
 
             let functions = bytes4_array

@@ -512,8 +512,7 @@ fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String
     if candidates.len() == 1 {
         let matched_tag = candidates[0].clone();
         print!(
-            "Found a similar version tag: {}, do you want to use this insead? ([y]/n): ",
-            matched_tag
+            "Found a similar version tag: {matched_tag}, do you want to use this insead? ([y]/n): "
         );
         stdout().flush()?;
         let mut input = String::new();

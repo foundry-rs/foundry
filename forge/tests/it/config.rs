@@ -205,15 +205,13 @@ pub fn assert_multiple(
     for (contract_name, tests) in &expecteds {
         assert!(
             actuals.contains_key(*contract_name),
-            "We did not run the contract {}",
-            contract_name
+            "We did not run the contract {contract_name}"
         );
 
         assert_eq!(
             actuals[*contract_name].len(),
             expecteds[contract_name].len(),
-            "We did not run as many test functions as we expected for {}",
-            contract_name
+            "We did not run as many test functions as we expected for {contract_name}"
         );
         for (test_name, should_pass, reason, expected_logs, expected_warning_count) in tests {
             let logs = &actuals[*contract_name].test_results[*test_name].decoded_logs;
@@ -237,8 +235,7 @@ pub fn assert_multiple(
                 );
                 assert_eq!(
                     actuals[*contract_name].test_results[*test_name].reason, *reason,
-                    "Failure reason for test {} did not match what we expected.",
-                    test_name
+                    "Failure reason for test {test_name} did not match what we expected."
                 );
             }
 
@@ -255,8 +252,7 @@ pub fn assert_multiple(
             if let Some(expected_warning_count) = expected_warning_count {
                 assert_eq!(
                     warnings_count, expected_warning_count,
-                    "Test {} did not pass as expected. Expected:\n{}Got:\n{}",
-                    test_name, expected_warning_count, warnings_count
+                    "Test {test_name} did not pass as expected. Expected:\n{expected_warning_count}Got:\n{warnings_count}"
                 );
             }
         }

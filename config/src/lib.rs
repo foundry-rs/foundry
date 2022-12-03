@@ -647,8 +647,7 @@ impl Config {
                     if solc.is_none() {
                         if self.offline {
                             return Err(SolcError::msg(format!(
-                                "can't install missing solc {} in offline mode",
-                                version
+                                "can't install missing solc {version} in offline mode"
                             )))
                         }
                         Solc::blocking_install(version)?;
@@ -2063,11 +2062,9 @@ impl Provider for DappEnvCompatProvider {
             // Activate Solidity optimizer (0 or 1)
             let val = val.parse::<u8>().map_err(figment::Error::custom)?;
             if val > 1 {
-                return Err(format!(
-                    "Invalid $DAPP_BUILD_OPTIMIZE value `{}`,  expected 0 or 1",
-                    val
+                return Err(
+                    format!("Invalid $DAPP_BUILD_OPTIMIZE value `{val}`,  expected 0 or 1").into()
                 )
-                .into())
             }
             dict.insert("optimizer".to_string(), (val == 1).into());
         }
@@ -2762,9 +2759,8 @@ mod tests {
                 &format!(
                     r#"
                 [profile.default]
-                gas_limit = "{}"
-            "#,
-                    gas
+                gas_limit = "{gas}"
+            "#
                 ),
             )?;
 

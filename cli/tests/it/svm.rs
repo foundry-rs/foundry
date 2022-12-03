@@ -30,9 +30,7 @@ async fn ensure_latest_release(platform: Platform) {
         .unwrap_or_else(|err| panic!("Could not fetch releases for {platform}: {err:?}"));
     assert!(
         releases.releases.contains_key(&LATEST_SOLC),
-        "platform {:?} is missing solc info {}",
-        platform,
-        LATEST_SOLC
+        "platform {platform:?} is missing solc info {LATEST_SOLC}"
     );
 }
 

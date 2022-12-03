@@ -258,8 +258,7 @@ pub fn value_to_abi(
                 Ok(val) => Ok(val),
                 Err(dec_err) => v.parse::<U256>().map_err(|hex_err| {
                     format!(
-                        "Failed to parse uint value `{}` from hex and as decimal string {}, {}",
-                        v, hex_err, dec_err
+                        "Failed to parse uint value `{v}` from hex and as decimal string {hex_err}, {dec_err}"
                     )
                 }),
             }
@@ -275,8 +274,7 @@ pub fn value_to_abi(
                 Ok(val) => Ok(val),
                 Err(dec_err) => v.parse::<I256>().map_err(|hex_err| {
                     format!(
-                        "Failed to parse int value `{}` from hex and as decimal string {}, {}",
-                        v, hex_err, dec_err
+                        "Failed to parse int value `{v}` from hex and as decimal string {hex_err}, {dec_err}"
                     )
                 }),
             }

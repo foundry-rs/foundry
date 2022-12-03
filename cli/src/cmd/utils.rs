@@ -40,10 +40,9 @@ pub fn remove_contract(
         {
             if suggestion != info.name {
                 err = format!(
-                    r#"{}
+                    r#"{err}
 
-        Did you mean `{}`?"#,
-                    err, suggestion
+        Did you mean `{suggestion}`?"#
                 );
             }
         }
@@ -101,10 +100,9 @@ pub fn get_cached_entry_by_name(
     let mut err = format!("could not find artifact: `{name}`");
     if let Some(suggestion) = suggestions::did_you_mean(name, &alternatives).pop() {
         err = format!(
-            r#"{}
+            r#"{err}
 
-        Did you mean `{}`?"#,
-            err, suggestion
+        Did you mean `{suggestion}`?"#
         );
     }
     eyre::bail!(err)
