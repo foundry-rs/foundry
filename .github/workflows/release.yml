@@ -15,9 +15,7 @@ env:
 jobs:
     prepare:
         name: Prepare release
-        # Temporarily pin to `20.04` instead of `ubuntu-latest`, until ubuntu-latest migration is complete
-        # See also <https://github.com/foundry-rs/foundry/issues/3827>
-        runs-on: ubuntu-20.04
+        runs-on: ubuntu-latest
 
         outputs:
             tag_name: ${{ steps.release_info.outputs.tag_name }}
@@ -81,7 +79,9 @@ jobs:
                     # The target is used by Cargo
                     # The arch is either 386, arm64 or amd64
                     # The svm target platform to use for the binary https://github.com/roynalnaruto/svm-rs/blob/84cbe0ac705becabdc13168bae28a45ad2299749/svm-builds/build.rs#L4-L24
-                    - os: ubuntu-latest
+                    # Temporarily pin to `20.04` instead of `ubuntu-latest`, until ubuntu-latest migration is complete
+                    # See also <https://github.com/foundry-rs/foundry/issues/3827>
+                    - os: ubuntu-20.04
                       platform: linux
                       target: x86_64-unknown-linux-gnu
                       arch: amd64
