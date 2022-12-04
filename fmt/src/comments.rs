@@ -292,18 +292,18 @@ impl<'a, I: Iterator<Item = &'a String>> Iterator for CommentContents<'a, I> {
     type Item = &'a str;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.peeked.take().flatten().or_else(|| self.contents.next()).and_then(|content| {
+        self.peeked.take().flatten().or_else(|| self.contents.next()).map(|content| {
             let mut comment = content.as_str();
-            comment = comment.strip_prefix(self.start_token).unwrap_or(&comment);
+            comment = comment.strip_prefix(self.start_token).unwrap_or(comment);
             if let Some(end_token) = self.end_token {
-                comment = comment.strip_suffix(end_token).unwrap_or(&comment);
+                comment = comment.strip_suffix(end_token).unwrap_or(comment);
             }
             if !self.is_first {
                 comment = comment.trim_start();
             } else {
                 self.is_first = false;
             }
-            Some(comment)
+            comment
         })
     }
 }

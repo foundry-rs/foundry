@@ -540,28 +540,6 @@ impl<'a, W: Write> Formatter<'a, W> {
         })
     }
 
-    /// TODO:
-    fn write_new_comment_line_if_needed(
-        &mut self,
-        next_line: &str,
-        last_line_wrapped: bool,
-        wrap_token: &str,
-        padding: usize,
-    ) -> Result<()> {
-        let next_line = next_line.lines().next();
-        let next_word_fits = self.config.wrap_comments &&
-            last_line_wrapped &&
-            next_line
-                .and_then(|l| l.trim_start().split(' ').next())
-                .and_then(|word| Some(self.will_it_fit(word)))
-                .unwrap_or_default();
-        if !next_word_fits {
-            self.write_preserved_line()?;
-            write!(self.buf(), "{}{}", wrap_token, " ".repeat(padding))?;
-        }
-        Ok(())
-    }
-
     /// Write the line of a doc block comment line
     fn write_doc_block_line(&mut self, comment: &CommentWithMetadata, line: &str) -> Result<()> {
         if line.trim().starts_with('*') {
@@ -637,12 +615,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                     self.write_whitespace_separator(true)?;
                     // write newline wrap token
                     write!(self.buf(), "{}{}", wrap_token, " ".repeat(padding))?;
-                    return Ok(self.write_comment_line(
-                        &words.join(" "),
-                        wrap_token,
-                        padding,
-                        false,
-                    )?)
+                    return self.write_comment_line(&words.join(" "), wrap_token, padding, false)
                 }
 
                 self.write_whitespace_separator(false)?;
@@ -676,7 +649,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             None => return Ok(()),
         };
         let mut is_first = is_first.unwrap_or(true);
-        while let Some(comment) = comments.next() {
+        for comment in comments {
             let unwritten_whitespace_loc =
                 Loc::File(comment.loc.file_no(), last_byte_written, comment.loc.start());
             if self.inline_config.is_disabled(unwritten_whitespace_loc) {
