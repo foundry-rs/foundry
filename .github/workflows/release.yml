@@ -15,7 +15,9 @@ env:
 jobs:
     prepare:
         name: Prepare release
-        runs-on: ubuntu-latest
+        # Temporarily pin to `20.04` instead of `ubuntu-latest`, until ubuntu-latest migration is complete
+        # See also <https://github.com/foundry-rs/foundry/issues/3827>
+        runs-on: ubuntu-20.04
 
         outputs:
             tag_name: ${{ steps.release_info.outputs.tag_name }}
