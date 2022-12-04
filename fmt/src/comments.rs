@@ -77,8 +77,7 @@ impl CommentWithMetadata {
     /// Return a flag indicating whether this comment can be extended
     /// with the contents of another comment
     pub fn can_be_extended(&self, other: &CommentWithMetadata) -> bool {
-        let other_first_ch =
-            other.contents().next().map(|c| c.trim_start().chars().next()).flatten();
+        let other_first_ch = other.contents().next().and_then(|c| c.trim_start().chars().next());
         self.is_line() &&
             other.is_line() &&
             self.position == other.position &&
@@ -208,6 +207,26 @@ impl CommentWithMetadata {
         CommentContents::new(self.raw_contents.iter(), self.start_token(), self.end_token())
     }
 
+    /// Return the whitespace padding for the lines following the first
+    pub fn padding(&self) -> Option<usize> {
+        if self.is_line() {
+            self.contents()
+                .next()
+                .and_then(|content| content.lines().next())
+                .and_then(|line| line.trim_start().chars().next().map(|ch| (line, ch)))
+                .and_then(|(line, ch)| {
+                    // TODO: 1. and 1)
+                    if ch == '-' || ch == '*' {
+                        line.trim_start().find(char::is_alphanumeric)
+                    } else {
+                        None
+                    }
+                })
+        } else {
+            None
+        }
+    }
+
     /// The start token of the comment
     pub fn start_token(&self) -> &str {
         match self.ty {
@@ -243,18 +262,29 @@ pub struct CommentContents<'a, I>
 where
     I: Iterator<Item = &'a String>,
 {
-    comments: I,
+    contents: I,
     start_token: &'a str,
     end_token: Option<&'a str>,
     is_first: bool,
+    peeked: Option<Option<&'a String>>,
 }
 
 impl<'a, I> CommentContents<'a, I>
 where
     I: Iterator<Item = &'a String>,
 {
-    fn new(comments: I, start_token: &'a str, end_token: Option<&'a str>) -> Self {
-        Self { comments, start_token, end_token, is_first: true }
+    fn new(contents: I, start_token: &'a str, end_token: Option<&'a str>) -> Self {
+        Self { contents, start_token, end_token, is_first: true, peeked: None }
+    }
+
+    pub fn peek_next_word(&mut self) -> Option<&'a str> {
+        let iter = &mut self.contents;
+        self.peeked
+            .get_or_insert_with(|| iter.next())
+            .and_then(|content| content.lines().next())
+            .and_then(|line| {
+                line.strip_prefix(self.start_token).unwrap_or(line).trim_start().split(' ').next()
+            })
     }
 }
 
@@ -262,8 +292,8 @@ impl<'a, I: Iterator<Item = &'a String>> Iterator for CommentContents<'a, I> {
     type Item = &'a str;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(comment) = self.comments.next() {
-            let mut comment = comment.as_str();
+        self.peeked.take().flatten().or_else(|| self.contents.next()).and_then(|content| {
+            let mut comment = content.as_str();
             comment = comment.strip_prefix(self.start_token).unwrap_or(&comment);
             if let Some(end_token) = self.end_token {
                 comment = comment.strip_suffix(end_token).unwrap_or(&comment);
@@ -274,9 +304,7 @@ impl<'a, I: Iterator<Item = &'a String>> Iterator for CommentContents<'a, I> {
                 self.is_first = false;
             }
             Some(comment)
-        } else {
-            None
-        }
+        })
     }
 }
 

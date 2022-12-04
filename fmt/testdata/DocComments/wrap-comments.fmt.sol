@@ -153,9 +153,9 @@ function freeFloatingMultilineIndent() {}
 ///   completed
 contract FractionalPool {
     /// @notice A proof-of-concept
-    /// implementation demonstrating
-    /// how Flexible Voting can be used
-    /// to allow holders of governance
+    /// implementation demonstrating how
+    /// Flexible Voting can be used to
+    /// allow holders of governance
     /// tokens to use them in DeFi but
     /// still participate in governance.
     /// The FractionalPool simulates a
@@ -201,3 +201,13 @@ contract FractionalPool {
 //   by the pool before the proposal is
 //   completed
 contract FractionalPool2 {}
+
+/// Some contract specification that:
+/// * satisfies the first long
+///   constraint
+/// * must uphold to the second
+///   constraint under every condition
+/// * correctly implements
+///   the interface required for
+///   interacting with other contracts
+contract ContractWithBulletItems {}

@@ -126,3 +126,11 @@ contract FractionalPool {
 // - The vote preferences of all Depositors are expressed proportionally across any tokens held by the pool, and
 //   rolled up into a single delegated vote made by the pool before the proposal is completed
 contract FractionalPool2 {}
+
+/// Some contract specification that:
+/// * satisfies the first long constraint
+/// * must uphold to the second constraint under every condition
+/// * correctly implements
+///  the interface required for
+///interacting with other contracts
+contract ContractWithBulletItems {}

@@ -429,12 +429,6 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(out.into_iter().map(|(_, c)| c).collect_vec())
     }
 
-    // TODO: remove
-    /// Write a comment to the buffer formatted.
-    /// WARNING: This may introduce a newline if the comment is a Line comment
-    /// or if the comment are wrapped
-    // fn write_comment(&mut self, comment: &CommentWithMetadata, is_first: bool) -> Result<()> {}
-
     /// Write a comment with position [CommentPosition::Prefix]
     fn write_prefix_comment(
         &mut self,
@@ -460,28 +454,25 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         write!(self.buf(), "{}", comment.start_token())?;
 
-        // TODO:
-        let mut contents = comment.contents().peekable();
+        let padding = comment.padding().unwrap_or_default();
+        let mut contents = comment.contents();
+
         while let Some(content) = contents.next() {
             let mut lines = content.lines().peekable();
             let mut last_line_wrapped = false;
             while let Some(line) = lines.next() {
-                last_line_wrapped = self.write_comment_line(line, comment.wrap_token(), true)?;
+                last_line_wrapped =
+                    self.write_comment_line(line, comment.wrap_token(), padding, true)?;
                 if lines.peek().is_some() {
                     self.write_preserved_line()?;
                 }
             }
-            if let Some(next_content) = contents.peek() {
-                let next_line = next_content.lines().next();
-                let next_word_fits = self.config.wrap_comments &&
-                    last_line_wrapped &&
-                    next_line
-                        .and_then(|l| l.trim_start().split(' ').next())
-                        .and_then(|word| Some(self.will_it_fit(word)))
-                        .unwrap_or_default();
-                if !next_word_fits {
+            if let Some(next_word) = contents.peek_next_word() {
+                // Write next newline unless we are wrapping and next word fits
+                if !(self.config.wrap_comments && last_line_wrapped && self.will_it_fit(next_word))
+                {
                     self.write_preserved_line()?;
-                    write!(self.buf(), "{}", comment.wrap_token())?;
+                    write!(self.buf(), "{}{}", comment.wrap_token(), " ".repeat(padding))?;
                 }
             }
         }
@@ -507,20 +498,31 @@ impl<'a, W: Write> Formatter<'a, W> {
             write!(fmt.buf(), "{}", comment.start_token())?;
             let start_token_pos = fmt.current_line_len();
 
-            // TODO:
-            let mut contents_iter = comment.contents().peekable();
-            while let Some(content) = contents_iter.next() {
-                let mut lines = content.lines().peekable();
-                fmt.grouped(|fmt| {
+            fmt.grouped(|fmt| {
+                let mut contents = comment.contents();
+                while let Some(content) = contents.next() {
+                    let mut lines = content.lines().peekable();
+                    let mut last_line_wrapped = false;
                     while let Some(line) = lines.next() {
-                        fmt.write_comment_line(line, comment.wrap_token(), true)?;
+                        last_line_wrapped =
+                            fmt.write_comment_line(line, comment.wrap_token(), 0, true)?;
                         if lines.peek().is_some() {
                             fmt.write_whitespace_separator(true)?;
                         }
                     }
-                    Ok(())
-                })?;
-            }
+                    if let Some(next_word) = contents.peek_next_word() {
+                        // Write next newline unless we are wrapping and next word fits
+                        if !(fmt.config.wrap_comments &&
+                            last_line_wrapped &&
+                            fmt.will_it_fit(next_word))
+                        {
+                            fmt.write_whitespace_separator(true)?;
+                            write!(fmt.buf(), "{}", comment.wrap_token())?;
+                        }
+                    }
+                }
+                Ok(())
+            })?;
 
             if let Some(end) = comment.end_token() {
                 // If comment is not multiline, end token has to be aligned with the start
@@ -538,13 +540,36 @@ impl<'a, W: Write> Formatter<'a, W> {
         })
     }
 
+    /// TODO:
+    fn write_new_comment_line_if_needed(
+        &mut self,
+        next_line: &str,
+        last_line_wrapped: bool,
+        wrap_token: &str,
+        padding: usize,
+    ) -> Result<()> {
+        let next_line = next_line.lines().next();
+        let next_word_fits = self.config.wrap_comments &&
+            last_line_wrapped &&
+            next_line
+                .and_then(|l| l.trim_start().split(' ').next())
+                .and_then(|word| Some(self.will_it_fit(word)))
+                .unwrap_or_default();
+        if !next_word_fits {
+            self.write_preserved_line()?;
+            write!(self.buf(), "{}{}", wrap_token, " ".repeat(padding))?;
+        }
+        Ok(())
+    }
+
     /// Write the line of a doc block comment line
     fn write_doc_block_line(&mut self, comment: &CommentWithMetadata, line: &str) -> Result<()> {
         if line.trim().starts_with('*') {
             let line = line.trim().trim_start_matches('*');
             let needs_space = line.chars().next().map_or(false, |ch| !ch.is_whitespace());
             write!(self.buf(), " *{}", if needs_space { " " } else { "" })?;
-            self.write_comment_line(line, comment.wrap_token(), true)?;
+            // TODO:
+            self.write_comment_line(line, comment.wrap_token(), 0, true)?;
             self.write_whitespace_separator(true)?;
             return Ok(())
         }
@@ -555,14 +580,21 @@ impl<'a, W: Write> Formatter<'a, W> {
             .count();
         let to_skip = indent_whitespace_count - indent_whitespace_count % self.config.tab_width;
         write!(self.buf(), " * ")?;
-        self.write_comment_line(&line[to_skip..], comment.wrap_token(), true)?;
+        // TODO:
+        self.write_comment_line(&line[to_skip..], comment.wrap_token(), 0, true)?;
         self.write_whitespace_separator(true)?;
         Ok(())
     }
 
     /// Write a comment line that might potentially overflow the maximum line length
     /// and, if configured, will be wrapped to the next line
-    fn write_comment_line(&mut self, line: &str, wrap_token: &str, is_first: bool) -> Result<bool> {
+    fn write_comment_line(
+        &mut self,
+        line: &str,
+        wrap_token: &str,
+        padding: usize,
+        is_first: bool,
+    ) -> Result<bool> {
         if self.will_it_fit(line) || !self.config.wrap_comments {
             let start_with_ws =
                 line.chars().next().map(|ch| ch.is_whitespace()).unwrap_or_default();
@@ -604,8 +636,13 @@ impl<'a, W: Write> Formatter<'a, W> {
                     // write remaining words on the next
                     self.write_whitespace_separator(true)?;
                     // write newline wrap token
-                    write!(self.buf(), "{}", wrap_token)?;
-                    return Ok(self.write_comment_line(&words.join(" "), wrap_token, false)?)
+                    write!(self.buf(), "{}{}", wrap_token, " ".repeat(padding))?;
+                    return Ok(self.write_comment_line(
+                        &words.join(" "),
+                        wrap_token,
+                        padding,
+                        false,
+                    )?)
                 }
 
                 self.write_whitespace_separator(false)?;
