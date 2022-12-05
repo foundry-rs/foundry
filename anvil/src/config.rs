@@ -145,6 +145,8 @@ pub struct NodeConfig {
     pub prune_history: bool,
     /// The file where to load the state from
     pub init_state: Option<SerializableState>,
+    /// max number of blocks with transactions in memory
+    pub transaction_block_keeper: Option<usize>,
 }
 
 impl NodeConfig {
@@ -362,6 +364,7 @@ impl Default for NodeConfig {
             code_size_limit: None,
             prune_history: false,
             init_state: None,
+            transaction_block_keeper: None,
         }
     }
 }
@@ -444,6 +447,16 @@ impl NodeConfig {
     #[must_use]
     pub fn set_pruned_history(mut self, prune_history: bool) -> Self {
         self.prune_history = prune_history;
+        self
+    }
+
+    /// Sets max number of blocks with transactions to keep in memory
+    #[must_use]
+    pub fn with_transaction_block_keeper<U: Into<usize>>(
+        mut self,
+        transaction_block_keeper: Option<U>,
+    ) -> Self {
+        self.transaction_block_keeper = transaction_block_keeper.map(Into::into);
         self
     }
 
@@ -908,6 +921,7 @@ impl NodeConfig {
             fork,
             self.enable_steps_tracing,
             self.prune_history,
+            self.transaction_block_keeper,
         )
         .await;
 
