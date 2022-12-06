@@ -401,9 +401,9 @@ contract {} {{
                 .into_iter()
                 .filter_map(|sup| match sup {
                     pt::SourceUnitPart::ImportDirective(i) => match i {
-                        pt::Import::Plain(s, _)
-                        | pt::Import::Rename(s, _, _)
-                        | pt::Import::GlobalSymbol(s, _, _) => {
+                        pt::Import::Plain(s, _) |
+                        pt::Import::Rename(s, _, _) |
+                        pt::Import::GlobalSymbol(s, _, _) => {
                             let path = PathBuf::from(s.string);
 
                             match fs::read_to_string(path) {
@@ -532,13 +532,13 @@ pub fn parse_fragment(
     let mut base = SessionSource::new(solc, config);
 
     if base.clone().with_run_code(buffer).parse().is_ok() {
-        return Some(ParseTreeFragment::Function);
+        return Some(ParseTreeFragment::Function)
     }
     if base.clone().with_top_level_code(buffer).parse().is_ok() {
-        return Some(ParseTreeFragment::Contract);
+        return Some(ParseTreeFragment::Contract)
     }
     if base.with_global_code(buffer).parse().is_ok() {
-        return Some(ParseTreeFragment::Source);
+        return Some(ParseTreeFragment::Source)
     }
 
     None

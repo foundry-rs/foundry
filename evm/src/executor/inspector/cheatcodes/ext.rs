@@ -164,7 +164,7 @@ fn get_env(
 ) -> Result<Bytes, Bytes> {
     let msg = format!("Failed to get environment variable `{key}` as type `{}`", &r#type);
     let val = if let Some(value) = default {
-        env::var(key).unwrap_or(value.clone())
+        env::var(key).unwrap_or_else(|_| value.clone())
     } else {
         env::var(key).map_err::<Bytes, _>(|e| format!("{msg}: {e}").encode().into())?
     };
