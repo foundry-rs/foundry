@@ -29,8 +29,6 @@ jobs:
         steps:
             - name: Checkout sources
               uses: actions/checkout@v2
-              with:
-                  submodules: recursive
             - name: Install toolchain
               uses: actions-rs/toolchain@v1
               with:
@@ -68,8 +66,6 @@ jobs:
         steps:
             - name: Checkout sources
               uses: actions/checkout@v2
-              with:
-                  submodules: recursive
             - name: Install nextest
               uses: taiki-e/install-action@nextest
             - run: mkdir -p ~/.cargo/bin
@@ -168,8 +164,6 @@ jobs:
         steps:
             - name: Checkout sources
               uses: actions/checkout@v2
-              with:
-                  submodules: recursive
             - name: Install toolchain
               uses: actions-rs/toolchain@v1
               with:
@@ -188,8 +182,6 @@ jobs:
         steps:
             - name: Checkout sources
               uses: actions/checkout@v2
-              with:
-                  submodules: recursive
 
             - name: Install toolchain
               uses: actions-rs/toolchain@v1
@@ -214,9 +206,6 @@ jobs:
               with:
                   args: --all --all-features -- -D warnings
                   token: ${{ secrets.GITHUB_TOKEN }}
-
-            - name: remove forge-std files
-              run: rm -rf testdata/lib/forge-std/**
 
             - name: forge fmt
               run: cargo run --bin forge -- fmt --check testdata/

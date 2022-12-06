@@ -108,9 +108,6 @@ jobs:
         steps:
             - name: Checkout sources
               uses: actions/checkout@v2
-              # Check out `testdata/forge-std` submodule for chisel build.
-              with:
-                  submodules: 'recursive'
 
             - name: Install toolchain
               uses: actions-rs/toolchain@v1
