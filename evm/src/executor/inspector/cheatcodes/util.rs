@@ -246,6 +246,9 @@ pub fn value_to_abi(
     r#type: ParamType,
     is_array: bool,
 ) -> Result<Bytes, String> {
+    if is_array && val.len() == 1 && val.first().unwrap().as_ref().is_empty() {
+        return Ok(abi::encode(&[Token::String(String::from(""))]).into())
+    }
     let parse_bool = |v: &str| v.to_lowercase().parse::<bool>();
     let parse_uint = |v: &str| {
         if v.starts_with("0x") {
@@ -255,8 +258,7 @@ pub fn value_to_abi(
                 Ok(val) => Ok(val),
                 Err(dec_err) => v.parse::<U256>().map_err(|hex_err| {
                     format!(
-                        "Failed to parse uint value `{}` from hex and as decimal string {}, {}",
-                        v, hex_err, dec_err
+                        "Failed to parse uint value `{v}` from hex and as decimal string {hex_err}, {dec_err}"
                     )
                 }),
             }
@@ -272,8 +274,7 @@ pub fn value_to_abi(
                 Ok(val) => Ok(val),
                 Err(dec_err) => v.parse::<I256>().map_err(|hex_err| {
                     format!(
-                        "Failed to parse int value `{}` from hex and as decimal string {}, {}",
-                        v, hex_err, dec_err
+                        "Failed to parse int value `{v}` from hex and as decimal string {hex_err}, {dec_err}"
                     )
                 }),
             }

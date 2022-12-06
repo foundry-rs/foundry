@@ -144,6 +144,14 @@ pub struct Cheatcodes {
 
     /// Records all eth deals
     pub eth_deals: Vec<DealRecord>,
+
+    /// Holds the stored gas info for when we pause gas metering. It is an `Option<Option<..>>`
+    /// because the `call` callback in an `Inspector` doesn't get access to
+    /// the `revm::Interpreter` which holds the `revm::Gas` struct that
+    /// we need to copy. So we convert it to a `Some(None)` in `apply_cheatcode`, and once we have
+    /// the interpreter, we copy the gas struct. Then each time there is an execution of an
+    /// operation, we reset the gas.
+    pub gas_metering: Option<Option<revm::Gas>>,
 }
 
 impl Cheatcodes {
@@ -262,6 +270,19 @@ where
     }
 
     fn step(&mut self, interpreter: &mut Interpreter, _: &mut EVMData<'_, DB>, _: bool) -> Return {
+        // reset gas if gas metering is turned off
+        match self.gas_metering {
+            Some(None) => {
+                // need to store gas metering
+                self.gas_metering = Some(Some(interpreter.gas));
+            }
+            Some(Some(gas)) => {
+                // dont monitor gas changes, keep it constant
+                interpreter.gas = gas;
+            }
+            _ => {}
+        }
+
         // Record writes and reads if `record` has been called
         if let Some(storage_accesses) = &mut self.accesses {
             match interpreter.contract.bytecode.bytecode()[interpreter.program_counter()] {

@@ -301,8 +301,7 @@ impl CallTraceDecoder {
                                 Some(node.trace.status),
                             ) {
                                 node.trace.output = RawOrDecodedReturnData::Decoded(format!(
-                                    r#""{}""#,
-                                    decoded_error
+                                    r#""{decoded_error}""#
                                 ));
                             }
                         }

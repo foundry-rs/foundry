@@ -656,8 +656,7 @@ impl Tui {
                             }
                         }
                         Err(e) => text_output.extend(Text::from(format!(
-                            "Error in source map parsing: '{}', please open an issue",
-                            e
+                            "Error in source map parsing: '{e}', please open an issue"
                         ))),
                     }
                 } else {

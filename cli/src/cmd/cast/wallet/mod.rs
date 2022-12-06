@@ -160,10 +160,9 @@ impl WalletSubcommands {
                     Ok(_) => {
                         println!("Validation success. Address {address} signed this message.")
                     }
-                    Err(_) => println!(
-                        "Validation failed. Address {} did not sign this message.",
-                        address
-                    ),
+                    Err(_) => {
+                        println!("Validation failed. Address {address} did not sign this message.")
+                    }
                 }
             }
         };

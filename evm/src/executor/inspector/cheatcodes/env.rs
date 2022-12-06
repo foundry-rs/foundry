@@ -429,6 +429,16 @@ pub fn apply<DB: DatabaseExt>(
             state.broadcast = None;
             Bytes::new()
         }
+        HEVMCalls::PauseGasMetering(_) => {
+            if state.gas_metering.is_none() {
+                state.gas_metering = Some(None);
+            }
+            Bytes::new()
+        }
+        HEVMCalls::ResumeGasMetering(_) => {
+            state.gas_metering = None;
+            Bytes::new()
+        }
         _ => return Ok(None),
     };
 

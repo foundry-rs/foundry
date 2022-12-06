@@ -20,11 +20,7 @@ impl fmt::Display for FunctionSignatureError {
                 write!(f, "\tOr did you mean:\t {sig}()")
             }
             FunctionSignatureError::UnknownChain(chain) => {
-                write!(
-                    f,
-                    "Resolving via etherscan requires a known chain. Unknown chain: {}",
-                    chain
-                )
+                write!(f, "Resolving via etherscan requires a known chain. Unknown chain: {chain}")
             }
             FunctionSignatureError::MissingToAddress => f.write_str("Target address must be set"),
         }

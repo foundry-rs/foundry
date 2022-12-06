@@ -1,0 +1,42 @@
+// SPDX-License-Identifier: Unlicense
+pragma solidity >=0.8.0;
+
+import "ds-test/test.sol";
+import "./Cheats.sol";
+
+contract GasMeteringTest is DSTest {
+    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+
+    function testGasMetering() public {
+        uint256 gas_start = gasleft();
+
+        addInLoop();
+
+        uint256 gas_end_normal = gas_start - gasleft();
+
+        cheats.pauseGasMetering();
+        uint256 gas_start_not_metered = gasleft();
+
+        addInLoop();
+
+        uint256 gas_end_not_metered = gas_start_not_metered - gasleft();
+        cheats.resumeGasMetering();
+
+        uint256 gas_start_metered = gasleft();
+
+        addInLoop();
+
+        uint256 gas_end_resume_metered = gas_start_metered - gasleft();
+
+        assertEq(gas_end_normal, gas_end_resume_metered);
+        assertEq(gas_end_not_metered, 0);
+    }
+
+    function addInLoop() internal returns (uint256) {
+        uint256 b;
+        for (uint256 i; i < 10000; i++) {
+            b + i;
+        }
+        return b;
+    }
+}

@@ -391,8 +391,7 @@ async fn main() -> eyre::Result<()> {
                 let address = provider.resolve_name(&name).await?;
                 assert_eq!(
                     address, who,
-                    "forward lookup verification failed. got {}, expected {}",
-                    name, who
+                    "forward lookup verification failed. got {name}, expected {who}"
                 );
             }
             println!("{name}");
@@ -409,8 +408,7 @@ async fn main() -> eyre::Result<()> {
                 let name = provider.lookup_address(address).await?;
                 assert_eq!(
                     name, who,
-                    "forward lookup verification failed. got {}, expected {}",
-                    name, who
+                    "forward lookup verification failed. got {name}, expected {who}"
                 );
             }
             println!("{}", SimpleCast::to_checksum_address(&address));
