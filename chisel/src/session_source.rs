@@ -17,7 +17,7 @@ use solang_parser::pt;
 use std::{collections::HashMap, fs, path::PathBuf};
 
 /// Solidity source for the `Vm` interface in [forge-std](https://github.com/foundry-rs/forge-std)
-static VM_SOURCE: &str = include_str!("../../testdata/lib/forge-std/src/Vm.sol");
+static VM_SOURCE: &str = include_str!("../../testdata/cheats/Cheats.sol");
 
 /// Intermediate output for the compiled [SessionSource]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -369,11 +369,11 @@ contract {} is Script {{
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^{major}.{minor}.{patch};
 
-import {{Vm}} from "forge-std/Vm.sol";
+import {{Cheats}} from "forge-std/Vm.sol";
 {}
 
 contract {} {{
-    Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    Cheats internal constant vm = Cheats(address(uint160(uint256(keccak256("hevm cheat code")))));
     {}
   
     /// @notice REPL contract entry point
@@ -401,9 +401,9 @@ contract {} {{
                 .into_iter()
                 .filter_map(|sup| match sup {
                     pt::SourceUnitPart::ImportDirective(i) => match i {
-                        pt::Import::Plain(s, _) |
-                        pt::Import::Rename(s, _, _) |
-                        pt::Import::GlobalSymbol(s, _, _) => {
+                        pt::Import::Plain(s, _)
+                        | pt::Import::Rename(s, _, _)
+                        | pt::Import::GlobalSymbol(s, _, _) => {
                             let path = PathBuf::from(s.string);
 
                             match fs::read_to_string(path) {
@@ -532,13 +532,13 @@ pub fn parse_fragment(
     let mut base = SessionSource::new(solc, config);
 
     if base.clone().with_run_code(buffer).parse().is_ok() {
-        return Some(ParseTreeFragment::Function)
+        return Some(ParseTreeFragment::Function);
     }
     if base.clone().with_top_level_code(buffer).parse().is_ok() {
-        return Some(ParseTreeFragment::Contract)
+        return Some(ParseTreeFragment::Contract);
     }
     if base.with_global_code(buffer).parse().is_ok() {
-        return Some(ParseTreeFragment::Source)
+        return Some(ParseTreeFragment::Source);
     }
 
     None
