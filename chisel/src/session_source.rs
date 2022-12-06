@@ -157,7 +157,7 @@ impl SessionSource {
         let mut new_source = self.shallow_clone();
         if let Some(parsed) = parse_fragment(&new_source.solc, &new_source.config, &content)
             .or_else(|| {
-                content = format!("{};", content);
+                content = format!("{content};");
                 parse_fragment(&new_source.solc, &new_source.config, &content)
             })
             .or_else(|| {

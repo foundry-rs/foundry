@@ -87,9 +87,9 @@ async fn main() -> eyre::Result<()> {
             let sessions = dispatcher.dispatch_command(ChiselCommand::ListSessions, &[]).await;
             match sessions {
                 DispatchResult::CommandSuccess(Some(session_list)) => {
-                    println!("{}", session_list);
+                    println!("{session_list}");
                 }
-                DispatchResult::CommandFailed(error) => eprintln!("{}", error),
+                DispatchResult::CommandFailed(e) => eprintln!("{e}"),
                 _ => panic!("Unexpected result: Please report this bug."),
             }
             return Ok(())
@@ -98,8 +98,8 @@ async fn main() -> eyre::Result<()> {
             // For both of these subcommands, we need to attempt to load the session from cache
             match dispatcher.dispatch_command(ChiselCommand::Load, &[id]).await {
                 DispatchResult::CommandSuccess(_) => { /* Continue */ }
-                DispatchResult::CommandFailed(error) => {
-                    eprintln!("{}", error);
+                DispatchResult::CommandFailed(e) => {
+                    eprintln!("{e}");
                     return Ok(())
                 }
                 _ => panic!("Unexpected result! Please report this bug."),
@@ -109,7 +109,7 @@ async fn main() -> eyre::Result<()> {
             if matches!(args.sub, Some(ChiselParserSub::View { .. })) {
                 match dispatcher.dispatch_command(ChiselCommand::Source, &[]).await {
                     DispatchResult::CommandSuccess(Some(source)) => {
-                        println!("{}", source);
+                        println!("{source}");
                     }
                     _ => panic!("Unexpected result! Please report this bug."),
                 }
@@ -119,7 +119,7 @@ async fn main() -> eyre::Result<()> {
         Some(ChiselParserSub::ClearCache) => {
             match dispatcher.dispatch_command(ChiselCommand::ClearCache, &[]).await {
                 DispatchResult::CommandSuccess(Some(msg)) => println!("{}", Paint::green(msg)),
-                DispatchResult::CommandFailed(error) => eprintln!("{}", error),
+                DispatchResult::CommandFailed(e) => eprintln!("{e}"),
                 _ => panic!("Unexpected result! Please report this bug."),
             }
             return Ok(())
@@ -153,12 +153,12 @@ async fn main() -> eyre::Result<()> {
                     DispatchResult::Success(msg) | DispatchResult::CommandSuccess(msg) => if let Some(msg) = msg {
                         println!("{}", Paint::green(msg));
                     },
-                    DispatchResult::UnrecognizedCommand(e) => eprintln!("{}", e),
+                    DispatchResult::UnrecognizedCommand(e) => eprintln!("{e}"),
                     DispatchResult::SolangParserFailed(e) => {
                         eprintln!("{}", Paint::red("Compilation error"));
-                        eprintln!("{}", Paint::red(format!("{:?}", e)));
+                        eprintln!("{}", Paint::red(format!("{e:?}")));
                     }
-                    DispatchResult::FileIoError(e) => eprintln!("{}", Paint::red(format!("⚒️ Chisel File IO Error - {}", e))),
+                    DispatchResult::FileIoError(e) => eprintln!("{}", Paint::red(format!("⚒️ Chisel File IO Error - {e}"))),
                     DispatchResult::CommandFailed(msg) | DispatchResult::Failure(Some(msg)) => eprintln!("{}", Paint::red(msg)),
                     DispatchResult::Failure(None) => eprintln!("{}\nPlease Report this bug as a github issue if it persists: https://github.com/foundry-rs/foundry/issues/new/choose", Paint::red("⚒️ Unknown Chisel Error ⚒️")),
                 }
@@ -173,7 +173,7 @@ async fn main() -> eyre::Result<()> {
             }
             Err(ReadlineError::Eof) => break,
             Err(err) => {
-                println!("Error: {:?}", err);
+                println!("Error: {err:?}");
                 break
             }
         }

@@ -119,7 +119,7 @@ impl ChiselSession {
         let cache_file_name = match self.id.as_ref() {
             Some(id) => {
                 // ID is already set- use the existing cache file.
-                format!("{}chisel-{}.json", cache_dir, id)
+                format!("{cache_dir}chisel-{id}.json")
             }
             None => {
                 // Get the next session cache ID / file
@@ -153,7 +153,7 @@ impl ChiselSession {
         let mut latest = if let Some(e) = entries.next() {
             e?
         } else {
-            return Ok((String::from("0"), format!("{}chisel-0.json", cache_dir)))
+            return Ok((String::from("0"), format!("{cache_dir}chisel-0.json")))
         };
 
         let mut session_num = 1;
@@ -168,7 +168,7 @@ impl ChiselSession {
             session_num += 1;
         }
 
-        Ok((format!("{}", session_num), format!("{}chisel-{}.json", cache_dir, session_num)))
+        Ok((format!("{session_num}"), format!("{cache_dir}chisel-{session_num}.json")))
     }
 
     /// The Chisel Cache Directory
@@ -180,7 +180,7 @@ impl ChiselSession {
         let home_dir = dirs::home_dir().ok_or(eyre::eyre!("Failed to grab home directory"))?;
         let home_dir_str =
             home_dir.to_str().ok_or(eyre::eyre!("Failed to convert home directory to string"))?;
-        Ok(format!("{}/.foundry/cache/chisel/", home_dir_str))
+        Ok(format!("{home_dir_str}/.foundry/cache/chisel/"))
     }
 
     /// Create the cache directory if it does not exist
@@ -241,8 +241,7 @@ impl ChiselSession {
     /// Optionally, an owned instance of the loaded chisel session.
     pub fn load(id: &str) -> Result<Self> {
         let cache_dir = ChiselSession::cache_dir()?;
-        let contents =
-            std::fs::read_to_string(Path::new(&format!("{}chisel-{}.json", cache_dir, id)))?;
+        let contents = std::fs::read_to_string(Path::new(&format!("{cache_dir}chisel-{id}.json")))?;
         let chisel_env: ChiselSession = serde_json::from_str(&contents)?;
         Ok(chisel_env)
     }

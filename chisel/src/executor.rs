@@ -216,11 +216,7 @@ impl SessionSource {
 fn format_token(token: Token) -> String {
     match token {
         Token::Address(a) => {
-            format!(
-                "Type: {}\n└ Data: {}",
-                Paint::red("address"),
-                Paint::cyan(format!("0x{:x}", a))
-            )
+            format!("Type: {}\n└ Data: {}", Paint::red("address"), Paint::cyan(format!("0x{a:x}")))
         }
         Token::FixedBytes(b) => {
             format!(
@@ -233,7 +229,7 @@ fn format_token(token: Token) -> String {
             format!(
                 "Type: {}\n├ Hex: {}\n└ Decimal: {}",
                 Paint::red("int"),
-                Paint::cyan(format!("0x{:x}", i)),
+                Paint::cyan(format!("0x{i:x}")),
                 Paint::cyan(I256::from_raw(i))
             )
         }
@@ -241,7 +237,7 @@ fn format_token(token: Token) -> String {
             format!(
                 "Type: {}\n├ Hex: {}\n└ Decimal: {}",
                 Paint::red("uint"),
-                Paint::cyan(format!("0x{:x}", i)),
+                Paint::cyan(format!("0x{i:x}")),
                 Paint::cyan(i)
             )
         }

@@ -143,7 +143,7 @@ impl ChiselDisptacher {
                     ChiselCommand::iter().map(CmdDescriptor::from).collect::<Vec<CmdDescriptor>>();
                 DispatchResult::CommandSuccess(Some(format!(
                     "{}\n{}",
-                    Paint::cyan(format!("{} Chisel help\n=============", CHISEL_CHAR)),
+                    Paint::cyan(format!("{CHISEL_CHAR} Chisel help\n=============")),
                     CmdCategory::iter()
                         .map(|cat| {
                             // Get commands in the current category
@@ -257,11 +257,11 @@ impl ChiselDisptacher {
             ChiselCommand::ListSessions => match ChiselSession::list_sessions() {
                 Ok(sessions) => DispatchResult::CommandSuccess(Some(format!(
                     "{}\n{}",
-                    Paint::cyan(format!("{} Chisel Sessions", CHISEL_CHAR)),
+                    Paint::cyan(format!("{CHISEL_CHAR} Chisel Sessions")),
                     sessions
                         .iter()
                         .map(|(time, name)| {
-                            format!("{} - {}", Paint::blue(format!("{:?}", time)), name)
+                            format!("{} - {}", Paint::blue(format!("{time:?}")), name)
                         })
                         .collect::<Vec<String>>()
                         .join("\n")
@@ -469,7 +469,7 @@ impl ChiselDisptacher {
                         .etherscan_api_key
                         .as_ref()
                     {
-                        format!("&apikey={}", api_key)
+                        format!("&apikey={api_key}")
                     } else {
                         String::default()
                     }
@@ -806,6 +806,6 @@ impl ChiselDisptacher {
     ///
     /// A formatted error [String].
     pub fn make_error<T: std::fmt::Display>(msg: T) -> String {
-        format!("{} {}", Paint::red(format!("{} Chisel Error:", CHISEL_CHAR)), Paint::red(msg))
+        format!("{} {}", Paint::red(format!("{CHISEL_CHAR} Chisel Error:")), Paint::red(msg))
     }
 }

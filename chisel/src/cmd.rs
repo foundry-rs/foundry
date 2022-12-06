@@ -68,8 +68,7 @@ impl FromStr for ChiselCommand {
             "fetch" | "fe" => Ok(ChiselCommand::Fetch),
             "exec" | "e" => Ok(ChiselCommand::Exec),
             _ => Err(ChiselDisptacher::make_error(format!(
-                "Unknown command \"{}\"! See available commands with `!help`.",
-                s
+                "Unknown command \"{s}\"! See available commands with `!help`.",
             ))
             .into()),
         }
