@@ -145,10 +145,13 @@ pub struct Backend {
     enable_steps_tracing: bool,
     /// Whether to keep history state
     prune_history: bool,
+    /// max number of blocks with transactions in memory
+    transaction_block_keeper: Option<usize>,
 }
 
 impl Backend {
     /// Initialises the balance of the given accounts
+    #[allow(clippy::too_many_arguments)]
     pub async fn with_genesis(
         db: Arc<AsyncRwLock<dyn Db>>,
         env: Arc<RwLock<Env>>,
@@ -157,6 +160,7 @@ impl Backend {
         fork: Option<ClientFork>,
         enable_steps_tracing: bool,
         prune_history: bool,
+        transaction_block_keeper: Option<usize>,
     ) -> Self {
         // if this is a fork then adjust the blockchain storage
         let blockchain = if let Some(ref fork) = fork {
@@ -186,6 +190,7 @@ impl Backend {
             active_snapshots: Arc::new(Mutex::new(Default::default())),
             enable_steps_tracing,
             prune_history,
+            transaction_block_keeper,
         };
 
         // Note: this can only fail in forking mode, in which case we can't recover
@@ -752,6 +757,22 @@ impl Backend {
                     block_number: block_number.as_u64(),
                 };
                 storage.transactions.insert(mined_tx.info.transaction_hash, mined_tx);
+            }
+
+            if let Some(transaction_block_keeper) = self.transaction_block_keeper {
+                if storage.blocks.len() > transaction_block_keeper {
+                    let n: U64 = block_number
+                        .as_u64()
+                        .saturating_sub(transaction_block_keeper.try_into().unwrap())
+                        .into();
+                    if let Some(hash) = storage.hashes.get(&n) {
+                        if let Some(block) = storage.blocks.get(hash) {
+                            for tx in block.clone().transactions {
+                                let _ = storage.transactions.remove(&tx.hash());
+                            }
+                        }
+                    }
+                }
             }
 
             // we intentionally set the difficulty to `0` for newer blocks

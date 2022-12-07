@@ -178,6 +178,9 @@ pub struct NodeArgs {
 
     #[clap(long, help = "Don't keep full chain history.")]
     pub prune_history: bool,
+
+    #[clap(long, help = "Number of blocks with transactions to keep in memory.")]
+    pub transaction_block_keeper: Option<usize>,
 }
 
 #[cfg(windows)]
@@ -235,6 +238,7 @@ impl NodeArgs {
             .set_pruned_history(self.prune_history)
             .with_init_state(self.load_state)
             .with_init_state(self.state.and_then(|s| s.state))
+            .with_transaction_block_keeper(self.transaction_block_keeper)
     }
 
     fn account_generator(&self) -> AccountGenerator {
