@@ -183,8 +183,8 @@ impl ScriptSequence {
 
         verify.set_chain(config, self.chain.into());
 
-        if verify.etherscan_key.is_some() ||
-            verify.verifier.verifier != VerificationProviderType::Etherscan
+        if verify.etherscan_key.is_some()
+            || verify.verifier.verifier != VerificationProviderType::Etherscan
         {
             let mut future_verifications = Vec::with_capacity(self.receipts.len());
             let mut unverifiable_contracts = vec![];
@@ -229,6 +229,8 @@ impl ScriptSequence {
             }
 
             println!("All ({num_verifications}) contracts were verified!");
+        } else {
+            eyre::bail!("No etherscan key provided")
         }
 
         Ok(())
@@ -287,12 +289,12 @@ impl Drop for ScriptSequence {
 fn sig_to_file_name(sig: &str) -> String {
     if let Some((name, _)) = sig.split_once('(') {
         // strip until call argument parenthesis
-        return name.to_string()
+        return name.to_string();
     }
     // assume calldata if `sig` is hex
     if let Ok(calldata) = hex::decode(sig) {
         // in which case we return the function signature
-        return hex::encode(&calldata[..SELECTOR_LEN])
+        return hex::encode(&calldata[..SELECTOR_LEN]);
     }
 
     // return sig as is
