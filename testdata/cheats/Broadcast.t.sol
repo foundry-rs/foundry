@@ -424,3 +424,14 @@ contract MultiChainBroadcastLink is DSTest {
         new Test();
     }
 }
+
+contract BroadcastEmptySetUp is DSTest {
+    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+
+    function setUp() public {}
+
+    function run() public {
+        cheats.broadcast();
+        new Test();
+    }
+}

@@ -848,3 +848,12 @@ contract Demo {
             .join("tests/fixtures/can_execute_script_and_skip_contracts.stdout"),
     );
 });
+
+forgetest_async!(
+    can_run_script_with_empty_setup,
+    |prj: TestProject, cmd: TestCommand| async move {
+        let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
+
+        tester.add_sig("BroadcastEmptySetUp", "run()").simulate(ScriptOutcome::OkNoEndpoint);
+    }
+);
