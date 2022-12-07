@@ -114,15 +114,8 @@ impl ScriptRunner {
                         .extend(setup_traces.map(|traces| (TraceKind::Setup, traces)).into_iter());
                     logs.extend_from_slice(&setup_logs);
 
-                    // We call the `setUp()` function with self.sender, and if there haven't been
-                    // any broadcasts, then the EVM cheatcode module hasn't corrected the nonce.
-                    // So we have to
-                    if transactions.is_none() || transactions.as_ref().unwrap().is_empty() {
-                        self.executor.set_nonce(
-                            self.sender,
-                            sender_nonce.as_u64() + libraries.len() as u64,
-                        )?;
-                    }
+                    self.maybe_correct_nonce(sender_nonce, libraries.len())?;
+
                     (
                         !reverted,
                         gas_used,
@@ -148,15 +141,8 @@ impl ScriptRunner {
                         .extend(setup_traces.map(|traces| (TraceKind::Setup, traces)).into_iter());
                     logs.extend_from_slice(&setup_logs);
 
-                    // We call the `setUp()` function with self.sender, and if there haven't been
-                    // any broadcasts, then the EVM cheatcode module hasn't corrected the nonce.
-                    // So we have to
-                    if transactions.is_none() || transactions.as_ref().unwrap().is_empty() {
-                        self.executor.set_nonce(
-                            self.sender,
-                            sender_nonce.as_u64() + libraries.len() as u64,
-                        )?;
-                    }
+                    self.maybe_correct_nonce(sender_nonce, libraries.len())?;
+
                     (
                         !reverted,
                         gas_used,
@@ -185,6 +171,29 @@ impl ScriptRunner {
                 script_wallets,
             },
         ))
+    }
+
+    /// We call the `setUp()` function with self.sender, and if there haven't been
+    /// any broadcasts, then the EVM cheatcode module hasn't corrected the nonce.
+    /// So we have to.
+    fn maybe_correct_nonce(
+        &mut self,
+        sender_initial_nonce: U256,
+        libraries_len: usize,
+    ) -> eyre::Result<()> {
+        if let Some(ref cheatcodes) = self.executor.inspector_config().cheatcodes {
+            if !cheatcodes.corrected_nonce {
+                self.executor
+                    .set_nonce(self.sender, sender_initial_nonce.as_u64() + libraries_len as u64)?;
+            }
+            self.executor
+                .inspector_config_mut()
+                .cheatcodes
+                .as_mut()
+                .expect("exists")
+                .corrected_nonce = false;
+        }
+        Ok(())
     }
 
     /// Executes the method that will collect all broadcastable transactions.

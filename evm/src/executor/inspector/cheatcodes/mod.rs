@@ -124,7 +124,8 @@ pub struct Cheatcodes {
     /// Current broadcasting information
     pub broadcast: Option<Broadcast>,
 
-    /// Used to correct the nonce of --sender after the initiating call
+    /// Used to correct the nonce of --sender after the initiating call. For more, check
+    /// `docs/scripting`.
     pub corrected_nonce: bool,
 
     /// Scripting based transactions

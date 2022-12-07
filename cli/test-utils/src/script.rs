@@ -239,6 +239,7 @@ impl ScriptTester {
 /// Various `forge` script results
 #[derive(Debug)]
 pub enum ScriptOutcome {
+    OkNoEndpoint,
     OkSimulation,
     OkBroadcast,
     WarnSpecifyDeployer,
@@ -253,6 +254,7 @@ pub enum ScriptOutcome {
 impl ScriptOutcome {
     pub fn as_str(&self) -> &'static str {
         match self {
+            ScriptOutcome::OkNoEndpoint => "If you wish to simulate on-chain transactions pass a RPC URL.",
             ScriptOutcome::OkSimulation => "SIMULATION COMPLETE. To broadcast these",
             ScriptOutcome::OkBroadcast => "ONCHAIN EXECUTION COMPLETE & SUCCESSFUL",
             ScriptOutcome::WarnSpecifyDeployer => "You have more than one deployer who could predeploy libraries. Using `--sender` instead.",
@@ -267,6 +269,7 @@ impl ScriptOutcome {
 
     pub fn is_err(&self) -> bool {
         match self {
+            ScriptOutcome::OkNoEndpoint |
             ScriptOutcome::OkSimulation |
             ScriptOutcome::OkBroadcast |
             ScriptOutcome::WarnSpecifyDeployer => false,

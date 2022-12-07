@@ -20,6 +20,7 @@ use ethers::{
     signers::{LocalWallet, Signer},
     types::{Address, U256},
 };
+use foundry_config::Config;
 use revm::{Bytecode, Database, EVMData};
 use tracing::trace;
 
@@ -454,7 +455,7 @@ fn correct_sender_nonce<DB: Database>(
     db: &mut DB,
     state: &mut Cheatcodes,
 ) -> Result<(), DB::Error> {
-    if !state.corrected_nonce {
+    if !state.corrected_nonce && sender != Config::DEFAULT_SENDER {
         with_journaled_account(journaled_state, db, sender, |account| {
             account.info.nonce = account.info.nonce.saturating_sub(1);
             state.corrected_nonce = true;
