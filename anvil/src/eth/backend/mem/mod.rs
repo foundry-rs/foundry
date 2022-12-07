@@ -151,6 +151,7 @@ pub struct Backend {
 
 impl Backend {
     /// Initialises the balance of the given accounts
+    #[allow(clippy::too_many_arguments)]
     pub async fn with_genesis(
         db: Arc<AsyncRwLock<dyn Db>>,
         env: Arc<RwLock<Env>>,
