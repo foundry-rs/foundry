@@ -24,6 +24,9 @@ pub use stack::{InspectorData, InspectorStack};
 pub mod cheatcodes;
 pub use cheatcodes::{Cheatcodes, CheatsConfig, DEFAULT_CREATE2_DEPLOYER};
 
+mod chisel_state;
+pub use chisel_state::ChiselState;
+
 use ethers::types::U256;
 
 use revm::{BlockEnv, GasInspector};
@@ -59,6 +62,11 @@ pub struct InspectorStackConfig {
     pub coverage: bool,
     /// Should we print all opcode traces into console. Useful for debugging of EVM.
     pub trace_printer: bool,
+    /// The chisel state inspector.
+    ///
+    /// If the inspector is enabled, Some(final_pc)
+    /// If not, None
+    pub chisel_state: Option<usize>,
 }
 
 impl InspectorStackConfig {
@@ -91,6 +99,10 @@ impl InspectorStackConfig {
 
         if self.trace_printer {
             stack.printer = Some(TracePrinter::default());
+        }
+
+        if let Some(final_pc) = self.chisel_state {
+            stack.chisel_state = Some(ChiselState::new(final_pc));
         }
         stack
     }

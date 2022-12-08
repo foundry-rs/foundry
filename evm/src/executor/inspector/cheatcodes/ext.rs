@@ -412,7 +412,8 @@ fn serialize_json(
     value_key: &str,
     value: &str,
 ) -> Result<Bytes, Bytes> {
-    let parsed_value = serde_json::from_str(value).unwrap_or(Value::String(value.to_string()));
+    let parsed_value =
+        serde_json::from_str(value).unwrap_or_else(|_| Value::String(value.to_string()));
     let json = if let Some(serialization) = state.serialized_jsons.get_mut(object_key) {
         serialization.insert(value_key.to_string(), parsed_value);
         serialization.clone()
@@ -473,7 +474,8 @@ fn write_json(
     path: impl AsRef<Path>,
     json_path_or_none: Option<&str>,
 ) -> Result<Bytes, Bytes> {
-    let json: Value = serde_json::from_str(object).unwrap_or(Value::String(object.to_owned()));
+    let json: Value =
+        serde_json::from_str(object).unwrap_or_else(|_| Value::String(object.to_owned()));
     let json_string = serde_json::to_string_pretty(&if let Some(json_path) = json_path_or_none {
         let path = _state
             .config
@@ -481,10 +483,8 @@ fn write_json(
             .map_err(error::encode_error)?;
         let data = serde_json::from_str(&fs::read_to_string(path).map_err(error::encode_error)?)
             .map_err(error::encode_error)?;
-        let result =
-            jsonpath_lib::replace_with(data, &format!("${json_path}"), &mut |_| Some(json.clone()))
-                .map_err(error::encode_error)?;
-        result
+        jsonpath_lib::replace_with(data, &format!("${json_path}"), &mut |_| Some(json.clone()))
+            .map_err(error::encode_error)?
     } else {
         json
     })

@@ -97,6 +97,13 @@ impl ExecutorBuilder {
         self
     }
 
+    /// Enable the chisel state inspector
+    #[must_use]
+    pub fn with_chisel_state(mut self, final_pc: usize) -> Self {
+        self.inspector_config.chisel_state = Some(final_pc);
+        self
+    }
+
     /// Builds the executor as configured.
     pub fn build(self, db: Backend) -> Executor {
         let gas_limit = self.gas_limit.unwrap_or(self.env.block.gas_limit);

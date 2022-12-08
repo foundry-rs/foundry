@@ -30,7 +30,7 @@ mod utils;
 pub type Traces = Vec<(TraceKind, CallTraceArena)>;
 
 /// An arena of [CallTraceNode]s
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CallTraceArena {
     /// The arena of nodes
     pub arena: Vec<CallTraceNode>,
@@ -251,7 +251,7 @@ impl fmt::Display for CallTraceArena {
 }
 
 /// A raw or decoded log.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RawOrDecodedLog {
     /// A raw log
     Raw(RawLog),

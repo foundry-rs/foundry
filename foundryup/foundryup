@@ -55,11 +55,13 @@ main() {
     rm -f "$FOUNDRY_BIN_DIR/forge"
     rm -f "$FOUNDRY_BIN_DIR/cast"
     rm -f "$FOUNDRY_BIN_DIR/anvil"
+    rm -f "$FOUNDRY_BIN_DIR/chisel"
 
     # Symlink from local repo binaries to bin dir
     ensure ln -s "$PWD/target/release/forge" "$FOUNDRY_BIN_DIR/forge"
     ensure ln -s "$PWD/target/release/cast" "$FOUNDRY_BIN_DIR/cast"
     ensure ln -s "$PWD/target/release/anvil" "$FOUNDRY_BIN_DIR/anvil"
+    ensure ln -s "$PWD/target/release/chisel" "$FOUNDRY_BIN_DIR/chisel"
 
     say "done"
     exit 0
@@ -131,6 +133,7 @@ main() {
     say "installed - $($FOUNDRY_BIN_DIR/forge --version)"
     say "installed - $($FOUNDRY_BIN_DIR/cast --version)"
     say "installed - $($FOUNDRY_BIN_DIR/anvil --version)"
+    say "installed - $($FOUNDRY_BIN_DIR/chisel --version)"
     say "done"
 
     if [[ $(which forge) =~ "cargo" ]]; then
@@ -143,6 +146,10 @@ main() {
 
     if [[ $(which anvil) =~ "cargo" ]]; then
       warn "it appears your system has already has anvil installed via cargo. you may need to run 'rm $(which anvil)' to allow foundryup to take precedence!"
+    fi
+
+    if [[ $(which chisel) =~ "cargo" ]]; then
+      warn "it appears your system has already has chisel installed via cargo. you may need to run 'rm $(which chisel)' to allow foundryup to take precedence!"
     fi
   else
     need_cmd cargo
@@ -160,6 +167,8 @@ main() {
     cd $REPO_PATH
     ensure git fetch origin ${FOUNDRYUP_BRANCH}:remotes/origin/${FOUNDRYUP_BRANCH}
     ensure git checkout origin/${FOUNDRYUP_BRANCH}
+    # checkout submodules for Chisel build
+    ensure git submodule update --init --recursive
     # If set, checkout specific commit from branch
     if [ ! -z $FOUNDRYUP_COMMIT ]; then
       say "installing at commit ${FOUNDRYUP_COMMIT}"
@@ -170,12 +179,15 @@ main() {
     RUSTFLAGS="-C target-cpu=native" ensure cargo install --path ./cli --bins --locked --force --root $FOUNDRY_DIR
     # install anvil
     RUSTFLAGS="-C target-cpu=native" ensure cargo install --path ./anvil --bin anvil --locked --force --root $FOUNDRY_DIR
+    # install chisel
+    RUSTFLAGS="-C target-cpu=native" ensure cargo install --path ./chisel --bin chisel --locked --force --root $FOUNDRY_DIR
 
     # If help2man is installed, use it to add Foundry man pages.
     if command -v help2man &> /dev/null ; then
       help2man -N $FOUNDRY_BIN_DIR/forge > $FOUNDRY_MAN_DIR/forge.1
       help2man -N $FOUNDRY_BIN_DIR/cast > $FOUNDRY_MAN_DIR/cast.1
       help2man -N $FOUNDRY_BIN_DIR/anvil > $FOUNDRY_MAN_DIR/anvil.1
+      help2man -N $FOUNDRY_BIN_DIR/chisel > $FOUNDRY_MAN_DIR/chisel.1
     fi
     say "done"
   fi
