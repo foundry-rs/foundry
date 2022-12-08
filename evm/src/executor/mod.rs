@@ -102,7 +102,7 @@ impl Executor {
     }
 
     /// Returns a reference to the Env
-    pub fn env(&mut self) -> &Env {
+    pub fn env(&self) -> &Env {
         &self.env
     }
 
