@@ -447,8 +447,8 @@ impl ScriptArgs {
         let mut txes_iter = transactions.into_iter().peekable();
 
         while let Some(mut tx) = txes_iter.next() {
-            let tx_rpc = match &tx.rpc {
-                Some(rpc) => rpc.clone(),
+            let tx_rpc = match tx.rpc.clone() {
+                Some(rpc) => rpc,
                 None => {
                     let rpc = self.evm_opts.ensure_fork_url()?.clone();
                     // Fills the RPC inside the transaction, if missing one.
@@ -507,16 +507,14 @@ impl ScriptArgs {
         if !self.skip_simulation {
             // Present gas information on a per RPC basis.
             for (rpc, total_gas) in total_gas_per_rpc {
-                let provider_info = manager.inner.get(&rpc).expect("to be set.");
+                let provider_info = manager.get(&rpc).expect("provider is set.");
 
                 // We don't store it in the transactions, since we want the most updated value.
                 // Right before broadcasting.
                 let per_gas = if let Some(gas_price) = self.with_gas_price {
                     gas_price
-                } else if provider_info.is_legacy {
-                    provider_info.gas_price.expect("to be set.")
                 } else {
-                    provider_info.eip1559_fees.expect("to be set.").0
+                    provider_info.gas_price()?
                 };
 
                 println!("\n==========================");
