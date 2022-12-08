@@ -84,6 +84,7 @@ pub async fn clear_pendings(
             Ok(TxStatus::Dropped) => {
                 // We want to remove it from pending so it will be re-broadcast.
                 deployment_sequence.remove_pending(tx_hash);
+                errors.push(format!("Transaction dropped from the mempool: {tx_hash:?}"));
             }
             Ok(TxStatus::Success(receipt)) => {
                 trace!(tx_hash = ?tx_hash, "received tx receipt");
