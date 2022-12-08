@@ -236,8 +236,7 @@ impl NodeArgs {
             .with_ipc(self.ipc)
             .with_code_size_limit(self.evm_opts.code_size_limit)
             .set_pruned_history(self.prune_history)
-            .with_init_state(self.load_state)
-            .with_init_state(self.state.and_then(|s| s.state))
+            .with_init_state(self.load_state.or_else(|| self.state.and_then(|s| s.state)))
             .with_transaction_block_keeper(self.transaction_block_keeper)
     }
 
