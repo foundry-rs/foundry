@@ -78,7 +78,7 @@ impl ScriptArgs {
                     TypedTransaction::Eip1559(_) => {
                         let fees = estimate_eip1559_fees(&provider, Some(chain))
                             .await
-                            .wrap_err("Failed to estimate EIP1559 fees")?;
+                            .wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
 
                         (None, Some(fees))
                     }
