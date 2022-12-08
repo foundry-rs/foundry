@@ -1450,7 +1450,29 @@ impl Backend {
         address: Address,
         block_request: Option<BlockRequest>,
     ) -> Result<U256, BlockchainError> {
-        self.with_database_at(block_request, |db, _| {
+        if let Some(ref block_request) = block_request {
+            if let BlockRequest::Pending(pool_transactions) = block_request {
+                let highest_nonce = pool_transactions
+                    .iter()
+                    .filter(|tx| *tx.pending_transaction.sender() == address)
+                    .fold(U256::zero(), |res, tx| {
+                        let nonce = tx.pending_transaction.nonce();
+                        if nonce.ge(&res) {
+                            return nonce.saturating_add(U256::from(1))
+                        }
+                        res
+                    });
+                if !highest_nonce.is_zero() {
+                    return Ok(highest_nonce)
+                }
+            }
+        }
+        let final_block_request = match block_request {
+            Some(BlockRequest::Pending(_)) => Some(BlockRequest::Number(self.best_number())),
+            Some(BlockRequest::Number(bn)) => Some(BlockRequest::Number(bn)),
+            None => None,
+        };
+        self.with_database_at(final_block_request, |db, _| {
             trace!(target: "backend", "get nonce for {:?}", address);
             Ok(db.basic(address)?.unwrap_or_default().nonce.into())
         })
