@@ -1451,18 +1451,22 @@ impl Backend {
         block_request: Option<BlockRequest>,
     ) -> Result<U256, BlockchainError> {
         if let Some(BlockRequest::Pending(pool_transactions)) = block_request.as_ref() {
-            let highest_nonce = pool_transactions
+            let highest_nonce_tx = pool_transactions
                 .iter()
                 .filter(|tx| *tx.pending_transaction.sender() == address)
-                .fold(U256::zero(), |res, tx| {
-                    let nonce = tx.pending_transaction.nonce();
-                    if nonce.ge(&res) {
-                        return nonce.saturating_add(U256::from(1))
+                .reduce(|accum, item| {
+                    let nonce = item.pending_transaction.nonce();
+                    if nonce.gt(accum.pending_transaction.nonce()) {
+                        item
+                    } else {
+                        accum
                     }
-                    res
                 });
-            if !highest_nonce.is_zero() {
-                return Ok(highest_nonce)
+            if let Some(highest_nonce_tx) = highest_nonce_tx {
+                return Ok(highest_nonce_tx
+                    .pending_transaction
+                    .nonce()
+                    .saturating_add(U256::from(1)))
             }
         }
         let final_block_request = match block_request {
