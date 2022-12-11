@@ -1451,22 +1451,8 @@ impl Backend {
         block_request: Option<BlockRequest>,
     ) -> Result<U256, BlockchainError> {
         if let Some(BlockRequest::Pending(pool_transactions)) = block_request.as_ref() {
-            let highest_nonce_tx = pool_transactions
-                .iter()
-                .filter(|tx| *tx.pending_transaction.sender() == address)
-                .reduce(|accum, item| {
-                    let nonce = item.pending_transaction.nonce();
-                    if nonce.gt(accum.pending_transaction.nonce()) {
-                        item
-                    } else {
-                        accum
-                    }
-                });
-            if let Some(highest_nonce_tx) = highest_nonce_tx {
-                return Ok(highest_nonce_tx
-                    .pending_transaction
-                    .nonce()
-                    .saturating_add(U256::from(1)))
+            if let Some(value) = get_pool_transactions_nonce(pool_transactions, address) {
+                return Ok(value)
             }
         }
         let final_block_request = match block_request {
@@ -1824,6 +1810,28 @@ impl Backend {
             .lock()
             .retain(|tx| tx.unbounded_send(notification.clone()).is_ok());
     }
+}
+
+/// Get max nonce from transaction pool by address
+fn get_pool_transactions_nonce(
+    pool_transactions: &[Arc<PoolTransaction>],
+    address: ethers::types::H160,
+) -> Option<U256> {
+    let highest_nonce_tx = pool_transactions
+        .iter()
+        .filter(|tx| *tx.pending_transaction.sender() == address)
+        .reduce(|accum, item| {
+            let nonce = item.pending_transaction.nonce();
+            if nonce.gt(accum.pending_transaction.nonce()) {
+                item
+            } else {
+                accum
+            }
+        });
+    if let Some(highest_nonce_tx) = highest_nonce_tx {
+        return Some(highest_nonce_tx.pending_transaction.nonce().saturating_add(U256::one()))
+    }
+    None
 }
 
 #[async_trait::async_trait]
