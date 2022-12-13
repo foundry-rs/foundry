@@ -125,7 +125,7 @@ main() {
     MAN_TARBALL_URL="${RELEASE_URL}foundry_man_${FOUNDRYUP_VERSION}.tar.gz"
 
     # Download the binaries tarball and unpack it into the .foundry bin directory.
-    say "downloading latest forge, cast and anvil"
+    say "downloading latest forge, cast, anvil, and chisel"
     ensure curl -# -L $BIN_TARBALL_URL | tar -xzC $FOUNDRY_BIN_DIR
     # Download the man tarball and unpack it into the .foundry man directory.
     say "downloading manpages"
