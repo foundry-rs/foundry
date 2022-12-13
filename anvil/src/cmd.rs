@@ -367,8 +367,9 @@ pub struct AnvilEvmArgs {
 
     /// Specify chain id to skip fetching it from remote endpoint. This enables offline-start mode.
     ///
-    /// You still must pass both `--fork-url` and `--fork-block-number`, and already have your required
-    /// state cached on disk, anything missing locally would be fetched from the remote.
+    /// You still must pass both `--fork-url` and `--fork-block-number`, and already have your
+    /// required state cached on disk, anything missing locally would be fetched from the
+    /// remote.
     #[clap(
         long,
         help_heading = "FORK CONFIG",

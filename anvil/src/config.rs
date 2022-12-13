@@ -800,9 +800,9 @@ impl NodeConfig {
                 Some(Default::default())
             } else {
                 provider
-                .get_block(BlockNumber::Number(fork_block_number.into()))
-                .await
-                .expect("Failed to get fork block")
+                    .get_block(BlockNumber::Number(fork_block_number.into()))
+                    .await
+                    .expect("Failed to get fork block")
             };
 
             let block = if let Some(block) = block {

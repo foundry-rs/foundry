@@ -59,7 +59,7 @@ impl BlockchainDb {
             .and_then(|p| {
                 JsonBlockCacheDB::load(p).ok().filter(|cache| {
                     if skip_check {
-                        return true;
+                        return true
                     }
                     let mut existing = cache.meta().write();
                     existing.hosts.extend(meta.hosts.clone());
