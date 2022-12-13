@@ -635,6 +635,58 @@ async fn can_get_pending_transaction() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_first_noce_is_zero() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+    let from = handle.dev_wallets().next().unwrap().address();
+
+    let nonce = provider
+        .get_transaction_count(from, Some(BlockId::Number(BlockNumber::Pending)))
+        .await
+        .unwrap();
+
+    assert_eq!(nonce, U256::zero());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_handle_different_sender_nonce_calculation() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let from_first = accounts[0].address();
+    let from_second = accounts[1].address();
+
+    let tx_count = 10u64;
+
+    // send a bunch of tx to the mempool and check nonce is returned correctly
+    for idx in 1..=tx_count {
+        let tx_from_first =
+            TransactionRequest::new().from(from_first).value(1337u64).to(Address::random());
+        let _ = provider.send_transaction(tx_from_first, None).await.unwrap();
+        let nonce_from_first = provider
+            .get_transaction_count(from_first, Some(BlockId::Number(BlockNumber::Pending)))
+            .await
+            .unwrap();
+        assert_eq!(nonce_from_first, idx.into());
+
+        let tx_from_second =
+            TransactionRequest::new().from(from_second).value(1337u64).to(Address::random());
+        let _ = provider.send_transaction(tx_from_second, None).await.unwrap();
+        let nonce_from_second = provider
+            .get_transaction_count(from_second, Some(BlockId::Number(BlockNumber::Pending)))
+            .await
+            .unwrap();
+        assert_eq!(nonce_from_second, idx.into());
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn includes_pending_tx_for_transaction_count() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
