@@ -33,12 +33,34 @@ impl BlockchainDb {
     ///   - the file contains malformed data, or if it couldn't be read
     ///   - the provided `meta` differs from [BlockchainDbMeta] that's stored on disk
     pub fn new(meta: BlockchainDbMeta, cache_path: Option<PathBuf>) -> Self {
+        Self::new_db(meta, cache_path, false)
+    }
+
+    /// Creates a new instance of the [BlockchainDb] and skips check when comparing meta
+    /// This is useful for offline-start mode when we don't want to fetch metadata of `block`.
+    ///
+    /// if a `cache_path` is provided it attempts to load a previously stored [JsonBlockCacheData]
+    /// and will try to use the cached entries it holds.
+    ///
+    /// This will return a new and empty [MemDb] if
+    ///   - `cache_path` is `None`
+    ///   - the file the `cache_path` points to, does not exist
+    ///   - the file contains malformed data, or if it couldn't be read
+    ///   - the provided `meta` differs from [BlockchainDbMeta] that's stored on disk
+    pub fn new_skip_check(meta: BlockchainDbMeta, cache_path: Option<PathBuf>) -> Self {
+        Self::new_db(meta, cache_path, true)
+    }
+
+    fn new_db(meta: BlockchainDbMeta, cache_path: Option<PathBuf>, skip_check: bool) -> Self {
         trace!(target : "forge::cache", cache=?cache_path, "initialising blockchain db");
         // read cache and check if metadata matches
         let cache = cache_path
             .as_ref()
             .and_then(|p| {
                 JsonBlockCacheDB::load(p).ok().filter(|cache| {
+                    if skip_check {
+                        return true
+                    }
                     let mut existing = cache.meta().write();
                     existing.hosts.extend(meta.hosts.clone());
                     if meta != *existing {

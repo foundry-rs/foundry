@@ -111,6 +111,8 @@ pub struct NodeConfig {
     pub eth_rpc_url: Option<String>,
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
+    /// specifies chain id for cache to skip fetching from remote in offline-start mode
+    pub fork_chain_id: Option<U256>,
     /// The generator used to generate the dev accounts
     pub account_generator: Option<AccountGenerator>,
     /// whether to enable tracing
@@ -358,6 +360,7 @@ impl Default for NodeConfig {
             fork_request_timeout: REQUEST_TIMEOUT,
             fork_request_retries: 5,
             fork_retry_backoff: Duration::from_millis(1_000),
+            fork_chain_id: None,
             // alchemy max cpus <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
             compute_units_per_second: ALCHEMY_FREE_TIER_CUPS,
             ipc_path: None,
@@ -605,6 +608,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets the `fork_chain_id` to use to fork off local cache from
+    #[must_use]
+    pub fn with_fork_chain_id<U: Into<U256>>(mut self, fork_chain_id: Option<U>) -> Self {
+        self.fork_chain_id = fork_chain_id.map(Into::into);
+        self
+    }
+
     /// Sets the `fork_request_timeout` to use for requests
     #[must_use]
     pub fn fork_request_timeout(mut self, fork_request_timeout: Option<Duration>) -> Self {
@@ -758,8 +768,10 @@ impl NodeConfig {
 
             let (fork_block_number, fork_chain_id) =
                 if let Some(fork_block_number) = self.fork_block_number {
-                    // auto adjust hardfork if not specified
-                    let chain_id = if self.hardfork.is_none() {
+                    let chain_id = if let Some(chain_id) = self.fork_chain_id {
+                        Some(chain_id)
+                    } else if self.hardfork.is_none() {
+                        // auto adjust hardfork if not specified
                         // but only if we're forking mainnet
                         let chain_id =
                             provider.get_chainid().await.expect("Failed to fetch network chain id");
@@ -784,10 +796,14 @@ impl NodeConfig {
                     )
                 };
 
-            let block = provider
-                .get_block(BlockNumber::Number(fork_block_number.into()))
-                .await
-                .expect("Failed to get fork block");
+            let block = if self.fork_chain_id.is_some() {
+                Some(Default::default())
+            } else {
+                provider
+                    .get_block(BlockNumber::Number(fork_block_number.into()))
+                    .await
+                    .expect("Failed to get fork block")
+            };
 
             let block = if let Some(block) = block {
                 block
@@ -841,7 +857,7 @@ impl NodeConfig {
                 }
             }
 
-            let block_hash = block.hash.unwrap();
+            let block_hash = block.hash.unwrap_or_default();
 
             let chain_id = if let Some(chain_id) = self.chain_id {
                 chain_id
@@ -862,8 +878,11 @@ impl NodeConfig {
             let override_chain_id = self.chain_id;
 
             let meta = BlockchainDbMeta::new(env.clone(), eth_rpc_url.clone());
-
-            let block_chain_db = BlockchainDb::new(meta, self.block_cache_path());
+            let block_chain_db = if self.fork_chain_id.is_some() {
+                BlockchainDb::new_skip_check(meta, self.block_cache_path())
+            } else {
+                BlockchainDb::new(meta, self.block_cache_path())
+            };
 
             // This will spawn the background thread that will use the provider to fetch
             // blockchain data from the other client

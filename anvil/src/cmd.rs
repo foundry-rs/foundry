@@ -218,6 +218,7 @@ impl NodeArgs {
                     .fork_block_number
                     .or_else(|| self.evm_opts.fork_url.as_ref().and_then(|f| f.block)),
             )
+            .with_fork_chain_id(self.evm_opts.fork_chain_id)
             .fork_request_timeout(self.evm_opts.fork_request_timeout.map(Duration::from_millis))
             .fork_request_retries(self.evm_opts.fork_request_retries)
             .fork_retry_backoff(self.evm_opts.fork_retry_backoff.map(Duration::from_millis))
@@ -363,6 +364,19 @@ pub struct AnvilEvmArgs {
     /// See --fork-url.
     #[clap(long, requires = "fork_url", value_name = "BACKOFF", help_heading = "FORK CONFIG")]
     pub fork_retry_backoff: Option<u64>,
+
+    /// Specify chain id to skip fetching it from remote endpoint. This enables offline-start mode.
+    ///
+    /// You still must pass both `--fork-url` and `--fork-block-number`, and already have your
+    /// required state cached on disk, anything missing locally would be fetched from the
+    /// remote.
+    #[clap(
+        long,
+        help_heading = "FORK CONFIG",
+        value_name = "CHAIN",
+        requires = "fork_block_number"
+    )]
+    pub fork_chain_id: Option<Chain>,
 
     /// Sets the number of assumed available compute units per second for this provider
     ///
