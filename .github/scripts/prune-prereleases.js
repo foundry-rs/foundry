@@ -1,14 +1,20 @@
 module.exports = async ({ github, context }) => {
     console.log("Pruning old prereleases");
 
+    // doc: https://docs.github.com/en/rest/releases/releases
     const { data: releases } = await github.rest.repos.listReleases({
         owner: context.repo.owner,
         repo: context.repo.repo,
     });
 
-    // Only consider releases tagged `nightly-${SHA}` for deletion
     let nightlies = releases.filter(
-        release => release.tag_name.includes("nightly") && release.tag_name !== "nightly"
+        release =>
+            // Only consider releases tagged `nightly-${SHA}` for deletion
+            release.tag_name.includes("nightly") &&
+            release.tag_name !== "nightly" &&
+            // ref: https://github.com/foundry-rs/foundry/issues/3881
+            // Skipping pruning the build on 1st day of each month
+            !release.created_at.includes("-01T")
     );
 
     // Keep newest 3 nightlies
