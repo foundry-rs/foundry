@@ -481,7 +481,8 @@ impl ChiselDisptacher {
                 match reqwest::get(&request_url).await {
                     Ok(response) => {
                         let json = response.json::<EtherscanABIResponse>().await.unwrap();
-                        if let Some(abi) = json.result {
+                        if json.status.eq("1") && json.result.is_some() {
+                            let abi = json.result.unwrap();
                             if let Ok(abi) = ethers::abi::Abi::load(abi.as_bytes()) {
                                 let mut interface = format!(
                                     "// Interface of {}\ninterface {} {{\n",
@@ -570,9 +571,13 @@ impl ChiselDisptacher {
                                     "Contract is not verified!",
                                 ))
                             }
+                        } else if let Some(error_msg) = json.result {
+                            DispatchResult::CommandFailed(Self::make_error(format!(
+                                "Could not fetch interface - \"{error_msg}\""
+                            )))
                         } else {
                             DispatchResult::CommandFailed(Self::make_error(format!(
-                                "Coult not fetch interface - \"{}\"",
+                                "Could not fetch interface - \"{}\"",
                                 json.message
                             )))
                         }
