@@ -25,9 +25,9 @@ RUN --mount=type=cache,target=/root/.cargo/registry --mount=type=cache,target=/r
     && strip out/cast \
     && strip out/anvil;
 
-FROM docker.io/frolvlad/alpine-glibc:alpine-3.16_glibc-2.35 as foundry-client
+FROM docker.io/frolvlad/alpine-glibc:alpine-3.16_glibc-2.34 as foundry-client
 
-RUN apk add --no-cache linux-headers gcompat git
+RUN apk add --no-cache linux-headers git
 
 COPY --from=build-environment /opt/foundry/out/forge /usr/local/bin/forge
 COPY --from=build-environment /opt/foundry/out/cast /usr/local/bin/cast
