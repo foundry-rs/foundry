@@ -22,7 +22,7 @@ use foundry_evm::{
 };
 use hash_db::HashDB;
 use serde::{Deserialize, Serialize};
-use std::{fmt, path::Path};
+use std::{collections::BTreeMap, fmt, path::Path};
 
 /// Type alias for the `HashDB` representation of the Database
 pub type AsHashDB = Box<dyn HashDB<KeccakHasher, Vec<u8>>>;
@@ -276,7 +276,7 @@ impl MaybeHashDatabase for StateDb {
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct SerializableState {
-    pub accounts: HashMap<Address, SerializableAccountRecord>,
+    pub accounts: BTreeMap<Address, SerializableAccountRecord>,
 }
 
 // === impl SerializableState ===
@@ -303,5 +303,5 @@ pub struct SerializableAccountRecord {
     pub nonce: u64,
     pub balance: U256,
     pub code: Bytes,
-    pub storage: HashMap<U256, U256>,
+    pub storage: BTreeMap<U256, U256>,
 }

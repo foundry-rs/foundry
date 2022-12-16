@@ -150,11 +150,8 @@ mod tests {
     };
     use bytes::Bytes;
     use forge::revm::{Bytecode, KECCAK_EMPTY};
-    use foundry_evm::{
-        executor::{backend::MemDb, DatabaseRef},
-        HashMap,
-    };
-    use std::str::FromStr;
+    use foundry_evm::executor::{backend::MemDb, DatabaseRef};
+    use std::{collections::BTreeMap, str::FromStr};
 
     // verifies that all substantial aspects of a loaded account remain the state after an account
     // is dumped and reloaded
@@ -229,11 +226,11 @@ mod tests {
                 balance: Default::default(),
                 code: Default::default(),
                 nonce: 1,
-                storage: HashMap::default(),
+                storage: Default::default(),
             },
         );
 
-        let mut new_storage = HashMap::new();
+        let mut new_storage = BTreeMap::default();
         new_storage.insert("0x1234568".into(), "0x5".into());
 
         new_state.accounts.insert(
