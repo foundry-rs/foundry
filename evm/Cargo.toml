@@ -16,10 +16,10 @@ foundry-config = { path = "./../config" }
 serde_json = "1.0.67"
 serde = "1.0.130"
 hex = "0.4.3"
-ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = [
+ethers = { git = "https://github.com/iFrostizz/ethers-rs", default-features = false, features = [
   "solc-full",
   "abigen",
-] }
+], branch = "f/ast" }
 jsonpath_lib = "0.3.0"
 
 # Error handling

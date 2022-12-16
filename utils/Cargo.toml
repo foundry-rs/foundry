@@ -7,14 +7,14 @@ readme = "README.md"
 repository = "https://github.com/foundry-rs/foundry"
 
 [dependencies]
-ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-contract = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = [
+ethers-core = { git = "https://github.com/iFrostizz/ethers-rs", default-features = false, branch = "f/ast" }
+ethers-contract = { git = "https://github.com/iFrostizz/ethers-rs", default-features = false, features = [
     "abigen",
-] }
-ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-providers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+], branch = "f/ast" }
+ethers-etherscan = { git = "https://github.com/iFrostizz/ethers-rs", default-features = false, branch = "f/ast" }
+ethers-addressbook = { git = "https://github.com/iFrostizz/ethers-rs", default-features = false, branch = "f/ast" }
+ethers-providers = { git = "https://github.com/iFrostizz/ethers-rs", default-features = false, branch = "f/ast" }
+ethers-solc = { git = "https://github.com/iFrostizz/ethers-rs", default-features = false, branch = "f/ast" }
 tracing-subscriber = { version = "0.3", default-features = false, features = [
     "env-filter",
     "fmt",

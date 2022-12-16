@@ -10,10 +10,10 @@ repository = "https://github.com/foundry-rs/foundry"
 
 [dependencies]
 tempfile = "3.3.0"
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = [
+ethers-solc = { git = "https://github.com/iFrostizz/ethers-rs", default-features = false, features = [
     "project-util",
-] }
-ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+], branch = "f/ast" }
+ethers = { git = "https://github.com/iFrostizz/ethers-rs", default-features = false, branch = "f/ast" }
 
 walkdir = "2.3.2"
 once_cell = "1.13"
