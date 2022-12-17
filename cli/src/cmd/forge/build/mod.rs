@@ -71,7 +71,7 @@ pub struct BuildArgs {
         long,
         num_args(1..),
         action = ArgAction::Append,
-        help = "Skip building whose names contain FILTER. `test` and `script` are aliases for `.t.sol` and `.s.sol`. (this flag can be used multiple times)")]
+        help = "Skip building whose names contain SKIP. `test` and `script` are aliases for `.t.sol` and `.s.sol`. (this flag can be used multiple times)")]
     #[serde(skip)]
     pub skip: Option<Vec<SkipBuildFilter>>,
 
