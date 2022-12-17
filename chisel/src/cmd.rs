@@ -12,6 +12,8 @@ use strum::EnumIter;
 pub enum ChiselCommand {
     /// Print helpful information about chisel
     Help,
+    /// Quit the REPL
+    Quit,
     /// Clear the current session source
     Clear,
     /// Print the generated source contract
@@ -54,6 +56,7 @@ impl FromStr for ChiselCommand {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_ref() {
             "help" | "h" => Ok(ChiselCommand::Help),
+            "quit" | "q" => Ok(ChiselCommand::Quit),
             "clear" | "c" => Ok(ChiselCommand::Clear),
             "source" | "so" => Ok(ChiselCommand::Source),
             "save" | "s" => Ok(ChiselCommand::Save),
@@ -109,6 +112,7 @@ impl From<ChiselCommand> for CmdDescriptor {
         match cmd {
             // General
             ChiselCommand::Help => (&["help", "h"], "Display all commands", CmdCategory::General),
+            ChiselCommand::Quit => (&["quit", "q"], "Quit Chisel", CmdCategory::General),
             ChiselCommand::Exec => (&["exec <command> [args]", "e <command> [args]"], "Execute a shell command and print the output", CmdCategory::General),
             // Session
             ChiselCommand::Clear => (&["clear", "c"], "Clear current session source", CmdCategory::Session),
