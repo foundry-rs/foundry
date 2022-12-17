@@ -284,7 +284,8 @@ where
                         // otherwise weird things with returning gas from a call happen
                         // ref: https://github.com/bluealloy/revm/blob/2cb991091d32330cfe085320891737186947ce5a/crates/revm/src/evm_impl.rs#L190
                         //
-                        // It would be nice if we had access to the interpreter in `call_end`, as we could just do this there instead.
+                        // It would be nice if we had access to the interpreter in `call_end`, as we
+                        // could just do this there instead.
                         interpreter.gas = revm::Gas::new(0);
                     }
                     _ => {
