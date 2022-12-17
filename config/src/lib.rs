@@ -205,18 +205,18 @@ pub struct Config {
     pub ignored_error_codes: Vec<SolidityErrorCode>,
     /// When true, compiler warnings are treated as errors
     pub deny_warnings: bool,
-    /// Only run test functions matching the specified regex pattern.
-    #[serde(rename = "match_test")]
-    pub test_pattern: Option<RegexWrapper>,
-    /// Only run test functions that do not match the specified regex pattern.
-    #[serde(rename = "no_match_test")]
-    pub test_pattern_inverse: Option<RegexWrapper>,
-    /// Only run tests in contracts matching the specified regex pattern.
-    #[serde(rename = "match_contract")]
-    pub contract_pattern: Option<RegexWrapper>,
-    /// Only run tests in contracts that do not match the specified regex pattern.
-    #[serde(rename = "no_match_contract")]
-    pub contract_pattern_inverse: Option<RegexWrapper>,
+    /// Only run test functions matching the specified glob patterns.
+    #[serde(rename = "match_test", with = "from_opt_vec_glob")]
+    pub test_pattern: Option<Vec<globset::Glob>>,
+    /// Only run test functions that do not match the specified glob patterns.
+    #[serde(rename = "no_match_test", with = "from_opt_vec_glob")]
+    pub test_pattern_inverse: Option<Vec<globset::Glob>>,
+    /// Only run tests in contracts matching the specified glob patterns.
+    #[serde(rename = "match_contract", with = "from_opt_vec_glob")]
+    pub contract_pattern: Option<Vec<globset::Glob>>,
+    /// Only run tests in contracts that do not match the specified glob patterns.
+    #[serde(rename = "no_match_contract", with = "from_opt_vec_glob")]
+    pub contract_pattern_inverse: Option<Vec<globset::Glob>>,
     /// Only run tests in source files matching the specified glob pattern.
     #[serde(rename = "match_path", with = "from_opt_glob")]
     pub path_pattern: Option<globset::Glob>,
@@ -1589,6 +1589,37 @@ pub(crate) mod from_opt_glob {
         let s: Option<String> = Option::deserialize(deserializer)?;
         if let Some(s) = s {
             return Ok(Some(globset::Glob::new(&s).map_err(serde::de::Error::custom)?))
+        }
+        Ok(None)
+    }
+}
+
+pub(crate) mod from_opt_vec_glob {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &Option<Vec<globset::Glob>>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match value {
+            Some(globs) => serializer.serialize_str(&globs.iter().map(|glob| glob.to_string()).collect::<Vec<String>>().join(",")),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<globset::Glob>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s: Option<String> = Option::deserialize(deserializer)?;
+        if let Some(s) = s {
+            let split = s.split(",");
+            let mut globs: Vec<globset::Glob> = vec![];
+            for i in split {
+                let glob_item = globset::Glob::new(i).map_err(serde::de::Error::custom)?;
+                globs.push(glob_item);
+            }
+            return Ok(Some(globs))
         }
         Ok(None)
     }
