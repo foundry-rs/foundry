@@ -3,6 +3,7 @@ use clap::Parser;
 use ethers::solc::FileFilter;
 use forge::TestFilter;
 use foundry_config::Config;
+use itertools::Itertools;
 use std::{fmt, path::Path, str::FromStr};
 
 /// The filter to use during testing
@@ -16,41 +17,49 @@ pub struct Filter {
     #[clap(long = "match", short = 'm')]
     pub pattern: Option<regex::Regex>,
 
-    /// Only run test functions matching the specified regex pattern.
+    /// Only run test functions matching the specified glob patterns.
     #[clap(
         long = "match-test",
         visible_alias = "mt",
         conflicts_with = "pattern",
-        value_name = "REGEX"
+        value_name = "GLOB",
+        use_value_delimiter = true,
+        value_delimiter = ','
     )]
-    pub test_pattern: Option<regex::Regex>,
+    pub test_pattern: Option<Vec<GlobMatcher>>,
 
-    /// Only run test functions that do not match the specified regex pattern.
+    /// Only run test functions that do not match the specified glob patterns.
     #[clap(
         long = "no-match-test",
         visible_alias = "nmt",
         conflicts_with = "pattern",
-        value_name = "REGEX"
+        value_name = "GLOB",
+        use_value_delimiter = true,
+        value_delimiter = ','
     )]
-    pub test_pattern_inverse: Option<regex::Regex>,
+    pub test_pattern_inverse: Option<Vec<GlobMatcher>>,
 
-    /// Only run tests in contracts matching the specified regex pattern.
+    /// Only run tests in contracts matching the specified glob patterns.
     #[clap(
         long = "match-contract",
         visible_alias = "mc",
         conflicts_with = "pattern",
-        value_name = "REGEX"
+        value_name = "GLOB",
+        use_value_delimiter = true,
+        value_delimiter = ','
     )]
-    pub contract_pattern: Option<regex::Regex>,
+    pub contract_pattern: Option<Vec<GlobMatcher>>,
 
-    /// Only run tests in contracts that do not match the specified regex pattern.
+    /// Only run tests in contracts that do not match the specified glob patterns.
     #[clap(
         long = "no-match-contract",
         visible_alias = "nmc",
         conflicts_with = "pattern",
-        value_name = "REGEX"
+        value_name = "GLOB",
+        use_value_delimiter = true,
+        value_delimiter = ','
     )]
-    pub contract_pattern_inverse: Option<regex::Regex>,
+    pub contract_pattern_inverse: Option<Vec<GlobMatcher>>,
 
     /// Only run tests in source files matching the specified glob pattern.
     #[clap(
@@ -77,17 +86,24 @@ impl Filter {
     pub fn with_merged_config(&self, config: &Config) -> Self {
         let mut filter = self.clone();
         if filter.test_pattern.is_none() {
-            filter.test_pattern = config.test_pattern.clone().map(|p| p.into());
+            if let Some(globs) = config.test_pattern.clone() {
+                filter.test_pattern = Some(globs.into_iter().map(Into::into).collect())
+            }
         }
         if filter.test_pattern_inverse.is_none() {
-            filter.test_pattern_inverse = config.test_pattern_inverse.clone().map(|p| p.into());
+            if let Some(globs) = config.test_pattern_inverse.clone() {
+                filter.test_pattern_inverse = Some(globs.into_iter().map(Into::into).collect())
+            }
         }
         if filter.contract_pattern.is_none() {
-            filter.contract_pattern = config.contract_pattern.clone().map(|p| p.into());
+            if let Some(globs) = config.contract_pattern.clone() {
+                filter.contract_pattern = Some(globs.into_iter().map(Into::into).collect())
+            }
         }
         if filter.contract_pattern_inverse.is_none() {
-            filter.contract_pattern_inverse =
-                config.contract_pattern_inverse.clone().map(|p| p.into());
+            if let Some(globs) = config.contract_pattern_inverse.clone() {
+                filter.contract_pattern_inverse = Some(globs.into_iter().map(Into::into).collect())
+            }
         }
         if filter.path_pattern.is_none() {
             filter.path_pattern = config.path_pattern.clone().map(Into::into);
@@ -103,10 +119,25 @@ impl fmt::Debug for Filter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Filter")
             .field("match", &self.pattern.as_ref().map(|r| r.as_str()))
-            .field("match-test", &self.test_pattern.as_ref().map(|r| r.as_str()))
-            .field("no-match-test", &self.test_pattern_inverse.as_ref().map(|r| r.as_str()))
-            .field("match-contract", &self.contract_pattern.as_ref().map(|r| r.as_str()))
-            .field("no-match-contract", &self.contract_pattern_inverse.as_ref().map(|r| r.as_str()))
+            .field(
+                "match-test",
+                &self.test_pattern.as_ref().map(|r| r.iter().map(|x| x.as_str()).join(",")),
+            )
+            .field(
+                "no-match-test",
+                &self.test_pattern_inverse.as_ref().map(|r| r.iter().map(|x| x.as_str()).join(",")),
+            )
+            .field(
+                "match-contract",
+                &self.contract_pattern.as_ref().map(|r| r.iter().map(|x| x.as_str()).join(",")),
+            )
+            .field(
+                "no-match-contract",
+                &self
+                    .contract_pattern_inverse
+                    .as_ref()
+                    .map(|r| r.iter().map(|x| x.as_str()).join(",")),
+            )
             .field("match-path", &self.path_pattern.as_ref().map(|g| g.as_str()))
             .field("no-match-path", &self.path_pattern_inverse.as_ref().map(|g| g.as_str()))
             .finish_non_exhaustive()
@@ -139,11 +170,11 @@ impl TestFilter for Filter {
         if let Some(re) = &self.pattern {
             ok &= re.is_match(test_name);
         }
-        if let Some(re) = &self.test_pattern {
-            ok &= re.is_match(test_name);
+        if let Some(globs) = &self.test_pattern {
+            ok &= globs.iter().any(|x| x.is_match(test_name));
         }
-        if let Some(re) = &self.test_pattern_inverse {
-            ok &= !re.is_match(test_name);
+        if let Some(globs) = &self.test_pattern_inverse {
+            ok &= !globs.iter().any(|x| x.is_match(test_name));
         }
         ok
     }
@@ -151,11 +182,11 @@ impl TestFilter for Filter {
     fn matches_contract(&self, contract_name: impl AsRef<str>) -> bool {
         let mut ok = true;
         let contract_name = contract_name.as_ref();
-        if let Some(re) = &self.contract_pattern {
-            ok &= re.is_match(contract_name);
+        if let Some(globs) = &self.contract_pattern {
+            ok &= globs.iter().any(|x| x.is_match(contract_name));
         }
-        if let Some(re) = &self.contract_pattern_inverse {
-            ok &= !re.is_match(contract_name);
+        if let Some(globs) = &self.contract_pattern_inverse {
+            ok &= !globs.iter().any(|x| x.is_match(contract_name));
         }
         ok
     }
@@ -180,16 +211,18 @@ impl fmt::Display for Filter {
             patterns.push(format!("\tmatch: `{}`", p.as_str()));
         }
         if let Some(ref p) = self.test_pattern {
-            patterns.push(format!("\tmatch-test: `{}`", p.as_str()));
+            patterns.push(format!("\tmatch-test: `{}`", p.iter().map(|x| x.as_str()).join(",")));
         }
         if let Some(ref p) = self.test_pattern_inverse {
-            patterns.push(format!("\tno-match-test: `{}`", p.as_str()));
+            patterns.push(format!("\tno-match-test: `{}`", p.iter().map(|x| x.as_str()).join(",")));
         }
         if let Some(ref p) = self.contract_pattern {
-            patterns.push(format!("\tmatch-contract: `{}`", p.as_str()));
+            patterns
+                .push(format!("\tmatch-contract: `{}`", p.iter().map(|x| x.as_str()).join(",")));
         }
         if let Some(ref p) = self.contract_pattern_inverse {
-            patterns.push(format!("\tno-match-contract: `{}`", p.as_str()));
+            patterns
+                .push(format!("\tno-match-contract: `{}`", p.iter().map(|x| x.as_str()).join(",")));
         }
         if let Some(ref p) = self.path_pattern {
             patterns.push(format!("\tmatch-path: `{}`", p.as_str()));

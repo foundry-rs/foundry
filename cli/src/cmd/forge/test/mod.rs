@@ -26,7 +26,6 @@ use foundry_common::{
     get_contract_name, get_file_name,
 };
 use foundry_config::{figment, Config};
-use regex::Regex;
 use std::{collections::BTreeMap, path::PathBuf, sync::mpsc::channel, thread, time::Duration};
 use tracing::trace;
 use watchexec::config::{InitConfig, RuntimeConfig};
@@ -38,6 +37,8 @@ use foundry_config::figment::{
     value::{Dict, Map},
     Metadata, Profile, Provider,
 };
+
+use self::filter::GlobMatcher;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
@@ -62,8 +63,8 @@ pub struct TestArgs {
     /// If the fuzz test does not fail, it will open the debugger on the last fuzz case.
     ///
     /// For more fine-grained control of which fuzz case is run, see forge run.
-    #[clap(long, value_name = "TEST_FUNCTION")]
-    debug: Option<Regex>,
+    #[clap(long, value_name = "TEST_FUNCTION", use_value_delimiter = true, value_delimiter = ',')]
+    debug: Option<Vec<GlobMatcher>>,
 
     /// Print a gas report.
     #[clap(long, env = "FORGE_GAS_REPORT")]
@@ -482,10 +483,13 @@ fn test(
             println!("{filter_str}");
             // Try to suggest a test when there's no match
             if let Some(ref test_pattern) = filter.test_pattern {
-                let test_name = test_pattern.as_str();
                 let candidates = runner.get_tests(&filter);
-                if let Some(suggestion) = suggestions::did_you_mean(test_name, candidates).pop() {
-                    println!("\nDid you mean `{suggestion}`?");
+                for test_name in test_pattern {
+                    if let Some(suggestion) =
+                        suggestions::did_you_mean(&test_name.as_str(), candidates.clone()).pop()
+                    {
+                        println!("\nFor `{test_name}`, did you mean `*{suggestion}*`?");
+                    }
                 }
             }
         }
