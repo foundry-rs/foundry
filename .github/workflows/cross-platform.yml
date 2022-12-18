@@ -5,7 +5,6 @@ on:
 name: cross-platform
 
 env:
-    ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
     CARGO_TERM_COLOR: always
 
 jobs:
