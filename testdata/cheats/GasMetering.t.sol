@@ -71,5 +71,4 @@ contract GasMeteringTest is DSTest {
         }
         return b;
     }
-
 }
