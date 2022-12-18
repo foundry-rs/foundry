@@ -241,7 +241,7 @@ casttest!(cast_run_succeeds, |_: TestProject, mut cmd: TestCommand| {
 });
 
 // tests that the `cast storage` command works correctly
-casttest!(cast_storage_succeeds, |_: TestProject, mut cmd: TestCommand| {
+casttest!(test_live_cast_storage_succeeds, |_: TestProject, mut cmd: TestCommand| {
     let eth_rpc_url = next_http_rpc_endpoint();
 
     // WETH
