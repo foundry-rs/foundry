@@ -9,6 +9,7 @@ name: test
 env:
     NEXTEST_EXPERIMENTAL_FILTER_EXPR: 1
     CARGO_TERM_COLOR: always
+    ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
 
 jobs:
     build-tests:
