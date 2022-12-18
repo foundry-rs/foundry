@@ -791,7 +791,6 @@ impl OutputExt for process::Output {
         let expected = IGNORE_IN_FIXTURES.replace_all(&expected, "").replace('\\', "/");
         let stdout = String::from_utf8_lossy(&self.stdout);
         let out = IGNORE_IN_FIXTURES.replace_all(&stdout, "").replace('\\', "/");
-
         pretty_assertions::assert_eq!(expected, out);
 
         self

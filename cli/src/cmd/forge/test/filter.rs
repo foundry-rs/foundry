@@ -85,8 +85,8 @@ impl Filter {
     /// Merges the set filter globs with the config's values
     pub fn with_merged_config(&self, config: &Config) -> Self {
         let mut filter = self.clone();
-        if filter.test_pattern.is_none() {
-            let mut p: Vec<GlobMatcher> = vec![];
+        if filter.test_pattern.is_none() && !config.test_pattern.clone().is_none() {
+            let mut p = Vec::new();
             for i in config.test_pattern.clone() {
                 for f in i {
                     p.push(f.into());
@@ -94,8 +94,8 @@ impl Filter {
             }
             filter.test_pattern = Some(p);
         }
-        if filter.test_pattern_inverse.is_none() {
-            let mut p: Vec<GlobMatcher> = vec![];
+        if filter.test_pattern_inverse.is_none() && !config.test_pattern_inverse.clone().is_none() {
+            let mut p = Vec::new();
             for i in config.test_pattern_inverse.clone() {
                 for f in i {
                     p.push(f.into());
@@ -103,8 +103,8 @@ impl Filter {
             }
             filter.test_pattern_inverse = Some(p);
         }
-        if filter.contract_pattern.is_none() {
-            let mut p: Vec<GlobMatcher> = vec![];
+        if filter.contract_pattern.is_none() && !config.contract_pattern.clone().is_none() {
+            let mut p = Vec::new();
             for i in config.contract_pattern.clone() {
                 for f in i {
                     p.push(f.into());
@@ -112,8 +112,8 @@ impl Filter {
             }
             filter.contract_pattern = Some(p);
         }
-        if filter.contract_pattern_inverse.is_none() {
-            let mut p: Vec<GlobMatcher> = vec![];
+        if filter.contract_pattern_inverse.is_none() && !config.contract_pattern_inverse.clone().is_none() {
+            let mut p = Vec::new();
             for i in config.contract_pattern_inverse.clone() {
                 for f in i {
                     p.push(f.into());
@@ -127,11 +127,6 @@ impl Filter {
         if filter.path_pattern_inverse.is_none() {
             filter.path_pattern_inverse = config.path_pattern_inverse.clone().map(Into::into);
         }
-        println!("{:?},{:?}", config.path_pattern.clone(), config.path_pattern_inverse.clone());
-        println!("{:?},{:?}", filter.path_pattern, filter.path_pattern_inverse);
-        println!("{:?},{:?}", filter.contract_pattern, filter.contract_pattern_inverse);
-        println!("{}", filter);
-        println!("{:?}", config);
         filter
     }
 }

@@ -1614,7 +1614,7 @@ pub(crate) mod from_opt_vec_glob {
         let s: Option<String> = Option::deserialize(deserializer)?;
         if let Some(s) = s {
             let split = s.split(",");
-            let mut globs: Vec<globset::Glob> = vec![];
+            let mut globs = Vec::new();
             for i in split {
                 let glob_item = globset::Glob::new(i).map_err(serde::de::Error::custom)?;
                 globs.push(glob_item);
