@@ -12,7 +12,10 @@ use ethers::{
         },
         info::ContractInfo,
     },
-    solc::{artifacts::LosslessAbi, utils::canonicalize},
+    solc::{
+        artifacts::{LosslessAbi, StorageLayout},
+        utils::canonicalize,
+    },
 };
 use foundry_common::compile;
 use serde_json::{to_value, Value};
@@ -133,35 +136,7 @@ impl Cmd for InspectArgs {
                 println!("{}", serde_json::to_string_pretty(&to_value(&artifact.gas_estimates)?)?);
             }
             ContractArtifactFields::StorageLayout => {
-                if pretty {
-                    if let Some(storage_layout) = &artifact.storage_layout {
-                        let mut table = Table::new();
-                        table.load_preset(ASCII_MARKDOWN);
-                        table.set_header(vec![
-                            "Name", "Type", "Slot", "Offset", "Bytes", "Contract",
-                        ]);
-
-                        for slot in &storage_layout.storage {
-                            let storage_type = storage_layout.types.get(&slot.storage_type);
-                            table.add_row(vec![
-                                slot.label.clone(),
-                                storage_type.as_ref().map_or("?".to_string(), |t| t.label.clone()),
-                                slot.slot.clone(),
-                                slot.offset.to_string(),
-                                storage_type
-                                    .as_ref()
-                                    .map_or("?".to_string(), |t| t.number_of_bytes.clone()),
-                                slot.contract.clone(),
-                            ]);
-                        }
-                        println!("{table}");
-                    }
-                } else {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&to_value(&artifact.storage_layout)?)?
-                    );
-                }
+                print_storage_layout(&artifact.storage_layout, pretty)?;
             }
             ContractArtifactFields::DevDoc => {
                 println!("{}", serde_json::to_string_pretty(&to_value(&artifact.devdoc)?)?);
@@ -216,6 +191,42 @@ impl Cmd for InspectArgs {
 
         Ok(())
     }
+}
+
+pub fn print_storage_layout(
+    storage_layout: &Option<StorageLayout>,
+    pretty: bool,
+) -> eyre::Result<()> {
+    if storage_layout.is_none() {
+        eyre::bail!("Could not get storage layout")
+    }
+
+    let storage_layout = storage_layout.as_ref().unwrap();
+
+    if !pretty {
+        println!("{}", serde_json::to_string_pretty(&to_value(storage_layout)?)?);
+        return Ok(())
+    }
+
+    let mut table = Table::new();
+    table.load_preset(ASCII_MARKDOWN);
+    table.set_header(vec!["Name", "Type", "Slot", "Offset", "Bytes", "Contract"]);
+
+    for slot in &storage_layout.storage {
+        let storage_type = storage_layout.types.get(&slot.storage_type);
+        table.add_row(vec![
+            slot.label.clone(),
+            storage_type.as_ref().map_or("?".to_string(), |t| t.label.clone()),
+            slot.slot.clone(),
+            slot.offset.to_string(),
+            storage_type.as_ref().map_or("?".to_string(), |t| t.number_of_bytes.clone()),
+            slot.contract.clone(),
+        ]);
+    }
+
+    println!("{table}");
+
+    Ok(())
 }
 
 /// Contract level output selection

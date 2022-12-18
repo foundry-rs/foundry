@@ -2335,6 +2335,7 @@ dependencies = [
  "strsim",
  "strum",
  "svm-rs",
+ "tempfile",
  "thiserror",
  "tokio",
  "toml",
