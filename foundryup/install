@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 set -e
 
-echo Installing foundryup...
+readonly SUCCESS_MARK="\033[0;32m✔\033[0m"
+readonly FAIL_MARK="\033[0;31m✘\033[0m"
+# https://en.wikipedia.org/wiki/ANSI_escape_code#CSI_(Control_Sequence_Introducer)_sequences
+# [nF is "cursor previous line" and moves to the beginning of the nth previous line
+# [0K is "erase display" and clears from the cursor to the end of the screen
+readonly CLEAR_LAST_MSG="\033[1F\033[0K"
+
+echo "Installing foundryup..."
 
 FOUNDRY_DIR=${FOUNDRY_DIR-"$HOME/.foundry"}
 FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
@@ -12,7 +19,16 @@ BIN_PATH="$FOUNDRY_BIN_DIR/foundryup"
 
 # Create the .foundry bin directory and foundryup binary if it doesn't exist.
 mkdir -p $FOUNDRY_BIN_DIR
-curl -# -L $BIN_URL -o $BIN_PATH
+readonly CURL_FLAGS="${CURL_FLAGS:- -# -vvv --max-time 120 --retry 3 --fail}"
+
+# we deliberately don't quote CURL_FLAGS
+# shellcheck disable=SC2086 
+curl ${CURL_FLAGS}  "${BIN_UR}" -o "${BIN_PATH}"
+if ! $? -ne 0; then
+	>&2 echo -e "${FAIL_MARK} Error: failed to download Foundry - $?"
+	exit 2
+fi
+echo -e "${CLEAR_LAST_MSG}${SUCCESS_MARK} Installing Foundry"
 chmod +x $BIN_PATH
 
 # Create the man directory for future man files if it doesn't exist.
@@ -48,9 +64,11 @@ if [[ ":$PATH:" != *":${FOUNDRY_BIN_DIR}:"* ]]; then
 fi
 
 # Warn MacOS users that they may need to manually install libusb via Homebrew:
-if [[ "$OSTYPE" =~ ^darwin && ! -f /usr/local/opt/libusb/lib/libusb-1.0.0.dylib ]]; then
-    echo && echo "warning: libusb not found. You may need to install it manually on MacOS via Homebrew (brew install libusb)."
+if [[ "$OSTYPE" =~ ^darwin && ! -f /opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib ]]; then
+    echo && echo "⚠️ Warning: libusb not found. You may need to install it manually on macOS via Homebrew (brew install libusb)."
 fi
 
 echo && echo "Detected your preferred shell is ${PREF_SHELL} and added foundryup to PATH. Run 'source ${PROFILE}' or start a new terminal session to use foundryup."
 echo "Then, simply run 'foundryup' to install Foundry."
+echo
+echo -e "${CLEAR_LAST_MSG}${SUCCESS_MARK} Foundryup successfully installed!"
