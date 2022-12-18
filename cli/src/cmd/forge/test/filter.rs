@@ -22,7 +22,7 @@ pub struct Filter {
         long = "match-test",
         visible_alias = "mt",
         conflicts_with = "pattern",
-        value_name = "REGEX",
+        value_name = "GLOB",
         use_value_delimiter = true,
         value_delimiter = ','
     )]
@@ -33,7 +33,7 @@ pub struct Filter {
         long = "no-match-test",
         visible_alias = "nmt",
         conflicts_with = "pattern",
-        value_name = "REGEX",
+        value_name = "GLOB",
         use_value_delimiter = true,
         value_delimiter = ','
     )]
@@ -44,7 +44,7 @@ pub struct Filter {
         long = "match-contract",
         visible_alias = "mc",
         conflicts_with = "pattern",
-        value_name = "REGEX",
+        value_name = "GLOB",
         use_value_delimiter = true,
         value_delimiter = ','
     )]
@@ -55,7 +55,7 @@ pub struct Filter {
         long = "no-match-contract",
         visible_alias = "nmc",
         conflicts_with = "pattern",
-        value_name = "REGEX",
+        value_name = "GLOB",
         use_value_delimiter = true,
         value_delimiter = ','
     )]
@@ -127,6 +127,11 @@ impl Filter {
         if filter.path_pattern_inverse.is_none() {
             filter.path_pattern_inverse = config.path_pattern_inverse.clone().map(Into::into);
         }
+        println!("{:?},{:?}", config.path_pattern.clone(), config.path_pattern_inverse.clone());
+        println!("{:?},{:?}", filter.path_pattern, filter.path_pattern_inverse);
+        println!("{:?},{:?}", filter.contract_pattern, filter.contract_pattern_inverse);
+        println!("{}", filter);
+        println!("{:?}", config);
         filter
     }
 }

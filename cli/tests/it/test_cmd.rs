@@ -236,7 +236,8 @@ contract FailTest is DSTest {
         )
         .unwrap();
 
-    cmd.args(["test", "--match-path", "*"]);
+    // cmd.args(["test", "--match-path", "*"]);
+    cmd.args(["test"]);
     println!("{}", cmd.stdout());
     println!("{}", cmd.stdout().contains("[PASS]"));
     println!("{}", !cmd.stdout().contains("[FAIL]"));
