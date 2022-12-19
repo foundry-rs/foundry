@@ -15,7 +15,7 @@ where
     let mut candidates: Vec<(f64, String)> = candidates
         .into_iter()
         .map(|pv| (strsim::jaro_winkler(v, pv.as_ref()), pv.as_ref().to_owned()))
-        .filter(|(similarity, _)| *similarity > 0.8)
+        .filter(|(similarity, _)| *similarity > 0.7)
         .collect();
     candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
     candidates.into_iter().map(|(_, pv)| pv).collect()

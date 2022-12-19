@@ -26,7 +26,6 @@ use foundry_common::{
     get_contract_name, get_file_name,
 };
 use foundry_config::{figment, Config};
-use itertools::Itertools;
 use std::{collections::BTreeMap, path::PathBuf, sync::mpsc::channel, thread, time::Duration};
 use tracing::trace;
 use watchexec::config::{InitConfig, RuntimeConfig};
@@ -488,10 +487,11 @@ fn test(
             println!("{filter_str}");
             // Try to suggest a test when there's no match
             if let Some(ref test_pattern) = filter.test_pattern {
-                let test_name = test_pattern.iter().map(|x| x.as_str()).join(",");
                 let candidates = runner.get_tests(&filter);
-                if let Some(suggestion) = suggestions::did_you_mean(&test_name, candidates).pop() {
-                    println!("\nDid you mean `{suggestion}`?");
+                for test_name in test_pattern {
+                    if let Some(suggestion) = suggestions::did_you_mean(&test_name.as_str(), candidates.clone()).pop() {
+                        println!("\nFor `{test_name}`, did you mean `{suggestion}`?");
+                    }
                 }
             }
         }

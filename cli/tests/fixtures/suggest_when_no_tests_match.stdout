@@ -10,4 +10,4 @@ No tests match the provided pattern:
 	match-path: `*TestE*`
 	no-match-path: `*TestF*`
 
-Did you mean `test1`?
+For `*testA*`, did you mean `test1`?
