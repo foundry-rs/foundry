@@ -14,13 +14,13 @@ foundry-config = { path = "./../config" }
 foundry-common = { path = "./../common" }
 
 futures = "0.3.17"
-ethers-etherscan = { git = "https://github.com/iFrostizz/ethers-rs", default-features = false, branch = "f/ast" }
-ethers-contract = { git = "https://github.com/iFrostizz/ethers-rs", default-features = false, features = [
+ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false, rev = "bb4af1c" }
+ethers-contract = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = [
     "abigen",
-], branch = "f/ast" }
-ethers-core = { git = "https://github.com/iFrostizz/ethers-rs", default-features = false, branch = "f/ast" }
-ethers-providers = { git = "https://github.com/iFrostizz/ethers-rs", default-features = false, branch = "f/ast" }
-ethers-signers = { git = "https://github.com/iFrostizz/ethers-rs", default-features = false, branch = "f/ast" }
+], rev = "bb4af1c" }
+ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false, rev = "bb4af1c" }
+ethers-providers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, rev = "bb4af1c" }
+ethers-signers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, rev = "bb4af1c" }
 eyre = "0.6.5"
 rustc-hex = "2.1.0"
 serde = "1.0.136"

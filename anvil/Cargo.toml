@@ -28,7 +28,7 @@ foundry-config = { path = "../config" }
 
 # evm support
 bytes = "1.1.0"
-ethers = { git = "https://github.com/iFrostizz/ethers-rs", features = ["ws"], branch = "f/ast" }
+ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["ws"], rev = "bb4af1c" }
 trie-db = { version = "0.23" }
 hash-db = { version = "0.15" }
 memory-db = { version = "0.29" }
@@ -68,13 +68,13 @@ ethereum-forkid = "0.11"
 
 # ethers
 [target.'cfg(not(windows))'.dependencies]
-ethers = { git = "https://github.com/iFrostizz/ethers-rs", features = ["ws", "ipc"], branch = "f/ast" }
+ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["ws", "ipc"], rev = "bb4af1c" }
 [target.'cfg(windows)'.dependencies]
-ethers = { git = "https://github.com/iFrostizz/ethers-rs", features = ["ws"], branch = "f/ast" }
+ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["ws"], rev = "bb4af1c" }
 
 [dev-dependencies]
-ethers = { git = "https://github.com/iFrostizz/ethers-rs", features = ["abigen"], branch = "f/ast" }
-ethers-solc = { git = "https://github.com/iFrostizz/ethers-rs", features = ["project-util", "full"], branch = "f/ast" }
+ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["abigen"], rev = "bb4af1c" }
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", features = ["project-util", "full"], rev = "bb4af1c" }
 pretty_assertions = "1.2.1"
 tokio = { version = "1", features = ["full"] }
 crc = "3.0.0"
