@@ -5,7 +5,7 @@ use crate::{
 };
 use cast::Cast;
 use clap::Parser;
-use comfy_table::Table;
+use comfy_table::{presets::ASCII_MARKDOWN, Table};
 use ethers::{
     abi::ethabi::ethereum_types::BigEndianHash, etherscan::Client, prelude::*,
     solc::artifacts::StorageLayout,
@@ -219,6 +219,7 @@ fn print_storage(layout: StorageLayout, pretty: bool) -> Result<()> {
     }
 
     let mut table = Table::new();
+    table.load_preset(ASCII_MARKDOWN);
     table.set_header(vec!["Name", "Type", "Slot", "Offset", "Bytes", "Value", "Contract"]);
 
     for slot in layout.storage {
