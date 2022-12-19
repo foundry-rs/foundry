@@ -1359,9 +1359,12 @@ impl EthApi {
     /// Handler for ETH RPC call: `evm_setIntervalMining`
     pub fn anvil_set_interval_mining(&self, secs: u64) -> Result<()> {
         node_info!("evm_setIntervalMining");
-        self.miner.set_mining_mode(MiningMode::FixedBlockTime(FixedBlockTimeMiner::new(
-            Duration::from_secs(secs),
-        )));
+        let mining_mode = if secs == 0 {
+            MiningMode::None
+        } else {
+            MiningMode::FixedBlockTime(FixedBlockTimeMiner::new(Duration::from_secs(secs)))
+        };
+        self.miner.set_mining_mode(mining_mode);
         Ok(())
     }
 
