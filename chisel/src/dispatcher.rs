@@ -176,6 +176,10 @@ impl ChiselDisptacher {
                         .join("\n")
                 )))
             }
+            ChiselCommand::Quit => {
+                // Exit the process with status code `0` for success.
+                std::process::exit(0);
+            }
             ChiselCommand::Clear => {
                 if let Some(session_source) = self.session.session_source.as_mut() {
                     // Drain all source sections

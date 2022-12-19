@@ -3,7 +3,7 @@ use crate::{
     cmd::cast::{
         call::CallArgs, create2::Create2Args, estimate::EstimateArgs, find_block::FindBlockArgs,
         interface::InterfaceArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs,
-        wallet::WalletSubcommands,
+        storage::StorageArgs, wallet::WalletSubcommands,
     },
     utils::parse_u256,
 };
@@ -625,23 +625,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
         visible_alias = "st",
         about = "Get the raw value of a contract's storage slot."
     )]
-    Storage {
-        #[clap(help = "The contract address.",  value_parser = parse_name_or_address, value_name = "ADDRESS")]
-        address: NameOrAddress,
-        #[clap(help = "The storage slot number (hex or decimal)",  value_parser = parse_slot, value_name = "SLOT")]
-        slot: H256,
-        #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
-        rpc_url: Option<String>,
-        #[clap(
-            long,
-            short = 'B',
-            help = "The block height you want to query at.",
-            long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
-             value_parser = parse_block_id,
-            value_name = "BLOCK"
-        )]
-        block: Option<BlockId>,
-    },
+    Storage(StorageArgs),
     #[clap(
         name = "proof",
         visible_alias = "pr",
@@ -785,7 +769,7 @@ pub fn parse_block_id(s: &str) -> eyre::Result<BlockId> {
     })
 }
 
-fn parse_slot(s: &str) -> eyre::Result<H256> {
+pub fn parse_slot(s: &str) -> eyre::Result<H256> {
     Numeric::from_str(s)
         .map_err(|e| eyre::eyre!("Could not parse slot number: {e}"))
         .map(|n| H256::from_uint(&n.into()))

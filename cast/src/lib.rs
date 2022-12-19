@@ -662,6 +662,35 @@ where
         let res = self.provider.provider().request::<T, serde_json::Value>(method, params).await?;
         Ok(serde_json::to_string(&res)?)
     }
+
+    /// Returns the slot
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_providers::{Provider, Http};
+    /// use ethers_core::types::{Address, H256};
+    /// use std::{str::FromStr, convert::TryFrom};
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    /// let addr = Address::from_str("0x00000000006c3852cbEf3e08E8dF289169EdE581")?;
+    /// let slot = H256::zero();
+    /// let storage = cast.storage(addr, slot, None).await?;
+    /// println!("{}", storage);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn storage<T: Into<NameOrAddress> + Send + Sync>(
+        &self,
+        from: T,
+        slot: H256,
+        block: Option<BlockId>,
+    ) -> Result<String> {
+        Ok(format!("{:?}", self.provider.get_storage_at(from, slot, block).await?))
+    }
 }
 
 pub struct InterfaceSource {
