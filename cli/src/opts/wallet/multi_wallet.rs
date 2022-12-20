@@ -6,7 +6,7 @@ use ethers::{
     signers::{HDPath as LedgerHDPath, Ledger, LocalWallet, Trezor, TrezorHDPath},
     types::Address,
 };
-use eyre::{Context, Result};
+use eyre::{Context, ContextCompat, Result};
 use foundry_common::RetryProvider;
 use foundry_config::Config;
 use itertools::izip;
@@ -182,6 +182,16 @@ pub struct MultiWallet {
     pub keystore_passwords: Option<Vec<String>>,
 
     #[clap(
+        env = "ETH_PASSWORD",
+        long = "password-file",
+        help_heading = "WALLET OPTIONS - KEYSTORE",
+        help = "The keystore password file path. Used with --keystore.",
+        requires = "keystore_paths",
+        value_name = "PASSWORD_FILE"
+    )]
+    pub keystore_password_file: Option<Vec<String>>,
+
+    #[clap(
         short,
         long = "ledger",
         help_heading = "WALLET OPTIONS - HARDWARE WALLET",
@@ -300,24 +310,16 @@ impl MultiWallet {
     /// Returns `Ok(None)` if no keystore provided.
     pub fn keystores(&self) -> Result<Option<Vec<LocalWallet>>> {
         if let Some(keystore_paths) = &self.keystore_paths {
-            let mut wallets = vec![];
+            let mut wallets = Vec::with_capacity(keystore_paths.len());
 
-            let mut passwords: Vec<Option<String>> = self
-                .keystore_passwords
-                .clone()
-                .unwrap_or_default()
-                .iter()
-                .map(|pw| Some(pw.clone()))
-                .collect();
+            let mut passwords_iter =
+                self.keystore_passwords.clone().unwrap_or_default().into_iter();
 
-            if passwords.is_empty() {
-                passwords = vec![None; keystore_paths.len()]
-            } else if passwords.len() != keystore_paths.len() {
-                eyre::bail!("Keystore passwords don't have the same length as keystore paths.");
-            }
+            let mut password_files_iter =
+                self.keystore_password_file.clone().unwrap_or_default().into_iter();
 
-            for (path, password) in keystore_paths.iter().zip(passwords) {
-                wallets.push(self.get_from_keystore(Some(path), password.as_ref(), None)?.unwrap());
+            for path in keystore_paths {
+                wallets.push(self.get_from_keystore(Some(path), passwords_iter.next().as_ref(), password_files_iter.next().as_ref())?.wrap_err("Keystore paths do not have the same length as provided passwords or password files.")?);
             }
             return Ok(Some(wallets))
         }
@@ -416,6 +418,7 @@ impl MultiWallet {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn parse_keystore_args() {
@@ -428,5 +431,35 @@ mod tests {
         assert_eq!(args.keystore_paths, Some(vec!["MY_KEYSTORE".to_string()]));
 
         std::env::remove_var("ETH_KEYSTORE");
+    }
+
+    #[test]
+    fn parse_keystore_password_file() {
+        let keystore = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/keystore");
+        let keystore_file = keystore
+            .join("UTC--2022-12-20T10-30-43.591916000Z--ec554aeafe75601aaab43bd4621a22284db566c2");
+
+        let keystore_password_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/keystore/password-ec554")
+            .into_os_string();
+
+        let args: MultiWallet = MultiWallet::parse_from([
+            "foundry-cli",
+            "--keystores",
+            keystore_file.to_str().unwrap(),
+            "--password-file",
+            keystore_password_file.to_str().unwrap(),
+        ]);
+        assert_eq!(
+            args.keystore_password_file,
+            Some(vec![keystore_password_file.to_str().unwrap().to_string()])
+        );
+
+        let wallets = args.keystores().unwrap().unwrap();
+        assert_eq!(wallets.len(), 1);
+        assert_eq!(
+            wallets[0].address(),
+            "ec554aeafe75601aaab43bd4621a22284db566c2".parse().unwrap()
+        );
     }
 }
