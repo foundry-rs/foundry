@@ -196,7 +196,160 @@ contract FailTest is DSTest {
         .unwrap();
 
     cmd.args(["test", "--match-test", "*testArray*"]);
-    cmd.stdout().contains("[PASS]") && !cmd.stdout().contains("[FAIL]")
+    assert!(cmd.stdout().contains("[PASS]") && !cmd.stdout().contains("[FAIL]"));
+});
+
+// tests that using the --match-contract option only runs files matching the test function
+forgetest!(can_test_with_match_contract, |prj: TestProject, mut cmd: TestCommand| {
+    prj.insert_ds_test();
+
+    prj.inner()
+        .add_source(
+            "ATest.t.sol",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import "./test.sol";
+contract ATest is DSTest {
+    function testArray(uint64[2] calldata values) external {
+        assertTrue(true);
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    prj.inner()
+        .add_source(
+            "FailTest.t.sol",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import "./test.sol";
+contract FailTest is DSTest {
+    function testNothing() external {
+        assertTrue(false);
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.args(["test", "--match-contract", "*ATest*"]);
+    assert!(cmd.stdout().contains("[PASS]") && !cmd.stdout().contains("[FAIL]"));
+});
+
+// tests that using the --match-contract option with multiple globs only runs files matching the test function
+forgetest!(can_test_with_match_multiple_contracts, |prj: TestProject, mut cmd: TestCommand| {
+    prj.insert_ds_test();
+
+    prj.inner()
+        .add_source(
+            "ATest.t.sol",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import "./test.sol";
+contract ATest is DSTest {
+    function testArray(uint64[2] calldata values) external {
+        assertTrue(true);
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    prj.inner()
+        .add_source(
+            "BTest.t.sol",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import "./test.sol";
+contract BTest is DSTest {
+    function testArray(uint64[2] calldata values) external {
+        assertTrue(true);
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    prj.inner()
+        .add_source(
+            "FailTest.t.sol",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import "./test.sol";
+contract FailTest is DSTest {
+    function testNothing() external {
+        assertTrue(false);
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.args(["test", "--match-contract", "*ATest*,*BTest*"]);
+    assert!(cmd.stdout().matches("[PASS]").count() == 2 && !cmd.stdout().contains("[FAIL]"));
+});
+
+// tests that using the --match-contract with --no-match-contract cancels the one that matches
+forgetest!(can_test_with_match_inverse_contradicts, |prj: TestProject, mut cmd: TestCommand| {
+    prj.insert_ds_test();
+
+    prj.inner()
+        .add_source(
+            "ATest.t.sol",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import "./test.sol";
+contract ATest is DSTest {
+    function testArray(uint64[2] calldata values) external {
+        assertTrue(true);
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    prj.inner()
+        .add_source(
+            "BTest.t.sol",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import "./test.sol";
+contract BTest is DSTest {
+    function testArray(uint64[2] calldata values) external {
+        assertTrue(true);
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    prj.inner()
+        .add_source(
+            "FailTest.t.sol",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import "./test.sol";
+contract FailTest is DSTest {
+    function testNothing() external {
+        assertTrue(false);
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.args(["test", "--match-contract", "*ATest*,*BTest*"]);
+    cmd.args(["--no-match-contract", "*BTest*"]);
+    assert!(cmd.stdout().matches("[PASS]").count() == 1 && !cmd.stdout().contains("[FAIL]"));
 });
 
 
@@ -236,11 +389,7 @@ contract FailTest is DSTest {
         )
         .unwrap();
 
-    // cmd.args(["test", "--match-path", "*"]);
-    cmd.args(["test"]);
-    println!("{}", cmd.stdout());
-    println!("{}", cmd.stdout().contains("[PASS]"));
-    println!("{}", !cmd.stdout().contains("[FAIL]"));
+    cmd.args(["test", "--match-path", "*src/ATest.t.sol"]);
     assert!(cmd.stdout().contains("[PASS]") && !cmd.stdout().contains("[FAIL]"));
 });
 
