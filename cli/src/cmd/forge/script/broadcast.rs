@@ -468,7 +468,7 @@ impl ScriptArgs {
 
                 if has_different_gas_calc(provider_info.chain) {
                     trace!("estimating with different gas calculation");
-                    let gas = typed_tx.gas().expect("gas is set by simulation.").clone();
+                    let gas = *typed_tx.gas().expect("gas is set by simulation.");
 
                     // We are trying to show the user an estimation of the total gas usage.
                     //
