@@ -278,8 +278,21 @@ where
                 self.gas_metering = Some(Some(interpreter.gas));
             }
             Some(Some(gas)) => {
-                // dont monitor gas changes, keep it constant
-                interpreter.gas = gas;
+                match interpreter.contract.bytecode.bytecode()[interpreter.program_counter()] {
+                    opcode::STOP | opcode::RETURN | opcode::SELFDESTRUCT | opcode::REVERT => {
+                        // If we are ending current execution frame, we want to just fully reset gas
+                        // otherwise weird things with returning gas from a call happen
+                        // ref: https://github.com/bluealloy/revm/blob/2cb991091d32330cfe085320891737186947ce5a/crates/revm/src/evm_impl.rs#L190
+                        //
+                        // It would be nice if we had access to the interpreter in `call_end`, as we
+                        // could just do this there instead.
+                        interpreter.gas = revm::Gas::new(0);
+                    }
+                    _ => {
+                        // dont monitor gas changes, keep it constant
+                        interpreter.gas = gas;
+                    }
+                }
             }
             _ => {}
         }
