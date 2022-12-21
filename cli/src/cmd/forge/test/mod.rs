@@ -486,7 +486,7 @@ fn test(
                 let candidates = runner.get_tests(&filter);
                 for test_name in test_pattern {
                     if let Some(suggestion) =
-                        suggestions::did_you_mean(&test_name.as_str(), candidates.clone()).pop()
+                        suggestions::did_you_mean(test_name.as_str(), candidates.clone()).pop()
                     {
                         println!("\nFor `{test_name}`, did you mean `*{suggestion}*`?");
                     }
