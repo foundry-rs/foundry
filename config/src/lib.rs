@@ -1618,12 +1618,12 @@ pub(crate) mod from_opt_vec_glob {
     {
         let s: Option<String> = Option::deserialize(deserializer)?;
         if let Some(s) = s {
-            let split = s.split(",");
+            let split = s.split(',');
             return Ok(Some(
                 split
                     .clone()
                     .into_iter()
-                    .map(|s| globset::Glob::new(&s).map_err(serde::de::Error::custom))
+                    .map(|s| globset::Glob::new(s).map_err(serde::de::Error::custom))
                     .collect::<Result<Vec<globset::Glob>, D::Error>>()?,
             ))
         }
