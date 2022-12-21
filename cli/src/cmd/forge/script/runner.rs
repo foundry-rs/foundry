@@ -280,8 +280,11 @@ impl ScriptRunner {
         let mut gas_used = res.gas_used;
 
         // We should only need to calculate realistic gas costs when preparing to broadcast
-        // something. Otherwise don't re-execute, or some usecases might be broken: https://github.com/foundry-rs/foundry/issues/3921
-        if res.transactions.is_some() {
+        // something. This happens during the onchain simulation stage, where we commit each
+        // collected transactions.
+        //
+        // Otherwise don't re-execute, or some usecases might be broken: https://github.com/foundry-rs/foundry/issues/3921
+        if commit {
             gas_used = self.search_optimal_gas_usage(&res, from, to, &calldata, value)?;
 
             // if we changed `fs_commit` during gas limit search, re-execute the call with original
@@ -290,15 +293,9 @@ impl ScriptRunner {
                 if let Some(ref mut cheatcodes) = self.executor.inspector_config_mut().cheatcodes {
                     cheatcodes.fs_commit = !cheatcodes.fs_commit;
                 }
-
-                res = self.executor.call_raw(from, to, calldata.0.clone(), value)?;
             }
 
-            // In this method, we only commit state when simulating transactions
-            if commit {
-                // if explicitly requested we can now commit the call
-                res = self.executor.call_raw_committing(from, to, calldata.0, value)?;
-            }
+            res = self.executor.call_raw_committing(from, to, calldata.0, value)?;
         }
 
         let RawCallResult {
