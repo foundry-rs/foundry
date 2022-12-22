@@ -160,7 +160,7 @@ fn console_log_format_inner<'a>(
             }
         } else {
             expect_fmt = ch == '%';
-            // push when not a % or there won't be an identifier
+            // push when not a `%` or it's the last char
             if !expect_fmt || i == s.len() - 1 {
                 result.push(ch);
             }
