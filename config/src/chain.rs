@@ -97,12 +97,12 @@ impl From<Chain> for U256 {
 }
 
 impl TryFrom<Chain> for ethers_core::types::Chain {
-    type Error = String;
+    type Error = <ethers_core::types::Chain as TryFrom<u64>>::Error;
 
     fn try_from(chain: Chain) -> Result<Self, Self::Error> {
         match chain {
             Chain::Named(chain) => Ok(chain),
-            Chain::Id(id) => ethers_core::types::Chain::try_from(id).map_err(|err| err.to_string()),
+            Chain::Id(id) => id.try_into(),
         }
     }
 }
