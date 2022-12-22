@@ -16,6 +16,18 @@ enum FormatSpec {
     Object,
 }
 
+impl FormatSpec {
+    fn from_char(ch: char) -> Option<Self> {
+        match ch {
+            's' => Some(Self::String),
+            'd' => Some(Self::Number),
+            'i' => Some(Self::Integer),
+            'o' => Some(Self::Object),
+            _ => None,
+        }
+    }
+}
+
 /// FormatValue specifies how a value type is to be formatted
 trait FormatValue: UIfmt {
     /// Formats a value according to the FormatSpec
@@ -75,73 +87,66 @@ impl FormatValue for Bytes {
     }
 }
 
-/// Formats a `specstr` using the input values.
-/// For example:
-///   console_log_format("%s has %d characters", ["foo", 3]) == "foo has 3 characters"
+/// Formats a string using the input values.
 ///
-/// Formatting rules are the same as hardhat. The supported format specifiers are as follows:
+/// Formatting rules are the same as Hardhat. The supported format specifiers are as follows:
 /// - %s: Converts the value using its String representation. This is equivalent to applying
-///   UIfmt::pretty() on the format string.
+///   [`UIfmt::pretty()`] on the format string.
 /// - %d, %i: Converts the value to an integer. If a non-numeric value, such as String or Address,
 ///   is passed, then the spec is formatted as `NaN`.
 /// - %o: Treats the format value as a javascript "object" and converts it to its string
 ///   representation.
 /// - %%: This is parsed as a single percent sign ('%') without consuming any input value.
 ///
-/// Unformatted values are appended to the end of the formatted output using UIfmt::pretty().
+/// Unformatted values are appended to the end of the formatted output using [`UIfmt::pretty()`].
 /// If there are more format specifiers than values, then the remaining unparsed format specifiers
 /// appended to the formatted output as-is.
+///
+/// # Example
+///
+/// ```ignore
+/// let formatted = console_log_format("%s has %d characters", ["foo", 3]);
+/// assert_eq!(formatted, "foo has 3 characters");
+/// ```
 fn console_log_format<'a>(
-    specstr: &str,
+    s: &str,
     values: impl IntoIterator<Item = &'a dyn FormatValue>,
 ) -> String {
-    let mut result = String::new();
-    let spec = specstr.as_bytes();
+    let mut result = String::with_capacity(s.len());
     let mut expect_fmt = false;
 
     let mut values_iter = values.into_iter();
     let mut current_value = values_iter.next();
 
-    for (pos, c) in spec.iter().enumerate() {
+    for (i, ch) in s.char_indices() {
+        // no more values
         if current_value.is_none() {
-            let suffix = String::from_utf8_lossy(&spec[pos..]);
-            result.push_str(&suffix.replace("%%", "%"));
+            result.push_str(&s[i..]);
             break
         }
 
-        result.push(*c as char);
-
-        if expect_fmt && (*c == b's' || *c == b'd' || *c == b'i' || *c == b'o') {
+        if expect_fmt {
             expect_fmt = false;
-            // remove the 2 char fmt specifier
-            result.pop();
-            result.pop();
-            let fspec = match *c {
-                b's' => FormatSpec::String,
-                b'd' => FormatSpec::Number,
-                b'i' => FormatSpec::Integer,
-                b'o' => FormatSpec::Object,
-                _ => unreachable!(),
-            };
-            result.push_str(&current_value.unwrap().fmt(fspec));
-            current_value = values_iter.next();
-        }
-
-        if *c == b'%' {
-            if pos == 0 {
-                expect_fmt = true;
+            if let Some(spec) = FormatSpec::from_char(ch) {
+                // format and write the value
+                let string = current_value.unwrap().fmt(spec);
+                result.push_str(&string);
+                current_value = values_iter.next();
             } else {
-                expect_fmt = spec[pos - 1] != b'%';
-                if !expect_fmt {
-                    result.pop(); // escape observed %%
-                }
+                // invalid specifier or a second `%`, in both cases we ignore
+                result.push(ch);
+            }
+        } else {
+            expect_fmt = ch == '%';
+            if !expect_fmt {
+                result.push(ch);
             }
         }
     }
 
+    // append any remaining values with the standard format
     if let Some(v) = current_value {
-        write!(result, " {}", v.pretty()).unwrap();
-        for v in values_iter {
+        for v in std::iter::once(v).chain(values_iter) {
             write!(result, " {}", v.pretty()).unwrap();
         }
     }
