@@ -148,18 +148,16 @@ type                    {}",
 
 impl UIfmt for TransactionReceiptWithRevertReason {
     fn pretty(&self) -> String {
-        format!(
-            "{}{}",
-            self.receipt.pretty(),
-            self.revert_reason.as_ref().map_or_else(
-                || "".to_string(),
-                |reason| format!(
-                    "
+        if let Some(ref revert_reason) = self.revert_reason {
+            format!(
+                "{}
 revertReason            {}",
-                    reason,
-                )
+                self.receipt.pretty(),
+                revert_reason
             )
-        )
+        } else {
+            self.receipt.pretty()
+        }
     }
 }
 

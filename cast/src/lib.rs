@@ -21,7 +21,6 @@ use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
 use foundry_common::{abi::encode_args, fmt::*, TransactionReceiptWithRevertReason};
 pub use foundry_evm::*;
-use regex::Regex;
 use rustc_hex::{FromHexIter, ToHex};
 use std::{path::PathBuf, str::FromStr};
 pub use tx::TxBuilder;
@@ -629,32 +628,7 @@ where
             }
             .into();
 
-        if let Some(U64([0])) = receipt.receipt.status {
-            if let Some(ref transaction) = self.provider.get_transaction(tx_hash).await? {
-                let error_string = self
-                    .provider
-                    .call(
-                        &transaction.into(),
-                        Some(BlockId::Hash(
-                            receipt
-                                .receipt
-                                .block_hash
-                                .expect("must be present as status is failed"),
-                        )),
-                    )
-                    .await
-                    .expect_err("must be Err as transaction status is failed")
-                    .to_string();
-
-                let pattern = Regex::new(r"message: execution reverted: (.*),").unwrap();
-
-                if let Some(revert_reason) =
-                    pattern.captures(&error_string).map(|captures| captures[1].to_string())
-                {
-                    receipt.revert_reason = Some(revert_reason);
-                }
-            }
-        }
+        receipt.update_revert_reason(&self.provider).await;
 
         Ok(if let Some(ref field) = field {
             get_pretty_tx_receipt_attr(&receipt, field)

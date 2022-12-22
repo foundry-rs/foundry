@@ -699,7 +699,6 @@ dependencies = [
  "foundry-utils",
  "futures",
  "hex",
- "regex",
  "rustc-hex",
  "serde",
  "serde_json",
