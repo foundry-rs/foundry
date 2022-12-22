@@ -488,7 +488,7 @@ fn test(
                     if let Some(suggestion) =
                         suggestions::did_you_mean(test_name.as_str(), candidates.clone()).pop()
                     {
-                        println!("\nFor `{test_name}`, did you mean `*{suggestion}*`?");
+                        println!("\nFor `{test_name}`, did you mean `{suggestion}`?");
                     }
                 }
             }

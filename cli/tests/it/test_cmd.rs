@@ -70,8 +70,8 @@ contract Dummy {}
         .unwrap();
 
     // set up command
-    cmd.args(["test", "--match-test", "*testA*", "--no-match-test", "*testB*"]);
-    cmd.args(["--match-contract", "*TestC*", "--no-match-contract", "*TestD*"]);
+    cmd.args(["test", "--match-test", "testA*", "--no-match-test", "testB*"]);
+    cmd.args(["--match-contract", "TestC*", "--no-match-contract", "TestD*"]);
     cmd.args(["--match-path", "*TestE*", "--no-match-path", "*TestF*"]);
 
     // run command and assert
@@ -99,8 +99,8 @@ contract TestC {
         .unwrap();
 
     // set up command
-    cmd.args(["test", "--match-test", "*testA*", "--no-match-test", "*testB*"]);
-    cmd.args(["--match-contract", "*TestC*", "--no-match-contract", "*TestD*"]);
+    cmd.args(["test", "--match-test", "testA*", "--no-match-test", "testB*"]);
+    cmd.args(["--match-contract", "TestC*", "--no-match-contract", "TestD*"]);
     cmd.args(["--match-path", "*TestE*", "--no-match-path", "*TestF*"]);
 
     // run command and assert
@@ -195,7 +195,7 @@ contract FailTest is DSTest {
         )
         .unwrap();
 
-    cmd.args(["test", "--match-test", "*testArray*"]);
+    cmd.args(["test", "--match-test", "testArray*"]);
     assert!(cmd.stdout().contains("[PASS]") && !cmd.stdout().contains("[FAIL]"));
 });
 
@@ -235,7 +235,7 @@ contract FailTest is DSTest {
         )
         .unwrap();
 
-    cmd.args(["test", "--match-contract", "*ATest*"]);
+    cmd.args(["test", "--match-contract", "ATest*"]);
     assert!(cmd.stdout().contains("[PASS]") && !cmd.stdout().contains("[FAIL]"));
 });
 
@@ -292,7 +292,7 @@ contract FailTest is DSTest {
         )
         .unwrap();
 
-    cmd.args(["test", "--match-contract", "*ATest*,*BTest*"]);
+    cmd.args(["test", "--match-contract", "ATest*,BTest*"]);
     assert!(cmd.stdout().matches("[PASS]").count() == 2 && !cmd.stdout().contains("[FAIL]"));
 });
 
@@ -348,8 +348,8 @@ contract FailTest is DSTest {
         )
         .unwrap();
 
-    cmd.args(["test", "--match-contract", "*ATest*,*BTest*"]);
-    cmd.args(["--no-match-contract", "*BTest*"]);
+    cmd.args(["test", "--match-contract", "ATest*,BTest*"]);
+    cmd.args(["--no-match-contract", "BTest*"]);
     assert!(cmd.stdout().matches("[PASS]").count() == 1 && !cmd.stdout().contains("[FAIL]"));
 });
 
