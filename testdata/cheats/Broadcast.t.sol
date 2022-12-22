@@ -454,11 +454,13 @@ contract ContractB {
     uint256 var2;
 
     constructor(address script_caller) {
+        require(address(0x1337) != script_caller);
         require(msg.sender == address(0x1337));
         require(tx.origin == address(0x1337));
     }
 
     function method(address script_caller) public {
+        require(address(0x1337) != script_caller);
         require(msg.sender == address(0x1337));
         require(tx.origin == address(0x1337));
     }
