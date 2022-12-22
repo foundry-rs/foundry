@@ -12,7 +12,7 @@ foundry-evm = { path = "./../evm" }
 
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = [
     "solc-full",
-], rev = "bb4af1c" }
+] }
 eyre = "0.6.5"
 semver = "1.0.5"
 serde_json = "1.0.67"
@@ -36,5 +36,5 @@ parking_lot = "0.12"
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = [
     "solc-full",
     "solc-tests",
-], rev = "bb4af1c" }
+] }
 foundry-utils = { path = "./../utils", features = ["test"] }

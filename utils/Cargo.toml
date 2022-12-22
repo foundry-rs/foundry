@@ -7,14 +7,14 @@ readme = "README.md"
 repository = "https://github.com/foundry-rs/foundry"
 
 [dependencies]
-ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false, rev = "bb4af1c" }
+ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-contract = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = [
     "abigen",
-], rev = "bb4af1c" }
-ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false, rev = "bb4af1c" }
-ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", default-features = false, rev = "bb4af1c" }
-ethers-providers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, rev = "bb4af1c" }
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false, rev = "bb4af1c" }
+] }
+ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-providers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false, features = [
     "env-filter",
     "fmt",
@@ -39,7 +39,7 @@ rand = "0.8"
 foundry-common = { path = "./../common" }
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = [
     "solc-full",
-], rev = "bb4af1c" }
+] }
 
 [features]
 test = ["tracing-subscriber"]

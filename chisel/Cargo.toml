@@ -30,8 +30,8 @@ foundry-common = { path = "../common" }
 forge-fmt = { path = "../fmt" }
 
 # ethers
-ethers = { git = "https://github.com/gakonst/ethers-rs", rev = "bb4af1c" }
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs", features = ["project-util", "full"], rev = "bb4af1c" }
+ethers = { git = "https://github.com/gakonst/ethers-rs" }
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", features = ["project-util", "full"] }
 
 # async
 tokio = { version = "1.21.2", features = ["full"] }

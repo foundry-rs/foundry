@@ -14,10 +14,10 @@ ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features =
     "async",
     "svm-solc",
     "project-util",
-], rev = "bb4af1c" }
+] }
 ethers-contract = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = [
     "abigen",
-], rev = "bb4af1c" }
+] }
 curl = { version = "0.4", default-features = false, features = ["http2"] }
 eyre = "0.6"
 git2 = { version = "0.15.0", default-features = false }

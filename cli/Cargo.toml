@@ -21,7 +21,7 @@ cast = { path = "../cast" }
 ui = { path = "../ui" }
 
 # eth
-ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, rev = "bb4af1c" }
+ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 solang-parser = "0.1.11"
 
 # cli

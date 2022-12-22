@@ -19,7 +19,7 @@ hex = "0.4.3"
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = [
   "solc-full",
   "abigen",
-], rev = "bb4af1c" }
+] }
 jsonpath_lib = "0.3.0"
 
 # Error handling
