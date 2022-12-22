@@ -201,7 +201,7 @@ contract BroadcastTestNoLinking is DSTest {
 
         cheats.startBroadcast();
 
-        for (uint256 i; i < 50; i++) {
+        for (uint256 i; i < 25; i++) {
             NoLink test9 = new NoLink();
         }
 
