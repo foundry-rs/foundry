@@ -40,13 +40,13 @@ impl TransactionReceiptWithRevertReason {
                 {
                     let error_string = e.to_string();
                     return {
-                        let prefix = "message: execution reverted: ";
+                        let message_substr = "message: execution reverted: ";
                         let mut temp = "";
 
                         error_string
-                            .find(prefix)
+                            .find(message_substr)
                             .and_then(|index| {
-                                let (_, rest) = error_string.split_at(index + prefix.len());
+                                let (_, rest) = error_string.split_at(index + message_substr.len());
                                 temp = rest;
                                 rest.rfind(", ")
                             })
