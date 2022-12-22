@@ -19,8 +19,9 @@ use ethers_core::{
 use ethers_etherscan::{errors::EtherscanError, Client};
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
-use foundry_common::{abi::encode_args, fmt::*};
+use foundry_common::{abi::encode_args, fmt::*, TransactionReceiptWithRevertReason};
 pub use foundry_evm::*;
+use regex::Regex;
 use rustc_hex::{FromHexIter, ToHex};
 use std::{path::PathBuf, str::FromStr};
 pub use tx::TxBuilder;
@@ -110,7 +111,7 @@ where
                 }
                 return Err(err).wrap_err(
                     "could not decode output. did you specify the wrong function return data type perhaps?"
-                )
+                );
             }
         };
         // handle case when return type is not specified
@@ -607,24 +608,53 @@ where
     ) -> Result<String> {
         let tx_hash = H256::from_str(&tx_hash).wrap_err("invalid tx hash")?;
 
-        let receipt = match self.provider.get_transaction_receipt(tx_hash).await? {
-            Some(r) => r,
-            None => {
-                // if the async flag is provided, immediately exit if no tx is found, otherwise try
-                // to poll for it
-                if cast_async {
-                    eyre::bail!("tx not found: {:?}", tx_hash)
-                } else {
-                    let tx = PendingTransaction::new(tx_hash, self.provider.provider());
-                    tx.confirmations(confs).await?.ok_or_else(|| {
-                        eyre::eyre!(
-                            "tx not found, might have been dropped from mempool: {:?}",
-                            tx_hash
-                        )
-                    })?
+        let mut receipt: TransactionReceiptWithRevertReason =
+            match self.provider.get_transaction_receipt(tx_hash).await? {
+                Some(r) => r,
+                None => {
+                    // if the async flag is provided, immediately exit if no tx is found, otherwise
+                    // try to poll for it
+                    if cast_async {
+                        eyre::bail!("tx not found: {:?}", tx_hash)
+                    } else {
+                        let tx = PendingTransaction::new(tx_hash, self.provider.provider());
+                        tx.confirmations(confs).await?.ok_or_else(|| {
+                            eyre::eyre!(
+                                "tx not found, might have been dropped from mempool: {:?}",
+                                tx_hash
+                            )
+                        })?
+                    }
                 }
             }
-        };
+            .into();
+
+        if let Some(U64([0])) = receipt.receipt.status {
+            if let Some(ref transaction) = self.provider.get_transaction(tx_hash).await? {
+                let error_string = self
+                    .provider
+                    .call(
+                        &transaction.into(),
+                        Some(BlockId::Hash(
+                            receipt
+                                .receipt
+                                .block_hash
+                                .expect("must be present as status is failed"),
+                        )),
+                    )
+                    .await
+                    .expect_err("must be Err as transaction status is failed")
+                    .to_string();
+
+                let pattern = Regex::new(r"message: execution reverted: (.*),").unwrap();
+
+                if let Some(revert_reason) =
+                    pattern.captures(&error_string).map(|captures| captures[1].to_string())
+                {
+                    receipt.revert_reason = Some(revert_reason);
+                }
+            }
+        }
 
         Ok(if let Some(ref field) = field {
             get_pretty_tx_receipt_attr(&receipt, field)
