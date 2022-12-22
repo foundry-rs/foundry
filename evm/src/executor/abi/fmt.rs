@@ -112,16 +112,38 @@ fn console_log_format<'a>(
     s: &str,
     values: impl IntoIterator<Item = &'a dyn FormatValue>,
 ) -> String {
+    let mut values = values.into_iter();
     let mut result = String::with_capacity(s.len());
-    let mut expect_fmt = false;
 
-    let mut values_iter = values.into_iter();
-    let mut current_value = values_iter.next();
+    let last_value = if s.is_empty() {
+        // if s is empty we still want to print the remaining values, if any
+        values.next()
+    } else {
+        console_log_format_inner(s, &mut values, &mut result)
+    };
+
+    // append any remaining values with the standard format
+    if let Some(v) = last_value {
+        for v in std::iter::once(v).chain(values) {
+            write!(result, " {}", v.pretty()).unwrap();
+        }
+    }
+
+    result
+}
+
+fn console_log_format_inner<'a>(
+    s: &str,
+    values: &mut impl Iterator<Item = &'a dyn FormatValue>,
+    result: &mut String,
+) -> Option<&'a dyn FormatValue> {
+    let mut expect_fmt = false;
+    let mut current_value = values.next();
 
     for (i, ch) in s.char_indices() {
         // no more values
         if current_value.is_none() {
-            result.push_str(&s[i..]);
+            result.push_str(&s[i..].replace("%%", "%"));
             break
         }
 
@@ -131,26 +153,21 @@ fn console_log_format<'a>(
                 // format and write the value
                 let string = current_value.unwrap().fmt(spec);
                 result.push_str(&string);
-                current_value = values_iter.next();
+                current_value = values.next();
             } else {
                 // invalid specifier or a second `%`, in both cases we ignore
                 result.push(ch);
             }
         } else {
             expect_fmt = ch == '%';
-            if !expect_fmt {
+            // push when not a % or there won't be an identifier
+            if !expect_fmt || i == s.len() - 1 {
                 result.push(ch);
             }
         }
     }
 
-    // append any remaining values with the standard format
-    if let Some(v) = current_value {
-        for v in std::iter::once(v).chain(values_iter) {
-            write!(result, " {}", v.pretty()).unwrap();
-        }
-    }
-    result
+    current_value
 }
 
 macro_rules! logf1 {
@@ -271,11 +288,10 @@ pub fn format_hardhat_call(call: &HardhatConsoleCalls) -> String {
 mod tests {
     use super::*;
     use crate::executor::abi::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_console_log_format_specifiers() {
-        use std::str::FromStr;
-
         let console_log_format_1 = |spec: &str, arg: &dyn FormatValue| {
             let args: [&dyn FormatValue; 1] = [arg];
             console_log_format(spec, args)
@@ -322,24 +338,22 @@ mod tests {
 
     #[test]
     fn test_console_log_format() {
-        use std::str::FromStr;
+        let mut log18call = Log18Call { p_0: "foo %s".to_string(), p_1: U256::from(100) };
+        assert_eq!("foo 100", logf1!(log18call));
+        log18call.p_0 = String::from("foo");
+        assert_eq!("foo 100", logf1!(log18call));
+        log18call.p_0 = String::from("%s foo");
+        assert_eq!("100 foo", logf1!(log18call));
 
-        let mut log17call = Log18Call { p_0: "foo %s".to_string(), p_1: U256::from(100) };
-        assert_eq!("foo 100", logf1!(log17call));
-        log17call.p_0 = String::from("foo");
-        assert_eq!("foo 100", logf1!(log17call));
-        log17call.p_0 = String::from("%s foo");
-        assert_eq!("100 foo", logf1!(log17call));
-
-        let mut log68call =
+        let mut log70call =
             Log70Call { p_0: "foo %s %s".to_string(), p_1: true, p_2: U256::from(100) };
-        assert_eq!("foo true 100", logf2!(log68call));
-        log68call.p_0 = String::from("foo");
-        assert_eq!("foo true 100", logf2!(log68call));
-        log68call.p_0 = String::from("%s %s foo");
-        assert_eq!("true 100 foo", logf2!(log68call));
+        assert_eq!("foo true 100", logf2!(log70call));
+        log70call.p_0 = String::from("foo");
+        assert_eq!("foo true 100", logf2!(log70call));
+        log70call.p_0 = String::from("%s %s foo");
+        assert_eq!("true 100 foo", logf2!(log70call));
 
-        let log149call = Log151Call {
+        let log151call = Log151Call {
             p_0: String::from("foo %s %%s %s and %d foo %%"),
             p_1: Address::from_str("0xdEADBEeF00000000000000000000000000000000").unwrap(),
             p_2: true,
@@ -347,7 +361,7 @@ mod tests {
         };
         assert_eq!(
             "foo 0xdEADBEeF00000000000000000000000000000000 %s true and 21 foo %",
-            logf3!(log149call)
+            logf3!(log151call)
         );
     }
 }
