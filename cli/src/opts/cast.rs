@@ -587,6 +587,13 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
         #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
         rpc_url: Option<String>,
     },
+    #[clap(name = "sig-event")]
+    #[clap(visible_alias = "se")]
+    #[clap(about = "Generate event signatures from event string.")]
+    SigEvent {
+        #[clap(value_name = "EVENT_STRING")]
+        event_string: String,
+    },
     #[clap(name = "keccak")]
     #[clap(visible_alias = "k")]
     #[clap(about = "Hash arbitrary data using keccak-256.")]

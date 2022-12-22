@@ -15,7 +15,7 @@ use foundry_cli::{
     utils::try_consume_config_rpc_url,
 };
 use foundry_common::{
-    abi::format_tokens,
+    abi::{format_tokens, get_event},
     fs,
     selectors::{
         decode_calldata, decode_event_topic, decode_function_selector, import_selectors,
@@ -411,6 +411,10 @@ async fn main() -> eyre::Result<()> {
         // Misc
         Subcommands::Keccak { data } => {
             println!("{}", SimpleCast::keccak(&data)?);
+        }
+        Subcommands::SigEvent { event_string } => {
+            let parsed_event = get_event(&event_string)?;
+            println!("{:?}", parsed_event.signature());
         }
         Subcommands::LeftShift { value, bits, base_in, base_out } => {
             println!("{}", SimpleCast::left_shift(&value, &bits, base_in, &base_out)?);

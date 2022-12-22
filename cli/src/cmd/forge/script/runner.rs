@@ -278,14 +278,77 @@ impl ScriptRunner {
 
         let mut res = self.executor.call_raw(from, to, calldata.0.clone(), value)?;
         let mut gas_used = res.gas_used;
+
+        // We should only need to calculate realistic gas costs when preparing to broadcast
+        // something. This happens during the onchain simulation stage, where we commit each
+        // collected transactions.
+        //
+        // Otherwise don't re-execute, or some usecases might be broken: https://github.com/foundry-rs/foundry/issues/3921
+        if commit {
+            gas_used = self.search_optimal_gas_usage(&res, from, to, &calldata, value)?;
+
+            // if we changed `fs_commit` during gas limit search, re-execute the call with original
+            // value
+            if fs_commit_changed {
+                if let Some(ref mut cheatcodes) = self.executor.inspector_config_mut().cheatcodes {
+                    cheatcodes.fs_commit = !cheatcodes.fs_commit;
+                }
+            }
+
+            res = self.executor.call_raw_committing(from, to, calldata.0, value)?;
+        }
+
+        let RawCallResult {
+            result,
+            reverted,
+            logs,
+            traces,
+            labels,
+            debug,
+            transactions,
+            script_wallets,
+            ..
+        } = res;
+
+        Ok(ScriptResult {
+            returned: result,
+            success: !reverted,
+            gas_used,
+            logs,
+            traces: traces
+                .map(|mut traces| {
+                    // Manually adjust gas for the trace to add back the stipend/real used gas
+                    traces.arena[0].trace.gas_cost = gas_used;
+                    vec![(TraceKind::Execution, traces)]
+                })
+                .unwrap_or_default(),
+            debug: vec![debug].into_iter().collect(),
+            labeled_addresses: labels,
+            transactions,
+            address: None,
+            script_wallets,
+        })
+    }
+
+    /// The executor will return the _exact_ gas value this transaction consumed, setting this value
+    /// as gas limit will result in `OutOfGas` so to come up with a better estimate we search over a
+    /// possible range we pick a higher gas limit 3x of a succeeded call should be safe.
+    ///
+    /// This might result in executing the same script multiple times. Depending on the user's goal,
+    /// it might be problematic when using `ffi`.
+    fn search_optimal_gas_usage(
+        &mut self,
+        res: &RawCallResult,
+        from: Address,
+        to: Address,
+        calldata: &Bytes,
+        value: U256,
+    ) -> eyre::Result<u64> {
+        let mut gas_used = res.gas_used;
         if matches!(res.exit_reason, return_ok!()) {
             // store the current gas limit and reset it later
             let init_gas_limit = self.executor.env_mut().tx.gas_limit;
 
-            // the executor will return the _exact_ gas value this transaction consumed, setting
-            // this value as gas limit will result in `OutOfGas` so to come up with a
-            // better estimate we search over a possible range we pick a higher gas
-            // limit 3x of a succeeded call should be safe
             let mut highest_gas_limit = gas_used * 3;
             let mut lowest_gas_limit = gas_used;
             let mut last_highest_gas_limit = highest_gas_limit;
@@ -320,51 +383,6 @@ impl ScriptRunner {
             // reset gas limit in the
             self.executor.env_mut().tx.gas_limit = init_gas_limit;
         }
-
-        // if we changed `fs_commit` during gas limit search, re-execute the call with original
-        // value
-        if fs_commit_changed {
-            if let Some(ref mut cheatcodes) = self.executor.inspector_config_mut().cheatcodes {
-                cheatcodes.fs_commit = !cheatcodes.fs_commit;
-            }
-
-            res = self.executor.call_raw(from, to, calldata.0.clone(), value)?;
-        }
-
-        if commit {
-            // if explicitly requested we can now commit the call
-            res = self.executor.call_raw_committing(from, to, calldata.0, value)?;
-        }
-
-        let RawCallResult {
-            result,
-            reverted,
-            logs,
-            traces,
-            labels,
-            debug,
-            transactions,
-            script_wallets,
-            ..
-        } = res;
-
-        Ok(ScriptResult {
-            returned: result,
-            success: !reverted,
-            gas_used,
-            logs,
-            traces: traces
-                .map(|mut traces| {
-                    // Manually adjust gas for the trace to add back the stipend/real used gas
-                    traces.arena[0].trace.gas_cost = gas_used;
-                    vec![(TraceKind::Execution, traces)]
-                })
-                .unwrap_or_default(),
-            debug: vec![debug].into_iter().collect(),
-            labeled_addresses: labels,
-            transactions,
-            address: None,
-            script_wallets,
-        })
+        Ok(gas_used)
     }
 }

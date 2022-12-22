@@ -5,7 +5,7 @@ use crate::{
 };
 use cast::Cast;
 use clap::Parser;
-use comfy_table::Table;
+use comfy_table::{presets::ASCII_MARKDOWN, Table};
 use ethers::{
     abi::ethabi::ethereum_types::BigEndianHash, etherscan::Client, prelude::*,
     solc::artifacts::StorageLayout,
@@ -92,7 +92,7 @@ impl StorageArgs {
             eyre::bail!("Provided address has no deployed code and thus no storage");
         }
 
-        // Check if we're in a forge project
+        // Check if we're in a forge project and if we can find the address' code
         let mut project = build.project()?;
         if project.paths.has_input_files() {
             // Find in artifacts and pretty print
@@ -112,7 +112,7 @@ impl StorageArgs {
 
         // Not a forge project or artifact not found
         // Get code from Etherscan
-        println!("No matching artifacts found, fetching source code from Etherscan...");
+        eprintln!("No matching artifacts found, fetching source code from Etherscan...");
         let api_key = etherscan_api_key.or_else(|| {
             let config = Config::load();
             config.get_etherscan_api_key(Some(chain))
@@ -145,7 +145,7 @@ impl StorageArgs {
 
             if is_storage_layout_empty(&artifact.storage_layout) && auto_detect {
                 // try recompiling with the minimum version
-                println!("The requested contract was compiled with {version} while the minimum version for storage layouts is {MIN_SOLC} and as a result the output may be empty.");
+                eprintln!("The requested contract was compiled with {version} while the minimum version for storage layouts is {MIN_SOLC} and as a result the output may be empty.");
                 let solc = Solc::find_or_install_svm_version(MIN_SOLC.to_string())?;
                 project.solc = solc;
                 project.auto_detect = false;
@@ -176,12 +176,12 @@ async fn fetch_and_print_storage(
     pretty: bool,
 ) -> Result<()> {
     if is_storage_layout_empty(&artifact.storage_layout) {
-        println!("Storage layout is empty.");
+        eprintln!("Storage layout is empty.");
         Ok(())
     } else {
-        let mut layout = artifact.storage_layout.as_ref().unwrap().clone();
-        fetch_storage_values(provider, address, &mut layout).await?;
-        print_storage(layout, pretty)
+        let layout = artifact.storage_layout.as_ref().unwrap().clone();
+        let values = fetch_storage_values(provider, address, &layout).await?;
+        print_storage(layout, values, pretty)
     }
 }
 
@@ -190,38 +190,33 @@ async fn fetch_and_print_storage(
 async fn fetch_storage_values(
     provider: RetryProvider,
     address: Address,
-    layout: &mut StorageLayout,
-) -> Result<()> {
-    // TODO: Batch request; handle array values;
+    layout: &StorageLayout,
+) -> Result<Vec<String>> {
+    // TODO: Batch request; handle array values
     let futures: Vec<_> = layout
         .storage
         .iter()
         .map(|slot| {
-            let slot_h256 = H256::from_uint(&slot.slot.parse::<U256>()?);
+            let slot_h256 = H256::from_uint(&U256::from_dec_str(&slot.slot)?);
             Ok(provider.get_storage_at(address, slot_h256, None))
         })
         .collect::<Result<_>>()?;
 
-    for (value, slot) in join_all(futures).await.into_iter().zip(layout.storage.iter()) {
-        let value = value?.into_uint();
-        let t = layout.types.get_mut(&slot.storage_type).expect("Bad storage");
-        // TODO: Better format values according to their Solidity type
-        t.value = Some(format!("{value:?}"));
-    }
-
-    Ok(())
+    // TODO: Better format values according to their Solidity type
+    join_all(futures).await.into_iter().map(|value| Ok(format!("{}", value?.into_uint()))).collect()
 }
 
-fn print_storage(layout: StorageLayout, pretty: bool) -> Result<()> {
+fn print_storage(layout: StorageLayout, values: Vec<String>, pretty: bool) -> Result<()> {
     if !pretty {
         println!("{}", serde_json::to_string_pretty(&serde_json::to_value(layout)?)?);
         return Ok(())
     }
 
     let mut table = Table::new();
+    table.load_preset(ASCII_MARKDOWN);
     table.set_header(vec!["Name", "Type", "Slot", "Offset", "Bytes", "Value", "Contract"]);
 
-    for slot in layout.storage {
+    for (slot, value) in layout.storage.into_iter().zip(values) {
         let storage_type = layout.types.get(&slot.storage_type);
         table.add_row(vec![
             slot.label,
@@ -229,9 +224,7 @@ fn print_storage(layout: StorageLayout, pretty: bool) -> Result<()> {
             slot.slot,
             slot.offset.to_string(),
             storage_type.as_ref().map_or("?".to_string(), |t| t.number_of_bytes.clone()),
-            storage_type
-                .as_ref()
-                .map_or("?".to_string(), |t| t.value.clone().unwrap_or_else(|| "0".to_string())),
+            value,
             slot.contract,
         ]);
     }

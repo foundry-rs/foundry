@@ -12,7 +12,7 @@ use ethers::{
     prelude::{artifacts::Libraries, ArtifactId, TransactionReceipt, TxHash},
     types::transaction::eip2718::TypedTransaction,
 };
-use eyre::ContextCompat;
+use eyre::{ContextCompat, WrapErr};
 use foundry_common::{fs, SELECTOR_LEN};
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
@@ -92,7 +92,8 @@ impl ScriptSequence {
         broadcasted: bool,
     ) -> eyre::Result<Self> {
         let path = ScriptSequence::get_path(&config.broadcast, sig, target, chain_id, broadcasted)?;
-        Ok(ethers::solc::utils::read_json_file(path)?)
+        ethers::solc::utils::read_json_file(path)
+            .wrap_err(format!("Deployment not found for chain `{chain_id}`."))
     }
 
     /// Saves the transactions as file if it's a standalone deployment.

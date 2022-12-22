@@ -299,7 +299,7 @@ pub trait WalletTrait {
                 let path = self.find_keystore_file(path)?;
                 Some(
                     LocalWallet::decrypt_keystore(&path, self.password_from_file(password_file)?)
-                        .wrap_err_with(|| format!("Failed to decrypt keystore {path:?}"))?,
+                        .wrap_err_with(|| format!("Failed to decrypt keystore {path:?} with password file {password_file:?}"))?,
                 )
             }
             (Some(path), None, None) => {

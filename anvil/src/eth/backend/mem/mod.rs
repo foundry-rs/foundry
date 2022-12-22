@@ -507,7 +507,7 @@ impl Backend {
         id
     }
 
-    /// Reverts the state to the snapshot
+    /// Reverts the state to the snapshot identified by the given `id`.
     pub async fn revert_snapshot(&self, id: U256) -> Result<bool, BlockchainError> {
         let block = { self.active_snapshots.lock().remove(&id) };
         if let Some((num, hash)) = block {
@@ -534,7 +534,11 @@ impl Backend {
             };
             let block =
                 self.block_by_hash(best_block_hash).await?.ok_or(BlockchainError::BlockNotFound)?;
-            self.time.reset(block.timestamp.as_u64());
+
+            // Note: In [`TimeManager::compute_next_timestamp`] we ensure that the next timestamp is
+            // always increasing by at least one. By subtracting 1 here, this is mitigated.
+            let reset_time = block.timestamp.as_u64().saturating_sub(1);
+            self.time.reset(reset_time);
             self.set_block_number(num.into());
         }
         Ok(self.db.write().await.revert(id))

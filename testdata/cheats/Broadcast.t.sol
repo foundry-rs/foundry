@@ -435,3 +435,76 @@ contract BroadcastEmptySetUp is DSTest {
         new Test();
     }
 }
+
+contract ContractA {
+    uint256 var1;
+
+    constructor(address script_caller) {
+        require(msg.sender == script_caller);
+        require(tx.origin == script_caller);
+    }
+
+    function method(address script_caller) public {
+        require(msg.sender == script_caller);
+        require(tx.origin == script_caller);
+    }
+}
+
+contract ContractB {
+    uint256 var2;
+
+    constructor(address script_caller) {
+        require(address(0x1337) != script_caller);
+        require(msg.sender == address(0x1337));
+        require(tx.origin == address(0x1337));
+    }
+
+    function method(address script_caller) public {
+        require(address(0x1337) != script_caller);
+        require(msg.sender == address(0x1337));
+        require(tx.origin == address(0x1337));
+    }
+}
+
+contract CheckOverrides is DSTest {
+    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+
+    function run() external {
+        // `script_caller` can be set by `--private-key ...` or `--sender ...`
+        // Otherwise it will take the default value of 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38
+        address script_caller = msg.sender;
+        require(script_caller == 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38);
+        require(tx.origin == script_caller);
+
+        // startBroadcast(script_caller)
+        cheats.startBroadcast();
+        require(tx.origin == script_caller);
+        require(msg.sender == script_caller);
+
+        ContractA a = new ContractA(script_caller);
+        require(tx.origin == script_caller);
+        require(msg.sender == script_caller);
+
+        a.method(script_caller);
+        require(tx.origin == script_caller);
+        require(msg.sender == script_caller);
+
+        cheats.stopBroadcast();
+
+        // startBroadcast(msg.sender)
+        cheats.startBroadcast(address(0x1337));
+        require(tx.origin == script_caller);
+        require(msg.sender == script_caller);
+        require(msg.sender != address(0x1337));
+
+        ContractB b = new ContractB(script_caller);
+        require(tx.origin == script_caller);
+        require(msg.sender == script_caller);
+
+        b.method(script_caller);
+        require(tx.origin == script_caller);
+        require(msg.sender == script_caller);
+
+        cheats.stopBroadcast();
+    }
+}

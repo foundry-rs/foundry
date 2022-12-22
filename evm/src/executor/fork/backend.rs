@@ -568,10 +568,8 @@ impl SharedBackend {
 
     /// Updates the pinned block to fetch data from
     pub fn set_pinned_block(&self, block: impl Into<BlockId>) -> eyre::Result<()> {
-        tokio::task::block_in_place(|| {
-            let req = BackendRequest::SetPinnedBlock(block.into());
-            self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))
-        })
+        let req = BackendRequest::SetPinnedBlock(block.into());
+        self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))
     }
 
     /// Returns the full block for the given block identifier

@@ -8,7 +8,7 @@ use ethers::{
     prelude::{artifacts::Libraries, ArtifactId},
     signers::LocalWallet,
 };
-use eyre::ContextCompat;
+use eyre::{ContextCompat, WrapErr};
 use foundry_common::{fs, get_http_provider};
 use foundry_config::Config;
 use futures::future::join_all;
@@ -87,7 +87,7 @@ impl MultiChainSequence {
     /// Loads the sequences for the multi chain deployment.
     pub fn load(log_folder: &Path, sig: &str, target: &ArtifactId) -> eyre::Result<Self> {
         let path = MultiChainSequence::get_path(&log_folder.join("multi"), sig, target, true)?;
-        Ok(ethers::solc::utils::read_json_file(path)?)
+        ethers::solc::utils::read_json_file(path).wrap_err("Multi-chain deployment not found.")
     }
 
     /// Saves the transactions as file if it's a standalone deployment.
