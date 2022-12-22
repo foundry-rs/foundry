@@ -857,3 +857,9 @@ forgetest_async!(
         tester.add_sig("BroadcastEmptySetUp", "run()").simulate(ScriptOutcome::OkNoEndpoint);
     }
 );
+
+forgetest_async!(does_script_override_correctly, |prj: TestProject, cmd: TestCommand| async move {
+    let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
+
+    tester.add_sig("CheckOverrides", "run()").simulate(ScriptOutcome::OkNoEndpoint);
+});

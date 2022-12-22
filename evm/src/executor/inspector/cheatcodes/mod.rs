@@ -419,26 +419,28 @@ where
                     // At the target depth we set `msg.sender` & tx.origin.
                     // We are simulating the caller as being an EOA, so *both* must be set to the
                     // broadcast.origin.
-                    call.context.caller = broadcast.origin;
-                    call.transfer.source = broadcast.origin;
+                    data.env.tx.caller = broadcast.new_origin;
+
+                    call.context.caller = broadcast.new_origin;
+                    call.transfer.source = broadcast.new_origin;
                     // Add a `legacy` transaction to the VecDeque. We use a legacy transaction here
                     // because we only need the from, to, value, and data. We can later change this
                     // into 1559, in the cli package, relatively easily once we
                     // know the target chain supports EIP-1559.
                     if !is_static {
                         if let Err(err) =
-                            data.journaled_state.load_account(broadcast.origin, data.db)
+                            data.journaled_state.load_account(broadcast.new_origin, data.db)
                         {
                             return (Return::Revert, Gas::new(call.gas_limit), err.encode_string())
                         }
 
                         let account =
-                            data.journaled_state.state().get_mut(&broadcast.origin).unwrap();
+                            data.journaled_state.state().get_mut(&broadcast.new_origin).unwrap();
 
                         self.broadcastable_transactions.push_back(BroadcastableTransaction {
                             rpc: data.db.active_fork_url(),
                             transaction: TypedTransaction::Legacy(TransactionRequest {
-                                from: Some(broadcast.origin),
+                                from: Some(broadcast.new_origin),
                                 to: Some(NameOrAddress::Address(call.contract)),
                                 value: Some(call.transfer.value),
                                 data: Some(call.input.clone().into()),
@@ -493,6 +495,8 @@ where
 
         // Clean up broadcast
         if let Some(broadcast) = &self.broadcast {
+            data.env.tx.caller = broadcast.original_origin;
+
             if broadcast.single_call {
                 std::mem::take(&mut self.broadcast);
             }
@@ -622,27 +626,28 @@ where
             if data.journaled_state.depth() == broadcast.depth &&
                 call.caller == broadcast.original_caller
             {
-                if let Err(err) = data.journaled_state.load_account(broadcast.origin, data.db) {
+                if let Err(err) = data.journaled_state.load_account(broadcast.new_origin, data.db) {
                     return (Return::Revert, None, Gas::new(call.gas_limit), err.encode_string())
                 }
 
-                let (bytecode, to, nonce) =
-                    match process_create(broadcast.origin, call.init_code.clone(), data, call) {
-                        Ok(val) => val,
-                        Err(err) => {
-                            return (
-                                Return::Revert,
-                                None,
-                                Gas::new(call.gas_limit),
-                                err.encode_string(),
-                            )
-                        }
-                    };
+                data.env.tx.caller = broadcast.new_origin;
+
+                let (bytecode, to, nonce) = match process_create(
+                    broadcast.new_origin,
+                    call.init_code.clone(),
+                    data,
+                    call,
+                ) {
+                    Ok(val) => val,
+                    Err(err) => {
+                        return (Return::Revert, None, Gas::new(call.gas_limit), err.encode_string())
+                    }
+                };
 
                 self.broadcastable_transactions.push_back(BroadcastableTransaction {
                     rpc: data.db.active_fork_url(),
                     transaction: TypedTransaction::Legacy(TransactionRequest {
-                        from: Some(broadcast.origin),
+                        from: Some(broadcast.new_origin),
                         to,
                         value: Some(call.value),
                         data: Some(bytecode.into()),
@@ -677,6 +682,8 @@ where
 
         // Clean up broadcasts
         if let Some(broadcast) = &self.broadcast {
+            data.env.tx.caller = broadcast.original_origin;
+
             if broadcast.single_call {
                 std::mem::take(&mut self.broadcast);
             }
