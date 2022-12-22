@@ -589,7 +589,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
     },
     #[clap(name = "sig-event")]
     #[clap(visible_alias = "se")]
-    #[clap(about = "Generate event signatures from event string")]
+    #[clap(about = "Generate event signatures from event string.")]
     SigEvent {
         #[clap(value_name = "EVENT_STRING")]
         event_string: String,
