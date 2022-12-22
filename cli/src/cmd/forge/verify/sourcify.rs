@@ -2,7 +2,7 @@ use super::{VerifyArgs, VerifyCheckArgs};
 use crate::cmd::LoadConfig;
 use async_trait::async_trait;
 use cast::SimpleCast;
-use ethers::solc::ConfigurableContractArtifact;
+use ethers::solc::{cache::CompilationUnit, ConfigurableContractArtifact};
 
 use crate::cmd::forge::verify::provider::VerificationProvider;
 use foundry_common::fs;
@@ -120,11 +120,20 @@ impl SourcifyVerificationProvider {
         let cache = project.read_cache_file()?;
         let (path, entry) = crate::cmd::get_cached_entry_by_name(&cache, &args.contract.name)?;
 
-        if entry.solc_config.settings.metadata.is_none() {
+        if let Some(CompilationUnit { solc_config, .. }) =
+            cache.compilation_units.get(&entry.compilation_unit)
+        {
+            if solc_config.settings.metadata.is_none() {
+                eyre::bail!(
+                    r#"Contract {} was compiled without the solc `metadata` setting.
+    Sourcify requires contract metadata for verification.
+    metadata output can be enabled via `extra_output = ["metadata"]` in `foundry.toml`"#,
+                    args.contract.name
+                )
+            }
+        } else {
             eyre::bail!(
-                r#"Contract {} was compiled without the solc `metadata` setting.
-Sourcify requires contract metadata for verification.
-metadata output can be enabled via `extra_output = ["metadata"]` in `foundry.toml`"#,
+                "No compilation unit found for contract {}. Try `forge clean && forge build`.",
                 args.contract.name
             )
         }
