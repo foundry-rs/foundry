@@ -77,7 +77,7 @@ jobs:
             - name: Windows setup
               if: ${{ matrix.job.target == 'x86_64-pc-windows-msvc' }}
               run: |
-                  wsl --install --distribution Ubuntu
+                  wsl --install --distribution Ubuntu-20.04
               shell: pwsh
 
             - name: Build archive (unit tests)
