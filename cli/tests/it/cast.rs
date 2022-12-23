@@ -242,6 +242,12 @@ casttest!(cast_run_succeeds, |_: TestProject, mut cmd: TestCommand| {
 
 // tests that the `cast storage` command works correctly
 casttest!(test_live_cast_storage_succeeds, |_: TestProject, mut cmd: TestCommand| {
+    // ignore if ETHERSCAN_API_KEY not set
+    if std::env::var("ETHERSCAN_API_KEY").is_err() {
+        eprintln!("ETHERSCAN_API_KEY not set");
+        return
+    }
+
     let eth_rpc_url = next_http_rpc_endpoint();
 
     // WETH
