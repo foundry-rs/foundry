@@ -41,23 +41,7 @@ impl TransactionReceiptWithRevertReason {
         {
             if let Some(block_hash) = self.receipt.block_hash {
                 match provider.call(&transaction.into(), Some(BlockId::Hash(block_hash))).await {
-                    Err(e) => {
-                        let error_string = e.to_string();
-                        let message_substr = "message: execution reverted: ";
-                        let mut temp = "";
-
-                        return Ok(error_string
-                            .find(message_substr)
-                            .and_then(|index| {
-                                let (_, rest) = error_string.split_at(index + message_substr.len());
-                                temp = rest;
-                                rest.rfind(", ")
-                            })
-                            .map(|index| {
-                                let (reason, _) = temp.split_at(index);
-                                reason.to_string()
-                            }))
-                    }
+                    Err(e) => return Ok(extract_revert_reason(e.to_string())),
                     Ok(_) => eyre::bail!("no revert reason as transaction succeeded"),
                 }
             }
@@ -76,5 +60,44 @@ impl From<TransactionReceipt> for TransactionReceiptWithRevertReason {
 impl From<TransactionReceiptWithRevertReason> for TransactionReceipt {
     fn from(receipt_with_reason: TransactionReceiptWithRevertReason) -> Self {
         receipt_with_reason.receipt
+    }
+}
+
+fn extract_revert_reason<S: AsRef<str>>(error_string: S) -> Option<String> {
+    let message_substr = "message: execution reverted: ";
+
+    let mut temp = "";
+
+    error_string
+        .as_ref()
+        .find(message_substr)
+        .and_then(|index| {
+            let (_, rest) = error_string.as_ref().split_at(index + message_substr.len());
+            temp = rest;
+            rest.rfind(", ")
+        })
+        .map(|index| {
+            let (reason, _) = temp.split_at(index);
+            reason.to_string()
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_revert_reason() {
+        let error_string_1 = "(code: 3, message: execution reverted: Transaction too old, data: Some(String(\"0x08c379a0\")))";
+        let error_string_2 = "(code: 3, message: execution reverted: missing data: amountIn, amountOut, data: Some(String(\"0x08c379a0\")))";
+        let error_string_3 =
+            "(code: 4, message: invalid signature, data: Some(String(\"0x08c379a0\")))";
+
+        assert_eq!(extract_revert_reason(error_string_1), Some("Transaction too old".to_string()));
+        assert_eq!(
+            extract_revert_reason(error_string_2),
+            Some("missing data: amountIn, amountOut".to_string())
+        );
+        assert_eq!(extract_revert_reason(error_string_3), None);
     }
 }
