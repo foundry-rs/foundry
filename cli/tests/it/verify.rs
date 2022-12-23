@@ -330,7 +330,15 @@ forgetest!(
 forgetest_async!(
     test_live_can_deploy_and_verify,
     |prj: TestProject, mut cmd: TestCommand| async move {
-        let info = EnvExternalities::goerli().expect("Goerli secrets not set.");
+        let info = EnvExternalities::goerli();
+
+        // ignore if etherscan var not set
+        if std::env::var("ETHERSCAN_API_KEY").is_err() {
+            eprintln!("Goerli secrets not set.");
+            return
+        }
+
+        let info = info.unwrap();
 
         add_unique(&prj);
 
