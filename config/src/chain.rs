@@ -1,5 +1,5 @@
 use crate::U256;
-use ethers_core::types::{ParseChainError, U64};
+use ethers_core::types::U64;
 use open_fastrlp::{Decodable, Encodable};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::{fmt, str::FromStr};
@@ -97,7 +97,7 @@ impl From<Chain> for U256 {
 }
 
 impl TryFrom<Chain> for ethers_core::types::Chain {
-    type Error = ParseChainError;
+    type Error = <ethers_core::types::Chain as TryFrom<u64>>::Error;
 
     fn try_from(chain: Chain) -> Result<Self, Self::Error> {
         match chain {

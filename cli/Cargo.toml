@@ -47,7 +47,7 @@ dialoguer = { version = "0.10.2", default-features = false }
 # async / parallel
 tokio = { version = "1", features = ["macros"] }
 futures = "0.3.17"
-rayon = "1.5.1"
+rayon = "1.6.1"
 async-trait = "0.1.53"
 
 # disk / paths
