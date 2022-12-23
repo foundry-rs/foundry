@@ -628,7 +628,8 @@ where
             }
             .into();
 
-        receipt.update_revert_reason(&self.provider).await;
+        // Allow to fail silently
+        let _ = receipt.update_revert_reason(&self.provider).await;
 
         Ok(if let Some(ref field) = field {
             get_pretty_tx_receipt_attr(&receipt, field)
