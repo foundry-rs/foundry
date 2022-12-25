@@ -86,6 +86,12 @@ impl ConsoleFmt for Bytes {
     }
 }
 
+impl<const N: usize> ConsoleFmt for [u8; N] {
+    fn fmt(&self, _spec: FormatSpec) -> String {
+        self.pretty()
+    }
+}
+
 /// Formats a string using the input values.
 ///
 /// Formatting rules are the same as Hardhat. The supported format specifiers are as follows:
