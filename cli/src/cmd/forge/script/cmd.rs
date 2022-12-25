@@ -84,6 +84,48 @@ impl ScriptArgs {
         let known_contracts = flatten_contracts(&highlevel_known_contracts, true);
         let mut decoder = self.decode_traces(&script_config, &mut result, &known_contracts)?;
 
+        let mut only_relevant_predeploys = vec![];
+        if let Some(ref txs) = result.transactions {
+            txs.iter().for_each(|tx| match &tx.transaction {
+                TypedTransaction::Legacy(tx) => match (tx.to.is_none(), &tx.data) {
+                    (true, Some(data)) => {
+                        if let Some(info) = build_output.deploy_bytecode_to_dependencies.get(data) {
+                            only_relevant_predeploys.extend(
+                                info.iter().map(|(_, bcode)| bcode.clone()).collect::<Vec<_>>(),
+                            );
+                        } else {
+                            todo!("not found")
+                        }
+                    }
+                    _ => {}
+                },
+                TypedTransaction::Eip2930(tx) => match (tx.tx.to.is_none(), &tx.tx.data) {
+                    (true, Some(data)) => {
+                        if let Some(info) = build_output.deploy_bytecode_to_dependencies.get(data) {
+                            only_relevant_predeploys.extend(
+                                info.iter().map(|(_, bcode)| bcode.clone()).collect::<Vec<_>>(),
+                            );
+                        } else {
+                            todo!("not found")
+                        }
+                    }
+                    _ => {}
+                },
+                TypedTransaction::Eip1559(tx) => match (tx.to.is_none(), &tx.data) {
+                    (true, Some(data)) => {
+                        if let Some(info) = build_output.deploy_bytecode_to_dependencies.get(data) {
+                            only_relevant_predeploys.extend(
+                                info.iter().map(|(_, bcode)| bcode.clone()).collect::<Vec<_>>(),
+                            );
+                        } else {
+                            todo!("not found")
+                        }
+                    }
+                    _ => {}
+                },
+            });
+        }
+
         if self.debug {
             return self.run_debugger(&decoder, sources, result, project, highlevel_known_contracts)
         }
@@ -93,7 +135,7 @@ impl ScriptArgs {
                 &mut script_config,
                 project,
                 default_known_contracts,
-                predeploy_libraries,
+                only_relevant_predeploys,
                 &mut result,
             )
             .await?

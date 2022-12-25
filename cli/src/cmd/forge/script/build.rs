@@ -78,6 +78,7 @@ impl ScriptArgs {
         let mut run_dependencies = vec![];
         let mut contract = CompactContractBytecode::default();
         let mut highlevel_known_contracts = BTreeMap::new();
+        let mut deploy_bytecode_to_dependencies = BTreeMap::new();
 
         let mut target_fname = dunce::canonicalize(&self.path)
             .wrap_err("Couldn't convert contract path to absolute path.")?
@@ -97,6 +98,7 @@ impl ScriptArgs {
             target_fname: target_fname.clone(),
             contract: &mut contract,
             dependencies: &mut run_dependencies,
+            deploy_bytecode_to_dependencies: &mut deploy_bytecode_to_dependencies,
             matched: false,
             target_id: None,
         };
@@ -134,7 +136,7 @@ impl ScriptArgs {
                         if extra.matched {
                             eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `--tc ContractName`")
                         }
-                        *extra.dependencies = dependencies;
+                        *extra.dependencies = dependencies.clone();
                         *extra.contract = contract.clone();
                         extra.matched = true;
                         extra.target_id = Some(id.clone());
@@ -146,7 +148,7 @@ impl ScriptArgs {
                         .expect("The target specifier is malformed.");
                     let path = std::path::Path::new(path);
                     if path == id.source && name == id.name {
-                        *extra.dependencies = dependencies;
+                        *extra.dependencies = dependencies.clone();
                         *extra.contract = contract.clone();
                         extra.matched = true;
                         extra.target_id = Some(id.clone());
@@ -154,6 +156,13 @@ impl ScriptArgs {
                 }
 
                 let tc: ContractBytecode = contract.into();
+                if let Some(bytecode) = &tc.bytecode {
+                    let entry = extra
+                        .deploy_bytecode_to_dependencies
+                        .entry(bytecode.object.clone().into_bytes().expect("Must be linked by now"))
+                        .or_default();
+                    entry.extend(dependencies);
+                }
                 highlevel_known_contracts.insert(id, tc.unwrap());
                 Ok(())
             },
@@ -180,6 +189,7 @@ impl ScriptArgs {
             predeploy_libraries,
             sources: BTreeMap::new(),
             project,
+            deploy_bytecode_to_dependencies,
             libraries: new_libraries,
         })
     }
@@ -317,6 +327,8 @@ struct ExtraLinkingInfo<'a> {
     target_fname: String,
     contract: &'a mut CompactContractBytecode,
     dependencies: &'a mut Vec<(String, ethers::types::Bytes)>,
+    deploy_bytecode_to_dependencies:
+        &'a mut BTreeMap<ethers::types::Bytes, Vec<(String, ethers::types::Bytes)>>,
     matched: bool,
     target_id: Option<ArtifactId>,
 }
@@ -327,6 +339,8 @@ pub struct BuildOutput {
     pub contract: CompactContractBytecode,
     pub known_contracts: ArtifactContracts,
     pub highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
+    pub deploy_bytecode_to_dependencies:
+        BTreeMap<ethers::types::Bytes, Vec<(String, ethers::types::Bytes)>>,
     pub libraries: Libraries,
     pub predeploy_libraries: Vec<ethers::types::Bytes>,
     pub sources: BTreeMap<u32, String>,
