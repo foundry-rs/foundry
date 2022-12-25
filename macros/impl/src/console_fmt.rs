@@ -5,7 +5,7 @@ use syn::{
     Type,
 };
 
-pub fn hhcl(input: DeriveInput) -> TokenStream {
+pub fn console_fmt(input: DeriveInput) -> TokenStream {
     let krate = crate::krate();
     let name = input.ident;
     let tokens = match input.data {
@@ -14,7 +14,7 @@ pub fn hhcl(input: DeriveInput) -> TokenStream {
         Data::Union(_) => quote!(compile_error!("Union is unsupported");),
     };
     quote! {
-        impl #krate::FormatValue for #name {
+        impl #krate::ConsoleFmt for #name {
             #tokens
         }
     }
@@ -62,12 +62,12 @@ fn impl_struct(s: DataStruct, krate: &Path) -> Option<TokenStream> {
         let first = first.value();
         let n = n - 1;
         quote! {
-            let args: [&dyn FormatValue; #n] = [#(#args)*];
+            let args: [&dyn ConsoleFmt; #n] = [#(#args)*];
             #krate::console_log_format(#first.as_str(), args)
         }
     } else {
         quote! {
-            let args: [&dyn FormatValue; #n] = [#args];
+            let args: [&dyn ConsoleFmt; #n] = [#args];
             #krate::console_log_format("", args)
         }
     };
@@ -97,13 +97,13 @@ fn derive_enum(e: DataEnum, krate: &Path) -> TokenStream {
         let field = fields.into_iter().next().unwrap();
         let fields = Group::new(delimiter, quote!(#field));
         quote! {
-            Self::#name #fields => #krate::FormatValue::fmt(#field, spec),
+            Self::#name #fields => #krate::ConsoleFmt::fmt(#field, spec),
         }
     });
 
     quote! {
         fn fmt(&self, spec: FormatSpec) -> String {
-            use #krate::FormatValue;
+            use #krate::ConsoleFmt;
 
             match self {
                 #(#arms)*

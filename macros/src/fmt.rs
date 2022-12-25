@@ -28,12 +28,12 @@ impl FormatSpec {
 }
 
 /// Formats a value using a [FormatSpec].
-pub trait FormatValue {
+pub trait ConsoleFmt {
     /// Formats a value using a [FormatSpec].
     fn fmt(&self, spec: FormatSpec) -> String;
 }
 
-impl FormatValue for String {
+impl ConsoleFmt for String {
     fn fmt(&self, spec: FormatSpec) -> String {
         match spec {
             FormatSpec::String => self.clone(),
@@ -43,7 +43,7 @@ impl FormatValue for String {
     }
 }
 
-impl FormatValue for bool {
+impl ConsoleFmt for bool {
     fn fmt(&self, spec: FormatSpec) -> String {
         match spec {
             FormatSpec::String => self.pretty(),
@@ -54,19 +54,19 @@ impl FormatValue for bool {
     }
 }
 
-impl FormatValue for U256 {
+impl ConsoleFmt for U256 {
     fn fmt(&self, _spec: FormatSpec) -> String {
         self.pretty()
     }
 }
 
-impl FormatValue for I256 {
+impl ConsoleFmt for I256 {
     fn fmt(&self, _spec: FormatSpec) -> String {
         self.pretty()
     }
 }
 
-impl FormatValue for Address {
+impl ConsoleFmt for Address {
     fn fmt(&self, spec: FormatSpec) -> String {
         match spec {
             FormatSpec::String => self.pretty(),
@@ -76,7 +76,7 @@ impl FormatValue for Address {
     }
 }
 
-impl FormatValue for Bytes {
+impl ConsoleFmt for Bytes {
     fn fmt(&self, spec: FormatSpec) -> String {
         match spec {
             FormatSpec::String => self.pretty(),
@@ -109,7 +109,7 @@ impl FormatValue for Bytes {
 /// ```
 pub fn console_log_format<'a>(
     spec: &str,
-    values: impl IntoIterator<Item = &'a dyn FormatValue>,
+    values: impl IntoIterator<Item = &'a dyn ConsoleFmt>,
 ) -> String {
     let mut values = values.into_iter();
     let mut result = String::with_capacity(spec.len());
@@ -141,9 +141,9 @@ pub fn console_log_format<'a>(
 
 fn format_spec<'a>(
     s: &str,
-    values: &mut impl Iterator<Item = &'a dyn FormatValue>,
+    values: &mut impl Iterator<Item = &'a dyn ConsoleFmt>,
     result: &mut String,
-) -> Option<&'a dyn FormatValue> {
+) -> Option<&'a dyn ConsoleFmt> {
     let mut expect_fmt = false;
     let mut current_value = values.next();
 
@@ -180,44 +180,44 @@ fn format_spec<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::FormatValue;
+    use crate::ConsoleFmt;
     use std::str::FromStr;
 
     macro_rules! logf1 {
         ($a:ident) => {{
-            let args: [&dyn FormatValue; 1] = [&$a.p_1];
+            let args: [&dyn ConsoleFmt; 1] = [&$a.p_1];
             console_log_format(&$a.p_0, args)
         }};
     }
 
     macro_rules! logf2 {
         ($a:ident) => {{
-            let args: [&dyn FormatValue; 2] = [&$a.p_1, &$a.p_2];
+            let args: [&dyn ConsoleFmt; 2] = [&$a.p_1, &$a.p_2];
             console_log_format(&$a.p_0, args)
         }};
     }
 
     macro_rules! logf3 {
         ($a:ident) => {{
-            let args: [&dyn FormatValue; 3] = [&$a.p_1, &$a.p_2, &$a.p_3];
+            let args: [&dyn ConsoleFmt; 3] = [&$a.p_1, &$a.p_2, &$a.p_3];
             console_log_format(&$a.p_0, args)
         }};
     }
 
-    #[derive(Clone, Debug, FormatValue)]
+    #[derive(Clone, Debug, ConsoleFmt)]
     struct Log1 {
         p_0: String,
         p_1: U256,
     }
 
-    #[derive(Clone, Debug, FormatValue)]
+    #[derive(Clone, Debug, ConsoleFmt)]
     struct Log2 {
         p_0: String,
         p_1: bool,
         p_2: U256,
     }
 
-    #[derive(Clone, Debug, FormatValue)]
+    #[derive(Clone, Debug, ConsoleFmt)]
     struct Log3 {
         p_0: String,
         p_1: Address,
@@ -226,7 +226,7 @@ mod tests {
     }
 
     #[allow(unused)]
-    #[derive(Clone, Debug, FormatValue)]
+    #[derive(Clone, Debug, ConsoleFmt)]
     enum Logs {
         Log1(Log1),
         Log2(Log2),
@@ -235,8 +235,8 @@ mod tests {
 
     #[test]
     fn test_console_log_format_specifiers() {
-        let console_log_format_1 = |spec: &str, arg: &dyn FormatValue| {
-            let args: [&dyn FormatValue; 1] = [arg];
+        let console_log_format_1 = |spec: &str, arg: &dyn ConsoleFmt| {
+            let args: [&dyn ConsoleFmt; 1] = [arg];
             console_log_format(spec, args)
         };
 
