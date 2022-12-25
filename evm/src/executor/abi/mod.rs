@@ -1,4 +1,5 @@
 use ethers::types::{Address, Selector, H160};
+use foundry_macros::ConsoleFmt;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 

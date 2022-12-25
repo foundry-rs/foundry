@@ -62,12 +62,12 @@ fn impl_struct(s: DataStruct, krate: &Path) -> Option<TokenStream> {
         let first = first.value();
         let n = n - 1;
         quote! {
-            let args: [&dyn ConsoleFmt; #n] = [#(#args)*];
+            let args: [&dyn #krate::ConsoleFmt; #n] = [#(#args)*];
             #krate::console_log_format(#first.as_str(), args)
         }
     } else {
         quote! {
-            let args: [&dyn ConsoleFmt; #n] = [#args];
+            let args: [&dyn #krate::ConsoleFmt; #n] = [#args];
             #krate::console_log_format("", args)
         }
     };
@@ -103,8 +103,6 @@ fn derive_enum(e: DataEnum, krate: &Path) -> TokenStream {
 
     quote! {
         fn fmt(&self, spec: FormatSpec) -> String {
-            use #krate::ConsoleFmt;
-
             match self {
                 #(#arms)*
 
