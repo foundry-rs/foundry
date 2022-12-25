@@ -104,10 +104,10 @@ impl ConsoleFmt for Bytes {
 /// # Example
 ///
 /// ```ignore
-/// let formatted = console_log_format("%s has %d characters", ["foo", 3]);
+/// let formatted = console_format("%s has %d characters", ["foo", 3]);
 /// assert_eq!(formatted, "foo has 3 characters");
 /// ```
-pub fn console_log_format<'a>(
+pub fn console_format<'a>(
     spec: &str,
     values: impl IntoIterator<Item = &'a dyn ConsoleFmt>,
 ) -> String {
@@ -186,21 +186,21 @@ mod tests {
     macro_rules! logf1 {
         ($a:ident) => {{
             let args: [&dyn ConsoleFmt; 1] = [&$a.p_1];
-            console_log_format(&$a.p_0, args)
+            console_format(&$a.p_0, args)
         }};
     }
 
     macro_rules! logf2 {
         ($a:ident) => {{
             let args: [&dyn ConsoleFmt; 2] = [&$a.p_1, &$a.p_2];
-            console_log_format(&$a.p_0, args)
+            console_format(&$a.p_0, args)
         }};
     }
 
     macro_rules! logf3 {
         ($a:ident) => {{
             let args: [&dyn ConsoleFmt; 3] = [&$a.p_1, &$a.p_2, &$a.p_3];
-            console_log_format(&$a.p_0, args)
+            console_format(&$a.p_0, args)
         }};
     }
 
@@ -237,7 +237,7 @@ mod tests {
     fn test_console_log_format_specifiers() {
         let console_log_format_1 = |spec: &str, arg: &dyn ConsoleFmt| {
             let args: [&dyn ConsoleFmt; 1] = [arg];
-            console_log_format(spec, args)
+            console_format(spec, args)
         };
 
         assert_eq!("foo", console_log_format_1("%s", &String::from("foo")));

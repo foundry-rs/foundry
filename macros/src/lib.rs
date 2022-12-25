@@ -1,4 +1,4 @@
-mod fmt;
-pub use fmt::{console_log_format, ConsoleFmt, FormatSpec};
+mod console_fmt;
+pub use console_fmt::{console_format, ConsoleFmt, FormatSpec};
 
 pub use foundry_macros_impl::ConsoleFmt;

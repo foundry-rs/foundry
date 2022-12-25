@@ -63,12 +63,12 @@ fn impl_struct(s: DataStruct, krate: &Path) -> Option<TokenStream> {
         let n = n - 1;
         quote! {
             let args: [&dyn #krate::ConsoleFmt; #n] = [#(#args)*];
-            #krate::console_log_format(#first.as_str(), args)
+            #krate::console_format(#first.as_str(), args)
         }
     } else {
         quote! {
             let args: [&dyn #krate::ConsoleFmt; #n] = [#args];
-            #krate::console_log_format("", args)
+            #krate::console_format("", args)
         }
     };
 
