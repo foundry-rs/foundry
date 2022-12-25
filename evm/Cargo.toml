@@ -8,9 +8,10 @@ repository = "https://github.com/foundry-rs/foundry"
 keywords = ["ethereum", "web3", "evm"]
 
 [dependencies]
-foundry-utils = { path = "./../utils" }
-foundry-common = { path = "./../common" }
-foundry-config = { path = "./../config" }
+foundry-utils = { path = "../utils" }
+foundry-common = { path = "../common" }
+foundry-config = { path = "../config" }
+foundry-macros = { path = "../macros" }
 
 # Encoding/decoding
 serde_json = "1.0.67"

@@ -1,12 +1,12 @@
 use crate::executor::{
-    format_hardhat_call, patch_hardhat_console_selector, HardhatConsoleCalls,
-    HARDHAT_CONSOLE_ADDRESS,
+    patch_hardhat_console_selector, HardhatConsoleCalls, HARDHAT_CONSOLE_ADDRESS,
 };
 use bytes::Bytes;
 use ethers::{
     abi::{AbiDecode, Token},
     types::{Address, Log, H256},
 };
+use foundry_macros::ConsoleFmt;
 use revm::{db::Database, CallInputs, EVMData, Gas, Inspector, Return};
 
 /// An inspector that collects logs during execution.
@@ -75,7 +75,7 @@ fn convert_hh_log_to_event(call: HardhatConsoleCalls) -> Log {
                 .unwrap(),
         )],
         // Convert the parameters of the call to their string representation for the log
-        data: ethers::abi::encode(&[Token::String(format_hardhat_call(&call))]).into(),
+        data: ethers::abi::encode(&[Token::String(call.fmt(Default::default()))]).into(),
         ..Default::default()
     }
 }
