@@ -2462,6 +2462,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "foundry-macros"
+version = "0.1.0"
+dependencies = [
+ "ethers-core",
+ "foundry-common",
+ "foundry-macros-impl",
+]
+
+[[package]]
+name = "foundry-macros-impl"
+version = "0.0.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "foundry-utils"
 version = "0.2.0"
 dependencies = [
