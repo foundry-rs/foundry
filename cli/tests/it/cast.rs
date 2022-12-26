@@ -254,7 +254,7 @@ casttest!(test_live_cast_storage_succeeds, |_: TestProject, mut cmd: TestCommand
     // version < min, so empty storage layout
     let address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
     cmd.cast_fuse().args(["storage", "--rpc-url", eth_rpc_url.as_str(), address]);
-    let output = cmd.stdout_lossy();
+    let output = cmd.stderr_lossy();
     assert!(output.contains("Storage layout is empty"), "{}", output);
     // first slot is the name, always is "Wrapped Ether"
     cmd.cast_fuse().args(["storage", "--rpc-url", eth_rpc_url.as_str(), address, "0"]);
