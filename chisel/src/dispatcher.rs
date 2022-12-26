@@ -613,9 +613,9 @@ impl ChiselDisptacher {
             ChiselCommand::Edit => {
                 if let Some(session_source) = self.session.session_source.as_mut() {
                     // create a temp file with the content of the run code
-                    let mut file_path = std::env::temp_dir();
-                    file_path.push("chisel-tmp.sol");
-                    let result = std::fs::File::create(&file_path)
+                    let mut temp_file_path = std::env::temp_dir();
+                    temp_file_path.push("chisel-tmp.sol");
+                    let result = std::fs::File::create(&temp_file_path)
                         .map(|mut file| file.write_all(session_source.run_code.as_bytes()));
                     if let Err(e) = result {
                         return DispatchResult::CommandFailed(format!(
@@ -626,7 +626,7 @@ impl ChiselDisptacher {
                     // open the temp file with the editor
                     let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
                     let mut cmd = Command::new(editor);
-                    cmd.arg(&file_path);
+                    cmd.arg(&temp_file_path);
 
                     match cmd.status() {
                         Ok(status) => {
@@ -649,11 +649,17 @@ impl ChiselDisptacher {
                         }
                     }
 
-                    // if the editor exited successfully, try to compile the new code
-                    let edited_code = std::fs::read_to_string(file_path).unwrap();
                     let mut new_session_source = session_source.clone();
-                    new_session_source.drain_run();
-                    new_session_source.with_run_code(&edited_code);
+                    if let Ok(edited_code) = std::fs::read_to_string(temp_file_path) {
+                        new_session_source.drain_run();
+                        new_session_source.with_run_code(&edited_code);
+                    } else {
+                        return DispatchResult::CommandFailed(
+                            "Could not read the edited file".to_string(),
+                        )
+                    }
+
+                    // if the editor exited successfully, try to compile the new code
                     match new_session_source.execute().await {
                         Ok((_, mut res)) => {
                             let failed = !res.success;
