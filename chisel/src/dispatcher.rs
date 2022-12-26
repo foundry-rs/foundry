@@ -655,14 +655,41 @@ impl ChiselDisptacher {
                     new_session_source.drain_run();
                     new_session_source.with_run_code(&edited_code);
                     match new_session_source.execute().await {
-                        Ok((_, res)) => {
+                        Ok((_, mut res)) => {
                             let failed = !res.success;
-                            if failed {
-                                DispatchResult::Failure(None)
+                            if new_session_source.config.traces || failed {
+                                if let Ok(decoder) =
+                                    self.decode_traces(&new_session_source.config, &mut res)
+                                {
+                                    if self.show_traces(&decoder, &mut res).await.is_err() {
+                                        self.errored = true;
+                                        return DispatchResult::CommandFailed(
+                                            "Failed to display traces".to_owned(),
+                                        )
+                                    };
+
+                                    // Show console logs, if there are any
+                                    let decoded_logs = decode_console_logs(&res.logs);
+                                    if !decoded_logs.is_empty() {
+                                        println!("{}", Paint::green("Logs:"));
+                                        for log in decoded_logs {
+                                            println!("  {log}");
+                                        }
+                                    }
+                                }
+
+                                // If the contract execution failed, continue on without
+                                // updating the source.
+                                self.errored = true;
+                                DispatchResult::CommandFailed(Self::make_error(
+                                    "Failed to execute edited contract!",
+                                ))
                             } else {
                                 // the code could be compiled, save it
                                 *session_source = new_session_source;
-                                DispatchResult::CommandSuccess(None)
+                                DispatchResult::CommandSuccess(Some(String::from(
+                                    "Successfully edited `run()` function's body!",
+                                )))
                             }
                         }
                         Err(_) => DispatchResult::CommandFailed(
