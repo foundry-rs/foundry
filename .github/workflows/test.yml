@@ -42,9 +42,7 @@ jobs:
               uses: taiki-e/install-action@nextest
 
             - name: Build archive (unit tests)
-              run:
-                  cargo nextest archive --locked ${{ matrix.archive.flags }} --archive-file ${{
-                  matrix.archive.file }}
+              run: cargo nextest archive --locked ${{ matrix.archive.flags }} --archive-file ${{ matrix.archive.file }}
             - name: Upload archive
               uses: actions/upload-artifact@v3
               with:
@@ -77,9 +75,7 @@ jobs:
                   name: unit-tests
 
             - name: cargo nextest
-              run:
-                  cargo nextest run --retries 3 --archive-file nextest-unit.tar.zst -E '${{
-                  matrix.job.filter }}'
+              run: cargo nextest run --retries 3 --archive-file nextest-unit.tar.zst -E '${{ matrix.job.filter }}'
 
     integration:
         name: integration tests / ${{ matrix.job.name }}
@@ -118,9 +114,7 @@ jobs:
                   git config --global user.email "<>"
 
             - name: cargo nextest
-              run:
-                  cargo nextest run --partition count:${{ matrix.partition }}/2 --retries 3
-                  --archive-file nextest-integration.tar.zst -E '${{ matrix.job.filter }}'
+              run: cargo nextest run --partition count:${{ matrix.partition }}/2 --retries 3 --archive-file nextest-integration.tar.zst -E '${{ matrix.job.filter }}'
 
     external-integration:
         name: external integration tests / ${{ matrix.job.name }}
@@ -162,9 +156,7 @@ jobs:
               run: git config --global url."https://github.com/".insteadOf "git@github.com:"
 
             - name: cargo nextest
-              run:
-                  cargo nextest run --retries 3 --archive-file nextest-external-integration.tar.zst
-                  -E '${{ matrix.job.filter }}'
+              run: cargo nextest run --retries 3 --archive-file nextest-external-integration.tar.zst -E '${{ matrix.job.filter }}'
 
     doc:
         name: doc tests
