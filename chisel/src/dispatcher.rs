@@ -619,8 +619,7 @@ impl ChiselDisptacher {
                         .map(|mut file| file.write_all(session_source.run_code.as_bytes()));
                     if let Err(e) = result {
                         return DispatchResult::CommandFailed(format!(
-                            "Could not write to a temporary file: {}",
-                            e
+                            "Could not write to a temporary file: {e}"
                         ))
                     }
 
@@ -634,8 +633,7 @@ impl ChiselDisptacher {
                             if !status.success() {
                                 if let Some(status_code) = status.code() {
                                     return DispatchResult::CommandFailed(format!(
-                                        "Editor exited with status {}",
-                                        status_code
+                                        "Editor exited with status {status_code}"
                                     ))
                                 } else {
                                     return DispatchResult::CommandFailed(
