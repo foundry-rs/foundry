@@ -132,6 +132,7 @@ impl WalletSubcommands {
                     WalletType::Ledger(signer) => signer.address(),
                     WalletType::Local(signer) => signer.address(),
                     WalletType::Trezor(signer) => signer.address(),
+                    WalletType::Aws(signer) => signer.address(),
                 };
                 println!("{}", SimpleCast::to_checksum_address(&addr));
             }
@@ -150,6 +151,7 @@ impl WalletSubcommands {
                     WalletType::Ledger(wallet) => wallet.signer().sign_message(&message).await?,
                     WalletType::Local(wallet) => wallet.signer().sign_message(&message).await?,
                     WalletType::Trezor(wallet) => wallet.signer().sign_message(&message).await?,
+                    WalletType::Aws(wallet) => wallet.signer().sign_message(&message).await?,
                 };
                 println!("Signature: 0x{sig}");
             }

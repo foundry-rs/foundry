@@ -1,9 +1,10 @@
 use super::{WalletTrait, WalletType};
+use cast::{AwsChainProvider, AwsClient, AwsHttpClient, AwsRegion, KmsClient};
 use clap::{ArgAction, Parser};
 use ethers::{
     middleware::SignerMiddleware,
     prelude::{Middleware, Signer},
-    signers::{HDPath as LedgerHDPath, Ledger, LocalWallet, Trezor, TrezorHDPath},
+    signers::{AwsSigner, HDPath as LedgerHDPath, Ledger, LocalWallet, Trezor, TrezorHDPath},
     types::Address,
 };
 use eyre::{Context, ContextCompat, Result};
@@ -208,6 +209,13 @@ pub struct MultiWallet {
     pub trezor: bool,
 
     #[clap(
+        long = "aws",
+        help_heading = "WALLET OPTIONS - KEYSTORE",
+        help = "Use AWS Key Management Service"
+    )]
+    pub aws: bool,
+
+    #[clap(
         env = "ETH_FROM",
         short = 'a',
         long = "froms",
@@ -256,6 +264,7 @@ impl MultiWallet {
                 self.interactives()?,
                 self.mnemonics()?,
                 self.keystores()?,
+                self.aws_signers(chain).await?,
                 script_wallets_fn()?
             ],
             for wallet in wallets.into_iter() {
@@ -381,6 +390,28 @@ impl MultiWallet {
     pub async fn trezors(&self, chain_id: u64) -> Result<Option<Vec<Trezor>>> {
         if self.trezor {
             create_hw_wallets!(self, chain_id, get_from_trezor, wallets);
+            return Ok(Some(wallets))
+        }
+        Ok(None)
+    }
+
+    pub async fn aws_signers(&self, chain_id: u64) -> Result<Option<Vec<AwsSigner>>> {
+        if self.aws {
+            let mut wallets = vec![];
+            let client =
+                AwsClient::new_with(AwsChainProvider::default(), AwsHttpClient::new().unwrap());
+
+            let kms = KmsClient::new_with_client(client, AwsRegion::default());
+
+            let env_key_ids = std::env::var("AWS_KMS_KEY_IDS");
+            let key_ids =
+                if env_key_ids.is_ok() { env_key_ids? } else { std::env::var("AWS_KMS_KEY_ID")? };
+
+            for key in key_ids.split(',') {
+                let aws_signer = AwsSigner::new(kms.clone(), key, chain_id).await?;
+                wallets.push(aws_signer)
+            }
+
             return Ok(Some(wallets))
         }
         Ok(None)
