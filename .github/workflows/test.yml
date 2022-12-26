@@ -78,8 +78,8 @@ jobs:
 
             - name: cargo nextest
               run:
-                  ~/.cargo/bin/cargo-nextest nextest run --retries 3 --archive-file
-                  nextest-unit.tar.zst -E '${{ matrix.job.filter }}'
+                  cargo nextest run --retries 3 --archive-file nextest-unit.tar.zst -E '${{
+                  matrix.job.filter }}'
 
     integration:
         name: integration tests / ${{ matrix.job.name }}
@@ -119,9 +119,8 @@ jobs:
 
             - name: cargo nextest
               run:
-                  ~/.cargo/bin/cargo-nextest nextest run --partition count:${{ matrix.partition }}/2
-                  --retries 3 --archive-file nextest-integration.tar.zst -E '${{ matrix.job.filter
-                  }}'
+                  cargo nextest run --partition count:${{ matrix.partition }}/2 --retries 3
+                  --archive-file nextest-integration.tar.zst -E '${{ matrix.job.filter }}'
 
     external-integration:
         name: external integration tests / ${{ matrix.job.name }}
@@ -164,8 +163,8 @@ jobs:
 
             - name: cargo nextest
               run:
-                  ~/.cargo/bin/cargo-nextest nextest run --retries 3 --archive-file
-                  nextest-external-integration.tar.zst -E '${{ matrix.job.filter }}'
+                  cargo nextest run --retries 3 --archive-file nextest-external-integration.tar.zst
+                  -E '${{ matrix.job.filter }}'
 
     doc:
         name: doc tests
