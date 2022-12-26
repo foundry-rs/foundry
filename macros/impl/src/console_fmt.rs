@@ -21,7 +21,7 @@ pub fn console_fmt(input: DeriveInput) -> TokenStream {
 }
 
 fn derive_struct(s: DataStruct, krate: &Path) -> TokenStream {
-    let imp = impl_struct(s, &krate).unwrap_or_else(|| quote!(String::new()));
+    let imp = impl_struct(s, krate).unwrap_or_else(|| quote!(String::new()));
     quote! {
         fn fmt(&self, _spec: #krate::FormatSpec) -> String {
             #imp
@@ -51,7 +51,7 @@ fn impl_struct(s: DataStruct, krate: &Path) -> Option<TokenStream> {
         .into_iter()
         .enumerate()
         .map(|(i, field)| {
-            let ident = field.ident.clone().unwrap_or_else(|| format_ident!("{i}"));
+            let ident = field.ident.unwrap_or_else(|| format_ident!("{i}"));
             quote!(&self.#ident)
         })
         .collect();
