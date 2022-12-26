@@ -122,15 +122,16 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         self.backend.to_mut().roll_fork_to_transaction(id, transaction, env, journaled_state)
     }
 
-    fn transact(
+    fn transact<INSP: Inspector<Backend>>(
         &mut self,
         id: Option<LocalForkId>,
         transaction: H256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
+        inspector: Option<&mut INSP>,
     ) -> eyre::Result<()> {
         trace!(?id, ?transaction, "fuzz: execute transaction");
-        self.backend.to_mut().transact(id, transaction, env, journaled_state)
+        self.backend.to_mut().transact(id, transaction, env, journaled_state, inspector)
     }
 
     fn active_fork_id(&self) -> Option<LocalForkId> {

@@ -18,8 +18,9 @@ pub use in_memory_db::MemDb;
 use revm::{
     db::{CacheDB, DatabaseRef},
     precompiles::Precompiles,
-    Account, AccountInfo, Bytecode, CreateScheme, Database, DatabaseCommit, Env, ExecutionResult,
-    Inspector, JournaledState, Log, SpecId, TransactTo, EVM, KECCAK_EMPTY,
+    return_ok, Account, AccountInfo, Bytecode, CreateScheme, Database, DatabaseCommit, Env,
+    ExecutionResult, Inspector, JournaledState, Log, NoOpInspector, Return, SpecId, TransactTo,
+    EVM, KECCAK_EMPTY,
 };
 use std::collections::{HashMap, HashSet};
 use tracing::{trace, warn};
@@ -169,12 +170,13 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     ) -> eyre::Result<()>;
 
     /// Fetches the given transaction for the fork and executes it, committing the state in the DB
-    fn transact(
+    fn transact<INSP: Inspector<Backend>>(
         &mut self,
         id: Option<LocalForkId>,
         transaction: H256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
+        inspector: Option<&mut INSP>,
     ) -> eyre::Result<()>;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
@@ -419,6 +421,17 @@ impl Backend {
         }
 
         trace!(target: "backend", forking_mode=? backend.active_fork_ids.is_some(), "created executor backend");
+
+        backend
+    }
+
+    /// Creats a new instance of `Backend` with fork added to the fork database and sets the fork as
+    /// active
+    pub(crate) fn new_with_fork(id: &ForkId, fork: Fork, journaled_state: JournaledState) -> Self {
+        let mut backend = Self::spawn(None);
+        let fork_ids = backend.inner.insert_new_fork(id.clone(), fork.db, journaled_state);
+        backend.inner.launched_with_fork = Some((id.clone(), fork_ids.0, fork_ids.1));
+        backend.active_fork_ids = Some(fork_ids);
 
         backend
     }
@@ -763,6 +776,8 @@ impl Backend {
     ) -> eyre::Result<Option<Transaction>> {
         trace!(?id, ?tx_hash, "replay until transaction");
 
+        let fork_id = self.ensure_fork_id(id)?.clone();
+
         let fork = self.inner.get_fork_by_id_mut(id)?;
         let full_block =
             fork.db.db.get_full_block(BlockNumber::Number(env.block.number.as_u64().into()))?;
@@ -774,7 +789,14 @@ impl Backend {
             }
             trace!(tx=?tx.hash, "committing transaction");
 
-            commit_transaction(tx, env.clone(), journaled_state, fork);
+            commit_transaction(
+                tx,
+                env.clone(),
+                journaled_state,
+                fork,
+                &fork_id,
+                None::<&mut NoOpInspector>,
+            );
         }
 
         Ok(None)
@@ -1057,29 +1079,33 @@ impl DatabaseExt for Backend {
         Ok(())
     }
 
-    fn transact(
+    fn transact<INSP: Inspector<Backend>>(
         &mut self,
         maybe_id: Option<LocalForkId>,
         transaction: H256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
+        inspector: Option<&mut INSP>,
     ) -> eyre::Result<()> {
         trace!(?maybe_id, ?transaction, "execute transaction");
         let id = self.ensure_fork(maybe_id)?;
+        let fork_id = self.ensure_fork_id(id).cloned()?;
 
-        let env = if maybe_id.is_none() {
-            let fork_id = self.ensure_fork_id(id).cloned()?;
+        let mut env = if maybe_id.is_none() {
             self.forks
-                .get_env(fork_id)?
+                .get_env(fork_id.clone())?
                 .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exit", id))?
         } else {
             env.clone()
         };
 
+        let mut db = self.clone();
+        db.select_fork(id, &mut env, journaled_state)?;
+
         let fork = self.inner.get_fork_by_id_mut(id)?;
         let tx = fork.db.db.get_transaction(transaction)?;
 
-        commit_transaction(tx, env, journaled_state, fork);
+        commit_transaction(tx, env, journaled_state, fork, &fork_id, inspector);
 
         Ok(())
     }
@@ -1665,22 +1691,34 @@ fn is_contract_in_state(journaled_state: &JournaledState, acc: Address) -> bool 
 }
 
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
-/// state
-fn commit_transaction(
+/// state, with an optional inspector
+fn commit_transaction<INSP: Inspector<Backend>>(
     tx: Transaction,
     mut env: Env,
     journaled_state: &mut JournaledState,
     fork: &mut Fork,
+    fork_id: &ForkId,
+    inspector: Option<&mut INSP>,
 ) {
     configure_tx_env(&mut env, &tx);
-    let (_, state) = {
+
+    let (result, state) = {
         let mut evm = EVM::new();
         evm.env = env;
-        evm.database(&mut fork.db);
-        evm.transact()
+
+        let db = Backend::new_with_fork(fork_id, fork.clone(), journaled_state.clone());
+        evm.database(db);
+
+        if let Some(inspector) = inspector {
+            evm.inspect(inspector)
+        } else {
+            evm.transact()
+        }
     };
 
-    apply_state_changeset(state, journaled_state, fork);
+    if let return_ok!() = result.exit_reason {
+        apply_state_changeset(state, journaled_state, fork);
+    }
 }
 
 /// Applies the changeset of a transaction to the active journaled state and also commits it in the

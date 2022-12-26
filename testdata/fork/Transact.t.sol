@@ -7,6 +7,7 @@ import "../logs/console.sol";
 
 interface IERC20 {
     function transfer(address to, uint256 amount) external returns (bool);
+
     function balanceOf(address account) external view returns (uint256);
 }
 
@@ -45,7 +46,7 @@ contract TransactOnForkTest is DSTest {
         assert(sender.balance < expectedSenderBalance);
     }
 
-    function testTransactCooperatesWithCheatcoes() public {
+    function testTransactCooperatesWithCheatcodes() public {
         // A random block https://etherscan.io/block/16260609
         uint256 fork = vm.createFork("rpcAlias", 16260609);
         vm.selectFork(fork);
