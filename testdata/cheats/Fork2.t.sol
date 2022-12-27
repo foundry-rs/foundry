@@ -124,7 +124,6 @@ contract ForkTest is DSTest {
         assert(account.balance < newBalance);
     }
 
-
     /// checks that marking as persistent works
     function testMarkPersistent() public {
         assert(cheats.isPersistent(address(this)));
