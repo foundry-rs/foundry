@@ -3,7 +3,7 @@ use crate::{
     executor::{
         backend::snapshot::BackendSnapshot,
         fork::{CreateFork, ForkId, MultiFork, SharedBackend},
-        inspector::DEFAULT_CREATE2_DEPLOYER,
+        inspector::{cheatcodes::Cheatcodes, DEFAULT_CREATE2_DEPLOYER},
         snapshot::Snapshots,
     },
     CALLER, TEST_CONTRACT_ADDRESS,
@@ -19,8 +19,7 @@ use revm::{
     db::{CacheDB, DatabaseRef},
     precompiles::Precompiles,
     return_ok, Account, AccountInfo, Bytecode, CreateScheme, Database, DatabaseCommit, Env,
-    ExecutionResult, Inspector, JournaledState, Log, NoOpInspector, Return, SpecId, TransactTo,
-    EVM, KECCAK_EMPTY,
+    ExecutionResult, Inspector, JournaledState, Log, Return, SpecId, TransactTo, EVM, KECCAK_EMPTY,
 };
 use std::collections::{HashMap, HashSet};
 use tracing::{trace, warn};
@@ -170,13 +169,13 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     ) -> eyre::Result<()>;
 
     /// Fetches the given transaction for the fork and executes it, committing the state in the DB
-    fn transact<INSP: Inspector<Backend>>(
+    fn transact(
         &mut self,
         id: Option<LocalForkId>,
         transaction: H256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
-        inspector: Option<&mut INSP>,
+        cheatcodes_inspector: Option<&mut Cheatcodes>,
     ) -> eyre::Result<()>;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
@@ -789,14 +788,7 @@ impl Backend {
             }
             trace!(tx=?tx.hash, "committing transaction");
 
-            commit_transaction(
-                tx,
-                env.clone(),
-                journaled_state,
-                fork,
-                &fork_id,
-                None::<&mut NoOpInspector>,
-            );
+            commit_transaction(tx, env.clone(), journaled_state, fork, &fork_id, None);
         }
 
         Ok(None)
@@ -1079,13 +1071,13 @@ impl DatabaseExt for Backend {
         Ok(())
     }
 
-    fn transact<INSP: Inspector<Backend>>(
+    fn transact(
         &mut self,
         maybe_id: Option<LocalForkId>,
         transaction: H256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
-        inspector: Option<&mut INSP>,
+        cheatcodes_inspector: Option<&mut Cheatcodes>,
     ) -> eyre::Result<()> {
         trace!(?maybe_id, ?transaction, "execute transaction");
         let id = self.ensure_fork(maybe_id)?;
@@ -1105,7 +1097,7 @@ impl DatabaseExt for Backend {
         let fork = self.inner.get_fork_by_id_mut(id)?;
         let tx = fork.db.db.get_transaction(transaction)?;
 
-        commit_transaction(tx, env, journaled_state, fork, &fork_id, inspector);
+        commit_transaction(tx, env, journaled_state, fork, &fork_id, cheatcodes_inspector);
 
         Ok(())
     }
@@ -1692,13 +1684,13 @@ fn is_contract_in_state(journaled_state: &JournaledState, acc: Address) -> bool 
 
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
 /// state, with an optional inspector
-fn commit_transaction<INSP: Inspector<Backend>>(
+fn commit_transaction(
     tx: Transaction,
     mut env: Env,
     journaled_state: &mut JournaledState,
     fork: &mut Fork,
     fork_id: &ForkId,
-    inspector: Option<&mut INSP>,
+    cheatcodes_inspector: Option<&mut Cheatcodes>,
 ) {
     configure_tx_env(&mut env, &tx);
 
@@ -1709,7 +1701,7 @@ fn commit_transaction<INSP: Inspector<Backend>>(
         let db = Backend::new_with_fork(fork_id, fork.clone(), journaled_state.clone());
         evm.database(db);
 
-        if let Some(inspector) = inspector {
+        if let Some(inspector) = cheatcodes_inspector {
             evm.inspect(inspector)
         } else {
             evm.transact()
