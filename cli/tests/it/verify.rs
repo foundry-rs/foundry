@@ -366,6 +366,7 @@ forgetest_async!(
             &info.pk,
             "--broadcast",
             "-vvvv",
+            "--slow",
             "--optimize",
             "--verify",
             "--optimizer-runs",
