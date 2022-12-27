@@ -1083,16 +1083,13 @@ impl DatabaseExt for Backend {
         let id = self.ensure_fork(maybe_id)?;
         let fork_id = self.ensure_fork_id(id).cloned()?;
 
-        let mut env = if maybe_id.is_none() {
+        let env = if maybe_id.is_none() {
             self.forks
                 .get_env(fork_id.clone())?
                 .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exit", id))?
         } else {
             env.clone()
         };
-
-        let mut db = self.clone();
-        db.select_fork(id, &mut env, journaled_state)?;
 
         let fork = self.inner.get_fork_by_id_mut(id)?;
         let tx = fork.db.db.get_transaction(transaction)?;
