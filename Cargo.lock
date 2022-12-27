@@ -1806,13 +1806,13 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#799f752e55e80aa8d6357321d4f5f7ebf66daa8a"
+source = "git+https://github.com/danipopes/ethers-rs?branch=feat/named-pipes-provider#fbe706ad317d207ad0bb145cb7cde58a83c7ad5e"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
  "ethers-core",
  "ethers-etherscan",
- "ethers-middleware",
+ "ethers-middleware 1.0.2 (git+https://github.com/danipopes/ethers-rs?branch=feat/named-pipes-provider)",
  "ethers-providers",
  "ethers-signers",
  "ethers-solc",
@@ -1821,7 +1821,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#799f752e55e80aa8d6357321d4f5f7ebf66daa8a"
+source = "git+https://github.com/danipopes/ethers-rs?branch=feat/named-pipes-provider#fbe706ad317d207ad0bb145cb7cde58a83c7ad5e"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1832,7 +1832,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#799f752e55e80aa8d6357321d4f5f7ebf66daa8a"
+source = "git+https://github.com/danipopes/ethers-rs?branch=feat/named-pipes-provider#fbe706ad317d207ad0bb145cb7cde58a83c7ad5e"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1850,7 +1850,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#799f752e55e80aa8d6357321d4f5f7ebf66daa8a"
+source = "git+https://github.com/danipopes/ethers-rs?branch=feat/named-pipes-provider#fbe706ad317d207ad0bb145cb7cde58a83c7ad5e"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -1874,7 +1874,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#799f752e55e80aa8d6357321d4f5f7ebf66daa8a"
+source = "git+https://github.com/danipopes/ethers-rs?branch=feat/named-pipes-provider#fbe706ad317d207ad0bb145cb7cde58a83c7ad5e"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1888,7 +1888,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#799f752e55e80aa8d6357321d4f5f7ebf66daa8a"
+source = "git+https://github.com/danipopes/ethers-rs?branch=feat/named-pipes-provider#fbe706ad317d207ad0bb145cb7cde58a83c7ad5e"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1919,7 +1919,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#799f752e55e80aa8d6357321d4f5f7ebf66daa8a"
+source = "git+https://github.com/danipopes/ethers-rs?branch=feat/named-pipes-provider#fbe706ad317d207ad0bb145cb7cde58a83c7ad5e"
 dependencies = [
  "ethers-core",
  "ethers-solc",
@@ -1931,6 +1931,31 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tracing",
+]
+
+[[package]]
+name = "ethers-middleware"
+version = "1.0.2"
+source = "git+https://github.com/danipopes/ethers-rs?branch=feat/named-pipes-provider#fbe706ad317d207ad0bb145cb7cde58a83c7ad5e"
+dependencies = [
+ "async-trait",
+ "auto_impl 0.5.0",
+ "ethers-contract",
+ "ethers-core",
+ "ethers-etherscan",
+ "ethers-providers",
+ "ethers-signers",
+ "futures-locks",
+ "futures-util",
+ "instant",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-futures",
+ "url",
 ]
 
 [[package]]
@@ -1961,7 +1986,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#799f752e55e80aa8d6357321d4f5f7ebf66daa8a"
+source = "git+https://github.com/danipopes/ethers-rs?branch=feat/named-pipes-provider#fbe706ad317d207ad0bb145cb7cde58a83c7ad5e"
 dependencies = [
  "async-trait",
  "auto_impl 1.0.1",
@@ -1993,13 +2018,14 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-timer",
  "web-sys",
+ "winapi",
  "ws_stream_wasm",
 ]
 
 [[package]]
 name = "ethers-signers"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#799f752e55e80aa8d6357321d4f5f7ebf66daa8a"
+source = "git+https://github.com/danipopes/ethers-rs?branch=feat/named-pipes-provider#fbe706ad317d207ad0bb145cb7cde58a83c7ad5e"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -2022,7 +2048,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#799f752e55e80aa8d6357321d4f5f7ebf66daa8a"
+source = "git+https://github.com/danipopes/ethers-rs?branch=feat/named-pipes-provider#fbe706ad317d207ad0bb145cb7cde58a83c7ad5e"
 dependencies = [
  "cfg-if 1.0.0",
  "dunce",
@@ -2380,7 +2406,7 @@ dependencies = [
  "dunce",
  "ethers-core",
  "ethers-etherscan",
- "ethers-middleware",
+ "ethers-middleware 1.0.2 (git+https://github.com/gakonst/ethers-rs)",
  "ethers-providers",
  "ethers-solc",
  "eyre",

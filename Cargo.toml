@@ -56,7 +56,16 @@ panic = "abort"
 codegen-units = 1
 
 # # Patch ethers-rs with a local checkout then run `cargo update -p ethers`
-# [patch."https://github.com/gakonst/ethers-rs"]
+[patch."https://github.com/gakonst/ethers-rs"]
+ethers = { git = "https://github.com/danipopes/ethers-rs", branch = "feat/named-pipes-provider" }
+ethers-addressbook = { git = "https://github.com/danipopes/ethers-rs", branch = "feat/named-pipes-provider" }
+ethers-core = { git = "https://github.com/danipopes/ethers-rs", branch = "feat/named-pipes-provider" }
+ethers-contract = { git = "https://github.com/danipopes/ethers-rs", branch = "feat/named-pipes-provider" }
+ethers-providers = { git = "https://github.com/danipopes/ethers-rs", branch = "feat/named-pipes-provider" }
+ethers-signers = { git = "https://github.com/danipopes/ethers-rs", branch = "feat/named-pipes-provider" }
+ethers-etherscan = { git = "https://github.com/danipopes/ethers-rs", branch = "feat/named-pipes-provider" }
+ethers-solc = { git = "https://github.com/danipopes/ethers-rs", branch = "feat/named-pipes-provider" }
+
 # ethers = { path = "../ethers-rs" }
 # ethers-addressbook = { path = "../ethers-rs/ethers-addressbook" }
 # ethers-core = { path = "../ethers-rs/ethers-core" }
