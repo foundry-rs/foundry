@@ -425,8 +425,8 @@ impl Backend {
         backend
     }
 
-    /// Creats a new instance of `Backend` with fork added to the fork database and sets the fork as
-    /// active
+    /// Creates a new instance of `Backend` with fork added to the fork database and sets the fork
+    /// as active
     pub(crate) fn new_with_fork(id: &ForkId, fork: Fork, journaled_state: JournaledState) -> Self {
         let mut backend = Self::spawn(None);
         let fork_ids = backend.inner.insert_new_fork(id.clone(), fork.db, journaled_state);
