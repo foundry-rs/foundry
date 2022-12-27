@@ -1,9 +1,7 @@
 //! IPC tests
 
 use anvil::{spawn, NodeConfig};
-
 use ethers::{core::rand, prelude::Middleware, types::U256};
-
 use futures::StreamExt;
 
 pub fn rand_ipc_endpoint() -> String {

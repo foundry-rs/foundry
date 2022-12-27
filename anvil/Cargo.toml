@@ -83,3 +83,6 @@ crc = "3.0.0"
 default = ["cli"]
 cmd = ["foundry-common", "forge", "clap", "clap_complete", "ctrlc", "anvil-server/clap"]
 cli = ["tokio/full", "cmd", "fdlimit"]
+
+[patch."https://github.com/gakonst/ethers-rs"]
+ethers = { git = "https://github.com/danipopes/ethers-rs", branch = "feat/named-pipes-provider" }
