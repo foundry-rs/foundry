@@ -616,7 +616,7 @@ impl ScriptArgs {
 }
 
 /// How to send a single transaction
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum SendTransactionKind<'a> {
     Unlocked(Address),
     Raw(&'a WalletType),

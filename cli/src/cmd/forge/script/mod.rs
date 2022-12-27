@@ -633,7 +633,7 @@ pub struct JsonResult {
     pub returns: HashMap<String, NestedValue>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct NestedValue {
     pub internal_type: String,
     pub value: String,

@@ -29,7 +29,7 @@ pub const DRY_RUN_DIR: &str = "dry-run";
 
 /// Helper that saves the transactions sequence and its state on which transactions have been
 /// broadcasted
-#[derive(Deserialize, Serialize, Clone, Default)]
+#[derive(Deserialize, Serialize, Clone, Default, Debug)]
 pub struct ScriptSequence {
     pub transactions: VecDeque<TransactionWithMetadata>,
     #[serde(serialize_with = "wrapper::serialize_receipts")]

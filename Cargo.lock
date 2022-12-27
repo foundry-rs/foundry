@@ -2318,6 +2318,7 @@ dependencies = [
  "indicatif 0.17.1",
  "itertools",
  "once_cell",
+ "ordered-float",
  "parking_lot 0.12.0",
  "path-slash",
  "pretty_assertions",

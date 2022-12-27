@@ -7,7 +7,9 @@ use ethers::{
     prelude::{Middleware, Signer},
     types::{transaction::eip2718::TypedTransaction, U256},
 };
-use foundry_common::{contracts::flatten_contracts, try_get_http_provider};
+use foundry_common::{contracts::flatten_contracts, diff_score, try_get_http_provider};
+use itertools::Itertools;
+use ordered_float::OrderedFloat;
 use std::sync::Arc;
 use tracing::trace;
 
@@ -68,6 +70,25 @@ impl ScriptArgs {
         let mut result =
             self.execute(&mut script_config, contract, sender, &predeploy_libraries).await?;
 
+        // We only care about particular predeploy libraries that pertain to the actually deployed
+        // contracts. That is to say: dont deploy libraries that are only used by the
+        // script.
+        let relevant_predeploys =
+            get_relevant_predeploys(&result, &build_output.deploy_bytecode_to_dependencies)?;
+
+        // we want to reset libraries to default is relevant predeploys are empty. Otherwise,
+        // libraries are updated in the `maybe_prepare_libraries`
+        if relevant_predeploys.is_empty() {
+            libraries = Default::default();
+        }
+
+        // if there is a difference between predeploy libraries and relevant predeploy libraries,
+        // we need to try to fix any nonces that got screwed up because of the difference
+        if relevant_predeploys.len() < predeploy_libraries.len() {
+            let diff = predeploy_libraries.len() - relevant_predeploys.len();
+            decrement_nonces(&mut result, diff);
+        }
+
         if self.resume || (self.verify && !self.broadcast) {
             return self
                 .resume_deployment(
@@ -84,48 +105,6 @@ impl ScriptArgs {
         let known_contracts = flatten_contracts(&highlevel_known_contracts, true);
         let mut decoder = self.decode_traces(&script_config, &mut result, &known_contracts)?;
 
-        let mut only_relevant_predeploys = vec![];
-        if let Some(ref txs) = result.transactions {
-            txs.iter().for_each(|tx| match &tx.transaction {
-                TypedTransaction::Legacy(tx) => match (tx.to.is_none(), &tx.data) {
-                    (true, Some(data)) => {
-                        if let Some(info) = build_output.deploy_bytecode_to_dependencies.get(data) {
-                            only_relevant_predeploys.extend(
-                                info.iter().map(|(_, bcode)| bcode.clone()).collect::<Vec<_>>(),
-                            );
-                        } else {
-                            todo!("not found")
-                        }
-                    }
-                    _ => {}
-                },
-                TypedTransaction::Eip2930(tx) => match (tx.tx.to.is_none(), &tx.tx.data) {
-                    (true, Some(data)) => {
-                        if let Some(info) = build_output.deploy_bytecode_to_dependencies.get(data) {
-                            only_relevant_predeploys.extend(
-                                info.iter().map(|(_, bcode)| bcode.clone()).collect::<Vec<_>>(),
-                            );
-                        } else {
-                            todo!("not found")
-                        }
-                    }
-                    _ => {}
-                },
-                TypedTransaction::Eip1559(tx) => match (tx.to.is_none(), &tx.data) {
-                    (true, Some(data)) => {
-                        if let Some(info) = build_output.deploy_bytecode_to_dependencies.get(data) {
-                            only_relevant_predeploys.extend(
-                                info.iter().map(|(_, bcode)| bcode.clone()).collect::<Vec<_>>(),
-                            );
-                        } else {
-                            todo!("not found")
-                        }
-                    }
-                    _ => {}
-                },
-            });
-        }
-
         if self.debug {
             return self.run_debugger(&decoder, sources, result, project, highlevel_known_contracts)
         }
@@ -135,7 +114,7 @@ impl ScriptArgs {
                 &mut script_config,
                 project,
                 default_known_contracts,
-                only_relevant_predeploys,
+                relevant_predeploys,
                 &mut result,
             )
             .await?
@@ -392,5 +371,74 @@ impl ScriptArgs {
             }
         }
         Ok(())
+    }
+}
+
+fn get_relevant_predeploys(
+    result: &ScriptResult,
+    deploy_bytecode_to_dependencies: &BTreeMap<
+        ethers::types::Bytes,
+        Vec<(String, ethers::types::Bytes)>,
+    >,
+) -> eyre::Result<Vec<ethers::types::Bytes>> {
+    let mut only_relevant_predeploys = vec![];
+    if let Some(ref txs) = result.transactions {
+        for tx in txs.iter() {
+            only_relevant_predeploys
+                .extend(relevant_from_match(tx, deploy_bytecode_to_dependencies)?);
+        }
+    }
+    Ok(only_relevant_predeploys)
+}
+
+fn relevant_from_match(
+    tx: &BroadcastableTransaction,
+    deploy_bytecode_to_dependencies: &BTreeMap<
+        ethers::types::Bytes,
+        Vec<(String, ethers::types::Bytes)>,
+    >,
+) -> eyre::Result<Vec<ethers::types::Bytes>> {
+    match (&tx.transaction.to(), tx.transaction.data()) {
+        (None, Some(data)) => {
+            if let Some(info) = deploy_bytecode_to_dependencies.get(data) {
+                Ok(info.iter().map(|(_, bcode)| bcode.clone()).collect::<Vec<_>>())
+            } else {
+                // try fuzzy get:
+                if let Some(found) = deploy_bytecode_to_dependencies
+                    .iter()
+                    .filter_map(|entry| {
+                        let score = diff_score(entry.0, data);
+                        if score < 0.1 {
+                            Some((OrderedFloat(score), entry))
+                        } else {
+                            None
+                        }
+                    })
+                    .sorted_by_key(|(score, _)| *score)
+                    .next()
+                {
+                    Ok(found.1 .1.iter().map(|(_, bcode)| bcode.clone()).collect::<Vec<_>>())
+                } else {
+                    println!("{:#?}", deploy_bytecode_to_dependencies);
+                    println!("{:#?}", data);
+                    Err(eyre::eyre!("Could not find matching known contract when determining dependencies that need to be deployed for a Create call"))
+                }
+            }
+        }
+        // TODO: Handle create2?
+        // (Some(to), Some(data)) => {
+
+        // },
+        _ => Ok(vec![]),
+    }
+}
+
+fn decrement_nonces(result: &mut ScriptResult, diff: usize) {
+    if let Some(ref mut txs) = result.transactions {
+        for tx in txs.iter_mut() {
+            if let Some(nonce) = tx.transaction.nonce() {
+                tx.transaction.set_nonce(nonce - diff);
+            }
+        }
     }
 }
