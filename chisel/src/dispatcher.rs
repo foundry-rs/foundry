@@ -33,7 +33,7 @@ static CHISEL_CHAR: &str = "⚒️";
 
 /// Chisel input dispatcher
 #[derive(Debug)]
-pub struct ChiselDisptacher {
+pub struct ChiselDispatcher {
     /// The status of the previous dispatch
     pub errored: bool,
     /// A Chisel Session
@@ -107,7 +107,7 @@ pub fn format_source(source: &str, config: FormatterConfig) -> eyre::Result<Stri
     }
 }
 
-impl ChiselDisptacher {
+impl ChiselDispatcher {
     /// Associated public function to create a new Dispatcher instance
     pub fn new(config: &SessionSourceConfig) -> eyre::Result<Self> {
         ChiselSession::new(config).map(|session| Self { errored: false, session })
@@ -682,8 +682,8 @@ impl ChiselDisptacher {
                     // If traces are enabled or there was an error in execution, show the execution
                     // traces.
                     if new_source.config.traces || failed {
-                        if let Ok(decoder) = self.decode_traces(&new_source.config, &mut res) {
-                            if self.show_traces(&decoder, &mut res).await.is_err() {
+                        if let Ok(decoder) = Self::decode_traces(&new_source.config, &mut res) {
+                            if Self::show_traces(&decoder, &mut res).await.is_err() {
                                 self.errored = true;
                                 return DispatchResult::CommandFailed(
                                     "Failed to display traces".to_owned(),
@@ -749,7 +749,6 @@ impl ChiselDisptacher {
     ///
     /// Optionally, a [CallTraceDecoder]
     pub fn decode_traces(
-        &self,
         session_config: &SessionSourceConfig,
         result: &mut ChiselResult,
         // known_contracts: &ContractsByArtifact,
@@ -785,7 +784,6 @@ impl ChiselDisptacher {
     ///
     /// Optionally, a unit type signifying a successful result.
     pub async fn show_traces(
-        &self,
         decoder: &CallTraceDecoder,
         result: &mut ChiselResult,
     ) -> eyre::Result<()> {
