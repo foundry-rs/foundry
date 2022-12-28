@@ -623,12 +623,13 @@ impl ChiselDisptacher {
                 let to_inspect = args[0];
 
                 // Get a mutable reference to the session source
-                let source = match self.session.session_source.as_mut().ok_or(
-                    DispatchResult::CommandFailed(String::from("Session source not present")),
-                ) {
-                    Ok(session_source) => session_source,
-                    Err(e) => return e,
-                };
+                let source =
+                    match self.session.session_source.as_mut().ok_or(DispatchResult::CommandFailed(
+                        "Session source not present".to_string(),
+                    )) {
+                        Ok(session_source) => session_source,
+                        Err(e) => return e,
+                    };
 
                 // Copy the variable's stack contents into a bytes32 variable without updating
                 // the current session source.
@@ -650,9 +651,9 @@ impl ChiselDisptacher {
                     }
                 }
 
-                DispatchResult::CommandFailed(String::from(
-                    "Variable must exist within `run()` function.",
-                ))
+                DispatchResult::CommandFailed(
+                    "Variable must exist within `run()` function.".to_string(),
+                )
             }
         }
     }
