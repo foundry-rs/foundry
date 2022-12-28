@@ -78,6 +78,7 @@ impl ScriptArgs {
         let mut run_dependencies = vec![];
         let mut contract = CompactContractBytecode::default();
         let mut highlevel_known_contracts = BTreeMap::new();
+        #[allow(clippy::mutable_key_type)]
         let mut deploy_bytecode_to_dependencies = BTreeMap::new();
 
         let mut target_fname = dunce::canonicalize(&self.path)

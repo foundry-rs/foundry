@@ -374,6 +374,7 @@ impl ScriptArgs {
     }
 }
 
+#[allow(clippy::mutable_key_type)]
 fn get_relevant_predeploys(
     result: &ScriptResult,
     deploy_bytecode_to_dependencies: &BTreeMap<
@@ -391,6 +392,7 @@ fn get_relevant_predeploys(
     Ok(only_relevant_predeploys)
 }
 
+#[allow(clippy::mutable_key_type)]
 fn relevant_from_match(
     tx: &BroadcastableTransaction,
     deploy_bytecode_to_dependencies: &BTreeMap<
@@ -419,8 +421,6 @@ fn relevant_from_match(
                 {
                     Ok(found.1 .1.iter().map(|(_, bcode)| bcode.clone()).collect::<Vec<_>>())
                 } else {
-                    println!("{:#?}", deploy_bytecode_to_dependencies);
-                    println!("{:#?}", data);
                     Err(eyre::eyre!("Could not find matching known contract when determining dependencies that need to be deployed for a Create call"))
                 }
             }
