@@ -610,6 +610,51 @@ impl ChiselDispatcher {
                     Err(e) => DispatchResult::CommandFailed(e.to_string()),
                 }
             }
+            ChiselCommand::RawStack => {
+                if args.is_empty() {
+                    return DispatchResult::CommandFailed(Self::make_error("No variable supplied!"))
+                } else if args.len() > 1 {
+                    return DispatchResult::CommandFailed(Self::make_error(
+                        "!rawstack only takes one argument.",
+                    ))
+                }
+
+                // Store the variable that we want to inspect
+                let to_inspect = args[0];
+
+                // Get a mutable reference to the session source
+                let source =
+                    match self.session.session_source.as_mut().ok_or(DispatchResult::CommandFailed(
+                        "Session source not present".to_string(),
+                    )) {
+                        Ok(session_source) => session_source,
+                        Err(e) => return e,
+                    };
+
+                // Copy the variable's stack contents into a bytes32 variable without updating
+                // the current session source.
+                if let Ok((mut new_source, _)) = source.clone_with_new_line(format!(
+                    "bytes32 __raw__; assembly {{ __raw__ := {to_inspect} }}"
+                )) {
+                    match new_source.inspect("__raw__").await {
+                        Ok(res) => {
+                            // If the input was inspected, hault here and display the contents
+                            // of the `__raw__` variable's stack allocation.
+                            if let Some(res) = res {
+                                return DispatchResult::CommandSuccess(Some(res))
+                            }
+                        }
+                        Err(e) => {
+                            // If there was an explicit error thrown, hault here.
+                            return DispatchResult::CommandFailed(Self::make_error(e))
+                        }
+                    }
+                }
+
+                DispatchResult::CommandFailed(
+                    "Variable must exist within `run()` function.".to_string(),
+                )
+            }
         }
     }
 

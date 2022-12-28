@@ -47,6 +47,8 @@ pub enum ChiselCommand {
     Fetch,
     /// Executes a shell command
     Exec,
+    /// Display the raw value of a variable's stack allocation.
+    RawStack,
 }
 
 /// Attempt to convert a string slice to a `ChiselCommand`
@@ -70,6 +72,7 @@ impl FromStr for ChiselCommand {
             "export" | "ex" => Ok(ChiselCommand::Export),
             "fetch" | "fe" => Ok(ChiselCommand::Fetch),
             "exec" | "e" => Ok(ChiselCommand::Exec),
+            "rawstack" | "rs" => Ok(ChiselCommand::RawStack),
             _ => Err(ChiselDispatcher::make_error(format!(
                 "Unknown command \"{s}\"! See available commands with `!help`.",
             ))
@@ -129,6 +132,7 @@ impl From<ChiselCommand> for CmdDescriptor {
             // Debug
             ChiselCommand::MemDump => (&["memdump", "md"], "Dump the raw memory of the current state", CmdCategory::Debug),
             ChiselCommand::StackDump => (&["stackdump", "sd"], "Dump the raw stack of the current state", CmdCategory::Debug),
+            ChiselCommand::RawStack => (&["rawstack <var>", "rs <var>"], "Display the raw value of a variable's stack allocation. For variables that are > 32 bytes in length, this will display their memory pointer.", CmdCategory::Debug),
         }
     }
 }
