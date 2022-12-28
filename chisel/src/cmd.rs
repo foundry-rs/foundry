@@ -3,7 +3,7 @@
 //! This module holds the [ChiselCommand] enum, which contains all builtin commands that
 //! can be executed within the REPL.
 
-use crate::prelude::ChiselDisptacher;
+use crate::prelude::ChiselDispatcher;
 use std::{error::Error, str::FromStr};
 use strum::EnumIter;
 

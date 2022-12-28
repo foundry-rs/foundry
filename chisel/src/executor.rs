@@ -2,7 +2,9 @@
 //!
 //! This module contains the execution logic for the [SessionSource].
 
-use crate::prelude::{ChiselResult, ChiselRunner, IntermediateOutput, SessionSource};
+use crate::prelude::{
+    ChiselDispatcher, ChiselResult, ChiselRunner, IntermediateOutput, SessionSource,
+};
 use core::fmt::Debug;
 use ethers::{
     abi::{ethabi, ParamType, Token},
@@ -11,7 +13,10 @@ use ethers::{
 };
 use ethers_solc::Artifact;
 use eyre::{Result, WrapErr};
-use forge::executor::{inspector::CheatsConfig, Backend, ExecutorBuilder};
+use forge::{
+    decode::decode_console_logs,
+    executor::{inspector::CheatsConfig, Backend, ExecutorBuilder},
+};
 use solang_parser::pt::{self, CodeLocation};
 use yansi::Paint;
 
@@ -127,7 +132,7 @@ impl SessionSource {
             return Ok(None)
         };
 
-        let res = if let Ok((_, res)) = source.execute().await { res } else { return Ok(None) };
+        let mut res = if let Ok((_, res)) = source.execute().await { res } else { return Ok(None) };
 
         if let Some((stack, memory, _)) = &res.state {
             let generated_output = source
@@ -168,7 +173,21 @@ impl SessionSource {
                 Ok(Some(format_token(token)))
             })
         } else {
-            eyre::bail!("No state present")
+            if let Ok(decoder) = ChiselDispatcher::decode_traces(&source.config, &mut res) {
+                if ChiselDispatcher::show_traces(&decoder, &mut res).await.is_err() {
+                    eyre::bail!("Failed to display traces");
+                };
+
+                // Show console logs, if there are any
+                let decoded_logs = decode_console_logs(&res.logs);
+                if !decoded_logs.is_empty() {
+                    println!("{}", Paint::green("Logs:"));
+                    for log in decoded_logs {
+                        println!("  {log}");
+                    }
+                }
+            }
+            eyre::bail!("Failed to inspect expression")
         }
     }
 
