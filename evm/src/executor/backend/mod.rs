@@ -18,8 +18,8 @@ pub use in_memory_db::MemDb;
 use revm::{
     db::{CacheDB, DatabaseRef},
     precompiles::Precompiles,
-    return_ok, Account, AccountInfo, Bytecode, CreateScheme, Database, DatabaseCommit, Env,
-    ExecutionResult, Inspector, JournaledState, Log, Return, SpecId, TransactTo, EVM, KECCAK_EMPTY,
+    Account, AccountInfo, Bytecode, CreateScheme, Database, DatabaseCommit, Env, ExecutionResult,
+    Inspector, JournaledState, Log, SpecId, TransactTo, EVM, KECCAK_EMPTY,
 };
 use std::collections::{HashMap, HashSet};
 use tracing::{trace, warn};
@@ -1691,7 +1691,7 @@ fn commit_transaction(
 ) {
     configure_tx_env(&mut env, &tx);
 
-    let (result, state) = {
+    let (_, state) = {
         let mut evm = EVM::new();
         evm.env = env;
 
@@ -1705,9 +1705,7 @@ fn commit_transaction(
         }
     };
 
-    if let return_ok!() = result.exit_reason {
-        apply_state_changeset(state, journaled_state, fork);
-    }
+    apply_state_changeset(state, journaled_state, fork);
 }
 
 /// Applies the changeset of a transaction to the active journaled state and also commits it in the
