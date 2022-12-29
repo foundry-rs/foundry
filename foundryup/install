@@ -18,21 +18,21 @@ BIN_URL="https://raw.githubusercontent.com/foundry-rs/foundry/master/foundryup/f
 BIN_PATH="$FOUNDRY_BIN_DIR/foundryup"
 
 # Create the .foundry bin directory and foundryup binary if it doesn't exist.
-mkdir -p $FOUNDRY_BIN_DIR
+mkdir -p "$FOUNDRY_BIN_DIR"
 readonly CURL_FLAGS="${CURL_FLAGS:- -# -vvv --max-time 120 --retry 3 --fail}"
 
 # we deliberately don't quote CURL_FLAGS
 # shellcheck disable=SC2086 
-curl ${CURL_FLAGS}  "${BIN_UR}" -o "${BIN_PATH}"
+curl ${CURL_FLAGS}  "${BIN_URL}" -o "${BIN_PATH}"
 if ! $? -ne 0; then
 	>&2 echo -e "${FAIL_MARK} Error: failed to download Foundry - $?"
 	exit 2
 fi
 echo -e "${CLEAR_LAST_MSG}${SUCCESS_MARK} Installing Foundry"
-chmod +x $BIN_PATH
+chmod +x "$BIN_PATH"
 
 # Create the man directory for future man files if it doesn't exist.
-mkdir -p $FOUNDRY_MAN_DIR
+mkdir -p "$FOUNDRY_MAN_DIR"
 
 # Store the correct profile file (i.e. .profile for bash or .zshrc for ZSH).
 case $SHELL in
@@ -60,15 +60,50 @@ esac
 # Only add foundryup if it isn't already in PATH.
 if [[ ":$PATH:" != *":${FOUNDRY_BIN_DIR}:"* ]]; then
     # Add the foundryup directory to the path and ensure the old PATH variables remain.
-    echo >> $PROFILE && echo "export PATH=\"\$PATH:$FOUNDRY_BIN_DIR\"" >> $PROFILE
+    echo >> "$PROFILE" && echo "export PATH=\"\$PATH:$FOUNDRY_BIN_DIR\"" >> "$PROFILE"
 fi
 
 # Warn MacOS users that they may need to manually install libusb via Homebrew:
-if [[ "$OSTYPE" =~ ^darwin && ! -f /opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib ]]; then
-    echo && echo "⚠️ Warning: libusb not found. You may need to install it manually on macOS via Homebrew (brew install libusb)."
+#if [[ "$OSTYPE" =~ ^darwin && ! -f /opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib ]]; then
+if [[ "$OSTYPE" =~ ^darwin ]]; then
+
+    brew_prefix=$(brew --prefix)
+    if [[ $(uname -m) == 'arm64' ]]; then
+      echo "** Running on a Apple Silicon M1"
+      export expected_prefix=/opt/homebrew
+    else
+      echo "** Running on a Apple x86"
+      export expected_prefix=/usr/local
+    fi
+
+    # Ensure that we have libgit2's dependencies installed.
+    installed=$(brew list)
+
+    REQUIRED_TOOLS="libusb"
+    for tool in $REQUIRED_TOOLS
+    do
+        # Skip packages that are already installed.
+        echo "$installed" | grep -q "$tool" && code=$? || code=$?
+
+        if [ "$code" -eq "0" ]
+        then
+            echo "*** $tool is available"
+            continue
+        elif [ "$code" -ne "1" ]
+        then
+            exit "$code"
+        fi
+
+        echo "*** Installing $tool with Homebrew..."
+        brew install "$tool"
+    done
+
+echo -e "${CLEAR_LAST_MSG}${SUCCESS_MARK} Foundryup setup OK"
+
 fi
 
 echo && echo "Detected your preferred shell is ${PREF_SHELL} and added foundryup to PATH. Run 'source ${PROFILE}' or start a new terminal session to use foundryup."
 echo "Then, simply run 'foundryup' to install Foundry."
 echo
 echo -e "${CLEAR_LAST_MSG}${SUCCESS_MARK} Foundryup successfully installed!"
+sleep 1
