@@ -9,12 +9,12 @@ readme = "README.md"
 
 [dependencies]
 # eth
-ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = [
+ethers-core = { git = "https://github.com/iFrostizz/ethers-rs", rev = "2e4b749", default-features = false }
+ethers-solc = { git = "https://github.com/iFrostizz/ethers-rs", rev = "2e4b749", default-features = false, features = [
     "async",
     "svm-solc",
 ] }
-ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-etherscan = { git = "https://github.com/iFrostizz/ethers-rs", rev = "2e4b749", default-features = false }
 
 # formats
 Inflector = "0.11.4"
