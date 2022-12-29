@@ -37,7 +37,7 @@ pub struct EthereumOpts {
     #[serde(skip)]
     pub chain: Option<Chain>,
 
-    #[clap(flatten, next_help_heading = "WALLET OPTIONS")]
+    #[clap(flatten, next_help_heading = "Wallet options")]
     #[serde(skip)]
     pub wallet: Wallet,
 }

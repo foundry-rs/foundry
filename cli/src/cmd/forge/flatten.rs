@@ -21,7 +21,7 @@ pub struct FlattenArgs {
     )]
     pub output: Option<PathBuf>,
 
-    #[clap(flatten, next_help_heading = "PROJECT OPTIONS")]
+    #[clap(flatten, next_help_heading = "Project options")]
     project_paths: ProjectPathsArgs,
 }
 

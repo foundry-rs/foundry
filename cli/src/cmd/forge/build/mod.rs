@@ -75,7 +75,7 @@ pub struct BuildArgs {
     #[serde(skip)]
     pub skip: Option<Vec<SkipBuildFilter>>,
 
-    #[clap(flatten, next_help_heading = "WATCH OPTIONS")]
+    #[clap(flatten, next_help_heading = "Watch options")]
     #[serde(skip)]
     pub watch: WatchArgs,
 }

@@ -27,9 +27,9 @@ pub struct SendTxArgs {
         help = "Only print the transaction hash and exit immediately."
     )]
     cast_async: bool,
-    #[clap(flatten, next_help_heading = "TRANSACTION OPTIONS")]
+    #[clap(flatten, next_help_heading = "Transaction options")]
     tx: TransactionOpts,
-    #[clap(flatten, next_help_heading = "ETHEREUM OPTIONS")]
+    #[clap(flatten, next_help_heading = "Ethereum options")]
     eth: EthereumOpts,
     #[clap(
         short,
@@ -39,7 +39,7 @@ pub struct SendTxArgs {
         value_name = "CONFIRMATIONS"
     )]
     confirmations: usize,
-    #[clap(long = "json", short = 'j', help_heading = "DISPLAY OPTIONS")]
+    #[clap(long = "json", short = 'j', help_heading = "Display options")]
     to_json: bool,
     #[clap(
         long = "resend",

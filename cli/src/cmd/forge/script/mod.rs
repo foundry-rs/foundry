@@ -124,13 +124,13 @@ pub struct ScriptArgs {
     )]
     pub gas_estimate_multiplier: u64,
 
-    #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
+    #[clap(flatten, next_help_heading = "Build options")]
     pub opts: BuildArgs,
 
     #[clap(flatten)]
     pub wallets: MultiWallet,
 
-    #[clap(flatten, next_help_heading = "EVM OPTIONS")]
+    #[clap(flatten, next_help_heading = "Evm options")]
     pub evm_opts: EvmArgs,
 
     #[clap(

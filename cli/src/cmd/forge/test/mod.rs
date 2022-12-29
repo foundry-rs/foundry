@@ -74,10 +74,10 @@ pub struct TestArgs {
     allow_failure: bool,
 
     /// Output test results in JSON format.
-    #[clap(long, short, help_heading = "DISPLAY OPTIONS")]
+    #[clap(long, short, help_heading = "Display options")]
     json: bool,
 
-    #[clap(flatten, next_help_heading = "EVM OPTIONS")]
+    #[clap(flatten, next_help_heading = "Evm options")]
     evm_opts: EvmArgs,
 
     #[clap(
@@ -88,14 +88,14 @@ pub struct TestArgs {
     )]
     etherscan_api_key: Option<String>,
 
-    #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
+    #[clap(flatten, next_help_heading = "Build options")]
     opts: CoreBuildArgs,
 
-    #[clap(flatten, next_help_heading = "WATCH OPTIONS")]
+    #[clap(flatten, next_help_heading = "Watch options")]
     pub watch: WatchArgs,
 
     /// List tests instead of running them
-    #[clap(long, short, help_heading = "DISPLAY OPTIONS")]
+    #[clap(long, short, help_heading = "Display options")]
     list: bool,
 
     #[clap(

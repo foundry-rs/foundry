@@ -50,18 +50,18 @@ pub struct CreateArgs {
     )]
     constructor_args_path: Option<PathBuf>,
 
-    #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
+    #[clap(flatten, next_help_heading = "Build options")]
     opts: CoreBuildArgs,
 
-    #[clap(flatten, next_help_heading = "TRANSACTION OPTIONS")]
+    #[clap(flatten, next_help_heading = "Transaction options")]
     tx: TransactionOpts,
 
-    #[clap(flatten, next_help_heading = "ETHEREUM OPTIONS")]
+    #[clap(flatten, next_help_heading = "Ethereum options")]
     eth: EthereumOpts,
 
     #[clap(
         long = "json",
-        help_heading = "DISPLAY OPTIONS",
+        help_heading = "Display options",
         help = "Print the deployment information as JSON."
     )]
     json: bool,

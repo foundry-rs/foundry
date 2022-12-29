@@ -23,7 +23,7 @@ pub struct CallArgs {
     sig: Option<String>,
     #[clap(help = "The arguments of the function to call.", value_name = "ARGS")]
     args: Vec<String>,
-    #[clap(flatten, next_help_heading = "TRANSACTION OPTIONS")]
+    #[clap(flatten, next_help_heading = "Transaction options")]
     tx: TransactionOpts,
     #[clap(flatten)]
     // TODO: We only need RPC URL and Etherscan API key here.

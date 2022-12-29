@@ -37,7 +37,7 @@ pub static RE_BASIC_SNAPSHOT_ENTRY: Lazy<Regex> = Lazy::new(|| {
 #[derive(Debug, Clone, Parser)]
 pub struct SnapshotArgs {
     /// All test arguments are supported
-    #[clap(flatten, next_help_heading = "TEST OPTIONS")]
+    #[clap(flatten, next_help_heading = "Test options")]
     pub(crate) test: test::TestArgs,
 
     /// Additional configs for test results

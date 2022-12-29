@@ -32,10 +32,10 @@ pub struct DebugArgs {
     #[clap(long)]
     pub debug: bool,
 
-    #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
+    #[clap(flatten, next_help_heading = "Build options")]
     pub opts: CoreBuildArgs,
 
-    #[clap(flatten, next_help_heading = "EVM OPTIONS")]
+    #[clap(flatten, next_help_heading = "Evm options")]
     pub evm_opts: EvmArgs,
 }
 

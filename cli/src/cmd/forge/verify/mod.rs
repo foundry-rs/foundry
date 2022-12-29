@@ -20,7 +20,7 @@ pub struct VerifierArgs {
     #[clap(
         value_enum,
         long = "verifier",
-        help_heading = "Verification Provider",
+        help_heading = "Verification provider",
         help = "Contract verification provider to use `etherscan`, `sourcify` or `blockscout`",
         default_value = "etherscan"
     )]
@@ -121,7 +121,7 @@ pub struct VerifyArgs {
     pub retry: RetryArgs,
 
     #[clap(
-        help_heading = "LINKER OPTIONS",
+        help_heading = "Linker options",
         help = "Set pre-linked libraries.",
         long,
         env = "DAPP_LIBRARIES",
