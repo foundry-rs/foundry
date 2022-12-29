@@ -14,6 +14,7 @@ use std::path::PathBuf;
 
 /// Aggregates commonly used arguments related to paths
 #[derive(Debug, Clone, Parser, Serialize, Default)]
+#[clap(next_help_heading = "Project options")]
 pub struct ProjectPathsArgs {
     #[clap(
         help = "The project's root path.",

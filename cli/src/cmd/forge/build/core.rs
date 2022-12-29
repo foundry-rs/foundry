@@ -20,6 +20,7 @@ use std::path::PathBuf;
 
 /// Various arguments used by multiple subcommands
 #[derive(Debug, Clone, Parser, Serialize, Default)]
+#[clap(next_help_heading = "Build options")]
 pub struct CoreBuildArgs {
     #[clap(
         help_heading = "Cache options",
@@ -39,7 +40,7 @@ pub struct CoreBuildArgs {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub libraries: Vec<String>,
 
-    #[clap(flatten, next_help_heading = "Compiler options")]
+    #[clap(flatten)]
     #[serde(flatten)]
     pub compiler: CompilerArgs,
 
@@ -88,7 +89,7 @@ pub struct CoreBuildArgs {
     #[serde(skip)]
     pub via_ir: bool,
 
-    #[clap(flatten, next_help_heading = "Project options")]
+    #[clap(flatten)]
     #[serde(flatten)]
     pub project_paths: ProjectPathsArgs,
 

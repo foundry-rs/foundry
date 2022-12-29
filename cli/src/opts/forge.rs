@@ -164,6 +164,7 @@ pub enum Subcommands {
 //
 // See also [`BuildArgs`]
 #[derive(Default, Debug, Clone, Parser, Serialize)]
+#[clap(next_help_heading = "Compiler options")]
 pub struct CompilerArgs {
     #[clap(help = "The target EVM version.", long, value_name = "VERSION")]
     #[serde(skip_serializing_if = "Option::is_none")]

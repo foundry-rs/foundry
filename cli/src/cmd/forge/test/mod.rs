@@ -43,6 +43,7 @@ use foundry_config::figment::{
 foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
 
 #[derive(Debug, Clone, Parser)]
+#[clap(next_help_heading = "Test options")]
 pub struct TestArgs {
     #[clap(flatten)]
     filter: Filter,
@@ -77,7 +78,7 @@ pub struct TestArgs {
     #[clap(long, short, help_heading = "Display options")]
     json: bool,
 
-    #[clap(flatten, next_help_heading = "Evm options")]
+    #[clap(flatten)]
     evm_opts: EvmArgs,
 
     #[clap(
@@ -88,10 +89,10 @@ pub struct TestArgs {
     )]
     etherscan_api_key: Option<String>,
 
-    #[clap(flatten, next_help_heading = "Build options")]
+    #[clap(flatten)]
     opts: CoreBuildArgs,
 
-    #[clap(flatten, next_help_heading = "Watch options")]
+    #[clap(flatten)]
     pub watch: WatchArgs,
 
     /// List tests instead of running them

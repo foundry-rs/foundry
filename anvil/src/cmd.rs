@@ -28,7 +28,7 @@ use tracing::{error, trace};
 
 #[derive(Clone, Debug, Parser)]
 pub struct NodeArgs {
-    #[clap(flatten, next_help_heading = "EVM options")]
+    #[clap(flatten)]
     pub evm_opts: AnvilEvmArgs,
 
     #[clap(
@@ -75,7 +75,7 @@ pub struct NodeArgs {
     )]
     pub derivation_path: Option<String>,
 
-    #[clap(flatten, next_help_heading = "Server options")]
+    #[clap(flatten)]
     pub server_config: ServerConfig,
 
     #[clap(long, help = "Don't print anything on startup.")]
@@ -318,6 +318,7 @@ impl NodeArgs {
 
 // Anvil's evm related arguments
 #[derive(Debug, Clone, Parser)]
+#[clap(next_help_heading = "EVM options")]
 pub struct AnvilEvmArgs {
     /// Fetch state over a remote endpoint instead of starting from an empty state.
     ///

@@ -36,6 +36,7 @@ The wallet options can either be:
 6. Private Key (interactively via secure prompt)
 "#
 )]
+#[clap(next_help_heading = "Wallet options")]
 pub struct Wallet {
     #[clap(
         long,

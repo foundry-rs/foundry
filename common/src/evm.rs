@@ -35,6 +35,7 @@ use serde::Serialize;
 /// # }
 /// ```
 #[derive(Debug, Clone, Default, Parser, Serialize)]
+#[clap(next_help_heading = "EVM options")]
 pub struct EvmArgs {
     /// Fetch state over a remote endpoint instead of starting from an empty state.
     ///

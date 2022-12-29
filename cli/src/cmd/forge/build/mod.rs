@@ -54,6 +54,7 @@ foundry_config::merge_impl_figment_convert!(BuildArgs, args);
 /// Some arguments are marked as `#[serde(skip)]` and require manual processing in
 /// `figment::Provider` implementation
 #[derive(Debug, Clone, Parser, Serialize, Default)]
+#[clap(next_help_heading = "Build options")]
 pub struct BuildArgs {
     #[clap(flatten)]
     #[serde(flatten)]
@@ -75,7 +76,7 @@ pub struct BuildArgs {
     #[serde(skip)]
     pub skip: Option<Vec<SkipBuildFilter>>,
 
-    #[clap(flatten, next_help_heading = "Watch options")]
+    #[clap(flatten)]
     #[serde(skip)]
     pub watch: WatchArgs,
 }

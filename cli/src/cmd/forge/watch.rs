@@ -20,6 +20,7 @@ use watchexec::{
 };
 
 #[derive(Debug, Clone, Parser, Default)]
+#[clap(next_help_heading = "Watch options")]
 pub struct WatchArgs {
     /// File update debounce delay
     ///

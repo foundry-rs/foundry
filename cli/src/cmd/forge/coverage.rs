@@ -48,13 +48,13 @@ pub struct CoverageArgs {
     )]
     report: Vec<CoverageReportKind>,
 
-    #[clap(flatten, next_help_heading = "Test filtering")]
+    #[clap(flatten)]
     filter: Filter,
 
-    #[clap(flatten, next_help_heading = "Evm options")]
+    #[clap(flatten)]
     evm_opts: EvmArgs,
 
-    #[clap(flatten, next_help_heading = "Build options")]
+    #[clap(flatten)]
     opts: CoreBuildArgs,
 }
 

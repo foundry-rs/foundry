@@ -9,6 +9,7 @@ use std::{fmt, path::Path, str::FromStr};
 ///
 /// See also `FileFilter`
 #[derive(Clone, Parser)]
+#[clap(next_help_heading = "Test filtering")]
 pub struct Filter {
     /// Only run test functions matching the specified regex pattern.
     ///

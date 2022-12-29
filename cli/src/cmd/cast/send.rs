@@ -27,9 +27,9 @@ pub struct SendTxArgs {
         help = "Only print the transaction hash and exit immediately."
     )]
     cast_async: bool,
-    #[clap(flatten, next_help_heading = "Transaction options")]
+    #[clap(flatten)]
     tx: TransactionOpts,
-    #[clap(flatten, next_help_heading = "Ethereum options")]
+    #[clap(flatten)]
     eth: EthereumOpts,
     #[clap(
         short,

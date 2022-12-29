@@ -20,7 +20,7 @@ pub struct TreeArgs {
         value_name = "CHARSET"
     )]
     charset: Charset,
-    #[clap(flatten, next_help_heading = "Project options")]
+    #[clap(flatten)]
     opts: ProjectPathsArgs,
 }
 

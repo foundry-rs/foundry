@@ -23,11 +23,10 @@ pub struct CallArgs {
     sig: Option<String>,
     #[clap(help = "The arguments of the function to call.", value_name = "ARGS")]
     args: Vec<String>,
-    #[clap(flatten, next_help_heading = "Transaction options")]
+    #[clap(flatten)]
     tx: TransactionOpts,
     #[clap(flatten)]
-    // TODO: We only need RPC URL and Etherscan API key here.
-    eth: EthereumOpts,
+    eth: EthereumOpts, // TODO: We only need RPC URL and Etherscan API key from here.
     #[clap(long, short, help = "the block you want to query, can also be earliest/latest/pending", value_parser = parse_block_id, value_name = "BLOCK")]
     block: Option<BlockId>,
     #[clap(subcommand)]

@@ -34,10 +34,10 @@ pub(crate) const VERSION_MESSAGE: &str = concat!(
 #[derive(Debug, Parser)]
 #[clap(name = "chisel", version = VERSION_MESSAGE)]
 pub struct ChiselParser {
-    #[clap(flatten, next_help_heading = "Build options")]
+    #[clap(flatten)]
     pub opts: BuildArgs,
 
-    #[clap(flatten, next_help_heading = "Evm options")]
+    #[clap(flatten)]
     pub evm_opts: EvmArgs,
 
     #[command(subcommand)]

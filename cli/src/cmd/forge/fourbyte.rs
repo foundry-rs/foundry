@@ -25,7 +25,7 @@ pub struct UploadSelectorsArgs {
     )]
     pub all: bool,
 
-    #[clap(flatten, next_help_heading = "Project options")]
+    #[clap(flatten)]
     pub project_paths: ProjectPathsArgs,
 }
 
