@@ -36,7 +36,7 @@ use tracing::trace;
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(CoverageArgs, opts, evm_opts);
 
-/// Generate coverage reports for your tests.
+/// CLI arguments for `forge coverage`.
 #[derive(Debug, Clone, Parser)]
 pub struct CoverageArgs {
     #[clap(
@@ -48,13 +48,13 @@ pub struct CoverageArgs {
     )]
     report: Vec<CoverageReportKind>,
 
-    #[clap(flatten, next_help_heading = "TEST FILTERING")]
+    #[clap(flatten)]
     filter: Filter,
 
-    #[clap(flatten, next_help_heading = "EVM OPTIONS")]
+    #[clap(flatten)]
     evm_opts: EvmArgs,
 
-    #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
+    #[clap(flatten)]
     opts: CoreBuildArgs,
 }
 

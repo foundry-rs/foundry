@@ -28,7 +28,7 @@ use tracing::{error, trace};
 
 #[derive(Clone, Debug, Parser)]
 pub struct NodeArgs {
-    #[clap(flatten, next_help_heading = "EVM OPTIONS")]
+    #[clap(flatten)]
     pub evm_opts: AnvilEvmArgs,
 
     #[clap(
@@ -75,7 +75,7 @@ pub struct NodeArgs {
     )]
     pub derivation_path: Option<String>,
 
-    #[clap(flatten, next_help_heading = "SERVER OPTIONS")]
+    #[clap(flatten)]
     pub server_config: ServerConfig,
 
     #[clap(long, help = "Don't print anything on startup.")]
@@ -114,7 +114,7 @@ pub struct NodeArgs {
         help = "The host the server will listen on",
         value_name = "IP_ADDR",
         env = "ANVIL_IP_ADDR",
-        help_heading = "SERVER OPTIONS"
+        help_heading = "Server options"
     )]
     pub host: Option<IpAddr>,
 
@@ -316,8 +316,9 @@ impl NodeArgs {
     }
 }
 
-// Anvil's evm related arguments
+/// Anvil's EVM related arguments.
 #[derive(Debug, Clone, Parser)]
+#[clap(next_help_heading = "EVM options")]
 pub struct AnvilEvmArgs {
     /// Fetch state over a remote endpoint instead of starting from an empty state.
     ///
@@ -327,7 +328,7 @@ pub struct AnvilEvmArgs {
         short,
         visible_alias = "rpc-url",
         value_name = "URL",
-        help_heading = "FORK CONFIG"
+        help_heading = "Fork config"
     )]
     pub fork_url: Option<ForkUrl>,
 
@@ -337,7 +338,7 @@ pub struct AnvilEvmArgs {
     #[clap(
         long = "timeout",
         name = "timeout",
-        help_heading = "FORK CONFIG",
+        help_heading = "Fork config",
         requires = "fork_url"
     )]
     pub fork_request_timeout: Option<u64>,
@@ -348,7 +349,7 @@ pub struct AnvilEvmArgs {
     #[clap(
         long = "retries",
         name = "retries",
-        help_heading = "FORK CONFIG",
+        help_heading = "Fork config",
         requires = "fork_url"
     )]
     pub fork_request_retries: Option<u32>,
@@ -356,13 +357,13 @@ pub struct AnvilEvmArgs {
     /// Fetch state from a specific block number over a remote endpoint.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork_url", value_name = "BLOCK", help_heading = "FORK CONFIG")]
+    #[clap(long, requires = "fork_url", value_name = "BLOCK", help_heading = "Fork config")]
     pub fork_block_number: Option<u64>,
 
     /// Initial retry backoff on encountering errors.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork_url", value_name = "BACKOFF", help_heading = "FORK CONFIG")]
+    #[clap(long, requires = "fork_url", value_name = "BACKOFF", help_heading = "Fork config")]
     pub fork_retry_backoff: Option<u64>,
 
     /// Specify chain id to skip fetching it from remote endpoint. This enables offline-start mode.
@@ -372,7 +373,7 @@ pub struct AnvilEvmArgs {
     /// remote.
     #[clap(
         long,
-        help_heading = "FORK CONFIG",
+        help_heading = "Fork config",
         value_name = "CHAIN",
         requires = "fork_block_number"
     )]
@@ -389,7 +390,7 @@ pub struct AnvilEvmArgs {
         requires = "fork_url",
         alias = "cups",
         value_name = "CUPS",
-        help_heading = "FORK CONFIG"
+        help_heading = "Fork config"
     )]
     pub compute_units_per_second: Option<u64>,
 
@@ -404,7 +405,7 @@ pub struct AnvilEvmArgs {
         requires = "fork_url",
         value_name = "NO_RATE_LIMITS",
         help = "Disables rate limiting for this node provider.",
-        help_heading = "FORK CONFIG"
+        help_heading = "Fork config"
     )]
     pub no_rate_limit: bool,
 
@@ -415,20 +416,20 @@ pub struct AnvilEvmArgs {
     /// This flag overrides the project's configuration file.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork_url", help_heading = "FORK CONFIG")]
+    #[clap(long, requires = "fork_url", help_heading = "Fork config")]
     pub no_storage_caching: bool,
 
     /// The block gas limit.
-    #[clap(long, value_name = "GAS_LIMIT", help_heading = "ENVIRONMENT CONFIG")]
+    #[clap(long, value_name = "GAS_LIMIT", help_heading = "Environment config")]
     pub gas_limit: Option<u64>,
 
     /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests. By
     /// default, it is 0x6000 (~25kb).
-    #[clap(long, value_name = "CODE_SIZE", help_heading = "ENVIRONMENT CONFIG")]
+    #[clap(long, value_name = "CODE_SIZE", help_heading = "Environment config")]
     pub code_size_limit: Option<usize>,
 
     /// The gas price.
-    #[clap(long, value_name = "GAS_PRICE", help_heading = "ENVIRONMENT CONFIG")]
+    #[clap(long, value_name = "GAS_PRICE", help_heading = "Environment config")]
     pub gas_price: Option<u64>,
 
     /// The base fee in a block.
@@ -436,12 +437,12 @@ pub struct AnvilEvmArgs {
         long,
         visible_alias = "base-fee",
         value_name = "FEE",
-        help_heading = "ENVIRONMENT CONFIG"
+        help_heading = "Environment config"
     )]
     pub block_base_fee_per_gas: Option<u64>,
 
     /// The chain ID.
-    #[clap(long, alias = "chain", value_name = "CHAIN_ID", help_heading = "ENVIRONMENT CONFIG")]
+    #[clap(long, alias = "chain", value_name = "CHAIN_ID", help_heading = "Environment config")]
     pub chain_id: Option<Chain>,
 
     #[clap(

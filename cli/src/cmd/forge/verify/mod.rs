@@ -20,7 +20,7 @@ pub struct VerifierArgs {
     #[clap(
         value_enum,
         long = "verifier",
-        help_heading = "Verification Provider",
+        help_heading = "Verification provider",
         help = "Contract verification provider to use `etherscan`, `sourcify` or `blockscout`",
         default_value = "etherscan"
     )]
@@ -41,7 +41,7 @@ impl Default for VerifierArgs {
     }
 }
 
-/// Verification arguments
+/// CLI arguments for `forge verify`.
 #[derive(Debug, Clone, Parser)]
 pub struct VerifyArgs {
     #[clap(help = "The address of the contract to verify.", value_name = "ADDRESS")]
@@ -117,11 +117,11 @@ pub struct VerifyArgs {
     #[clap(long, help = "Wait for verification result after submission")]
     pub watch: bool,
 
-    #[clap(flatten, help = "Allows to use retry arguments for contract verification")]
+    #[clap(flatten)]
     pub retry: RetryArgs,
 
     #[clap(
-        help_heading = "LINKER OPTIONS",
+        help_heading = "Linker options",
         help = "Set pre-linked libraries.",
         long,
         env = "DAPP_LIBRARIES",

@@ -22,6 +22,7 @@ use serde_json::{to_value, Value};
 use std::{fmt, str::FromStr};
 use tracing::trace;
 
+/// CLI arguments for `forge inspect`.
 #[derive(Debug, Clone, Parser)]
 pub struct InspectArgs {
     #[clap(

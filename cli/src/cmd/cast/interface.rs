@@ -8,6 +8,7 @@ use foundry_config::Config;
 use futures::future::BoxFuture;
 use std::path::{Path, PathBuf};
 
+/// CLI arguments for `cast interface`.
 #[derive(Debug, Clone, Parser)]
 pub struct InterfaceArgs {
     #[clap(

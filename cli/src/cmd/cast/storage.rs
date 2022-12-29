@@ -25,6 +25,7 @@ use semver::Version;
 /// https://github.com/ethereum/solidity/blob/develop/Changelog.md#065-2020-04-06
 const MIN_SOLC: Version = Version::new(0, 6, 5);
 
+/// CLI arguments for `cast storage`.
 #[derive(Debug, Clone, Parser)]
 pub struct StorageArgs {
     // Storage

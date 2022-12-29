@@ -76,6 +76,7 @@ pub use transaction::TransactionWithMetadata;
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(ScriptArgs, opts, evm_opts);
 
+/// CLI arguments for `forge script`.
 #[derive(Debug, Clone, Parser, Default)]
 pub struct ScriptArgs {
     /// The contract you want to run. Either the file path or contract name.
@@ -124,13 +125,13 @@ pub struct ScriptArgs {
     )]
     pub gas_estimate_multiplier: u64,
 
-    #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
+    #[clap(flatten)]
     pub opts: BuildArgs,
 
     #[clap(flatten)]
     pub wallets: MultiWallet,
 
-    #[clap(flatten, next_help_heading = "EVM OPTIONS")]
+    #[clap(flatten)]
     pub evm_opts: EvmArgs,
 
     #[clap(
@@ -189,7 +190,7 @@ pub struct ScriptArgs {
     )]
     pub with_gas_price: Option<U256>,
 
-    #[clap(flatten, help = "Allows to use retry arguments for contract verification")]
+    #[clap(flatten)]
     pub retry: RetryArgs,
 }
 

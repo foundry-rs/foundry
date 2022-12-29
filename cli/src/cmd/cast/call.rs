@@ -19,17 +19,23 @@ use foundry_config::{Chain, Config};
 pub struct CallArgs {
     #[clap(help = "The destination of the transaction.", value_parser = parse_name_or_address, value_name = "TO")]
     to: Option<NameOrAddress>,
+
     #[clap(help = "The signature of the function to call.", value_name = "SIG")]
     sig: Option<String>,
+
     #[clap(help = "The arguments of the function to call.", value_name = "ARGS")]
     args: Vec<String>,
-    #[clap(flatten, next_help_heading = "TRANSACTION OPTIONS")]
-    tx: TransactionOpts,
+
     #[clap(flatten)]
-    // TODO: We only need RPC URL and Etherscan API key here.
+    tx: TransactionOpts,
+
+    // TODO: We only need RPC URL and Etherscan API key from here.
+    #[clap(flatten)]
     eth: EthereumOpts,
+
     #[clap(long, short, help = "the block you want to query, can also be earliest/latest/pending", value_parser = parse_block_id, value_name = "BLOCK")]
     block: Option<BlockId>,
+
     #[clap(subcommand)]
     command: Option<CallSubcommands>,
 }
