@@ -19,7 +19,7 @@ use std::{
 };
 use yansi::Paint;
 
-/// Command to initialize a new forge project
+/// CLI arguments for `forge init`.
 #[derive(Debug, Clone, Parser)]
 pub struct InitArgs {
     #[clap(

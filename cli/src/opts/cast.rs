@@ -749,7 +749,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
     },
 }
 
-/// Common args for ToHex, ToDec, ToBase
+/// CLI arguments for `cast --to-base`.
 #[derive(Debug, Parser)]
 pub struct ToBaseArgs {
     #[clap(allow_hyphen_values = true, value_name = "VALUE")]

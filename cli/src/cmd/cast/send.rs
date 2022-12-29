@@ -7,6 +7,7 @@ use foundry_common::try_get_http_provider;
 use foundry_config::{Chain, Config};
 use std::sync::Arc;
 
+/// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
 pub struct SendTxArgs {
     #[clap(

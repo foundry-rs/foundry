@@ -42,6 +42,7 @@ use foundry_config::figment::{
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
 
+/// CLI arguments for `forge test`.
 #[derive(Debug, Clone, Parser)]
 #[clap(next_help_heading = "Test options")]
 pub struct TestArgs {

@@ -18,7 +18,6 @@ use foundry_config::{
 use serde::Serialize;
 use std::path::PathBuf;
 
-/// Various arguments used by multiple subcommands
 #[derive(Debug, Clone, Parser, Serialize, Default)]
 #[clap(next_help_heading = "Build options")]
 pub struct CoreBuildArgs {

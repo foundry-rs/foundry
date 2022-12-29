@@ -13,6 +13,7 @@ use rayon::prelude::*;
 use regex::RegexSetBuilder;
 use std::{str::FromStr, time::Instant};
 
+/// CLI arguments for `cast create2`.
 #[derive(Debug, Clone, Parser)]
 pub struct Create2Args {
     #[clap(

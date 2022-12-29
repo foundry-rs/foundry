@@ -7,6 +7,7 @@ use std::path::PathBuf;
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(DebugArgs, opts, evm_opts);
 
+/// CLI arguments for `forge debug`.
 #[derive(Debug, Clone, Parser)]
 pub struct DebugArgs {
     /// The contract you want to run. Either the file path or contract name.

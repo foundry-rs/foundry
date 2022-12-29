@@ -2,7 +2,7 @@ use crate::HeaderValue;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::str::FromStr;
 
-/// Additional server settings
+/// Additional server options.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "clap", derive(clap::Parser), clap(next_help_heading = "Server options"))]
 pub struct ServerConfig {

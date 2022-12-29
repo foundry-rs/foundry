@@ -316,7 +316,7 @@ impl NodeArgs {
     }
 }
 
-// Anvil's evm related arguments
+/// Anvil's EVM related arguments.
 #[derive(Debug, Clone, Parser)]
 #[clap(next_help_heading = "EVM options")]
 pub struct AnvilEvmArgs {

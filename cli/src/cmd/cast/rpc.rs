@@ -6,6 +6,7 @@ use foundry_common::try_get_http_provider;
 use futures::future::BoxFuture;
 use itertools::Itertools;
 
+/// CLI arguments for `cast rpc`.
 #[derive(Debug, Clone, Parser)]
 pub struct RpcArgs {
     #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]

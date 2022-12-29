@@ -22,6 +22,7 @@ use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
 use tracing::log::trace;
 
+/// CLI arguments for `forge create`.
 #[derive(Debug, Clone, Parser)]
 pub struct CreateArgs {
     #[clap(
@@ -79,7 +80,7 @@ pub struct CreateArgs {
     #[clap(flatten)]
     pub verifier: verify::VerifierArgs,
 
-    #[clap(flatten, help = "Allows to use retry arguments for contract verification")]
+    #[clap(flatten)]
     retry: RetryArgs,
 }
 

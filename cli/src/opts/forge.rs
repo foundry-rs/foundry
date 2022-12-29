@@ -82,18 +82,10 @@ pub enum Subcommands {
     )]
     Remappings(RemappingArgs),
 
-    #[clap(
-        visible_alias = "v",
-        about = "Verify smart contracts on Etherscan.",
-        long_about = "Verify smart contracts on Etherscan."
-    )]
+    #[clap(visible_alias = "v", about = "Verify smart contracts on Etherscan.")]
     VerifyContract(VerifyArgs),
 
-    #[clap(
-        visible_alias = "vc",
-        about = "Check verification status on Etherscan.",
-        long_about = "Check verification status on Etherscan."
-    )]
+    #[clap(visible_alias = "vc", about = "Check verification status on Etherscan.")]
     VerifyCheck(VerifyCheckArgs),
 
     #[clap(visible_alias = "c", about = "Deploy a smart contract.")]

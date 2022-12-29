@@ -41,7 +41,7 @@ impl Default for VerifierArgs {
     }
 }
 
-/// Verification arguments
+/// CLI arguments for `forge verify`.
 #[derive(Debug, Clone, Parser)]
 pub struct VerifyArgs {
     #[clap(help = "The address of the contract to verify.", value_name = "ADDRESS")]
@@ -117,7 +117,7 @@ pub struct VerifyArgs {
     #[clap(long, help = "Wait for verification result after submission")]
     pub watch: bool,
 
-    #[clap(flatten, help = "Allows to use retry arguments for contract verification")]
+    #[clap(flatten)]
     pub retry: RetryArgs,
 
     #[clap(

@@ -7,8 +7,9 @@ pub const RETRY_CHECK_ON_VERIFY: RetryArgs = RetryArgs { retries: 8, delay: 15 }
 /// Retry config used when waiting for a created contract
 pub const RETRY_VERIFY_ON_CREATE: RetryArgs = RetryArgs { retries: 15, delay: 5 };
 
-/// A type that keeps track of attempts
+/// Retry arguments for contract verification.
 #[derive(Debug, Clone, Copy, Parser)]
+#[clap(about = "Allows to use retry arguments for contract verification")] // override doc
 pub struct RetryArgs {
     #[clap(
         long,

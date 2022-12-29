@@ -32,7 +32,7 @@ pub use self::paths::ProjectPathsArgs;
 
 foundry_config::merge_impl_figment_convert!(BuildArgs, args);
 
-/// All `forge build` related arguments
+/// CLI arguments for `forge build`.
 ///
 /// CLI arguments take the highest precedence in the Config/Figment hierarchy.
 /// In order to override them in the foundry `Config` they need to be merged into an existing
@@ -54,7 +54,7 @@ foundry_config::merge_impl_figment_convert!(BuildArgs, args);
 /// Some arguments are marked as `#[serde(skip)]` and require manual processing in
 /// `figment::Provider` implementation
 #[derive(Debug, Clone, Parser, Serialize, Default)]
-#[clap(next_help_heading = "Build options")]
+#[clap(next_help_heading = "Build options", about = None)] // override doc
 pub struct BuildArgs {
     #[clap(flatten)]
     #[serde(flatten)]

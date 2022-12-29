@@ -1,5 +1,7 @@
 //! cast wallet subcommand
 
+pub mod vanity;
+
 use crate::{
     cmd::{cast::wallet::vanity::VanityArgs, Cmd},
     opts::{EthereumOpts, Wallet, WalletType},
@@ -11,10 +13,8 @@ use ethers::{
     signers::{LocalWallet, Signer},
     types::{Address, Chain, Signature},
 };
-use std::str::FromStr;
 
-pub mod vanity;
-
+/// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
 pub enum WalletSubcommands {
     #[clap(name = "new", visible_alias = "n", about = "Create a new random keypair.")]
@@ -154,8 +154,8 @@ impl WalletSubcommands {
                 println!("Signature: 0x{sig}");
             }
             WalletSubcommands::Verify { message, signature, address } => {
-                let pubkey = Address::from_str(&address).expect("invalid pubkey provided");
-                let signature = Signature::from_str(&signature)?;
+                let pubkey: Address = address.parse().expect("invalid pubkey provided");
+                let signature: Signature = signature.parse()?;
                 match signature.verify(message, pubkey) {
                     Ok(_) => {
                         println!("Validation success. Address {address} signed this message.")
