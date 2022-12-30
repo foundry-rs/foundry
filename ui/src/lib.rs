@@ -28,7 +28,7 @@ use tui::{
     style::{Color, Modifier, Style},
     terminal::Frame,
     text::{Span, Spans, Text},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
     Terminal,
 };
 
@@ -36,6 +36,8 @@ use tui::{
 pub trait Ui {
     /// Start the agent that will now take over
     fn start(self) -> Result<TUIExitReason>;
+    /// Start the tui choice view
+    fn start_choice(self) -> Result<TUIExitReason>;
 }
 
 /// Used to indicate why the UI stopped
@@ -113,6 +115,25 @@ impl Tui {
         })
     }
 
+    pub fn new_choice_board() -> Result<Self> {
+        let mut stdout = io::stdout();
+        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+        let backend = CrosstermBackend::new(stdout);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.hide_cursor();
+
+        Ok(Tui {
+            debug_arena: vec![],
+            terminal,
+            key_buffer: String::new(),
+            current_step: 0,
+            identified_contracts: HashMap::new(),
+            known_contracts: HashMap::new(),
+            known_contracts_sources: HashMap::new(),
+            pc_ic_maps: BTreeMap::new(),
+        })
+    }
+
     /// Grab number from buffer. Used for something like '10k' to move up 10 operations
     fn buffer_as_number(buffer: &str, default_value: usize) -> usize {
         if let Ok(num) = buffer.parse() {
@@ -177,6 +198,51 @@ impl Tui {
                 mem_utf,
             );
         }
+    }
+
+    fn draw_choice_layout<B: Backend>(f: &mut Frame<B>) {
+        // Tui::draw_op_list(f, address, debug_steps, opcode_list, current_step, draw_memory,
+        // op_pane);
+
+        // Create a list of strings to choose from
+        let mut list_state = ListState::default();
+        let list_items =
+            vec![ListItem::new("Item 1"), ListItem::new("Item 2"), ListItem::new("Item 3")];
+        let list = List::new(list_items)
+            .style(Style::default().fg(Color::White))
+            .highlight_style(Style::default().fg(Color::Yellow));
+
+        // Main event loop
+        /*loop {
+            terminal
+                .draw(|f| {
+                    let size = f.size();
+                    let constraints = [Constraint::Percentage(100)];
+                    let vertical_chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints(constraints.as_ref())
+                        .split(size);
+
+                    f.render_widget(list, vertical_chunks[0]);
+                })
+                .unwrap();
+
+            // Read the next key event
+            let keys = stdin().keys();
+            let next_key = keys.next().unwrap();
+
+            match next_key.unwrap() {
+                // Move the selection up with the 'j' key
+                Key::Char('j') => list_state.select_previous(),
+                // Move the selection down with the 'k' key
+                Key::Char('k') => list_state.select_next(),
+                // Exit the program when the 'q' key is pressed
+                Key::Char('q') => break,
+                _ => {}
+            }
+        }
+
+        terminal.show_cursor().unwrap();*/
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1238,6 +1304,87 @@ impl Ui for Tui {
                     &mut draw_memory,
                     stack_labels,
                     mem_utf,
+                )
+            })?;
+        }
+    }
+
+    fn start_choice(mut self) -> Result<TUIExitReason> {
+        // If something panics inside here, we should do everything we can to
+        // not corrupt the user's terminal.
+        std::panic::set_hook(Box::new(|e| {
+            disable_raw_mode().expect("Unable to disable raw mode");
+            execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture)
+                .expect("unable to execute disable mouse capture");
+            println!("{e}");
+        }));
+        // This is the recommend tick rate from tui-rs, based on their examples
+        let tick_rate = Duration::from_millis(200);
+
+        // Setup a channel to send interrupts
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let mut last_tick = Instant::now();
+            loop {
+                // Poll events since last tick - if last tick is greater than tick_rate, we demand
+                // immediate availability of the event. This may affect
+                // interactivity, but I'm not sure as it is hard to test.
+                if event::poll(tick_rate.saturating_sub(last_tick.elapsed())).unwrap() {
+                    let event = event::read().unwrap();
+                    if let Event::Key(key) = event {
+                        if tx.send(Interrupt::KeyPressed(key)).is_err() {
+                            return
+                        }
+                    } else if let Event::Mouse(mouse) = event {
+                        if tx.send(Interrupt::MouseEvent(mouse)).is_err() {
+                            return
+                        }
+                    }
+                }
+                // Force update if time has passed
+                if last_tick.elapsed() > tick_rate {
+                    if tx.send(Interrupt::IntervalElapsed).is_err() {
+                        return
+                    }
+                    last_tick = Instant::now();
+                }
+            }
+        });
+
+        self.terminal.clear()?;
+        let mut draw_memory: DrawMemory = DrawMemory::default();
+
+        let debug_call: Vec<(Address, Vec<DebugStep>, CallKind)> = self.debug_arena.clone();
+        let mut last_index = 0;
+
+        let mut stack_labels = false;
+        let mut mem_utf = false;
+        // UI thread that manages drawing
+        loop {
+            // Grab interrupt
+            match rx.recv()? {
+                // Key press
+                Interrupt::KeyPressed(event) => match event.code {
+                    _ => {}
+                },
+                _ => (),
+            }
+
+            self.terminal.draw(|f| {
+                Tui::draw_choice_layout(
+                    f, /* f,
+                       * debug_call[draw_memory.inner_call_index].0,
+                       * &self.identified_contracts,
+                       * &self.known_contracts,
+                       * &self.pc_ic_maps,
+                       * &self.known_contracts_sources,
+                       * &debug_call[draw_memory.inner_call_index].1[..],
+                       * &opcode_list,
+                       * current_step,
+                       * debug_call[draw_memory.inner_call_index].2,
+                       * &mut draw_memory,
+                       * stack_labels,
+                       * mem_utf, */
                 )
             })?;
         }

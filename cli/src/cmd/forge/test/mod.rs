@@ -179,6 +179,18 @@ impl TestArgs {
                 n => {
                     let all_tests = runner.get_tests(&filter);
                     // TODO: create test UI and filter one, else Err
+                    let debugger = DebugArgs {
+                        path: PathBuf::default(),
+                        target_contract: None,
+                        sig: String::new(),
+                        args: Vec::new(),
+                        debug: true,
+                        opts: Default::default(),
+                        evm_opts: self.evm_opts.clone(),
+                    };
+
+                    utils::block_on(debugger.open_debug_choice())?;
+
                     return Err(
                         eyre::eyre!("{n} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n
                         \n
@@ -245,7 +257,7 @@ impl TestArgs {
             args: Vec::new(),
             debug: true,
             opts,
-            evm_opts: self.evm_opts,
+            evm_opts: self.evm_opts.clone(),
         };
         utils::block_on(debugger.debug())?;
 

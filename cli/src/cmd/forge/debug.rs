@@ -56,4 +56,9 @@ impl DebugArgs {
         };
         script.run_script().await
     }
+
+    pub async fn open_debug_choice(self) -> eyre::Result<()> {
+        // let script = ScriptArgs::default();
+        ScriptArgs::run_choice_board()
+    }
 }

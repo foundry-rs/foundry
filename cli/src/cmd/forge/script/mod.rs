@@ -417,7 +417,7 @@ impl ScriptArgs {
             .collect()
     }
 
-    fn run_debugger(
+    pub fn run_debugger(
         &self,
         decoder: &CallTraceDecoder,
         sources: BTreeMap<u32, String>,
@@ -454,6 +454,13 @@ impl ScriptArgs {
                 .collect(),
         )?;
         match tui.start().expect("Failed to start tui") {
+            TUIExitReason::CharExit => Ok(()),
+        }
+    }
+
+    pub fn run_choice_board() -> eyre::Result<()> {
+        let tui = Tui::new_choice_board()?;
+        match tui.start_choice().expect("Failed to start tui") {
             TUIExitReason::CharExit => Ok(()),
         }
     }
