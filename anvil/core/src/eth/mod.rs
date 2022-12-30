@@ -263,6 +263,14 @@ pub enum EthRequest {
         #[cfg_attr(feature = "serde", serde(default))] GethDebugTracingOptions,
     ),
 
+    /// geth's `debug_traceCall`  endpoint
+    #[cfg_attr(feature = "serde", serde(rename = "debug_traceCall"))]
+    DebugTraceCall(
+        EthTransactionRequest,
+        #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
+        #[cfg_attr(feature = "serde", serde(default))] GethDebugTracingOptions,
+    ),
+
     /// Trace transaction endpoint for parity's `trace_transaction`
     #[cfg_attr(feature = "serde", serde(rename = "trace_transaction", with = "sequence"))]
     TraceTransaction(H256),
