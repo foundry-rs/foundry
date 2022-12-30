@@ -34,7 +34,6 @@ impl ScriptArgs {
 
         let contracts = output
             .into_artifacts()
-            .into_iter()
             .map(|(id, artifact)| -> eyre::Result<_> {
                 // Sources are only required for the debugger, but it *might* mean that there's
                 // something wrong with the build and/or artifacts.

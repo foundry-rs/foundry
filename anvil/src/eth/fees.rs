@@ -201,7 +201,6 @@ impl FeeHistoryService {
         let reward_percentiles: Vec<f64> = {
             let mut percentile: f64 = 0.0;
             (0..=200)
-                .into_iter()
                 .map(|_| {
                     let val = percentile;
                     percentile += 0.5;

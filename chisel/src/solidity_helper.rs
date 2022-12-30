@@ -76,7 +76,7 @@ impl SolidityHelper {
         let mut out = String::new();
         // Highlight commands separately
         if input.starts_with('!') {
-            let split: Vec<&str> = input.split(' ').into_iter().collect();
+            let split: Vec<&str> = input.split(' ').collect();
             let cmd = ChiselCommand::from_str(&split[0][1..]);
             out = format!(
                 "!{} {}",
