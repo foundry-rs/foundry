@@ -665,9 +665,9 @@ impl ChiselDispatcher {
                             let failed = !res.success;
                             if new_session_source.config.traces || failed {
                                 if let Ok(decoder) =
-                                    self.decode_traces(&new_session_source.config, &mut res)
+                                    Self::decode_traces(&new_session_source.config, &mut res)
                                 {
-                                    if self.show_traces(&decoder, &mut res).await.is_err() {
+                                    if Self::show_traces(&decoder, &mut res).await.is_err() {
                                         self.errored = true;
                                         return DispatchResult::CommandFailed(
                                             "Failed to display traces".to_owned(),
