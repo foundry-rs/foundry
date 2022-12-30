@@ -1,10 +1,7 @@
 use crate::{
     abi::HEVMCalls,
     error,
-    executor::inspector::{
-        cheatcodes::util::{self},
-        Cheatcodes,
-    },
+    executor::inspector::{cheatcodes::util, Cheatcodes},
 };
 use bytes::Bytes;
 use ethers::{

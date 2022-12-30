@@ -42,7 +42,9 @@ use foundry_config::figment::{
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
 
+/// CLI arguments for `forge test`.
 #[derive(Debug, Clone, Parser)]
+#[clap(next_help_heading = "Test options")]
 pub struct TestArgs {
     #[clap(flatten)]
     filter: Filter,
@@ -74,10 +76,10 @@ pub struct TestArgs {
     allow_failure: bool,
 
     /// Output test results in JSON format.
-    #[clap(long, short, help_heading = "DISPLAY OPTIONS")]
+    #[clap(long, short, help_heading = "Display options")]
     json: bool,
 
-    #[clap(flatten, next_help_heading = "EVM OPTIONS")]
+    #[clap(flatten)]
     evm_opts: EvmArgs,
 
     #[clap(
@@ -88,14 +90,14 @@ pub struct TestArgs {
     )]
     etherscan_api_key: Option<String>,
 
-    #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
+    #[clap(flatten)]
     opts: CoreBuildArgs,
 
-    #[clap(flatten, next_help_heading = "WATCH OPTIONS")]
+    #[clap(flatten)]
     pub watch: WatchArgs,
 
     /// List tests instead of running them
-    #[clap(long, short, help_heading = "DISPLAY OPTIONS")]
+    #[clap(long, short, help_heading = "Display options")]
     list: bool,
 
     #[clap(

@@ -7,6 +7,7 @@ use foundry_common::try_get_http_provider;
 use foundry_config::{Chain, Config};
 use std::sync::Arc;
 
+/// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
 pub struct SendTxArgs {
     #[clap(
@@ -27,9 +28,9 @@ pub struct SendTxArgs {
         help = "Only print the transaction hash and exit immediately."
     )]
     cast_async: bool,
-    #[clap(flatten, next_help_heading = "TRANSACTION OPTIONS")]
+    #[clap(flatten)]
     tx: TransactionOpts,
-    #[clap(flatten, next_help_heading = "ETHEREUM OPTIONS")]
+    #[clap(flatten)]
     eth: EthereumOpts,
     #[clap(
         short,
@@ -39,7 +40,7 @@ pub struct SendTxArgs {
         value_name = "CONFIRMATIONS"
     )]
     confirmations: usize,
-    #[clap(long = "json", short = 'j', help_heading = "DISPLAY OPTIONS")]
+    #[clap(long = "json", short = 'j', help_heading = "Display options")]
     to_json: bool,
     #[clap(
         long = "resend",

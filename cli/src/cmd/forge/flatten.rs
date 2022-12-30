@@ -6,6 +6,7 @@ use clap::{Parser, ValueHint};
 use foundry_common::fs;
 use std::path::PathBuf;
 
+/// CLI arguments for `forge flatten`.
 #[derive(Debug, Clone, Parser)]
 pub struct FlattenArgs {
     #[clap(help = "The path to the contract to flatten.", value_hint = ValueHint::FilePath, value_name = "TARGET_PATH")]
@@ -21,7 +22,7 @@ pub struct FlattenArgs {
     )]
     pub output: Option<PathBuf>,
 
-    #[clap(flatten, next_help_heading = "PROJECT OPTIONS")]
+    #[clap(flatten)]
     project_paths: ProjectPathsArgs,
 }
 

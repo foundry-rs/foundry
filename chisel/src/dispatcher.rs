@@ -33,7 +33,7 @@ static CHISEL_CHAR: &str = "⚒️";
 
 /// Chisel input dispatcher
 #[derive(Debug)]
-pub struct ChiselDisptacher {
+pub struct ChiselDispatcher {
     /// The status of the previous dispatch
     pub errored: bool,
     /// A Chisel Session
@@ -107,7 +107,7 @@ pub fn format_source(source: &str, config: FormatterConfig) -> eyre::Result<Stri
     }
 }
 
-impl ChiselDisptacher {
+impl ChiselDispatcher {
     /// Associated public function to create a new Dispatcher instance
     pub fn new(config: &SessionSourceConfig) -> eyre::Result<Self> {
         ChiselSession::new(config).map(|session| Self { errored: false, session })
@@ -706,6 +706,51 @@ impl ChiselDisptacher {
                     DispatchResult::CommandFailed(Self::make_error("Session not present."))
                 }
             }
+            ChiselCommand::RawStack => {
+                if args.is_empty() {
+                    return DispatchResult::CommandFailed(Self::make_error("No variable supplied!"))
+                } else if args.len() > 1 {
+                    return DispatchResult::CommandFailed(Self::make_error(
+                        "!rawstack only takes one argument.",
+                    ))
+                }
+
+                // Store the variable that we want to inspect
+                let to_inspect = args[0];
+
+                // Get a mutable reference to the session source
+                let source =
+                    match self.session.session_source.as_mut().ok_or(DispatchResult::CommandFailed(
+                        "Session source not present".to_string(),
+                    )) {
+                        Ok(session_source) => session_source,
+                        Err(e) => return e,
+                    };
+
+                // Copy the variable's stack contents into a bytes32 variable without updating
+                // the current session source.
+                if let Ok((mut new_source, _)) = source.clone_with_new_line(format!(
+                    "bytes32 __raw__; assembly {{ __raw__ := {to_inspect} }}"
+                )) {
+                    match new_source.inspect("__raw__").await {
+                        Ok(res) => {
+                            // If the input was inspected, hault here and display the contents
+                            // of the `__raw__` variable's stack allocation.
+                            if let Some(res) = res {
+                                return DispatchResult::CommandSuccess(Some(res))
+                            }
+                        }
+                        Err(e) => {
+                            // If there was an explicit error thrown, hault here.
+                            return DispatchResult::CommandFailed(Self::make_error(e))
+                        }
+                    }
+                }
+
+                DispatchResult::CommandFailed(
+                    "Variable must exist within `run()` function.".to_string(),
+                )
+            }
         }
     }
 
@@ -778,8 +823,8 @@ impl ChiselDisptacher {
                     // If traces are enabled or there was an error in execution, show the execution
                     // traces.
                     if new_source.config.traces || failed {
-                        if let Ok(decoder) = self.decode_traces(&new_source.config, &mut res) {
-                            if self.show_traces(&decoder, &mut res).await.is_err() {
+                        if let Ok(decoder) = Self::decode_traces(&new_source.config, &mut res) {
+                            if Self::show_traces(&decoder, &mut res).await.is_err() {
                                 self.errored = true;
                                 return DispatchResult::CommandFailed(
                                     "Failed to display traces".to_owned(),
@@ -845,7 +890,6 @@ impl ChiselDisptacher {
     ///
     /// Optionally, a [CallTraceDecoder]
     pub fn decode_traces(
-        &self,
         session_config: &SessionSourceConfig,
         result: &mut ChiselResult,
         // known_contracts: &ContractsByArtifact,
@@ -881,7 +925,6 @@ impl ChiselDisptacher {
     ///
     /// Optionally, a unit type signifying a successful result.
     pub async fn show_traces(
-        &self,
         decoder: &CallTraceDecoder,
         result: &mut ChiselResult,
     ) -> eyre::Result<()> {

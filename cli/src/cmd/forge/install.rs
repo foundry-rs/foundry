@@ -24,7 +24,7 @@ use yansi::Paint;
 static DEPENDENCY_VERSION_TAG_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^v?\d+(\.\d+)*$").unwrap());
 
-/// Command to install dependencies
+/// CLI arguments for `forge install`.
 #[derive(Debug, Clone, Parser)]
 #[clap(override_usage = "forge install [OPTIONS] [DEPENDENCIES]...
     forge install [OPTIONS] <github username>/<github project>@<tag>...
@@ -46,8 +46,10 @@ pub struct InstallArgs {
     /// The dependency will installed to `lib/<alias>`.
     #[clap(value_name = "DEPENDENCIES")]
     dependencies: Vec<Dependency>,
+
     #[clap(flatten)]
     opts: DependencyInstallOpts,
+
     #[clap(
         help = "The project's root path.",
         long_help = "The project's root path. By default, this is the root directory of the current Git repository, or the current working directory.",
@@ -74,8 +76,10 @@ impl Cmd for InstallArgs {
 pub struct DependencyInstallOpts {
     #[clap(help = "Install without adding the dependency as a submodule.", long)]
     pub no_git: bool,
+
     #[clap(help = "Do not create a commit.", long)]
     pub no_commit: bool,
+
     #[clap(help = "Do not print any messages.", short, long)]
     pub quiet: bool,
 }

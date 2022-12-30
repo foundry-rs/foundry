@@ -91,6 +91,16 @@ pub fn apply<DB: DatabaseExt>(
                 .map(|_| Default::default())
                 .map_err(error::encode_error)
         }
+        HEVMCalls::RollFork3(fork) => data
+            .db
+            .roll_fork_to_transaction(
+                Some(fork.0),
+                fork.1.into(),
+                data.env,
+                &mut data.journaled_state,
+            )
+            .map(|_| Default::default())
+            .map_err(error::encode_error),
         HEVMCalls::RpcUrl(rpc) => state.config.get_rpc_url(&rpc.0).map(|url| url.encode().into()),
         HEVMCalls::RpcUrls(_) => {
             let mut urls = Vec::with_capacity(state.config.rpc_endpoints.len());
@@ -122,12 +132,18 @@ pub fn apply<DB: DatabaseExt>(
         }
         HEVMCalls::Transact0(inner) => data
             .db
-            .transact(None, inner.0.into(), data.env, &mut data.journaled_state)
+            .transact(None, inner.0.into(), data.env, &mut data.journaled_state, Some(state))
             .map(|_| Default::default())
             .map_err(error::encode_error),
         HEVMCalls::Transact1(inner) => data
             .db
-            .transact(Some(inner.0), inner.1.into(), data.env, &mut data.journaled_state)
+            .transact(
+                Some(inner.0),
+                inner.1.into(),
+                data.env,
+                &mut data.journaled_state,
+                Some(state),
+            )
             .map(|_| Default::default())
             .map_err(error::encode_error),
         _ => return None,
