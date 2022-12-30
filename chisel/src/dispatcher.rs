@@ -610,6 +610,102 @@ impl ChiselDispatcher {
                     Err(e) => DispatchResult::CommandFailed(e.to_string()),
                 }
             }
+            ChiselCommand::Edit => {
+                if let Some(session_source) = self.session.session_source.as_mut() {
+                    // create a temp file with the content of the run code
+                    let mut temp_file_path = std::env::temp_dir();
+                    temp_file_path.push("chisel-tmp.sol");
+                    let result = std::fs::File::create(&temp_file_path)
+                        .map(|mut file| file.write_all(session_source.run_code.as_bytes()));
+                    if let Err(e) = result {
+                        return DispatchResult::CommandFailed(format!(
+                            "Could not write to a temporary file: {e}"
+                        ))
+                    }
+
+                    // open the temp file with the editor
+                    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+                    let mut cmd = Command::new(editor);
+                    cmd.arg(&temp_file_path);
+
+                    match cmd.status() {
+                        Ok(status) => {
+                            if !status.success() {
+                                if let Some(status_code) = status.code() {
+                                    return DispatchResult::CommandFailed(format!(
+                                        "Editor exited with status {status_code}"
+                                    ))
+                                } else {
+                                    return DispatchResult::CommandFailed(
+                                        "Editor exited without a status code".to_string(),
+                                    )
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            return DispatchResult::CommandFailed(
+                                "Editor exited without a status code".to_string(),
+                            )
+                        }
+                    }
+
+                    let mut new_session_source = session_source.clone();
+                    if let Ok(edited_code) = std::fs::read_to_string(temp_file_path) {
+                        new_session_source.drain_run();
+                        new_session_source.with_run_code(&edited_code);
+                    } else {
+                        return DispatchResult::CommandFailed(
+                            "Could not read the edited file".to_string(),
+                        )
+                    }
+
+                    // if the editor exited successfully, try to compile the new code
+                    match new_session_source.execute().await {
+                        Ok((_, mut res)) => {
+                            let failed = !res.success;
+                            if new_session_source.config.traces || failed {
+                                if let Ok(decoder) =
+                                    Self::decode_traces(&new_session_source.config, &mut res)
+                                {
+                                    if Self::show_traces(&decoder, &mut res).await.is_err() {
+                                        self.errored = true;
+                                        return DispatchResult::CommandFailed(
+                                            "Failed to display traces".to_owned(),
+                                        )
+                                    };
+
+                                    // Show console logs, if there are any
+                                    let decoded_logs = decode_console_logs(&res.logs);
+                                    if !decoded_logs.is_empty() {
+                                        println!("{}", Paint::green("Logs:"));
+                                        for log in decoded_logs {
+                                            println!("  {log}");
+                                        }
+                                    }
+                                }
+
+                                // If the contract execution failed, continue on without
+                                // updating the source.
+                                self.errored = true;
+                                DispatchResult::CommandFailed(Self::make_error(
+                                    "Failed to execute edited contract!",
+                                ))
+                            } else {
+                                // the code could be compiled, save it
+                                *session_source = new_session_source;
+                                DispatchResult::CommandSuccess(Some(String::from(
+                                    "Successfully edited `run()` function's body!",
+                                )))
+                            }
+                        }
+                        Err(_) => DispatchResult::CommandFailed(
+                            "The code could not be compiled".to_string(),
+                        ),
+                    }
+                } else {
+                    DispatchResult::CommandFailed(Self::make_error("Session not present."))
+                }
+            }
             ChiselCommand::RawStack => {
                 if args.is_empty() {
                     return DispatchResult::CommandFailed(Self::make_error("No variable supplied!"))
