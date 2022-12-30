@@ -31,15 +31,15 @@ impl<'a> fmt::Display for HexDisplay<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if self.0.len() < 1027 {
             for byte in self.0 {
-                f.write_fmt(format_args!("{:02x}", byte))?;
+                f.write_fmt(format_args!("{byte:02x}"))?;
             }
         } else {
             for byte in &self.0[0..512] {
-                f.write_fmt(format_args!("{:02x}", byte))?;
+                f.write_fmt(format_args!("{byte:02x}"))?;
             }
             f.write_str("...")?;
             for byte in &self.0[self.0.len() - 512..] {
-                f.write_fmt(format_args!("{:02x}", byte))?;
+                f.write_fmt(format_args!("{byte:02x}"))?;
             }
         }
         Ok(())
@@ -49,7 +49,7 @@ impl<'a> fmt::Display for HexDisplay<'a> {
 impl<'a> fmt::Debug for HexDisplay<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for byte in self.0 {
-            f.write_fmt(format_args!("{:02x}", byte))?;
+            f.write_fmt(format_args!("{byte:02x}"))?;
         }
         Ok(())
     }

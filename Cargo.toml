@@ -15,6 +15,7 @@ members = [
     "forge",
     "ui",
     "utils",
+    "chisel",
 ]
 
 [profile.dev]

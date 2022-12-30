@@ -32,17 +32,16 @@ impl RevertDiagnostic {
                 let contract_label = get_label(contract);
 
                 format!(
-                    r#"Contract {} does not exist on active fork with id `{}`
-        But exists on non active forks: `{:?}`"#,
-                    contract_label, active, available_on
+                    r#"Contract {contract_label} does not exist on active fork with id `{active}`
+        But exists on non active forks: `{available_on:?}`"#
                 )
             }
             RevertDiagnostic::ContractDoesNotExist { contract, persistent, .. } => {
                 let contract_label = get_label(contract);
                 if *persistent {
-                    format!("Contract {} does not exist", contract_label)
+                    format!("Contract {contract_label} does not exist")
                 } else {
-                    format!("Contract {} does not exist and is not marked as persistent, see `vm.makePersistent()`", contract_label)
+                    format!("Contract {contract_label} does not exist and is not marked as persistent, see `vm.makePersistent()`")
                 }
             }
         }

@@ -27,12 +27,10 @@ macro_rules! ensure_svm_releases {
 async fn ensure_latest_release(platform: Platform) {
     let releases = svm::all_releases(platform)
         .await
-        .unwrap_or_else(|err| panic!("Could not fetch releases for {}: {:?}", platform, err));
+        .unwrap_or_else(|err| panic!("Could not fetch releases for {platform}: {err:?}"));
     assert!(
         releases.releases.contains_key(&LATEST_SOLC),
-        "platform {:?} is missing solc info {}",
-        platform,
-        LATEST_SOLC
+        "platform {platform:?} is missing solc info {LATEST_SOLC}"
     );
 }
 

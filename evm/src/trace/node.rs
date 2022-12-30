@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// A node in the arena
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CallTraceNode {
     /// Parent node index in the arena
     pub parent: Option<usize>,
@@ -98,6 +98,7 @@ impl CallTraceNode {
         funcs: &[Function],
         labels: &HashMap<Address, String>,
         errors: &Abi,
+        verbosity: u8,
     ) {
         debug_assert!(!funcs.is_empty(), "requires at least 1 func");
         // This is safe because (1) we would not have an entry for the given
@@ -110,13 +111,15 @@ impl CallTraceNode {
             let inputs = if bytes.len() >= SELECTOR_LEN {
                 if self.trace.address == CHEATCODE_ADDRESS {
                     // Try to decode cheatcode inputs in a more custom way
-                    utils::decode_cheatcode_inputs(func, bytes, errors).unwrap_or_else(|| {
-                        func.decode_input(&bytes[SELECTOR_LEN..])
-                            .expect("bad function input decode")
-                            .iter()
-                            .map(|token| utils::label(token, labels))
-                            .collect()
-                    })
+                    utils::decode_cheatcode_inputs(func, bytes, errors, verbosity).unwrap_or_else(
+                        || {
+                            func.decode_input(&bytes[SELECTOR_LEN..])
+                                .expect("bad function input decode")
+                                .iter()
+                                .map(|token| utils::label(token, labels))
+                                .collect()
+                        },
+                    )
                 } else {
                     match func.decode_input(&bytes[SELECTOR_LEN..]) {
                         Ok(v) => v.iter().map(|token| utils::label(token, labels)).collect(),
@@ -134,8 +137,9 @@ impl CallTraceNode {
             if let RawOrDecodedReturnData::Raw(bytes) = &self.trace.output {
                 if !bytes.is_empty() && self.trace.success {
                     if self.trace.address == CHEATCODE_ADDRESS {
-                        if let Some(decoded) =
-                            funcs.iter().find_map(|func| decode_cheatcode_outputs(func, bytes))
+                        if let Some(decoded) = funcs
+                            .iter()
+                            .find_map(|func| decode_cheatcode_outputs(func, bytes, verbosity))
                         {
                             self.trace.output = RawOrDecodedReturnData::Decoded(decoded);
                             return
@@ -161,7 +165,7 @@ impl CallTraceNode {
                     decode::decode_revert(bytes, Some(errors), Some(self.trace.status))
                 {
                     self.trace.output =
-                        RawOrDecodedReturnData::Decoded(format!(r#""{}""#, decoded_error));
+                        RawOrDecodedReturnData::Decoded(format!(r#""{decoded_error}""#));
                 }
             }
         }

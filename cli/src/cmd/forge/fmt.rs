@@ -17,6 +17,7 @@ use std::{
 };
 use tracing::log::warn;
 
+/// CLI arguments for `forge fmt`.
 #[derive(Debug, Clone, Parser)]
 pub struct FmtArgs {
     #[clap(
@@ -169,7 +170,7 @@ impl Cmd for FmtArgs {
 
                 if self.check || matches!(input, Input::Stdin(_)) {
                     if self.raw {
-                        print!("{}", output);
+                        print!("{output}");
                     }
 
                     let diff = TextDiff::from_lines(&source, &output);

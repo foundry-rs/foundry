@@ -15,7 +15,7 @@ fn test_cheats_fork_revert() {
             &Filter::new(
                 "testNonExistingContractRevert",
                 ".*",
-                &format!(".*cheats{}Fork", RE_PATH_SEPARATOR),
+                &format!(".*cheats{RE_PATH_SEPARATOR}Fork"),
             ),
             None,
             TEST_OPTS,
@@ -27,7 +27,7 @@ fn test_cheats_fork_revert() {
         for (_, result) in test_results {
             assert_eq!(
                 result.reason.unwrap(),
-                "Contract 0xCe71065D4017F316EC606Fe4422e11eB2c47c246 does not exist on active fork with id `1`\n        But exists on non active forks: `[0]`"
+                "Contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f does not exist on active fork with id `1`\n        But exists on non active forks: `[0]`"
             );
         }
     }
@@ -36,7 +36,7 @@ fn test_cheats_fork_revert() {
 /// Executes all non-reverting fork cheatcodes
 #[test]
 fn test_cheats_fork() {
-    let filter = Filter::new(".*", ".*", &format!(".*cheats{}Fork", RE_PATH_SEPARATOR))
+    let filter = Filter::new(".*", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}Fork"))
         .exclude_tests(".*Revert");
     TestConfig::filter(filter).run();
 }
@@ -46,13 +46,20 @@ fn test_cheats_fork() {
 fn test_launch_fork() {
     let rpc_url = foundry_utils::rpc::next_http_archive_rpc_endpoint();
     let runner = forked_runner(&rpc_url);
-    let filter = Filter::new(".*", ".*", &format!(".*fork{}Launch", RE_PATH_SEPARATOR));
+    let filter = Filter::new(".*", ".*", &format!(".*fork{RE_PATH_SEPARATOR}Launch"));
     TestConfig::with_filter(runner, filter).run();
 }
 
 /// Tests that we can transact transactions in forking mode
 #[test]
 fn test_transact_fork() {
-    let filter = Filter::new(".*", ".*", &format!(".*fork{}Transact", RE_PATH_SEPARATOR));
+    let filter = Filter::new(".*", ".*", &format!(".*fork{RE_PATH_SEPARATOR}Transact"));
+    TestConfig::filter(filter).run();
+}
+
+/// Tests that we can create the same fork (provider,block) concurretnly in different tests
+#[test]
+fn test_create_same_fork() {
+    let filter = Filter::new(".*", ".*", &format!(".*fork{RE_PATH_SEPARATOR}ForkSame"));
     TestConfig::filter(filter).run();
 }

@@ -5,7 +5,7 @@ use ethers::prelude::Log;
 use foundry_evm::{
     coverage::HitMaps,
     fuzz::{CounterExample, FuzzedCases},
-    trace::{CallTraceArena, TraceKind},
+    trace::Traces,
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt, time::Duration};
@@ -75,11 +75,14 @@ pub struct TestResult {
     /// be printed to the user.
     pub logs: Vec<Log>,
 
+    /// The decoded DSTest logging events and Hardhat's `console.log` from [logs](Self::logs).
+    pub decoded_logs: Vec<String>,
+
     /// What kind of test this was
     pub kind: TestKind,
 
     /// Traces
-    pub traces: Vec<(TraceKind, CallTraceArena)>,
+    pub traces: Traces,
 
     /// Raw coverage info
     #[serde(skip)]
@@ -108,13 +111,13 @@ impl fmt::Display for TestKindReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             TestKindReport::Standard { gas } => {
-                write!(f, "(gas: {})", gas)
+                write!(f, "(gas: {gas})")
             }
             TestKindReport::Fuzz { runs, mean_gas, median_gas } => {
-                write!(f, "(runs: {}, μ: {}, ~: {})", runs, mean_gas, median_gas)
+                write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas})")
             }
             TestKindReport::Invariant { runs, calls, reverts } => {
-                write!(f, "(runs: {}, calls: {}, reverts: {})", runs, calls, reverts)
+                write!(f, "(runs: {runs}, calls: {calls}, reverts: {reverts})")
             }
         }
     }
@@ -172,7 +175,7 @@ pub struct TestSetup {
     /// The logs emitted during setup
     pub logs: Vec<Log>,
     /// Call traces of the setup
-    pub traces: Vec<(TraceKind, CallTraceArena)>,
+    pub traces: Traces,
     /// Addresses labeled during setup
     pub labeled_addresses: BTreeMap<Address, String>,
     /// Whether the setup failed

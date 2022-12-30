@@ -13,7 +13,7 @@ pub const BROADCAST_TEST_PATH: &str = "src/Broadcast.t.sol";
 pub struct ScriptTester {
     pub accounts_pub: Vec<Address>,
     pub accounts_priv: Vec<String>,
-    pub provider: RetryProvider,
+    pub provider: Option<RetryProvider>,
     pub nonces: BTreeMap<u32, U256>,
     pub address_nonces: BTreeMap<Address, U256>,
     pub cmd: TestCommand,
@@ -23,7 +23,7 @@ impl ScriptTester {
     /// Creates a new instance of a Tester for the given contract
     pub fn new(
         mut cmd: TestCommand,
-        endpoint: &str,
+        endpoint: Option<&str>,
         project_root: &Path,
         target_contract: &str,
     ) -> Self {
@@ -37,10 +37,14 @@ impl ScriptTester {
             target_contract,
             "--root",
             project_root.to_str().unwrap(),
-            "--fork-url",
-            endpoint,
             "-vvvvv",
         ]);
+
+        let mut provider = None;
+        if let Some(endpoint) = endpoint {
+            cmd.args(["--fork-url", endpoint]);
+            provider = Some(get_http_provider(endpoint))
+        }
 
         ScriptTester {
             accounts_pub: vec![
@@ -53,7 +57,7 @@ impl ScriptTester {
                 "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d".to_string(),
                 "5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a".to_string(),
             ],
-            provider: get_http_provider(endpoint),
+            provider,
             nonces: BTreeMap::default(),
             address_nonces: BTreeMap::default(),
             cmd,
@@ -70,7 +74,20 @@ impl ScriptTester {
         std::fs::copy(testdata + "/cheats/Broadcast.t.sol", project_root.join(BROADCAST_TEST_PATH))
             .expect("Failed to initialize broadcast contract");
 
-        Self::new(cmd, endpoint, project_root, &target_contract)
+        Self::new(cmd, Some(endpoint), project_root, &target_contract)
+    }
+
+    /// Creates a new instance of a Tester for the `broadcast` test at the given `project_root` by
+    /// configuring the `TestCommand` with script without an endpoint
+    pub fn new_broadcast_without_endpoint(cmd: TestCommand, project_root: &Path) -> Self {
+        let target_contract = project_root.join(BROADCAST_TEST_PATH).to_string_lossy().to_string();
+
+        // copy the broadcast test
+        let testdata = Self::testdata_path();
+        std::fs::copy(testdata + "/cheats/Broadcast.t.sol", project_root.join(BROADCAST_TEST_PATH))
+            .expect("Failed to initialize broadcast contract");
+
+        Self::new(cmd, None, project_root, &target_contract)
     }
 
     /// Returns the path to the dir that contains testdata
@@ -90,15 +107,17 @@ impl ScriptTester {
     pub async fn load_private_keys(&mut self, keys_indexes: Vec<u32>) -> &mut Self {
         for index in keys_indexes {
             self.cmd.args(["--private-keys", &self.accounts_priv[index as usize]]);
-            let nonce = self
-                .provider
-                .get_transaction_count(
-                    NameOrAddress::Address(self.accounts_pub[index as usize]),
-                    None,
-                )
-                .await
-                .unwrap();
-            self.nonces.insert(index, nonce);
+
+            if let Some(provider) = &self.provider {
+                let nonce = provider
+                    .get_transaction_count(
+                        NameOrAddress::Address(self.accounts_pub[index as usize]),
+                        None,
+                    )
+                    .await
+                    .unwrap();
+                self.nonces.insert(index, nonce);
+            }
         }
         self
     }
@@ -107,6 +126,8 @@ impl ScriptTester {
         for address in addresses {
             let nonce = self
                 .provider
+                .as_ref()
+                .unwrap()
                 .get_transaction_count(NameOrAddress::Address(address), None)
                 .await
                 .unwrap();
@@ -123,8 +144,20 @@ impl ScriptTester {
         self
     }
 
+    /// Adds given address as sender
+    pub fn sender(&mut self, addr: Address) -> &mut Self {
+        self.cmd.args(["--sender", format!("{addr:?}").as_str()]);
+        self
+    }
+
     pub fn add_sig(&mut self, contract_name: &str, sig: &str) -> &mut Self {
         self.cmd.args(["--tc", contract_name, "--sig", sig]);
+        self
+    }
+
+    /// Adds the `--unlocked` flag
+    pub fn unlocked(&mut self) -> &mut Self {
+        self.cmd.arg("--unlocked");
         self
     }
 
@@ -147,6 +180,8 @@ impl ScriptTester {
         for (private_key_slot, expected_increment) in keys_indexes {
             let nonce = self
                 .provider
+                .as_ref()
+                .unwrap()
                 .get_transaction_count(
                     NameOrAddress::Address(self.accounts_pub[private_key_slot as usize]),
                     None,
@@ -168,6 +203,8 @@ impl ScriptTester {
         for (address, expected_increment) in address_indexes {
             let nonce = self
                 .provider
+                .as_ref()
+                .unwrap()
                 .get_transaction_count(NameOrAddress::Address(address), None)
                 .await
                 .unwrap();
@@ -183,7 +220,7 @@ impl ScriptTester {
             if expected.is_err() { self.cmd.stderr_lossy() } else { self.cmd.stdout_lossy() };
 
         if !output.contains(expected.as_str()) {
-            panic!("OUTPUT: {}\n\nEXPECTED: {}", output, expected.as_str());
+            panic!("OUTPUT: {output}\n\nEXPECTED: {}", expected.as_str());
         }
         self
     }
@@ -192,11 +229,17 @@ impl ScriptTester {
         self.cmd.arg("--slow");
         self
     }
+
+    pub fn args(&mut self, args: Vec<String>) -> &mut Self {
+        self.cmd.args(args);
+        self
+    }
 }
 
 /// Various `forge` script results
 #[derive(Debug)]
 pub enum ScriptOutcome {
+    OkNoEndpoint,
     OkSimulation,
     OkBroadcast,
     WarnSpecifyDeployer,
@@ -204,11 +247,14 @@ pub enum ScriptOutcome {
     MissingWallet,
     StaticCallNotAllowed,
     FailedScript,
+    UnsupportedLibraries,
+    ErrorSelectForkOnBroadcast,
 }
 
 impl ScriptOutcome {
     pub fn as_str(&self) -> &'static str {
         match self {
+            ScriptOutcome::OkNoEndpoint => "If you wish to simulate on-chain transactions pass a RPC URL.",
             ScriptOutcome::OkSimulation => "SIMULATION COMPLETE. To broadcast these",
             ScriptOutcome::OkBroadcast => "ONCHAIN EXECUTION COMPLETE & SUCCESSFUL",
             ScriptOutcome::WarnSpecifyDeployer => "You have more than one deployer who could predeploy libraries. Using `--sender` instead.",
@@ -216,17 +262,22 @@ impl ScriptOutcome {
             ScriptOutcome::MissingWallet => "No associated wallet",
             ScriptOutcome::StaticCallNotAllowed => "Staticcalls are not allowed after vm.broadcast. Either remove it, or use vm.startBroadcast instead.",
             ScriptOutcome::FailedScript => "Script failed.",
+            ScriptOutcome::UnsupportedLibraries => "Multi chain deployment does not support library linking at the moment.",
+            ScriptOutcome::ErrorSelectForkOnBroadcast => "You need to stop broadcasting before you can select forks."
         }
     }
 
     pub fn is_err(&self) -> bool {
         match self {
+            ScriptOutcome::OkNoEndpoint |
             ScriptOutcome::OkSimulation |
             ScriptOutcome::OkBroadcast |
             ScriptOutcome::WarnSpecifyDeployer => false,
             ScriptOutcome::MissingSender |
             ScriptOutcome::MissingWallet |
             ScriptOutcome::StaticCallNotAllowed |
+            ScriptOutcome::UnsupportedLibraries |
+            ScriptOutcome::ErrorSelectForkOnBroadcast |
             ScriptOutcome::FailedScript => true,
         }
     }

@@ -78,7 +78,7 @@ impl EtherscanIdentifier {
         let outputs_fut = contracts_iter
             .clone()
             .map(|(address, metadata)| {
-                println!("Compiling: {} {:?}", metadata.contract_name, address);
+                println!("Compiling: {} {address:?}", metadata.contract_name);
                 compile::compile_from_source(metadata)
             })
             .collect::<Vec<_>>();
@@ -101,7 +101,7 @@ impl EtherscanIdentifier {
 impl TraceIdentifier for EtherscanIdentifier {
     fn identify_addresses(
         &mut self,
-        addresses: Vec<(&Address, Option<&Vec<u8>>)>,
+        addresses: Vec<(&Address, Option<&[u8]>)>,
     ) -> Vec<AddressIdentity> {
         trace!(target: "etherscanidentifier", "identify {} addresses", addresses.len());
 

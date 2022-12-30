@@ -91,8 +91,7 @@ impl CheatsConfig {
         let normalized = self.normalized_path(path);
         if !self.is_normalized_path_allowed(&normalized, kind) {
             return Err(format!(
-                "The path {:?} is not allowed to be accessed for {} operations.",
-                path, kind
+                "The path {path:?} is not allowed to be accessed for {kind} operations."
             ))
         }
 
@@ -145,7 +144,7 @@ impl CheatsConfig {
             }
             None => {
                 if !url_or_alias.starts_with("http") && !url_or_alias.starts_with("ws") {
-                    Err(error::encode_error(format!("invalid rpc url {}", url_or_alias)))
+                    Err(error::encode_error(format!("invalid rpc url {url_or_alias}")))
                 } else {
                     Ok(url_or_alias)
                 }
@@ -199,13 +198,13 @@ mod tests {
         let root = "/my/project/root/";
         let config = config(root, FsPermissions::new(vec![PathPermission::read_write("./")]));
 
-        let f = format!("{}foundry.toml", root);
-        assert!(config.is_foundry_toml(&f));
+        let f = format!("{root}foundry.toml");
+        assert!(config.is_foundry_toml(f));
 
-        let f = format!("{}Foundry.toml", root);
-        assert!(config.is_foundry_toml(&f));
+        let f = format!("{root}Foundry.toml");
+        assert!(config.is_foundry_toml(f));
 
-        let f = format!("{}lib/other/foundry.toml", root);
-        assert!(!config.is_foundry_toml(&f));
+        let f = format!("{root}lib/other/foundry.toml");
+        assert!(!config.is_foundry_toml(f));
     }
 }

@@ -76,8 +76,7 @@ impl TimeManager {
         trace!(target: "time", "override next timestamp {}", timestamp);
         if timestamp <= *self.last_timestamp.read() {
             return Err(BlockchainError::TimestampError(format!(
-                "{} is lower than or equal to previous block's timestamp",
-                timestamp
+                "{timestamp} is lower than or equal to previous block's timestamp"
             )))
         }
         self.next_exact_timestamp.write().replace(timestamp);
@@ -148,5 +147,5 @@ pub fn duration_since_unix_epoch() -> Duration {
     use std::time::SystemTime;
     let now = SystemTime::now();
     now.duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_else(|err| panic!("Current time {:?} is invalid: {:?}", now, err))
+        .unwrap_or_else(|err| panic!("Current time {now:?} is invalid: {err:?}"))
 }

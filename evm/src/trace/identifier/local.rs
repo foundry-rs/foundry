@@ -4,6 +4,8 @@ use ethers::{
     prelude::ArtifactId,
 };
 use foundry_common::contracts::{diff_score, ContractsByArtifact};
+use itertools::Itertools;
+use ordered_float::OrderedFloat;
 use std::{borrow::Cow, collections::BTreeMap};
 
 /// A trace identifier that tries to identify addresses using local contracts.
@@ -30,16 +32,25 @@ impl LocalTraceIdentifier {
 impl TraceIdentifier for LocalTraceIdentifier {
     fn identify_addresses(
         &mut self,
-        addresses: Vec<(&Address, Option<&Vec<u8>>)>,
+        addresses: Vec<(&Address, Option<&[u8]>)>,
     ) -> Vec<AddressIdentity> {
         addresses
             .into_iter()
             .filter_map(|(address, code)| {
                 let code = code?;
-                let (_, (id, abi)) = self
+                let (_, (_, (id, abi))) = self
                     .local_contracts
                     .iter()
-                    .find(|(known_code, _)| diff_score(known_code, code) < 0.1)?;
+                    .filter_map(|entry| {
+                        let score = diff_score(entry.0, code);
+                        if score < 0.1 {
+                            Some((OrderedFloat(score), entry))
+                        } else {
+                            None
+                        }
+                    })
+                    .sorted_by_key(|(score, _)| *score)
+                    .next()?;
 
                 Some(AddressIdentity {
                     address: *address,

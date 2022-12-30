@@ -4,6 +4,7 @@ use ethers::types::U256;
 use serde::Serialize;
 
 #[derive(Parser, Debug, Clone, Serialize)]
+#[clap(next_help_heading = "Transaction options")]
 pub struct TransactionOpts {
     #[clap(
     long = "gas-limit",

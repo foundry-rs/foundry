@@ -239,3 +239,100 @@ casttest!(cast_run_succeeds, |_: TestProject, mut cmd: TestCommand| {
     assert!(output.contains("Transaction successfully executed"));
     assert!(!output.contains("Revert"));
 });
+
+// tests that the `cast storage` command works correctly
+casttest!(test_live_cast_storage_succeeds, |_: TestProject, mut cmd: TestCommand| {
+    // ignore if ETHERSCAN_API_KEY not set
+    if std::env::var("ETHERSCAN_API_KEY").is_err() {
+        eprintln!("ETHERSCAN_API_KEY not set");
+        return
+    }
+
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    // WETH
+    // version < min, so empty storage layout
+    let address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+    cmd.cast_fuse().args(["storage", "--rpc-url", eth_rpc_url.as_str(), address]);
+    let output = cmd.stderr_lossy();
+    assert!(output.contains("Storage layout is empty"), "{}", output);
+    // first slot is the name, always is "Wrapped Ether"
+    cmd.cast_fuse().args(["storage", "--rpc-url", eth_rpc_url.as_str(), address, "0"]);
+    let output = cmd.stdout_lossy();
+    assert!(
+        output.contains("0x577261707065642045746865720000000000000000000000000000000000001a"),
+        "{output}",
+    );
+
+    // Polygon bridge proxy
+    let address = "0xA0c68C638235ee32657e8f720a23ceC1bFc77C77";
+    cmd.cast_fuse().args(["storage", "--rpc-url", eth_rpc_url.as_str(), address]);
+    let output = cmd.stdout_lossy();
+    assert!(
+        output.contains("RootChainManager") &&
+            output.contains("_roles") &&
+            output.contains("mapping(bytes32 => struct AccessControl.RoleData)"),
+        "{output}",
+    );
+    // first slot is `inited`, always is 1
+    cmd.cast_fuse().args(["storage", "--rpc-url", eth_rpc_url.as_str(), address, "0"]);
+    let output = cmd.stdout_lossy();
+    assert!(
+        output.contains("0x0000000000000000000000000000000000000000000000000000000000000001"),
+        "{output}",
+    );
+});
+
+// tests that `cast --to-base` commands are working correctly.
+casttest!(cast_to_base, |_: TestProject, mut cmd: TestCommand| {
+    let values = [
+        "1",
+        "100",
+        "100000",
+        "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+        "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "-1",
+        "-100",
+        "-100000",
+        "-57896044618658097711785492504343953926634992332820282019728792003956564819968",
+    ];
+    for value in values {
+        for subcmd in ["--to-base", "--to-hex", "--to-dec"] {
+            if subcmd == "--to-base" {
+                for base in ["bin", "oct", "dec", "hex"] {
+                    cmd.cast_fuse().args([subcmd, value, base]);
+                    assert!(!cmd.stdout_lossy().trim().is_empty());
+                }
+            } else {
+                cmd.cast_fuse().args([subcmd, value]);
+                assert!(!cmd.stdout_lossy().trim().is_empty());
+            }
+        }
+    }
+});
+
+// tests that revert reason is only present if transaction has reverted.
+casttest!(cast_receipt_revert_reason, |_: TestProject, mut cmd: TestCommand| {
+    let rpc = next_http_rpc_endpoint();
+
+    // <https://etherscan.io/tx/0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e>
+    cmd.cast_fuse().args([
+        "receipt",
+        "0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e",
+        "--rpc-url",
+        rpc.as_str(),
+    ]);
+    let output = cmd.stdout_lossy();
+    assert!(!output.contains("revertReason"));
+
+    // <https://etherscan.io/tx/0x0e07d8b53ed3d91314c80e53cf25bcde02084939395845cbb625b029d568135c>
+    cmd.cast_fuse().args([
+        "receipt",
+        "0x0e07d8b53ed3d91314c80e53cf25bcde02084939395845cbb625b029d568135c",
+        "--rpc-url",
+        rpc.as_str(),
+    ]);
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("revertReason"));
+    assert!(output.contains("Transaction too old"));
+});

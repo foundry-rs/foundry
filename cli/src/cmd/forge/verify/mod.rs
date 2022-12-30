@@ -1,6 +1,9 @@
 //! Verify contract source
 
-use crate::cmd::retry::RetryArgs;
+use crate::cmd::{
+    forge::verify::{etherscan::EtherscanVerificationProvider, provider::VerificationProvider},
+    retry::RetryArgs,
+};
 use clap::{Parser, ValueHint};
 use ethers::{abi::Address, solc::info::ContractInfo};
 use foundry_config::{figment, impl_figment_convert, Chain, Config};
@@ -17,7 +20,7 @@ pub struct VerifierArgs {
     #[clap(
         value_enum,
         long = "verifier",
-        help_heading = "Verification Provider",
+        help_heading = "Verification provider",
         help = "Contract verification provider to use `etherscan`, `sourcify` or `blockscout`",
         default_value = "etherscan"
     )]
@@ -38,7 +41,7 @@ impl Default for VerifierArgs {
     }
 }
 
-/// Verification arguments
+/// CLI arguments for `forge verify`.
 #[derive(Debug, Clone, Parser)]
 pub struct VerifyArgs {
     #[clap(help = "The address of the contract to verify.", value_name = "ADDRESS")]
@@ -114,11 +117,11 @@ pub struct VerifyArgs {
     #[clap(long, help = "Wait for verification result after submission")]
     pub watch: bool,
 
-    #[clap(flatten, help = "Allows to use retry arguments for contract verification")]
+    #[clap(flatten)]
     pub retry: RetryArgs,
 
     #[clap(
-        help_heading = "LINKER OPTIONS",
+        help_heading = "Linker options",
         help = "Set pre-linked libraries.",
         long,
         env = "DAPP_LIBRARIES",
@@ -137,13 +140,21 @@ pub struct VerifyArgs {
 
     #[clap(flatten)]
     pub verifier: VerifierArgs,
+
+    #[clap(
+        help = "Prints the standard json compiler input.",
+        long,
+        long_help = "The standard json compiler input can be used to manually submit contract verification in the browser.",
+        conflicts_with = "flatten"
+    )]
+    pub show_standard_json_input: bool,
 }
 
 impl_figment_convert!(VerifyArgs);
 
 impl figment::Provider for VerifyArgs {
     fn metadata(&self) -> figment::Metadata {
-        figment::Metadata::named(stringify!($name))
+        figment::Metadata::named("Verify Provider")
     }
     fn data(
         &self,
@@ -166,7 +177,20 @@ impl figment::Provider for VerifyArgs {
 impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(self) -> eyre::Result<()> {
+        if self.show_standard_json_input {
+            let args =
+                EtherscanVerificationProvider::default().create_verify_request(&self, None).await?;
+            println!("{}", args.source);
+            return Ok(())
+        }
+
+        println!("Start verifying contract `{:?}` deployed on {}", self.address, self.chain);
         self.verifier.verifier.client(&self.etherscan_key)?.verify(self).await
+    }
+
+    /// Returns the configured verification provider
+    pub fn verification_provider(&self) -> eyre::Result<Box<dyn VerificationProvider>> {
+        self.verifier.verifier.client(&self.etherscan_key)
     }
 }
 
@@ -207,6 +231,30 @@ pub struct VerifyCheckArgs {
 impl VerifyCheckArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(self) -> eyre::Result<()> {
+        println!("Checking verification status on {}", self.chain);
         self.verifier.verifier.client(&self.etherscan_key)?.check(self).await
+    }
+}
+
+impl figment::Provider for VerifyCheckArgs {
+    fn metadata(&self) -> figment::Metadata {
+        figment::Metadata::named("Verify Check Provider")
+    }
+    fn data(
+        &self,
+    ) -> Result<figment::value::Map<figment::Profile, figment::value::Dict>, figment::Error> {
+        Ok(figment::value::Map::from([(Config::selected_profile(), figment::value::Dict::new())]))
+    }
+}
+impl<'a> From<&'a VerifyCheckArgs> for figment::Figment {
+    fn from(args: &'a VerifyCheckArgs) -> Self {
+        Config::figment_with_root(foundry_config::find_project_root_path().unwrap()).merge(args)
+    }
+}
+
+impl<'a> From<&'a VerifyCheckArgs> for Config {
+    fn from(args: &'a VerifyCheckArgs) -> Self {
+        let figment: figment::Figment = args.into();
+        Config::from_provider(figment).sanitized()
     }
 }

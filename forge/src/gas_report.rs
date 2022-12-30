@@ -2,7 +2,7 @@ use crate::{
     executor::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
     trace::{CallTraceArena, RawOrDecodedCall, TraceKind},
 };
-use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, *};
+use comfy_table::{presets::ASCII_MARKDOWN, *};
 use ethers::types::U256;
 use foundry_common::{calc, TestFunctionExt};
 use serde::{Deserialize, Serialize};
@@ -124,7 +124,7 @@ impl Display for GasReport {
             }
 
             let mut table = Table::new();
-            table.load_preset(UTF8_FULL).apply_modifier(UTF8_ROUND_CORNERS);
+            table.load_preset(ASCII_MARKDOWN);
             table.set_header(vec![Cell::new(format!("{name} contract"))
                 .add_attribute(Attribute::Bold)
                 .fg(Color::Green)]);
@@ -158,7 +158,8 @@ impl Display for GasReport {
                     ]);
                 })
             });
-            writeln!(f, "{}", table)?
+            writeln!(f, "{table}")?;
+            writeln!(f, "\n")?;
         }
         Ok(())
     }

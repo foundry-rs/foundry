@@ -1,7 +1,6 @@
 //! Build command
 use crate::cmd::{
     forge::{
-        build::filter::{SkipBuildFilter, SkipBuildFilters},
         install::{self},
         watch::WatchArgs,
     },
@@ -9,7 +8,10 @@ use crate::cmd::{
 };
 use clap::{ArgAction, Parser};
 use ethers::solc::{Project, ProjectCompileOutput};
-use foundry_common::{compile, compile::ProjectCompiler};
+use foundry_common::{
+    compile,
+    compile::{ProjectCompiler, SkipBuildFilter},
+};
 use foundry_config::{
     figment::{
         self,
@@ -20,7 +22,6 @@ use foundry_config::{
     Config,
 };
 use serde::Serialize;
-use tracing::trace;
 use watchexec::config::{InitConfig, RuntimeConfig};
 
 mod core;
@@ -29,11 +30,9 @@ pub use self::core::CoreBuildArgs;
 mod paths;
 pub use self::paths::ProjectPathsArgs;
 
-mod filter;
-
 foundry_config::merge_impl_figment_convert!(BuildArgs, args);
 
-/// All `forge build` related arguments
+/// CLI arguments for `forge build`.
 ///
 /// CLI arguments take the highest precedence in the Config/Figment hierarchy.
 /// In order to override them in the foundry `Config` they need to be merged into an existing
@@ -55,6 +54,7 @@ foundry_config::merge_impl_figment_convert!(BuildArgs, args);
 /// Some arguments are marked as `#[serde(skip)]` and require manual processing in
 /// `figment::Provider` implementation
 #[derive(Debug, Clone, Parser, Serialize, Default)]
+#[clap(next_help_heading = "Build options", about = None)] // override doc
 pub struct BuildArgs {
     #[clap(flatten)]
     #[serde(flatten)]
@@ -72,11 +72,11 @@ pub struct BuildArgs {
         long,
         num_args(1..),
         action = ArgAction::Append,
-        help = "Skip building whose names contain FILTER. `test` and `script` are aliases for `.t.sol` and `.s.sol`. (this flag can be used multiple times)")]
+        help = "Skip building whose names contain SKIP. `test` and `script` are aliases for `.t.sol` and `.s.sol`. (this flag can be used multiple times)")]
     #[serde(skip)]
     pub skip: Option<Vec<SkipBuildFilter>>,
 
-    #[clap(flatten, next_help_heading = "WATCH OPTIONS")]
+    #[clap(flatten)]
     #[serde(skip)]
     pub watch: WatchArgs,
 }
@@ -98,20 +98,10 @@ impl Cmd for BuildArgs {
         let filters = self.skip.unwrap_or_default();
 
         if self.args.silent {
-            if filters.is_empty() {
-                compile::suppress_compile(&project)
-            } else {
-                trace!(?filters, "compile with filters suppressed");
-                compile::suppress_compile_sparse(&project, SkipBuildFilters(filters))
-            }
+            compile::suppress_compile_with_filter(&project, filters)
         } else {
-            let compiler = ProjectCompiler::new(self.names, self.sizes);
-            if filters.is_empty() {
-                compiler.compile(&project)
-            } else {
-                trace!(?filters, "compile with filters");
-                compiler.compile_sparse(&project, SkipBuildFilters(filters))
-            }
+            let compiler = ProjectCompiler::with_filter(self.names, self.sizes, filters);
+            compiler.compile(&project)
         }
     }
 }

@@ -1,7 +1,9 @@
 //! forge tests for core functionality
 
 use crate::{config::*, test_helpers::filter::Filter};
+
 use forge::result::SuiteResult;
+
 use foundry_evm::trace::TraceKind;
 use std::{collections::BTreeMap, env};
 
@@ -654,9 +656,7 @@ fn test_env_vars() {
     assert!(
         res.is_ok() && res.unwrap() == env_var_val,
         "Test `testSetEnv` did not pass as expected.
-Reason: `setEnv` failed to set an environment variable `{}={}`",
-        env_var_key,
-        env_var_val
+Reason: `setEnv` failed to set an environment variable `{env_var_key}={env_var_val}`"
     );
 }
 
@@ -688,15 +688,13 @@ fn test_trace() {
             assert_eq!(
                 deployment_traces.count(),
                 1,
-                "Test {} did not have exactly 1 deployment trace.",
-                test_name
+                "Test {test_name} did not have exactly 1 deployment trace."
             );
-            assert!(setup_traces.count() <= 1, "Test {} had more than 1 setup trace.", test_name);
+            assert!(setup_traces.count() <= 1, "Test {test_name} had more than 1 setup trace.");
             assert_eq!(
                 execution_traces.count(),
                 1,
-                "Test {} did not not have exactly 1 execution trace.",
-                test_name
+                "Test {test_name} did not not have exactly 1 execution trace."
             );
         }
     }

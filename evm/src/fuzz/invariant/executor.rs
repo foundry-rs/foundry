@@ -387,9 +387,8 @@ impl<'a> InvariantExecutor<'a> {
             // Check that the selectors really exist for this contract.
             for selector in selectors {
                 abi.functions()
-                    .into_iter()
                     .find(|func| func.short_signature().as_slice() == selector.as_slice())
-                    .wrap_err(format!("{contract} does not have the selector {:?}", selector))?;
+                    .wrap_err(format!("{contract} does not have the selector {selector:?}"))?;
             }
 
             return Ok(artifact.identifier())
@@ -482,8 +481,7 @@ impl<'a> InvariantExecutor<'a> {
             }
         } else {
             let (name, abi) = self.setup_contracts.get(&address).wrap_err(format!(
-                "[targetSelectors] address does not have an associated contract: {}",
-                address
+                "[targetSelectors] address does not have an associated contract: {address}"
             ))?;
 
             let functions = bytes4_array
@@ -501,7 +499,7 @@ impl<'a> InvariantExecutor<'a> {
     where
         T: Tokenizable + Detokenize + TokenizableItem,
     {
-        if let Some(func) = abi.functions().into_iter().find(|func| func.name == method_name) {
+        if let Some(func) = abi.functions().find(|func| func.name == method_name) {
             if let Ok(call_result) = self.executor.call::<Vec<T>, _, _>(
                 CALLER,
                 address,

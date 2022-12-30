@@ -568,10 +568,8 @@ impl SharedBackend {
 
     /// Updates the pinned block to fetch data from
     pub fn set_pinned_block(&self, block: impl Into<BlockId>) -> eyre::Result<()> {
-        tokio::task::block_in_place(|| {
-            let req = BackendRequest::SetPinnedBlock(block.into());
-            self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))
-        })
+        let req = BackendRequest::SetPinnedBlock(block.into());
+        self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))
     }
 
     /// Returns the full block for the given block identifier
@@ -672,17 +670,17 @@ mod tests {
         Backend,
     };
     use ethers::{
-        providers::{Http, Provider},
         solc::utils::RuntimeOrHandle,
         types::{Address, Chain},
     };
+    use foundry_common::get_http_provider;
     use foundry_config::Config;
-    use std::{collections::BTreeSet, convert::TryFrom, path::PathBuf, sync::Arc};
+    use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
     const ENDPOINT: &str = "https://mainnet.infura.io/v3/c60b0bb42f8a4c6481ecd229eddaca27";
 
     #[test]
     fn shared_backend() {
-        let provider = Provider::<Http>::try_from(ENDPOINT).unwrap();
+        let provider = get_http_provider(ENDPOINT);
         let meta = BlockchainDbMeta {
             cfg_env: Default::default(),
             block_env: Default::default(),
@@ -734,7 +732,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn can_read_write_cache() {
-        let provider = Provider::<Http>::try_from(ENDPOINT).unwrap();
+        let provider = get_http_provider(ENDPOINT);
 
         let block_num = provider.get_block_number().await.unwrap().as_u64();
 

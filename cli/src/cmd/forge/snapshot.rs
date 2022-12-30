@@ -34,10 +34,11 @@ pub static RE_BASIC_SNAPSHOT_ENTRY: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?P<file>(.*?)):(?P<sig>(\w+)\s*\((.*?)\))\s*\(((gas:)?\s*(?P<gas>\d+)|(runs:\s*(?P<runs>\d+),\s*μ:\s*(?P<avg>\d+),\s*~:\s*(?P<med>\d+))|(runs:\s*(?P<invruns>\d+),\s*calls:\s*(?P<calls>\d+),\s*reverts:\s*(?P<reverts>\d+)))\)").unwrap()
 });
 
+/// CLI arguments for `forge snapshot`.
 #[derive(Debug, Clone, Parser)]
 pub struct SnapshotArgs {
     /// All test arguments are supported
-    #[clap(flatten, next_help_heading = "TEST OPTIONS")]
+    #[clap(flatten)]
     pub(crate) test: test::TestArgs,
 
     /// Additional configs for test results
@@ -408,11 +409,11 @@ fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> eyre::Result<()> {
 fn fmt_pct_change(change: f64) -> String {
     let change_pct = change * 100.0;
     match change.partial_cmp(&0.0).unwrap_or(Ordering::Equal) {
-        Ordering::Less => Paint::green(format!("{:.3}%", change_pct)).to_string(),
+        Ordering::Less => Paint::green(format!("{change_pct:.3}%")).to_string(),
         Ordering::Equal => {
-            format!("{:.3}%", change_pct)
+            format!("{change_pct:.3}%")
         }
-        Ordering::Greater => Paint::red(format!("{:.3}%", change_pct)).to_string(),
+        Ordering::Greater => Paint::red(format!("{change_pct:.3}%")).to_string(),
     }
 }
 

@@ -1,7 +1,10 @@
 use crate::{
     eth::{
         backend,
-        backend::{notifications::NewBlockNotifications, validate::TransactionValidator},
+        backend::{
+            db::SerializableState, mem::MIN_TRANSACTION_GAS, notifications::NewBlockNotifications,
+            validate::TransactionValidator,
+        },
         error::{
             BlockchainError, FeeHistoryError, InvalidTransactionError, Result, ToRpcResponseResult,
         },
@@ -33,7 +36,7 @@ use anvil_core::{
         },
         EthRequest,
     },
-    types::{EvmMineOptions, Forking, Index, Work},
+    types::{EvmMineOptions, Forking, Index, NodeEnvironment, NodeForkConfig, NodeInfo, Work},
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use ethers::{
@@ -47,7 +50,7 @@ use ethers::{
         },
         Address, Block, BlockId, BlockNumber, Bytes, FeeHistory, Filter, FilteredParams,
         GethDebugTracingOptions, Log, Trace, Transaction, TransactionReceipt, TxHash,
-        TxpoolContent, TxpoolInspectSummary, TxpoolStatus, TxpoolTransaction, H256, U256, U64,
+        TxpoolContent, TxpoolInspectSummary, TxpoolStatus, H256, U256, U64,
     },
     utils::rlp,
 };
@@ -293,6 +296,7 @@ impl EthApi {
             }
             EthRequest::DumpState(_) => self.anvil_dump_state().await.to_rpc_result(),
             EthRequest::LoadState(buf) => self.anvil_load_state(buf).await.to_rpc_result(),
+            EthRequest::NodeInfo(_) => self.anvil_node_info().await.to_rpc_result(),
             EthRequest::EvmSnapshot(_) => self.evm_snapshot().await.to_rpc_result(),
             EthRequest::EvmRevert(id) => self.evm_revert(id).await.to_rpc_result(),
             EthRequest::EvmIncreaseTime(time) => self.evm_increase_time(time).await.to_rpc_result(),
@@ -485,6 +489,16 @@ impl EthApi {
     pub async fn balance(&self, address: Address, block_number: Option<BlockId>) -> Result<U256> {
         node_info!("eth_getBalance");
         let block_request = self.block_request(block_number).await?;
+
+        // check if the number predates the fork, if in fork mode
+        if let BlockRequest::Number(number) = &block_request {
+            if let Some(fork) = self.get_fork() {
+                if fork.predates_fork(number.as_u64()) {
+                    return Ok(fork.get_balance(address, number.as_u64()).await?)
+                }
+            }
+        }
+
         self.backend.get_balance(address, Some(block_request)).await
     }
 
@@ -499,6 +513,18 @@ impl EthApi {
     ) -> Result<H256> {
         node_info!("eth_getStorageAt");
         let block_request = self.block_request(block_number).await?;
+
+        // check if the number predates the fork, if in fork mode
+        if let BlockRequest::Number(number) = &block_request {
+            if let Some(fork) = self.get_fork() {
+                if fork.predates_fork(number.as_u64()) {
+                    return Ok(fork
+                        .storage_at(address, index, Some(BlockNumber::Number(*number)))
+                        .await?)
+                }
+            }
+        }
+
         self.backend.storage_at(address, index, Some(block_request)).await
     }
 
@@ -683,7 +709,7 @@ impl EthApi {
         node_info!("eth_signTypedData_v4");
         let signer = self.get_signer(address).ok_or(BlockchainError::NoSignerAvailable)?;
         let signature = signer.sign_typed_data(address, data).await?;
-        Ok(format!("0x{}", signature))
+        Ok(format!("0x{signature}"))
     }
 
     /// The sign method calculates an Ethereum specific signature
@@ -693,7 +719,7 @@ impl EthApi {
         node_info!("eth_sign");
         let signer = self.get_signer(address).ok_or(BlockchainError::NoSignerAvailable)?;
         let signature = signer.sign(address, content.as_ref()).await?;
-        Ok(format!("0x{}", signature))
+        Ok(format!("0x{signature}"))
     }
 
     /// Sends a transaction
@@ -815,7 +841,7 @@ impl EthApi {
 
         let (exit, out, gas, _) =
             self.backend.call(request, fees, Some(block_request), overrides).await?;
-        trace!(target = "node", "Call status {:?}, gas {}", exit, gas);
+        trace!(target : "node", "Call status {:?}, gas {}", exit, gas);
 
         ensure_return_ok(exit, &out)
     }
@@ -900,18 +926,22 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_getTransactionByHash`
     pub async fn transaction_by_hash(&self, hash: H256) -> Result<Option<Transaction>> {
         node_info!("eth_getTransactionByHash");
-        let mut tx = self.backend.transaction_by_hash(hash).await?;
+        let mut tx = self.pool.get_transaction(hash).map(|pending| {
+            let from = *pending.sender();
+            let mut tx = transaction_build(
+                pending.transaction,
+                None,
+                None,
+                true,
+                Some(self.backend.base_fee()),
+            );
+            // we set the from field here explicitly to the set sender of the pending transaction,
+            // in case the transaction is impersonated.
+            tx.from = from;
+            tx
+        });
         if tx.is_none() {
-            // no transaction found, check the mempool for a pending transaction
-            tx = self.pool.get_transaction(hash).map(|pending| {
-                transaction_build(
-                    pending.transaction,
-                    None,
-                    None,
-                    true,
-                    Some(self.backend.base_fee()),
-                )
-            });
+            tx = self.backend.transaction_by_hash(hash).await?
         }
 
         Ok(tx)
@@ -946,6 +976,10 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_getTransactionReceipt`
     pub async fn transaction_receipt(&self, hash: H256) -> Result<Option<TransactionReceipt>> {
         node_info!("eth_getTransactionReceipt");
+        let tx = self.pool.get_transaction(hash);
+        if tx.is_some() {
+            return Ok(None)
+        }
         self.backend.transaction_receipt(hash).await
     }
 
@@ -1039,10 +1073,15 @@ impl EthApi {
         node_info!("eth_feeHistory");
         // max number of blocks in the requested range
 
+        let current = self.backend.best_number().as_u64();
+        let slots_in_an_epoch = 32u64;
+
         let number = match newest_block {
-            BlockNumber::Latest | BlockNumber::Pending => self.backend.best_number().as_u64(),
+            BlockNumber::Latest | BlockNumber::Pending => current,
             BlockNumber::Earliest => 0,
             BlockNumber::Number(n) => n.as_u64(),
+            BlockNumber::Safe => current.saturating_sub(slots_in_an_epoch),
+            BlockNumber::Finalized => current.saturating_sub(slots_in_an_epoch * 2),
         };
 
         // check if the number predates the fork, if in fork mode
@@ -1320,9 +1359,12 @@ impl EthApi {
     /// Handler for ETH RPC call: `evm_setIntervalMining`
     pub fn anvil_set_interval_mining(&self, secs: u64) -> Result<()> {
         node_info!("evm_setIntervalMining");
-        self.miner.set_mining_mode(MiningMode::FixedBlockTime(FixedBlockTimeMiner::new(
-            Duration::from_secs(secs),
-        )));
+        let mining_mode = if secs == 0 {
+            MiningMode::None
+        } else {
+            MiningMode::FixedBlockTime(FixedBlockTimeMiner::new(Duration::from_secs(secs)))
+        };
+        self.miner.set_mining_mode(mining_mode);
         Ok(())
     }
 
@@ -1440,6 +1482,11 @@ impl EthApi {
         self.backend.dump_state().await
     }
 
+    /// Returns the current state
+    pub async fn serialized_state(&self) -> Result<SerializableState> {
+        self.backend.serialized_state().await
+    }
+
     /// Append chain state buffer to current chain. Will overwrite any conflicting addresses or
     /// storage.
     ///
@@ -1447,6 +1494,45 @@ impl EthApi {
     pub async fn anvil_load_state(&self, buf: Bytes) -> Result<bool> {
         node_info!("anvil_loadState");
         self.backend.load_state(buf).await
+    }
+
+    /// Retrieves the Anvil node configuration params.
+    ///
+    /// Handler for RPC call: `anvil_nodeInfo`
+    pub async fn anvil_node_info(&self) -> Result<NodeInfo> {
+        node_info!("anvil_nodeInfo");
+
+        let env = self.backend.env().read();
+        let fork_config = self.backend.get_fork();
+        let tx_order = self.transaction_order.read();
+
+        Ok(NodeInfo {
+            current_block_number: self.backend.best_number(),
+            current_block_timestamp: env.block.timestamp.try_into().unwrap_or(u64::MAX),
+            current_block_hash: self.backend.best_hash(),
+            hard_fork: env.cfg.spec_id,
+            transaction_order: match *tx_order {
+                TransactionOrder::Fifo => "fifo".to_string(),
+                TransactionOrder::Fees => "fees".to_string(),
+            },
+            environment: NodeEnvironment {
+                base_fee: self.backend.base_fee(),
+                chain_id: self.backend.chain_id(),
+                gas_limit: self.backend.gas_limit(),
+                gas_price: self.backend.gas_price(),
+            },
+            fork_config: fork_config
+                .map(|fork| {
+                    let config = fork.config.read();
+
+                    NodeForkConfig {
+                        fork_url: Some(config.eth_rpc_url.clone()),
+                        fork_block_number: Some(config.block_number),
+                        fork_retry_backoff: Some(config.backoff.as_millis()),
+                    }
+                })
+                .unwrap_or_default(),
+        })
     }
 
     /// Snapshot the state of the blockchain at the current block.
@@ -1565,7 +1651,7 @@ impl EthApi {
                     .initial_backoff(1000)
                     .build()
                     .map_err(|_| {
-                        ProviderError::CustomError(format!("Failed to parse invalid url {}", url))
+                        ProviderError::CustomError(format!("Failed to parse invalid url {url}"))
                     })?
                     .interval(interval),
             );
@@ -1671,23 +1757,20 @@ impl EthApi {
     pub async fn txpool_content(&self) -> Result<TxpoolContent> {
         node_info!("txpool_content");
         let mut content = TxpoolContent::default();
-        fn convert(tx: Arc<PoolTransaction>) -> TxpoolTransaction {
+        fn convert(tx: Arc<PoolTransaction>) -> Transaction {
             let from = *tx.pending_transaction.sender();
-            let tx = &tx.pending_transaction.transaction;
+            let mut tx = transaction_build(
+                tx.pending_transaction.transaction.clone(),
+                None,
+                None,
+                true,
+                None,
+            );
 
-            TxpoolTransaction {
-                block_hash: None,
-                block_number: None,
-                from: Some(from),
-                to: tx.to().copied(),
-                gas: Some(tx.gas_limit()),
-                gas_price: Some(tx.gas_price()),
-                value: tx.value(),
-                hash: tx.hash(),
-                input: tx.data().clone(),
-                nonce: *tx.nonce(),
-                transaction_index: None,
-            }
+            // we set the from field here explicitly to the set sender of the pending transaction,
+            // in case the transaction is impersonated.
+            tx.from = from;
+            tx
         }
 
         for pending in self.pool.ready_transactions() {
@@ -1739,9 +1822,6 @@ impl EthApi {
     where
         D: DatabaseRef<Error = DatabaseError>,
     {
-        // call takes at least this amount
-        const MIN_GAS: U256 = U256([21_000, 0, 0, 0]);
-
         // if the request is a simple transfer we can optimize
         let likely_transfer =
             request.data.as_ref().map(|data| data.as_ref().is_empty()).unwrap_or(true);
@@ -1749,7 +1829,7 @@ impl EthApi {
             if let Some(to) = request.to {
                 if let Ok(target_code) = self.backend.get_code_with_state(&state, to) {
                     if target_code.as_ref().is_empty() {
-                        return Ok(MIN_GAS)
+                        return Ok(MIN_TRANSACTION_GAS)
                     }
                 }
             }
@@ -1843,7 +1923,7 @@ impl EthApi {
         // search over the possible range
 
         let gas: U256 = gas.into();
-        let mut lowest_gas_limit = MIN_GAS;
+        let mut lowest_gas_limit = MIN_TRANSACTION_GAS;
 
         // pick a point that's close to the estimated gas
         let mut mid_gas_limit = std::cmp::min(gas * 3, (highest_gas_limit + lowest_gas_limit) / 2);
@@ -2030,6 +2110,15 @@ impl EthApi {
         block_number: Option<BlockId>,
     ) -> Result<U256> {
         let block_request = self.block_request(block_number).await?;
+
+        if let BlockRequest::Number(number) = &block_request {
+            if let Some(fork) = self.get_fork() {
+                if fork.predates_fork_inclusive(number.as_u64()) {
+                    return Ok(fork.get_nonce(address, number.as_u64()).await?)
+                }
+            }
+        }
+
         let nonce = self.backend.get_nonce(address, Some(block_request)).await?;
 
         Ok(nonce)

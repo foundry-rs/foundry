@@ -14,6 +14,7 @@ mod error;
 mod find;
 mod visitor;
 
+/// CLI arguments for `forge geiger`.
 #[derive(Debug, Clone, Parser)]
 pub struct GeigerArgs {
     #[clap(
@@ -78,11 +79,11 @@ impl Cmd for GeigerArgs {
                 Ok(metrics) => {
                     let printer = SolFileMetricsPrinter { metrics: &metrics, root: &root };
                     if self.full || printer.metrics.cheatcodes.has_unsafe() {
-                        eprint!("{}", printer);
+                        eprint!("{printer}");
                     }
                 }
                 Err(err) => {
-                    eprintln!("{}", err);
+                    eprintln!("{err}");
                 }
             };
         });

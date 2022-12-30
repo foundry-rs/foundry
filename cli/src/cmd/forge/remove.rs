@@ -8,7 +8,7 @@ use eyre::WrapErr;
 use foundry_config::{find_git_root_path, impl_figment_convert_basic};
 use std::{path::PathBuf, process::Command};
 
-/// Command to remove dependencies
+/// CLI arguments for `forge remove`.
 #[derive(Debug, Clone, Parser)]
 pub struct RemoveArgs {
     #[clap(help = "The path to the dependency you want to remove.")]
@@ -57,8 +57,8 @@ impl Cmd for RemoveArgs {
             }
 
             println!(
-                "Removing {} in {:?}, (url: {:?}, tag: {:?})",
-                dep.name, dep_path, dep.url, dep.tag
+                "Removing {} in {dep_path:?}, (url: {:?}, tag: {:?})",
+                dep.name, dep.url, dep.tag
             );
 
             // remove submodule entry from .git/config

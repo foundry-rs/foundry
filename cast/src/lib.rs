@@ -19,7 +19,7 @@ use ethers_core::{
 use ethers_etherscan::{errors::EtherscanError, Client};
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
-use foundry_common::{abi::encode_args, fmt::*};
+use foundry_common::{abi::encode_args, fmt::*, TransactionReceiptWithRevertReason};
 pub use foundry_evm::*;
 use rustc_hex::{FromHexIter, ToHex};
 use std::{path::PathBuf, str::FromStr};
@@ -110,7 +110,7 @@ where
                 }
                 return Err(err).wrap_err(
                     "could not decode output. did you specify the wrong function return data type perhaps?"
-                )
+                );
             }
         };
         // handle case when return type is not specified
@@ -170,7 +170,7 @@ where
                 if !al.storage_keys.is_empty() {
                     s.push("  keys:".to_string());
                     for key in al.storage_keys {
-                        s.push(format!("    {:?}", key));
+                        s.push(format!("    {key:?}"));
                     }
                 }
             }
@@ -429,6 +429,8 @@ where
             "0x7b66506a9ebdbf30d32b43c5f15a3b1216269a1ec3a75aa3182b86176a2b1ca7" => {
                 "polygon-mumbai"
             }
+            "0x4f1dd23188aab3a76b463e4af801b52b1248ef073c648cbdc4c9333d3da79756" => "gnosis",
+            "0xada44fd8d2ecab8b08f256af07ad3e777f17fb434f8f8e678b312f576212ba9a" => "chiado",
             "0x6d3c66c5357ec91d5c43af47e234a939b22557cbb552dc45bebbceeed90fbe34" => "bsctest",
             "0x0d21840abff46b96c84b2ac9e10e4f5cdaeb5693cb665db62a2f3b02d2d57b5b" => "bsc",
             "0x31ced5b9beb7f8782b014660da0cb18cc409f121f408186886e1ca3e8eeca96b" => {
@@ -605,24 +607,29 @@ where
     ) -> Result<String> {
         let tx_hash = H256::from_str(&tx_hash).wrap_err("invalid tx hash")?;
 
-        let receipt = match self.provider.get_transaction_receipt(tx_hash).await? {
-            Some(r) => r,
-            None => {
-                // if the async flag is provided, immediately exit if no tx is found, otherwise try
-                // to poll for it
-                if cast_async {
-                    eyre::bail!("tx not found: {:?}", tx_hash)
-                } else {
-                    let tx = PendingTransaction::new(tx_hash, self.provider.provider());
-                    tx.confirmations(confs).await?.ok_or_else(|| {
-                        eyre::eyre!(
-                            "tx not found, might have been dropped from mempool: {:?}",
-                            tx_hash
-                        )
-                    })?
+        let mut receipt: TransactionReceiptWithRevertReason =
+            match self.provider.get_transaction_receipt(tx_hash).await? {
+                Some(r) => r,
+                None => {
+                    // if the async flag is provided, immediately exit if no tx is found, otherwise
+                    // try to poll for it
+                    if cast_async {
+                        eyre::bail!("tx not found: {:?}", tx_hash)
+                    } else {
+                        let tx = PendingTransaction::new(tx_hash, self.provider.provider());
+                        tx.confirmations(confs).await?.ok_or_else(|| {
+                            eyre::eyre!(
+                                "tx not found, might have been dropped from mempool: {:?}",
+                                tx_hash
+                            )
+                        })?
+                    }
                 }
             }
-        };
+            .into();
+
+        // Allow to fail silently
+        let _ = receipt.update_revert_reason(&self.provider).await;
 
         Ok(if let Some(ref field) = field {
             get_pretty_tx_receipt_attr(&receipt, field)
@@ -659,6 +666,35 @@ where
     {
         let res = self.provider.provider().request::<T, serde_json::Value>(method, params).await?;
         Ok(serde_json::to_string(&res)?)
+    }
+
+    /// Returns the slot
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_providers::{Provider, Http};
+    /// use ethers_core::types::{Address, H256};
+    /// use std::{str::FromStr, convert::TryFrom};
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    /// let addr = Address::from_str("0x00000000006c3852cbEf3e08E8dF289169EdE581")?;
+    /// let slot = H256::zero();
+    /// let storage = cast.storage(addr, slot, None).await?;
+    /// println!("{}", storage);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn storage<T: Into<NameOrAddress> + Send + Sync>(
+        &self,
+        from: T,
+        slot: H256,
+        block: Option<BlockId>,
+    ) -> Result<String> {
+        Ok(format!("{:?}", self.provider.get_storage_at(from, slot, block).await?))
     }
 }
 
@@ -740,7 +776,7 @@ impl SimpleCast {
             Err(_) => Units::try_from(decimals)?,
         };
         let n: NumberWithBase = parse_units(value, units.as_num())?.into();
-        Ok(format!("{}", n))
+        Ok(format!("{n}"))
     }
 
     /// Converts integers with specified decimals into fixed point numbers
@@ -769,7 +805,7 @@ impl SimpleCast {
         let (sign, mut value, value_len) = {
             let number = NumberWithBase::parse_int(value, None)?;
             let sign = if number.is_nonnegative() { "" } else { "-" };
-            let value = format!("{:#}", number);
+            let value = format!("{number:#}");
             let value_stripped = value.strip_prefix('-').unwrap_or(&value).to_string();
             let value_len = value_stripped.len();
             (sign, value_stripped, value_len)
@@ -778,14 +814,14 @@ impl SimpleCast {
 
         let value = if decimals >= value_len {
             // Add "0." and pad with 0s
-            format!("0.{:0>1$}", value, decimals)
+            format!("0.{value:0>decimals$}")
         } else {
             // Insert decimal at -idx (i.e 1 => decimal idx = -1)
             value.insert(value_len - decimals, '.');
             value
         };
 
-        Ok(format!("{}{}", sign, value))
+        Ok(format!("{sign}{value}"))
     }
 
     /// Concatencates hex strings
@@ -855,7 +891,7 @@ impl SimpleCast {
     /// ```
     pub fn to_uint256(value: &str) -> Result<String> {
         let n = NumberWithBase::parse_uint(value, None)?;
-        Ok(format!("{:#066x}", n))
+        Ok(format!("{n:#066x}"))
     }
 
     /// Converts a number into int256 hex string with 0x prefix
@@ -885,7 +921,7 @@ impl SimpleCast {
     /// ```
     pub fn to_int256(value: &str) -> Result<String> {
         let n = NumberWithBase::parse_int(value, None)?;
-        Ok(format!("{:#066x}", n))
+        Ok(format!("{n:#066x}"))
     }
 
     /// Converts an eth amount into a specified unit
@@ -990,7 +1026,7 @@ impl SimpleCast {
         let striped_value = strip_0x(value);
         let bytes = hex::decode(striped_value).expect("Could not decode hex");
         let item = rlp::decode::<Item>(&bytes).expect("Could not decode rlp");
-        Ok(format!("{}", item))
+        Ok(format!("{item}"))
     }
 
     /// Encodes hex data or list of hex data to hexadecimal rlp
@@ -1046,7 +1082,7 @@ impl SimpleCast {
         n.set_base(base_out);
 
         // Use Debug fmt
-        Ok(format!("{:#?}", n))
+        Ok(format!("{n:#?}"))
     }
 
     /// Converts hexdata into bytes32 value
@@ -1074,7 +1110,7 @@ impl SimpleCast {
             eyre::bail!("string >32 bytes");
         }
 
-        let padded = format!("{:0<64}", s);
+        let padded = format!("{s:0<64}");
         // need to use the Debug implementation
         Ok(format!("{:?}", H256::from_str(&padded)?))
     }
@@ -1219,7 +1255,7 @@ impl SimpleCast {
     ) -> Result<Vec<InterfaceSource>> {
         let (contract_abis, contract_names): (Vec<RawAbi>, Vec<String>) = match address_or_path {
             InterfacePath::Local { path, name } => {
-                let file = std::fs::read_to_string(&path).wrap_err("unable to read abi file")?;
+                let file = std::fs::read_to_string(path).wrap_err("unable to read abi file")?;
 
                 let mut json: serde_json::Value = serde_json::from_str(&file)?;
                 let json = if !json["abi"].is_null() { json["abi"].take() } else { json };

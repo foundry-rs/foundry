@@ -21,7 +21,9 @@ use std::sync::Arc;
 const FLASHBOTS_URL: &str = "https://rpc.flashbots.net";
 
 impl_figment_convert_cast!(EthereumOpts);
+
 #[derive(Debug, Clone, Default, Parser, Serialize)]
+#[clap(next_help_heading = "Ethereum options")]
 pub struct EthereumOpts {
     #[clap(env = "ETH_RPC_URL", long = "rpc-url", help = "The RPC endpoint.", value_name = "URL")]
     pub rpc_url: Option<String>,
@@ -37,7 +39,7 @@ pub struct EthereumOpts {
     #[serde(skip)]
     pub chain: Option<Chain>,
 
-    #[clap(flatten, next_help_heading = "WALLET OPTIONS")]
+    #[clap(flatten)]
     #[serde(skip)]
     pub wallet: Wallet,
 }
@@ -139,7 +141,7 @@ impl figment::Provider for EthereumOpts {
         }
 
         if let Some(from) = self.wallet.from {
-            dict.insert("sender".to_string(), format!("{:?}", from).into());
+            dict.insert("sender".to_string(), format!("{from:?}").into());
         }
 
         if let Some(etherscan_api_key) = &self.etherscan_api_key {

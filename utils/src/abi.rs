@@ -45,7 +45,7 @@ pub fn abi_to_solidity(contract_abi: &RawAbi, mut contract_name: &str) -> eyre::
             .collect::<eyre::Result<Vec<String>>>()?
             .join(", ");
 
-        let event_final = format!("event {}({})", event.name, inputs);
+        let event_final = format!("event {}({inputs})", event.name);
 
         events.push(format!("{event_final};"));
     }
@@ -73,7 +73,7 @@ pub fn abi_to_solidity(contract_abi: &RawAbi, mut contract_name: &str) -> eyre::
             _ => "",
         };
 
-        let mut func = format!("function {}({})", function.name, inputs);
+        let mut func = format!("function {}({inputs})", function.name);
         if !mutability.is_empty() {
             func = format!("{func} {mutability}");
         }
@@ -91,45 +91,41 @@ pub fn abi_to_solidity(contract_abi: &RawAbi, mut contract_name: &str) -> eyre::
     let sol = if structs.structs_types().is_empty() {
         if events.is_empty() {
             format!(
-                r#"interface {} {{
-    {}
+                r#"interface {contract_name} {{
+    {functions}
 }}
-"#,
-                contract_name, functions
+"#
             )
         } else {
             format!(
-                r#"interface {} {{
-    {}
+                r#"interface {contract_name} {{
+    {events}
 
-    {}
+    {functions}
 }}
-"#,
-                contract_name, events, functions
+"#
             )
         }
     } else {
         let structs = format_struct_types(&structs);
         match events.is_empty() {
             true => format!(
-                r#"interface {} {{
-    {}
+                r#"interface {contract_name} {{
+    {structs}
 
-    {}
+    {functions}
 }}
-"#,
-                contract_name, structs, functions
+"#
             ),
             false => format!(
-                r#"interface {} {{
-    {}
+                r#"interface {contract_name} {{
+    {events}
 
-    {}
+    {structs}
 
-    {}
+    {functions}
 }}
-"#,
-                contract_name, events, structs, functions
+"#
             ),
         }
     };
@@ -146,11 +142,11 @@ fn expand_input_param_type(
     match kind {
         ParamType::Array(ty) => {
             let ty = expand_input_param_type(fun, param, ty, structs)?;
-            Ok(format!("{}[]", ty))
+            Ok(format!("{ty}[]"))
         }
         ParamType::FixedArray(ty, size) => {
             let ty = expand_input_param_type(fun, param, ty, structs)?;
-            Ok(format!("{}[{}]", ty, *size))
+            Ok(format!("{ty}[{}]", *size))
         }
         ParamType::Tuple(_) => {
             let ty = if let Some(struct_name) =
@@ -175,11 +171,11 @@ fn expand_output_param_type(
     match kind {
         ParamType::Array(ty) => {
             let ty = expand_output_param_type(fun, param, ty, structs)?;
-            Ok(format!("{}[]", ty))
+            Ok(format!("{ty}[]"))
         }
         ParamType::FixedArray(ty, size) => {
             let ty = expand_output_param_type(fun, param, ty, structs)?;
-            Ok(format!("{}[{}]", ty, *size))
+            Ok(format!("{ty}[{}]", *size))
         }
         ParamType::Tuple(_) => {
             if param.internal_type.is_none() {
@@ -240,7 +236,7 @@ fn format_param(param: &Param, kind: String) -> String {
     if param.name.is_empty() {
         kind
     } else {
-        format!("{} {}", kind, param.name)
+        format!("{kind} {}", param.name)
     }
 }
 
@@ -254,11 +250,11 @@ fn expand_event_param_type(
     match kind {
         ParamType::Array(ty) => {
             let ty = expand_event_param_type(event, ty, idx, structs)?;
-            Ok(format!("{}[]", ty))
+            Ok(format!("{ty}[]"))
         }
         ParamType::FixedArray(ty, size) => {
             let ty = expand_event_param_type(event, ty, idx, structs)?;
-            Ok(format!("{}[{}]", ty, *size))
+            Ok(format!("{ty}[{}]", *size))
         }
         ParamType::Tuple(_) => {
             let ty =
@@ -283,9 +279,9 @@ fn format_event_params(
     let ty = if param.name.is_empty() {
         kind
     } else if param.indexed {
-        format!("{} indexed {}", kind, param.name)
+        format!("{kind} indexed {}", param.name)
     } else {
-        format!("{} {}", kind, param.name)
+        format!("{kind} {}", param.name)
     };
     Ok(ty)
 }
@@ -305,7 +301,7 @@ fn format_struct_types(structs: &InternalStructs) -> String {
 fn format_struct_field(name: &str, sol_struct: &SolStruct) -> String {
     // strip member access if any
     let name = name.split('.').last().unwrap();
-    let mut def = format!("struct {} {{\n", name);
+    let mut def = format!("struct {name} {{\n");
     for field in sol_struct.fields.iter() {
         let ty = match &field.ty {
             FieldType::Elementary(ty) => ty.to_string(),
@@ -315,7 +311,7 @@ fn format_struct_field(name: &str, sol_struct: &SolStruct) -> String {
             }
         };
 
-        def.push_str(&format!("{} {};\n", ty, field.name));
+        def.push_str(&format!("{ty} {};\n", field.name));
     }
 
     def.push('}');

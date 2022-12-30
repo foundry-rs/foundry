@@ -2,10 +2,10 @@ use crate::executor::fork::CreateFork;
 use ethers::{
     providers::{Middleware, Provider},
     solc::utils::RuntimeOrHandle,
-    types::{Address, Chain, U256},
+    types::{Address, Chain, H256, U256},
 };
 use eyre::WrapErr;
-use foundry_common::{self, try_get_http_provider};
+use foundry_common::{self, try_get_http_provider, RpcUrl};
 use foundry_config::Config;
 use revm::{BlockEnv, CfgEnv, SpecId, TxEnv};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -19,7 +19,7 @@ pub struct EvmOpts {
 
     /// Fetch state over a remote instead of starting from empty state
     #[serde(rename = "eth_rpc_url")]
-    pub fork_url: Option<String>,
+    pub fork_url: Option<RpcUrl>,
 
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
@@ -86,7 +86,7 @@ impl EvmOpts {
         )
         .await
         .wrap_err_with(|| {
-            format!("Could not instantiate forked environment with fork url: {}", fork_url)
+            format!("Could not instantiate forked environment with fork url: {fork_url}")
         })
     }
 
@@ -98,12 +98,13 @@ impl EvmOpts {
                 coinbase: self.env.block_coinbase,
                 timestamp: self.env.block_timestamp.into(),
                 difficulty: self.env.block_difficulty.into(),
+                prevrandao: Some(self.env.block_prevrandao),
                 basefee: self.env.block_base_fee_per_gas.into(),
                 gas_limit: self.gas_limit(),
             },
             cfg: CfgEnv {
                 chain_id: self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID).into(),
-                spec_id: SpecId::LONDON,
+                spec_id: SpecId::MERGE,
                 perf_all_precompiles_have_balance: false,
                 limit_contract_code_size: self.env.code_size_limit.or(Some(usize::MAX)),
                 memory_limit: self.memory_limit,
@@ -207,6 +208,9 @@ pub struct Env {
 
     /// the block.difficulty value during EVM execution
     pub block_difficulty: u64,
+
+    /// Previous block beacon chain random value. Before merge this field is used for mix_hash
+    pub block_prevrandao: H256,
 
     /// the block.gaslimit value during EVM execution
     #[serde(

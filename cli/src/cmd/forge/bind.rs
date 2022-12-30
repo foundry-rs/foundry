@@ -24,6 +24,7 @@ impl_figment_convert!(BindArgs, build_args);
 static DEFAULT_CRATE_NAME: &str = "foundry-contracts";
 static DEFAULT_CRATE_VERSION: &str = "0.0.1";
 
+/// CLI arguments for `forge bind`.
 #[derive(Debug, Clone, Parser, Serialize)]
 pub struct BindArgs {
     #[clap(
@@ -125,7 +126,18 @@ impl BindArgs {
         if !self.skip.is_empty() {
             return ExcludeContracts::default().extend_regex(self.skip.clone()).into()
         }
-        ExcludeContracts::default().add_pattern(".*Test").add_pattern(".*Script").into()
+        // This excludes all Test/Script and forge-std contracts
+        ExcludeContracts::default()
+            .extend_pattern([
+                ".*Test.*",
+                ".*Script",
+                "console[2]?",
+                "CommonBase",
+                "Components",
+                "[Ss]td(Math|Error|Json|Utils|Cheats|Assertions|Storage(Safe)?)",
+                "[Vv]m.*",
+            ])
+            .into()
     }
 
     /// Instantiate the multi-abigen

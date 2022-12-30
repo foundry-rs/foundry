@@ -5,10 +5,11 @@ use forge::TestFilter;
 use foundry_config::Config;
 use std::{fmt, path::Path, str::FromStr};
 
-/// The filter to use during testing
+/// The filter to use during testing.
 ///
-/// See also `FileFilter`
+/// See also `FileFilter`.
 #[derive(Clone, Parser)]
+#[clap(next_help_heading = "Test filtering")]
 pub struct Filter {
     /// Only run test functions matching the specified regex pattern.
     ///
@@ -221,7 +222,7 @@ impl GlobMatcher {
     pub fn is_match(&self, path: &str) -> bool {
         let mut matches = self.matcher.is_match(path);
         if !matches && !path.starts_with("./") && self.as_str().starts_with("./") {
-            matches = self.matcher.is_match(format!("./{}", path));
+            matches = self.matcher.is_match(format!("./{path}"));
         }
         matches
     }
