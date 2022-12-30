@@ -232,8 +232,7 @@ impl<'a> ContractRunner<'a> {
             ))
         }
 
-        let has_invariants =
-            self.contract.functions().into_iter().any(|func| func.name.is_invariant_test());
+        let has_invariants = self.contract.functions().any(|func| func.name.is_invariant_test());
 
         // Invariant testing requires tracing to figure out what contracts were created.
         let original_tracing = self.executor.inspector_config().tracing;
@@ -271,7 +270,6 @@ impl<'a> ContractRunner<'a> {
         let tests: Vec<_> = self
             .contract
             .functions()
-            .into_iter()
             .filter(|func| func.is_test() && filter.matches_test(func.signature()))
             .map(|func| (func, func.is_test_fail()))
             .collect();
@@ -303,7 +301,6 @@ impl<'a> ContractRunner<'a> {
             let functions: Vec<&Function> = self
                 .contract
                 .functions()
-                .into_iter()
                 .filter(|func| {
                     func.name.is_invariant_test() && filter.matches_test(func.signature())
                 })

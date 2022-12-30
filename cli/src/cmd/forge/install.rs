@@ -451,7 +451,7 @@ fn git_checkout(
             vec!["checkout", tag]
         };
         trace!(?tag, ?recurse, "git checkout");
-        Command::new("git").args(args).current_dir(&libs.join(target_dir)).output()
+        Command::new("git").args(args).current_dir(libs.join(target_dir)).output()
     };
 
     let output = checkout(&tag)?;

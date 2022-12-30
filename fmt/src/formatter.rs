@@ -1568,7 +1568,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         if let Some(remainder) = lines.next() {
             // Call with `self.write_str` and not `write!`, so we can have `\n` at the beginning
             // without triggering an indentation
-            self.write_raw(&format!("\n{remainder}"))?;
+            self.write_raw(format!("\n{remainder}"))?;
         }
 
         let _ = self.comments.remove_all_comments_before(loc.end());
