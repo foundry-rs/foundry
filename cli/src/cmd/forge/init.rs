@@ -85,6 +85,11 @@ impl Cmd for InitArgs {
                 .args(["clone", "--recursive", &template, &root.display().to_string()])
                 .exec()?;
 
+            // Navigate to the newly cloned repo.
+            let initial_dir = std::env::current_dir()?;
+            std::env::set_current_dir(&root)?;
+
+            // Modify the git history.
             let git_output =
                 Command::new("git").args(["rev-parse", "--short", "HEAD"]).output()?.stdout;
             let commit_hash = String::from_utf8(git_output)?;
@@ -94,6 +99,9 @@ impl Cmd for InitArgs {
 
             let commit_msg = format!("chore: init from {template} at {commit_hash}");
             Command::new("git").args(["commit", "-m", &commit_msg]).exec()?;
+
+            // Navigate back.
+            std::env::set_current_dir(initial_dir)?;
         } else {
             // check if target is empty
             if !force && root.read_dir().map(|mut i| i.next().is_some()).unwrap_or(false) {
