@@ -60,12 +60,45 @@ impl MultiContractRunner {
                     filter.matches_contract(&id.name)
             })
             .flat_map(|(_, (abi, _, _))| {
-                abi.functions().filter(|func| filter.matches_test(func.signature()))
+                abi.functions().filter(|func| {
+                    dbg!(&func.signature());
+                    filter.matches_test(func.signature())
+                })
             })
             .count()
     }
 
-    // Get all tests of matching path and contract
+    pub fn get_filtered_tests(&self, filter: &impl TestFilter) -> Vec<String> {
+        self.contracts
+            .iter()
+            .filter(|(id, _)| {
+                filter.matches_path(id.source.to_string_lossy()) &&
+                    filter.matches_contract(&id.name)
+            })
+            .flat_map(|(_, (abi, _, _))| {
+                abi.functions()
+                    .filter(|func| filter.matches_test(func.signature()))
+                    .map(|func| func.name.clone())
+            })
+            .collect()
+    }
+
+    pub fn get_filtered_sig(&self, filter: &impl TestFilter) -> Vec<String> {
+        self.contracts
+            .iter()
+            .filter(|(id, _)| {
+                filter.matches_path(id.source.to_string_lossy()) &&
+                    filter.matches_contract(&id.name)
+            })
+            .flat_map(|(_, (abi, _, _))| {
+                abi.functions()
+                    .filter(|func| filter.matches_test(func.signature()))
+                    .map(|func| func.signature().clone())
+            })
+            .collect()
+    }
+
+    /// Get all tests of matching path and contract
     pub fn get_tests(&self, filter: &impl TestFilter) -> Vec<String> {
         self.contracts
             .iter()

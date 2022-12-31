@@ -462,7 +462,8 @@ impl ScriptArgs {
         let tui = Tui::new_choice_board(all_tests)?;
 
         match tui.start_choice().expect("Failed to start tui") {
-            (TUIExitReason::CharExit, n) => Ok(n),
+            (TUIExitReason::CharExit, Some(n)) => Ok(n),
+            (TUIExitReason::CharExit, None) => Err(eyre::eyre!("Choice aborted")),
         }
     }
 

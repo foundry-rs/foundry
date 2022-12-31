@@ -18,7 +18,6 @@ use std::{
     cmp::{max, min},
     collections::{BTreeMap, HashMap, VecDeque},
     io,
-    rc::Rc,
     sync::mpsc,
     thread,
     time::{Duration, Instant},
@@ -29,7 +28,7 @@ use tui::{
     style::{Color, Modifier, Style},
     terminal::Frame,
     text::{Span, Spans, Text},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph, Wrap},
     Terminal,
 };
 
@@ -38,7 +37,7 @@ pub trait Ui {
     /// Start the agent that will now take over
     fn start(self) -> Result<TUIExitReason>;
     /// Start the tui choice view
-    fn start_choice(self) -> Result<(TUIExitReason, usize)>;
+    fn start_choice(self) -> Result<(TUIExitReason, Option<usize>)>;
 }
 
 /// Used to indicate why the UI stopped
@@ -125,7 +124,7 @@ impl Tui {
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
-        terminal.hide_cursor();
+        terminal.hide_cursor()?;
 
         Ok(Tui {
             debug_arena: vec![],
@@ -206,11 +205,7 @@ impl Tui {
         }
     }
 
-    fn draw_choice_layout<B: Backend>(
-        f: &mut Frame<B>,
-        all_tests: &Vec<String>,
-        current_step: usize,
-    ) {
+    fn draw_choice_layout<B: Backend>(f: &mut Frame<B>, all_tests: &[String], current_step: usize) {
         let total_size = f.size();
 
         // Main event loop
@@ -225,7 +220,7 @@ impl Tui {
                 .split(app)[..]
             {
                 Tui::draw_choices_footer(f, footer);
-                Tui::draw_choices(f, choice_pane, current_step, &all_tests);
+                Tui::draw_choices(f, choice_pane, current_step, all_tests);
             } else {
                 panic!("unable to create vertical panes")
             }
@@ -1030,7 +1025,7 @@ impl Tui {
         f: &mut Frame<B>,
         choice_pane: Rect,
         current_step: usize,
-        all_tests: &Vec<String>,
+        all_tests: &[String],
     ) {
         let create_block = |title| {
             Block::default()
@@ -1047,11 +1042,8 @@ impl Tui {
             })
         };
 
-        let text: Vec<Spans> = all_tests
-            .into_iter()
-            .enumerate()
-            .map(|(i, t)| create_span(t, i == current_step))
-            .collect();
+        let text: Vec<Spans> =
+            all_tests.iter().enumerate().map(|(i, t)| create_span(t, i == current_step)).collect();
 
         let paragraph = Paragraph::new(text.clone())
             // .style(Style::default().bg(Color::White).fg(Color::Black))
@@ -1347,7 +1339,7 @@ impl Ui for Tui {
         }
     }
 
-    fn start_choice(mut self) -> Result<(TUIExitReason, usize)> {
+    fn start_choice(mut self) -> Result<(TUIExitReason, Option<usize>)> {
         let mut current_step: usize = 0;
 
         // If something panics inside here, we should do everything we can to
@@ -1412,14 +1404,23 @@ impl Ui for Tui {
                     } else {
                         match event.code {
                             // Exit or choose test
-                            KeyCode::Char('q') | KeyCode::Enter => {
+                            KeyCode::Char('q') => {
                                 disable_raw_mode()?;
                                 execute!(
                                     self.terminal.backend_mut(),
                                     LeaveAlternateScreen,
                                     DisableMouseCapture
                                 )?;
-                                return Ok((TUIExitReason::CharExit, current_step))
+                                return Ok((TUIExitReason::CharExit, None))
+                            }
+                            KeyCode::Enter => {
+                                disable_raw_mode()?;
+                                execute!(
+                                    self.terminal.backend_mut(),
+                                    LeaveAlternateScreen,
+                                    DisableMouseCapture
+                                )?;
+                                return Ok((TUIExitReason::CharExit, Some(current_step)))
                             }
                             // Move up
                             KeyCode::Char('k') | KeyCode::Up => {
@@ -1433,11 +1434,10 @@ impl Ui for Tui {
                             KeyCode::Char('j') | KeyCode::Down => {
                                 if self.key_buffer.ends_with("<C-w>") {
                                     // change window
-                                } else {
-                                    if current_step < max_tests {
-                                        current_step += 1;
-                                    }
+                                } else if current_step < max_tests {
+                                    current_step += 1;
                                 }
+
                                 self.key_buffer.clear();
                             }
                             _ => {}
@@ -1446,9 +1446,7 @@ impl Ui for Tui {
                 }
                 Interrupt::MouseEvent(event) => match event.kind {
                     MouseEventKind::ScrollUp => {
-                        if current_step > 0 {
-                            current_step -= 1;
-                        }
+                        current_step = current_step.saturating_sub(1);
                         self.key_buffer.clear();
                     }
                     MouseEventKind::ScrollDown => {
@@ -1462,9 +1460,7 @@ impl Ui for Tui {
                 Interrupt::IntervalElapsed => {}
             }
 
-            // dbg!(current_step);
-
-            self.terminal.draw(|f| Tui::draw_choice_layout(f, &all_tests, current_step))?;
+            self.terminal.draw(|f| Tui::draw_choice_layout(f, all_tests, current_step))?;
         }
     }
 }

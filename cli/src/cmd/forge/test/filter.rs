@@ -1,4 +1,4 @@
-use crate::utils::FoundryPathExt;
+use crate::{cmd::forge::test::TestArgs, utils::FoundryPathExt};
 use clap::Parser;
 use ethers::solc::FileFilter;
 use forge::TestFilter;
@@ -136,16 +136,26 @@ impl TestFilter for Filter {
     fn matches_test(&self, test_name: impl AsRef<str>) -> bool {
         let mut ok = true;
         let test_name = test_name.as_ref();
+        println!("-----");
+        dbg!(&test_name);
+        println!(
+            "{:#?} {:#?} {:#?}",
+            &self.pattern, &self.test_pattern, &self.test_pattern_inverse
+        );
         // Handle the deprecated option match
         if let Some(re) = &self.pattern {
             ok &= re.is_match(test_name);
+            dbg!(ok, re.is_match(test_name));
         }
         if let Some(re) = &self.test_pattern {
             ok &= re.is_match(test_name);
+            dbg!(ok, re.is_match(test_name));
         }
         if let Some(re) = &self.test_pattern_inverse {
             ok &= !re.is_match(test_name);
+            dbg!(ok, re.is_match(test_name));
         }
+        println!("-----");
         ok
     }
 
@@ -257,11 +267,30 @@ impl From<globset::Glob> for GlobMatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use regex::Regex;
 
     #[test]
     fn can_match_glob_paths() {
         let matcher: GlobMatcher = "./test/*".parse().unwrap();
         assert!(matcher.is_match("test/Contract.sol"));
         assert!(matcher.is_match("./test/Contract.sol"));
+    }
+
+    #[test]
+    fn filter_strictly_reg() {
+        let regex = Regex::new(r"\Ahello\z").unwrap();
+
+        assert!(regex.is_match("hello"));
+        assert!(!regex.is_match("Hello"));
+        assert!(!regex.is_match("hello world!"));
+    }
+
+    #[test]
+    fn filter_strictly_func() {
+        let regex = Regex::new(r"\Ahello\z").unwrap();
+
+        assert!(regex.is_match("hello"));
+        assert!(!regex.is_match("Hello"));
+        assert!(!regex.is_match("hello world!"));
     }
 }

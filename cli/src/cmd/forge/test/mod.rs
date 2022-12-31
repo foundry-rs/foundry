@@ -31,7 +31,7 @@ use foundry_common::{
     get_contract_name, get_file_name, TestFilter,
 };
 use foundry_config::{figment, Config};
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 use std::{collections::BTreeMap, path::PathBuf, sync::mpsc::channel, thread, time::Duration};
 use tracing::trace;
 use watchexec::config::{InitConfig, RuntimeConfig};
@@ -182,28 +182,28 @@ impl TestArgs {
         if self.debug.is_some() {
             filter.test_pattern = self.debug.clone();
 
-            let filtered_tests = runner.get_tests(&filter);
+            println!("{}", &filter);
+
+            let filtered_tests = runner.get_filtered_sig(&filter);
 
             let test_name = match filtered_tests.len() {
                 // or should we display them all ?
                 0 => return Err(eyre::eyre!("No test found")),
                 1 => filtered_tests,
                 _ => {
-                    let all_tests = runner.get_tests(&filter);
-                    // println!("{:#?}", all_tests);
-                    let choice = ChoiceArgs { all_tests };
-
+                    let choice = ChoiceArgs { all_tests: filtered_tests.clone() };
                     let test_index = utils::block_on(choice.open_debug_choice())?;
-
                     vec![filtered_tests.get(test_index).expect("Test not found").clone()]
                 }
             };
 
-            let filter =
-                self.filter_from_name(test_name.get(0).expect("No test found"), &mut config);
+            println!("{:#?}", test_name);
 
+            let new_filter = self.filter_from_name(test_name.get(0).expect("No test found"));
+
+            println!("{}", &new_filter);
             // try with new filter
-            let n = runner.count_filtered_tests(&filter);
+            let n = runner.count_filtered_tests(&new_filter);
 
             if n != 1 {
                 return Err(
@@ -273,15 +273,27 @@ impl TestArgs {
             opts,
             evm_opts: self.evm_opts.clone(),
         };
+        dbg!("before debug");
         utils::block_on(debugger.debug())?;
 
         Ok(TestOutcome::new(results, self.allow_failure))
     }
 
-    pub fn filter_from_name(&self, name: &str, config: &mut Config) -> Filter {
-        let mut from_config = config;
-        from_config.test_pattern = Some(RegexWrapper::from(Regex::new(name).unwrap()));
-        self.filter.with_merged_config(from_config)
+    /// Makes a Filter strictly matching a function name
+    pub fn filter_from_name(&self, name: &str) -> Filter {
+        /*let name = format!(r#"\A{name}\z"#);
+        println!("{}", name);*/
+
+        // TODO: why don't they match afterwards
+        let reg = Regex::new(&name).unwrap();
+        // let reg = Regex::new(r#"testSetNumber(uint256)"#).unwrap();
+        // println!("{reg}");
+
+        let mut filter = self.filter.clone();
+        filter.test_pattern = Some(reg.clone());
+        filter.pattern = Some(reg);
+        filter.test_pattern_inverse = None;
+        filter
     }
 
     /// Returns the flattened [`Filter`] arguments merged with [`Config`]
