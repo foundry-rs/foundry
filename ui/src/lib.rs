@@ -18,6 +18,7 @@ use std::{
     cmp::{max, min},
     collections::{BTreeMap, HashMap, VecDeque},
     io,
+    rc::Rc,
     sync::mpsc,
     thread,
     time::{Duration, Instant},
@@ -61,6 +62,8 @@ pub struct Tui {
     known_contracts_sources: HashMap<String, BTreeMap<u32, String>>,
     /// A mapping of source -> (PC -> IC map for deploy code, PC -> IC map for runtime code)
     pc_ic_maps: BTreeMap<String, (PCICMap, PCICMap)>,
+    /// A vector of every test names that should be displayed on the choice ui
+    all_tests: Vec<String>,
 }
 
 impl Tui {
@@ -112,10 +115,11 @@ impl Tui {
             known_contracts,
             known_contracts_sources,
             pc_ic_maps,
+            all_tests: Vec::new(),
         })
     }
 
-    pub fn new_choice_board() -> Result<Self> {
+    pub fn new_choice_board(all_tests: Vec<String>) -> Result<Self> {
         let mut stdout = io::stdout();
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
         let backend = CrosstermBackend::new(stdout);
@@ -131,6 +135,7 @@ impl Tui {
             known_contracts: HashMap::new(),
             known_contracts_sources: HashMap::new(),
             pc_ic_maps: BTreeMap::new(),
+            all_tests,
         })
     }
 
@@ -200,49 +205,32 @@ impl Tui {
         }
     }
 
-    fn draw_choice_layout<B: Backend>(f: &mut Frame<B>) {
-        // Tui::draw_op_list(f, address, debug_steps, opcode_list, current_step, draw_memory,
-        // op_pane);
-
-        // Create a list of strings to choose from
-        let mut list_state = ListState::default();
-        let list_items =
-            vec![ListItem::new("Item 1"), ListItem::new("Item 2"), ListItem::new("Item 3")];
-        let list = List::new(list_items)
-            .style(Style::default().fg(Color::White))
-            .highlight_style(Style::default().fg(Color::Yellow));
+    fn draw_choice_layout<B: Backend>(
+        f: &mut Frame<B>,
+        all_tests: &Vec<String>,
+        current_step: usize,
+    ) {
+        let total_size = f.size();
 
         // Main event loop
-        /*loop {
-            terminal
-                .draw(|f| {
-                    let size = f.size();
-                    let constraints = [Constraint::Percentage(100)];
-                    let vertical_chunks = Layout::default()
-                        .direction(Direction::Vertical)
-                        .constraints(constraints.as_ref())
-                        .split(size);
-
-                    f.render_widget(list, vertical_chunks[0]);
-                })
-                .unwrap();
-
-            // Read the next key event
-            let keys = stdin().keys();
-            let next_key = keys.next().unwrap();
-
-            match next_key.unwrap() {
-                // Move the selection up with the 'j' key
-                Key::Char('j') => list_state.select_previous(),
-                // Move the selection down with the 'k' key
-                Key::Char('k') => list_state.select_next(),
-                // Exit the program when the 'q' key is pressed
-                Key::Char('q') => break,
-                _ => {}
+        if let [app, footer] = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Ratio(98, 100), Constraint::Ratio(2, 100)].as_ref())
+            .split(total_size)[..]
+        {
+            if let [choice_pane] = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Ratio(1, 6)].as_ref())
+                .split(app)[..]
+            {
+                Tui::draw_choices_footer(f, footer);
+                Tui::draw_choices(f, choice_pane, current_step, &all_tests);
+            } else {
+                panic!("unable to create vertical panes")
             }
+        } else {
+            panic!("unable to create footer / app")
         }
-
-        terminal.show_cursor().unwrap();*/
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -414,6 +402,20 @@ impl Tui {
         let text_output = Text::from(Span::styled(
             "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end | [t]: toggle stack labels | [m]: toggle memory decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll memory",
             Style::default().add_modifier(Modifier::DIM)
+        ));
+        let paragraph = Paragraph::new(text_output)
+            .block(block_controls)
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: false });
+        f.render_widget(paragraph, area);
+    }
+
+    fn draw_choices_footer<B: Backend>(f: &mut Frame<B>, area: Rect) {
+        let block_controls = Block::default();
+
+        let text_output = Text::from(Span::styled(
+            "[q]: quit | [k/j]: prev/next test | [<C-w> + (h/j/k/l)]: change window",
+            Style::default().add_modifier(Modifier::DIM),
         ));
         let paragraph = Paragraph::new(text_output)
             .block(block_controls)
@@ -1022,6 +1024,41 @@ impl Tui {
         let paragraph = Paragraph::new(text).block(stack_space).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
     }
+
+    fn draw_choices<B: Backend>(
+        f: &mut Frame<B>,
+        choice_pane: Rect,
+        current_step: usize,
+        all_tests: &Vec<String>,
+    ) {
+        let create_block = |title| {
+            Block::default()
+                .borders(Borders::ALL)
+                .style(Style::default().bg(Color::Black).fg(Color::White))
+                .title(Span::styled(title, Style::default().add_modifier(Modifier::BOLD)))
+        };
+
+        let create_span = |name, high| {
+            Spans::from(if high {
+                Span::styled(name, Style::default().add_modifier(Modifier::DIM))
+            } else {
+                Span::styled(name, Style::default())
+            })
+        };
+
+        let text: Vec<Spans> = all_tests
+            .into_iter()
+            .enumerate()
+            .map(|(i, t)| create_span(t, i == current_step))
+            .collect();
+
+        let paragraph = Paragraph::new(text.clone())
+            // .style(Style::default().bg(Color::White).fg(Color::Black))
+            .block(create_block("Test functions"))
+            .alignment(Alignment::Center);
+
+        f.render_widget(paragraph, choice_pane);
+    }
 }
 
 impl Ui for Tui {
@@ -1352,41 +1389,85 @@ impl Ui for Tui {
         });
 
         self.terminal.clear()?;
-        let mut draw_memory: DrawMemory = DrawMemory::default();
 
-        let debug_call: Vec<(Address, Vec<DebugStep>, CallKind)> = self.debug_arena.clone();
-        let mut last_index = 0;
+        let mut current_step: usize = 0;
 
-        let mut stack_labels = false;
-        let mut mem_utf = false;
+        // need to have at least one test
+        let max_tests = self.all_tests.len()/*.checked_sub(1).expect("No test provided for choice")*/;
+
+        let all_tests = &self.all_tests;
+
         // UI thread that manages drawing
         loop {
             // Grab interrupt
             match rx.recv()? {
                 // Key press
-                Interrupt::KeyPressed(event) => match event.code {
+                Interrupt::KeyPressed(event) => {
+                    if event.modifiers.contains(KeyModifiers::CONTROL) {
+                        if event.code == KeyCode::Char('w') {
+                            // add window change to buffer
+                            self.key_buffer.push_str("<C-w>");
+                        }
+                    } else {
+                        match event.code {
+                            // Exit
+                            KeyCode::Char('q') => {
+                                disable_raw_mode()?;
+                                execute!(
+                                    self.terminal.backend_mut(),
+                                    LeaveAlternateScreen,
+                                    DisableMouseCapture
+                                )?;
+                                return Ok(TUIExitReason::CharExit)
+                            }
+                            // Move up
+                            KeyCode::Char('k') | KeyCode::Up => {
+                                if self.key_buffer.ends_with("<C-w>") {
+                                    // change window
+                                } else {
+                                    if current_step < max_tests {
+                                        current_step += 1;
+                                    }
+                                }
+                                self.key_buffer.clear();
+                            }
+                            // Move down
+                            KeyCode::Char('j') | KeyCode::Down => {
+                                if self.key_buffer.ends_with("<C-w>") {
+                                } else {
+                                    current_step = current_step.saturating_sub(1);
+                                }
+                                self.key_buffer.clear();
+                            }
+                            // Choose test
+                            KeyCode::Enter => {
+                                self.key_buffer.clear();
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Interrupt::MouseEvent(event) => match event.kind {
+                    MouseEventKind::ScrollUp => {
+                        if current_step > 0 {
+                            current_step -= 1;
+                        }
+                        self.key_buffer.clear();
+                    }
+                    MouseEventKind::ScrollDown => {
+                        if current_step < max_tests {
+                            current_step += 1;
+                        }
+                        self.key_buffer.clear();
+                    }
                     _ => {}
                 },
-                _ => (),
+                Interrupt::IntervalElapsed => {}
             }
 
-            self.terminal.draw(|f| {
-                Tui::draw_choice_layout(
-                    f, /* f,
-                       * debug_call[draw_memory.inner_call_index].0,
-                       * &self.identified_contracts,
-                       * &self.known_contracts,
-                       * &self.pc_ic_maps,
-                       * &self.known_contracts_sources,
-                       * &debug_call[draw_memory.inner_call_index].1[..],
-                       * &opcode_list,
-                       * current_step,
-                       * debug_call[draw_memory.inner_call_index].2,
-                       * &mut draw_memory,
-                       * stack_labels,
-                       * mem_utf, */
-                )
-            })?;
+            // dbg!(current_step);
+
+            self.terminal.draw(|f| Tui::draw_choice_layout(f, &all_tests, current_step))?;
         }
     }
 }

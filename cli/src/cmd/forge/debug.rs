@@ -56,9 +56,16 @@ impl DebugArgs {
         };
         script.run_script().await
     }
+}
 
+#[derive(Debug, Clone, Parser)]
+pub struct ChoiceArgs {
+    pub all_tests: Vec<String>,
+}
+
+impl ChoiceArgs {
     pub async fn open_debug_choice(self) -> eyre::Result<()> {
         // let script = ScriptArgs::default();
-        ScriptArgs::run_choice_board()
+        ScriptArgs::run_choice_board(self.all_tests).await
     }
 }

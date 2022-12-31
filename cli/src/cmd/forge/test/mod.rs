@@ -1,7 +1,12 @@
 //! Test command
 use crate::{
     cmd::{
-        forge::{build::CoreBuildArgs, debug::DebugArgs, install, watch::WatchArgs},
+        forge::{
+            build::CoreBuildArgs,
+            debug::{ChoiceArgs, DebugArgs},
+            install,
+            watch::WatchArgs,
+        },
         Cmd, LoadConfig,
     },
     suggestions, utils,
@@ -162,7 +167,7 @@ impl TestArgs {
         // Prepare the test builder
         let evm_spec = utils::evm_spec(&config.evm_version);
 
-        let mut runner = MultiContractRunnerBuilder::default()
+        let runner = MultiContractRunnerBuilder::default()
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(evm_spec)
             .sender(evm_opts.sender)
@@ -176,27 +181,27 @@ impl TestArgs {
 
             let filter = match runner.count_filtered_tests(&filter) {
                 1 => filter,
-                n => {
+                _ => {
                     let all_tests = runner.get_tests(&filter);
-                    // TODO: create test UI and filter one, else Err
-                    let debugger = DebugArgs {
-                        path: PathBuf::default(),
-                        target_contract: None,
-                        sig: String::new(),
-                        args: Vec::new(),
-                        debug: true,
-                        opts: Default::default(),
-                        evm_opts: self.evm_opts.clone(),
-                    };
+                    // println!("{:#?}", all_tests);
+                    let choice = ChoiceArgs { all_tests };
 
-                    utils::block_on(debugger.open_debug_choice())?;
+                    utils::block_on(choice.open_debug_choice())?;
 
-                    return Err(
+                    // TODO: update filter
+                    filter
+                }
+            };
+
+            // try with new filter
+            let n = runner.count_filtered_tests(&filter);
+
+            if n != 1 {
+                return Err(
                         eyre::eyre!("{n} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n
                         \n
                         Use --match-contract and --match-path to further limit the search."));
-                }
-            };
+            }
 
             self.debug_single_test(runner, &filter, test_options)
         } else if self.list {
