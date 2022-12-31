@@ -122,10 +122,10 @@ impl FileFilter for Filter {
     fn is_match(&self, file: &Path) -> bool {
         if let Some(file) = file.as_os_str().to_str() {
             if let Some(ref glob) = self.path_pattern {
-                return glob.is_match(file)
+                return glob.is_match(file);
             }
             if let Some(ref glob) = self.path_pattern_inverse {
-                return !glob.is_match(file)
+                return !glob.is_match(file);
             }
         }
         file.is_sol_test()
@@ -136,26 +136,18 @@ impl TestFilter for Filter {
     fn matches_test(&self, test_name: impl AsRef<str>) -> bool {
         let mut ok = true;
         let test_name = test_name.as_ref();
-        println!("-----");
-        dbg!(&test_name);
-        println!(
-            "{:#?} {:#?} {:#?}",
-            &self.pattern, &self.test_pattern, &self.test_pattern_inverse
-        );
+
         // Handle the deprecated option match
         if let Some(re) = &self.pattern {
             ok &= re.is_match(test_name);
-            dbg!(ok, re.is_match(test_name));
         }
         if let Some(re) = &self.test_pattern {
             ok &= re.is_match(test_name);
-            dbg!(ok, re.is_match(test_name));
         }
         if let Some(re) = &self.test_pattern_inverse {
             ok &= !re.is_match(test_name);
-            dbg!(ok, re.is_match(test_name));
         }
-        println!("-----");
+
         ok
     }
 
@@ -287,10 +279,10 @@ mod tests {
 
     #[test]
     fn filter_strictly_func() {
-        let regex = Regex::new(r"\Ahello\z").unwrap();
+        let regex = Regex::new(r"testSetFunction(uint256)").unwrap();
 
-        assert!(regex.is_match("hello"));
-        assert!(!regex.is_match("Hello"));
-        assert!(!regex.is_match("hello world!"));
+        assert!(regex.is_match("testSetFunction(uint256)"));
+        assert!(!regex.is_match("testSetFunction()"));
+        assert!(!regex.is_match("testsetFunction(uint256)"));
     }
 }

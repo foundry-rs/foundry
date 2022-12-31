@@ -142,8 +142,8 @@ impl TestArgs {
         let mut project = config.project()?;
 
         // install missing dependencies
-        if install::install_missing_dependencies(&mut config, &project, self.build_args().silent) &&
-            config.auto_detect_remappings
+        if install::install_missing_dependencies(&mut config, &project, self.build_args().silent)
+            && config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
@@ -182,8 +182,6 @@ impl TestArgs {
         if self.debug.is_some() {
             filter.test_pattern = self.debug.clone();
 
-            println!("{}", &filter);
-
             let filtered_tests = runner.get_filtered_sig(&filter);
 
             let test_name = match filtered_tests.len() {
@@ -197,11 +195,8 @@ impl TestArgs {
                 }
             };
 
-            println!("{:#?}", test_name);
-
             let new_filter = self.filter_from_name(test_name.get(0).expect("No test found"));
 
-            println!("{}", &new_filter);
             // try with new filter
             let n = runner.count_filtered_tests(&new_filter);
 
@@ -273,7 +268,6 @@ impl TestArgs {
             opts,
             evm_opts: self.evm_opts.clone(),
         };
-        dbg!("before debug");
         utils::block_on(debugger.debug())?;
 
         Ok(TestOutcome::new(results, self.allow_failure))
@@ -281,13 +275,11 @@ impl TestArgs {
 
     /// Makes a Filter strictly matching a function name
     pub fn filter_from_name(&self, name: &str) -> Filter {
-        /*let name = format!(r#"\A{name}\z"#);
-        println!("{}", name);*/
+        // don't make capturing groups
+        let name = name.replace("(", "[(]");
+        let name = name.replace(")", "[)]");
 
-        // TODO: why don't they match afterwards
         let reg = Regex::new(&name).unwrap();
-        // let reg = Regex::new(r#"testSetNumber(uint256)"#).unwrap();
-        // println!("{reg}");
 
         let mut filter = self.filter.clone();
         filter.test_pattern = Some(reg.clone());
@@ -418,7 +410,7 @@ impl TestOutcome {
     pub fn ensure_ok(&self) -> eyre::Result<()> {
         let failures = self.failures().count();
         if self.allow_failure || failures == 0 {
-            return Ok(())
+            return Ok(());
         }
 
         if !shell::verbosity().is_normal() {
@@ -431,7 +423,7 @@ impl TestOutcome {
         for (suite_name, suite) in self.results.iter() {
             let failures = suite.failures().count();
             if failures == 0 {
-                continue
+                continue;
             }
 
             let term = if failures > 1 { "tests" } else { "test" };
