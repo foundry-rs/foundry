@@ -64,8 +64,10 @@ pub struct ChoiceArgs {
 }
 
 impl ChoiceArgs {
-    pub async fn open_debug_choice(self) -> eyre::Result<()> {
+    pub async fn open_debug_choice(self) -> eyre::Result<usize> {
         // let script = ScriptArgs::default();
-        ScriptArgs::run_choice_board(self.all_tests).await
+        ScriptArgs::run_choice_board(self.all_tests).await;
+
+        Ok(0)
     }
 }

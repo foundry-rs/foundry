@@ -38,7 +38,7 @@ pub trait Ui {
     /// Start the agent that will now take over
     fn start(self) -> Result<TUIExitReason>;
     /// Start the tui choice view
-    fn start_choice(self) -> Result<TUIExitReason>;
+    fn start_choice(self) -> Result<(TUIExitReason, usize)>;
 }
 
 /// Used to indicate why the UI stopped
@@ -120,6 +120,7 @@ impl Tui {
     }
 
     pub fn new_choice_board(all_tests: Vec<String>) -> Result<Self> {
+        enable_raw_mode()?;
         let mut stdout = io::stdout();
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
         let backend = CrosstermBackend::new(stdout);
@@ -1040,9 +1041,9 @@ impl Tui {
 
         let create_span = |name, high| {
             Spans::from(if high {
-                Span::styled(name, Style::default().add_modifier(Modifier::DIM))
-            } else {
                 Span::styled(name, Style::default())
+            } else {
+                Span::styled(name, Style::default().add_modifier(Modifier::DIM))
             })
         };
 
@@ -1346,7 +1347,9 @@ impl Ui for Tui {
         }
     }
 
-    fn start_choice(mut self) -> Result<TUIExitReason> {
+    fn start_choice(mut self) -> Result<(TUIExitReason, usize)> {
+        let mut current_step: usize = 0;
+
         // If something panics inside here, we should do everything we can to
         // not corrupt the user's terminal.
         std::panic::set_hook(Box::new(|e| {
@@ -1390,10 +1393,8 @@ impl Ui for Tui {
 
         self.terminal.clear()?;
 
-        let mut current_step: usize = 0;
-
         // need to have at least one test
-        let max_tests = self.all_tests.len()/*.checked_sub(1).expect("No test provided for choice")*/;
+        let max_tests = self.all_tests.len().checked_sub(1).expect("No test provided for choice");
 
         let all_tests = &self.all_tests;
 
@@ -1410,18 +1411,26 @@ impl Ui for Tui {
                         }
                     } else {
                         match event.code {
-                            // Exit
-                            KeyCode::Char('q') => {
+                            // Exit or choose test
+                            KeyCode::Char('q') | KeyCode::Enter => {
                                 disable_raw_mode()?;
                                 execute!(
                                     self.terminal.backend_mut(),
                                     LeaveAlternateScreen,
                                     DisableMouseCapture
                                 )?;
-                                return Ok(TUIExitReason::CharExit)
+                                return Ok((TUIExitReason::CharExit, current_step))
                             }
                             // Move up
                             KeyCode::Char('k') | KeyCode::Up => {
+                                if self.key_buffer.ends_with("<C-w>") {
+                                } else {
+                                    current_step = current_step.saturating_sub(1);
+                                }
+                                self.key_buffer.clear();
+                            }
+                            // Move down
+                            KeyCode::Char('j') | KeyCode::Down => {
                                 if self.key_buffer.ends_with("<C-w>") {
                                     // change window
                                 } else {
@@ -1429,18 +1438,6 @@ impl Ui for Tui {
                                         current_step += 1;
                                     }
                                 }
-                                self.key_buffer.clear();
-                            }
-                            // Move down
-                            KeyCode::Char('j') | KeyCode::Down => {
-                                if self.key_buffer.ends_with("<C-w>") {
-                                } else {
-                                    current_step = current_step.saturating_sub(1);
-                                }
-                                self.key_buffer.clear();
-                            }
-                            // Choose test
-                            KeyCode::Enter => {
                                 self.key_buffer.clear();
                             }
                             _ => {}

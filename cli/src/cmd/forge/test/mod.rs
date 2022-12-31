@@ -39,9 +39,12 @@ use yansi::Paint;
 mod filter;
 pub use filter::Filter;
 use foundry_common::shell;
-use foundry_config::figment::{
-    value::{Dict, Map},
-    Metadata, Profile, Provider,
+use foundry_config::{
+    figment::{
+        value::{Dict, Map},
+        Metadata, Profile, Provider,
+    },
+    RegexWrapper,
 };
 
 // Loads project's figment and merges the build cli arguments into it
@@ -179,19 +182,25 @@ impl TestArgs {
         if self.debug.is_some() {
             filter.test_pattern = self.debug.clone();
 
-            let filter = match runner.count_filtered_tests(&filter) {
-                1 => filter,
+            let filtered_tests = runner.get_tests(&filter);
+
+            let test_name = match filtered_tests.len() {
+                // or should we display them all ?
+                0 => return Err(eyre::eyre!("No test found")),
+                1 => filtered_tests,
                 _ => {
                     let all_tests = runner.get_tests(&filter);
                     // println!("{:#?}", all_tests);
                     let choice = ChoiceArgs { all_tests };
 
-                    utils::block_on(choice.open_debug_choice())?;
+                    let test_index = utils::block_on(choice.open_debug_choice())?;
 
-                    // TODO: update filter
-                    filter
+                    vec![filtered_tests.get(test_index).expect("Test not found").clone()]
                 }
             };
+
+            let filter =
+                self.filter_from_name(test_name.get(0).expect("No test found"), &mut config);
 
             // try with new filter
             let n = runner.count_filtered_tests(&filter);
@@ -267,6 +276,12 @@ impl TestArgs {
         utils::block_on(debugger.debug())?;
 
         Ok(TestOutcome::new(results, self.allow_failure))
+    }
+
+    pub fn filter_from_name(&self, name: &str, config: &mut Config) -> Filter {
+        let mut from_config = config;
+        from_config.test_pattern = Some(RegexWrapper::from(Regex::new(name).unwrap()));
+        self.filter.with_merged_config(from_config)
     }
 
     /// Returns the flattened [`Filter`] arguments merged with [`Config`]

@@ -458,10 +458,11 @@ impl ScriptArgs {
         }
     }
 
-    pub async fn run_choice_board(all_tests: Vec<String>) -> eyre::Result<()> {
+    pub async fn run_choice_board(all_tests: Vec<String>) -> eyre::Result<usize> {
         let tui = Tui::new_choice_board(all_tests)?;
+
         match tui.start_choice().expect("Failed to start tui") {
-            TUIExitReason::CharExit => Ok(()),
+            (TUIExitReason::CharExit, n) => Ok(n),
         }
     }
 
