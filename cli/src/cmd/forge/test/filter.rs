@@ -1,4 +1,4 @@
-use crate::{cmd::forge::test::TestArgs, utils::FoundryPathExt};
+use crate::utils::FoundryPathExt;
 use clap::Parser;
 use ethers::solc::FileFilter;
 use forge::TestFilter;
@@ -122,10 +122,10 @@ impl FileFilter for Filter {
     fn is_match(&self, file: &Path) -> bool {
         if let Some(file) = file.as_os_str().to_str() {
             if let Some(ref glob) = self.path_pattern {
-                return glob.is_match(file);
+                return glob.is_match(file)
             }
             if let Some(ref glob) = self.path_pattern_inverse {
-                return !glob.is_match(file);
+                return !glob.is_match(file)
             }
         }
         file.is_sol_test()
@@ -259,30 +259,11 @@ impl From<globset::Glob> for GlobMatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use regex::Regex;
 
     #[test]
     fn can_match_glob_paths() {
         let matcher: GlobMatcher = "./test/*".parse().unwrap();
         assert!(matcher.is_match("test/Contract.sol"));
         assert!(matcher.is_match("./test/Contract.sol"));
-    }
-
-    #[test]
-    fn filter_strictly_reg() {
-        let regex = Regex::new(r"\Ahello\z").unwrap();
-
-        assert!(regex.is_match("hello"));
-        assert!(!regex.is_match("Hello"));
-        assert!(!regex.is_match("hello world!"));
-    }
-
-    #[test]
-    fn filter_strictly_func() {
-        let regex = Regex::new(r"testSetFunction(uint256)").unwrap();
-
-        assert!(regex.is_match("testSetFunction(uint256)"));
-        assert!(!regex.is_match("testSetFunction()"));
-        assert!(!regex.is_match("testsetFunction(uint256)"));
     }
 }

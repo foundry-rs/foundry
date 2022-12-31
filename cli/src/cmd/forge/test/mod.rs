@@ -31,7 +31,7 @@ use foundry_common::{
     get_contract_name, get_file_name, TestFilter,
 };
 use foundry_config::{figment, Config};
-use regex::{Regex, RegexBuilder};
+use regex::Regex;
 use std::{collections::BTreeMap, path::PathBuf, sync::mpsc::channel, thread, time::Duration};
 use tracing::trace;
 use watchexec::config::{InitConfig, RuntimeConfig};
@@ -39,12 +39,9 @@ use yansi::Paint;
 mod filter;
 pub use filter::Filter;
 use foundry_common::shell;
-use foundry_config::{
-    figment::{
-        value::{Dict, Map},
-        Metadata, Profile, Provider,
-    },
-    RegexWrapper,
+use foundry_config::figment::{
+    value::{Dict, Map},
+    Metadata, Profile, Provider,
 };
 
 // Loads project's figment and merges the build cli arguments into it
@@ -142,8 +139,8 @@ impl TestArgs {
         let mut project = config.project()?;
 
         // install missing dependencies
-        if install::install_missing_dependencies(&mut config, &project, self.build_args().silent)
-            && config.auto_detect_remappings
+        if install::install_missing_dependencies(&mut config, &project, self.build_args().silent) &&
+            config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
@@ -410,7 +407,7 @@ impl TestOutcome {
     pub fn ensure_ok(&self) -> eyre::Result<()> {
         let failures = self.failures().count();
         if self.allow_failure || failures == 0 {
-            return Ok(());
+            return Ok(())
         }
 
         if !shell::verbosity().is_normal() {
@@ -423,7 +420,7 @@ impl TestOutcome {
         for (suite_name, suite) in self.results.iter() {
             let failures = suite.failures().count();
             if failures == 0 {
-                continue;
+                continue
             }
 
             let term = if failures > 1 { "tests" } else { "test" };

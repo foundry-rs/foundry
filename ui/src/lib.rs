@@ -1425,8 +1425,20 @@ impl Ui for Tui {
                             // Move up
                             KeyCode::Char('k') | KeyCode::Up => {
                                 if self.key_buffer.ends_with("<C-w>") {
+                                    // change window
                                 } else {
                                     current_step = current_step.saturating_sub(1);
+                                    for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
+                                        current_step = match current_step.checked_sub(1) {
+                                            Some(c_s) => c_s,
+                                            None => {
+                                                // is already at 0
+                                                self.key_buffer.clear();
+                                                // dont clutter cpu
+                                                break
+                                            }
+                                        }
+                                    }
                                 }
                                 self.key_buffer.clear();
                             }
@@ -1434,13 +1446,41 @@ impl Ui for Tui {
                             KeyCode::Char('j') | KeyCode::Down => {
                                 if self.key_buffer.ends_with("<C-w>") {
                                     // change window
-                                } else if current_step < max_tests {
-                                    current_step += 1;
+                                } else {
+                                    for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
+                                        if current_step < max_tests {
+                                            current_step += 1;
+                                        } else {
+                                            self.key_buffer.clear();
+                                            break
+                                        }
+                                    }
                                 }
 
                                 self.key_buffer.clear();
                             }
-                            _ => {}
+                            // Go to start
+                            KeyCode::Char('g') => {
+                                current_step = 0;
+                                self.key_buffer.clear();
+                            }
+                            // Go to end
+                            KeyCode::Char('G') => {
+                                current_step = max_tests;
+                                self.key_buffer.clear();
+                            }
+                            KeyCode::Char(other) => match other {
+                                '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' => {
+                                    self.key_buffer.push(other);
+                                }
+                                _ => {
+                                    // Invalid key, clear buffer
+                                    self.key_buffer.clear();
+                                }
+                            },
+                            _ => {
+                                self.key_buffer.clear();
+                            }
                         }
                     }
                 }
