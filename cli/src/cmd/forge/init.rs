@@ -85,13 +85,10 @@ impl Cmd for InitArgs {
                 .args(["clone", "--recursive", &template, &root.display().to_string()])
                 .exec()?;
 
-            let git_output = Command::new("git")
-                .args(["rev-parse", "--short", "HEAD"])
-                .current_dir(&root)
-                .output()?
-                .stdout;
+            let git_output =
+                Command::new("git").args(["rev-parse", "--short", "HEAD"]).output()?.stdout;
             let commit_hash = String::from_utf8(git_output)?;
-            Command::new("rm").args(["-rf", ".git"]).exec()?;
+            std::fs::remove_dir_all(".git")?;
             Command::new("git").args(["init"]).exec()?;
             Command::new("git").args(["add", "--all"]).exec()?;
 
