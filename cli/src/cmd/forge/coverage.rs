@@ -10,7 +10,7 @@ use clap::{ArgAction, Parser, ValueEnum};
 use ethers::{
     abi::Address,
     prelude::{
-        artifacts::{Ast, CompactBytecode, CompactDeployedBytecode},
+        artifacts::{lowfidelity::Ast, CompactBytecode, CompactDeployedBytecode},
         Artifact, Bytes, Project, ProjectCompileOutput, U256,
     },
     solc::{artifacts::contract::CompactContractBytecode, sourcemap::SourceMap},
