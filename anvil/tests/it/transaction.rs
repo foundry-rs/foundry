@@ -668,7 +668,7 @@ async fn can_handle_different_sender_nonce_calculation() {
     for idx in 1..=tx_count {
         let tx_from_first =
             TransactionRequest::new().from(from_first).value(1337u64).to(Address::random());
-        let _ = provider.send_transaction(tx_from_first, None).await.unwrap();
+        let _tx = provider.send_transaction(tx_from_first, None).await.unwrap();
         let nonce_from_first = provider
             .get_transaction_count(from_first, Some(BlockId::Number(BlockNumber::Pending)))
             .await
@@ -677,7 +677,7 @@ async fn can_handle_different_sender_nonce_calculation() {
 
         let tx_from_second =
             TransactionRequest::new().from(from_second).value(1337u64).to(Address::random());
-        let _ = provider.send_transaction(tx_from_second, None).await.unwrap();
+        let _tx = provider.send_transaction(tx_from_second, None).await.unwrap();
         let nonce_from_second = provider
             .get_transaction_count(from_second, Some(BlockId::Number(BlockNumber::Pending)))
             .await

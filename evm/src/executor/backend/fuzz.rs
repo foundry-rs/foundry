@@ -4,6 +4,7 @@ use crate::{
             diagnostic::RevertDiagnostic, error::DatabaseError, Backend, DatabaseExt, LocalForkId,
         },
         fork::{CreateFork, ForkId},
+        inspector::cheatcodes::Cheatcodes,
     },
     Address,
 };
@@ -128,9 +129,10 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         transaction: H256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
+        cheatcodes_inspector: Option<&mut Cheatcodes>,
     ) -> eyre::Result<()> {
         trace!(?id, ?transaction, "fuzz: execute transaction");
-        self.backend.to_mut().transact(id, transaction, env, journaled_state)
+        self.backend.to_mut().transact(id, transaction, env, journaled_state, cheatcodes_inspector)
     }
 
     fn active_fork_id(&self) -> Option<LocalForkId> {

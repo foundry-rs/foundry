@@ -6,7 +6,7 @@ use ethers::{
     signers::{HDPath as LedgerHDPath, Ledger, LocalWallet, Trezor, TrezorHDPath},
     types::Address,
 };
-use eyre::{Context, Result};
+use eyre::{Context, ContextCompat, Result};
 use foundry_common::RetryProvider;
 use foundry_config::Config;
 use itertools::izip;
@@ -93,7 +93,7 @@ pub struct MultiWallet {
     #[clap(
         long,
         short,
-        help_heading = "WALLET OPTIONS - RAW",
+        help_heading = "Wallet options - raw",
         help = "Open an interactive prompt to enter your private key. Takes a value for the number of keys to enter",
         default_value = "0",
         value_name = "NUM"
@@ -102,7 +102,7 @@ pub struct MultiWallet {
 
     #[clap(
         long = "private-keys",
-        help_heading = "WALLET OPTIONS - RAW",
+        help_heading = "Wallet options - raw",
         help = "Use the provided private keys.",
         value_name = "RAW_PRIVATE_KEYS",
         value_parser = foundry_common::clap_helpers::strip_0x_prefix,
@@ -112,7 +112,7 @@ pub struct MultiWallet {
 
     #[clap(
         long = "private-key",
-        help_heading = "WALLET OPTIONS - RAW",
+        help_heading = "Wallet options - raw",
         help = "Use the provided private key.",
         conflicts_with = "private_keys",
         value_name = "RAW_PRIVATE_KEY",
@@ -123,7 +123,7 @@ pub struct MultiWallet {
     #[clap(
         long = "mnemonics",
         alias = "mnemonic-paths",
-        help_heading = "WALLET OPTIONS - RAW",
+        help_heading = "Wallet options - raw",
         help = "Use the mnemonic phrases or mnemonic files at the specified paths.",
         value_name = "PATHS",
         action = ArgAction::Append,
@@ -132,7 +132,7 @@ pub struct MultiWallet {
 
     #[clap(
         long = "mnemonic-passphrases",
-        help_heading = "WALLET OPTIONS - RAW",
+        help_heading = "Wallet options - raw",
         help = "Use a BIP39 passphrases for the mnemonic.",
         value_name = "PASSPHRASE",
         action = ArgAction::Append,
@@ -142,7 +142,7 @@ pub struct MultiWallet {
     #[clap(
         long = "mnemonic-derivation-paths",
         alias = "hd-paths",
-        help_heading = "WALLET OPTIONS - RAW",
+        help_heading = "Wallet options - raw",
         help = "The wallet derivation path. Works with both --mnemonic-path and hardware wallets.",
         value_name = "PATHS",
         action = ArgAction::Append,
@@ -152,7 +152,7 @@ pub struct MultiWallet {
     #[clap(
         long = "mnemonic-indexes",
         conflicts_with = "hd_paths",
-        help_heading = "WALLET OPTIONS - RAW",
+        help_heading = "Wallet options - raw",
         help = "Use the private key from the given mnemonic index. Used with --mnemonic-paths.",
         default_value = "0",
         value_name = "INDEXES",
@@ -164,7 +164,7 @@ pub struct MultiWallet {
         env = "ETH_KEYSTORE",
         long = "keystore",
         visible_alias = "keystores",
-        help_heading = "WALLET OPTIONS - KEYSTORE",
+        help_heading = "Wallet options - keystore",
         help = "Use the keystore in the given folder or file.",
         action = ArgAction::Append,
         value_name = "PATHS",
@@ -173,7 +173,7 @@ pub struct MultiWallet {
 
     #[clap(
         long = "password",
-        help_heading = "WALLET OPTIONS - KEYSTORE",
+        help_heading = "Wallet options - keystore",
         help = "The keystore password. Used with --keystore.",
         requires = "keystore_paths",
         value_name = "PASSWORDS",
@@ -182,9 +182,19 @@ pub struct MultiWallet {
     pub keystore_passwords: Option<Vec<String>>,
 
     #[clap(
+        env = "ETH_PASSWORD",
+        long = "password-file",
+        help_heading = "Wallet options - keystore",
+        help = "The keystore password file path. Used with --keystore.",
+        requires = "keystore_paths",
+        value_name = "PASSWORD_FILE"
+    )]
+    pub keystore_password_file: Option<Vec<String>>,
+
+    #[clap(
         short,
         long = "ledger",
-        help_heading = "WALLET OPTIONS - HARDWARE WALLET",
+        help_heading = "Wallet options - hardware wallet",
         help = "Use a Ledger hardware wallet."
     )]
     pub ledger: bool,
@@ -192,7 +202,7 @@ pub struct MultiWallet {
     #[clap(
         short,
         long = "trezor",
-        help_heading = "WALLET OPTIONS - HARDWARE WALLET",
+        help_heading = "Wallet options - hardware wallet",
         help = "Use a Trezor hardware wallet."
     )]
     pub trezor: bool,
@@ -201,7 +211,7 @@ pub struct MultiWallet {
         env = "ETH_FROM",
         short = 'a',
         long = "froms",
-        help_heading = "WALLET OPTIONS - REMOTE",
+        help_heading = "Wallet options - remote",
         help = "The sender account.",
         value_name = "ADDRESSES",
         action = ArgAction::Append,
@@ -300,24 +310,16 @@ impl MultiWallet {
     /// Returns `Ok(None)` if no keystore provided.
     pub fn keystores(&self) -> Result<Option<Vec<LocalWallet>>> {
         if let Some(keystore_paths) = &self.keystore_paths {
-            let mut wallets = vec![];
+            let mut wallets = Vec::with_capacity(keystore_paths.len());
 
-            let mut passwords: Vec<Option<String>> = self
-                .keystore_passwords
-                .clone()
-                .unwrap_or_default()
-                .iter()
-                .map(|pw| Some(pw.clone()))
-                .collect();
+            let mut passwords_iter =
+                self.keystore_passwords.clone().unwrap_or_default().into_iter();
 
-            if passwords.is_empty() {
-                passwords = vec![None; keystore_paths.len()]
-            } else if passwords.len() != keystore_paths.len() {
-                eyre::bail!("Keystore passwords don't have the same length as keystore paths.");
-            }
+            let mut password_files_iter =
+                self.keystore_password_file.clone().unwrap_or_default().into_iter();
 
-            for (path, password) in keystore_paths.iter().zip(passwords) {
-                wallets.push(self.get_from_keystore(Some(path), password.as_ref(), None)?.unwrap());
+            for path in keystore_paths {
+                wallets.push(self.get_from_keystore(Some(path), passwords_iter.next().as_ref(), password_files_iter.next().as_ref())?.wrap_err("Keystore paths do not have the same length as provided passwords or password files.")?);
             }
             return Ok(Some(wallets))
         }
@@ -416,6 +418,7 @@ impl MultiWallet {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn parse_keystore_args() {
@@ -428,5 +431,35 @@ mod tests {
         assert_eq!(args.keystore_paths, Some(vec!["MY_KEYSTORE".to_string()]));
 
         std::env::remove_var("ETH_KEYSTORE");
+    }
+
+    #[test]
+    fn parse_keystore_password_file() {
+        let keystore = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/keystore");
+        let keystore_file = keystore
+            .join("UTC--2022-12-20T10-30-43.591916000Z--ec554aeafe75601aaab43bd4621a22284db566c2");
+
+        let keystore_password_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/keystore/password-ec554")
+            .into_os_string();
+
+        let args: MultiWallet = MultiWallet::parse_from([
+            "foundry-cli",
+            "--keystores",
+            keystore_file.to_str().unwrap(),
+            "--password-file",
+            keystore_password_file.to_str().unwrap(),
+        ]);
+        assert_eq!(
+            args.keystore_password_file,
+            Some(vec![keystore_password_file.to_str().unwrap().to_string()])
+        );
+
+        let wallets = args.keystores().unwrap().unwrap();
+        assert_eq!(wallets.len(), 1);
+        assert_eq!(
+            wallets[0].address(),
+            "ec554aeafe75601aaab43bd4621a22284db566c2".parse().unwrap()
+        );
     }
 }

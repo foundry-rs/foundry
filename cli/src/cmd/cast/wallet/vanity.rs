@@ -16,6 +16,7 @@ use std::time::Instant;
 /// Type alias for the result of [generate_wallet].
 pub type GeneratedWallet = (SigningKey, H160);
 
+/// CLI arguments for `cast wallet vanity`.
 #[derive(Debug, Clone, Parser)]
 pub struct VanityArgs {
     #[clap(

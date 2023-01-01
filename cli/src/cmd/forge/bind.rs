@@ -24,6 +24,7 @@ impl_figment_convert!(BindArgs, build_args);
 static DEFAULT_CRATE_NAME: &str = "foundry-contracts";
 static DEFAULT_CRATE_VERSION: &str = "0.0.1";
 
+/// CLI arguments for `forge bind`.
 #[derive(Debug, Clone, Parser, Serialize)]
 pub struct BindArgs {
     #[clap(

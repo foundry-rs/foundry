@@ -35,6 +35,7 @@ use serde::Serialize;
 /// # }
 /// ```
 #[derive(Debug, Clone, Default, Parser, Serialize)]
+#[clap(next_help_heading = "EVM options", about = None)] // override doc
 pub struct EvmArgs {
     /// Fetch state over a remote endpoint instead of starting from an empty state.
     ///
@@ -136,7 +137,7 @@ impl Provider for EvmArgs {
 
 /// Configures the executor environment during tests.
 #[derive(Debug, Clone, Default, Parser, Serialize)]
-#[clap(next_help_heading = "EXECUTOR ENVIRONMENT CONFIG")]
+#[clap(next_help_heading = "Executor environment config")]
 pub struct EnvArgs {
     /// The block gas limit.
     #[clap(long, value_name = "GAS_LIMIT")]

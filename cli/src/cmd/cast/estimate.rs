@@ -12,6 +12,7 @@ use ethers::{
 use foundry_common::try_get_http_provider;
 use foundry_config::{Chain, Config};
 
+/// CLI arguments for `cast estimate`.
 #[derive(Debug, Parser)]
 pub struct EstimateArgs {
     #[clap(help = "The destination of the transaction.", value_parser = parse_name_or_address, value_name = "TO")]

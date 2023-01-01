@@ -54,7 +54,7 @@ fn test_write_session() {
     num_items = if num_items > 0 { num_items - 1 } else { 0 };
 
     // Validate the session
-    assert_eq!(cached_session_name, format!("{}chisel-{}.json", cache_dir, num_items));
+    assert_eq!(cached_session_name, format!("{cache_dir}chisel-{num_items}.json"));
 }
 
 #[test]
@@ -73,7 +73,7 @@ fn test_write_session_with_name() {
     let cached_session_name = env.write().unwrap();
 
     // Validate the session
-    assert_eq!(cached_session_name, format!("{}chisel-test.json", cache_dir));
+    assert_eq!(cached_session_name, format!("{cache_dir}chisel-test.json"));
 }
 
 #[test]
@@ -90,7 +90,7 @@ fn test_clear_cache() {
     ChiselSession::clear_cache().unwrap();
 
     // Validate there are no items in the cache dir
-    let num_items = std::fs::read_dir(&cache_dir).unwrap().count();
+    let num_items = std::fs::read_dir(cache_dir).unwrap().count();
     assert_eq!(num_items, 0);
 }
 

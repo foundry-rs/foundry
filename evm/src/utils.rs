@@ -89,7 +89,6 @@ pub fn get_function(
     abi: &Abi,
 ) -> eyre::Result<Function> {
     abi.functions()
-        .into_iter()
         .find(|func| func.short_signature().as_slice() == selector.as_slice())
         .cloned()
         .wrap_err(format!("{contract_name} does not have the selector {selector:?}"))

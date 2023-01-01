@@ -2,7 +2,9 @@
 //!
 //! This module contains the execution logic for the [SessionSource].
 
-use crate::prelude::{ChiselResult, ChiselRunner, IntermediateOutput, SessionSource};
+use crate::prelude::{
+    ChiselDispatcher, ChiselResult, ChiselRunner, IntermediateOutput, SessionSource,
+};
 use core::fmt::Debug;
 use ethers::{
     abi::{ethabi, ParamType, Token},
@@ -11,7 +13,10 @@ use ethers::{
 };
 use ethers_solc::Artifact;
 use eyre::{Result, WrapErr};
-use forge::executor::{inspector::CheatsConfig, Backend, ExecutorBuilder};
+use forge::{
+    decode::decode_console_logs,
+    executor::{inspector::CheatsConfig, Backend, ExecutorBuilder},
+};
 use solang_parser::pt::{self, CodeLocation};
 use yansi::Paint;
 
@@ -40,8 +45,45 @@ impl SessionSource {
             // Find the last statement within the "run()" method and get the program
             // counter via the source map.
             if let Some(final_statement) = run_func_statements.last() {
+                // If the final statement is some type of block (assembly, unchecked, or regular),
+                // we need to find the final statement within that block. Otherwise, default to
+                // the source loc of the final statement of the `run()` function's block.
+                //
+                // There is some code duplication within the arms due to the difference between
+                // the [pt::Statement] type and the [pt::YulStatement] types.
+                let source_loc = match final_statement {
+                    pt::Statement::Assembly { loc: _, dialect: _, flags: _, block } => {
+                        if let Some(statement) = block.statements.last() {
+                            statement.loc()
+                        } else {
+                            // In the case where the block is empty, attempt to grab the statement
+                            // before the asm block. Because we use saturating sub to get the second
+                            // to last index, this can always be safely unwrapped.
+                            run_func_statements
+                                .get(run_func_statements.len().saturating_sub(2))
+                                .unwrap()
+                                .loc()
+                        }
+                    }
+                    pt::Statement::Block { loc: _, unchecked: _, statements } => {
+                        if let Some(statement) = statements.last() {
+                            statement.loc()
+                        } else {
+                            // In the case where the block is empty, attempt to grab the statement
+                            // before the block. Because we use saturating sub to get the second to
+                            // last index, this can always be safely unwrapped.
+                            run_func_statements
+                                .get(run_func_statements.len().saturating_sub(2))
+                                .unwrap()
+                                .loc()
+                        }
+                    }
+                    _ => final_statement.loc(),
+                };
+
+                // Map the source location of the final statement of the `run()` function to its
+                // corresponding runtime program counter
                 let final_pc = {
-                    let source_loc = final_statement.loc();
                     let offset = source_loc.start();
                     let length = source_loc.end() - source_loc.start();
                     contract
@@ -60,10 +102,7 @@ impl SessionSource {
                 let mut runner = self.prepare_runner(final_pc).await;
 
                 // Return [ChiselResult] or bubble up error
-                match runner.run(bytecode.into_owned()) {
-                    Ok(res) => Ok(res),
-                    Err(e) => Err(e),
-                }
+                runner.run(bytecode.into_owned())
             } else {
                 // Return a default result if no statements are present.
                 Ok((Address::zero(), ChiselResult::default()))
@@ -93,7 +132,7 @@ impl SessionSource {
             return Ok(None)
         };
 
-        let res = if let Ok((_, res)) = source.execute().await { res } else { return Ok(None) };
+        let mut res = if let Ok((_, res)) = source.execute().await { res } else { return Ok(None) };
 
         if let Some((stack, memory, _)) = &res.state {
             let generated_output = source
@@ -134,7 +173,21 @@ impl SessionSource {
                 Ok(Some(format_token(token)))
             })
         } else {
-            eyre::bail!("No state present")
+            if let Ok(decoder) = ChiselDispatcher::decode_traces(&source.config, &mut res) {
+                if ChiselDispatcher::show_traces(&decoder, &mut res).await.is_err() {
+                    eyre::bail!("Failed to display traces");
+                };
+
+                // Show console logs, if there are any
+                let decoded_logs = decode_console_logs(&res.logs);
+                if !decoded_logs.is_empty() {
+                    println!("{}", Paint::green("Logs:"));
+                    for log in decoded_logs {
+                        println!("  {log}");
+                    }
+                }
+            }
+            eyre::bail!("Failed to inspect expression")
         }
     }
 

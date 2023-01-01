@@ -161,7 +161,7 @@ impl CallTraceArena {
         let mut acc = GethTrace {
             // If the top-level trace succeeded, then it was a success
             failed: !main_trace.success,
-            gas: receipt_gas_used.as_u64(),
+            gas: receipt_gas_used,
             return_value: main_trace.output.to_bytes(),
             ..Default::default()
         };

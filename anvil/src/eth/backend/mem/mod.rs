@@ -507,7 +507,7 @@ impl Backend {
         id
     }
 
-    /// Reverts the state to the snapshot
+    /// Reverts the state to the snapshot identified by the given `id`.
     pub async fn revert_snapshot(&self, id: U256) -> Result<bool, BlockchainError> {
         let block = { self.active_snapshots.lock().remove(&id) };
         if let Some((num, hash)) = block {
@@ -534,7 +534,11 @@ impl Backend {
             };
             let block =
                 self.block_by_hash(best_block_hash).await?.ok_or(BlockchainError::BlockNotFound)?;
-            self.time.reset(block.timestamp.as_u64());
+
+            // Note: In [`TimeManager::compute_next_timestamp`] we ensure that the next timestamp is
+            // always increasing by at least one. By subtracting 1 here, this is mitigated.
+            let reset_time = block.timestamp.as_u64().saturating_sub(1);
+            self.time.reset(reset_time);
             self.set_block_number(num.into());
         }
         Ok(self.db.write().await.revert(id))
@@ -889,6 +893,28 @@ impl Backend {
             evm.inspect_ref(&mut inspector);
         inspector.print_logs();
         Ok((exit_reason, out, gas_used, state))
+    }
+
+    pub async fn call_with_tracing(
+        &self,
+        request: EthTransactionRequest,
+        fee_details: FeeDetails,
+        block_request: Option<BlockRequest>,
+        opts: GethDebugTracingOptions,
+    ) -> Result<GethTrace, BlockchainError> {
+        self.with_database_at(block_request, |state, block| {
+            let mut inspector = Inspector::default().with_steps_tracing();
+            let block_number = block.number;
+            let mut evm = revm::EVM::new();
+            evm.env = self.build_call_env(request, fee_details, block);
+            evm.database(state);
+            let (ExecutionResult { exit_reason, out, gas_used, .. }, _) =
+                evm.inspect_ref(&mut inspector);
+            let res = inspector.tracer.unwrap_or_default().traces.geth_trace(gas_used.into(), opts);
+            trace!(target: "backend", "trace call return {:?} out: {:?} gas {} on block {}", exit_reason, out, gas_used, block_number);
+            Ok(res)
+        })
+        .await?
     }
 
     pub fn build_access_list_with_state<D>(

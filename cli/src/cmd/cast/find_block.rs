@@ -8,6 +8,7 @@ use eyre::Result;
 use foundry_common::try_get_http_provider;
 use futures::{future::BoxFuture, join};
 
+/// CLI arguments for `cast find-block`.
 #[derive(Debug, Clone, Parser)]
 pub struct FindBlockArgs {
     #[clap(help = "The UNIX timestamp to search for (in seconds)", value_name = "TIMESTAMP")]
