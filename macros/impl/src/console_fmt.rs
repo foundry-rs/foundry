@@ -93,7 +93,7 @@ fn derive_enum(e: DataEnum, krate: &Path) -> TokenStream {
             .collect();
 
         if fields.len() != 1 {
-            unimplemented!("Enum variant with not 1 field")
+            unimplemented!("Enum variant with more than 1 field")
         }
 
         let field = fields.into_iter().next().unwrap();
