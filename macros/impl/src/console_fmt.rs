@@ -11,7 +11,7 @@ pub fn console_fmt(input: DeriveInput) -> TokenStream {
     let tokens = match input.data {
         Data::Struct(s) => derive_struct(s, &krate),
         Data::Enum(e) => derive_enum(e, &krate),
-        Data::Union(_) => quote!(compile_error!("Union is unsupported");),
+        Data::Union(_) => return quote!(compile_error!("Unions are unsupported");),
     };
     quote! {
         impl #krate::ConsoleFmt for #name {
