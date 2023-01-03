@@ -36,18 +36,19 @@ The wallet options can either be:
 6. Private Key (interactively via secure prompt)
 "#
 )]
+#[clap(next_help_heading = "Wallet options")]
 pub struct Wallet {
     #[clap(
         long,
         short,
-        help_heading = "WALLET OPTIONS - RAW",
+        help_heading = "Wallet options - raw",
         help = "Open an interactive prompt to enter your private key."
     )]
     pub interactive: bool,
 
     #[clap(
         long = "private-key",
-        help_heading = "WALLET OPTIONS - RAW",
+        help_heading = "Wallet options - raw",
         help = "Use the provided private key.",
         value_name = "RAW_PRIVATE_KEY",
         value_parser = foundry_common::clap_helpers::strip_0x_prefix
@@ -57,7 +58,7 @@ pub struct Wallet {
     #[clap(
         long = "mnemonic",
         alias = "mnemonic-path",
-        help_heading = "WALLET OPTIONS - RAW",
+        help_heading = "Wallet options - raw",
         help = "Use the mnemonic phrase of mnemonic file at the specified path.",
         value_name = "PATH"
     )]
@@ -65,7 +66,7 @@ pub struct Wallet {
 
     #[clap(
         long = "mnemonic-passphrase",
-        help_heading = "WALLET OPTIONS - RAW",
+        help_heading = "Wallet options - raw",
         help = "Use a BIP39 passphrase for the mnemonic.",
         value_name = "PASSPHRASE"
     )]
@@ -74,7 +75,7 @@ pub struct Wallet {
     #[clap(
         long = "mnemonic-derivation-path",
         alias = "hd-path",
-        help_heading = "WALLET OPTIONS - RAW",
+        help_heading = "Wallet options - raw",
         help = "The wallet derivation path. Works with both --mnemonic-path and hardware wallets.",
         value_name = "PATH"
     )]
@@ -83,7 +84,7 @@ pub struct Wallet {
     #[clap(
         long = "mnemonic-index",
         conflicts_with = "hd_path",
-        help_heading = "WALLET OPTIONS - RAW",
+        help_heading = "Wallet options - raw",
         help = "Use the private key from the given mnemonic index. Used with --mnemonic-path.",
         default_value = "0",
         value_name = "INDEX"
@@ -93,7 +94,7 @@ pub struct Wallet {
     #[clap(
         env = "ETH_KEYSTORE",
         long = "keystore",
-        help_heading = "WALLET OPTIONS - KEYSTORE",
+        help_heading = "Wallet options - keystore",
         help = "Use the keystore in the given folder or file.",
         value_name = "PATH"
     )]
@@ -101,7 +102,7 @@ pub struct Wallet {
 
     #[clap(
         long = "password",
-        help_heading = "WALLET OPTIONS - KEYSTORE",
+        help_heading = "Wallet options - keystore",
         help = "The keystore password. Used with --keystore.",
         requires = "keystore_path",
         value_name = "PASSWORD"
@@ -111,7 +112,7 @@ pub struct Wallet {
     #[clap(
         env = "ETH_PASSWORD",
         long = "password-file",
-        help_heading = "WALLET OPTIONS - KEYSTORE",
+        help_heading = "Wallet options - keystore",
         help = "The keystore password file path. Used with --keystore.",
         requires = "keystore_path",
         value_name = "PASSWORD_FILE"
@@ -121,7 +122,7 @@ pub struct Wallet {
     #[clap(
         short,
         long = "ledger",
-        help_heading = "WALLET OPTIONS - HARDWARE WALLET",
+        help_heading = "Wallet options - hardware wallet",
         help = "Use a Ledger hardware wallet."
     )]
     pub ledger: bool,
@@ -129,7 +130,7 @@ pub struct Wallet {
     #[clap(
         short,
         long = "trezor",
-        help_heading = "WALLET OPTIONS - HARDWARE WALLET",
+        help_heading = "Wallet options - hardware wallet",
         help = "Use a Trezor hardware wallet."
     )]
     pub trezor: bool,
@@ -138,7 +139,7 @@ pub struct Wallet {
         env = "ETH_FROM",
         short,
         long = "from",
-        help_heading = "WALLET OPTIONS - REMOTE",
+        help_heading = "Wallet options - remote",
         help = "The sender account.",
         value_name = "ADDRESS"
     )]

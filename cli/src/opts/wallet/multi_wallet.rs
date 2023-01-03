@@ -93,7 +93,7 @@ pub struct MultiWallet {
     #[clap(
         long,
         short,
-        help_heading = "WALLET OPTIONS - RAW",
+        help_heading = "Wallet options - raw",
         help = "Open an interactive prompt to enter your private key. Takes a value for the number of keys to enter",
         default_value = "0",
         value_name = "NUM"
@@ -102,7 +102,7 @@ pub struct MultiWallet {
 
     #[clap(
         long = "private-keys",
-        help_heading = "WALLET OPTIONS - RAW",
+        help_heading = "Wallet options - raw",
         help = "Use the provided private keys.",
         value_name = "RAW_PRIVATE_KEYS",
         value_parser = foundry_common::clap_helpers::strip_0x_prefix,
@@ -112,7 +112,7 @@ pub struct MultiWallet {
 
     #[clap(
         long = "private-key",
-        help_heading = "WALLET OPTIONS - RAW",
+        help_heading = "Wallet options - raw",
         help = "Use the provided private key.",
         conflicts_with = "private_keys",
         value_name = "RAW_PRIVATE_KEY",
@@ -123,7 +123,7 @@ pub struct MultiWallet {
     #[clap(
         long = "mnemonics",
         alias = "mnemonic-paths",
-        help_heading = "WALLET OPTIONS - RAW",
+        help_heading = "Wallet options - raw",
         help = "Use the mnemonic phrases or mnemonic files at the specified paths.",
         value_name = "PATHS",
         action = ArgAction::Append,
@@ -132,7 +132,7 @@ pub struct MultiWallet {
 
     #[clap(
         long = "mnemonic-passphrases",
-        help_heading = "WALLET OPTIONS - RAW",
+        help_heading = "Wallet options - raw",
         help = "Use a BIP39 passphrases for the mnemonic.",
         value_name = "PASSPHRASE",
         action = ArgAction::Append,
@@ -142,7 +142,7 @@ pub struct MultiWallet {
     #[clap(
         long = "mnemonic-derivation-paths",
         alias = "hd-paths",
-        help_heading = "WALLET OPTIONS - RAW",
+        help_heading = "Wallet options - raw",
         help = "The wallet derivation path. Works with both --mnemonic-path and hardware wallets.",
         value_name = "PATHS",
         action = ArgAction::Append,
@@ -152,7 +152,7 @@ pub struct MultiWallet {
     #[clap(
         long = "mnemonic-indexes",
         conflicts_with = "hd_paths",
-        help_heading = "WALLET OPTIONS - RAW",
+        help_heading = "Wallet options - raw",
         help = "Use the private key from the given mnemonic index. Used with --mnemonic-paths.",
         default_value = "0",
         value_name = "INDEXES",
@@ -164,7 +164,7 @@ pub struct MultiWallet {
         env = "ETH_KEYSTORE",
         long = "keystore",
         visible_alias = "keystores",
-        help_heading = "WALLET OPTIONS - KEYSTORE",
+        help_heading = "Wallet options - keystore",
         help = "Use the keystore in the given folder or file.",
         action = ArgAction::Append,
         value_name = "PATHS",
@@ -173,7 +173,7 @@ pub struct MultiWallet {
 
     #[clap(
         long = "password",
-        help_heading = "WALLET OPTIONS - KEYSTORE",
+        help_heading = "Wallet options - keystore",
         help = "The keystore password. Used with --keystore.",
         requires = "keystore_paths",
         value_name = "PASSWORDS",
@@ -184,7 +184,7 @@ pub struct MultiWallet {
     #[clap(
         env = "ETH_PASSWORD",
         long = "password-file",
-        help_heading = "WALLET OPTIONS - KEYSTORE",
+        help_heading = "Wallet options - keystore",
         help = "The keystore password file path. Used with --keystore.",
         requires = "keystore_paths",
         value_name = "PASSWORD_FILE"
@@ -194,7 +194,7 @@ pub struct MultiWallet {
     #[clap(
         short,
         long = "ledger",
-        help_heading = "WALLET OPTIONS - HARDWARE WALLET",
+        help_heading = "Wallet options - hardware wallet",
         help = "Use a Ledger hardware wallet."
     )]
     pub ledger: bool,
@@ -202,7 +202,7 @@ pub struct MultiWallet {
     #[clap(
         short,
         long = "trezor",
-        help_heading = "WALLET OPTIONS - HARDWARE WALLET",
+        help_heading = "Wallet options - hardware wallet",
         help = "Use a Trezor hardware wallet."
     )]
     pub trezor: bool,
@@ -211,7 +211,7 @@ pub struct MultiWallet {
         env = "ETH_FROM",
         short = 'a',
         long = "froms",
-        help_heading = "WALLET OPTIONS - REMOTE",
+        help_heading = "Wallet options - remote",
         help = "The sender account.",
         value_name = "ADDRESSES",
         action = ArgAction::Append,

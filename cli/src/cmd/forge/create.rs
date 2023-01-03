@@ -22,6 +22,7 @@ use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
 use tracing::log::trace;
 
+/// CLI arguments for `forge create`.
 #[derive(Debug, Clone, Parser)]
 pub struct CreateArgs {
     #[clap(
@@ -50,18 +51,18 @@ pub struct CreateArgs {
     )]
     constructor_args_path: Option<PathBuf>,
 
-    #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
+    #[clap(flatten)]
     opts: CoreBuildArgs,
 
-    #[clap(flatten, next_help_heading = "TRANSACTION OPTIONS")]
+    #[clap(flatten)]
     tx: TransactionOpts,
 
-    #[clap(flatten, next_help_heading = "ETHEREUM OPTIONS")]
+    #[clap(flatten)]
     eth: EthereumOpts,
 
     #[clap(
         long = "json",
-        help_heading = "DISPLAY OPTIONS",
+        help_heading = "Display options",
         help = "Print the deployment information as JSON."
     )]
     json: bool,
@@ -79,7 +80,7 @@ pub struct CreateArgs {
     #[clap(flatten)]
     pub verifier: verify::VerifierArgs,
 
-    #[clap(flatten, help = "Allows to use retry arguments for contract verification")]
+    #[clap(flatten)]
     retry: RetryArgs,
 }
 

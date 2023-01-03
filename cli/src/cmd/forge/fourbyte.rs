@@ -10,6 +10,7 @@ use foundry_common::{
     selectors::{import_selectors, SelectorImportData},
 };
 
+/// CLI arguments for `forge upload-selectors`.
 #[derive(Debug, Clone, Parser)]
 pub struct UploadSelectorsArgs {
     #[clap(
@@ -25,7 +26,7 @@ pub struct UploadSelectorsArgs {
     )]
     pub all: bool,
 
-    #[clap(flatten, next_help_heading = "PROJECT OPTIONS")]
+    #[clap(flatten)]
     pub project_paths: ProjectPathsArgs,
 }
 

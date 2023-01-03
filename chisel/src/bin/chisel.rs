@@ -3,7 +3,7 @@
 //! This module contains the core readline loop for the Chisel CLI as well as the
 //! executable's `main` function.
 
-use chisel::prelude::{ChiselCommand, ChiselDisptacher, DispatchResult, SolidityHelper};
+use chisel::prelude::{ChiselCommand, ChiselDispatcher, DispatchResult, SolidityHelper};
 use clap::Parser;
 use foundry_cli::cmd::{forge::build::BuildArgs, LoadConfig};
 use foundry_common::evm::EvmArgs;
@@ -34,10 +34,10 @@ pub(crate) const VERSION_MESSAGE: &str = concat!(
 #[derive(Debug, Parser)]
 #[clap(name = "chisel", version = VERSION_MESSAGE)]
 pub struct ChiselParser {
-    #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
+    #[clap(flatten)]
     pub opts: BuildArgs,
 
-    #[clap(flatten, next_help_heading = "EVM OPTIONS")]
+    #[clap(flatten)]
     pub evm_opts: EvmArgs,
 
     #[command(subcommand)]
@@ -73,7 +73,7 @@ async fn main() -> eyre::Result<()> {
     let (config, evm_opts) = args.load_config_and_evm_opts()?;
 
     // Create a new cli dispatcher
-    let mut dispatcher = ChiselDisptacher::new(&chisel::session_source::SessionSourceConfig {
+    let mut dispatcher = ChiselDispatcher::new(&chisel::session_source::SessionSourceConfig {
         // Enable traces if any level of verbosity was passed
         traces: config.verbosity > 0,
         foundry_config: config,

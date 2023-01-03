@@ -82,18 +82,10 @@ pub enum Subcommands {
     )]
     Remappings(RemappingArgs),
 
-    #[clap(
-        visible_alias = "v",
-        about = "Verify smart contracts on Etherscan.",
-        long_about = "Verify smart contracts on Etherscan."
-    )]
+    #[clap(visible_alias = "v", about = "Verify smart contracts on Etherscan.")]
     VerifyContract(VerifyArgs),
 
-    #[clap(
-        visible_alias = "vc",
-        about = "Check verification status on Etherscan.",
-        long_about = "Check verification status on Etherscan."
-    )]
+    #[clap(visible_alias = "vc", about = "Check verification status on Etherscan.")]
     VerifyCheck(VerifyCheckArgs),
 
     #[clap(visible_alias = "c", about = "Deploy a smart contract.")]
@@ -164,6 +156,7 @@ pub enum Subcommands {
 //
 // See also [`BuildArgs`]
 #[derive(Default, Debug, Clone, Parser, Serialize)]
+#[clap(next_help_heading = "Compiler options")]
 pub struct CompilerArgs {
     #[clap(help = "The target EVM version.", long, value_name = "VERSION")]
     #[serde(skip_serializing_if = "Option::is_none")]

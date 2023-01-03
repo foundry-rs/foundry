@@ -8,7 +8,7 @@ foundry_config::impl_figment_convert!(TreeArgs, opts);
 use crate::cmd::{forge::build::ProjectPathsArgs, LoadConfig};
 use ethers::solc::resolver::{Charset, TreeOptions};
 
-/// Command to display the project's dependency tree
+/// CLI arguments for `forge tree`.
 #[derive(Debug, Clone, Parser)]
 pub struct TreeArgs {
     #[clap(help = "Do not de-duplicate (repeats all shared dependencies)", long)]
@@ -20,7 +20,7 @@ pub struct TreeArgs {
         value_name = "CHARSET"
     )]
     charset: Charset,
-    #[clap(flatten, next_help_heading = "PROJECT OPTIONS")]
+    #[clap(flatten)]
     opts: ProjectPathsArgs,
 }
 

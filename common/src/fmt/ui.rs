@@ -342,7 +342,7 @@ value                {}{}",
 }
 
 fn tab_paragraph(paragraph: String) -> String {
-    paragraph.lines().into_iter().fold("".to_string(), |acc, x| acc + "\t" + x + "\n")
+    paragraph.lines().fold("".to_string(), |acc, x| acc + "\t" + x + "\n")
 }
 
 /// Convert a U256 to bytes

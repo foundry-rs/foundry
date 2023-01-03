@@ -33,7 +33,7 @@ static CHISEL_CHAR: &str = "⚒️";
 
 /// Chisel input dispatcher
 #[derive(Debug)]
-pub struct ChiselDisptacher {
+pub struct ChiselDispatcher {
     /// The status of the previous dispatch
     pub errored: bool,
     /// A Chisel Session
@@ -107,7 +107,7 @@ pub fn format_source(source: &str, config: FormatterConfig) -> eyre::Result<Stri
     }
 }
 
-impl ChiselDisptacher {
+impl ChiselDispatcher {
     /// Associated public function to create a new Dispatcher instance
     pub fn new(config: &SessionSourceConfig) -> eyre::Result<Self> {
         ChiselSession::new(config).map(|session| Self { errored: false, session })
@@ -610,6 +610,147 @@ impl ChiselDisptacher {
                     Err(e) => DispatchResult::CommandFailed(e.to_string()),
                 }
             }
+            ChiselCommand::Edit => {
+                if let Some(session_source) = self.session.session_source.as_mut() {
+                    // create a temp file with the content of the run code
+                    let mut temp_file_path = std::env::temp_dir();
+                    temp_file_path.push("chisel-tmp.sol");
+                    let result = std::fs::File::create(&temp_file_path)
+                        .map(|mut file| file.write_all(session_source.run_code.as_bytes()));
+                    if let Err(e) = result {
+                        return DispatchResult::CommandFailed(format!(
+                            "Could not write to a temporary file: {e}"
+                        ))
+                    }
+
+                    // open the temp file with the editor
+                    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+                    let mut cmd = Command::new(editor);
+                    cmd.arg(&temp_file_path);
+
+                    match cmd.status() {
+                        Ok(status) => {
+                            if !status.success() {
+                                if let Some(status_code) = status.code() {
+                                    return DispatchResult::CommandFailed(format!(
+                                        "Editor exited with status {status_code}"
+                                    ))
+                                } else {
+                                    return DispatchResult::CommandFailed(
+                                        "Editor exited without a status code".to_string(),
+                                    )
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            return DispatchResult::CommandFailed(
+                                "Editor exited without a status code".to_string(),
+                            )
+                        }
+                    }
+
+                    let mut new_session_source = session_source.clone();
+                    if let Ok(edited_code) = std::fs::read_to_string(temp_file_path) {
+                        new_session_source.drain_run();
+                        new_session_source.with_run_code(&edited_code);
+                    } else {
+                        return DispatchResult::CommandFailed(
+                            "Could not read the edited file".to_string(),
+                        )
+                    }
+
+                    // if the editor exited successfully, try to compile the new code
+                    match new_session_source.execute().await {
+                        Ok((_, mut res)) => {
+                            let failed = !res.success;
+                            if new_session_source.config.traces || failed {
+                                if let Ok(decoder) =
+                                    Self::decode_traces(&new_session_source.config, &mut res)
+                                {
+                                    if Self::show_traces(&decoder, &mut res).await.is_err() {
+                                        self.errored = true;
+                                        return DispatchResult::CommandFailed(
+                                            "Failed to display traces".to_owned(),
+                                        )
+                                    };
+
+                                    // Show console logs, if there are any
+                                    let decoded_logs = decode_console_logs(&res.logs);
+                                    if !decoded_logs.is_empty() {
+                                        println!("{}", Paint::green("Logs:"));
+                                        for log in decoded_logs {
+                                            println!("  {log}");
+                                        }
+                                    }
+                                }
+
+                                // If the contract execution failed, continue on without
+                                // updating the source.
+                                self.errored = true;
+                                DispatchResult::CommandFailed(Self::make_error(
+                                    "Failed to execute edited contract!",
+                                ))
+                            } else {
+                                // the code could be compiled, save it
+                                *session_source = new_session_source;
+                                DispatchResult::CommandSuccess(Some(String::from(
+                                    "Successfully edited `run()` function's body!",
+                                )))
+                            }
+                        }
+                        Err(_) => DispatchResult::CommandFailed(
+                            "The code could not be compiled".to_string(),
+                        ),
+                    }
+                } else {
+                    DispatchResult::CommandFailed(Self::make_error("Session not present."))
+                }
+            }
+            ChiselCommand::RawStack => {
+                if args.is_empty() {
+                    return DispatchResult::CommandFailed(Self::make_error("No variable supplied!"))
+                } else if args.len() > 1 {
+                    return DispatchResult::CommandFailed(Self::make_error(
+                        "!rawstack only takes one argument.",
+                    ))
+                }
+
+                // Store the variable that we want to inspect
+                let to_inspect = args[0];
+
+                // Get a mutable reference to the session source
+                let source =
+                    match self.session.session_source.as_mut().ok_or(DispatchResult::CommandFailed(
+                        "Session source not present".to_string(),
+                    )) {
+                        Ok(session_source) => session_source,
+                        Err(e) => return e,
+                    };
+
+                // Copy the variable's stack contents into a bytes32 variable without updating
+                // the current session source.
+                if let Ok((mut new_source, _)) = source.clone_with_new_line(format!(
+                    "bytes32 __raw__; assembly {{ __raw__ := {to_inspect} }}"
+                )) {
+                    match new_source.inspect("__raw__").await {
+                        Ok(res) => {
+                            // If the input was inspected, hault here and display the contents
+                            // of the `__raw__` variable's stack allocation.
+                            if let Some(res) = res {
+                                return DispatchResult::CommandSuccess(Some(res))
+                            }
+                        }
+                        Err(e) => {
+                            // If there was an explicit error thrown, hault here.
+                            return DispatchResult::CommandFailed(Self::make_error(e))
+                        }
+                    }
+                }
+
+                DispatchResult::CommandFailed(
+                    "Variable must exist within `run()` function.".to_string(),
+                )
+            }
         }
     }
 
@@ -682,8 +823,8 @@ impl ChiselDisptacher {
                     // If traces are enabled or there was an error in execution, show the execution
                     // traces.
                     if new_source.config.traces || failed {
-                        if let Ok(decoder) = self.decode_traces(&new_source.config, &mut res) {
-                            if self.show_traces(&decoder, &mut res).await.is_err() {
+                        if let Ok(decoder) = Self::decode_traces(&new_source.config, &mut res) {
+                            if Self::show_traces(&decoder, &mut res).await.is_err() {
                                 self.errored = true;
                                 return DispatchResult::CommandFailed(
                                     "Failed to display traces".to_owned(),
@@ -749,7 +890,6 @@ impl ChiselDisptacher {
     ///
     /// Optionally, a [CallTraceDecoder]
     pub fn decode_traces(
-        &self,
         session_config: &SessionSourceConfig,
         result: &mut ChiselResult,
         // known_contracts: &ContractsByArtifact,
@@ -785,7 +925,6 @@ impl ChiselDisptacher {
     ///
     /// Optionally, a unit type signifying a successful result.
     pub async fn show_traces(
-        &self,
         decoder: &CallTraceDecoder,
         result: &mut ChiselResult,
     ) -> eyre::Result<()> {

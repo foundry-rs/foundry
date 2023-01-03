@@ -895,6 +895,28 @@ impl Backend {
         Ok((exit_reason, out, gas_used, state))
     }
 
+    pub async fn call_with_tracing(
+        &self,
+        request: EthTransactionRequest,
+        fee_details: FeeDetails,
+        block_request: Option<BlockRequest>,
+        opts: GethDebugTracingOptions,
+    ) -> Result<GethTrace, BlockchainError> {
+        self.with_database_at(block_request, |state, block| {
+            let mut inspector = Inspector::default().with_steps_tracing();
+            let block_number = block.number;
+            let mut evm = revm::EVM::new();
+            evm.env = self.build_call_env(request, fee_details, block);
+            evm.database(state);
+            let (ExecutionResult { exit_reason, out, gas_used, .. }, _) =
+                evm.inspect_ref(&mut inspector);
+            let res = inspector.tracer.unwrap_or_default().traces.geth_trace(gas_used.into(), opts);
+            trace!(target: "backend", "trace call return {:?} out: {:?} gas {} on block {}", exit_reason, out, gas_used, block_number);
+            Ok(res)
+        })
+        .await?
+    }
+
     pub fn build_access_list_with_state<D>(
         &self,
         state: D,

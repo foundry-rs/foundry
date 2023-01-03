@@ -5,10 +5,11 @@ use forge::TestFilter;
 use foundry_config::Config;
 use std::{fmt, path::Path, str::FromStr};
 
-/// The filter to use during testing
+/// The filter to use during testing.
 ///
-/// See also `FileFilter`
+/// See also `FileFilter`.
 #[derive(Clone, Parser)]
+#[clap(next_help_heading = "Test filtering")]
 pub struct Filter {
     /// Only run test functions matching the specified regex pattern.
     ///

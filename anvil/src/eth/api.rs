@@ -250,6 +250,10 @@ impl EthApi {
             EthRequest::DebugTraceTransaction(tx, opts) => {
                 self.debug_trace_transaction(tx, opts).await.to_rpc_result()
             }
+            // non eth-standard rpc calls
+            EthRequest::DebugTraceCall(tx, block, opts) => {
+                self.debug_trace_call(tx, block, opts).await.to_rpc_result()
+            }
             EthRequest::TraceTransaction(tx) => self.trace_transaction(tx).await.to_rpc_result(),
             EthRequest::TraceBlock(block) => self.trace_block(block).await.to_rpc_result(),
             EthRequest::ImpersonateAccount(addr) => {
@@ -1264,6 +1268,30 @@ impl EthApi {
         }
 
         self.backend.debug_trace_transaction(tx_hash, opts).await
+    }
+
+    /// Returns traces for the transaction for geth's tracing endpoint
+    ///
+    /// Handler for RPC call: `debug_traceCall`
+    pub async fn debug_trace_call(
+        &self,
+        request: EthTransactionRequest,
+        block_number: Option<BlockId>,
+        opts: GethDebugTracingOptions,
+    ) -> Result<GethTrace> {
+        node_info!("debug_traceCall");
+        if opts.tracer.is_some() {
+            return Err(RpcError::invalid_params("non-default tracer not supported yet").into())
+        }
+        let block_request = self.block_request(block_number).await?;
+        let fees = FeeDetails::new(
+            request.gas_price,
+            request.max_fee_per_gas,
+            request.max_priority_fee_per_gas,
+        )?
+        .or_zero_fees();
+
+        self.backend.call_with_tracing(request, fees, Some(block_request), opts).await
     }
 
     /// Returns traces for the transaction hash via parity's tracing endpoint

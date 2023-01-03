@@ -247,7 +247,7 @@ Examples:
         #[clap(flatten)]
         // TODO: We only need RPC URL + etherscan stuff from this struct
         eth: EthereumOpts,
-        #[clap(long = "json", short = 'j', help_heading = "DISPLAY OPTIONS")]
+        #[clap(long = "json", short = 'j', help_heading = "Display options")]
         to_json: bool,
     },
     #[clap(name = "block")]
@@ -268,7 +268,7 @@ Examples:
         field: Option<String>,
         #[clap(long, env = "CAST_FULL_BLOCK")]
         full: bool,
-        #[clap(long = "json", short = 'j', help_heading = "DISPLAY OPTIONS")]
+        #[clap(long = "json", short = 'j', help_heading = "Display options")]
         to_json: bool,
         #[clap(long, env = "ETH_RPC_URL", value_name = "URL")]
         rpc_url: Option<String>,
@@ -343,7 +343,7 @@ Examples:
         tx_hash: String,
         #[clap(value_name = "FIELD")]
         field: Option<String>,
-        #[clap(long = "json", short = 'j', help_heading = "DISPLAY OPTIONS")]
+        #[clap(long = "json", short = 'j', help_heading = "Display options")]
         to_json: bool,
         #[clap(long, env = "ETH_RPC_URL", value_name = "URL")]
         rpc_url: Option<String>,
@@ -372,7 +372,7 @@ Examples:
             help = "Exit immediately if the transaction was not found."
         )]
         cast_async: bool,
-        #[clap(long = "json", short = 'j', help_heading = "DISPLAY OPTIONS")]
+        #[clap(long = "json", short = 'j', help_heading = "Display options")]
         to_json: bool,
         #[clap(long, env = "ETH_RPC_URL", value_name = "URL")]
         rpc_url: Option<String>,
@@ -749,7 +749,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
     },
 }
 
-/// Common args for ToHex, ToDec, ToBase
+/// CLI arguments for `cast --to-base`.
 #[derive(Debug, Parser)]
 pub struct ToBaseArgs {
     #[clap(allow_hyphen_values = true, value_name = "VALUE")]

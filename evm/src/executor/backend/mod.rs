@@ -3,7 +3,7 @@ use crate::{
     executor::{
         backend::snapshot::BackendSnapshot,
         fork::{CreateFork, ForkId, MultiFork, SharedBackend},
-        inspector::DEFAULT_CREATE2_DEPLOYER,
+        inspector::{cheatcodes::Cheatcodes, DEFAULT_CREATE2_DEPLOYER},
         snapshot::Snapshots,
     },
     CALLER, TEST_CONTRACT_ADDRESS,
@@ -175,6 +175,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
         transaction: H256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
+        cheatcodes_inspector: Option<&mut Cheatcodes>,
     ) -> eyre::Result<()>;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
@@ -419,6 +420,17 @@ impl Backend {
         }
 
         trace!(target: "backend", forking_mode=? backend.active_fork_ids.is_some(), "created executor backend");
+
+        backend
+    }
+
+    /// Creates a new instance of `Backend` with fork added to the fork database and sets the fork
+    /// as active
+    pub(crate) fn new_with_fork(id: &ForkId, fork: Fork, journaled_state: JournaledState) -> Self {
+        let mut backend = Self::spawn(None);
+        let fork_ids = backend.inner.insert_new_fork(id.clone(), fork.db, journaled_state);
+        backend.inner.launched_with_fork = Some((id.clone(), fork_ids.0, fork_ids.1));
+        backend.active_fork_ids = Some(fork_ids);
 
         backend
     }
@@ -763,6 +775,8 @@ impl Backend {
     ) -> eyre::Result<Option<Transaction>> {
         trace!(?id, ?tx_hash, "replay until transaction");
 
+        let fork_id = self.ensure_fork_id(id)?.clone();
+
         let fork = self.inner.get_fork_by_id_mut(id)?;
         let full_block =
             fork.db.db.get_full_block(BlockNumber::Number(env.block.number.as_u64().into()))?;
@@ -774,7 +788,7 @@ impl Backend {
             }
             trace!(tx=?tx.hash, "committing transaction");
 
-            commit_transaction(tx, env.clone(), journaled_state, fork);
+            commit_transaction(tx, env.clone(), journaled_state, fork, &fork_id, None);
         }
 
         Ok(None)
@@ -1063,14 +1077,15 @@ impl DatabaseExt for Backend {
         transaction: H256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
+        cheatcodes_inspector: Option<&mut Cheatcodes>,
     ) -> eyre::Result<()> {
         trace!(?maybe_id, ?transaction, "execute transaction");
         let id = self.ensure_fork(maybe_id)?;
+        let fork_id = self.ensure_fork_id(id).cloned()?;
 
         let env = if maybe_id.is_none() {
-            let fork_id = self.ensure_fork_id(id).cloned()?;
             self.forks
-                .get_env(fork_id)?
+                .get_env(fork_id.clone())?
                 .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exit", id))?
         } else {
             env.clone()
@@ -1079,7 +1094,7 @@ impl DatabaseExt for Backend {
         let fork = self.inner.get_fork_by_id_mut(id)?;
         let tx = fork.db.db.get_transaction(transaction)?;
 
-        commit_transaction(tx, env, journaled_state, fork);
+        commit_transaction(tx, env, journaled_state, fork, &fork_id, cheatcodes_inspector);
 
         Ok(())
     }
@@ -1665,19 +1680,29 @@ fn is_contract_in_state(journaled_state: &JournaledState, acc: Address) -> bool 
 }
 
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
-/// state
+/// state, with an optional inspector
 fn commit_transaction(
     tx: Transaction,
     mut env: Env,
     journaled_state: &mut JournaledState,
     fork: &mut Fork,
+    fork_id: &ForkId,
+    cheatcodes_inspector: Option<&mut Cheatcodes>,
 ) {
     configure_tx_env(&mut env, &tx);
+
     let (_, state) = {
         let mut evm = EVM::new();
         evm.env = env;
-        evm.database(&mut fork.db);
-        evm.transact()
+
+        let db = Backend::new_with_fork(fork_id, fork.clone(), journaled_state.clone());
+        evm.database(db);
+
+        if let Some(inspector) = cheatcodes_inspector {
+            evm.inspect(inspector)
+        } else {
+            evm.transact()
+        }
     };
 
     apply_state_changeset(state, journaled_state, fork);

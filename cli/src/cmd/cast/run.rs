@@ -23,6 +23,7 @@ use tracing::trace;
 use ui::{TUIExitReason, Tui, Ui};
 use yansi::Paint;
 
+/// CLI arguments for `cast run`.
 #[derive(Debug, Clone, Parser)]
 pub struct RunArgs {
     #[clap(help = "The transaction hash.", value_name = "TXHASH")]
