@@ -138,7 +138,7 @@ pub struct ScriptArgs {
         long,
         help = "Send via `eth_sendTransaction` using the `--sender` argument or `$ETH_FROM` as sender",
         requires = "sender",
-        conflicts_with_all = &["private_key", "private_keys", "froms", "ledger", "trezor"]
+        conflicts_with_all = &["private_key", "private_keys", "froms", "ledger", "trezor", "aws"]
     )]
     pub unlocked: bool,
 

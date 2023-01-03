@@ -151,6 +151,7 @@ impl CreateArgs {
                 WalletType::Ledger(signer) => self.deploy(abi, bin, params, signer).await?,
                 WalletType::Local(signer) => self.deploy(abi, bin, params, signer).await?,
                 WalletType::Trezor(signer) => self.deploy(abi, bin, params, signer).await?,
+                WalletType::Aws(signer) => self.deploy(abi, bin, params, signer).await?,
             },
             None => eyre::bail!("could not find artifact"),
         };
