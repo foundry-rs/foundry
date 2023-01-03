@@ -133,6 +133,7 @@ jobs:
                   git config --global user.email "<>"
 
             - name: cargo nextest
+              shell: bash
               run: |
                 # see https://github.com/foundry-rs/foundry/pull/3959
                 export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib"
@@ -194,6 +195,7 @@ jobs:
 
             - name: cargo nextest
               if: ${{ matrix.job.target == 'aarch64-apple-darwin' }}
+              shell: bash
               run: |
                 # see https://github.com/foundry-rs/foundry/pull/3959
                 export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib"
@@ -201,6 +203,7 @@ jobs:
 
             - name: cargo nextest
               if: ${{ matrix.job.target != 'aarch64-apple-darwin' }}
+              shell: bash
               run: |
                 # see https://github.com/foundry-rs/foundry/pull/3959
                 export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib"
