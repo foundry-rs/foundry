@@ -30,8 +30,9 @@ impl Db for ForkedDatabase {
     }
 
     fn dump_state(&self) -> DatabaseResult<Option<SerializableState>> {
-        let db = self.database();
-        let accounts = db
+        let mut db = self.database().clone();
+        let accounts = self
+            .database()
             .accounts
             .clone()
             .into_iter()
@@ -39,7 +40,7 @@ impl Db for ForkedDatabase {
                 let code = if let Some(code) = v.info.code {
                     code
                 } else {
-                    db.clone().code_by_hash(v.info.code_hash)?
+                    db.code_by_hash(v.info.code_hash)?
                 }
                 .to_checked();
                 Ok((
