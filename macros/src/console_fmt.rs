@@ -189,6 +189,11 @@ mod tests {
     use crate::ConsoleFmt;
     use std::str::FromStr;
 
+    /// Workaround for the derive macro using `foundry_macros` when it's `crate`.
+    mod foundry_macros {
+        pub use crate::*;
+    }
+
     macro_rules! logf1 {
         ($a:ident) => {{
             let args: [&dyn ConsoleFmt; 1] = [&$a.p_1];
