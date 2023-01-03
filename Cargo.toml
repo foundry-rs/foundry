@@ -16,6 +16,8 @@ members = [
     "ui",
     "utils",
     "chisel",
+    "macros",
+    "macros/impl",
 ]
 
 [profile.dev]

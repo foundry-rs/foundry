@@ -120,6 +120,7 @@ jobs:
         steps:
             - name: Checkout sources
               uses: actions/checkout@v2
+            - uses: dtolnay/rust-toolchain@stable
             - name: Install nextest
               uses: taiki-e/install-action@nextest
             - name: Download archives
@@ -132,7 +133,11 @@ jobs:
                   git config --global user.email "<>"
 
             - name: cargo nextest
-              run: ~/.cargo/bin/cargo-nextest nextest run --retries 3 --archive-file  ${{ matrix.job.target }}-${{ matrix.archive.file }} -E '${{ matrix.nextest.filter }}'
+              shell: bash
+              run: |
+                # see https://github.com/foundry-rs/foundry/pull/3959
+                export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib"
+                cargo nextest run --retries 3 --archive-file  ${{ matrix.job.target }}-${{ matrix.archive.file }} -E '${{ matrix.nextest.filter }}'
 
     integration:
         name: integration tests ${{ matrix.job.target }} (${{ matrix.job.os }}) / ${{ matrix.archive.name }} / ${{ matrix.nextest.name }}
@@ -169,6 +174,7 @@ jobs:
         steps:
             - name: Checkout sources
               uses: actions/checkout@v2
+            - uses: dtolnay/rust-toolchain@stable
             - name: Install nextest
               uses: taiki-e/install-action@nextest
             - name: Download archives
@@ -189,8 +195,16 @@ jobs:
 
             - name: cargo nextest
               if: ${{ matrix.job.target == 'aarch64-apple-darwin' }}
-              run: ~/.cargo/bin/cargo-nextest nextest run --retries 3 --archive-file ${{ matrix.job.target }}-${{ matrix.archive.file }} -E '${{ matrix.nextest.            macos-aarch-filter }}'
+              shell: bash
+              run: |
+                # see https://github.com/foundry-rs/foundry/pull/3959
+                export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib"
+                cargo nextest run --retries 3 --archive-file ${{ matrix.job.target }}-${{ matrix.archive.file }} -E '${{ matrix.nextest.macos-aarch-filter }}'
 
             - name: cargo nextest
               if: ${{ matrix.job.target != 'aarch64-apple-darwin' }}
-              run: ~/.cargo/bin/cargo-nextest nextest run --retries 3 --archive-file ${{ matrix.job.target }}-${{ matrix.archive.file }} -E '${{ matrix.nextest.filter }}'
+              shell: bash
+              run: |
+                # see https://github.com/foundry-rs/foundry/pull/3959
+                export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib"
+                cargo nextest run --retries 3 --archive-file ${{ matrix.job.target }}-${{ matrix.archive.file }} -E '${{ matrix.nextest.filter }}'

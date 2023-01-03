@@ -1,8 +1,9 @@
 use super::{Wallet, WalletType};
+use cast::{AwsChainProvider, AwsClient, AwsHttpClient, AwsRegion, KmsClient};
 use clap::Parser;
 use ethers::{
     middleware::SignerMiddleware,
-    signers::{HDPath as LedgerHDPath, Ledger, Signer, Trezor, TrezorHDPath},
+    signers::{AwsSigner, HDPath as LedgerHDPath, Ledger, Signer, Trezor, TrezorHDPath},
     types::{Address, U256},
 };
 use eyre::Result;
@@ -53,6 +54,7 @@ impl EthereumOpts {
                 WalletType::Ledger(signer) => signer.address(),
                 WalletType::Local(signer) => signer.address(),
                 WalletType::Trezor(signer) => signer.address(),
+                WalletType::Aws(signer) => signer.address(),
             }
         } else {
             self.wallet.from.unwrap_or_else(Address::zero)
@@ -99,6 +101,17 @@ impl EthereumOpts {
             let trezor = Trezor::new(derivation, chain_id.as_u64(), None).await?;
 
             Ok(Some(WalletType::Trezor(SignerMiddleware::new(provider, trezor))))
+        } else if self.wallet.aws {
+            let client =
+                AwsClient::new_with(AwsChainProvider::default(), AwsHttpClient::new().unwrap());
+
+            let kms = KmsClient::new_with_client(client, AwsRegion::default());
+
+            let key_id = std::env::var("AWS_KMS_KEY_ID")?;
+
+            let aws_signer = AwsSigner::new(kms, key_id, chain_id.as_u64()).await?;
+
+            Ok(Some(WalletType::Aws(SignerMiddleware::new(provider, aws_signer))))
         } else {
             let local = self
                 .wallet
@@ -108,7 +121,7 @@ impl EthereumOpts {
                 .or_else(|| self.wallet.mnemonic().transpose())
                 .or_else(|| self.wallet.keystore().transpose())
                 .transpose()?
-                .ok_or_else(|| eyre::eyre!("error accessing local wallet, did you set a private key, mnemonic or keystore? Run `cast send --help` or `forge create --help` and use the corresponding CLI flag to set your key via --private-key, --mnemonic-path, --interactive, --trezor or --ledger. Alternatively, if you're using a local node with unlocked accounts, use the --unlocked flag and set the `ETH_FROM` environment variable to the address of the unlocked account you want to use"))?;
+                .ok_or_else(|| eyre::eyre!("error accessing local wallet, did you set a private key, mnemonic or keystore? Run `cast send --help` or `forge create --help` and use the corresponding CLI flag to set your key via --private-key, --mnemonic-path, --aws, --interactive, --trezor or --ledger. Alternatively, if you're using a local node with unlocked accounts, use the --unlocked flag and set the `ETH_FROM` environment variable to the address of the unlocked account you want to use"))?;
 
             let local = local.with_chain_id(chain_id.as_u64());
 

@@ -2,7 +2,7 @@ use clap::Parser;
 use ethers::{
     middleware::SignerMiddleware,
     prelude::Signer,
-    signers::{coins_bip39::English, Ledger, LocalWallet, MnemonicBuilder, Trezor},
+    signers::{coins_bip39::English, AwsSigner, Ledger, LocalWallet, MnemonicBuilder, Trezor},
     types::Address,
 };
 use eyre::{bail, eyre, Result, WrapErr};
@@ -34,6 +34,7 @@ The wallet options can either be:
 4. Keystore (via file path)
 5. Private Key (cleartext in CLI)
 6. Private Key (interactively via secure prompt)
+7. AWS KMS
 "#
 )]
 #[clap(next_help_heading = "Wallet options")]
@@ -134,6 +135,13 @@ pub struct Wallet {
         help = "Use a Trezor hardware wallet."
     )]
     pub trezor: bool,
+
+    #[clap(
+        long = "aws",
+        help_heading = "WALLET OPTIONS - KEYSTORE",
+        help = "Use AWS Key Management Service"
+    )]
+    pub aws: bool,
 
     #[clap(
         env = "ETH_FROM",
@@ -334,6 +342,7 @@ pub enum WalletType {
     Local(SignerClient<LocalWallet>),
     Ledger(SignerClient<Ledger>),
     Trezor(SignerClient<Trezor>),
+    Aws(SignerClient<AwsSigner>),
 }
 
 impl From<SignerClient<Ledger>> for WalletType {
@@ -354,12 +363,19 @@ impl From<SignerClient<LocalWallet>> for WalletType {
     }
 }
 
+impl From<SignerClient<AwsSigner>> for WalletType {
+    fn from(wallet: SignerClient<AwsSigner>) -> WalletType {
+        WalletType::Aws(wallet)
+    }
+}
+
 impl WalletType {
     pub fn chain_id(&self) -> u64 {
         match self {
             WalletType::Local(inner) => inner.signer().chain_id(),
             WalletType::Ledger(inner) => inner.signer().chain_id(),
             WalletType::Trezor(inner) => inner.signer().chain_id(),
+            WalletType::Aws(inner) => inner.signer().chain_id(),
         }
     }
 }
@@ -404,6 +420,7 @@ mod tests {
             mnemonic_passphrase: None,
             ledger: false,
             trezor: false,
+            aws: false,
             hd_path: None,
             mnemonic_index: 0,
         };
