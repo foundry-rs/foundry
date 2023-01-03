@@ -76,9 +76,10 @@ jobs:
             # For some reason the FFI cheatcode uses WSL bash instead of Git bash, so we need to install a WSL distribution
             - name: Windows setup
               if: ${{ matrix.job.target == 'x86_64-pc-windows-msvc' }}
-              run: |
-                  wsl --install --distribution Ubuntu-20.04
-              shell: pwsh
+              uses: Vampire/setup-wsl@v1
+              with:
+                distribution: Ubuntu-20.04
+                set-as-default: true
 
             - name: Build archive (unit tests)
               run: cargo nextest archive --locked ${{ matrix.job.flags }} --archive-file ${{ matrix.job.target }}-${{ matrix.archive.file }}
