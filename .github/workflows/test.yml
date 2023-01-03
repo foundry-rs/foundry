@@ -68,14 +68,17 @@ jobs:
               uses: actions/checkout@v2
             - name: Install nextest
               uses: taiki-e/install-action@nextest
-            - run: mkdir -p ~/.cargo/bin
+            - uses: dtolnay/rust-toolchain@stable
             - name: Download archives
               uses: actions/download-artifact@v3
               with:
                   name: unit-tests
 
             - name: cargo nextest
-              run: ~/.cargo/bin/cargo-nextest nextest run --retries 3 --archive-file nextest-unit.tar.zst -E '${{ matrix.job.filter }}'
+              run: |
+                # see https://github.com/foundry-rs/foundry/pull/3959
+                export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib"
+                cargo nextest run --retries 3 --archive-file nextest-unit.tar.zst -E '${{ matrix.job.filter }}'
 
     integration:
         name: integration tests / ${{ matrix.job.name }}
@@ -96,7 +99,7 @@ jobs:
               uses: actions/checkout@v2
             - name: Install nextest
               uses: taiki-e/install-action@nextest
-            - run: mkdir -p ~/.cargo/bin
+            - uses: dtolnay/rust-toolchain@stable
             - name: Download archives
               uses: actions/download-artifact@v3
               with:
@@ -114,7 +117,10 @@ jobs:
                   git config --global user.email "<>"
 
             - name: cargo nextest
-              run: ~/.cargo/bin/cargo-nextest nextest run --partition count:${{ matrix.partition }}/2 --retries 3 --archive-file nextest-integration.tar.zst -E '${{ matrix.job.filter }}'
+              run: |
+                # see https://github.com/foundry-rs/foundry/pull/3959
+                export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib"
+                cargo nextest run --partition count:${{ matrix.partition }}/2 --retries 3 --archive-file nextest-integration.tar.zst -E '${{ matrix.job.filter }}'
 
     external-integration:
         name: external integration tests / ${{ matrix.job.name }}
@@ -134,7 +140,7 @@ jobs:
               uses: actions/checkout@v2
             - name: Install nextest
               uses: taiki-e/install-action@nextest
-            - run: mkdir -p ~/.cargo/bin
+            - uses: dtolnay/rust-toolchain@stable
             - name: Download archives
               uses: actions/download-artifact@v3
               with:
@@ -156,7 +162,10 @@ jobs:
               run: git config --global url."https://github.com/".insteadOf "git@github.com:"
 
             - name: cargo nextest
-              run: ~/.cargo/bin/cargo-nextest nextest run --retries 3 --archive-file nextest-external-integration.tar.zst -E '${{ matrix.job.filter }}'
+              run: |
+                # see https://github.com/foundry-rs/foundry/pull/3959
+                export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib"
+                cargo nextest run --retries 3 --archive-file nextest-external-integration.tar.zst -E '${{ matrix.job.filter }}'
 
     doc:
         name: doc tests

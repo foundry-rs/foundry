@@ -2438,6 +2438,7 @@ dependencies = [
  "eyre",
  "foundry-common",
  "foundry-config",
+ "foundry-macros",
  "foundry-utils",
  "futures",
  "hashbrown 0.13.1",
@@ -2459,6 +2460,24 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "yansi",
+]
+
+[[package]]
+name = "foundry-macros"
+version = "0.1.0"
+dependencies = [
+ "ethers-core",
+ "foundry-common",
+ "foundry-macros-impl",
+]
+
+[[package]]
+name = "foundry-macros-impl"
+version = "0.0.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

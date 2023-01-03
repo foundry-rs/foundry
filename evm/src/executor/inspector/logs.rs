@@ -1,12 +1,12 @@
 use crate::executor::{
-    format_hardhat_call, patch_hardhat_console_selector, HardhatConsoleCalls,
-    HARDHAT_CONSOLE_ADDRESS,
+    patch_hardhat_console_selector, HardhatConsoleCalls, HARDHAT_CONSOLE_ADDRESS,
 };
 use bytes::Bytes;
 use ethers::{
     abi::{AbiDecode, Token},
     types::{Address, Log, H256},
 };
+use foundry_macros::ConsoleFmt;
 use revm::{db::Database, CallInputs, EVMData, Gas, Inspector, Return};
 
 /// An inspector that collects logs during execution.
@@ -66,16 +66,21 @@ where
     }
 }
 
+/// Topic 0 of DSTest's `log(string)`.
+///
+/// `0x41304facd9323d75b11bcdd609cb38effffdb05710f7caf0e9b16c6d9d709f50`
+const TOPIC: H256 = H256([
+    0x41, 0x30, 0x4f, 0xac, 0xd9, 0x32, 0x3d, 0x75, 0xb1, 0x1b, 0xcd, 0xd6, 0x09, 0xcb, 0x38, 0xef,
+    0xff, 0xfd, 0xb0, 0x57, 0x10, 0xf7, 0xca, 0xf0, 0xe9, 0xb1, 0x6c, 0x6d, 0x9d, 0x70, 0x9f, 0x50,
+]);
+
 /// Converts a call to Hardhat's `console.log` to a DSTest `log(string)` event.
 fn convert_hh_log_to_event(call: HardhatConsoleCalls) -> Log {
-    Log {
-        // This is topic 0 of DSTest's `log(string)`
-        topics: vec![H256::from_slice(
-            &hex::decode("41304facd9323d75b11bcdd609cb38effffdb05710f7caf0e9b16c6d9d709f50")
-                .unwrap(),
-        )],
-        // Convert the parameters of the call to their string representation for the log
-        data: ethers::abi::encode(&[Token::String(format_hardhat_call(&call))]).into(),
-        ..Default::default()
-    }
+    // Convert the parameters of the call to their string representation using `ConsoleFmt`.
+    let data = {
+        let fmt = call.fmt(Default::default());
+        let token = Token::String(fmt);
+        ethers::abi::encode(&[token]).into()
+    };
+    Log { topics: vec![TOPIC], data, ..Default::default() }
 }

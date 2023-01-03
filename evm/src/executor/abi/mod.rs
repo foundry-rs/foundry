@@ -204,16 +204,13 @@ ethers::contract::abigen!(
             event log_named_array        (string key, uint256[] val)
             event log_named_array        (string key, int256[] val)
             event log_named_array        (string key, address[] val)
-    ]"#
+    ]"#,
 );
 pub use console::{ConsoleEvents, CONSOLE_ABI};
 
 // Bindings for Hardhat console
-ethers::contract::abigen!(HardhatConsole, "./abi/console.json",);
+ethers::contract::abigen!(HardhatConsole, "./abi/console.json", event_derives (foundry_macros::ConsoleFmt););
 pub use hardhat_console::HARDHATCONSOLE_ABI as HARDHAT_CONSOLE_ABI;
-
-mod fmt;
-pub use fmt::format_hardhat_call;
 
 /// If the input starts with a known `hardhat/console.log` `uint` selector, then this will replace
 /// it with the selector `abigen!` bindings expect.
