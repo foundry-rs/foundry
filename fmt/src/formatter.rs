@@ -2324,7 +2324,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             FunctionAttribute::Virtual(loc) => write_chunk!(self, loc.end(), "virtual")?,
             FunctionAttribute::Immutable(loc) => write_chunk!(self, loc.end(), "immutable")?,
             FunctionAttribute::Override(loc, args) => {
-                self.visit_list("override", args, None, Some(loc.end()), false)?
+                write_chunk!(self, loc.start(), "override")?;
+                if !args.is_empty() && self.config.override_spacing {
+                    self.write_whitespace_separator(false)?;
+                }
+                self.visit_list("", args, None, Some(loc.end()), false)?
             }
             FunctionAttribute::BaseOrModifier(loc, base) => {
                 let is_contract_base = self.context.contract.as_ref().map_or(false, |contract| {
@@ -2680,7 +2684,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             VariableAttribute::Immutable(_) => Some("immutable".to_string()),
             VariableAttribute::Override(loc, idents) => {
                 write_chunk!(self, loc.start(), "override")?;
-                if !idents.is_empty() && self.config.variable_override_spacing {
+                if !idents.is_empty() && self.config.override_spacing {
                     self.write_whitespace_separator(false)?;
                 }
                 self.visit_list("", idents, Some(loc.start()), Some(loc.end()), false)?;
