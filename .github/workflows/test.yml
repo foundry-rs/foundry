@@ -221,6 +221,6 @@ jobs:
 
     cross-platform:
         name: Cross-platform tests
-        if: github.event_name != "pull_request"
+        if: github.event_name != 'pull_request'
         needs: [integration, lint, doc, unit]
         uses: ./.github/workflows/cross-platform.yml
