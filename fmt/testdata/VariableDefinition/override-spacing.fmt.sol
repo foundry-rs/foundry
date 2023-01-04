@@ -1,5 +1,5 @@
 // config: line_length = 40
-// config: variable_override_spacing = false
+// config: override_spacing = false
 contract Contract {
     bytes32 private constant BYTES;
     bytes32
