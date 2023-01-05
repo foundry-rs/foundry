@@ -2,7 +2,7 @@ use solang_parser::doccomment::DocCommentTag;
 
 /// Filter a collection of comments and return
 /// only those that match a given tag
-pub(crate) fn filter_comments_by_tag<'a>(
+pub(crate) fn comments_by_tag<'a>(
     comments: &'a [DocCommentTag],
     tag: &str,
 ) -> Vec<&'a DocCommentTag> {
@@ -11,7 +11,7 @@ pub(crate) fn filter_comments_by_tag<'a>(
 
 /// Filter a collection of comments and return
 /// only those that do not have provided tags
-pub(crate) fn filter_comments_without_tags<'a>(
+pub(crate) fn exclude_comment_tags<'a>(
     comments: &'a [DocCommentTag],
     tags: Vec<&str>,
 ) -> Vec<&'a DocCommentTag> {

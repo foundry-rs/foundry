@@ -2129,6 +2129,7 @@ dependencies = [
 name = "forge-doc"
 version = "0.1.0"
 dependencies = [
+ "auto_impl 1.0.1",
  "clap 3.2.16",
  "ethers-solc",
  "eyre",

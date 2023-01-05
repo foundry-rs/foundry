@@ -9,6 +9,7 @@ use solang_parser::pt::{
 /// Display Solidity parse tree unit as code string.
 /// [AsCode::as_code] formats the unit into
 /// a valid Solidity code block.
+#[auto_impl::auto_impl(&)]
 pub(crate) trait AsCode {
     fn as_code(&self) -> String;
 }
@@ -58,52 +59,48 @@ impl AsCode for FunctionDefinition {
 impl AsCode for Expression {
     fn as_code(&self) -> String {
         match self {
-            Expression::Type(_, ty) => {
-                match ty {
-                    Type::Address => "address".to_owned(),
-                    Type::AddressPayable => "address payable".to_owned(),
-                    Type::Payable => "payable".to_owned(),
-                    Type::Bool =>  "bool".to_owned(),
-                    Type::String =>  "string".to_owned(),
-                    Type::Bytes(n) => format!("bytes{}", n),
-                    Type::Rational =>  "rational".to_owned(),
-                    Type::DynamicBytes =>  "bytes".to_owned(),
-                    Type::Int(n) => format!("int{}", n),
-                    Type::Uint(n) => format!("uint{}", n),
-                    Type::Mapping(_, from, to) => format!("mapping({} => {})", from.as_code(), to.as_code()),
-                    Type::Function { params, attributes, returns } => {
-                        let params = params.as_code();
-                        let mut attributes = attributes.as_code();
-                        if !attributes.is_empty() {
-                            attributes.insert(0, ' ');
-                        }
-                        let mut returns_str = String::new();
-                        if let Some((params, _attrs)) = returns {
-                            returns_str = params.as_code();
-                            if !returns_str.is_empty() {
-                                returns_str = format!(" returns ({})", returns_str)
-                            }
-                        }
-                       format!("function ({params}){attributes}{returns_str}")
-                    },
+            Expression::Type(_, ty) => match ty {
+                Type::Address => "address".to_owned(),
+                Type::AddressPayable => "address payable".to_owned(),
+                Type::Payable => "payable".to_owned(),
+                Type::Bool => "bool".to_owned(),
+                Type::String => "string".to_owned(),
+                Type::Bytes(n) => format!("bytes{}", n),
+                Type::Rational => "rational".to_owned(),
+                Type::DynamicBytes => "bytes".to_owned(),
+                Type::Int(n) => format!("int{}", n),
+                Type::Uint(n) => format!("uint{}", n),
+                Type::Mapping(_, from, to) => {
+                    format!("mapping({} => {})", from.as_code(), to.as_code())
                 }
-            }
+                Type::Function { params, attributes, returns } => {
+                    let params = params.as_code();
+                    let mut attributes = attributes.as_code();
+                    if !attributes.is_empty() {
+                        attributes.insert(0, ' ');
+                    }
+                    let mut returns_str = String::new();
+                    if let Some((params, _attrs)) = returns {
+                        returns_str = params.as_code();
+                        if !returns_str.is_empty() {
+                            returns_str = format!(" returns ({})", returns_str)
+                        }
+                    }
+                    format!("function ({params}){attributes}{returns_str}")
+                }
+            },
             Expression::Variable(ident) => ident.name.to_owned(),
-            Expression::ArraySubscript(_, expr1, expr2) => format!("{}[{}]", expr1.as_code(), expr2.as_ref().map(|expr| expr.as_code()).unwrap_or_default()),
-            Expression::MemberAccess(_, expr, ident) => format!("{}.{}", ident.name, expr.as_code()),
-            item => {
-                println!("UNREACHABLE {:?}", item); // TODO:
-                unreachable!()
+            Expression::ArraySubscript(_, expr1, expr2) => format!(
+                "{}[{}]",
+                expr1.as_code(),
+                expr2.as_ref().map(|expr| expr.as_code()).unwrap_or_default()
+            ),
+            Expression::MemberAccess(_, expr, ident) => {
+                format!("{}.{}", ident.name, expr.as_code())
             }
-        // ArraySlice(
-        //     Loc,
-        //     Box<Expression>,
-        //     Option<Box<Expression>>,
-        //     Option<Box<Expression>>,
-        // ),
-        // FunctionCall(Loc, Box<Expression>, Vec<Expression>),
-        // NamedFunctionCall(Loc, Box<Expression>, Vec<NamedArgument>),
-        // List(Loc, ParameterList),
+            item => {
+                panic!("Attempted to format unsupported item: {item:?}")
+            }
         }
     }
 }
@@ -205,8 +202,9 @@ impl AsCode for IdentifierPath {
 
 impl AsCode for StructDefinition {
     fn as_code(&self) -> String {
+        let name = &self.name.name;
         let fields = self.fields.iter().map(AsCode::as_code).join(";\n\t");
-        format!("struct {} {{\n\t{};\n}}", self.name.name, fields)
+        format!("struct {name} {{\n\t{fields};\n}}")
     }
 }
 
@@ -220,7 +218,7 @@ impl AsCode for EnumDefinition {
     fn as_code(&self) -> String {
         let name = &self.name.name;
         let values = self.values.iter().map(AsCode::as_code).join("\n\t");
-        format!("enum {name}{{\n\t{values}\n}}")
+        format!("enum {name} {{\n\t{values}\n}}")
     }
 }
 

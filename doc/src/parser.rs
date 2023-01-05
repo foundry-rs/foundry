@@ -12,11 +12,12 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub(crate) enum DocParserError {}
 
+// TODO:
 type Result<T, E = DocParserError> = std::result::Result<T, E>;
 
 #[derive(Debug)]
 pub(crate) struct DocParser {
-    pub(crate) parts: Vec<DocPart>,
+    pub(crate) items: Vec<DocItem>,
     comments: Vec<Comment>,
     start_at: usize,
     context: DocContext,
@@ -24,14 +25,54 @@ pub(crate) struct DocParser {
 
 #[derive(Debug, Default)]
 struct DocContext {
-    parent: Option<DocPart>,
+    parent: Option<DocItem>,
 }
 
 #[derive(Debug, PartialEq)]
-pub(crate) struct DocPart {
-    pub(crate) comments: Vec<DocCommentTag>,
+pub(crate) struct DocItem {
     pub(crate) element: DocElement,
-    pub(crate) children: Vec<DocPart>,
+    pub(crate) comments: Vec<DocCommentTag>,
+    pub(crate) children: Vec<DocItem>,
+}
+
+macro_rules! filter_children_fn {
+    ($vis:vis fn $name:ident(&self, $variant:ident) -> $ret:ty) => {
+        $vis fn $name<'a>(&'a self) -> Option<Vec<(&'a $ret, &'a Vec<DocCommentTag>)>> {
+            let items = self.children.iter().filter_map(|item| match item.element {
+                DocElement::$variant(ref inner) => Some((inner, &item.comments)),
+                _ => None,
+            });
+            let items = items.collect::<Vec<_>>();
+            if !items.is_empty() {
+                Some(items)
+            } else {
+                None
+            }
+        }
+    };
+}
+
+impl DocItem {
+    filter_children_fn!(pub(crate) fn variables(&self, Variable) -> VariableDefinition);
+    filter_children_fn!(pub(crate) fn functions(&self, Function) -> FunctionDefinition);
+    filter_children_fn!(pub(crate) fn events(&self, Event) -> EventDefinition);
+    filter_children_fn!(pub(crate) fn errors(&self, Error) -> ErrorDefinition);
+    filter_children_fn!(pub(crate) fn structs(&self, Struct) -> StructDefinition);
+    filter_children_fn!(pub(crate) fn enums(&self, Enum) -> EnumDefinition);
+
+    pub(crate) fn filename(&self) -> String {
+        let prefix = match self.element {
+            DocElement::Contract(_) => "contract",
+            DocElement::Function(_) => "function",
+            DocElement::Variable(_) => "variable",
+            DocElement::Event(_) => "event",
+            DocElement::Error(_) => "error",
+            DocElement::Struct(_) => "struct",
+            DocElement::Enum(_) => "enum",
+        };
+        let ident = self.element.ident();
+        format!("{prefix}.{ident}.md")
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -45,16 +86,32 @@ pub(crate) enum DocElement {
     Enum(EnumDefinition),
 }
 
+impl DocElement {
+    pub(crate) fn ident(&self) -> String {
+        match self {
+            DocElement::Contract(contract) => contract.name.name.to_owned(),
+            DocElement::Variable(var) => var.name.name.to_owned(),
+            DocElement::Event(event) => event.name.name.to_owned(),
+            DocElement::Error(error) => error.name.name.to_owned(),
+            DocElement::Struct(structure) => structure.name.name.to_owned(),
+            DocElement::Enum(enumerable) => enumerable.name.name.to_owned(),
+            DocElement::Function(func) => {
+                func.name.as_ref().map(|name| name.name.to_owned()).unwrap_or_default() // TODO: <unknown>
+            }
+        }
+    }
+}
+
 impl DocParser {
     pub(crate) fn new(comments: Vec<Comment>) -> Self {
-        DocParser { parts: vec![], comments, start_at: 0, context: Default::default() }
+        DocParser { items: vec![], comments, start_at: 0, context: Default::default() }
     }
 
     fn with_parent(
         &mut self,
-        mut parent: DocPart,
+        mut parent: DocItem,
         mut visit: impl FnMut(&mut Self) -> Result<()>,
-    ) -> Result<DocPart> {
+    ) -> Result<DocItem> {
         let curr = self.context.parent.take();
         self.context.parent = Some(parent);
         visit(self)?;
@@ -64,11 +121,11 @@ impl DocParser {
     }
 
     fn add_element_to_parent(&mut self, element: DocElement, loc: Loc) {
-        let child = DocPart { comments: self.parse_docs(loc.start()), element, children: vec![] };
+        let child = DocItem { comments: self.parse_docs(loc.start()), element, children: vec![] };
         if let Some(parent) = self.context.parent.as_mut() {
             parent.children.push(child);
         } else {
-            self.parts.push(child);
+            self.items.push(child);
         }
         self.start_at = loc.end();
     }
@@ -92,7 +149,7 @@ impl Visitor for DocParser {
         for source in source_unit.0.iter_mut() {
             match source {
                 SourceUnitPart::ContractDefinition(def) => {
-                    let contract = DocPart {
+                    let contract = DocItem {
                         element: DocElement::Contract(def.clone()),
                         comments: self.parse_docs(def.loc.start()),
                         children: vec![],
@@ -104,7 +161,7 @@ impl Visitor for DocParser {
                     })?;
 
                     self.start_at = def.loc.end();
-                    self.parts.push(contract);
+                    self.items.push(contract);
                 }
                 SourceUnitPart::FunctionDefinition(func) => self.visit_function(func)?,
                 SourceUnitPart::EventDefinition(event) => self.visit_event(event)?,
@@ -153,6 +210,8 @@ impl Visitor for DocParser {
 mod tests {
     use super::*;
     use std::{fs, path::PathBuf};
+
+    // TODO: write tests w/ sol source code
 
     #[test]
     fn parse_docs() {

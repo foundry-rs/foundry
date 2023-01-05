@@ -17,6 +17,6 @@ mod builder;
 mod config;
 mod format;
 mod helpers;
-mod macros;
 mod output;
 mod parser;
+mod writer;
