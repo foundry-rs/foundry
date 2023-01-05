@@ -55,12 +55,24 @@ impl<'de> serde::Deserialize<'de> for Forking {
 #[cfg_attr(feature = "serde", serde(untagged))]
 pub enum EvmMineOptions {
     Options {
+        #[cfg_attr(
+            feature = "serde",
+            serde(
+                deserialize_with = "ethers_core::types::serde_helpers::deserialize_stringified_u64_opt"
+            )
+        )]
         timestamp: Option<u64>,
         // If `blocks` is given, it will mine exactly blocks number of blocks, regardless of any
         // other blocks mined or reverted during it's operation
         blocks: Option<u64>,
     },
     /// The timestamp the block should be mined with
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            deserialize_with = "ethers_core::types::serde_helpers::deserialize_stringified_u64_opt"
+        )
+    )]
     Timestamp(Option<u64>),
 }
 
