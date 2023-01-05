@@ -168,8 +168,9 @@ impl<'a> serde::Deserialize<'a> for Index {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct NodeInfo {
     pub current_block_number: U64,
     pub current_block_timestamp: u64,
@@ -180,8 +181,9 @@ pub struct NodeInfo {
     pub fork_config: NodeForkConfig,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct NodeEnvironment {
     pub base_fee: U256,
     pub chain_id: U256,
@@ -189,8 +191,9 @@ pub struct NodeEnvironment {
     pub gas_price: U256,
 }
 
-#[derive(Debug, Clone, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct NodeForkConfig {
     pub fork_url: Option<String>,
     pub fork_block_number: Option<u64>,
