@@ -8,7 +8,7 @@ use eyre::WrapErr;
 use foundry_config::{find_git_root_path, impl_figment_convert_basic};
 use std::{path::PathBuf, process::Command};
 
-/// Command to remove dependencies
+/// CLI arguments for `forge remove`.
 #[derive(Debug, Clone, Parser)]
 pub struct RemoveArgs {
     #[clap(help = "The path to the dependency you want to remove.")]

@@ -195,19 +195,20 @@ fn install_commonly_used_solc() {
         let v0_8_10 = std::thread::spawn(|| Solc::blocking_install(&"0.8.10".parse().unwrap()));
         let v0_8_13 = std::thread::spawn(|| Solc::blocking_install(&"0.8.13".parse().unwrap()));
 
-        let wait = |res: std::thread::JoinHandle<_>| {
+        let wait = |res: std::thread::JoinHandle<_>| -> Result<(), ()> {
             if let Err(err) = res.join().unwrap() {
                 eprintln!("{err:?}");
                 // there could be another process that's currently installing this version, so we
                 // sleep here for a bit and assume the other process will be finished then
                 std::thread::sleep(std::time::Duration::from_secs(15));
+                Err(())
+            } else {
+                Ok(())
             }
         };
 
-        wait(v0_8_10);
-        wait(v0_8_13);
-
-        *is_preinstalled = true;
+        // only set to installed if succeeded
+        *is_preinstalled = wait(v0_8_10).and(wait(v0_8_13)).is_ok();
     }
 }
 
@@ -645,6 +646,7 @@ impl TestCommand {
     }
 
     /// Runs the command and asserts that it resulted in an error exit code.
+    #[track_caller]
     pub fn assert_err(&mut self) {
         let o = self.execute();
         if o.status.success() {
@@ -665,6 +667,7 @@ impl TestCommand {
     }
 
     /// Runs the command and asserts that something was printed to stderr.
+    #[track_caller]
     pub fn assert_non_empty_stderr(&mut self) {
         let o = self.execute();
         if o.status.success() || o.stderr.is_empty() {
@@ -685,6 +688,7 @@ impl TestCommand {
     }
 
     /// Runs the command and asserts that something was printed to stdout.
+    #[track_caller]
     pub fn assert_non_empty_stdout(&mut self) {
         let o = self.execute();
         if !o.status.success() || o.stdout.is_empty() {
@@ -705,6 +709,7 @@ impl TestCommand {
     }
 
     /// Runs the command and asserts that nothing was printed to stdout.
+    #[track_caller]
     pub fn assert_empty_stdout(&mut self) {
         let o = self.execute();
         if !o.status.success() || !o.stderr.is_empty() {
@@ -724,10 +729,12 @@ impl TestCommand {
         }
     }
 
+    #[track_caller]
     fn expect_success(&self, out: process::Output) -> process::Output {
         self.ensure_success(out).unwrap()
     }
 
+    #[track_caller]
     pub fn ensure_success(&self, out: process::Output) -> eyre::Result<process::Output> {
         if !out.status.success() {
             let suggest = if out.stderr.is_empty() {

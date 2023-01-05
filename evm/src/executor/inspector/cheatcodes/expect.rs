@@ -11,6 +11,7 @@ use ethers::{
 };
 use revm::{return_ok, Bytecode, EVMData, Return};
 use std::cmp::Ordering;
+use tracing::{instrument, trace};
 
 /// For some cheatcodes we may internally change the status of the call, i.e. in `expectRevert`.
 /// Solidity will see a successful call and attempt to decode the return data. Therefore, we need
@@ -48,21 +49,24 @@ fn expect_revert(
     }
 }
 
+#[instrument(skip_all, fields(expected_revert, status, retdata= hex::encode(&retdata)))]
 pub fn handle_expect_revert(
     is_create: bool,
     expected_revert: Option<&Bytes>,
     status: Return,
     retdata: Bytes,
 ) -> Result<(Option<Address>, Bytes), Bytes> {
+    trace!("handle expect revert");
+
     if matches!(status, return_ok!()) {
         return Err("Call did not revert as expected".to_string().encode().into())
     }
-
     macro_rules! success_return {
         () => {
             Ok(if is_create {
                 (Some(DUMMY_CREATE_ADDRESS), Bytes::new())
             } else {
+                trace!("successfully handled expected revert");
                 (None, DUMMY_CALL_OUTPUT.to_vec().into())
             })
         };

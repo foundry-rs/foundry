@@ -656,8 +656,7 @@ impl Tui {
                             }
                         }
                         Err(e) => text_output.extend(Text::from(format!(
-                            "Error in source map parsing: '{}', please open an issue",
-                            e
+                            "Error in source map parsing: '{e}', please open an issue"
                         ))),
                     }
                 } else {
@@ -804,7 +803,6 @@ impl Tui {
                     indices_affected.iter().find(|(affected_index, _name)| *affected_index == i);
 
                 let mut words: Vec<Span> = (0..32)
-                    .into_iter()
                     .rev()
                     .map(|i| stack_item.byte(i))
                     .map(|byte| {
@@ -897,10 +895,14 @@ impl Tui {
             }
         }
 
+        let height = area.height as usize;
+        let end_line = draw_mem.current_mem_startline + height;
+
         let text: Vec<Spans> = memory
             .chunks(32)
             .enumerate()
             .skip(draw_mem.current_mem_startline)
+            .take_while(|(i, _)| i < &end_line)
             .map(|(i, mem_word)| {
                 let words: Vec<Span> = mem_word
                     .iter()

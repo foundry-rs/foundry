@@ -1,6 +1,7 @@
 use ethers_core::{
     abi::ethereum_types::FromStrRadixErrKind,
     types::{Sign, I256, U256},
+    utils::ParseUnits,
 };
 use eyre::Result;
 use std::{
@@ -303,6 +304,15 @@ impl From<I256> for NumberWithBase {
     fn from(number: I256) -> Self {
         // both is_positive and is_negative return false for 0
         Self::new(number.into_raw(), !number.is_negative(), Base::default())
+    }
+}
+
+impl From<ParseUnits> for NumberWithBase {
+    fn from(value: ParseUnits) -> Self {
+        match value {
+            ParseUnits::U256(val) => val.into(),
+            ParseUnits::I256(val) => val.into(),
+        }
     }
 }
 

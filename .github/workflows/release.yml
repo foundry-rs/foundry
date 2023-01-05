@@ -15,7 +15,7 @@ env:
 jobs:
     prepare:
         name: Prepare release
-        runs-on: ubuntu-latest
+        runs-on: ubuntu-20.04
 
         outputs:
             tag_name: ${{ steps.release_info.outputs.tag_name }}
@@ -79,12 +79,12 @@ jobs:
                     # The target is used by Cargo
                     # The arch is either 386, arm64 or amd64
                     # The svm target platform to use for the binary https://github.com/roynalnaruto/svm-rs/blob/84cbe0ac705becabdc13168bae28a45ad2299749/svm-builds/build.rs#L4-L24
-                    - os: ubuntu-latest
+                    - os: ubuntu-20.04
                       platform: linux
                       target: x86_64-unknown-linux-gnu
                       arch: amd64
                       svm_target_platform: linux-amd64
-                    - os: ubuntu-latest
+                    - os: ubuntu-20.04
                       platform: linux
                       target: aarch64-unknown-linux-gnu
                       arch: arm64
@@ -151,16 +151,16 @@ jobs:
                   VERSION_NAME: ${{ (env.IS_NIGHTLY && 'nightly') || needs.prepare.outputs.tag_name }}
               run: |
                   if [ "$PLATFORM_NAME" == "linux" ]; then
-                    tar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C ./target/${TARGET}/release forge cast anvil
+                    tar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C ./target/${TARGET}/release forge cast anvil chisel
                     echo "::set-output name=file_name::foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz"
                   elif [ "$PLATFORM_NAME" == "darwin" ]; then
                     # We need to use gtar here otherwise the archive is corrupt.
                     # See: https://github.com/actions/virtual-environments/issues/2619
-                    gtar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C ./target/${TARGET}/release forge cast anvil
+                    gtar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C ./target/${TARGET}/release forge cast anvil chisel
                     echo "::set-output name=file_name::foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz"
                   else
                     cd ./target/${TARGET}/release
-                    7z a -tzip "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" forge.exe cast.exe anvil.exe
+                    7z a -tzip "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" forge.exe cast.exe anvil.exe chisel.exe
                     mv "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" ../../../
                     echo "::set-output name=file_name::foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip"
                   fi
@@ -178,10 +178,12 @@ jobs:
                   help2man -N ./target/${TARGET}/release/forge > forge.1
                   help2man -N ./target/${TARGET}/release/cast > cast.1
                   help2man -N ./target/${TARGET}/release/anvil > anvil.1
+                  help2man -N ./target/${TARGET}/release/chisel > chisel.1
                   gzip forge.1
                   gzip cast.1
                   gzip anvil.1
-                  tar -czvf "foundry_man_${VERSION_NAME}.tar.gz" forge.1.gz cast.1.gz anvil.1.gz
+                  gzip chisel.1
+                  tar -czvf "foundry_man_${VERSION_NAME}.tar.gz" forge.1.gz cast.1.gz anvil.1.gz chisel.1.gz
                   echo "::set-output name=foundry_man::foundry_man_${VERSION_NAME}.tar.gz"
               shell: bash
 
@@ -213,7 +215,7 @@ jobs:
 
     cleanup:
         name: Release cleanup
-        runs-on: ubuntu-latest
+        runs-on: ubuntu-20.04
         needs: release
 
         steps:

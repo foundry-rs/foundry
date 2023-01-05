@@ -11,9 +11,9 @@ contract ContractEnvironmentTest is DSTest {
     }
 
     function testAddresses() public {
-        assertEq(msg.sender, 0x00a329c0648769A73afAc7F9381E08FB43dBEA72, "sender account is incorrect");
-        assertEq(tx.origin, 0x00a329c0648769A73afAc7F9381E08FB43dBEA72, "origin account is incorrect");
-        assertEq(address(this), 0xb4c79daB8f259C7Aee6E5b2Aa729821864227e84, "test contract address is incorrect");
+        assertEq(msg.sender, 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38, "sender account is incorrect");
+        assertEq(tx.origin, 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38, "origin account is incorrect");
+        assertEq(address(this), 0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496, "test contract address is incorrect");
     }
 
     function testEnvironment() public {

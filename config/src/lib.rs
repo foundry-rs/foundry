@@ -2,13 +2,13 @@
 #![deny(missing_docs, unsafe_code, unused_crate_dependencies)]
 
 use crate::cache::StorageCachingConfig;
-use ethers_core::types::{Address, Chain::Mainnet, H160, U256};
+use ethers_core::types::{Address, Chain::Mainnet, H160, H256, U256};
 pub use ethers_solc::artifacts::OptimizerDetails;
 use ethers_solc::{
     artifacts::{
         output_selection::ContractOutputSelection, serde_helpers, BytecodeHash, DebuggingSettings,
         Libraries, ModelCheckerSettings, ModelCheckerTarget, Optimizer, RevertStrings, Settings,
-        SettingsMetadata,
+        SettingsMetadata, Severity,
     },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     error::SolcError,
@@ -203,6 +203,8 @@ pub struct Config {
     pub etherscan: EtherscanConfigs,
     /// list of solidity error codes to always silence in the compiler output
     pub ignored_error_codes: Vec<SolidityErrorCode>,
+    /// When true, compiler warnings are treated as errors
+    pub deny_warnings: bool,
     /// Only run test functions matching the specified regex pattern.
     #[serde(rename = "match_test")]
     pub test_pattern: Option<RegexWrapper>,
@@ -256,6 +258,8 @@ pub struct Config {
     pub block_timestamp: u64,
     /// the `block.difficulty` value during EVM execution
     pub block_difficulty: u64,
+    /// Before merge the `block.max_hash` after merge it is `block.prevrandao`
+    pub block_prevrandao: H256,
     /// the `block.gaslimit` value during EVM execution
     pub block_gas_limit: Option<GasLimit>,
     /// The memory limit of the EVM (32 MB by default)
@@ -390,9 +394,10 @@ impl Config {
 
     /// Default address for tx.origin
     ///
-    /// `0x00a329c0648769a73afac7f9381e08fb43dbea72`
+    /// `0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38`
     pub const DEFAULT_SENDER: H160 = H160([
-        0, 163, 41, 192, 100, 135, 105, 167, 58, 250, 199, 249, 56, 30, 8, 251, 67, 219, 234, 114,
+        0x18, 0x04, 0xc8, 0xAB, 0x1F, 0x12, 0xE6, 0xbb, 0xF3, 0x89, 0x4D, 0x40, 0x83, 0xF3, 0x3E,
+        0x07, 0x30, 0x9D, 0x1F, 0x38,
     ]);
 
     /// Returns the current `Config`
@@ -604,6 +609,11 @@ impl Config {
             .include_paths(&self.include_paths)
             .solc_config(SolcConfig::builder().settings(self.solc_settings()?).build())
             .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
+            .set_compiler_severity_filter(if self.deny_warnings {
+                Severity::Warning
+            } else {
+                Severity::Error
+            })
             .set_auto_detect(self.is_auto_detect())
             .set_offline(self.offline)
             .set_cached(cached)
@@ -637,8 +647,7 @@ impl Config {
                     if solc.is_none() {
                         if self.offline {
                             return Err(SolcError::msg(format!(
-                                "can't install missing solc {} in offline mode",
-                                version
+                                "can't install missing solc {version} in offline mode"
                             )))
                         }
                         Solc::blocking_install(version)?;
@@ -850,16 +859,13 @@ impl Config {
         }
 
         // try to find by comparing chain ids
-        if let Some((chain, config)) =
-            chain.and_then(|chain| self.etherscan.find_chain(chain).map(|config| (chain, config)))
-        {
-            let key = config.key.clone().resolve()?;
-            return Ok(ResolvedEtherscanConfig::create(key, chain))
+        if let Some(config) = chain.and_then(|chain| self.etherscan.find_chain(chain).cloned()) {
+            return Ok(config.resolve().ok())
         }
 
         // fallback `etherscan_api_key` as actual key
         if let Some(key) = self.etherscan_api_key.as_ref() {
-            let chain = self.chain_id.unwrap_or_else(|| Mainnet.into());
+            let chain = chain.or(self.chain_id).unwrap_or_else(|| Mainnet.into());
             return Ok(ResolvedEtherscanConfig::create(key, chain))
         }
 
@@ -1021,17 +1027,18 @@ impl Config {
         // autodetect paths
         let root = root.into();
         let paths = ProjectPathsConfig::builder().build_with_root(&root);
+        let artifacts: PathBuf = paths.artifacts.file_name().unwrap().into();
         Config {
             __root: paths.root.into(),
             src: paths.sources.file_name().unwrap().into(),
-            out: paths.artifacts.file_name().unwrap().into(),
+            out: artifacts.clone(),
             libs: paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect(),
             remappings: paths
                 .remappings
                 .into_iter()
                 .map(|r| RelativeRemapping::new(r, &root))
                 .collect(),
-            fs_permissions: FsPermissions::new([PathPermission::read(paths.artifacts)]),
+            fs_permissions: FsPermissions::new([PathPermission::read(artifacts)]),
             ..Config::default()
         }
     }
@@ -1707,6 +1714,7 @@ impl Default for Config {
             block_coinbase: Address::zero(),
             block_timestamp: 1,
             block_difficulty: 0,
+            block_prevrandao: Default::default(),
             block_gas_limit: None,
             memory_limit: 2u64.pow(25),
             eth_rpc_url: None,
@@ -1719,6 +1727,7 @@ impl Default for Config {
                 SolidityErrorCode::SpdxLicenseNotProvided,
                 SolidityErrorCode::ContractExceeds24576Bytes,
             ],
+            deny_warnings: false,
             via_ir: false,
             rpc_storage_caching: Default::default(),
             rpc_endpoints: Default::default(),
@@ -1800,7 +1809,10 @@ impl<'de> Deserialize<'de> for GasLimit {
 
         let gas = match Gas::deserialize(deserializer)? {
             Gas::Number(num) => GasLimit(num),
-            Gas::Text(s) => GasLimit(s.parse().map_err(D::Error::custom)?),
+            Gas::Text(s) => match s.as_str() {
+                "max" | "MAX" | "Max" | "u64::MAX" | "u64::Max" => GasLimit(u64::MAX),
+                s => GasLimit(s.parse().map_err(D::Error::custom)?),
+            },
         };
 
         Ok(gas)
@@ -2050,11 +2062,9 @@ impl Provider for DappEnvCompatProvider {
             // Activate Solidity optimizer (0 or 1)
             let val = val.parse::<u8>().map_err(figment::Error::custom)?;
             if val > 1 {
-                return Err(format!(
-                    "Invalid $DAPP_BUILD_OPTIMIZE value `{}`,  expected 0 or 1",
-                    val
+                return Err(
+                    format!("Invalid $DAPP_BUILD_OPTIMIZE value `{val}`,  expected 0 or 1").into()
                 )
-                .into())
             }
             dict.insert("optimizer".to_string(), (val == 1).into());
         }
@@ -2417,7 +2427,7 @@ mod tests {
     fn default_sender() {
         assert_eq!(
             Config::DEFAULT_SENDER,
-            "0x00a329c0648769a73afac7f9381e08fb43dbea72".parse().unwrap()
+            "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38".parse().unwrap()
         );
     }
 
@@ -2749,9 +2759,8 @@ mod tests {
                 &format!(
                     r#"
                 [profile.default]
-                gas_limit = "{}"
-            "#,
-                    gas
+                gas_limit = "{gas}"
+            "#
                 ),
             )?;
 
@@ -3035,6 +3044,32 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_etherscan_config_by_chain_with_url() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+
+                [etherscan]
+                mumbai = { key = "https://etherscan-mumbai.com/", chain = 80001 , url =  "https://verifier-url.com/"}
+            "#,
+            )?;
+
+            let config = Config::load();
+
+            let mumbai = config
+                .get_etherscan_config_with_chain(Some(ethers_core::types::Chain::PolygonMumbai))
+                .unwrap()
+                .unwrap();
+            assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
+            assert_eq!(mumbai.api_url, "https://verifier-url.com/".to_string());
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn test_extract_etherscan_config_by_chain_and_alias() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
@@ -3173,6 +3208,7 @@ mod tests {
                 block_base_fee_per_gas = 0
                 block_coinbase = '0x0000000000000000000000000000000000000000'
                 block_difficulty = 0
+                block_prevrandao = '0x0000000000000000000000000000000000000000000000000000000000000000'
                 block_number = 1
                 block_timestamp = 1
                 bytecode_hash = 'ipfs'
@@ -3188,6 +3224,7 @@ mod tests {
                 gas_price = 0
                 gas_reports = ['*']
                 ignored_error_codes = [1878]
+                deny_warnings = false
                 initial_balance = '0xffffffffffffffffffffffff'
                 libraries = []
                 libs = ['lib']
@@ -3199,12 +3236,12 @@ mod tests {
                 optimizer_runs = 200
                 out = 'out'
                 remappings = ['nested/=lib/nested/']
-                sender = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
+                sender = '0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38'
                 sizes = false
                 sparse_mode = false
                 src = 'src'
                 test = 'test'
-                tx_origin = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
+                tx_origin = '0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38'
                 verbosity = 0
                 via_ir = false
                 

@@ -6,9 +6,27 @@ interface Cheats {
     struct Log {
         bytes32[] topics;
         bytes data;
+        address emitter;
     }
-    // Set block.timestamp (newTimestamp)
 
+    // Used in getRpcStructs
+    struct Rpc {
+        string name;
+        string url;
+    }
+
+    // Used in fsMetadata
+    struct FsMetadata {
+        bool isDir;
+        bool isSymlink;
+        uint256 length;
+        bool readOnly;
+        uint256 modified;
+        uint256 accessed;
+        uint256 created;
+    }
+
+    // Set block.timestamp (newTimestamp)
     function warp(uint256) external;
     // Set block.difficulty (newDifficulty)
     function difficulty(uint256) external;
@@ -52,6 +70,22 @@ interface Cheats {
     function envBytes32(string calldata, string calldata) external returns (bytes32[] memory);
     function envString(string calldata, string calldata) external returns (string[] memory);
     function envBytes(string calldata, string calldata) external returns (bytes[] memory);
+    // Read environment variables with default value, (name, value) => (value)
+    function envOr(string calldata, bool) external returns (bool);
+    function envOr(string calldata, uint256) external returns (uint256);
+    function envOr(string calldata, int256) external returns (int256);
+    function envOr(string calldata, address) external returns (address);
+    function envOr(string calldata, bytes32) external returns (bytes32);
+    function envOr(string calldata, string calldata) external returns (string memory);
+    function envOr(string calldata, bytes calldata) external returns (bytes memory);
+    // Read environment variables as arrays with default value, (name, value[]) => (value[])
+    function envOr(string calldata, string calldata, bool[] calldata) external returns (bool[] memory);
+    function envOr(string calldata, string calldata, uint256[] calldata) external returns (uint256[] memory);
+    function envOr(string calldata, string calldata, int256[] calldata) external returns (int256[] memory);
+    function envOr(string calldata, string calldata, address[] calldata) external returns (address[] memory);
+    function envOr(string calldata, string calldata, bytes32[] calldata) external returns (bytes32[] memory);
+    function envOr(string calldata, string calldata, string[] calldata) external returns (string[] memory);
+    function envOr(string calldata, string calldata, bytes[] calldata) external returns (bytes[] memory);
     // Sets the *next* call's msg.sender to be the input address
     function prank(address) external;
     // Sets all subsequent calls' msg.sender to be the input address until `stopPrank` is called
@@ -133,6 +167,8 @@ interface Cheats {
     function readFileBinary(string calldata) external returns (bytes memory);
     // Get the path of the current project root
     function projectRoot() external returns (string memory);
+    // Get the metadata for a file/directory
+    function fsMetadata(string calldata) external returns (FsMetadata memory);
     // Reads next line of file to string, (path) => (line)
     function readLine(string calldata) external returns (string memory);
     // Writes data to file, creating a file if it does not exist, and entirely replacing its contents if it does.
@@ -224,6 +260,31 @@ interface Cheats {
     function rpcUrl(string calldata) external returns (string memory);
     /// Returns all rpc urls and their aliases `[alias, url][]`
     function rpcUrls() external returns (string[2][] memory);
+    /// Returns all rpc urls and their aliases as an array of structs
+    function rpcUrlStructs() external returns (Rpc[] memory);
     function parseJson(string calldata, string calldata) external returns (bytes memory);
     function parseJson(string calldata) external returns (bytes memory);
+
+    function serializeBool(string calldata, string calldata, bool) external returns (string memory);
+    function serializeUint(string calldata, string calldata, uint256) external returns (string memory);
+    function serializeInt(string calldata, string calldata, int256) external returns (string memory);
+    function serializeAddress(string calldata, string calldata, address) external returns (string memory);
+    function serializeBytes32(string calldata, string calldata, bytes32) external returns (string memory);
+    function serializeString(string calldata, string calldata, string calldata) external returns (string memory);
+    function serializeBytes(string calldata, string calldata, bytes calldata) external returns (string memory);
+
+    function serializeBool(string calldata, string calldata, bool[] calldata) external returns (string memory);
+    function serializeUint(string calldata, string calldata, uint256[] calldata) external returns (string memory);
+    function serializeInt(string calldata, string calldata, int256[] calldata) external returns (string memory);
+    function serializeAddress(string calldata, string calldata, address[] calldata) external returns (string memory);
+    function serializeBytes32(string calldata, string calldata, bytes32[] calldata) external returns (string memory);
+    function serializeString(string calldata, string calldata, string[] calldata) external returns (string memory);
+    function serializeBytes(string calldata, string calldata, bytes[] calldata) external returns (string memory);
+    function writeJson(string calldata, string calldata) external;
+    function writeJson(string calldata, string calldata, string calldata) external;
+
+    // Pauses gas metering (gas usage will not be counted)
+    function pauseGasMetering() external;
+    // Resumes gas metering from where it left off
+    function resumeGasMetering() external;
 }

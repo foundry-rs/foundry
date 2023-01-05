@@ -23,13 +23,13 @@ pub fn etherscan_key(chain: Chain) -> Option<String> {
 }
 
 pub fn network_rpc_key(chain: &str) -> Option<String> {
-    let key = format!("{}_RPC_URL", chain.to_uppercase().replace("-", "_"));
-    std::env::var(&key).ok()
+    let key = format!("{}_RPC_URL", chain.to_uppercase().replace('-', "_"));
+    std::env::var(key).ok()
 }
 
 pub fn network_private_key(chain: &str) -> Option<String> {
-    let key = format!("{}_PRIVATE_KEY", chain.to_uppercase().replace("-", "_"));
-    std::env::var(&key).or_else(|_| std::env::var("TEST_PRIVATE_KEY")).ok()
+    let key = format!("{}_PRIVATE_KEY", chain.to_uppercase().replace('-', "_"));
+    std::env::var(key).or_else(|_| std::env::var("TEST_PRIVATE_KEY")).ok()
 }
 
 /// Represents external input required for executing verification requests

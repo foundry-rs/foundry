@@ -79,6 +79,9 @@ pub mod inspector;
 pub mod state;
 pub mod storage;
 
+// Gas per transaction not creating a contract.
+pub const MIN_TRANSACTION_GAS: U256 = U256([21_000, 0, 0, 0]);
+
 pub type State = foundry_evm::HashMap<Address, Account>;
 
 /// A block request, which includes the Pool Transactions if it's Pending
@@ -142,10 +145,13 @@ pub struct Backend {
     enable_steps_tracing: bool,
     /// Whether to keep history state
     prune_history: bool,
+    /// max number of blocks with transactions in memory
+    transaction_block_keeper: Option<usize>,
 }
 
 impl Backend {
     /// Initialises the balance of the given accounts
+    #[allow(clippy::too_many_arguments)]
     pub async fn with_genesis(
         db: Arc<AsyncRwLock<dyn Db>>,
         env: Arc<RwLock<Env>>,
@@ -154,6 +160,7 @@ impl Backend {
         fork: Option<ClientFork>,
         enable_steps_tracing: bool,
         prune_history: bool,
+        transaction_block_keeper: Option<usize>,
     ) -> Self {
         // if this is a fork then adjust the blockchain storage
         let blockchain = if let Some(ref fork) = fork {
@@ -183,6 +190,7 @@ impl Backend {
             active_snapshots: Arc::new(Mutex::new(Default::default())),
             enable_steps_tracing,
             prune_history,
+            transaction_block_keeper,
         };
 
         // Note: this can only fail in forking mode, in which case we can't recover
@@ -304,6 +312,7 @@ impl Backend {
                     timestamp: fork_block.timestamp,
                     gas_limit: fork_block.gas_limit,
                     difficulty: fork_block.difficulty,
+                    prevrandao: fork_block.mix_hash,
                     // Keep previous `coinbase` and `basefee` value
                     coinbase: env.block.coinbase,
                     basefee: env.block.basefee,
@@ -498,7 +507,7 @@ impl Backend {
         id
     }
 
-    /// Reverts the state to the snapshot
+    /// Reverts the state to the snapshot identified by the given `id`.
     pub async fn revert_snapshot(&self, id: U256) -> Result<bool, BlockchainError> {
         let block = { self.active_snapshots.lock().remove(&id) };
         if let Some((num, hash)) = block {
@@ -525,25 +534,30 @@ impl Backend {
             };
             let block =
                 self.block_by_hash(best_block_hash).await?.ok_or(BlockchainError::BlockNotFound)?;
-            self.time.reset(block.timestamp.as_u64());
+
+            // Note: In [`TimeManager::compute_next_timestamp`] we ensure that the next timestamp is
+            // always increasing by at least one. By subtracting 1 here, this is mitigated.
+            let reset_time = block.timestamp.as_u64().saturating_sub(1);
+            self.time.reset(reset_time);
             self.set_block_number(num.into());
         }
         Ok(self.db.write().await.revert(id))
     }
 
+    /// Get the current state.
+    pub async fn serialized_state(&self) -> Result<SerializableState, BlockchainError> {
+        let state = self.db.read().await.dump_state()?;
+        state.ok_or_else(|| {
+            RpcError::invalid_params("Dumping state not supported with the current configuration")
+                .into()
+        })
+    }
+
     /// Write all chain data to serialized bytes buffer
     pub async fn dump_state(&self) -> Result<Bytes, BlockchainError> {
-        self.db
-            .read()
-            .await
-            .dump_state()?
-            .map(|s| serde_json::to_vec(&s).unwrap_or_default().into())
-            .ok_or_else(|| {
-                RpcError::invalid_params(
-                    "Dumping state not supported with the current configuration",
-                )
-                .into()
-            })
+        let state = self.serialized_state().await?;
+        let content = serde_json::to_vec(&state).unwrap_or_default().into();
+        Ok(content)
     }
 
     /// Deserialize and add all chain data to the backend storage
@@ -749,6 +763,22 @@ impl Backend {
                 storage.transactions.insert(mined_tx.info.transaction_hash, mined_tx);
             }
 
+            if let Some(transaction_block_keeper) = self.transaction_block_keeper {
+                if storage.blocks.len() > transaction_block_keeper {
+                    let n: U64 = block_number
+                        .as_u64()
+                        .saturating_sub(transaction_block_keeper.try_into().unwrap())
+                        .into();
+                    if let Some(hash) = storage.hashes.get(&n) {
+                        if let Some(block) = storage.blocks.get(hash) {
+                            for tx in block.clone().transactions {
+                                let _ = storage.transactions.remove(&tx.hash());
+                            }
+                        }
+                    }
+                }
+            }
+
             // we intentionally set the difficulty to `0` for newer blocks
             env.block.difficulty = U256::zero();
 
@@ -863,6 +893,28 @@ impl Backend {
             evm.inspect_ref(&mut inspector);
         inspector.print_logs();
         Ok((exit_reason, out, gas_used, state))
+    }
+
+    pub async fn call_with_tracing(
+        &self,
+        request: EthTransactionRequest,
+        fee_details: FeeDetails,
+        block_request: Option<BlockRequest>,
+        opts: GethDebugTracingOptions,
+    ) -> Result<GethTrace, BlockchainError> {
+        self.with_database_at(block_request, |state, block| {
+            let mut inspector = Inspector::default().with_steps_tracing();
+            let block_number = block.number;
+            let mut evm = revm::EVM::new();
+            evm.env = self.build_call_env(request, fee_details, block);
+            evm.database(state);
+            let (ExecutionResult { exit_reason, out, gas_used, .. }, _) =
+                evm.inspect_ref(&mut inspector);
+            let res = inspector.tracer.unwrap_or_default().traces.geth_trace(gas_used.into(), opts);
+            trace!(target: "backend", "trace call return {:?} out: {:?} gas {} on block {}", exit_reason, out, gas_used, block_number);
+            Ok(res)
+        })
+        .await?
     }
 
     pub fn build_access_list_with_state<D>(
@@ -1301,6 +1353,7 @@ impl Backend {
                             coinbase: block.header.beneficiary,
                             timestamp: block.header.timestamp.into(),
                             difficulty: block.header.difficulty,
+                            prevrandao: Some(block.header.mix_hash),
                             basefee: block.header.base_fee_per_gas.unwrap_or_default(),
                             gas_limit: block.header.gas_limit,
                         };
@@ -1325,6 +1378,7 @@ impl Backend {
                     coinbase: block.header.beneficiary,
                     timestamp: block.header.timestamp.into(),
                     difficulty: block.header.difficulty,
+                    prevrandao: Some(block.header.mix_hash),
                     basefee: block.header.base_fee_per_gas.unwrap_or_default(),
                     gas_limit: block.header.gas_limit,
                 };
@@ -1422,7 +1476,17 @@ impl Backend {
         address: Address,
         block_request: Option<BlockRequest>,
     ) -> Result<U256, BlockchainError> {
-        self.with_database_at(block_request, |db, _| {
+        if let Some(BlockRequest::Pending(pool_transactions)) = block_request.as_ref() {
+            if let Some(value) = get_pool_transactions_nonce(pool_transactions, address) {
+                return Ok(value)
+            }
+        }
+        let final_block_request = match block_request {
+            Some(BlockRequest::Pending(_)) => Some(BlockRequest::Number(self.best_number())),
+            Some(BlockRequest::Number(bn)) => Some(BlockRequest::Number(bn)),
+            None => None,
+        };
+        self.with_database_at(final_block_request, |db, _| {
             trace!(target: "backend", "get nonce for {:?}", address);
             Ok(db.basic(address)?.unwrap_or_default().nonce.into())
         })
@@ -1774,6 +1838,28 @@ impl Backend {
     }
 }
 
+/// Get max nonce from transaction pool by address
+fn get_pool_transactions_nonce(
+    pool_transactions: &[Arc<PoolTransaction>],
+    address: ethers::types::H160,
+) -> Option<U256> {
+    let highest_nonce_tx = pool_transactions
+        .iter()
+        .filter(|tx| *tx.pending_transaction.sender() == address)
+        .reduce(|accum, item| {
+            let nonce = item.pending_transaction.nonce();
+            if nonce.gt(accum.pending_transaction.nonce()) {
+                item
+            } else {
+                accum
+            }
+        });
+    if let Some(highest_nonce_tx) = highest_nonce_tx {
+        return Some(highest_nonce_tx.pending_transaction.nonce().saturating_add(U256::one()))
+    }
+    None
+}
+
 #[async_trait::async_trait]
 impl TransactionValidator for Backend {
     async fn validate_pool_transaction(
@@ -1810,6 +1896,11 @@ impl TransactionValidator for Backend {
                     return Err(InvalidTransactionError::InvalidChainId)
                 }
             }
+        }
+
+        if tx.gas_limit() < MIN_TRANSACTION_GAS {
+            warn!(target: "backend", "[{:?}] gas too low", tx.hash());
+            return Err(InvalidTransactionError::GasTooLow)
         }
 
         if tx.gas_limit() > env.block.gas_limit {

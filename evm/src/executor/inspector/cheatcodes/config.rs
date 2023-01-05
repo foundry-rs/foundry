@@ -91,8 +91,7 @@ impl CheatsConfig {
         let normalized = self.normalized_path(path);
         if !self.is_normalized_path_allowed(&normalized, kind) {
             return Err(format!(
-                "The path {:?} is not allowed to be accessed for {} operations.",
-                path, kind
+                "The path {path:?} is not allowed to be accessed for {kind} operations."
             ))
         }
 

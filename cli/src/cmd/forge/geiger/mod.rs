@@ -14,6 +14,7 @@ mod error;
 mod find;
 mod visitor;
 
+/// CLI arguments for `forge geiger`.
 #[derive(Debug, Clone, Parser)]
 pub struct GeigerArgs {
     #[clap(

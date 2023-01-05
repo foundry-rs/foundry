@@ -17,6 +17,7 @@ use std::{
 };
 use tracing::log::warn;
 
+/// CLI arguments for `forge fmt`.
 #[derive(Debug, Clone, Parser)]
 pub struct FmtArgs {
     #[clap(

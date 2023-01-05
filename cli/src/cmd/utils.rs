@@ -14,7 +14,7 @@ use eyre::WrapErr;
 use forge::executor::opts::EvmOpts;
 use foundry_common::{cli_warn, fs, TestFunctionExt};
 use foundry_config::{error::ExtractConfigError, figment::Figment, Chain as ConfigChain, Config};
-use std::path::PathBuf;
+use std::{fmt::Write, path::PathBuf};
 use tracing::trace;
 use yansi::Paint;
 
@@ -40,10 +40,9 @@ pub fn remove_contract(
         {
             if suggestion != info.name {
                 err = format!(
-                    r#"{}
+                    r#"{err}
 
-        Did you mean `{}`?"#,
-                    err, suggestion
+        Did you mean `{suggestion}`?"#
                 );
             }
         }
@@ -101,10 +100,9 @@ pub fn get_cached_entry_by_name(
     let mut err = format!("could not find artifact: `{name}`");
     if let Some(suggestion) = suggestions::did_you_mean(name, &alternatives).pop() {
         err = format!(
-            r#"{}
+            r#"{err}
 
-        Did you mean `{}`?"#,
-            err, suggestion
+        Did you mean `{suggestion}`?"#
         );
     }
     eyre::bail!(err)
@@ -136,18 +134,22 @@ pub fn needs_setup(abi: &Abi) -> bool {
     setup_fns.len() == 1 && setup_fns[0].name == "setUp"
 }
 
+pub(crate) fn eta_key(state: &indicatif::ProgressState, f: &mut dyn Write) {
+    write!(f, "{:.1}s", state.eta().as_secs_f64()).unwrap()
+}
+
 #[macro_export]
 macro_rules! init_progress {
     ($local:expr, $label:expr) => {{
-        let pb = ProgressBar::new($local.len() as u64);
+        let pb = indicatif::ProgressBar::new($local.len() as u64);
         let mut template =
             "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ".to_string();
         template += $label;
         template += " ({eta})";
         pb.set_style(
-            ProgressStyle::with_template(&template)
+            indicatif::ProgressStyle::with_template(&template)
                 .unwrap()
-                .with_key("eta", |state| format!("{:.1}s", state.eta().as_secs_f64()))
+                .with_key("eta", $crate::cmd::utils::eta_key)
                 .progress_chars("#>-"),
         );
         pb

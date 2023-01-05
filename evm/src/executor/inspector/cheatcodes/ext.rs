@@ -1,10 +1,7 @@
 use crate::{
     abi::HEVMCalls,
     error,
-    executor::inspector::{
-        cheatcodes::util::{self},
-        Cheatcodes,
-    },
+    executor::inspector::{cheatcodes::util, Cheatcodes},
 };
 use bytes::Bytes;
 use ethers::{
@@ -12,21 +9,22 @@ use ethers::{
     prelude::artifacts::CompactContractBytecode,
     types::*,
 };
-use foundry_common::{fs, get_artifact_path};
+use foundry_common::{fmt::*, fs, get_artifact_path};
 use foundry_config::fs_permissions::FsAccessKind;
 use hex::FromHex;
-use jsonpath_rust::JsonPathFinder;
+use jsonpath_lib;
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
+    collections::{BTreeMap, HashMap},
     env,
     io::{BufRead, BufReader, Write},
     path::Path,
     process::Command,
     str::FromStr,
+    time::UNIX_EPOCH,
 };
 use tracing::{error, trace};
-
 /// Invokes a `Command` with the given args and returns the abi encoded response
 ///
 /// If the output of the command is valid hex, it returns the hex decoded value
@@ -155,9 +153,18 @@ fn set_env(key: &str, val: &str) -> Result<Bytes, Bytes> {
     }
 }
 
-fn get_env(key: &str, r#type: ParamType, delim: Option<&str>) -> Result<Bytes, Bytes> {
+fn get_env(
+    key: &str,
+    r#type: ParamType,
+    delim: Option<&str>,
+    default: Option<String>,
+) -> Result<Bytes, Bytes> {
     let msg = format!("Failed to get environment variable `{key}` as type `{}`", &r#type);
-    let val = env::var(key).map_err::<Bytes, _>(|e| format!("{msg}: {e}").encode().into())?;
+    let val = if let Some(value) = default {
+        env::var(key).unwrap_or(value)
+    } else {
+        env::var(key).map_err::<Bytes, _>(|e| format!("{msg}: {e}").encode().into())?
+    };
     let val = if let Some(d) = delim {
         val.split(d).map(|v| v.trim().to_string()).collect()
     } else {
@@ -296,6 +303,33 @@ fn remove_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, 
     Ok(Bytes::new())
 }
 
+/// Gets the metadata of a file/directory
+///
+/// This will return an error if no file/directory is found, or if the target path isn't allowed
+fn fs_metadata(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
+    let path =
+        state.config.ensure_path_allowed(&path, FsAccessKind::Read).map_err(error::encode_error)?;
+
+    let metadata = path.metadata().map_err(error::encode_error)?;
+
+    // These fields not available on all platforms; default to 0
+    let [modified, accessed, created] =
+        [metadata.modified(), metadata.accessed(), metadata.created()].map(|time| {
+            time.unwrap_or(UNIX_EPOCH).duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+        });
+
+    let metadata = (
+        metadata.is_dir(),
+        metadata.is_symlink(),
+        metadata.len(),
+        metadata.permissions().readonly(),
+        modified,
+        accessed,
+        created,
+    );
+    Ok(metadata.encode().into())
+}
+
 /// Converts a serde_json::Value to an abi::Token
 /// The function is designed to run recursively, so that in case of an object
 /// it will call itself to convert each of it's value and encode the whole as a
@@ -329,8 +363,11 @@ fn value_to_token(value: &Value) -> eyre::Result<Token> {
         Ok(Token::Int(number.into()))
     } else if let Some(array) = value.as_array() {
         Ok(Token::Array(array.iter().map(value_to_token).collect::<eyre::Result<Vec<_>>>()?))
-    } else if let Some(object) = value.as_object() {
-        let values = object.values().map(value_to_token).collect::<eyre::Result<Vec<_>>>()?;
+    } else if value.as_object().is_some() {
+        let ordered_object: BTreeMap<String, Value> =
+            serde_json::from_value(value.clone()).unwrap();
+        let values =
+            ordered_object.values().map(value_to_token).collect::<eyre::Result<Vec<_>>>()?;
         Ok(Token::Tuple(values))
     } else if value.is_null() {
         Ok(Token::FixedBytes(vec![0; 32]))
@@ -342,14 +379,13 @@ fn value_to_token(value: &Value) -> eyre::Result<Token> {
 /// As the JSON object is parsed serially, with the keys ordered alphabetically, they must be
 /// deserialized in the same order. That means that the solidity `struct` should order it's fields
 /// alphabetically and not by efficient packing or some other taxonomy.
-fn parse_json(_state: &mut Cheatcodes, json: &str, key: &str) -> Result<Bytes, Bytes> {
-    let values: Value = JsonPathFinder::from_str(json, key)?.find();
+fn parse_json(_state: &mut Cheatcodes, json_str: &str, key: &str) -> Result<Bytes, Bytes> {
+    let json = serde_json::from_str(json_str).map_err(error::encode_error)?;
+    let values: Vec<&Value> = jsonpath_lib::select(&json, key).map_err(error::encode_error)?;
     // values is an array of items. Depending on the JsonPath key, they
     // can be many or a single item. An item can be a single value or
     // an entire JSON object.
     let res = values
-        .as_array()
-        .ok_or_else(|| error::encode_error("JsonPath did not return an array"))?
         .iter()
         .map(|inner| {
             value_to_token(inner).map_err(|err| {
@@ -360,6 +396,98 @@ fn parse_json(_state: &mut Cheatcodes, json: &str, key: &str) -> Result<Bytes, B
     // encode the bytes as the 'bytes' solidity type
     let abi_encoded = abi::encode(&[Token::Bytes(abi::encode(&res?))]);
     Ok(abi_encoded.into())
+}
+/// Serializes a key:value pair to a specific object. By calling this function multiple times,
+/// the user can serialize multiple KV pairs to the same object. The value can be of any type, even
+/// a new object in itself. The function will return
+/// a stringified version of the object, so that the user can use that as a value to a new
+/// invocation of the same function with a new object key. This enables the user to reuse the same
+/// function to crate arbitrarily complex object structures (JSON).
+fn serialize_json(
+    state: &mut Cheatcodes,
+    object_key: &str,
+    value_key: &str,
+    value: &str,
+) -> Result<Bytes, Bytes> {
+    let parsed_value =
+        serde_json::from_str(value).unwrap_or_else(|_| Value::String(value.to_string()));
+    let json = if let Some(serialization) = state.serialized_jsons.get_mut(object_key) {
+        serialization.insert(value_key.to_string(), parsed_value);
+        serialization.clone()
+    } else {
+        let mut serialization = HashMap::new();
+        serialization.insert(value_key.to_string(), parsed_value);
+        state.serialized_jsons.insert(object_key.to_string(), serialization.clone());
+        serialization.clone()
+    };
+    let stringified = serde_json::to_string(&json)
+        .map_err(|err| error::encode_error(format!("Failed to stringify hashmap: {err}")))?;
+    Ok(abi::encode(&[Token::String(stringified)]).into())
+}
+/// Converts an array to it's stringified version, adding the appropriate quotes around it's
+/// ellements. This is to signify that the elements of the array are string themselves.
+fn array_str_to_str<T: UIfmt>(array: &Vec<T>) -> String {
+    format!(
+        "[{}",
+        array
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                if index == array.len() - 1 {
+                    format!("\"{}\"]", value.pretty())
+                } else {
+                    format!("\"{}\",", value.pretty())
+                }
+            })
+            .collect::<String>()
+    )
+}
+
+/// Converts an array to it's stringified version. It will not add quotes around the values of the
+/// array, enabling serde_json to parse the values of the array as types (e.g numbers, booleans,
+/// etc.)
+fn array_eval_to_str<T: UIfmt>(array: &Vec<T>) -> String {
+    format!(
+        "[{}",
+        array
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                if index == array.len() - 1 {
+                    format!("{}]", value.pretty())
+                } else {
+                    format!("{},", value.pretty())
+                }
+            })
+            .collect::<String>()
+    )
+}
+
+/// Write an object to a new file OR replaces the value of an existing JSON file with the supplied
+/// object.
+fn write_json(
+    _state: &mut Cheatcodes,
+    object: &str,
+    path: impl AsRef<Path>,
+    json_path_or_none: Option<&str>,
+) -> Result<Bytes, Bytes> {
+    let json: Value =
+        serde_json::from_str(object).unwrap_or_else(|_| Value::String(object.to_owned()));
+    let json_string = serde_json::to_string_pretty(&if let Some(json_path) = json_path_or_none {
+        let path = _state
+            .config
+            .ensure_path_allowed(&path, FsAccessKind::Read)
+            .map_err(error::encode_error)?;
+        let data = serde_json::from_str(&fs::read_to_string(path).map_err(error::encode_error)?)
+            .map_err(error::encode_error)?;
+        jsonpath_lib::replace_with(data, &format!("${json_path}"), &mut |_| Some(json.clone()))
+            .map_err(error::encode_error)?
+    } else {
+        json
+    })
+    .map_err(error::encode_error)?;
+    write_file(_state, path, json_string)?;
+    Ok(Bytes::new())
 }
 
 pub fn apply(
@@ -378,22 +506,85 @@ pub fn apply(
         HEVMCalls::GetCode(inner) => get_code(state, &inner.0),
         HEVMCalls::GetDeployedCode(inner) => get_deployed_code(state, &inner.0),
         HEVMCalls::SetEnv(inner) => set_env(&inner.0, &inner.1),
-        HEVMCalls::EnvBool0(inner) => get_env(&inner.0, ParamType::Bool, None),
-        HEVMCalls::EnvUint0(inner) => get_env(&inner.0, ParamType::Uint(256), None),
-        HEVMCalls::EnvInt0(inner) => get_env(&inner.0, ParamType::Int(256), None),
-        HEVMCalls::EnvAddress0(inner) => get_env(&inner.0, ParamType::Address, None),
-        HEVMCalls::EnvBytes320(inner) => get_env(&inner.0, ParamType::FixedBytes(32), None),
-        HEVMCalls::EnvString0(inner) => get_env(&inner.0, ParamType::String, None),
-        HEVMCalls::EnvBytes0(inner) => get_env(&inner.0, ParamType::Bytes, None),
-        HEVMCalls::EnvBool1(inner) => get_env(&inner.0, ParamType::Bool, Some(&inner.1)),
-        HEVMCalls::EnvUint1(inner) => get_env(&inner.0, ParamType::Uint(256), Some(&inner.1)),
-        HEVMCalls::EnvInt1(inner) => get_env(&inner.0, ParamType::Int(256), Some(&inner.1)),
-        HEVMCalls::EnvAddress1(inner) => get_env(&inner.0, ParamType::Address, Some(&inner.1)),
-        HEVMCalls::EnvBytes321(inner) => {
-            get_env(&inner.0, ParamType::FixedBytes(32), Some(&inner.1))
+        HEVMCalls::EnvBool0(inner) => get_env(&inner.0, ParamType::Bool, None, None),
+        HEVMCalls::EnvUint0(inner) => get_env(&inner.0, ParamType::Uint(256), None, None),
+        HEVMCalls::EnvInt0(inner) => get_env(&inner.0, ParamType::Int(256), None, None),
+        HEVMCalls::EnvAddress0(inner) => get_env(&inner.0, ParamType::Address, None, None),
+        HEVMCalls::EnvBytes320(inner) => get_env(&inner.0, ParamType::FixedBytes(32), None, None),
+        HEVMCalls::EnvString0(inner) => get_env(&inner.0, ParamType::String, None, None),
+        HEVMCalls::EnvBytes0(inner) => get_env(&inner.0, ParamType::Bytes, None, None),
+        HEVMCalls::EnvBool1(inner) => get_env(&inner.0, ParamType::Bool, Some(&inner.1), None),
+        HEVMCalls::EnvUint1(inner) => get_env(&inner.0, ParamType::Uint(256), Some(&inner.1), None),
+        HEVMCalls::EnvInt1(inner) => get_env(&inner.0, ParamType::Int(256), Some(&inner.1), None),
+        HEVMCalls::EnvAddress1(inner) => {
+            get_env(&inner.0, ParamType::Address, Some(&inner.1), None)
         }
-        HEVMCalls::EnvString1(inner) => get_env(&inner.0, ParamType::String, Some(&inner.1)),
-        HEVMCalls::EnvBytes1(inner) => get_env(&inner.0, ParamType::Bytes, Some(&inner.1)),
+        HEVMCalls::EnvBytes321(inner) => {
+            get_env(&inner.0, ParamType::FixedBytes(32), Some(&inner.1), None)
+        }
+        HEVMCalls::EnvString1(inner) => get_env(&inner.0, ParamType::String, Some(&inner.1), None),
+        HEVMCalls::EnvBytes1(inner) => get_env(&inner.0, ParamType::Bytes, Some(&inner.1), None),
+        HEVMCalls::EnvOr0(inner) => {
+            get_env(&inner.0, ParamType::Bool, None, Some(inner.1.to_string()))
+        }
+        HEVMCalls::EnvOr1(inner) => {
+            get_env(&inner.0, ParamType::Uint(256), None, Some(inner.1.to_string()))
+        }
+        HEVMCalls::EnvOr2(inner) => {
+            get_env(&inner.0, ParamType::Int(256), None, Some(inner.1.to_string()))
+        }
+        HEVMCalls::EnvOr3(inner) => {
+            get_env(&inner.0, ParamType::Address, None, Some(hex::encode(inner.1)))
+        }
+        HEVMCalls::EnvOr4(inner) => {
+            get_env(&inner.0, ParamType::FixedBytes(32), None, Some(hex::encode(inner.1)))
+        }
+        HEVMCalls::EnvOr5(inner) => {
+            get_env(&inner.0, ParamType::String, None, Some(inner.1.to_string()))
+        }
+        HEVMCalls::EnvOr6(inner) => {
+            get_env(&inner.0, ParamType::Bytes, None, Some(hex::encode(&inner.1)))
+        }
+        HEVMCalls::EnvOr7(inner) => get_env(
+            &inner.0,
+            ParamType::Bool,
+            Some(&inner.1),
+            Some(inner.2.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(&inner.1)),
+        ),
+        HEVMCalls::EnvOr8(inner) => get_env(
+            &inner.0,
+            ParamType::Uint(256),
+            Some(&inner.1),
+            Some(inner.2.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(&inner.1)),
+        ),
+        HEVMCalls::EnvOr9(inner) => get_env(
+            &inner.0,
+            ParamType::Int(256),
+            Some(&inner.1),
+            Some(inner.2.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(&inner.1)),
+        ),
+        HEVMCalls::EnvOr10(inner) => get_env(
+            &inner.0,
+            ParamType::Address,
+            Some(&inner.1),
+            Some(inner.2.iter().map(hex::encode).collect::<Vec<_>>().join(&inner.1)),
+        ),
+        HEVMCalls::EnvOr11(inner) => get_env(
+            &inner.0,
+            ParamType::FixedBytes(32),
+            Some(&inner.1),
+            Some(inner.2.iter().map(hex::encode).collect::<Vec<_>>().join(&inner.1)),
+        ),
+        HEVMCalls::EnvOr12(inner) => {
+            get_env(&inner.0, ParamType::String, Some(&inner.1), Some(inner.2.join(&inner.1)))
+        }
+        HEVMCalls::EnvOr13(inner) => get_env(
+            &inner.0,
+            ParamType::Bytes,
+            Some(&inner.1),
+            Some(inner.2.iter().map(hex::encode).collect::<Vec<_>>().join(&inner.1)),
+        ),
+
         HEVMCalls::ProjectRoot(_) => project_root(state),
         HEVMCalls::ReadFile(inner) => read_file(state, &inner.0),
         HEVMCalls::ReadFileBinary(inner) => read_file_binary(state, &inner.0),
@@ -403,10 +594,55 @@ pub fn apply(
         HEVMCalls::WriteLine(inner) => write_line(state, &inner.0, &inner.1),
         HEVMCalls::CloseFile(inner) => close_file(state, &inner.0),
         HEVMCalls::RemoveFile(inner) => remove_file(state, &inner.0),
+        HEVMCalls::FsMetadata(inner) => fs_metadata(state, &inner.0),
         // If no key argument is passed, return the whole JSON object.
         // "$" is the JSONPath key for the root of the object
         HEVMCalls::ParseJson0(inner) => parse_json(state, &inner.0, "$"),
-        HEVMCalls::ParseJson1(inner) => parse_json(state, &inner.0, &inner.1),
+        HEVMCalls::ParseJson1(inner) => parse_json(state, &inner.0, &format!("$.{}", &inner.1)),
+        HEVMCalls::SerializeBool0(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
+        }
+        HEVMCalls::SerializeBool1(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &array_eval_to_str(&inner.2))
+        }
+        HEVMCalls::SerializeUint0(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
+        }
+        HEVMCalls::SerializeUint1(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &array_eval_to_str(&inner.2))
+        }
+        HEVMCalls::SerializeInt0(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
+        }
+        HEVMCalls::SerializeInt1(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &array_eval_to_str(&inner.2))
+        }
+        HEVMCalls::SerializeAddress0(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
+        }
+        HEVMCalls::SerializeAddress1(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &array_str_to_str(&inner.2))
+        }
+        HEVMCalls::SerializeBytes320(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
+        }
+        HEVMCalls::SerializeBytes321(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &array_str_to_str(&inner.2))
+        }
+        HEVMCalls::SerializeString0(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
+        }
+        HEVMCalls::SerializeString1(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &array_str_to_str(&inner.2))
+        }
+        HEVMCalls::SerializeBytes0(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
+        }
+        HEVMCalls::SerializeBytes1(inner) => {
+            serialize_json(state, &inner.0, &inner.1, &array_str_to_str(&inner.2))
+        }
+        HEVMCalls::WriteJson0(inner) => write_json(state, &inner.0, &inner.1, None),
+        HEVMCalls::WriteJson1(inner) => write_json(state, &inner.0, &inner.1, Some(&inner.2)),
         _ => return None,
     })
 }

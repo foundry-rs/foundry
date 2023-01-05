@@ -141,11 +141,11 @@ pub fn recurse_link<'a>(
 ) {
     // check if we have dependencies
     if let Some(dependencies) = dependency_tree.get(&target) {
-        trace!(?target, target = "forge::link", "linking contract");
+        trace!(target : "forge::link", ?target, "linking contract");
         // for each dependency, try to link
         dependencies.iter().for_each(|(next_target, file, key)| {
             // get the dependency
-            trace!(dependency = next_target, file, key, target = "forge::link", "get dependency");
+            trace!(target : "forge::link", dependency = next_target, file, key,  "get dependency");
             let contract = contracts
                 .get(next_target)
                 .unwrap_or_else(|| panic!("No target contract named {next_target}"))

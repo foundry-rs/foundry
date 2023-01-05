@@ -26,7 +26,7 @@ pub fn to_marker(nonce: u64, from: Address) -> TxMarker {
 /// Modes that determine the transaction ordering of the mempool
 ///
 /// This type controls the transaction order via the priority metric of a transaction
-#[derive(Debug, Clone, Eq, PartialEq, Copy)]
+#[derive(Debug, Clone, Eq, PartialEq, Copy, serde::Serialize, serde::Deserialize)]
 pub enum TransactionOrder {
     /// Keep the pool transaction transactions sorted in the order they arrive.
     ///

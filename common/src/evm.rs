@@ -1,6 +1,7 @@
 //! cli arguments for configuring the evm settings
 use clap::{ArgAction, Parser};
-use ethers_core::types::{Address, U256};
+use ethers_core::types::{Address, H256, U256};
+use eyre::ContextCompat;
 use foundry_config::{
     figment::{
         self,
@@ -34,6 +35,7 @@ use serde::Serialize;
 /// # }
 /// ```
 #[derive(Debug, Clone, Default, Parser, Serialize)]
+#[clap(next_help_heading = "EVM options", about = None)] // override doc
 pub struct EvmArgs {
     /// Fetch state over a remote endpoint instead of starting from an empty state.
     ///
@@ -63,7 +65,7 @@ pub struct EvmArgs {
     /// This flag overrides the project's configuration file.
     ///
     /// See --fork-url.
-    #[clap(long, requires = "fork_url")]
+    #[clap(long)]
     #[serde(skip)]
     pub no_storage_caching: bool,
 
@@ -135,7 +137,7 @@ impl Provider for EvmArgs {
 
 /// Configures the executor environment during tests.
 #[derive(Debug, Clone, Default, Parser, Serialize)]
-#[clap(next_help_heading = "EXECUTOR ENVIRONMENT CONFIG")]
+#[clap(next_help_heading = "Executor environment config")]
 pub struct EnvArgs {
     /// The block gas limit.
     #[clap(long, value_name = "GAS_LIMIT")]
@@ -188,10 +190,22 @@ pub struct EnvArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_difficulty: Option<u64>,
 
+    /// The block prevrandao value. NOTE: Before merge this field was mix_hash.
+    #[clap(long, value_name = "PREVRANDAO")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_prevrandao: Option<H256>,
+
     /// The block gas limit.
     #[clap(long, value_name = "GAS_LIMIT")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_gas_limit: Option<u64>,
+}
+
+impl EvmArgs {
+    /// Ensures that fork url exists and returns its reference.
+    pub fn ensure_fork_url(&self) -> eyre::Result<&String> {
+        self.fork_url.as_ref().wrap_err("Missing `--fork-url` field.")
+    }
 }
 
 #[cfg(test)]

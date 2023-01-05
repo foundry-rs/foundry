@@ -15,7 +15,7 @@ use foundry_cli::{
     utils::try_consume_config_rpc_url,
 };
 use foundry_common::{
-    abi::format_tokens,
+    abi::{format_tokens, get_event},
     fs,
     selectors::{
         decode_calldata, decode_event_topic, decode_function_selector, import_selectors,
@@ -295,13 +295,7 @@ async fn main() -> eyre::Result<()> {
             println!("{}", serde_json::to_string(&value)?);
         }
         Subcommands::Rpc(cmd) => cmd.run()?.await?,
-        Subcommands::Storage { address, slot, rpc_url, block } => {
-            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-
-            let provider = try_get_http_provider(rpc_url)?;
-            let value = provider.get_storage_at(address, slot, block).await?;
-            println!("{value:?}");
-        }
+        Subcommands::Storage(cmd) => cmd.run().await?,
 
         // Calls & transactions
         Subcommands::Call(cmd) => cmd.run().await?,
@@ -314,7 +308,7 @@ async fn main() -> eyre::Result<()> {
             let tx_hash = *pending_tx;
 
             if cast_async {
-                println!("{pending_tx:?}");
+                println!("{tx_hash:#x}");
             } else {
                 let receipt =
                     pending_tx.await?.ok_or_else(|| eyre::eyre!("tx {tx_hash} not found"))?;
@@ -391,8 +385,7 @@ async fn main() -> eyre::Result<()> {
                 let address = provider.resolve_name(&name).await?;
                 assert_eq!(
                     address, who,
-                    "forward lookup verification failed. got {}, expected {}",
-                    name, who
+                    "forward lookup verification failed. got {name}, expected {who}"
                 );
             }
             println!("{name}");
@@ -409,8 +402,7 @@ async fn main() -> eyre::Result<()> {
                 let name = provider.lookup_address(address).await?;
                 assert_eq!(
                     name, who,
-                    "forward lookup verification failed. got {}, expected {}",
-                    name, who
+                    "forward lookup verification failed. got {name}, expected {who}"
                 );
             }
             println!("{}", SimpleCast::to_checksum_address(&address));
@@ -419,6 +411,10 @@ async fn main() -> eyre::Result<()> {
         // Misc
         Subcommands::Keccak { data } => {
             println!("{}", SimpleCast::keccak(&data)?);
+        }
+        Subcommands::SigEvent { event_string } => {
+            let parsed_event = get_event(&event_string)?;
+            println!("{:?}", parsed_event.signature());
         }
         Subcommands::LeftShift { value, bits, base_in, base_out } => {
             println!("{}", SimpleCast::left_shift(&value, &bits, base_in, &base_out)?);
@@ -455,7 +451,9 @@ async fn main() -> eyre::Result<()> {
                 }
             }
         }
-        Subcommands::Create2(cmd) => cmd.run()?,
+        Subcommands::Create2(cmd) => {
+            cmd.run()?;
+        }
         Subcommands::Wallet { command } => command.run().await?,
         Subcommands::Completions { shell } => {
             generate(shell, &mut Opts::command(), "cast", &mut std::io::stdout())

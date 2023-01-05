@@ -13,13 +13,14 @@ use ethers::{
         LocalWallet, Signer, H160, *,
     },
     signers::{coins_bip39::English, MnemonicBuilder},
-    types::{NameOrAddress, H256, U256},
+    types::{transaction::eip2718::TypedTransaction, NameOrAddress, H256, U256},
     utils,
 };
-use foundry_common::fmt::*;
+use foundry_common::{fmt::*, RpcUrl};
 use hex::FromHex;
 use revm::{Account, CreateInputs, Database, EVMData, JournaledState, TransactTo};
-use std::str::FromStr;
+use std::{collections::VecDeque, str::FromStr};
+use tracing::trace;
 
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 
@@ -27,6 +28,15 @@ const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 pub const DEFAULT_CREATE2_DEPLOYER: H160 = H160([
     78, 89, 180, 72, 71, 179, 121, 87, 133, 136, 146, 12, 167, 143, 191, 38, 192, 180, 149, 108,
 ]);
+
+/// Helps collecting transactions from different forks.
+#[derive(Debug, Clone, Default)]
+pub struct BroadcastableTransaction {
+    pub rpc: Option<RpcUrl>,
+    pub transaction: TypedTransaction,
+}
+
+pub type BroadcastableTransactions = VecDeque<BroadcastableTransaction>;
 
 /// Configures the env for the transaction
 pub fn configure_tx_env(env: &mut revm::Env, tx: &Transaction) {
@@ -192,11 +202,13 @@ where
             match &info.code {
                 Some(code) => {
                     if code.is_empty() {
+                        trace!(create2=?DEFAULT_CREATE2_DEPLOYER, "Empty Create 2 deployer code");
                         return Err(DatabaseError::MissingCreate2Deployer)
                     }
                 }
                 None => {
                     // forked db
+                    trace!(create2=?DEFAULT_CREATE2_DEPLOYER, "Missing Create 2 deployer code");
                     if data.db.code_by_hash(info.code_hash)?.is_empty() {
                         return Err(DatabaseError::MissingCreate2Deployer)
                     }
@@ -234,6 +246,9 @@ pub fn value_to_abi(
     r#type: ParamType,
     is_array: bool,
 ) -> Result<Bytes, String> {
+    if is_array && val.len() == 1 && val.first().unwrap().as_ref().is_empty() {
+        return Ok(abi::encode(&[Token::String(String::from(""))]).into())
+    }
     let parse_bool = |v: &str| v.to_lowercase().parse::<bool>();
     let parse_uint = |v: &str| {
         if v.starts_with("0x") {
@@ -243,8 +258,7 @@ pub fn value_to_abi(
                 Ok(val) => Ok(val),
                 Err(dec_err) => v.parse::<U256>().map_err(|hex_err| {
                     format!(
-                        "Failed to parse uint value `{}` from hex and as decimal string {}, {}",
-                        v, hex_err, dec_err
+                        "Failed to parse uint value `{v}` from hex and as decimal string {hex_err}, {dec_err}"
                     )
                 }),
             }
@@ -260,8 +274,7 @@ pub fn value_to_abi(
                 Ok(val) => Ok(val),
                 Err(dec_err) => v.parse::<I256>().map_err(|hex_err| {
                     format!(
-                        "Failed to parse int value `{}` from hex and as decimal string {}, {}",
-                        v, hex_err, dec_err
+                        "Failed to parse int value `{v}` from hex and as decimal string {hex_err}, {dec_err}"
                     )
                 }),
             }
