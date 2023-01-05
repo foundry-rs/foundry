@@ -93,7 +93,10 @@ impl CallArgs {
                 builder.set_data(data);
             }
             _ => {
-                builder.value(tx.value).set_args(sig.unwrap().as_str(), args).await?;
+                builder.value(tx.value);
+                if let Some(sig) = sig {
+                    builder.set_args(sig.as_str(), args).await?;
+                }
             }
         };
 

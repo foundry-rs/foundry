@@ -70,8 +70,9 @@ impl Cmd for InitArgs {
         }
         let root = dunce::canonicalize(root)?;
 
-        // if a template is provided, then this command is just an alias to `git clone <url>
-        // <path>`
+        // if a template is provided, then this command clones the template repo, removes the .git
+        // folder, and initializes a new git repo—-this ensures there is no history from the
+        // template and the template is not set as a remote.
         if let Some(template) = template {
             let template = if template.starts_with("https://") {
                 template
@@ -79,9 +80,28 @@ impl Cmd for InitArgs {
                 "https://github.com/".to_string() + &template
             };
             p_println!(!quiet => "Initializing {} from {}...", root.display(), template);
+
             Command::new("git")
                 .args(["clone", "--recursive", &template, &root.display().to_string()])
                 .exec()?;
+
+            // Navigate to the newly cloned repo.
+            let initial_dir = std::env::current_dir()?;
+            std::env::set_current_dir(&root)?;
+
+            // Modify the git history.
+            let git_output =
+                Command::new("git").args(["rev-parse", "--short", "HEAD"]).output()?.stdout;
+            let commit_hash = String::from_utf8(git_output)?;
+            std::fs::remove_dir_all(".git")?;
+            Command::new("git").args(["init"]).exec()?;
+            Command::new("git").args(["add", "--all"]).exec()?;
+
+            let commit_msg = format!("chore: init from {template} at {commit_hash}");
+            Command::new("git").args(["commit", "-m", &commit_msg]).exec()?;
+
+            // Navigate back.
+            std::env::set_current_dir(initial_dir)?;
         } else {
             // check if target is empty
             if !force && root.read_dir().map(|mut i| i.next().is_some()).unwrap_or(false) {

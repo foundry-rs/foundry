@@ -170,6 +170,10 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
         sig: &str,
         args: Vec<String>,
     ) -> Result<(Vec<u8>, Function)> {
+        if sig.trim().is_empty() {
+            return Err(FunctionSignatureError::MissingSignature.into())
+        }
+
         let args = resolve_name_args(&args, self.provider).await;
 
         let func = if sig.contains('(') {

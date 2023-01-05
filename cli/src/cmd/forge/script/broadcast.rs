@@ -252,6 +252,7 @@ impl ScriptArgs {
                 WalletType::Local(signer) => self.broadcast(signer, tx).await,
                 WalletType::Ledger(signer) => self.broadcast(signer, tx).await,
                 WalletType::Trezor(signer) => self.broadcast(signer, tx).await,
+                WalletType::Aws(signer) => self.broadcast(signer, tx).await,
             },
         }
     }

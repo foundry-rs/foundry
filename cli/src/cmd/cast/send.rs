@@ -91,6 +91,7 @@ impl SendTxArgs {
                 WalletType::Ledger(leger) => leger.address(),
                 WalletType::Local(local) => local.address(),
                 WalletType::Trezor(trezor) => trezor.address(),
+                WalletType::Aws(aws) => aws.address(),
             };
 
             // prevent misconfigured hwlib from sending a transaction that defies
@@ -152,6 +153,22 @@ impl SendTxArgs {
                     .await?;
                 }
                 WalletType::Trezor(signer) => {
+                    cast_send(
+                        &signer,
+                        from,
+                        to,
+                        code,
+                        (sig, args),
+                        tx,
+                        chain,
+                        config.etherscan_api_key,
+                        cast_async,
+                        confirmations,
+                        to_json,
+                    )
+                    .await?;
+                }
+                WalletType::Aws(signer) => {
                     cast_send(
                         &signer,
                         from,
