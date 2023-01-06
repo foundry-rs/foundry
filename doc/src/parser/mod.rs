@@ -21,16 +21,21 @@ pub use item::{ParseItem, ParseSource};
 /// [ParseItem]s can be accessed by calling [Parser::items].
 #[derive(Debug, Default)]
 pub struct Parser {
-    items: Vec<ParseItem>,
+    /// Initial comments from solang parser.
     comments: Vec<Comment>,
-    start_at: usize,
+    /// Parser context.
     context: ParserContext,
+    /// Parsed results.
+    items: Vec<ParseItem>,
 }
 
-/// [Parser]'s context. Holds information about current parent that's being visited.
+/// [Parser] context.
 #[derive(Debug, Default)]
 struct ParserContext {
+    /// Current visited parent.
     parent: Option<ParseItem>,
+    /// Current start pointer for parsing doc comments.
+    doc_start_loc: usize,
 }
 
 impl Parser {
@@ -71,13 +76,13 @@ impl Parser {
         } else {
             self.items.push(child);
         }
-        self.start_at = loc.end();
+        self.context.doc_start_loc = loc.end();
     }
 
     /// Parse the doc comments from the current start location.
     fn parse_docs(&mut self, end: usize) -> Vec<DocCommentTag> {
         let mut res = vec![];
-        for comment in parse_doccomments(&self.comments, self.start_at, end) {
+        for comment in parse_doccomments(&self.comments, self.context.doc_start_loc, end) {
             match comment {
                 DocComment::Line { comment } => res.push(comment),
                 DocComment::Block { comments } => res.extend(comments.into_iter()),
@@ -100,7 +105,7 @@ impl Visitor for Parser {
                     let contract = ParseItem::new(source).with_comments(comments);
 
                     // Move the doc pointer to the contract location start.
-                    self.start_at = def.loc.start();
+                    self.context.doc_start_loc = def.loc.start();
 
                     // Parse child elements with current contract as parent
                     let contract = self.with_parent(contract, |doc| {
@@ -112,7 +117,7 @@ impl Visitor for Parser {
                     })?;
 
                     // Move the doc pointer to the contract location end.
-                    self.start_at = def.loc.end();
+                    self.context.doc_start_loc = def.loc.end();
 
                     // Add contract to the parsed items.
                     self.items.push(contract);
@@ -265,4 +270,6 @@ mod tests {
         assert!(contract.children.iter().all(|ch| ch.children.is_empty()));
         assert!(contract.children.iter().all(|ch| ch.comments.is_empty()));
     }
+
+    // TODO: test regular doc comments & natspec
 }

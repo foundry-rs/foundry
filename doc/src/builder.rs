@@ -19,14 +19,14 @@ use crate::{
 
 #[derive(Debug)]
 struct DocFile {
-    source: ParseItem,
-    source_path: PathBuf,
+    item: ParseItem,
+    item_path: PathBuf,
     target_path: PathBuf,
 }
 
 impl DocFile {
-    fn new(source: ParseItem, source_path: PathBuf, target_path: PathBuf) -> Self {
-        Self { source_path, source, target_path }
+    fn new(item: ParseItem, item_path: PathBuf, target_path: PathBuf) -> Self {
+        Self { item_path, item, target_path }
     }
 }
 
@@ -88,8 +88,11 @@ impl DocBuilder {
 
         // Flatten and sort the results
         let files = files.into_iter().flatten().sorted_by(|file1, file2| {
-            file1.source_path.display().to_string().cmp(&file2.source_path.display().to_string())
+            file1.item_path.display().to_string().cmp(&file2.item_path.display().to_string())
         });
+
+        // Apply preprocessors to files
+        // TODO:
 
         // Write mdbook related files
         self.write_mdbook(files.collect::<Vec<_>>())?;
@@ -118,7 +121,6 @@ impl DocBuilder {
         let mut summary = BufWriter::default();
         summary.write_title("Summary")?;
         summary.write_link_list_item("README", Self::README, 0)?;
-        // TODO:
         self.write_summary_section(&mut summary, &files.iter().collect::<Vec<_>>(), None, 0)?;
         fs::write(out_dir_src.join(Self::SUMMARY), summary.finish())?;
 
@@ -144,7 +146,7 @@ impl DocBuilder {
 
         // Write doc files
         for file in files {
-            let doc_content = file.source.as_doc()?;
+            let doc_content = file.item.as_doc()?;
             fs::create_dir_all(
                 file.target_path.parent().ok_or(eyre::format_err!("empty target path; noop"))?,
             )?;
@@ -182,7 +184,7 @@ impl DocBuilder {
         // Group entries by path depth
         let mut grouped = HashMap::new();
         for file in files {
-            let path = file.source_path.strip_prefix(&self.root)?;
+            let path = file.item_path.strip_prefix(&self.root)?;
             let key = path.iter().take(depth + 1).collect::<PathBuf>();
             grouped.entry(key).or_insert_with(Vec::new).push(*file);
         }
@@ -204,7 +206,7 @@ impl DocBuilder {
         for (path, files) in grouped {
             if path.extension().map(|ext| ext.eq(Self::SOL_EXT)).unwrap_or_default() {
                 for file in files {
-                    let ident = file.source.source.ident();
+                    let ident = file.item.source.ident();
 
                     let readme_path = Path::new("/").join(&path).display().to_string();
                     readme.write_link_list_item(&ident, &readme_path, 0)?;
