@@ -1,102 +1,57 @@
 use crate::{
     helpers::{comments_by_tag, exclude_comment_tags},
-    output::DocOutput,
     parser::{ParseItem, ParseSource},
     writer::BufWriter,
 };
 use itertools::Itertools;
-use solang_parser::{
-    doccomment::DocCommentTag,
-    pt::{
-        Base, EnumDefinition, ErrorDefinition, EventDefinition, FunctionDefinition,
-        StructDefinition, VariableDefinition,
-    },
-};
+use solang_parser::{doccomment::DocCommentTag, pt::Base};
 
-pub(crate) type DocResult = Result<String, std::fmt::Error>;
+/// The result of [Asdoc::as_doc] method.
+pub type AsDocResult = Result<String, std::fmt::Error>;
 
+/// A trait for formatting a parse unit as documentation.
 #[auto_impl::auto_impl(&)]
-pub(crate) trait DocFormat {
-    fn doc(&self) -> DocResult;
+pub trait AsDoc {
+    /// Formats a parse tree item into a doc string.
+    fn as_doc(&self) -> AsDocResult;
 }
 
-impl DocFormat for String {
-    fn doc(&self) -> DocResult {
+impl AsDoc for String {
+    fn as_doc(&self) -> AsDocResult {
         Ok(self.to_owned())
     }
 }
 
-impl DocFormat for DocCommentTag {
-    fn doc(&self) -> DocResult {
+impl AsDoc for DocCommentTag {
+    fn as_doc(&self) -> AsDocResult {
         Ok(self.value.to_owned())
     }
 }
 
-impl DocFormat for Vec<&DocCommentTag> {
-    fn doc(&self) -> DocResult {
-        Ok(self.iter().map(|c| DocCommentTag::doc(*c)).collect::<Result<Vec<_>, _>>()?.join("\n\n"))
+impl AsDoc for Vec<&DocCommentTag> {
+    fn as_doc(&self) -> AsDocResult {
+        Ok(self
+            .iter()
+            .map(|c| DocCommentTag::as_doc(*c))
+            .collect::<Result<Vec<_>, _>>()?
+            .join("\n\n"))
     }
 }
 
-impl DocFormat for Vec<DocCommentTag> {
-    fn doc(&self) -> DocResult {
-        Ok(self.iter().map(DocCommentTag::doc).collect::<Result<Vec<_>, _>>()?.join("\n\n"))
+impl AsDoc for Vec<DocCommentTag> {
+    fn as_doc(&self) -> AsDocResult {
+        Ok(self.iter().map(DocCommentTag::as_doc).collect::<Result<Vec<_>, _>>()?.join("\n\n"))
     }
 }
 
-// TODO: remove?
-impl DocFormat for Base {
-    fn doc(&self) -> DocResult {
+impl AsDoc for Base {
+    fn as_doc(&self) -> AsDocResult {
         Ok(self.name.identifiers.iter().map(|ident| ident.name.to_owned()).join("."))
     }
 }
 
-impl DocFormat for Vec<Base> {
-    fn doc(&self) -> DocResult {
-        Ok(self.iter().map(|base| base.doc()).collect::<Result<Vec<_>, _>>()?.join(", "))
-    }
-}
-
-// TODO: remove
-impl DocFormat for FunctionDefinition {
-    fn doc(&self) -> DocResult {
-        let name = self.name.as_ref().map_or(self.ty.to_string(), |n| n.name.to_owned());
-        DocOutput::H3(&name).doc()
-    }
-}
-
-impl DocFormat for EventDefinition {
-    fn doc(&self) -> DocResult {
-        DocOutput::H3(&self.name.name).doc()
-    }
-}
-
-impl DocFormat for ErrorDefinition {
-    fn doc(&self) -> DocResult {
-        DocOutput::H3(&self.name.name).doc()
-    }
-}
-
-impl DocFormat for StructDefinition {
-    fn doc(&self) -> DocResult {
-        DocOutput::H3(&self.name.name).doc()
-    }
-}
-
-impl DocFormat for EnumDefinition {
-    fn doc(&self) -> DocResult {
-        DocOutput::H3(&self.name.name).doc()
-    }
-}
-
-impl DocFormat for VariableDefinition {
-    fn doc(&self) -> DocResult {
-        DocOutput::H3(&self.name.name).doc()
-    }
-}
-
-impl DocFormat for ParseItem {
-    fn doc(&self) -> DocResult {
+impl AsDoc for ParseItem {
+    fn as_doc(&self) -> AsDocResult {
         let mut writer = BufWriter::default();
 
         match &self.source {
@@ -110,14 +65,14 @@ impl DocFormat for ParseItem {
                     let bases = contract
                         .base
                         .iter()
-                        .map(|base| base.doc())
+                        .map(|base| base.as_doc())
                         .collect::<Result<Vec<_>, _>>()?;
                     writer.write_bold("Inherits:")?;
                     writer.write_raw(bases.join(", "))?;
                     writer.writeln()?;
                 }
 
-                writer.write_raw(self.comments.doc()?)?;
+                writer.write_raw(self.comments.as_doc()?)?;
 
                 if let Some(state_vars) = self.variables() {
                     writer.write_subtitle("State Variables")?;
@@ -137,7 +92,7 @@ impl DocFormat for ParseItem {
 
                         // Write function docs
                         writer.write_raw(
-                            exclude_comment_tags(comments, vec!["param", "return"]).doc()?,
+                            exclude_comment_tags(comments, vec!["param", "return"]).as_doc()?,
                         )?;
 
                         // Write function header
@@ -239,7 +194,7 @@ impl DocFormat for ParseItem {
 
                 // Write function docs
                 writer.write_raw(
-                    exclude_comment_tags(&self.comments, vec!["param", "return"]).doc()?,
+                    exclude_comment_tags(&self.comments, vec!["param", "return"]).as_doc()?,
                 )?;
 
                 // Write function header

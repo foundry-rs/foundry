@@ -9,7 +9,6 @@
 //!
 //! See [DocBuilder]
 
-mod as_code;
 mod builder;
 mod format;
 mod helpers;
@@ -17,5 +16,11 @@ mod output;
 mod parser;
 mod writer;
 
+/// The documentation builder.
 pub use builder::DocBuilder;
+
+/// Solidity parser and related output items.
 pub use parser::{error, ParseItem, ParseSource, Parser};
+
+/// Traits for formatting items into doc output/
+pub use format::{AsCode, AsDoc, AsDocResult};

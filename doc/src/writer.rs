@@ -2,7 +2,10 @@ use itertools::Itertools;
 use solang_parser::{doccomment::DocCommentTag, pt::Parameter};
 use std::fmt::{self, Display, Write};
 
-use crate::{as_code::AsCode, format::DocFormat, output::DocOutput};
+use crate::{
+    format::{AsCode, AsDoc},
+    output::DocOutput,
+};
 
 /// TODO: comments
 #[derive(Default)]
@@ -51,7 +54,7 @@ impl BufWriter {
         depth: usize,
     ) -> fmt::Result {
         let link = DocOutput::Link(name, path);
-        self.write_list_item(&link.doc()?, depth)
+        self.write_list_item(&link.as_doc()?, depth)
     }
 
     pub(crate) fn write_code<T: AsCode>(&mut self, item: T) -> fmt::Result {
@@ -61,12 +64,12 @@ impl BufWriter {
     }
 
     // TODO: revise
-    pub(crate) fn write_section<T: DocFormat + AsCode>(
+    pub(crate) fn write_section<T: AsCode>(
         &mut self,
         item: T,
         comments: &Vec<DocCommentTag>,
     ) -> fmt::Result {
-        self.write_raw(&comments.doc()?)?;
+        self.write_raw(&comments.as_doc()?)?;
         self.writeln()?;
         self.write_code(item)?;
         self.writeln()?;

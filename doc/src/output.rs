@@ -1,4 +1,4 @@
-use crate::format::{DocFormat, DocResult};
+use crate::format::{AsDoc, AsDocResult};
 
 /// TODO: rename
 pub(crate) enum DocOutput<'a> {
@@ -10,8 +10,8 @@ pub(crate) enum DocOutput<'a> {
     CodeBlock(&'a str, &'a str),
 }
 
-impl<'a> DocFormat for DocOutput<'a> {
-    fn doc(&self) -> DocResult {
+impl<'a> AsDoc for DocOutput<'a> {
+    fn as_doc(&self) -> AsDocResult {
         let doc = match self {
             Self::H1(val) => format!("# {val}"),
             Self::H2(val) => format!("## {val}"),
@@ -26,6 +26,6 @@ impl<'a> DocFormat for DocOutput<'a> {
 
 impl<'a> std::fmt::Display for DocOutput<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("{}", self.doc()?))
+        f.write_fmt(format_args!("{}", self.as_doc()?))
     }
 }

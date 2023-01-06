@@ -61,7 +61,8 @@ impl Parser {
         Ok(parent)
     }
 
-    /// Adds a child element to the parent parsed item.
+    /// Adds a child element to the parent item if it exists.
+    /// Otherwise the element will be added to a top-level items collection.
     /// Moves the doc comment pointer to the end location of the child element.
     fn add_element_to_parent(&mut self, source: ParseSource, loc: Loc) {
         let child = ParseItem { source, comments: self.parse_docs(loc.start()), children: vec![] };
@@ -93,12 +94,15 @@ impl Visitor for Parser {
         for source in source_unit.0.iter_mut() {
             match source {
                 SourceUnitPart::ContractDefinition(def) => {
-                    let contract = ParseItem {
-                        source: ParseSource::Contract(def.clone()),
-                        comments: self.parse_docs(def.loc.start()),
-                        children: vec![],
-                    };
+                    // Create new contract parse item.
+                    let source = ParseSource::Contract(def.clone());
+                    let comments = self.parse_docs(def.loc.start());
+                    let contract = ParseItem::new(source).with_comments(comments);
+
+                    // Move the doc pointer to the contract location start.
                     self.start_at = def.loc.start();
+
+                    // Parse child elements with current contract as parent
                     let contract = self.with_parent(contract, |doc| {
                         def.parts
                             .iter_mut()
@@ -107,7 +111,10 @@ impl Visitor for Parser {
                         Ok(())
                     })?;
 
+                    // Move the doc pointer to the contract location end.
                     self.start_at = def.loc.end();
+
+                    // Add contract to the parsed items.
                     self.items.push(contract);
                 }
                 SourceUnitPart::FunctionDefinition(func) => self.visit_function(func)?,
@@ -115,6 +122,7 @@ impl Visitor for Parser {
                 SourceUnitPart::ErrorDefinition(error) => self.visit_error(error)?,
                 SourceUnitPart::StructDefinition(structure) => self.visit_struct(structure)?,
                 SourceUnitPart::EnumDefinition(enumerable) => self.visit_enum(enumerable)?,
+                SourceUnitPart::VariableDefinition(var) => self.visit_var_definition(var)?,
                 _ => {}
             };
         }
@@ -153,22 +161,108 @@ impl Visitor for Parser {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use std::{fs, path::PathBuf};
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use assert_matches::assert_matches;
+    use solang_parser::parse;
 
-//     // TODO: write tests w/ sol source code
+    #[inline]
+    fn parse_source(src: &str) -> Vec<ParseItem> {
+        let (mut source, comments) = parse(src, 0).expect("failed to parse source");
+        let mut doc = Parser::new(comments);
+        source.visit(&mut doc).expect("failed to visit source");
+        doc.items()
+    }
 
-//     #[test]
-//     fn parse_docs() {
-//         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-//             .join("testdata")
-//             .join("oz-governance")
-//             .join("Governor.sol");
-//         let target = fs::read_to_string(path).unwrap();
-//         let (mut source_pt, source_comments) = solang_parser::parse(&target, 1).unwrap();
-//         let mut d = DocParser::new(source_comments);
-//         assert!(source_pt.visit(&mut d).is_ok());
-//     }
-// }
+    macro_rules! test_single_unit {
+        ($test:ident, $src:expr, $variant:ident $identity:expr) => {
+            #[test]
+            fn $test() {
+                let items = parse_source($src);
+                assert_eq!(items.len(), 1);
+                let item = items.first().unwrap();
+                assert!(item.comments.is_empty());
+                assert!(item.children.is_empty());
+                assert_eq!(item.source.ident(), $identity);
+                assert_matches!(item.source, ParseSource::$variant(_));
+            }
+        };
+    }
+
+    #[test]
+    fn empty_source() {
+        assert_eq!(parse_source(""), vec![]);
+    }
+
+    test_single_unit!(single_function, "function someFn() { }", Function "someFn");
+    test_single_unit!(single_variable, "uint256 constant VALUE = 0;", Variable "VALUE");
+    test_single_unit!(single_event, "event SomeEvent();", Event "SomeEvent");
+    test_single_unit!(single_error, "error SomeError();", Error "SomeError");
+    test_single_unit!(single_struct, "struct SomeStruct { }", Struct "SomeStruct");
+    test_single_unit!(single_enum, "enum SomeEnum { SOME, OTHER }", Enum "SomeEnum");
+    test_single_unit!(single_contract, "contract Contract { }", Contract "Contract");
+
+    #[test]
+    fn multiple_shallow_contracts() {
+        let items = parse_source(
+            r#"
+            contract A { }
+            contract B { }
+            contract C { }
+        "#,
+        );
+        assert_eq!(items.len(), 3);
+
+        let first_item = items.get(0).unwrap();
+        assert_matches!(first_item.source, ParseSource::Contract(_));
+        assert_eq!(first_item.source.ident(), "A");
+
+        let first_item = items.get(1).unwrap();
+        assert_matches!(first_item.source, ParseSource::Contract(_));
+        assert_eq!(first_item.source.ident(), "B");
+
+        let first_item = items.get(2).unwrap();
+        assert_matches!(first_item.source, ParseSource::Contract(_));
+        assert_eq!(first_item.source.ident(), "C");
+    }
+
+    #[test]
+    fn contract_with_children_items() {
+        let items = parse_source(
+            r#"
+            event TopLevelEvent();
+
+            contract Contract {
+                event ContractEvent();
+                error ContractError();
+                struct ContractStruct { }
+                enum ContractEnum { }
+
+                uint256 constant CONTRACT_CONSTANT;
+                bool contractVar;
+
+                function contractFunction(uint256) external returns (uint256) {
+                    bool localVar; // must be ignored
+                }
+            }
+        "#,
+        );
+
+        assert_eq!(items.len(), 2);
+
+        let event = items.get(0).unwrap();
+        assert!(event.comments.is_empty());
+        assert!(event.children.is_empty());
+        assert_eq!(event.source.ident(), "TopLevelEvent");
+        assert_matches!(event.source, ParseSource::Event(_));
+
+        let contract = items.get(1).unwrap();
+        assert!(contract.comments.is_empty());
+        assert_eq!(contract.children.len(), 7);
+        assert_eq!(contract.source.ident(), "Contract");
+        assert_matches!(contract.source, ParseSource::Contract(_));
+        assert!(contract.children.iter().all(|ch| ch.children.is_empty()));
+        assert!(contract.children.iter().all(|ch| ch.comments.is_empty()));
+    }
+}

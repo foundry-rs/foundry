@@ -11,7 +11,7 @@ use std::{
 };
 
 use crate::{
-    format::DocFormat,
+    format::AsDoc,
     output::DocOutput,
     parser::{ParseItem, ParseSource, Parser},
     writer::BufWriter,
@@ -144,7 +144,7 @@ impl DocBuilder {
 
         // Write doc files
         for file in files {
-            let doc_content = file.source.doc()?;
+            let doc_content = file.source.as_doc()?;
             fs::create_dir_all(
                 file.target_path.parent().ok_or(eyre::format_err!("empty target path; noop"))?,
             )?;
@@ -246,7 +246,8 @@ impl DocBuilder {
                                 .join(format!("contract.{}.md", base_contract.name)),
                         );
                         return Ok(Some(
-                            DocOutput::Link(&base.doc()?, &path.display().to_string()).doc()?,
+                            DocOutput::Link(&base.as_doc()?, &path.display().to_string())
+                                .as_doc()?,
                         ))
                     }
                 }

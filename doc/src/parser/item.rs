@@ -39,12 +39,16 @@ macro_rules! filter_children_fn {
 }
 
 impl ParseItem {
-    filter_children_fn!(pub fn variables(&self, Variable) -> VariableDefinition);
-    filter_children_fn!(pub fn functions(&self, Function) -> FunctionDefinition);
-    filter_children_fn!(pub fn events(&self, Event) -> EventDefinition);
-    filter_children_fn!(pub fn errors(&self, Error) -> ErrorDefinition);
-    filter_children_fn!(pub fn structs(&self, Struct) -> StructDefinition);
-    filter_children_fn!(pub fn enums(&self, Enum) -> EnumDefinition);
+    /// Create new instance of [ParseItem].
+    pub fn new(source: ParseSource) -> Self {
+        Self { source, comments: Default::default(), children: Default::default() }
+    }
+
+    /// Set comments on the [ParseItem].
+    pub fn with_comments(mut self, comments: Vec<DocCommentTag>) -> Self {
+        self.comments = comments;
+        self
+    }
 
     /// Format the item's filename.
     pub fn filename(&self) -> String {
@@ -60,6 +64,13 @@ impl ParseItem {
         let ident = self.source.ident();
         format!("{prefix}.{ident}.md")
     }
+
+    filter_children_fn!(pub fn variables(&self, Variable) -> VariableDefinition);
+    filter_children_fn!(pub fn functions(&self, Function) -> FunctionDefinition);
+    filter_children_fn!(pub fn events(&self, Event) -> EventDefinition);
+    filter_children_fn!(pub fn errors(&self, Error) -> ErrorDefinition);
+    filter_children_fn!(pub fn structs(&self, Struct) -> StructDefinition);
+    filter_children_fn!(pub fn enums(&self, Enum) -> EnumDefinition);
 }
 
 /// A wrapper type around pt token.
