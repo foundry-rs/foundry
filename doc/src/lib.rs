@@ -9,8 +9,6 @@
 //!
 //! See [DocBuilder]
 
-pub use builder::DocBuilder;
-
 mod as_code;
 mod builder;
 mod format;
@@ -18,3 +16,6 @@ mod helpers;
 mod output;
 mod parser;
 mod writer;
+
+pub use builder::DocBuilder;
+pub use parser::{error, ParseItem, ParseSource, Parser};

@@ -13,25 +13,25 @@ use std::{
 use crate::{
     format::DocFormat,
     output::DocOutput,
-    parser::{DocElement, DocItem, DocParser},
+    parser::{ParseItem, ParseSource, Parser},
     writer::BufWriter,
 };
 
 #[derive(Debug)]
 struct DocFile {
-    source: DocItem,
+    source: ParseItem,
     source_path: PathBuf,
     target_path: PathBuf,
 }
 
 impl DocFile {
-    fn new(source: DocItem, source_path: PathBuf, target_path: PathBuf) -> Self {
+    fn new(source: ParseItem, source_path: PathBuf, target_path: PathBuf) -> Self {
         Self { source_path, source, target_path }
     }
 }
 
 /// Build Solidity documentation for a project from natspec comments.
-/// The builder parses the source files using [DocParser],
+/// The builder parses the source files using [Parser],
 /// then formats and writes the elements as the output.
 #[derive(Debug)]
 pub struct DocBuilder {
@@ -73,9 +73,9 @@ impl DocBuilder {
                             diags
                         )
                     })?;
-                let mut doc = DocParser::new(comments);
+                let mut doc = Parser::new(comments);
                 source_unit.visit(&mut doc)?;
-                doc.items
+                doc.items()
                     .into_iter()
                     .map(|item| {
                         let relative_path = path.strip_prefix(&self.root)?.join(item.filename());
@@ -204,7 +204,7 @@ impl DocBuilder {
         for (path, files) in grouped {
             if path.extension().map(|ext| ext.eq(Self::SOL_EXT)).unwrap_or_default() {
                 for file in files {
-                    let ident = file.source.element.ident();
+                    let ident = file.source.source.ident();
 
                     let readme_path = Path::new("/").join(&path).display().to_string();
                     readme.write_link_list_item(&ident, &readme_path, 0)?;
@@ -233,12 +233,12 @@ impl DocBuilder {
     // TODO:
     fn lookup_contract_base<'a>(
         &self,
-        docs: &[(PathBuf, Vec<DocItem>)],
+        docs: &[(PathBuf, Vec<ParseItem>)],
         base: &Base,
     ) -> eyre::Result<Option<String>> {
         for (base_path, base_doc) in docs {
             for base_part in base_doc.iter() {
-                if let DocElement::Contract(base_contract) = &base_part.element {
+                if let ParseSource::Contract(base_contract) = &base_part.source {
                     if base.name.identifiers.last().unwrap().name == base_contract.name.name {
                         let path = PathBuf::from("/").join(
                             base_path

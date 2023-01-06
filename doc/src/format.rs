@@ -1,7 +1,7 @@
 use crate::{
     helpers::{comments_by_tag, exclude_comment_tags},
     output::DocOutput,
-    parser::{DocElement, DocItem},
+    parser::{ParseItem, ParseSource},
     writer::BufWriter,
 };
 use itertools::Itertools;
@@ -95,12 +95,12 @@ impl DocFormat for VariableDefinition {
     }
 }
 
-impl DocFormat for DocItem {
+impl DocFormat for ParseItem {
     fn doc(&self) -> DocResult {
         let mut writer = BufWriter::default();
 
-        match &self.element {
-            DocElement::Contract(contract) => {
+        match &self.source {
+            ParseSource::Contract(contract) => {
                 writer.write_title(&contract.name.name)?;
 
                 if !contract.base.is_empty() {
@@ -209,27 +209,27 @@ impl DocFormat for DocItem {
                     })?;
                 }
             }
-            DocElement::Variable(var) => {
+            ParseSource::Variable(var) => {
                 writer.write_title(&var.name.name)?;
                 writer.write_section(var, &self.comments)?;
             }
-            DocElement::Event(event) => {
+            ParseSource::Event(event) => {
                 writer.write_title(&event.name.name)?;
                 writer.write_section(event, &self.comments)?;
             }
-            DocElement::Error(error) => {
+            ParseSource::Error(error) => {
                 writer.write_title(&error.name.name)?;
                 writer.write_section(error, &self.comments)?;
             }
-            DocElement::Struct(structure) => {
+            ParseSource::Struct(structure) => {
                 writer.write_title(&structure.name.name)?;
                 writer.write_section(structure, &self.comments)?;
             }
-            DocElement::Enum(enumerable) => {
+            ParseSource::Enum(enumerable) => {
                 writer.write_title(&enumerable.name.name)?;
                 writer.write_section(enumerable, &self.comments)?;
             }
-            DocElement::Function(func) => {
+            ParseSource::Function(func) => {
                 // TODO: cleanup
                 // Write function name
                 let func_name =
