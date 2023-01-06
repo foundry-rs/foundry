@@ -1864,7 +1864,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#4fd742f8cea5fd4de1577f1a8541f8f9c4240ceb"
+source = "git+https://github.com/gakonst/ethers-rs#7ddfd84e20df47de3286a88261f03cdd8073fda7"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1879,7 +1879,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#4fd742f8cea5fd4de1577f1a8541f8f9c4240ceb"
+source = "git+https://github.com/gakonst/ethers-rs#7ddfd84e20df47de3286a88261f03cdd8073fda7"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1890,7 +1890,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#4fd742f8cea5fd4de1577f1a8541f8f9c4240ceb"
+source = "git+https://github.com/gakonst/ethers-rs#7ddfd84e20df47de3286a88261f03cdd8073fda7"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1908,7 +1908,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#4fd742f8cea5fd4de1577f1a8541f8f9c4240ceb"
+source = "git+https://github.com/gakonst/ethers-rs#7ddfd84e20df47de3286a88261f03cdd8073fda7"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -1932,7 +1932,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#4fd742f8cea5fd4de1577f1a8541f8f9c4240ceb"
+source = "git+https://github.com/gakonst/ethers-rs#7ddfd84e20df47de3286a88261f03cdd8073fda7"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1946,7 +1946,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#4fd742f8cea5fd4de1577f1a8541f8f9c4240ceb"
+source = "git+https://github.com/gakonst/ethers-rs#7ddfd84e20df47de3286a88261f03cdd8073fda7"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1977,7 +1977,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#4fd742f8cea5fd4de1577f1a8541f8f9c4240ceb"
+source = "git+https://github.com/gakonst/ethers-rs#7ddfd84e20df47de3286a88261f03cdd8073fda7"
 dependencies = [
  "ethers-core",
  "ethers-solc",
@@ -1994,7 +1994,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#4fd742f8cea5fd4de1577f1a8541f8f9c4240ceb"
+source = "git+https://github.com/gakonst/ethers-rs#7ddfd84e20df47de3286a88261f03cdd8073fda7"
 dependencies = [
  "async-trait",
  "auto_impl 0.5.0",
@@ -2019,7 +2019,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#4fd742f8cea5fd4de1577f1a8541f8f9c4240ceb"
+source = "git+https://github.com/gakonst/ethers-rs#7ddfd84e20df47de3286a88261f03cdd8073fda7"
 dependencies = [
  "async-trait",
  "auto_impl 1.0.1",
@@ -2058,7 +2058,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#4fd742f8cea5fd4de1577f1a8541f8f9c4240ceb"
+source = "git+https://github.com/gakonst/ethers-rs#7ddfd84e20df47de3286a88261f03cdd8073fda7"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -2085,7 +2085,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#4fd742f8cea5fd4de1577f1a8541f8f9c4240ceb"
+source = "git+https://github.com/gakonst/ethers-rs#7ddfd84e20df47de3286a88261f03cdd8073fda7"
 dependencies = [
  "cfg-if 1.0.0",
  "dunce",
@@ -3207,7 +3207,9 @@ checksum = "1788965e61b367cd03a62950836d5cd41560c3577d90e40e0819373194d1661c"
 dependencies = [
  "http",
  "hyper",
+ "log",
  "rustls",
+ "rustls-native-certs",
  "tokio",
  "tokio-rustls",
 ]
@@ -5144,7 +5146,7 @@ dependencies = [
  "futures",
  "http",
  "hyper",
- "hyper-tls",
+ "hyper-rustls",
  "lazy_static",
  "log",
  "rusoto_credential",
