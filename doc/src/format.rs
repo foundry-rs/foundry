@@ -113,11 +113,11 @@ impl DocFormat for DocItem {
                         .map(|base| base.doc())
                         .collect::<Result<Vec<_>, _>>()?;
                     writer.write_bold("Inherits:")?;
-                    writer.write_raw(&bases.join(", "))?;
+                    writer.write_raw(bases.join(", "))?;
                     writer.writeln()?;
                 }
 
-                writer.write_raw(&self.comments.doc()?)?;
+                writer.write_raw(self.comments.doc()?)?;
 
                 if let Some(state_vars) = self.variables() {
                     writer.write_subtitle("State Variables")?;
@@ -137,7 +137,7 @@ impl DocFormat for DocItem {
 
                         // Write function docs
                         writer.write_raw(
-                            &exclude_comment_tags(&comments, vec!["param", "return"]).doc()?,
+                            exclude_comment_tags(comments, vec!["param", "return"]).doc()?,
                         )?;
 
                         // Write function header
@@ -146,7 +146,7 @@ impl DocFormat for DocItem {
                         // Write function parameter comments in a table
                         let params =
                             func.params.iter().filter_map(|p| p.1.as_ref()).collect::<Vec<_>>();
-                        let param_comments = comments_by_tag(&comments, "param");
+                        let param_comments = comments_by_tag(comments, "param");
                         if !params.is_empty() && !param_comments.is_empty() {
                             writer.write_heading("Parameters")?;
                             writer.writeln()?;
@@ -160,7 +160,7 @@ impl DocFormat for DocItem {
                         // Write function parameter comments in a table
                         let returns =
                             func.returns.iter().filter_map(|p| p.1.as_ref()).collect::<Vec<_>>();
-                        let returns_comments = comments_by_tag(&comments, "return");
+                        let returns_comments = comments_by_tag(comments, "return");
                         if !returns.is_empty() && !returns_comments.is_empty() {
                             writer.write_heading("Returns")?;
                             writer.writeln()?;
@@ -239,7 +239,7 @@ impl DocFormat for DocItem {
 
                 // Write function docs
                 writer.write_raw(
-                    &exclude_comment_tags(&self.comments, vec!["param", "return"]).doc()?,
+                    exclude_comment_tags(&self.comments, vec!["param", "return"]).doc()?,
                 )?;
 
                 // Write function header

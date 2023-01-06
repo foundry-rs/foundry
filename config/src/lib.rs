@@ -64,6 +64,9 @@ pub use crate::fs_permissions::FsPermissions;
 pub mod error;
 pub use error::SolidityErrorCode;
 
+pub mod doc;
+pub use doc::DocConfig;
+
 mod warning;
 pub use warning::*;
 
@@ -333,6 +336,8 @@ pub struct Config {
     pub build_info_path: Option<PathBuf>,
     /// Configuration for `forge fmt`
     pub fmt: FormatterConfig,
+    /// Configuration for `forge doc`
+    pub doc: DocConfig,
     /// Configures the permissions of cheat codes that touch the file system.
     ///
     /// This includes what operations can be executed (read, write)
@@ -384,7 +389,7 @@ impl Config {
 
     /// Standalone sections in the config which get integrated into the selected profile
     pub const STANDALONE_SECTIONS: &'static [&'static str] =
-        &["rpc_endpoints", "etherscan", "fmt", "fuzz", "invariant"];
+        &["rpc_endpoints", "etherscan", "fmt", "doc", "fuzz", "invariant"];
 
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
@@ -1740,6 +1745,7 @@ impl Default for Config {
             build_info: false,
             build_info_path: None,
             fmt: Default::default(),
+            doc: Default::default(),
             __non_exhaustive: (),
             __warnings: vec![],
         }

@@ -10,11 +10,9 @@
 //! See [DocBuilder]
 
 pub use builder::DocBuilder;
-pub use config::DocConfig;
 
 mod as_code;
 mod builder;
-mod config;
 mod format;
 mod helpers;
 mod output;

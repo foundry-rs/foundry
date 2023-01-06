@@ -1,5 +1,4 @@
 use ethers_solc::utils::source_files_iter;
-use eyre;
 use forge_fmt::Visitable;
 use itertools::Itertools;
 use rayon::prelude::*;
@@ -12,7 +11,6 @@ use std::{
 };
 
 use crate::{
-    config::DocConfig,
     format::DocFormat,
     output::DocOutput,
     parser::{DocElement, DocItem, DocParser},
@@ -37,7 +35,14 @@ impl DocFile {
 /// then formats and writes the elements as the output.
 #[derive(Debug)]
 pub struct DocBuilder {
-    config: DocConfig,
+    /// The project root
+    pub root: PathBuf,
+    /// Path to Solidity source files.
+    pub sources: PathBuf,
+    /// Output path.
+    pub out: PathBuf,
+    /// The documentation title.
+    pub title: String,
 }
 
 // TODO: consider using `tfio`
@@ -46,25 +51,20 @@ impl DocBuilder {
     const SUMMARY: &'static str = "SUMMARY.md";
     const SOL_EXT: &'static str = "sol";
 
-    /// Construct a new builder with default configuration.
-    pub fn new() -> Self {
-        DocBuilder { config: DocConfig::default() }
-    }
-
-    /// Construct a new builder with provided configuration
-    pub fn from_config(config: DocConfig) -> Self {
-        DocBuilder { config }
+    /// Get the output directory
+    pub fn out_dir(&self) -> PathBuf {
+        self.root.join(&self.out)
     }
 
     /// Parse the sources and build the documentation.
     pub fn build(self) -> eyre::Result<()> {
         // Collect and parse source files
-        let sources: Vec<_> = source_files_iter(&self.config.sources).collect();
+        let sources: Vec<_> = source_files_iter(&self.sources).collect();
         let files = sources
             .par_iter()
             .enumerate()
             .map(|(i, path)| {
-                let source = fs::read_to_string(&path)?;
+                let source = fs::read_to_string(path)?;
                 let (mut source_unit, comments) =
                     solang_parser::parse(&source, i).map_err(|diags| {
                         eyre::eyre!(
@@ -75,16 +75,14 @@ impl DocBuilder {
                     })?;
                 let mut doc = DocParser::new(comments);
                 source_unit.visit(&mut doc)?;
-                Ok(doc
-                    .items
+                doc.items
                     .into_iter()
                     .map(|item| {
-                        let relative_path =
-                            path.strip_prefix(&self.config.root)?.join(item.filename());
-                        let target_path = self.config.out.join("src").join(relative_path);
+                        let relative_path = path.strip_prefix(&self.root)?.join(item.filename());
+                        let target_path = self.out.join("src").join(relative_path);
                         Ok(DocFile::new(item, path.clone(), target_path))
                     })
-                    .collect::<eyre::Result<Vec<_>>>()?)
+                    .collect::<eyre::Result<Vec<_>>>()
             })
             .collect::<eyre::Result<Vec<_>>>()?;
 
@@ -100,13 +98,13 @@ impl DocBuilder {
     }
 
     fn write_mdbook(&self, files: Vec<DocFile>) -> eyre::Result<()> {
-        let out_dir = self.config.out_dir();
+        let out_dir = self.out_dir();
         let out_dir_src = out_dir.join("src");
         fs::create_dir_all(&out_dir_src)?;
 
         // Write readme content if any
         let readme_content = {
-            let src_readme = self.config.sources.join(Self::README);
+            let src_readme = self.sources.join(Self::README);
             if src_readme.exists() {
                 fs::read_to_string(src_readme)?
             } else {
@@ -137,12 +135,12 @@ impl DocBuilder {
         // Write book config
         let mut book: toml::Value = toml::from_str(include_str!("../static/book.toml"))?;
         let book_entry = book["book"].as_table_mut().unwrap();
-        book_entry.insert(String::from("title"), self.config.title.clone().into());
-        fs::write(self.config.out_dir().join("book.toml"), toml::to_string_pretty(&book)?)?;
+        book_entry.insert(String::from("title"), self.title.clone().into());
+        fs::write(self.out_dir().join("book.toml"), toml::to_string_pretty(&book)?)?;
 
         // Write .gitignore
         let gitignore = "book/";
-        fs::write(self.config.out_dir().join(".gitignore"), gitignore)?;
+        fs::write(self.out_dir().join(".gitignore"), gitignore)?;
 
         // Write doc files
         for file in files {
@@ -175,7 +173,7 @@ impl DocBuilder {
                 let summary_path = path.join(Self::README);
                 summary.write_link_list_item(
                     &title,
-                    &summary_path.as_os_str().to_string_lossy(),
+                    &summary_path.display().to_string(),
                     depth - 1,
                 )?;
             }
@@ -184,9 +182,9 @@ impl DocBuilder {
         // Group entries by path depth
         let mut grouped = HashMap::new();
         for file in files {
-            let path = file.source_path.strip_prefix(&self.config.root)?;
+            let path = file.source_path.strip_prefix(&self.root)?;
             let key = path.iter().take(depth + 1).collect::<PathBuf>();
-            grouped.entry(key).or_insert_with(Vec::new).push(file.clone());
+            grouped.entry(key).or_insert_with(Vec::new).push(*file);
         }
         // Sort entries by path depth
         let grouped = grouped.into_iter().sorted_by(|(lhs, _), (rhs, _)| {
@@ -211,7 +209,8 @@ impl DocBuilder {
                     let readme_path = Path::new("/").join(&path).display().to_string();
                     readme.write_link_list_item(&ident, &readme_path, 0)?;
 
-                    let summary_path = file.target_path.display().to_string();
+                    let summary_path =
+                        file.target_path.strip_prefix("docs/src")?.display().to_string();
                     summary.write_link_list_item(&ident, &summary_path, depth)?;
                 }
             } else {
@@ -223,7 +222,7 @@ impl DocBuilder {
         }
         if !readme.is_empty() {
             if let Some(path) = path {
-                let path = self.config.out_dir().join("src").join(path);
+                let path = self.out_dir().join("src").join(path);
                 fs::create_dir_all(&path)?;
                 fs::write(path.join(Self::README), readme.finish())?;
             }
@@ -243,8 +242,8 @@ impl DocBuilder {
                     if base.name.identifiers.last().unwrap().name == base_contract.name.name {
                         let path = PathBuf::from("/").join(
                             base_path
-                                .strip_prefix(&self.config.root)?
-                                .join(&format!("contract.{}.md", base_contract.name)),
+                                .strip_prefix(&self.root)?
+                                .join(format!("contract.{}.md", base_contract.name)),
                         );
                         return Ok(Some(
                             DocOutput::Link(&base.doc()?, &path.display().to_string()).doc()?,

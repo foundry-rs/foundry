@@ -50,7 +50,7 @@ impl AsCode for FunctionDefinition {
         }
         let mut returns = self.returns.as_code();
         if !returns.is_empty() {
-            returns = format!(" returns ({})", returns)
+            returns = format!(" returns ({returns})")
         }
         format!("{ty}{name}({params}){attributes}{returns}")
     }
@@ -65,11 +65,11 @@ impl AsCode for Expression {
                 Type::Payable => "payable".to_owned(),
                 Type::Bool => "bool".to_owned(),
                 Type::String => "string".to_owned(),
-                Type::Bytes(n) => format!("bytes{}", n),
+                Type::Bytes(n) => format!("bytes{n}"),
                 Type::Rational => "rational".to_owned(),
                 Type::DynamicBytes => "bytes".to_owned(),
-                Type::Int(n) => format!("int{}", n),
-                Type::Uint(n) => format!("uint{}", n),
+                Type::Int(n) => format!("int{n}"),
+                Type::Uint(n) => format!("uint{n}"),
                 Type::Mapping(_, from, to) => {
                     format!("mapping({} => {})", from.as_code(), to.as_code())
                 }
@@ -83,7 +83,7 @@ impl AsCode for Expression {
                     if let Some((params, _attrs)) = returns {
                         returns_str = params.as_code();
                         if !returns_str.is_empty() {
-                            returns_str = format!(" returns ({})", returns_str)
+                            returns_str = format!(" returns ({returns_str})")
                         }
                     }
                     format!("function ({params}){attributes}{returns_str}")
@@ -224,6 +224,6 @@ impl AsCode for EnumDefinition {
 
 impl AsCode for Identifier {
     fn as_code(&self) -> String {
-        format!("{}", self.name)
+        self.name.to_string()
     }
 }

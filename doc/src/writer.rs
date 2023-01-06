@@ -66,14 +66,8 @@ impl BufWriter {
         item: T,
         comments: &Vec<DocCommentTag>,
     ) -> fmt::Result {
-        // self.write_subtitle(subtitle)?; // TODO: h2/h3 or no title
-        // for (entry, comments) in entries {
-        //     writeln!(self.buf, "{}\n{}\n", entry.doc(), comments.doc())?;
-        //     // writeln_code!(self.buf, "{}", entry)?;
-        //     self.write_code(entry)?;
-        //     self.writeln()?;
-        // }
-        writeln!(self.buf, "{}\n{}\n", item.doc()?, comments.doc()?)?;
+        self.write_raw(&comments.doc()?)?;
+        self.writeln()?;
         self.write_code(item)?;
         self.writeln()?;
         Ok(())
@@ -94,17 +88,16 @@ impl BufWriter {
             let param_name = param.name.as_ref().map(|n| n.name.to_owned());
             let description = param_name
                 .as_ref()
-                .map(|name| {
+                .and_then(|name| {
                     comments.iter().find_map(|comment| {
                         match comment.value.trim_start().split_once(' ') {
                             Some((tag_name, description)) if tag_name.trim().eq(name.as_str()) => {
-                                Some(description.replace("\n", " "))
+                                Some(description.replace('\n', " "))
                             }
                             _ => None,
                         }
                     })
                 })
-                .flatten()
                 .unwrap_or_default();
             let row = [
                 param_name.unwrap_or_else(|| "<none>".to_owned()),
