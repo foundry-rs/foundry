@@ -3207,7 +3207,9 @@ checksum = "1788965e61b367cd03a62950836d5cd41560c3577d90e40e0819373194d1661c"
 dependencies = [
  "http",
  "hyper",
+ "log",
  "rustls",
+ "rustls-native-certs",
  "tokio",
  "tokio-rustls",
 ]
@@ -5144,6 +5146,7 @@ dependencies = [
  "futures",
  "http",
  "hyper",
+ "hyper-rustls",
  "hyper-tls",
  "lazy_static",
  "log",
