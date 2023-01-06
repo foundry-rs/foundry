@@ -6,6 +6,9 @@ vulnerability = "deny"
 unmaintained = "warn"
 yanked = "warn"
 notice = "warn"
+ignore = [
+    "RUSTSEC-2020-0071", # https://rustsec.org/advisories/RUSTSEC-2020-0071
+]
 
 # This section is considered when running `cargo deny check bans`.
 # More documentation about the 'bans' section can be found here:
