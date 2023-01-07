@@ -1,5 +1,5 @@
 // config: line_length = 60
-// config: override_spacing = false
+// config: override_spacing = true
 interface FunctionInterfaces {
     function noParamsNoModifiersNoReturns();
 
@@ -698,7 +698,7 @@ contract FunctionOverrides is
     }
 
     function oneParam(uint256 x)
-        override(
+        override (
             FunctionInterfaces,
             FunctionDefinitions,
             SomeOtherFunctionContract,
