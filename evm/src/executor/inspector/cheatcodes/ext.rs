@@ -5,7 +5,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethers::{
-    abi::{self, AbiEncode, ParamType, Token},
+    abi::{self, AbiEncode, JsonAbi, ParamType, Token},
     prelude::artifacts::CompactContractBytecode,
     types::*,
 };
@@ -67,6 +67,7 @@ fn ffi(state: &Cheatcodes, args: &[String]) -> Result<Bytes, Bytes> {
 #[allow(clippy::large_enum_variant)]
 enum ArtifactBytecode {
     Hardhat(HardhatArtifact),
+    Solc(JsonAbi),
     Forge(CompactContractBytecode),
 }
 
@@ -77,6 +78,7 @@ impl ArtifactBytecode {
             ArtifactBytecode::Forge(inner) => {
                 inner.bytecode.and_then(|bytecode| bytecode.object.into_bytes())
             }
+            ArtifactBytecode::Solc(inner) => inner.bytecode(),
         }
     }
 
@@ -86,6 +88,7 @@ impl ArtifactBytecode {
             ArtifactBytecode::Forge(inner) => inner.deployed_bytecode.and_then(|bytecode| {
                 bytecode.bytecode.and_then(|bytecode| bytecode.object.into_bytes())
             }),
+            ArtifactBytecode::Solc(inner) => inner.deployed_bytecode(),
         }
     }
 }
@@ -681,5 +684,15 @@ mod tests {
 
         let output = String::decode(&output).unwrap();
         assert_eq!(output, msg);
+    }
+
+    #[test]
+    fn test_artifact_parsing() {
+        let s = include_str!("../../../../test-data/solc-obj.json");
+        let artifact: ArtifactBytecode = serde_json::from_str(s).unwrap();
+        assert!(artifact.into_bytecode().is_some());
+
+        let artifact: ArtifactBytecode = serde_json::from_str(s).unwrap();
+        assert!(artifact.into_deployed_bytecode().is_some());
     }
 }
