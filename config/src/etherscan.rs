@@ -13,6 +13,9 @@ use std::{
 };
 use tracing::warn;
 
+/// The user agent to use when querying the etherscan API.
+pub const ETHERSCAN_USER_AGENT: &str = concat!("foundry/", env!("CARGO_PKG_VERSION"));
+
 /// Errors that can occur when creating an `EtherscanConfig`
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum EtherscanConfigError {
@@ -256,6 +259,7 @@ impl ResolvedEtherscanConfig {
         }
 
         ethers_etherscan::Client::builder()
+            .with_client(reqwest::Client::builder().user_agent(ETHERSCAN_USER_AGENT).build()?)
             .with_api_key(api_key)
             .with_api_url(api_url.as_str())?
             .with_url(

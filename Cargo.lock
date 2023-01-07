@@ -2480,6 +2480,7 @@ dependencies = [
  "path-slash",
  "pretty_assertions",
  "regex",
+ "reqwest",
  "semver",
  "serde",
  "serde_regex",
