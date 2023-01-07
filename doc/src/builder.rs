@@ -2,7 +2,6 @@ use ethers_solc::utils::source_files_iter;
 use forge_fmt::Visitable;
 use itertools::Itertools;
 use rayon::prelude::*;
-use solang_parser::pt::Base;
 use std::{
     cmp::Ordering,
     collections::HashMap,
@@ -10,25 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{
-    format::AsDoc,
-    output::DocOutput,
-    parser::{ParseItem, ParseSource, Parser},
-    writer::BufWriter,
-};
-
-#[derive(Debug)]
-struct DocFile {
-    item: ParseItem,
-    item_path: PathBuf,
-    target_path: PathBuf,
-}
-
-impl DocFile {
-    fn new(item: ParseItem, item_path: PathBuf, target_path: PathBuf) -> Self {
-        Self { item_path, item, target_path }
-    }
-}
+use crate::{AsDoc, BufWriter, Document, Parser, Preprocessor};
 
 /// Build Solidity documentation for a project from natspec comments.
 /// The builder parses the source files using [Parser],
@@ -43,13 +24,45 @@ pub struct DocBuilder {
     pub out: PathBuf,
     /// The documentation title.
     pub title: String,
+    /// THe
+    pub preprocessors: Vec<Box<dyn Preprocessor>>,
 }
 
 // TODO: consider using `tfio`
 impl DocBuilder {
+    const SRC: &'static str = "src";
+    const SOL_EXT: &'static str = "sol";
     const README: &'static str = "README.md";
     const SUMMARY: &'static str = "SUMMARY.md";
-    const SOL_EXT: &'static str = "sol";
+
+    /// Create new instance of builder.
+    pub fn new(root: PathBuf, sources: PathBuf) -> Self {
+        Self {
+            root,
+            sources,
+            out: Default::default(),
+            title: Default::default(),
+            preprocessors: Default::default(),
+        }
+    }
+
+    /// Set an `out` path on the builder.
+    pub fn with_out(mut self, out: PathBuf) -> Self {
+        self.out = out;
+        self
+    }
+
+    /// Set title on the builder
+    pub fn with_title(mut self, title: String) -> Self {
+        self.title = title;
+        self
+    }
+
+    /// Set preprocessors on the builder.
+    pub fn with_preprocessors(mut self, preprocessors: Vec<Box<dyn Preprocessor>>) -> Self {
+        self.preprocessors = preprocessors;
+        self
+    }
 
     /// Get the output directory
     pub fn out_dir(&self) -> PathBuf {
@@ -60,7 +73,7 @@ impl DocBuilder {
     pub fn build(self) -> eyre::Result<()> {
         // Collect and parse source files
         let sources: Vec<_> = source_files_iter(&self.sources).collect();
-        let files = sources
+        let documents = sources
             .par_iter()
             .enumerate()
             .map(|(i, path)| {
@@ -79,30 +92,33 @@ impl DocBuilder {
                     .into_iter()
                     .map(|item| {
                         let relative_path = path.strip_prefix(&self.root)?.join(item.filename());
-                        let target_path = self.out.join("src").join(relative_path);
-                        Ok(DocFile::new(item, path.clone(), target_path))
+                        let target_path = self.out.join(Self::SRC).join(relative_path);
+                        Ok(Document::new(item, path.clone(), target_path))
                     })
                     .collect::<eyre::Result<Vec<_>>>()
             })
             .collect::<eyre::Result<Vec<_>>>()?;
 
         // Flatten and sort the results
-        let files = files.into_iter().flatten().sorted_by(|file1, file2| {
-            file1.item_path.display().to_string().cmp(&file2.item_path.display().to_string())
+        let documents = documents.into_iter().flatten().sorted_by(|doc1, doc2| {
+            doc1.item_path.display().to_string().cmp(&doc2.item_path.display().to_string())
         });
 
         // Apply preprocessors to files
-        // TODO:
+        let documents = self
+            .preprocessors
+            .iter()
+            .try_fold(documents.collect::<Vec<_>>(), |docs, p| p.preprocess(docs))?;
 
         // Write mdbook related files
-        self.write_mdbook(files.collect::<Vec<_>>())?;
+        self.write_mdbook(documents)?;
 
         Ok(())
     }
 
-    fn write_mdbook(&self, files: Vec<DocFile>) -> eyre::Result<()> {
+    fn write_mdbook(&self, documents: Vec<Document>) -> eyre::Result<()> {
         let out_dir = self.out_dir();
-        let out_dir_src = out_dir.join("src");
+        let out_dir_src = out_dir.join(Self::SRC);
         fs::create_dir_all(&out_dir_src)?;
 
         // Write readme content if any
@@ -121,7 +137,7 @@ impl DocBuilder {
         let mut summary = BufWriter::default();
         summary.write_title("Summary")?;
         summary.write_link_list_item("README", Self::README, 0)?;
-        self.write_summary_section(&mut summary, &files.iter().collect::<Vec<_>>(), None, 0)?;
+        self.write_summary_section(&mut summary, &documents.iter().collect::<Vec<_>>(), None, 0)?;
         fs::write(out_dir_src.join(Self::SUMMARY), summary.finish())?;
 
         // Create dir for static files
@@ -145,12 +161,14 @@ impl DocBuilder {
         fs::write(self.out_dir().join(".gitignore"), gitignore)?;
 
         // Write doc files
-        for file in files {
-            let doc_content = file.item.as_doc()?;
+        for document in documents {
             fs::create_dir_all(
-                file.target_path.parent().ok_or(eyre::format_err!("empty target path; noop"))?,
+                document
+                    .target_path
+                    .parent()
+                    .ok_or(eyre::format_err!("empty target path; noop"))?,
             )?;
-            fs::write(file.target_path, doc_content)?;
+            fs::write(&document.target_path, document.as_doc()?)?;
         }
 
         Ok(())
@@ -159,15 +177,15 @@ impl DocBuilder {
     fn write_summary_section(
         &self,
         summary: &mut BufWriter,
-        files: &[&DocFile],
-        path: Option<&Path>,
+        files: &[&Document],
+        base_path: Option<&Path>,
         depth: usize,
     ) -> eyre::Result<()> {
         if files.is_empty() {
             return Ok(())
         }
 
-        if let Some(path) = path {
+        if let Some(path) = base_path {
             let title = path.iter().last().unwrap().to_string_lossy();
             if depth == 1 {
                 summary.write_title(&title)?;
@@ -207,13 +225,34 @@ impl DocBuilder {
             if path.extension().map(|ext| ext.eq(Self::SOL_EXT)).unwrap_or_default() {
                 for file in files {
                     let ident = file.item.source.ident();
+                    // let mut link_path = file.target_path.strip_prefix("docs/src")?;
+                    // if let Some(path) = base_path {
+                    //     link_path = link_path.strip_prefix(path.parent().unwrap())?;
+                    // }
+                    // let link_path = link_path.display().to_string();
+                    // TODO:
+                    // println!("LINK PATH {link_path}");
+                    // println!("PATH {:?}", path.display().to_string());
 
-                    let readme_path = Path::new("/").join(&path).display().to_string();
-                    readme.write_link_list_item(&ident, &readme_path, 0)?;
+                    let summary_path = file.target_path.strip_prefix("docs/src")?;
+                    summary.write_link_list_item(
+                        &ident,
+                        &summary_path.display().to_string(),
+                        depth,
+                    )?;
 
-                    let summary_path =
-                        file.target_path.strip_prefix("docs/src")?.display().to_string();
-                    summary.write_link_list_item(&ident, &summary_path, depth)?;
+                    let readme_path = base_path
+                        .map(|path| summary_path.strip_prefix(path))
+                        .transpose()?
+                        .unwrap_or(summary_path);
+                    readme.write_link_list_item(&ident, &readme_path.display().to_string(), 0)?;
+
+                    println!("SUMMARY PATH {}", summary_path.display().to_string());
+                    println!("README PATH {}", readme_path.display().to_string());
+
+                    // let summary_path =
+                    //     file.target_path.strip_prefix("docs/src")?.display().to_string();
+                    // summary.write_link_list_item(&ident, &link_path, depth)?;
                 }
             } else {
                 let name = path.iter().last().unwrap().to_string_lossy();
@@ -223,39 +262,12 @@ impl DocBuilder {
             }
         }
         if !readme.is_empty() {
-            if let Some(path) = path {
-                let path = self.out_dir().join("src").join(path);
+            if let Some(path) = base_path {
+                let path = self.out_dir().join(Self::SRC).join(path);
                 fs::create_dir_all(&path)?;
                 fs::write(path.join(Self::README), readme.finish())?;
             }
         }
         Ok(())
-    }
-
-    // TODO:
-    fn lookup_contract_base<'a>(
-        &self,
-        docs: &[(PathBuf, Vec<ParseItem>)],
-        base: &Base,
-    ) -> eyre::Result<Option<String>> {
-        for (base_path, base_doc) in docs {
-            for base_part in base_doc.iter() {
-                if let ParseSource::Contract(base_contract) = &base_part.source {
-                    if base.name.identifiers.last().unwrap().name == base_contract.name.name {
-                        let path = PathBuf::from("/").join(
-                            base_path
-                                .strip_prefix(&self.root)?
-                                .join(format!("contract.{}.md", base_contract.name)),
-                        );
-                        return Ok(Some(
-                            DocOutput::Link(&base.as_doc()?, &path.display().to_string())
-                                .as_doc()?,
-                        ))
-                    }
-                }
-            }
-        }
-
-        Ok(None)
     }
 }

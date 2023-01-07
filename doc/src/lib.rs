@@ -10,17 +10,22 @@
 //! See [DocBuilder]
 
 mod builder;
-mod format;
-mod helpers;
-mod output;
+mod document;
 mod parser;
+mod preprocessor;
 mod writer;
 
 /// The documentation builder.
 pub use builder::DocBuilder;
 
+/// The document output.
+pub use document::Document;
+
 /// Solidity parser and related output items.
 pub use parser::{error, ParseItem, ParseSource, Parser};
 
-/// Traits for formatting items into doc output/
-pub use format::{AsCode, AsDoc, AsDocResult};
+/// Preprocessors.
+pub use preprocessor::*;
+
+/// Traits for formatting items into doc output.
+pub use writer::{AsCode, AsDoc, AsDocResult, BufWriter, Markdown};

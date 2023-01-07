@@ -17,8 +17,8 @@ pub struct ParseItem {
     pub children: Vec<ParseItem>,
 }
 
-/// Filters [ParseItem]'s children and returns the source pt token of the children
-/// matching the target variant as well as its comments.
+/// Defines a method that filters [ParseItem]'s children and returns the source pt token of the
+/// children matching the target variant as well as its comments.
 /// Returns [Option::None] if no children matching the variant are found.
 macro_rules! filter_children_fn {
     ($vis:vis fn $name:ident(&self, $variant:ident) -> $ret:ty) => {
@@ -38,6 +38,21 @@ macro_rules! filter_children_fn {
     };
 }
 
+/// Defines a method that returns [ParseSource] inner element if it matches
+/// the variant
+macro_rules! as_inner_source {
+    ($vis:vis fn $name:ident(&self, $variant:ident) -> $ret:ty) => {
+        /// Return inner element if it matches $variant.
+        /// If the element doesn't match, returns [None]
+        $vis fn $name(&self) -> Option<&$ret> {
+            match self.source {
+                ParseSource::$variant(ref inner) => Some(inner),
+                _ => None
+            }
+        }
+    };
+}
+
 impl ParseItem {
     /// Create new instance of [ParseItem].
     pub fn new(source: ParseSource) -> Self {
@@ -48,6 +63,11 @@ impl ParseItem {
     pub fn with_comments(mut self, comments: Vec<DocCommentTag>) -> Self {
         self.comments = comments;
         self
+    }
+
+    /// Return item comments
+    pub fn comments(&self) -> &Vec<DocCommentTag> {
+        &self.comments
     }
 
     /// Format the item's filename.
@@ -71,6 +91,8 @@ impl ParseItem {
     filter_children_fn!(pub fn errors(&self, Error) -> ErrorDefinition);
     filter_children_fn!(pub fn structs(&self, Struct) -> StructDefinition);
     filter_children_fn!(pub fn enums(&self, Enum) -> EnumDefinition);
+
+    as_inner_source!(pub fn as_contract(&self, Contract) -> ContractDefinition);
 }
 
 /// A wrapper type around pt token.

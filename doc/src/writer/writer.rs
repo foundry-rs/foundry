@@ -2,14 +2,12 @@ use itertools::Itertools;
 use solang_parser::{doccomment::DocCommentTag, pt::Parameter};
 use std::fmt::{self, Display, Write};
 
-use crate::{
-    format::{AsCode, AsDoc},
-    output::DocOutput,
-};
+use crate::{AsCode, AsDoc, Markdown};
 
-/// TODO: comments
-#[derive(Default)]
-pub(crate) struct BufWriter {
+/// The buffered writer.
+/// Writes various display items into the internal buffer.
+#[derive(Default, Debug)]
+pub struct BufWriter {
     buf: String,
 }
 
@@ -27,19 +25,19 @@ impl BufWriter {
     }
 
     pub(crate) fn write_title(&mut self, title: &str) -> fmt::Result {
-        writeln!(self.buf, "{}", DocOutput::H1(title))
+        writeln!(self.buf, "{}", Markdown::H1(title))
     }
 
     pub(crate) fn write_subtitle(&mut self, subtitle: &str) -> fmt::Result {
-        writeln!(self.buf, "{}", DocOutput::H2(subtitle))
+        writeln!(self.buf, "{}", Markdown::H2(subtitle))
     }
 
     pub(crate) fn write_heading(&mut self, subtitle: &str) -> fmt::Result {
-        writeln!(self.buf, "{}", DocOutput::H3(subtitle))
+        writeln!(self.buf, "{}", Markdown::H3(subtitle))
     }
 
     pub(crate) fn write_bold(&mut self, text: &str) -> fmt::Result {
-        writeln!(self.buf, "{}", DocOutput::Bold(text))
+        writeln!(self.buf, "{}", Markdown::Bold(text))
     }
 
     pub(crate) fn write_list_item(&mut self, item: &str, depth: usize) -> fmt::Result {
@@ -53,13 +51,13 @@ impl BufWriter {
         path: &str,
         depth: usize,
     ) -> fmt::Result {
-        let link = DocOutput::Link(name, path);
+        let link = Markdown::Link(name, path);
         self.write_list_item(&link.as_doc()?, depth)
     }
 
     pub(crate) fn write_code<T: AsCode>(&mut self, item: T) -> fmt::Result {
         let code = item.as_code();
-        let block = DocOutput::CodeBlock("solidity", &code);
+        let block = Markdown::CodeBlock("solidity", &code);
         writeln!(self.buf, "{block}")
     }
 
@@ -110,16 +108,21 @@ impl BufWriter {
             self.write_piped(&row.join("|"))?;
         }
 
+        self.writeln()?;
+
         Ok(())
     }
 
     pub(crate) fn write_piped(&mut self, content: &str) -> fmt::Result {
         self.write_raw("|")?;
         self.write_raw(content)?;
-        self.write_raw("|")
+        self.write_raw("|")?;
+        self.writeln()
     }
 
     pub(crate) fn finish(self) -> String {
         self.buf
     }
 }
+
+// TODO: tests

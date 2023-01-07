@@ -33,13 +33,10 @@ impl Cmd for DocArgs {
         let root = self.root.clone().unwrap_or(find_project_root_path()?);
         let config = load_config_with_root(self.root.clone());
 
-        let builder = DocBuilder {
-            root,
-            sources: config.project_paths().sources,
-            out: self.out.clone().unwrap_or(config.doc.out.clone()),
-            title: config.doc.title.clone(),
-        };
-
-        builder.build()
+        DocBuilder::new(root, config.project_paths().sources)
+            .with_out(self.out.clone().unwrap_or(config.doc.out.clone()))
+            .with_title(config.doc.title.clone())
+            // TODO: .with_preprocessors()
+            .build()
     }
 }
