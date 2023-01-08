@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use crate::{
     document::read_context, parser::ParseSource, writer::BufWriter, CommentTag, Comments,
     CommentsRef, Document, Markdown, PreprocessorOutput, CONTRACT_INHERITANCE_ID,
@@ -78,6 +80,10 @@ impl AsDoc for Document {
                                 .as_ref()
                                 .and_then(|l| {
                                     l.get(base_ident).map(|path| {
+                                        let path = Path::new("/").join(
+                                            // TODO: move to func
+                                            path.strip_prefix("docs/src").ok().unwrap_or(path),
+                                        );
                                         Markdown::Link(&base_doc, &path.display().to_string())
                                             .as_doc()
                                     })

@@ -59,8 +59,8 @@ impl DocBuilder {
     }
 
     /// Set preprocessors on the builder.
-    pub fn with_preprocessors(mut self, preprocessors: Vec<Box<dyn Preprocessor>>) -> Self {
-        self.preprocessors = preprocessors;
+    pub fn with_preprocessor<P: Preprocessor + 'static>(mut self, preprocessor: P) -> Self {
+        self.preprocessors.push(Box::new(preprocessor) as Box<dyn Preprocessor>);
         self
     }
 

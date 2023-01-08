@@ -1,6 +1,6 @@
 use crate::cmd::Cmd;
 use clap::{Parser, ValueHint};
-use forge_doc::DocBuilder;
+use forge_doc::{ContractInheritance, DocBuilder};
 use foundry_config::{find_project_root_path, load_config_with_root};
 use std::path::PathBuf;
 
@@ -36,7 +36,7 @@ impl Cmd for DocArgs {
         DocBuilder::new(root, config.project_paths().sources)
             .with_out(self.out.clone().unwrap_or(config.doc.out.clone()))
             .with_title(config.doc.title.clone())
-            // TODO: .with_preprocessors()
+            .with_preprocessor(ContractInheritance)
             .build()
     }
 }
