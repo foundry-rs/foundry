@@ -1,3 +1,6 @@
+use std::str::FromStr;
+
+use ethers_core::{types::H160, utils::to_checksum};
 use forge_fmt::solang_ext::AttrSortKeyIteratorExt;
 use itertools::Itertools;
 use solang_parser::pt::{
@@ -6,6 +9,7 @@ use solang_parser::pt::{
     StructDefinition, Type, VariableAttribute, VariableDeclaration, VariableDefinition,
 };
 
+// TODO: delegate this logic to [forge_fmt::Formatter]
 /// Display Solidity parse tree item as code string.
 #[auto_impl::auto_impl(&)]
 pub trait AsCode {
@@ -21,7 +25,12 @@ impl AsCode for VariableDefinition {
             attrs.insert(0, ' ');
         }
         let name = self.name.name.to_owned();
-        format!("{ty}{attrs} {name}")
+        let init = self
+            .initializer
+            .as_ref()
+            .map(|init| format!(" = {}", init.as_code()))
+            .unwrap_or_default();
+        format!("{ty}{attrs} {name}{init}")
     }
 }
 
@@ -97,6 +106,28 @@ impl AsCode for Expression {
             Expression::MemberAccess(_, expr, ident) => {
                 format!("{}.{}", ident.name, expr.as_code())
             }
+            Expression::Parenthesis(_, expr) => {
+                format!("({})", expr.as_code())
+            }
+            Expression::HexNumberLiteral(_, val) => {
+                // ref: https://docs.soliditylang.org/en/latest/types.html?highlight=address%20literal#address-literals
+                if val.len() == 42 {
+                    to_checksum(&H160::from_str(val).expect(""), None)
+                } else {
+                    val.to_owned()
+                }
+            }
+            Expression::NumberLiteral(_, val, exp) => {
+                let mut val = val.replace('_', "");
+                if !exp.is_empty() {
+                    val.push_str(&format!("e{}", exp.replace('_', "")));
+                }
+                val
+            }
+            Expression::FunctionCall(_, expr, exprs) => {
+                format!("{}({})", expr.as_code(), exprs.iter().map(AsCode::as_code).join(", "))
+            }
+            // TODO: assignments
             item => {
                 panic!("Attempted to format unsupported item: {item:?}")
             }

@@ -2343,6 +2343,7 @@ dependencies = [
  "auto_impl 1.0.1",
  "clap 3.2.23",
  "derive_more",
+ "ethers-core",
  "ethers-solc",
  "eyre",
  "forge-fmt",

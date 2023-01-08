@@ -116,7 +116,7 @@ impl BufWriter {
             _ => return Err(fmt::Error),
         };
 
-        self.write_heading(heading)?;
+        self.write_bold(heading)?;
         self.writeln()?;
 
         self.write_piped(&Self::PARAM_TABLE_HEADERS.join("|"))?;

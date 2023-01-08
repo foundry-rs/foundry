@@ -15,6 +15,7 @@ forge-fmt = { path = "../fmt" }
 
 # ethers
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["async"] }
+ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 
 # cli
 clap = { version = "3.0.10", features = [
