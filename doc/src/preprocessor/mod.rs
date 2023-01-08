@@ -1,11 +1,10 @@
 //! Module containing documentation preprocessors.
 
-mod contract_inheritance;
+use crate::Document;
 use std::{collections::HashMap, fmt::Debug, path::PathBuf};
 
+mod contract_inheritance;
 pub use contract_inheritance::{ContractInheritance, CONTRACT_INHERITANCE_ID};
-
-use crate::Document;
 
 /// The preprocessor id.
 #[derive(Debug, Eq, Hash, PartialEq)]
@@ -24,11 +23,6 @@ pub enum PreprocessorOutput {
 /// Trait for preprocessing and/or modifying existing documents
 /// before writing the to disk.
 pub trait Preprocessor: Debug {
-    // TODO:
-    /// Preprocessor must specify the output type it's writing to the
-    /// document context. This is the inner type in [PreprocessorOutput] variants.
-    // type Output = ();
-
     /// The id of the preprocessor.
     /// Used to write data to document context.
     fn id(&self) -> PreprocessorId;

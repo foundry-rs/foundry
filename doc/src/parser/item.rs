@@ -6,7 +6,7 @@ use solang_parser::pt::{
 use crate::Comments;
 
 /// The parsed item.
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq, Debug)]
 pub struct ParseItem {
     /// The parse tree source.
     pub source: ParseSource,
@@ -64,6 +64,12 @@ impl ParseItem {
         self
     }
 
+    /// Set children on the [ParseItem].
+    pub fn with_children(mut self, children: Vec<ParseItem>) -> Self {
+        self.children = children;
+        self
+    }
+
     /// Format the item's filename.
     pub fn filename(&self) -> String {
         let prefix = match self.source {
@@ -87,6 +93,7 @@ impl ParseItem {
     filter_children_fn!(pub fn enums(&self, Enum) -> EnumDefinition);
 
     as_inner_source!(pub fn as_contract(&self, Contract) -> ContractDefinition);
+    as_inner_source!(pub fn as_variable(&self, Variable) -> VariableDefinition);
 }
 
 /// A wrapper type around pt token.

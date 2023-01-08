@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{AsDoc, BufWriter, Document, Parser, Preprocessor};
+use crate::{AsDoc, BufWriter, Document, ParseItem, ParseSource, Parser, Preprocessor};
 
 /// Build Solidity documentation for a project from natspec comments.
 /// The builder parses the source files using [Parser],
@@ -24,7 +24,7 @@ pub struct DocBuilder {
     pub out: PathBuf,
     /// The documentation title.
     pub title: String,
-    /// THe
+    /// The array of preprocessors to apply.
     pub preprocessors: Vec<Box<dyn Preprocessor>>,
 }
 
@@ -88,30 +88,67 @@ impl DocBuilder {
                     })?;
                 let mut doc = Parser::new(comments);
                 source_unit.visit(&mut doc)?;
-                doc.items()
+
+                // Split the parsed items on top-level constants and rest.
+                let (items, consts): (Vec<ParseItem>, Vec<ParseItem>) = doc
+                    .items()
+                    .into_iter()
+                    .partition(|item| !matches!(item.source, ParseSource::Variable(_)));
+
+                // Each regular item will be written into its own file.
+                let mut files = items
                     .into_iter()
                     .map(|item| {
                         let relative_path = path.strip_prefix(&self.root)?.join(item.filename());
                         let target_path = self.out.join(Self::SRC).join(relative_path);
-                        Ok(Document::new(item, path.clone(), target_path))
+                        Ok(Document::new(path.clone(), target_path).with_item(item))
                     })
-                    .collect::<eyre::Result<Vec<_>>>()
+                    .collect::<eyre::Result<Vec<_>>>()?;
+
+                // If top-level constants exist, they will be written to the same file.
+                if !consts.is_empty() {
+                    let filestem = path.file_stem().and_then(|stem| stem.to_str());
+
+                    let filename = {
+                        let mut name = "constants".to_owned();
+                        if let Some(stem) = filestem {
+                            name.push_str(&format!(".{stem}"));
+                        }
+                        name.push_str(".md");
+                        name
+                    };
+                    let relative_path = path.strip_prefix(&self.root)?.join(filename);
+                    let target_path = self.out.join(Self::SRC).join(relative_path);
+
+                    let identity = match filestem {
+                        Some(stem) if stem.to_lowercase().contains("constants") => stem.to_owned(),
+                        Some(stem) => format!("{stem} Constants"),
+                        None => "Constants".to_owned(),
+                    };
+
+                    files
+                        .push(Document::new(path.clone(), target_path).with_items(identity, consts))
+                }
+
+                Ok(files)
             })
             .collect::<eyre::Result<Vec<_>>>()?;
 
-        // Flatten and sort the results
-        let documents = documents.into_iter().flatten().sorted_by(|doc1, doc2| {
-            doc1.item_path.display().to_string().cmp(&doc2.item_path.display().to_string())
-        });
-
-        // Apply preprocessors to files
+        // Flatten results and apply preprocessors to files
         let documents = self
             .preprocessors
             .iter()
-            .try_fold(documents.collect::<Vec<_>>(), |docs, p| p.preprocess(docs))?;
+            .try_fold(documents.into_iter().flatten().collect_vec(), |docs, p| {
+                p.preprocess(docs)
+            })?;
+
+        // Sort the results
+        let documents = documents.into_iter().sorted_by(|doc1, doc2| {
+            doc1.item_path.display().to_string().cmp(&doc2.item_path.display().to_string())
+        });
 
         // Write mdbook related files
-        self.write_mdbook(documents)?;
+        self.write_mdbook(documents.collect_vec())?;
 
         Ok(())
     }
@@ -219,7 +256,7 @@ impl DocBuilder {
         for (path, files) in grouped {
             if path.extension().map(|ext| ext.eq(Self::SOL_EXT)).unwrap_or_default() {
                 for file in files {
-                    let ident = file.item.source.ident();
+                    let ident = &file.identity;
 
                     let summary_path = file.target_path.strip_prefix("docs/src")?;
                     summary.write_link_list_item(
