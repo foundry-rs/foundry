@@ -140,15 +140,11 @@ impl DocBuilder {
         self.write_summary_section(&mut summary, &documents.iter().collect::<Vec<_>>(), None, 0)?;
         fs::write(out_dir_src.join(Self::SUMMARY), summary.finish())?;
 
-        // Create dir for static files
-        let out_dir_static = out_dir_src.join("static");
-        fs::create_dir_all(&out_dir_static)?;
-
         // Write solidity syntax highlighting
-        fs::write(
-            out_dir_static.join("solidity.min.js"),
-            include_str!("../static/solidity.min.js"),
-        )?;
+        fs::write(out_dir.join("solidity.min.js"), include_str!("../static/solidity.min.js"))?;
+
+        // Write css files
+        fs::write(out_dir.join("book.css"), include_str!("../static/book.css"))?;
 
         // Write book config
         let mut book: toml::Value = toml::from_str(include_str!("../static/book.toml"))?;
@@ -219,20 +215,11 @@ impl DocBuilder {
             }
         });
 
-        let mut readme = BufWriter::default();
-        readme.write_raw("\n\n# Contents\n")?; // TODO:
+        let mut readme = BufWriter::new("\n\n# Contents\n");
         for (path, files) in grouped {
             if path.extension().map(|ext| ext.eq(Self::SOL_EXT)).unwrap_or_default() {
                 for file in files {
                     let ident = file.item.source.ident();
-                    // let mut link_path = file.target_path.strip_prefix("docs/src")?;
-                    // if let Some(path) = base_path {
-                    //     link_path = link_path.strip_prefix(path.parent().unwrap())?;
-                    // }
-                    // let link_path = link_path.display().to_string();
-                    // TODO:
-                    // println!("LINK PATH {link_path}");
-                    // println!("PATH {:?}", path.display().to_string());
 
                     let summary_path = file.target_path.strip_prefix("docs/src")?;
                     summary.write_link_list_item(
@@ -246,13 +233,6 @@ impl DocBuilder {
                         .transpose()?
                         .unwrap_or(summary_path);
                     readme.write_link_list_item(&ident, &readme_path.display().to_string(), 0)?;
-
-                    println!("SUMMARY PATH {}", summary_path.display().to_string());
-                    println!("README PATH {}", readme_path.display().to_string());
-
-                    // let summary_path =
-                    //     file.target_path.strip_prefix("docs/src")?.display().to_string();
-                    // summary.write_link_list_item(&ident, &link_path, depth)?;
                 }
             } else {
                 let name = path.iter().last().unwrap().to_string_lossy();

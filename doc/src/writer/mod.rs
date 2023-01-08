@@ -2,7 +2,6 @@
 
 mod as_code;
 mod as_doc;
-mod helpers;
 mod markdown;
 mod writer;
 

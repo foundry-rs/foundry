@@ -1,10 +1,9 @@
-use solang_parser::{
-    doccomment::DocCommentTag,
-    pt::{
-        ContractDefinition, EnumDefinition, ErrorDefinition, EventDefinition, FunctionDefinition,
-        StructDefinition, VariableDefinition,
-    },
+use solang_parser::pt::{
+    ContractDefinition, EnumDefinition, ErrorDefinition, EventDefinition, FunctionDefinition,
+    StructDefinition, VariableDefinition,
 };
+
+use crate::Comments;
 
 /// The parsed item.
 #[derive(Debug, PartialEq)]
@@ -12,7 +11,7 @@ pub struct ParseItem {
     /// The parse tree source.
     pub source: ParseSource,
     /// Item comments.
-    pub comments: Vec<DocCommentTag>,
+    pub comments: Comments,
     /// Children items.
     pub children: Vec<ParseItem>,
 }
@@ -23,7 +22,7 @@ pub struct ParseItem {
 macro_rules! filter_children_fn {
     ($vis:vis fn $name:ident(&self, $variant:ident) -> $ret:ty) => {
         /// Filter children items for [ParseSource::$variant] variants.
-        $vis fn $name<'a>(&'a self) -> Option<Vec<(&'a $ret, &'a Vec<DocCommentTag>)>> {
+        $vis fn $name<'a>(&'a self) -> Option<Vec<(&'a $ret, &'a Comments)>> {
             let items = self.children.iter().filter_map(|item| match item.source {
                 ParseSource::$variant(ref inner) => Some((inner, &item.comments)),
                 _ => None,
@@ -60,14 +59,9 @@ impl ParseItem {
     }
 
     /// Set comments on the [ParseItem].
-    pub fn with_comments(mut self, comments: Vec<DocCommentTag>) -> Self {
+    pub fn with_comments(mut self, comments: Comments) -> Self {
         self.comments = comments;
         self
-    }
-
-    /// Return item comments
-    pub fn comments(&self) -> &Vec<DocCommentTag> {
-        &self.comments
     }
 
     /// Format the item's filename.

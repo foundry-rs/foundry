@@ -2,19 +2,23 @@
 
 use forge_fmt::{Visitable, Visitor};
 use solang_parser::{
-    doccomment::{parse_doccomments, DocComment, DocCommentTag},
+    doccomment::{parse_doccomments, DocComment},
     pt::{
-        Comment, EnumDefinition, ErrorDefinition, EventDefinition, FunctionDefinition, Loc,
-        SourceUnit, SourceUnitPart, StructDefinition, VariableDefinition,
+        Comment as SolangComment, EnumDefinition, ErrorDefinition, EventDefinition,
+        FunctionDefinition, Loc, SourceUnit, SourceUnitPart, StructDefinition, VariableDefinition,
     },
 };
 
 /// Parser error.
 pub mod error;
-use error::{NoopError, ParserResult};
+use error::{ParserError, ParserResult};
 
 mod item;
 pub use item::{ParseItem, ParseSource};
+
+/// Doc comment.
+mod comment;
+pub use comment::{Comment, CommentTag, Comments, CommentsRef};
 
 /// The documentation parser. This type implements a [Visitor] trait. While walking the parse tree,
 /// [Parser] will collect relevant source items and corresponding doc comments. The resulting
@@ -22,7 +26,7 @@ pub use item::{ParseItem, ParseSource};
 #[derive(Debug, Default)]
 pub struct Parser {
     /// Initial comments from solang parser.
-    comments: Vec<Comment>,
+    comments: Vec<SolangComment>,
     /// Parser context.
     context: ParserContext,
     /// Parsed results.
@@ -40,7 +44,7 @@ struct ParserContext {
 
 impl Parser {
     /// Create a new instance of [Parser].
-    pub fn new(comments: Vec<Comment>) -> Self {
+    pub fn new(comments: Vec<SolangComment>) -> Self {
         Parser { comments, ..Default::default() }
     }
 
@@ -69,18 +73,19 @@ impl Parser {
     /// Adds a child element to the parent item if it exists.
     /// Otherwise the element will be added to a top-level items collection.
     /// Moves the doc comment pointer to the end location of the child element.
-    fn add_element_to_parent(&mut self, source: ParseSource, loc: Loc) {
-        let child = ParseItem { source, comments: self.parse_docs(loc.start()), children: vec![] };
+    fn add_element_to_parent(&mut self, source: ParseSource, loc: Loc) -> ParserResult<()> {
+        let child = ParseItem { source, comments: self.parse_docs(loc.start())?, children: vec![] };
         if let Some(parent) = self.context.parent.as_mut() {
             parent.children.push(child);
         } else {
             self.items.push(child);
         }
         self.context.doc_start_loc = loc.end();
+        Ok(())
     }
 
     /// Parse the doc comments from the current start location.
-    fn parse_docs(&mut self, end: usize) -> Vec<DocCommentTag> {
+    fn parse_docs(&mut self, end: usize) -> ParserResult<Comments> {
         let mut res = vec![];
         for comment in parse_doccomments(&self.comments, self.context.doc_start_loc, end) {
             match comment {
@@ -88,12 +93,12 @@ impl Parser {
                 DocComment::Block { comments } => res.extend(comments.into_iter()),
             }
         }
-        res
+        Ok(res.try_into()?)
     }
 }
 
 impl Visitor for Parser {
-    type Error = NoopError;
+    type Error = ParserError;
 
     fn visit_source_unit(&mut self, source_unit: &mut SourceUnit) -> ParserResult<()> {
         for source in source_unit.0.iter_mut() {
@@ -101,7 +106,7 @@ impl Visitor for Parser {
                 SourceUnitPart::ContractDefinition(def) => {
                     // Create new contract parse item.
                     let source = ParseSource::Contract(def.clone());
-                    let comments = self.parse_docs(def.loc.start());
+                    let comments = self.parse_docs(def.loc.start())?;
                     let contract = ParseItem::new(source).with_comments(comments);
 
                     // Move the doc pointer to the contract location start.
@@ -136,33 +141,27 @@ impl Visitor for Parser {
     }
 
     fn visit_function(&mut self, func: &mut FunctionDefinition) -> ParserResult<()> {
-        self.add_element_to_parent(ParseSource::Function(func.clone()), func.loc);
-        Ok(())
+        self.add_element_to_parent(ParseSource::Function(func.clone()), func.loc)
     }
 
     fn visit_var_definition(&mut self, var: &mut VariableDefinition) -> ParserResult<()> {
-        self.add_element_to_parent(ParseSource::Variable(var.clone()), var.loc);
-        Ok(())
+        self.add_element_to_parent(ParseSource::Variable(var.clone()), var.loc)
     }
 
     fn visit_event(&mut self, event: &mut EventDefinition) -> ParserResult<()> {
-        self.add_element_to_parent(ParseSource::Event(event.clone()), event.loc);
-        Ok(())
+        self.add_element_to_parent(ParseSource::Event(event.clone()), event.loc)
     }
 
     fn visit_error(&mut self, error: &mut ErrorDefinition) -> ParserResult<()> {
-        self.add_element_to_parent(ParseSource::Error(error.clone()), error.loc);
-        Ok(())
+        self.add_element_to_parent(ParseSource::Error(error.clone()), error.loc)
     }
 
     fn visit_struct(&mut self, structure: &mut StructDefinition) -> ParserResult<()> {
-        self.add_element_to_parent(ParseSource::Struct(structure.clone()), structure.loc);
-        Ok(())
+        self.add_element_to_parent(ParseSource::Struct(structure.clone()), structure.loc)
     }
 
     fn visit_enum(&mut self, enumerable: &mut EnumDefinition) -> ParserResult<()> {
-        self.add_element_to_parent(ParseSource::Enum(enumerable.clone()), enumerable.loc);
-        Ok(())
+        self.add_element_to_parent(ParseSource::Enum(enumerable.clone()), enumerable.loc)
     }
 }
 

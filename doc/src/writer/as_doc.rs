@@ -1,11 +1,9 @@
 use crate::{
-    document::read_context, parser::ParseSource, writer::BufWriter, Document, Markdown,
-    PreprocessorOutput, CONTRACT_INHERITANCE_ID,
+    document::read_context, parser::ParseSource, writer::BufWriter, CommentTag, Comments,
+    CommentsRef, Document, Markdown, PreprocessorOutput, CONTRACT_INHERITANCE_ID,
 };
 use itertools::Itertools;
-use solang_parser::{doccomment::DocCommentTag, pt::Base};
-
-use super::helpers::{comments_by_tag, exclude_comment_tags};
+use solang_parser::pt::Base;
 
 /// The result of [Asdoc::as_doc] method.
 pub type AsDocResult = Result<String, std::fmt::Error>;
@@ -23,25 +21,33 @@ impl AsDoc for String {
     }
 }
 
-impl AsDoc for DocCommentTag {
+impl AsDoc for Comments {
     fn as_doc(&self) -> AsDocResult {
-        Ok(self.value.to_owned())
+        CommentsRef::from(self).as_doc()
     }
 }
 
-impl AsDoc for Vec<&DocCommentTag> {
+impl<'a> AsDoc for CommentsRef<'a> {
     fn as_doc(&self) -> AsDocResult {
-        Ok(self
-            .iter()
-            .map(|c| DocCommentTag::as_doc(*c))
-            .collect::<Result<Vec<_>, _>>()?
-            .join("\n\n"))
-    }
-}
+        let mut writer = BufWriter::default();
 
-impl AsDoc for Vec<DocCommentTag> {
-    fn as_doc(&self) -> AsDocResult {
-        Ok(self.iter().map(DocCommentTag::as_doc).collect::<Result<Vec<_>, _>>()?.join("\n\n"))
+        // TODO: title
+
+        let authors = self.include_tag(CommentTag::Author);
+        if !authors.is_empty() {
+            writer.write_bold(&format!("Author{}:", if authors.len() == 1 { "" } else { "s" }))?;
+            writer.writeln_raw(authors.iter().map(|a| &a.value).join(", "))?;
+            writer.writeln()?;
+        }
+
+        // TODO: other tags
+        let docs = self.include_tags(&[CommentTag::Dev, CommentTag::Notice]);
+        for doc in docs.iter() {
+            writer.writeln_raw(&doc.value)?;
+            writer.writeln()?;
+        }
+
+        Ok(writer.finish())
     }
 }
 
@@ -81,13 +87,11 @@ impl AsDoc for Document {
                         )
                     }
 
-                    writer.write_raw(bases.join(", "))?;
+                    writer.writeln_raw(bases.join(", "))?;
                     writer.writeln()?;
                 }
 
-                // TODO: writeln_raw
-                writer.write_raw(self.comments.as_doc()?)?;
-                writer.writeln()?;
+                writer.writeln_doc(&self.comments)?;
 
                 if let Some(state_vars) = self.variables() {
                     writer.write_subtitle("State Variables")?;
@@ -106,10 +110,9 @@ impl AsDoc for Document {
                         writer.writeln()?;
 
                         // Write function docs
-                        writer.write_raw(
-                            exclude_comment_tags(comments, vec!["param", "return"]).as_doc()?,
+                        writer.writeln_doc(
+                            comments.exclude_tags(&[CommentTag::Param, CommentTag::Return]),
                         )?;
-                        writer.writeln()?;
 
                         // Write function header
                         writer.write_code(func)?;
@@ -117,30 +120,12 @@ impl AsDoc for Document {
                         // Write function parameter comments in a table
                         let params =
                             func.params.iter().filter_map(|p| p.1.as_ref()).collect::<Vec<_>>();
-                        let param_comments = comments_by_tag(comments, "param");
-                        if !params.is_empty() && !param_comments.is_empty() {
-                            writer.write_heading("Parameters")?;
-                            writer.writeln()?;
-                            writer.write_param_table(
-                                &["Name", "Type", "Description"],
-                                &params,
-                                &param_comments,
-                            )?
-                        }
+                        writer.try_write_param_table(CommentTag::Param, &params, comments)?;
 
                         // Write function parameter comments in a table
                         let returns =
                             func.returns.iter().filter_map(|p| p.1.as_ref()).collect::<Vec<_>>();
-                        let returns_comments = comments_by_tag(comments, "return");
-                        if !returns.is_empty() && !returns_comments.is_empty() {
-                            writer.write_heading("Returns")?;
-                            writer.writeln()?;
-                            writer.write_param_table(
-                                &["Name", "Type", "Description"],
-                                &returns,
-                                &returns_comments,
-                            )?;
-                        }
+                        writer.try_write_param_table(CommentTag::Return, &returns, comments)?;
 
                         writer.writeln()?;
 
@@ -182,23 +167,23 @@ impl AsDoc for Document {
             }
             ParseSource::Variable(var) => {
                 writer.write_title(&var.name.name)?;
-                writer.write_section(var, self.comments())?;
+                writer.write_section(var, &self.comments)?;
             }
             ParseSource::Event(event) => {
                 writer.write_title(&event.name.name)?;
-                writer.write_section(event, self.comments())?;
+                writer.write_section(event, &self.comments)?;
             }
             ParseSource::Error(error) => {
                 writer.write_title(&error.name.name)?;
-                writer.write_section(error, self.comments())?;
+                writer.write_section(error, &self.comments)?;
             }
             ParseSource::Struct(structure) => {
                 writer.write_title(&structure.name.name)?;
-                writer.write_section(structure, self.comments())?;
+                writer.write_section(structure, &self.comments)?;
             }
             ParseSource::Enum(enumerable) => {
                 writer.write_title(&enumerable.name.name)?;
-                writer.write_section(enumerable, self.comments())?;
+                writer.write_section(enumerable, &self.comments)?;
             }
             ParseSource::Function(func) => {
                 // TODO: cleanup
@@ -209,39 +194,20 @@ impl AsDoc for Document {
                 writer.writeln()?;
 
                 // Write function docs
-                writer.write_raw(
-                    exclude_comment_tags(self.comments(), vec!["param", "return"]).as_doc()?,
+                writer.writeln_doc(
+                    self.comments.exclude_tags(&[CommentTag::Param, CommentTag::Return]),
                 )?;
-                writer.writeln()?;
 
                 // Write function header
                 writer.write_code(func)?;
 
                 // Write function parameter comments in a table
                 let params = func.params.iter().filter_map(|p| p.1.as_ref()).collect::<Vec<_>>();
-                let param_comments = comments_by_tag(self.comments(), "param");
-                if !params.is_empty() && !param_comments.is_empty() {
-                    writer.write_heading("Parameters")?;
-                    writer.writeln()?;
-                    writer.write_param_table(
-                        &["Name", "Type", "Description"],
-                        &params,
-                        &param_comments,
-                    )?
-                }
+                writer.try_write_param_table(CommentTag::Param, &params, &self.comments)?;
 
                 // Write function parameter comments in a table
                 let returns = func.returns.iter().filter_map(|p| p.1.as_ref()).collect::<Vec<_>>();
-                let returns_comments = comments_by_tag(self.comments(), "return");
-                if !returns.is_empty() && !returns_comments.is_empty() {
-                    writer.write_heading("Returns")?;
-                    writer.writeln()?;
-                    writer.write_param_table(
-                        &["Name", "Type", "Description"],
-                        &returns,
-                        &returns_comments,
-                    )?;
-                }
+                writer.try_write_param_table(CommentTag::Return, &returns, &self.comments)?;
 
                 writer.writeln()?;
             }

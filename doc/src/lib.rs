@@ -22,7 +22,9 @@ pub use builder::DocBuilder;
 pub use document::Document;
 
 /// Solidity parser and related output items.
-pub use parser::{error, ParseItem, ParseSource, Parser};
+pub use parser::{
+    error, Comment, CommentTag, Comments, CommentsRef, ParseItem, ParseSource, Parser,
+};
 
 /// Preprocessors.
 pub use preprocessor::*;

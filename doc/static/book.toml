@@ -3,7 +3,8 @@ src = "src"
 
 [output.html]
 no-section-label = true
-additional-js = ["src/static/solidity.min.js"]
+additional-js = ["solidity.min.js"]
+additional-css = ["book.css"]
 
 [output.html.fold]
 enable = true
