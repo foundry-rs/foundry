@@ -73,6 +73,12 @@ impl DocBuilder {
     pub fn build(self) -> eyre::Result<()> {
         // Collect and parse source files
         let sources: Vec<_> = source_files_iter(&self.sources).collect();
+
+        if sources.is_empty() {
+            println!("No sources detected at {}", self.sources.display());
+            return Ok(())
+        }
+
         let documents = sources
             .par_iter()
             .enumerate()
