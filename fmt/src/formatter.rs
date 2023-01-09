@@ -2064,7 +2064,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 let spaced = expr.has_space_around();
                 let op = expr.operator().unwrap();
 
-                match expr.into_components() {
+                match expr.components_mut() {
                     (Some(left), Some(right)) => {
                         left.visit(self)?;
 
@@ -2103,7 +2103,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Expression::AssignDivide(..) |
             Expression::AssignModulo(..) => {
                 let op = expr.operator().unwrap();
-                let (left, right) = expr.into_components();
+                let (left, right) = expr.components_mut();
                 let (left, right) = (left.unwrap(), right.unwrap());
 
                 left.visit(self)?;

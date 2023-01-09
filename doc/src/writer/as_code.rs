@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use ethers_core::{types::H160, utils::to_checksum};
-use forge_fmt::solang_ext::AttrSortKeyIteratorExt;
+use forge_fmt::solang_ext::{AsStr, AttrSortKeyIteratorExt, Operator, OperatorComponents};
 use itertools::Itertools;
 use solang_parser::pt::{
     EnumDefinition, ErrorDefinition, ErrorParameter, EventDefinition, EventParameter, Expression,
@@ -124,10 +124,92 @@ impl AsCode for Expression {
                 }
                 val
             }
+            Expression::StringLiteral(vals) => vals
+                .iter()
+                .map(|val| {
+                    format!("{}\"{}\"", if val.unicode { "unicode" } else { "" }, val.string)
+                })
+                .join(" "),
+            Expression::BoolLiteral(_, bool) => {
+                let val = if *bool { "true" } else { "false" };
+                val.to_owned()
+            }
+            Expression::HexLiteral(vals) => {
+                vals.iter().map(|val| format!("hex\"{}\"", val.hex)).join(" ")
+            }
+            Expression::ArrayLiteral(_, exprs) => {
+                format!("[{}]", exprs.iter().map(AsCode::as_code).join(", "))
+            }
+            Expression::RationalNumberLiteral(_, val, fraction, exp) => {
+                let mut val = val.replace('_', "");
+                if val.is_empty() {
+                    val = "0".to_owned();
+                }
+
+                let mut fraction = fraction.trim_end_matches('0').to_owned();
+                if fraction.is_empty() {
+                    fraction.push('0')
+                }
+                val.push_str(&format!(".{fraction}"));
+
+                if !exp.is_empty() {
+                    val.push_str(&format!("e{}", exp.replace('_', "")));
+                }
+                val
+            }
             Expression::FunctionCall(_, expr, exprs) => {
                 format!("{}({})", expr.as_code(), exprs.iter().map(AsCode::as_code).join(", "))
             }
-            // TODO: assignments
+            Expression::Unit(_, expr, unit) => {
+                format!("{} {}", expr.as_code(), unit.as_str())
+            }
+            Expression::PreIncrement(..) |
+            Expression::PostIncrement(..) |
+            Expression::PreDecrement(..) |
+            Expression::PostDecrement(..) |
+            Expression::Not(..) |
+            Expression::Complement(..) |
+            Expression::UnaryPlus(..) |
+            Expression::Add(..) |
+            Expression::UnaryMinus(..) |
+            Expression::Subtract(..) |
+            Expression::Power(..) |
+            Expression::Multiply(..) |
+            Expression::Divide(..) |
+            Expression::Modulo(..) |
+            Expression::ShiftLeft(..) |
+            Expression::ShiftRight(..) |
+            Expression::BitwiseAnd(..) |
+            Expression::BitwiseXor(..) |
+            Expression::BitwiseOr(..) |
+            Expression::Less(..) |
+            Expression::More(..) |
+            Expression::LessEqual(..) |
+            Expression::MoreEqual(..) |
+            Expression::And(..) |
+            Expression::Or(..) |
+            Expression::Equal(..) |
+            Expression::NotEqual(..) => {
+                let spaced = self.has_space_around();
+
+                let (left, right) = self.components();
+
+                let mut val = String::from(self.operator().unwrap());
+                if let Some(left) = left {
+                    if spaced {
+                        val.insert(0, ' ');
+                    }
+                    val.insert_str(0, &left.as_code());
+                }
+                if let Some(right) = right {
+                    if spaced {
+                        val.push(' ');
+                    }
+                    val.push_str(&right.as_code())
+                }
+
+                val
+            }
             item => {
                 panic!("Attempted to format unsupported item: {item:?}")
             }

@@ -117,7 +117,9 @@ impl AsDoc for Document {
                     if let Some(state_vars) = item.variables() {
                         writer.write_subtitle("State Variables")?;
                         state_vars.into_iter().try_for_each(|(item, comments)| {
-                            writer.write_section(item, comments)
+                            writer.write_heading(&item.name.name)?;
+                            writer.write_section(item, comments)?;
+                            writer.writeln()
                         })?;
                     }
 
