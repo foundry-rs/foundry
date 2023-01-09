@@ -69,7 +69,7 @@ impl AsDoc for Document {
         match &self.content {
             DocumentContent::OverloadedFunctions(items) => {
                 writer
-                    .write_title(&format!("Function {}", items.first().unwrap().source.ident()))?;
+                    .write_title(&format!("function {}", items.first().unwrap().source.ident()))?;
 
                 for item in items.iter() {
                     let func = item.as_function().unwrap();
