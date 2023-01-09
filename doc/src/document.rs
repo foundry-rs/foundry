@@ -7,7 +7,7 @@ use crate::{ParseItem, PreprocessorId, PreprocessorOutput};
 #[derive(Debug)]
 pub struct Document {
     /// The underlying parsed items.
-    pub items: Vec<ParseItem>,
+    pub content: DocumentContent,
     /// The original item path.
     pub item_path: PathBuf,
     /// The target path where the document will be written.
@@ -18,29 +18,32 @@ pub struct Document {
     context: Mutex<HashMap<PreprocessorId, PreprocessorOutput>>,
 }
 
+/// The content of the document.
+#[derive(Debug)]
+pub enum DocumentContent {
+    Empty,
+    Single(ParseItem),
+    Constants(Vec<ParseItem>),
+    OverloadedFunctions(Vec<ParseItem>),
+}
+
 impl Document {
     /// Create new instance of [Document].
     pub fn new(item_path: PathBuf, target_path: PathBuf) -> Self {
         Self {
             item_path,
             target_path,
-            items: Vec::default(),
             identity: String::default(),
+            content: DocumentContent::Empty,
             context: Mutex::new(HashMap::default()),
         }
     }
 
-    /// Set item and item's identity on the [Document].
-    pub fn with_item(mut self, item: ParseItem) -> Self {
-        self.identity = item.source.ident();
-        self.items = vec![item];
-        self
-    }
-
-    /// Set items and some identity on the [Document].
-    pub fn with_items(mut self, identity: String, items: Vec<ParseItem>) -> Self {
+    /// Set content and identity on the [Document].
+    #[must_use]
+    pub fn with_content(mut self, content: DocumentContent, identity: String) -> Self {
+        self.content = content;
         self.identity = identity;
-        self.items = items;
         self
     }
 

@@ -9,7 +9,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{AsDoc, BufWriter, Document, ParseItem, ParseSource, Parser, Preprocessor};
+use crate::{
+    document::DocumentContent, AsDoc, BufWriter, Document, ParseItem, ParseSource, Parser,
+    Preprocessor,
+};
 
 /// Build Solidity documentation for a project from natspec comments.
 /// The builder parses the source files using [Parser],
@@ -101,13 +104,33 @@ impl DocBuilder {
                     .into_iter()
                     .partition(|item| !matches!(item.source, ParseSource::Variable(_)));
 
+                // TODO: group overloaded functions
+                // Attempt to group overloaded top-level functions
+                let mut remaining = Vec::with_capacity(items.len());
+                let mut funcs: HashMap<String, Vec<ParseItem>> = HashMap::default();
+                for item in items {
+                    if matches!(item.source, ParseSource::Function(_)) {
+                        funcs.entry(item.source.ident()).or_default().push(item);
+                    } else {
+                        // Put the item back
+                        remaining.push(item);
+                    }
+                }
+                let (items, overloaded): (
+                    HashMap<String, Vec<ParseItem>>,
+                    HashMap<String, Vec<ParseItem>>,
+                ) = funcs.into_iter().partition(|(_, v)| v.len() == 1);
+                remaining.extend(items.into_iter().flat_map(|(_, v)| v));
+
                 // Each regular item will be written into its own file.
-                let mut files = items
+                let mut files = remaining
                     .into_iter()
                     .map(|item| {
                         let relative_path = path.strip_prefix(&self.root)?.join(item.filename());
                         let target_path = self.out.join(Self::SRC).join(relative_path);
-                        Ok(Document::new(path.clone(), target_path).with_item(item))
+                        let ident = item.source.ident();
+                        Ok(Document::new(path.clone(), target_path)
+                            .with_content(DocumentContent::Single(item), ident))
                     })
                     .collect::<eyre::Result<Vec<_>>>()?;
 
@@ -132,8 +155,23 @@ impl DocBuilder {
                         None => "Constants".to_owned(),
                     };
 
-                    files
-                        .push(Document::new(path.clone(), target_path).with_items(identity, consts))
+                    files.push(
+                        Document::new(path.clone(), target_path)
+                            .with_content(DocumentContent::Constants(consts), identity),
+                    )
+                }
+
+                // If overloaded functions exist, they will be written to the same file
+                if !overloaded.is_empty() {
+                    for (ident, funcs) in overloaded {
+                        let filename = funcs.first().expect("no overloaded functions").filename();
+                        let relative_path = path.strip_prefix(&self.root)?.join(filename);
+                        let target_path = self.out.join(Self::SRC).join(relative_path);
+                        files.push(
+                            Document::new(path.clone(), target_path)
+                                .with_content(DocumentContent::OverloadedFunctions(funcs), ident),
+                        );
+                    }
                 }
 
                 Ok(files)

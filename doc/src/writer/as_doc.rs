@@ -1,8 +1,11 @@
 use std::path::Path;
 
 use crate::{
-    document::read_context, parser::ParseSource, writer::BufWriter, CommentTag, Comments,
-    CommentsRef, Document, Markdown, PreprocessorOutput, CONTRACT_INHERITANCE_ID,
+    document::{read_context, DocumentContent},
+    parser::ParseSource,
+    writer::BufWriter,
+    AsCode, CommentTag, Comments, CommentsRef, Document, Markdown, PreprocessorOutput,
+    CONTRACT_INHERITANCE_ID,
 };
 use itertools::Itertools;
 use solang_parser::pt::Base;
@@ -63,190 +66,229 @@ impl AsDoc for Document {
     fn as_doc(&self) -> AsDocResult {
         let mut writer = BufWriter::default();
 
-        // Handle constant files
-        if self.items.iter().all(|item| matches!(item.source, ParseSource::Variable(_))) {
-            writer.write_title("Constants")?;
+        match &self.content {
+            DocumentContent::OverloadedFunctions(items) => {
+                writer
+                    .write_title(&format!("Function {}", items.first().unwrap().source.ident()))?;
 
-            for item in self.items.iter() {
-                let var = item.as_variable().unwrap();
-                writer.write_heading(&var.name.name)?;
-                writer.write_section(var, &item.comments)?;
-            }
-
-            return Ok(writer.finish())
-        }
-
-        for item in self.items.iter() {
-            match &item.source {
-                ParseSource::Contract(contract) => {
-                    writer.write_title(&contract.name.name)?;
-
-                    if !contract.base.is_empty() {
-                        writer.write_bold("Inherits:")?;
-
-                        let mut bases = vec![];
-                        let linked =
-                            read_context!(self, CONTRACT_INHERITANCE_ID, ContractInheritance);
-                        for base in contract.base.iter() {
-                            let base_doc = base.as_doc()?;
-                            let base_ident = &base.name.identifiers.last().unwrap().name;
-                            bases.push(
-                                linked
-                                    .as_ref()
-                                    .and_then(|l| {
-                                        l.get(base_ident).map(|path| {
-                                            let path = Path::new("/").join(
-                                                // TODO: move to func
-                                                path.strip_prefix("docs/src").ok().unwrap_or(path),
-                                            );
-                                            Markdown::Link(&base_doc, &path.display().to_string())
-                                                .as_doc()
-                                        })
-                                    })
-                                    .transpose()?
-                                    .unwrap_or(base_doc),
-                            )
-                        }
-
-                        writer.writeln_raw(bases.join(", "))?;
-                        writer.writeln()?;
-                    }
-
-                    writer.writeln_doc(&item.comments)?;
-
-                    if let Some(state_vars) = item.variables() {
-                        writer.write_subtitle("State Variables")?;
-                        state_vars.into_iter().try_for_each(|(item, comments)| {
-                            writer.write_heading(&item.name.name)?;
-                            writer.write_section(item, comments)?;
-                            writer.writeln()
-                        })?;
-                    }
-
-                    if let Some(funcs) = item.functions() {
-                        writer.write_subtitle("Functions")?;
-                        funcs.into_iter().try_for_each(|(func, comments)| {
-                            // Write function name
-                            let func_name = func
-                                .name
-                                .as_ref()
-                                .map_or(func.ty.to_string(), |n| n.name.to_owned());
-                            writer.write_heading(&func_name)?;
-                            writer.writeln()?;
-
-                            // Write function docs
-                            writer.writeln_doc(
-                                comments.exclude_tags(&[CommentTag::Param, CommentTag::Return]),
-                            )?;
-
-                            // Write function header
-                            writer.write_code(func)?;
-
-                            // Write function parameter comments in a table
-                            let params =
-                                func.params.iter().filter_map(|p| p.1.as_ref()).collect::<Vec<_>>();
-                            writer.try_write_param_table(CommentTag::Param, &params, comments)?;
-
-                            // Write function parameter comments in a table
-                            let returns = func
-                                .returns
+                for item in items.iter() {
+                    let func = item.as_function().unwrap();
+                    let mut heading = item.source.ident();
+                    if !func.params.is_empty() {
+                        heading.push_str(&format!(
+                            "({})",
+                            func.params
                                 .iter()
-                                .filter_map(|p| p.1.as_ref())
-                                .collect::<Vec<_>>();
-                            writer.try_write_param_table(CommentTag::Return, &returns, comments)?;
-
-                            writer.writeln()?;
-
-                            Ok::<(), std::fmt::Error>(())
-                        })?;
+                                .map(|p| p.1.as_ref().map(|p| p.ty.as_code()).unwrap_or_default())
+                                .join(", ")
+                        ));
                     }
-
-                    if let Some(events) = item.events() {
-                        writer.write_subtitle("Events")?;
-                        events.into_iter().try_for_each(|(item, comments)| {
-                            writer.write_heading(&item.name.name)?;
-                            writer.write_section(item, comments)
-                        })?;
-                    }
-
-                    if let Some(errors) = item.errors() {
-                        writer.write_subtitle("Errors")?;
-                        errors.into_iter().try_for_each(|(item, comments)| {
-                            writer.write_heading(&item.name.name)?;
-                            writer.write_section(item, comments)
-                        })?;
-                    }
-
-                    if let Some(structs) = item.structs() {
-                        writer.write_subtitle("Structs")?;
-                        structs.into_iter().try_for_each(|(item, comments)| {
-                            writer.write_heading(&item.name.name)?;
-                            writer.write_section(item, comments)
-                        })?;
-                    }
-
-                    if let Some(enums) = item.enums() {
-                        writer.write_subtitle("Enums")?;
-                        enums.into_iter().try_for_each(|(item, comments)| {
-                            writer.write_heading(&item.name.name)?;
-                            writer.write_section(item, comments)
-                        })?;
-                    }
+                    writer.write_heading(&heading)?;
+                    writer.write_section(func, &item.comments)?;
                 }
-                ParseSource::Variable(var) => {
-                    writer.write_title(&var.name.name)?;
+            }
+            DocumentContent::Constants(items) => {
+                writer.write_title("Constants")?;
+
+                for item in items.iter() {
+                    let var = item.as_variable().unwrap();
+                    writer.write_heading(&var.name.name)?;
                     writer.write_section(var, &item.comments)?;
                 }
-                ParseSource::Event(event) => {
-                    writer.write_title(&event.name.name)?;
-                    writer.write_section(event, &item.comments)?;
-                }
-                ParseSource::Error(error) => {
-                    writer.write_title(&error.name.name)?;
-                    writer.write_section(error, &item.comments)?;
-                }
-                ParseSource::Struct(structure) => {
-                    writer.write_title(&structure.name.name)?;
-                    writer.write_section(structure, &item.comments)?;
-                }
-                ParseSource::Enum(enumerable) => {
-                    writer.write_title(&enumerable.name.name)?;
-                    writer.write_section(enumerable, &item.comments)?;
-                }
-                ParseSource::Type(ty) => {
-                    writer.write_title(&ty.name.name)?;
-                    writer.write_section(ty, &item.comments)?;
-                }
-                ParseSource::Function(func) => {
-                    // TODO: cleanup
-                    // Write function name
-                    let func_name =
-                        func.name.as_ref().map_or(func.ty.to_string(), |n| n.name.to_owned());
-                    writer.write_heading(&func_name)?;
-                    writer.writeln()?;
+            }
+            DocumentContent::Single(item) => {
+                match &item.source {
+                    ParseSource::Contract(contract) => {
+                        writer.write_title(&contract.name.name)?;
 
-                    // Write function docs
-                    writer.writeln_doc(
-                        item.comments.exclude_tags(&[CommentTag::Param, CommentTag::Return]),
-                    )?;
+                        if !contract.base.is_empty() {
+                            writer.write_bold("Inherits:")?;
 
-                    // Write function header
-                    writer.write_code(func)?;
+                            let mut bases = vec![];
+                            let linked =
+                                read_context!(self, CONTRACT_INHERITANCE_ID, ContractInheritance);
+                            for base in contract.base.iter() {
+                                let base_doc = base.as_doc()?;
+                                let base_ident = &base.name.identifiers.last().unwrap().name;
+                                bases.push(
+                                    linked
+                                        .as_ref()
+                                        .and_then(|l| {
+                                            l.get(base_ident).map(|path| {
+                                                let path = Path::new("/").join(
+                                                    // TODO: move to func
+                                                    path.strip_prefix("docs/src")
+                                                        .ok()
+                                                        .unwrap_or(path),
+                                                );
+                                                Markdown::Link(
+                                                    &base_doc,
+                                                    &path.display().to_string(),
+                                                )
+                                                .as_doc()
+                                            })
+                                        })
+                                        .transpose()?
+                                        .unwrap_or(base_doc),
+                                )
+                            }
 
-                    // Write function parameter comments in a table
-                    let params =
-                        func.params.iter().filter_map(|p| p.1.as_ref()).collect::<Vec<_>>();
-                    writer.try_write_param_table(CommentTag::Param, &params, &item.comments)?;
+                            writer.writeln_raw(bases.join(", "))?;
+                            writer.writeln()?;
+                        }
 
-                    // Write function parameter comments in a table
-                    let returns =
-                        func.returns.iter().filter_map(|p| p.1.as_ref()).collect::<Vec<_>>();
-                    writer.try_write_param_table(CommentTag::Return, &returns, &item.comments)?;
+                        writer.writeln_doc(&item.comments)?;
 
-                    writer.writeln()?;
+                        if let Some(state_vars) = item.variables() {
+                            writer.write_subtitle("State Variables")?;
+                            state_vars.into_iter().try_for_each(|(item, comments)| {
+                                writer.write_heading(&item.name.name)?;
+                                writer.write_section(item, comments)?;
+                                writer.writeln()
+                            })?;
+                        }
+
+                        if let Some(funcs) = item.functions() {
+                            writer.write_subtitle("Functions")?;
+                            funcs.into_iter().try_for_each(|(func, comments)| {
+                                // Write function name
+                                let func_name = func
+                                    .name
+                                    .as_ref()
+                                    .map_or(func.ty.to_string(), |n| n.name.to_owned());
+                                writer.write_heading(&func_name)?;
+                                writer.writeln()?;
+
+                                // Write function docs
+                                writer.writeln_doc(
+                                    comments.exclude_tags(&[CommentTag::Param, CommentTag::Return]),
+                                )?;
+
+                                // Write function header
+                                writer.write_code(func)?;
+
+                                // Write function parameter comments in a table
+                                let params = func
+                                    .params
+                                    .iter()
+                                    .filter_map(|p| p.1.as_ref())
+                                    .collect::<Vec<_>>();
+                                writer.try_write_param_table(
+                                    CommentTag::Param,
+                                    &params,
+                                    comments,
+                                )?;
+
+                                // Write function parameter comments in a table
+                                let returns = func
+                                    .returns
+                                    .iter()
+                                    .filter_map(|p| p.1.as_ref())
+                                    .collect::<Vec<_>>();
+                                writer.try_write_param_table(
+                                    CommentTag::Return,
+                                    &returns,
+                                    comments,
+                                )?;
+
+                                writer.writeln()?;
+
+                                Ok::<(), std::fmt::Error>(())
+                            })?;
+                        }
+
+                        if let Some(events) = item.events() {
+                            writer.write_subtitle("Events")?;
+                            events.into_iter().try_for_each(|(item, comments)| {
+                                writer.write_heading(&item.name.name)?;
+                                writer.write_section(item, comments)
+                            })?;
+                        }
+
+                        if let Some(errors) = item.errors() {
+                            writer.write_subtitle("Errors")?;
+                            errors.into_iter().try_for_each(|(item, comments)| {
+                                writer.write_heading(&item.name.name)?;
+                                writer.write_section(item, comments)
+                            })?;
+                        }
+
+                        if let Some(structs) = item.structs() {
+                            writer.write_subtitle("Structs")?;
+                            structs.into_iter().try_for_each(|(item, comments)| {
+                                writer.write_heading(&item.name.name)?;
+                                writer.write_section(item, comments)
+                            })?;
+                        }
+
+                        if let Some(enums) = item.enums() {
+                            writer.write_subtitle("Enums")?;
+                            enums.into_iter().try_for_each(|(item, comments)| {
+                                writer.write_heading(&item.name.name)?;
+                                writer.write_section(item, comments)
+                            })?;
+                        }
+                    }
+                    ParseSource::Variable(var) => {
+                        writer.write_title(&var.name.name)?;
+                        writer.write_section(var, &item.comments)?;
+                    }
+                    ParseSource::Event(event) => {
+                        writer.write_title(&event.name.name)?;
+                        writer.write_section(event, &item.comments)?;
+                    }
+                    ParseSource::Error(error) => {
+                        writer.write_title(&error.name.name)?;
+                        writer.write_section(error, &item.comments)?;
+                    }
+                    ParseSource::Struct(structure) => {
+                        writer.write_title(&structure.name.name)?;
+                        writer.write_section(structure, &item.comments)?;
+                    }
+                    ParseSource::Enum(enumerable) => {
+                        writer.write_title(&enumerable.name.name)?;
+                        writer.write_section(enumerable, &item.comments)?;
+                    }
+                    ParseSource::Type(ty) => {
+                        writer.write_title(&ty.name.name)?;
+                        writer.write_section(ty, &item.comments)?;
+                    }
+                    ParseSource::Function(func) => {
+                        // TODO: cleanup
+                        // Write function name
+                        let func_name =
+                            func.name.as_ref().map_or(func.ty.to_string(), |n| n.name.to_owned());
+                        writer.write_heading(&func_name)?;
+                        writer.writeln()?;
+
+                        // Write function docs
+                        writer.writeln_doc(
+                            item.comments.exclude_tags(&[CommentTag::Param, CommentTag::Return]),
+                        )?;
+
+                        // Write function header
+                        writer.write_code(func)?;
+
+                        // Write function parameter comments in a table
+                        let params =
+                            func.params.iter().filter_map(|p| p.1.as_ref()).collect::<Vec<_>>();
+                        writer.try_write_param_table(CommentTag::Param, &params, &item.comments)?;
+
+                        // Write function parameter comments in a table
+                        let returns =
+                            func.returns.iter().filter_map(|p| p.1.as_ref()).collect::<Vec<_>>();
+                        writer.try_write_param_table(
+                            CommentTag::Return,
+                            &returns,
+                            &item.comments,
+                        )?;
+
+                        writer.writeln()?;
+                    }
                 }
-            };
-        }
+            }
+            DocumentContent::Empty => (),
+        };
 
         Ok(writer.finish())
     }

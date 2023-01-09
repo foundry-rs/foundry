@@ -95,6 +95,7 @@ impl ParseItem {
 
     as_inner_source!(pub fn as_contract(&self, Contract) -> ContractDefinition);
     as_inner_source!(pub fn as_variable(&self, Variable) -> VariableDefinition);
+    as_inner_source!(pub fn as_function(&self, Function) -> FunctionDefinition);
 }
 
 /// A wrapper type around pt token.

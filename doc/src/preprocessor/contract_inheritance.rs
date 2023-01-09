@@ -1,5 +1,5 @@
 use super::{Preprocessor, PreprocessorId};
-use crate::{Document, ParseSource, PreprocessorOutput};
+use crate::{document::DocumentContent, Document, ParseSource, PreprocessorOutput};
 use std::{collections::HashMap, path::PathBuf};
 
 /// [ContractInheritance] preprocessor id.
@@ -21,7 +21,7 @@ impl Preprocessor for ContractInheritance {
 
     fn preprocess(&self, documents: Vec<Document>) -> Result<Vec<Document>, eyre::Error> {
         for document in documents.iter() {
-            for item in document.items.iter() {
+            if let DocumentContent::Single(ref item) = document.content {
                 if let ParseSource::Contract(ref contract) = item.source {
                     let mut links = HashMap::default();
 
@@ -49,7 +49,7 @@ impl Preprocessor for ContractInheritance {
 impl ContractInheritance {
     fn try_link_base<'a>(&self, base: &str, documents: &Vec<Document>) -> Option<PathBuf> {
         for candidate in documents {
-            for item in candidate.items.iter() {
+            if let DocumentContent::Single(ref item) = candidate.content {
                 if let ParseSource::Contract(ref contract) = item.source {
                     if base == contract.name.name {
                         return Some(candidate.target_path.clone())
