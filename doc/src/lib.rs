@@ -13,10 +13,14 @@ mod builder;
 mod document;
 mod parser;
 mod preprocessor;
+mod server;
 mod writer;
 
 /// The documentation builder.
 pub use builder::DocBuilder;
+
+/// The documentation server.
+pub use server::Server;
 
 /// The document output.
 pub use document::Document;

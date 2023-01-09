@@ -151,7 +151,7 @@ pub enum Subcommands {
     )]
     Geiger(geiger::GeigerArgs),
 
-    #[clap(about = "Generate documentation for the project,")]
+    #[clap(about = "Generate documentation for the project.")]
     Doc(DocArgs),
 }
 
