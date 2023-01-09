@@ -5,7 +5,8 @@ use solang_parser::{
     doccomment::{parse_doccomments, DocComment},
     pt::{
         Comment as SolangComment, EnumDefinition, ErrorDefinition, EventDefinition,
-        FunctionDefinition, Loc, SourceUnit, SourceUnitPart, StructDefinition, VariableDefinition,
+        FunctionDefinition, Loc, SourceUnit, SourceUnitPart, StructDefinition, TypeDefinition,
+        VariableDefinition,
     },
 };
 
@@ -133,6 +134,7 @@ impl Visitor for Parser {
                 SourceUnitPart::StructDefinition(structure) => self.visit_struct(structure)?,
                 SourceUnitPart::EnumDefinition(enumerable) => self.visit_enum(enumerable)?,
                 SourceUnitPart::VariableDefinition(var) => self.visit_var_definition(var)?,
+                SourceUnitPart::TypeDefinition(ty) => self.visit_type_definition(ty)?,
                 _ => {}
             };
         }
@@ -162,6 +164,10 @@ impl Visitor for Parser {
 
     fn visit_enum(&mut self, enumerable: &mut EnumDefinition) -> ParserResult<()> {
         self.add_element_to_parent(ParseSource::Enum(enumerable.clone()), enumerable.loc)
+    }
+
+    fn visit_type_definition(&mut self, def: &mut TypeDefinition) -> ParserResult<()> {
+        self.add_element_to_parent(ParseSource::Type(def.clone()), def.loc)
     }
 }
 

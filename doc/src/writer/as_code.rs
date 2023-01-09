@@ -6,7 +6,8 @@ use itertools::Itertools;
 use solang_parser::pt::{
     EnumDefinition, ErrorDefinition, ErrorParameter, EventDefinition, EventParameter, Expression,
     FunctionAttribute, FunctionDefinition, Identifier, IdentifierPath, Loc, Parameter,
-    StructDefinition, Type, VariableAttribute, VariableDeclaration, VariableDefinition,
+    StructDefinition, Type, TypeDefinition, VariableAttribute, VariableDeclaration,
+    VariableDefinition,
 };
 
 // TODO: delegate this logic to [forge_fmt::Formatter]
@@ -339,6 +340,12 @@ impl AsCode for EnumDefinition {
         let name = &self.name.name;
         let values = self.values.iter().map(AsCode::as_code).join("\n\t");
         format!("enum {name} {{\n\t{values}\n}}")
+    }
+}
+
+impl AsCode for TypeDefinition {
+    fn as_code(&self) -> String {
+        format!("type {} is {}", &self.name.name, self.ty.as_code())
     }
 }
 

@@ -213,6 +213,10 @@ impl AsDoc for Document {
                     writer.write_title(&enumerable.name.name)?;
                     writer.write_section(enumerable, &item.comments)?;
                 }
+                ParseSource::Type(ty) => {
+                    writer.write_title(&ty.name.name)?;
+                    writer.write_section(ty, &item.comments)?;
+                }
                 ParseSource::Function(func) => {
                     // TODO: cleanup
                     // Write function name

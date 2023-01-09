@@ -1,6 +1,6 @@
 use solang_parser::pt::{
     ContractDefinition, EnumDefinition, ErrorDefinition, EventDefinition, FunctionDefinition,
-    StructDefinition, VariableDefinition,
+    StructDefinition, TypeDefinition, VariableDefinition,
 };
 
 use crate::Comments;
@@ -80,6 +80,7 @@ impl ParseItem {
             ParseSource::Error(_) => "error",
             ParseSource::Struct(_) => "struct",
             ParseSource::Enum(_) => "enum",
+            ParseSource::Type(_) => "type",
         };
         let ident = self.source.ident();
         format!("{prefix}.{ident}.md")
@@ -113,6 +114,8 @@ pub enum ParseSource {
     Struct(StructDefinition),
     /// Source enum definition.
     Enum(EnumDefinition),
+    /// Source type definition.
+    Type(TypeDefinition),
 }
 
 impl ParseSource {
@@ -128,6 +131,7 @@ impl ParseSource {
             ParseSource::Function(func) => {
                 func.name.as_ref().map_or(func.ty.to_string(), |n| n.name.to_owned())
             }
+            ParseSource::Type(ty) => ty.name.name.to_owned(),
         }
     }
 }
