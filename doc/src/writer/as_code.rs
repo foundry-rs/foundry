@@ -41,7 +41,11 @@ impl AsCode for VariableAttribute {
             VariableAttribute::Constant(_) => "constant".to_owned(),
             VariableAttribute::Immutable(_) => "immutable".to_owned(),
             VariableAttribute::Override(_, idents) => {
-                format!("override({})", idents.iter().map(AsCode::as_code).join(", "))
+                let mut val = "override".to_owned();
+                if !idents.is_empty() {
+                    val.push_str(&format!("({})", idents.iter().map(AsCode::as_code).join(", ")));
+                }
+                val
             }
         }
     }
@@ -225,7 +229,11 @@ impl AsCode for FunctionAttribute {
             Self::Virtual(_) => "virtual".to_owned(),
             Self::Immutable(_) => "immutable".to_owned(),
             Self::Override(_, idents) => {
-                format!("override({})", idents.iter().map(AsCode::as_code).join(", "))
+                let mut val = "override".to_owned();
+                if !idents.is_empty() {
+                    val.push_str(&format!("({})", idents.iter().map(AsCode::as_code).join(", ")));
+                }
+                val
             }
             Self::BaseOrModifier(_, _base) => "".to_owned(), // TODO:
             Self::NameValue(..) => unreachable!(),
