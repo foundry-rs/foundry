@@ -104,7 +104,6 @@ impl DocBuilder {
                     .into_iter()
                     .partition(|item| !matches!(item.source, ParseSource::Variable(_)));
 
-                // TODO: group overloaded functions
                 // Attempt to group overloaded top-level functions
                 let mut remaining = Vec::with_capacity(items.len());
                 let mut funcs: HashMap<String, Vec<ParseItem>> = HashMap::default();
@@ -151,8 +150,8 @@ impl DocBuilder {
 
                     let identity = match filestem {
                         Some(stem) if stem.to_lowercase().contains("constants") => stem.to_owned(),
-                        Some(stem) => format!("{stem} Constants"),
-                        None => "Constants".to_owned(),
+                        Some(stem) => format!("{stem} constants"),
+                        None => "constants".to_owned(),
                     };
 
                     files.push(
