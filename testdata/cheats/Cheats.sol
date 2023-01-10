@@ -415,7 +415,7 @@ interface Cheats {
 
     function parseJsonBytes32(string calldata, string calldata) external returns (bytes32);
 
-    function parseJsonBytes32(string calldata, string calldata) external returns (bytes32[]);
+    function parseJsonBytes32(string calldata, string calldata) external returns (bytes32[] memory);
 
     function serializeBool(string calldata, string calldata, bool) external returns (string memory);
 
