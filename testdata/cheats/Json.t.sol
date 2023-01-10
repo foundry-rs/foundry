@@ -61,10 +61,7 @@ contract ParseJson is DSTest {
     }
 
     function test_H160ButNotaddress() public {
-        string memory data = abi.decode(
-            cheats.parseJson(json, ".H160NotAddress"),
-            (string)
-        );
+        string memory data = abi.decode(cheats.parseJson(json, ".H160NotAddress"), (string));
         assertEq("0000000000000000000000000000000000001337", data);
     }
 
@@ -101,9 +98,12 @@ contract ParseJson is DSTest {
     }
 
     function test_coercionRevert() public {
-        cheats.expectRevert("You can only coerce values or arrays, not JSON objects. The key '$.nestedObject' returns an object");
+        cheats.expectRevert(
+            "You can only coerce values or arrays, not JSON objects. The key '$.nestedObject' returns an object"
+        );
         uint256 number = cheats.parseJsonUint(json, "nestedObject");
     }
+
     function test_coercionUint() public {
         uint256 number = cheats.parseJsonUint(json, "hexUint");
         assertEq(number, 1231232);
@@ -111,16 +111,13 @@ contract ParseJson is DSTest {
         assertEq(number, 115792089237316195423570985008687907853269984665640564039457584007913129639935);
         number = cheats.parseJsonUint(json, "numberUint");
         assertEq(number, 115792089237316195423570985008687907853269984665640564039457584007913129639935);
-        uint256[] memory numbers = cheats.parseJsonUintArray(
-            json,
-            ".arrayUint"
-        );
+        uint256[] memory numbers = cheats.parseJsonUintArray(json, ".arrayUint");
         assertEq(numbers[0], 1231232);
         assertEq(numbers[1], 1231232);
         assertEq(numbers[2], 1231232);
     }
 
-    function test_coercionInt()public {
+    function test_coercionInt() public {
         int256 number = cheats.parseJsonInt(json, ".hexInt");
         assertEq(number, -12);
         number = cheats.parseJsonInt(json, "stringInt");
@@ -213,8 +210,7 @@ contract WriteJson is DSTest {
 
     function test_serializeNotSimpleJson() public {
         string memory json3 = "json3";
-        string
-            memory path = "../testdata/fixtures/Json/write_complex_test.json";
+        string memory path = "../testdata/fixtures/Json/write_complex_test.json";
         vm.serializeUint(json3, "a", uint256(123));
         string memory semiFinal = vm.serializeString(json3, "b", "test");
         string memory finalJson = vm.serializeString(json3, "c", semiFinal);
