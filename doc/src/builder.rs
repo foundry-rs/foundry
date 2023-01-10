@@ -216,7 +216,7 @@ impl DocBuilder {
         // Write summary and section readmes
         let mut summary = BufWriter::default();
         summary.write_title("Summary")?;
-        summary.write_link_list_item("README", Self::README, 0)?;
+        summary.write_link_list_item("Home", Self::README, 0)?;
         self.write_summary_section(&mut summary, &documents.iter().collect::<Vec<_>>(), None, 0)?;
         fs::write(out_dir_src.join(Self::SUMMARY), summary.finish())?;
 
