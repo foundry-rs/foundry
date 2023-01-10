@@ -1,7 +1,10 @@
 use crate::{
     abi::HEVMCalls,
     error,
-    executor::inspector::{cheatcodes::util, Cheatcodes},
+    executor::inspector::{
+        cheatcodes::{util, util::parse},
+        Cheatcodes,
+    },
 };
 use bytes::Bytes;
 use ethers::{
@@ -360,10 +363,10 @@ fn value_to_token(value: &Value) -> eyre::Result<Token> {
         } else {
             Ok(Token::String(string.to_owned()))
         }
-    } else if let Some(number) = value.as_u64() {
-        Ok(Token::Uint(number.into()))
-    } else if let Some(number) = value.as_i64() {
-        Ok(Token::Int(number.into()))
+    } else if let Ok(number) = U256::from_dec_str(&value.to_string()) {
+        Ok(Token::Uint(number))
+    } else if let Ok(number) = I256::from_dec_str(&value.to_string()) {
+        Ok(Token::Int(number.into_raw()))
     } else if let Some(array) = value.as_array() {
         Ok(Token::Array(array.iter().map(value_to_token).collect::<eyre::Result<Vec<_>>>()?))
     } else if value.as_object().is_some() {
@@ -378,16 +381,36 @@ fn value_to_token(value: &Value) -> eyre::Result<Token> {
         eyre::bail!("Unexpected json value: {}", value)
     }
 }
+
 /// Parses a JSON and returns a single value, an array or an entire JSON object encoded as tuple.
 /// As the JSON object is parsed serially, with the keys ordered alphabetically, they must be
 /// deserialized in the same order. That means that the solidity `struct` should order it's fields
 /// alphabetically and not by efficient packing or some other taxonomy.
-fn parse_json(_state: &mut Cheatcodes, json_str: &str, key: &str) -> Result<Bytes, Bytes> {
+fn parse_json(
+    _state: &mut Cheatcodes,
+    json_str: &str,
+    key: &str,
+    coerce: Option<ParamType>,
+) -> Result<Bytes, Bytes> {
     let json = serde_json::from_str(json_str).map_err(error::encode_error)?;
     let values: Vec<&Value> = jsonpath_lib::select(&json, key).map_err(error::encode_error)?;
     // values is an array of items. Depending on the JsonPath key, they
     // can be many or a single item. An item can be a single value or
     // an entire JSON object.
+    if let Some(coercion_type) = coerce {
+        if values.len() != 1 || values[0].is_object() {
+            return Err(error::encode_error(format!(
+                "You can only coerce values or arrays, not JSON objects. The key '{key}' returns an object",
+            )))
+        }
+        let final_val = if let Some(array) = values[0].as_array() {
+            array.iter().map(|v| v.to_string().replace('\"', "")).collect::<Vec<String>>()
+        } else {
+            vec![values[0].to_string().replace('\"', "")]
+        };
+        let bytes = parse(final_val, coercion_type, values[0].is_array());
+        return bytes
+    }
     let res = values
         .iter()
         .map(|inner| {
@@ -600,8 +623,52 @@ pub fn apply(
         HEVMCalls::FsMetadata(inner) => fs_metadata(state, &inner.0),
         // If no key argument is passed, return the whole JSON object.
         // "$" is the JSONPath key for the root of the object
-        HEVMCalls::ParseJson0(inner) => parse_json(state, &inner.0, "$"),
-        HEVMCalls::ParseJson1(inner) => parse_json(state, &inner.0, &format!("$.{}", &inner.1)),
+        HEVMCalls::ParseJson0(inner) => parse_json(state, &inner.0, "$", None),
+        HEVMCalls::ParseJson1(inner) => {
+            parse_json(state, &inner.0, &format!("$.{}", &inner.1), None)
+        }
+        HEVMCalls::ParseJsonBool(inner) => {
+            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::Bool))
+        }
+        HEVMCalls::ParseJsonBoolArray(inner) => {
+            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::Bool))
+        }
+        HEVMCalls::ParseJsonUint(inner) => {
+            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::Uint(256)))
+        }
+        HEVMCalls::ParseJsonUintArray(inner) => {
+            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::Uint(256)))
+        }
+        HEVMCalls::ParseJsonInt(inner) => {
+            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::Int(256)))
+        }
+        HEVMCalls::ParseJsonIntArray(inner) => {
+            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::Int(256)))
+        }
+        HEVMCalls::ParseJsonString(inner) => {
+            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::String))
+        }
+        HEVMCalls::ParseJsonStringArray(inner) => {
+            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::String))
+        }
+        HEVMCalls::ParseJsonAddress(inner) => {
+            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::Address))
+        }
+        HEVMCalls::ParseJsonAddressArray(inner) => {
+            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::Address))
+        }
+        HEVMCalls::ParseJsonBytes(inner) => {
+            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::Bytes))
+        }
+        HEVMCalls::ParseJsonBytesArray(inner) => {
+            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::Bytes))
+        }
+        HEVMCalls::ParseJsonBytes32(inner) => {
+            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::FixedBytes(32)))
+        }
+        HEVMCalls::ParseJsonBytes32Array(inner) => {
+            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::FixedBytes(32)))
+        }
         HEVMCalls::SerializeBool0(inner) => {
             serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
         }

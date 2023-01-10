@@ -125,7 +125,7 @@ fn remember_key(state: &mut Cheatcodes, private_key: U256, chain_id: U256) -> Re
     Ok(wallet.address().encode().into())
 }
 
-fn parse(
+pub fn parse(
     val: Vec<impl AsRef<str> + Clone>,
     r#type: ParamType,
     is_array: bool,
