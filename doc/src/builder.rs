@@ -204,8 +204,11 @@ impl DocBuilder {
         // Write readme content if any
         let readme_content = {
             let src_readme = self.sources.join(Self::README);
+            let root_readme = self.root.join(Self::README);
             if src_readme.exists() {
                 fs::read_to_string(src_readme)?
+            } else if root_readme.exists() {
+                fs::read_to_string(root_readme)?
             } else {
                 String::new()
             }
