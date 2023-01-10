@@ -74,9 +74,9 @@ contract ParseJson is DSTest {
     }
 
     function test_nestedObject() public {
-        bytes memory data = cheats.parseJson(json, ".nestedObject");
+        bytes memory data = cheats.parseJson(json, "nestedObject");
         Nested memory nested = abi.decode(data, (Nested));
-        assertEq(nested.number, 13);
+        assertEq(nested.number, 115792089237316195423570985008687907853269984665640564039457584007913129639935);
         assertEq(nested.str, "NEST");
     }
 
@@ -101,12 +101,10 @@ contract ParseJson is DSTest {
     }
 
     function test_coercionRevert() public {
-        string memory path = "../testdata/fixtures/Json/test.json";
         cheats.expectRevert("You can only coerce values or arrays, not JSON objects. The key '$.nestedObject' returns an object");
         uint256 number = cheats.parseJsonUint(json, "nestedObject");
     }
     function test_coercionUint() public {
-        string memory path = "../testdata/fixtures/Json/test.json";
         uint256 number = cheats.parseJsonUint(json, "hexUint");
         assertEq(number, 1231232);
         number = cheats.parseJsonUint(json, "stringUint");
@@ -123,7 +121,6 @@ contract ParseJson is DSTest {
     }
 
     function test_coercionInt()public {
-        string memory path = "../testdata/fixtures/Json/test.json";
         int256 number = cheats.parseJsonInt(json, ".hexInt");
         assertEq(number, -12);
         number = cheats.parseJsonInt(json, "stringInt");
@@ -131,7 +128,6 @@ contract ParseJson is DSTest {
     }
 
     function test_coercion_bool() public {
-        string memory path = "../testdata/fixtures/Json/test.json";
         bool boolean = cheats.parseJsonBool(json, ".booleanString");
         assertEq(boolean, true);
         bool[] memory booleans = cheats.parseJsonBoolArray(json, ".booleanArray");

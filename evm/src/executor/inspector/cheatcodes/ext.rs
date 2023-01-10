@@ -363,10 +363,10 @@ fn value_to_token(value: &Value) -> eyre::Result<Token> {
         } else {
             Ok(Token::String(string.to_owned()))
         }
-    } else if let Some(number) = value.as_u64() {
-        Ok(Token::Uint(number.into()))
-    } else if let Some(number) = value.as_i64() {
+    } else if let Ok(number) = U256::from_dec_str(&value.to_string()) {
         Ok(Token::Int(number.into()))
+    } else if let Ok(number) = I256::from_dec_str(&value.to_string()) {
+        Ok(Token::Int(number.into_raw()))
     } else if let Some(array) = value.as_array() {
         Ok(Token::Array(array.iter().map(value_to_token).collect::<eyre::Result<Vec<_>>>()?))
     } else if value.as_object().is_some() {
