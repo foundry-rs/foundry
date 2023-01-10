@@ -1,5 +1,5 @@
 use ethers_solc::utils::source_files_iter;
-use forge_fmt::Visitable;
+use forge_fmt::{FormatterConfig, Visitable};
 use itertools::Itertools;
 use rayon::prelude::*;
 use std::{
@@ -29,6 +29,8 @@ pub struct DocBuilder {
     pub title: String,
     /// The array of preprocessors to apply.
     pub preprocessors: Vec<Box<dyn Preprocessor>>,
+    /// The formatter config.
+    pub fmt: FormatterConfig,
 }
 
 // TODO: consider using `tfio`
@@ -46,6 +48,7 @@ impl DocBuilder {
             out: Default::default(),
             title: Default::default(),
             preprocessors: Default::default(),
+            fmt: Default::default(),
         }
     }
 
@@ -55,9 +58,15 @@ impl DocBuilder {
         self
     }
 
-    /// Set title on the builder
+    /// Set title on the builder.
     pub fn with_title(mut self, title: String) -> Self {
         self.title = title;
+        self
+    }
+
+    /// Set formatter config on the builder.
+    pub fn with_fmt(mut self, fmt: FormatterConfig) -> Self {
+        self.fmt = fmt;
         self
     }
 
@@ -95,8 +104,10 @@ impl DocBuilder {
                             diags
                         )
                     })?;
-                let mut doc = Parser::new(comments);
-                source_unit.visit(&mut doc)?;
+                let mut doc = Parser::new(comments, source).with_fmt(self.fmt.clone());
+                source_unit
+                    .visit(&mut doc)
+                    .map_err(|err| eyre::eyre!("Failed to parse source: {err}"))?;
 
                 // Split the parsed items on top-level constants and rest.
                 let (items, consts): (Vec<ParseItem>, Vec<ParseItem>) = doc

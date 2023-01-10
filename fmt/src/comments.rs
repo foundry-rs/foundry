@@ -212,7 +212,7 @@ impl CommentWithMetadata {
 }
 
 /// A list of comments
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct Comments {
     prefixes: VecDeque<CommentWithMetadata>,
     postfixes: VecDeque<CommentWithMetadata>,

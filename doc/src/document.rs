@@ -10,6 +10,8 @@ pub struct Document {
     pub content: DocumentContent,
     /// The original item path.
     pub item_path: PathBuf,
+    /// The original item file content.
+    pub item_content: String,
     /// The target path where the document will be written.
     pub target_path: PathBuf,
     /// The document display identity.
@@ -33,6 +35,7 @@ impl Document {
         Self {
             item_path,
             target_path,
+            item_content: String::default(),
             identity: String::default(),
             content: DocumentContent::Empty,
             context: Mutex::new(HashMap::default()),

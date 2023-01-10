@@ -1,9 +1,10 @@
+use forge_fmt::{Comments as FmtComments, Formatter, FormatterConfig, InlineConfig, Visitor};
 use solang_parser::pt::{
     ContractDefinition, EnumDefinition, ErrorDefinition, EventDefinition, FunctionDefinition,
     StructDefinition, TypeDefinition, VariableDefinition,
 };
 
-use crate::Comments;
+use crate::{error::ParserResult, Comments};
 
 /// The parsed item.
 #[derive(PartialEq, Debug)]
@@ -14,6 +15,8 @@ pub struct ParseItem {
     pub comments: Comments,
     /// Children items.
     pub children: Vec<ParseItem>,
+    /// Formatted code string.
+    pub code: String,
 }
 
 /// Defines a method that filters [ParseItem]'s children and returns the source pt token of the
@@ -22,9 +25,9 @@ pub struct ParseItem {
 macro_rules! filter_children_fn {
     ($vis:vis fn $name:ident(&self, $variant:ident) -> $ret:ty) => {
         /// Filter children items for [ParseSource::$variant] variants.
-        $vis fn $name<'a>(&'a self) -> Option<Vec<(&'a $ret, &'a Comments)>> {
+        $vis fn $name<'a>(&'a self) -> Option<Vec<(&'a $ret, &'a Comments, &'a String)>> {
             let items = self.children.iter().filter_map(|item| match item.source {
-                ParseSource::$variant(ref inner) => Some((inner, &item.comments)),
+                ParseSource::$variant(ref inner) => Some((inner, &item.comments, &item.code)),
                 _ => None,
             });
             let items = items.collect::<Vec<_>>();
@@ -55,7 +58,12 @@ macro_rules! as_inner_source {
 impl ParseItem {
     /// Create new instance of [ParseItem].
     pub fn new(source: ParseSource) -> Self {
-        Self { source, comments: Default::default(), children: Default::default() }
+        Self {
+            source,
+            comments: Default::default(),
+            children: Default::default(),
+            code: Default::default(),
+        }
     }
 
     /// Set comments on the [ParseItem].
@@ -68,6 +76,39 @@ impl ParseItem {
     pub fn with_children(mut self, children: Vec<ParseItem>) -> Self {
         self.children = children;
         self
+    }
+
+    /// Set formatted code on the [ParseItem].
+    pub fn with_code(mut self, source: &str, config: FormatterConfig) -> ParserResult<Self> {
+        let mut code = String::new();
+        let mut fmt = Formatter::new(
+            &mut code,
+            &source,
+            FmtComments::default(),
+            InlineConfig::default(),
+            config,
+        );
+
+        match self.source.clone() {
+            ParseSource::Contract(mut contract) => {
+                contract.parts = vec![];
+                fmt.visit_contract(&mut contract)?
+            }
+            ParseSource::Function(mut func) => {
+                func.body = None;
+                fmt.visit_function(&mut func)?
+            }
+            ParseSource::Variable(mut var) => fmt.visit_var_definition(&mut var)?,
+            ParseSource::Event(mut event) => fmt.visit_event(&mut event)?,
+            ParseSource::Error(mut error) => fmt.visit_error(&mut error)?,
+            ParseSource::Struct(mut structure) => fmt.visit_struct(&mut structure)?,
+            ParseSource::Enum(mut enumeration) => fmt.visit_enum(&mut enumeration)?,
+            ParseSource::Type(mut ty) => fmt.visit_type_definition(&mut ty)?,
+        };
+
+        self.code = code;
+
+        Ok(self)
     }
 
     /// Format the item's filename.
@@ -99,7 +140,7 @@ impl ParseItem {
 }
 
 /// A wrapper type around pt token.
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum ParseSource {
     /// Source contract definition.
     Contract(Box<ContractDefinition>),

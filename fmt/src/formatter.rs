@@ -69,7 +69,7 @@ macro_rules! bail {
 
 // TODO: store context entities as references without copying
 /// Current context of the Formatter (e.g. inside Contract or Function definition)
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct Context {
     contract: Option<ContractDefinition>,
     function: Option<FunctionDefinition>,
@@ -77,6 +77,7 @@ struct Context {
 }
 
 /// A Solidity formatter
+#[derive(Debug)]
 pub struct Formatter<'a, W> {
     buf: FormatBuffer<&'a mut W>,
     source: &'a str,

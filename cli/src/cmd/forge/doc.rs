@@ -40,6 +40,7 @@ impl Cmd for DocArgs {
         DocBuilder::new(root, config.project_paths().sources)
             .with_out(out.clone())
             .with_title(config.doc.title.clone())
+            .with_fmt(config.fmt.clone())
             .with_preprocessor(ContractInheritance)
             .with_preprocessor(Inheritdoc)
             .build()?;

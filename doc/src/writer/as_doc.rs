@@ -36,8 +36,6 @@ impl<'a> AsDoc for CommentsRef<'a> {
     fn as_doc(&self) -> AsDocResult {
         let mut writer = BufWriter::default();
 
-        // TODO: title
-
         let authors = self.include_tag(CommentTag::Author);
         if !authors.is_empty() {
             writer.write_bold(&format!("Author{}:", if authors.len() == 1 { "" } else { "s" }))?;
@@ -84,7 +82,7 @@ impl AsDoc for Document {
                         ));
                     }
                     writer.write_heading(&heading)?;
-                    writer.write_section(func, &item.comments)?;
+                    writer.write_section(&item.comments, &item.code)?;
                 }
             }
             DocumentContent::Constants(items) => {
@@ -93,7 +91,7 @@ impl AsDoc for Document {
                 for item in items.iter() {
                     let var = item.as_variable().unwrap();
                     writer.write_heading(&var.name.name)?;
-                    writer.write_section(var, &item.comments)?;
+                    writer.write_section(&item.comments, &item.code)?;
                 }
             }
             DocumentContent::Single(item) => {
@@ -140,21 +138,21 @@ impl AsDoc for Document {
 
                         if let Some(state_vars) = item.variables() {
                             writer.write_subtitle("State Variables")?;
-                            state_vars.into_iter().try_for_each(|(item, comments)| {
+                            state_vars.into_iter().try_for_each(|(item, comments, code)| {
                                 let comments = comments.merge_inheritdoc(
                                     &item.name.name,
                                     read_context!(self, INHERITDOC_ID, Inheritdoc),
                                 );
 
                                 writer.write_heading(&item.name.name)?;
-                                writer.write_section(item, &comments)?;
+                                writer.write_section(&comments, code)?;
                                 writer.writeln()
                             })?;
                         }
 
                         if let Some(funcs) = item.functions() {
                             writer.write_subtitle("Functions")?;
-                            funcs.into_iter().try_for_each(|(func, comments)| {
+                            funcs.into_iter().try_for_each(|(func, comments, code)| {
                                 let func_name = func
                                     .name
                                     .as_ref()
@@ -175,7 +173,7 @@ impl AsDoc for Document {
                                 )?;
 
                                 // Write function header
-                                writer.write_code(func)?;
+                                writer.write_code(&code)?;
 
                                 // Write function parameter comments in a table
                                 let params = func
@@ -209,59 +207,59 @@ impl AsDoc for Document {
 
                         if let Some(events) = item.events() {
                             writer.write_subtitle("Events")?;
-                            events.into_iter().try_for_each(|(item, comments)| {
+                            events.into_iter().try_for_each(|(item, comments, code)| {
                                 writer.write_heading(&item.name.name)?;
-                                writer.write_section(item, comments)
+                                writer.write_section(comments, code)
                             })?;
                         }
 
                         if let Some(errors) = item.errors() {
                             writer.write_subtitle("Errors")?;
-                            errors.into_iter().try_for_each(|(item, comments)| {
+                            errors.into_iter().try_for_each(|(item, comments, code)| {
                                 writer.write_heading(&item.name.name)?;
-                                writer.write_section(item, comments)
+                                writer.write_section(comments, code)
                             })?;
                         }
 
                         if let Some(structs) = item.structs() {
                             writer.write_subtitle("Structs")?;
-                            structs.into_iter().try_for_each(|(item, comments)| {
+                            structs.into_iter().try_for_each(|(item, comments, code)| {
                                 writer.write_heading(&item.name.name)?;
-                                writer.write_section(item, comments)
+                                writer.write_section(comments, code)
                             })?;
                         }
 
                         if let Some(enums) = item.enums() {
                             writer.write_subtitle("Enums")?;
-                            enums.into_iter().try_for_each(|(item, comments)| {
+                            enums.into_iter().try_for_each(|(item, comments, code)| {
                                 writer.write_heading(&item.name.name)?;
-                                writer.write_section(item, comments)
+                                writer.write_section(comments, code)
                             })?;
                         }
                     }
                     ParseSource::Variable(var) => {
                         writer.write_title(&var.name.name)?;
-                        writer.write_section(var, &item.comments)?;
+                        writer.write_section(&item.comments, &item.code)?;
                     }
                     ParseSource::Event(event) => {
                         writer.write_title(&event.name.name)?;
-                        writer.write_section(event, &item.comments)?;
+                        writer.write_section(&item.comments, &item.code)?;
                     }
                     ParseSource::Error(error) => {
                         writer.write_title(&error.name.name)?;
-                        writer.write_section(error, &item.comments)?;
+                        writer.write_section(&item.comments, &item.code)?;
                     }
                     ParseSource::Struct(structure) => {
                         writer.write_title(&structure.name.name)?;
-                        writer.write_section(structure, &item.comments)?;
+                        writer.write_section(&item.comments, &item.code)?;
                     }
                     ParseSource::Enum(enumerable) => {
                         writer.write_title(&enumerable.name.name)?;
-                        writer.write_section(enumerable, &item.comments)?;
+                        writer.write_section(&item.comments, &item.code)?;
                     }
                     ParseSource::Type(ty) => {
                         writer.write_title(&ty.name.name)?;
-                        writer.write_section(ty, &item.comments)?;
+                        writer.write_section(&item.comments, &item.code)?;
                     }
                     ParseSource::Function(func) => {
                         // TODO: cleanup
@@ -277,7 +275,7 @@ impl AsDoc for Document {
                         )?;
 
                         // Write function header
-                        writer.write_code(func)?;
+                        writer.write_code(&item.code)?;
 
                         // Write function parameter comments in a table
                         let params =

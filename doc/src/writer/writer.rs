@@ -82,16 +82,14 @@ impl BufWriter {
     }
 
     /// Writes a solidity code block block to the buffer.
-    pub fn write_code<T: AsCode>(&mut self, item: T) -> fmt::Result {
-        let code = item.as_code();
-        let block = Markdown::CodeBlock("solidity", &code);
-        writeln!(self.buf, "{block}")
+    pub fn write_code(&mut self, code: &str) -> fmt::Result {
+        writeln!(self.buf, "{}", Markdown::CodeBlock("solidity", &code))
     }
 
     /// Write an item section to the buffer. First write comments, the item itself as code.
-    pub fn write_section<T: AsCode>(&mut self, item: T, comments: &Comments) -> fmt::Result {
+    pub fn write_section(&mut self, comments: &Comments, code: &str) -> fmt::Result {
         self.writeln_raw(&comments.as_doc()?)?;
-        self.write_code(item)?;
+        self.write_code(code)?;
         self.writeln()
     }
 

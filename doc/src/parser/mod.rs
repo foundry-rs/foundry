@@ -1,6 +1,6 @@
 //! The parser module.
 
-use forge_fmt::{Visitable, Visitor};
+use forge_fmt::{FormatterConfig, Visitable, Visitor};
 use solang_parser::{
     doccomment::{parse_doccomments, DocComment},
     pt::{
@@ -33,6 +33,10 @@ pub struct Parser {
     context: ParserContext,
     /// Parsed results.
     items: Vec<ParseItem>,
+    /// Source file.
+    source: String,
+    /// The formatter config.
+    fmt: FormatterConfig,
 }
 
 /// [Parser] context.
@@ -46,8 +50,14 @@ struct ParserContext {
 
 impl Parser {
     /// Create a new instance of [Parser].
-    pub fn new(comments: Vec<SolangComment>) -> Self {
-        Parser { comments, ..Default::default() }
+    pub fn new(comments: Vec<SolangComment>, source: String) -> Self {
+        Parser { comments, source, ..Default::default() }
+    }
+
+    /// Set formatter config on the [Parser]
+    pub fn with_fmt(mut self, fmt: FormatterConfig) -> Self {
+        self.fmt = fmt;
+        self
     }
 
     /// Return the parsed items. Consumes the parser.
@@ -76,7 +86,7 @@ impl Parser {
     /// Otherwise the element will be added to a top-level items collection.
     /// Moves the doc comment pointer to the end location of the child element.
     fn add_element_to_parent(&mut self, source: ParseSource, loc: Loc) -> ParserResult<()> {
-        let child = ParseItem { source, comments: self.parse_docs(loc.start())?, children: vec![] };
+        let child = self.new_item(source, loc.start())?;
         if let Some(parent) = self.context.parent.as_mut() {
             parent.children.push(child);
         } else {
@@ -84,6 +94,12 @@ impl Parser {
         }
         self.context.doc_start_loc = loc.end();
         Ok(())
+    }
+
+    /// Create new [ParseItem] with comments and formatted code.
+    fn new_item(&mut self, source: ParseSource, loc_start: usize) -> ParserResult<ParseItem> {
+        let docs = self.parse_docs(loc_start)?;
+        ParseItem::new(source).with_comments(docs).with_code(&self.source, self.fmt.clone())
     }
 
     /// Parse the doc comments from the current start location.
@@ -107,9 +123,8 @@ impl Visitor for Parser {
             match source {
                 SourceUnitPart::ContractDefinition(def) => {
                     // Create new contract parse item.
-                    let source = ParseSource::Contract(def.clone());
-                    let comments = self.parse_docs(def.loc.start())?;
-                    let contract = ParseItem::new(source).with_comments(comments);
+                    let contract =
+                        self.new_item(ParseSource::Contract(def.clone()), def.loc.start())?;
 
                     // Move the doc pointer to the contract location start.
                     self.context.doc_start_loc = def.loc.start();
@@ -181,7 +196,7 @@ mod tests {
     #[inline]
     fn parse_source(src: &str) -> Vec<ParseItem> {
         let (mut source, comments) = parse(src, 0).expect("failed to parse source");
-        let mut doc = Parser::new(comments);
+        let mut doc = Parser::new(comments, src.to_owned()); // TODO:
         source.visit(&mut doc).expect("failed to visit source");
         doc.items()
     }
