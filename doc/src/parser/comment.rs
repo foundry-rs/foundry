@@ -1,6 +1,6 @@
-use derive_more::Deref;
+use derive_more::{Deref, DerefMut};
 use solang_parser::doccomment::DocCommentTag;
-use std::str::FromStr;
+use std::{collections::HashMap, str::FromStr};
 
 /// The natspec comment tag explaining the purpose of the comment.
 /// See: https://docs.soliditylang.org/en/v0.8.17/natspec-format.html#tags.
@@ -48,7 +48,7 @@ impl FromStr for CommentTag {
 
 /// The natspec documentation comment.
 /// https://docs.soliditylang.org/en/v0.8.17/natspec-format.html
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Clone, Debug)]
 pub struct Comment {
     /// The doc comment tag.
     pub tag: CommentTag,
@@ -94,24 +94,51 @@ impl TryFrom<DocCommentTag> for Comment {
 }
 
 /// The collection of natspec [Comment] items.
-#[derive(Deref, PartialEq, Default, Debug)]
+#[derive(Deref, DerefMut, PartialEq, Default, Clone, Debug)]
 pub struct Comments(Vec<Comment>);
 
 /// Forward the [Comments] function implementation to the [CommentsRef]
 /// reference type.
 macro_rules! ref_fn {
-    ($vis:vis fn $name:ident(&self, $arg:ty)) => {
+    ($vis:vis fn $name:ident(&self$(, )?$($arg_name:ident: $arg:ty),*) -> $ret:ty) => {
         /// Forward the function implementation to [CommentsRef] reference type.
-        $vis fn $name<'a>(&'a self, arg: $arg) -> CommentsRef<'a> {
-            CommentsRef::from(self).$name(arg)
+        $vis fn $name<'a>(&'a self, $($arg_name: $arg),*) -> $ret {
+            CommentsRef::from(self).$name($($arg_name),*)
         }
     };
 }
 
 impl Comments {
-    ref_fn!(pub fn include_tag(&self, CommentTag));
-    ref_fn!(pub fn include_tags(&self, &[CommentTag]));
-    ref_fn!(pub fn exclude_tags(&self, &[CommentTag]));
+    ref_fn!(pub fn include_tag(&self, tag: CommentTag) -> CommentsRef<'_>);
+    ref_fn!(pub fn include_tags(&self, tags: &[CommentTag]) -> CommentsRef<'_>);
+    ref_fn!(pub fn exclude_tags(&self, tags: &[CommentTag]) -> CommentsRef<'_>);
+    ref_fn!(pub fn contains_tag(&self, tag: &Comment) -> bool);
+    ref_fn!(pub fn find_inheritdoc_base(&self) -> Option<&'_ str>);
+
+    /// Attempt to lookup
+    ///
+    /// Merges two comments collections by inserting [CommentTag] from the second collection
+    /// into the first unless they are present.
+    pub fn merge_inheritdoc(
+        &self,
+        ident: &str,
+        inheritdocs: Option<HashMap<String, Comments>>,
+    ) -> Comments {
+        let mut result = Comments(Vec::from_iter(self.iter().cloned()));
+
+        if let (Some(inheritdocs), Some(base)) = (inheritdocs, self.find_inheritdoc_base()) {
+            let key = format!("{base}.{ident}");
+            if let Some(other) = inheritdocs.get(&key) {
+                for comment in other.iter() {
+                    if !result.contains_tag(comment) {
+                        result.push(comment.clone());
+                    }
+                }
+            }
+        }
+
+        result
+    }
 }
 
 impl TryFrom<Vec<DocCommentTag>> for Comments {
@@ -142,6 +169,25 @@ impl<'a> CommentsRef<'a> {
     pub fn exclude_tags(&self, tags: &[CommentTag]) -> CommentsRef<'a> {
         // Cloning only references here
         CommentsRef(self.iter().cloned().filter(|c| !tags.contains(&c.tag)).collect())
+    }
+
+    /// Check if the collection contains a target comment.
+    pub fn contains_tag(&self, target: &Comment) -> bool {
+        self.iter().any(|c| match (&c.tag, &target.tag) {
+            (CommentTag::Inheritdoc, CommentTag::Inheritdoc) => c.value == target.value,
+            (CommentTag::Param, CommentTag::Param) | (CommentTag::Return, CommentTag::Return) => {
+                c.split_first_word().map(|(name, _)| name) ==
+                    target.split_first_word().map(|(name, _)| name)
+            }
+            (tag1, tag2) => tag1 == tag2,
+        })
+    }
+
+    /// Find an [CommentTag::Inheritdoc] comment and extract the base.
+    fn find_inheritdoc_base(&self) -> Option<&'a str> {
+        self.iter()
+            .find(|c| matches!(c.tag, CommentTag::Inheritdoc))
+            .and_then(|c| c.value.split_whitespace().next())
     }
 }
 

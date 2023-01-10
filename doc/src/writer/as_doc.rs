@@ -5,7 +5,7 @@ use crate::{
     parser::ParseSource,
     writer::BufWriter,
     AsCode, CommentTag, Comments, CommentsRef, Document, Markdown, PreprocessorOutput,
-    CONTRACT_INHERITANCE_ID,
+    CONTRACT_INHERITANCE_ID, INHERITDOC_ID,
 };
 use itertools::Itertools;
 use solang_parser::pt::Base;
@@ -116,7 +116,6 @@ impl AsDoc for Document {
                                         .and_then(|l| {
                                             l.get(base_ident).map(|path| {
                                                 let path = Path::new("/").join(
-                                                    // TODO: move to func
                                                     path.strip_prefix("docs/src")
                                                         .ok()
                                                         .unwrap_or(path),
@@ -142,8 +141,13 @@ impl AsDoc for Document {
                         if let Some(state_vars) = item.variables() {
                             writer.write_subtitle("State Variables")?;
                             state_vars.into_iter().try_for_each(|(item, comments)| {
+                                let comments = comments.merge_inheritdoc(
+                                    &item.name.name,
+                                    read_context!(self, INHERITDOC_ID, Inheritdoc),
+                                );
+
                                 writer.write_heading(&item.name.name)?;
-                                writer.write_section(item, comments)?;
+                                writer.write_section(item, &comments)?;
                                 writer.writeln()
                             })?;
                         }
@@ -151,16 +155,22 @@ impl AsDoc for Document {
                         if let Some(funcs) = item.functions() {
                             writer.write_subtitle("Functions")?;
                             funcs.into_iter().try_for_each(|(func, comments)| {
-                                // Write function name
                                 let func_name = func
                                     .name
                                     .as_ref()
                                     .map_or(func.ty.to_string(), |n| n.name.to_owned());
+                                let comments = comments.merge_inheritdoc(
+                                    &func_name,
+                                    read_context!(self, INHERITDOC_ID, Inheritdoc),
+                                );
+
+                                // Write function name
                                 writer.write_heading(&func_name)?;
                                 writer.writeln()?;
 
                                 // Write function docs
                                 writer.writeln_doc(
+                                    // TODO: think about multiple inheritdocs
                                     comments.exclude_tags(&[CommentTag::Param, CommentTag::Return]),
                                 )?;
 
@@ -176,7 +186,7 @@ impl AsDoc for Document {
                                 writer.try_write_param_table(
                                     CommentTag::Param,
                                     &params,
-                                    comments,
+                                    &comments,
                                 )?;
 
                                 // Write function parameter comments in a table
@@ -188,7 +198,7 @@ impl AsDoc for Document {
                                 writer.try_write_param_table(
                                     CommentTag::Return,
                                     &returns,
-                                    comments,
+                                    &comments,
                                 )?;
 
                                 writer.writeln()?;

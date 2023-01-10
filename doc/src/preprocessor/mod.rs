@@ -1,10 +1,13 @@
 //! Module containing documentation preprocessors.
 
-use crate::Document;
+use crate::{Comments, Document};
 use std::{collections::HashMap, fmt::Debug, path::PathBuf};
 
 mod contract_inheritance;
 pub use contract_inheritance::{ContractInheritance, CONTRACT_INHERITANCE_ID};
+
+mod inheritdoc;
+pub use inheritdoc::{Inheritdoc, INHERITDOC_ID};
 
 /// The preprocessor id.
 #[derive(Debug, Eq, Hash, PartialEq)]
@@ -18,6 +21,9 @@ pub enum PreprocessorOutput {
     /// The contract inheritance output.
     /// The map of contract base idents to the path of the base contract.
     ContractInheritance(HashMap<String, PathBuf>),
+    /// The inheritdoc output.
+    /// The map of inherited item keys to their comments.
+    Inheritdoc(HashMap<String, Comments>),
 }
 
 /// Trait for preprocessing and/or modifying existing documents

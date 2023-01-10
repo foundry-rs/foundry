@@ -1,6 +1,6 @@
 use crate::cmd::Cmd;
 use clap::{Parser, ValueHint};
-use forge_doc::{ContractInheritance, DocBuilder, Server};
+use forge_doc::{ContractInheritance, DocBuilder, Inheritdoc, Server};
 use foundry_config::{find_project_root_path, load_config_with_root};
 use std::path::PathBuf;
 
@@ -41,6 +41,7 @@ impl Cmd for DocArgs {
             .with_out(out.clone())
             .with_title(config.doc.title.clone())
             .with_preprocessor(ContractInheritance)
+            .with_preprocessor(Inheritdoc)
             .build()?;
 
         if self.serve {

@@ -99,7 +99,7 @@ impl ParseItem {
 }
 
 /// A wrapper type around pt token.
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq, Debug)]
 pub enum ParseSource {
     /// Source contract definition.
     Contract(Box<ContractDefinition>),

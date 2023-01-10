@@ -60,12 +60,14 @@ impl Document {
     }
 }
 
-/// TODO: docs
+/// Read the preprocessor output variant from document context.
+/// Returns [None] if there is no output.
 macro_rules! read_context {
     ($doc: expr, $id: expr, $variant: ident) => {
-        $doc.get_from_context($id).map(|out| match out {
+        $doc.get_from_context($id).and_then(|out| match out {
             // Only a single variant is matched. Otherwise the code is invalid.
-            PreprocessorOutput::$variant(inner) => inner,
+            PreprocessorOutput::$variant(inner) => Some(inner),
+            _ => None,
         })
     };
 }

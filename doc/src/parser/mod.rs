@@ -14,6 +14,7 @@ use solang_parser::{
 pub mod error;
 use error::{ParserError, ParserResult};
 
+/// Parser item.
 mod item;
 pub use item::{ParseItem, ParseSource};
 
