@@ -12,11 +12,11 @@ repository = "https://github.com/foundry-rs/foundry"
 foundry-config = { path = "../config" }
 
 # eth
-ethers-core = { git = "https://github.com/iFrostizz/ethers-rs", rev = "c047a0e", default-features = false }
-ethers-solc = { git = "https://github.com/iFrostizz/ethers-rs", rev = "c047a0e", default-features = false }
-ethers-providers = { git = "https://github.com/iFrostizz/ethers-rs", rev = "c047a0e", default-features = false }
-ethers-middleware = { git = "https://github.com/iFrostizz/ethers-rs", rev = "c047a0e", default-features = false }
-ethers-etherscan = { git = "https://github.com/iFrostizz/ethers-rs", rev = "c047a0e", default-features = false, features = ["ethers-solc"] }
+ethers-core = { git = "https://github.com/iFrostizz/ethers-rs", rev = "ce3cc16", default-features = false }
+ethers-solc = { git = "https://github.com/iFrostizz/ethers-rs", rev = "ce3cc16", default-features = false }
+ethers-providers = { git = "https://github.com/iFrostizz/ethers-rs", rev = "ce3cc16", default-features = false }
+ethers-middleware = { git = "https://github.com/iFrostizz/ethers-rs", rev = "ce3cc16", default-features = false }
+ethers-etherscan = { git = "https://github.com/iFrostizz/ethers-rs", rev = "ce3cc16", default-features = false, features = ["ethers-solc"] }
 
 # io
 reqwest = { version = "0.11", default-features = false }

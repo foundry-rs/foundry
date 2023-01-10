@@ -13,7 +13,7 @@ semver = "1.0.4"
 solang-parser = "=0.1.18"
 itertools = "0.10.3"
 thiserror = "1.0.30"
-ethers-core = { git = "https://github.com/iFrostizz/ethers-rs", rev = "c047a0e", default-features = false }
+ethers-core = { git = "https://github.com/iFrostizz/ethers-rs", rev = "ce3cc16", default-features = false }
 foundry-config = { path = "../config" }
 
 [dev-dependencies]

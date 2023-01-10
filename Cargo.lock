@@ -1806,7 +1806,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "1.0.2"
-source = "git+https://github.com/iFrostizz/ethers-rs?rev=c047a0e#c047a0e7f528f236dbbcbfabbf3c7ec98f034e45"
+source = "git+https://github.com/iFrostizz/ethers-rs?rev=ce3cc16#ce3cc1686bb33b971920fded854870c731188071"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1821,7 +1821,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "1.0.2"
-source = "git+https://github.com/iFrostizz/ethers-rs?rev=c047a0e#c047a0e7f528f236dbbcbfabbf3c7ec98f034e45"
+source = "git+https://github.com/iFrostizz/ethers-rs?rev=ce3cc16#ce3cc1686bb33b971920fded854870c731188071"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1832,7 +1832,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "1.0.2"
-source = "git+https://github.com/iFrostizz/ethers-rs?rev=c047a0e#c047a0e7f528f236dbbcbfabbf3c7ec98f034e45"
+source = "git+https://github.com/iFrostizz/ethers-rs?rev=ce3cc16#ce3cc1686bb33b971920fded854870c731188071"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1850,7 +1850,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "1.0.2"
-source = "git+https://github.com/iFrostizz/ethers-rs?rev=c047a0e#c047a0e7f528f236dbbcbfabbf3c7ec98f034e45"
+source = "git+https://github.com/iFrostizz/ethers-rs?rev=ce3cc16#ce3cc1686bb33b971920fded854870c731188071"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -1874,7 +1874,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "1.0.2"
-source = "git+https://github.com/iFrostizz/ethers-rs?rev=c047a0e#c047a0e7f528f236dbbcbfabbf3c7ec98f034e45"
+source = "git+https://github.com/iFrostizz/ethers-rs?rev=ce3cc16#ce3cc1686bb33b971920fded854870c731188071"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1888,7 +1888,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "1.0.2"
-source = "git+https://github.com/iFrostizz/ethers-rs?rev=c047a0e#c047a0e7f528f236dbbcbfabbf3c7ec98f034e45"
+source = "git+https://github.com/iFrostizz/ethers-rs?rev=ce3cc16#ce3cc1686bb33b971920fded854870c731188071"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1900,6 +1900,7 @@ dependencies = [
  "generic-array 0.14.6",
  "hex",
  "k256",
+ "num_enum",
  "once_cell",
  "open-fastrlp",
  "proc-macro2",
@@ -1918,7 +1919,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "1.0.2"
-source = "git+https://github.com/iFrostizz/ethers-rs?rev=c047a0e#c047a0e7f528f236dbbcbfabbf3c7ec98f034e45"
+source = "git+https://github.com/iFrostizz/ethers-rs?rev=ce3cc16#ce3cc1686bb33b971920fded854870c731188071"
 dependencies = [
  "ethers-core",
  "ethers-solc",
@@ -1935,7 +1936,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "1.0.2"
-source = "git+https://github.com/iFrostizz/ethers-rs?rev=c047a0e#c047a0e7f528f236dbbcbfabbf3c7ec98f034e45"
+source = "git+https://github.com/iFrostizz/ethers-rs?rev=ce3cc16#ce3cc1686bb33b971920fded854870c731188071"
 dependencies = [
  "async-trait",
  "auto_impl 0.5.0",
@@ -1960,7 +1961,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "1.0.2"
-source = "git+https://github.com/iFrostizz/ethers-rs?rev=c047a0e#c047a0e7f528f236dbbcbfabbf3c7ec98f034e45"
+source = "git+https://github.com/iFrostizz/ethers-rs?rev=ce3cc16#ce3cc1686bb33b971920fded854870c731188071"
 dependencies = [
  "async-trait",
  "auto_impl 1.0.1",
@@ -1998,7 +1999,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "1.0.2"
-source = "git+https://github.com/iFrostizz/ethers-rs?rev=c047a0e#c047a0e7f528f236dbbcbfabbf3c7ec98f034e45"
+source = "git+https://github.com/iFrostizz/ethers-rs?rev=ce3cc16#ce3cc1686bb33b971920fded854870c731188071"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -2021,7 +2022,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "1.0.2"
-source = "git+https://github.com/iFrostizz/ethers-rs?rev=c047a0e#c047a0e7f528f236dbbcbfabbf3c7ec98f034e45"
+source = "git+https://github.com/iFrostizz/ethers-rs?rev=ce3cc16#ce3cc1686bb33b971920fded854870c731188071"
 dependencies = [
  "cfg-if 1.0.0",
  "dunce",
@@ -3943,9 +3944,9 @@ dependencies = [
 
 [[package]]
 name = "once_cell"
-version = "1.16.0"
+version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86f0b0d4bf799edbc74508c1e8bf170ff5f41238e5f8225603ca7caaae2b7860"
+checksum = "6f61fba1741ea2b3d6a1e3178721804bb716a68a6aeba1149b5d52e3d464ea66"
 
 [[package]]
 name = "oorandom"

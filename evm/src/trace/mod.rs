@@ -82,7 +82,7 @@ impl CallTraceArena {
             .map(|node| {
                 if node.trace.created() {
                     if let RawOrDecodedReturnData::Raw(ref bytes) = node.trace.output {
-                        return (&node.trace.address, Some(bytes.as_ref()))
+                        return (&node.trace.address, Some(bytes.as_ref()));
                     }
                 }
 
@@ -127,10 +127,10 @@ impl CallTraceArena {
                 Instruction::OpCode(opc) => {
                     match opc {
                         // If yes, descend into a child trace
-                        opcode::DELEGATECALL |
-                        opcode::CALL |
-                        opcode::STATICCALL |
-                        opcode::CALLCODE => {
+                        opcode::DELEGATECALL
+                        | opcode::CALL
+                        | opcode::STATICCALL
+                        | opcode::CALLCODE => {
                             self.add_to_geth_trace(
                                 storage,
                                 &self.arena[trace_node.children[child_id]],
@@ -150,7 +150,7 @@ impl CallTraceArena {
     /// Generate a geth-style trace e.g. for debug_traceTransaction
     pub fn geth_trace(&self, receipt_gas_used: U256, opts: GethDebugTracingOptions) -> GethTrace {
         if self.arena.is_empty() {
-            return Default::default()
+            return Default::default();
         }
 
         let mut storage = HashMap::new();
@@ -161,7 +161,7 @@ impl CallTraceArena {
         let mut acc = GethTrace {
             // If the top-level trace succeeded, then it was a success
             failed: !main_trace.success,
-            gas: receipt_gas_used.as_u64(),
+            gas: receipt_gas_used.as_u64().into(),
             return_value: main_trace.output.to_bytes(),
             ..Default::default()
         };
@@ -588,7 +588,7 @@ pub fn load_contracts(
             .iter()
             .filter_map(|(addr, name)| {
                 if let Ok(Some((_, (abi, _)))) = contracts.find_by_name_or_identifier(name) {
-                    return Some((*addr, (name.clone(), abi.clone())))
+                    return Some((*addr, (name.clone(), abi.clone())));
                 }
                 None
             })
