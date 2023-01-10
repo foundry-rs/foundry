@@ -13,6 +13,8 @@ pub enum Markdown<'a> {
     Bold(&'a str),
     /// Link item.
     Link(&'a str, &'a str),
+    /// Code item.
+    Code(&'a str),
     /// Code block item.
     CodeBlock(&'a str, &'a str),
 }
@@ -25,6 +27,7 @@ impl<'a> AsDoc for Markdown<'a> {
             Self::H3(val) => format!("### {val}"),
             Self::Bold(val) => format!("**{val}**"),
             Self::Link(val, link) => format!("[{val}]({link})"),
+            Self::Code(val) => format!("`{val}`"),
             Self::CodeBlock(lang, val) => format!("```{lang}\n{val}\n```"),
         };
         Ok(doc)

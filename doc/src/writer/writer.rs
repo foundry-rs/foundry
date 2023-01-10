@@ -141,8 +141,8 @@ impl BufWriter {
             }
 
             let row = [
-                param_name.unwrap_or_else(|| "<none>".to_owned()),
-                param.ty.as_code(),
+                Markdown::Code(&param_name.unwrap_or_else(|| "<none>".to_owned())).as_doc()?,
+                Markdown::Code(&param.ty.as_code()).as_doc()?,
                 comment.unwrap_or_default(),
             ];
             self.write_piped(&row.join("|"))?;
