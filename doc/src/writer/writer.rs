@@ -2,7 +2,7 @@ use itertools::Itertools;
 use solang_parser::pt::Parameter;
 use std::fmt::{self, Display, Write};
 
-use crate::{AsCode, AsDoc, CommentTag, Comments, Markdown};
+use crate::{AsDoc, AsString, CommentTag, Comments, Markdown};
 
 /// The buffered writer.
 /// Writes various display items into the internal buffer.
@@ -140,7 +140,7 @@ impl BufWriter {
 
             let row = [
                 Markdown::Code(&param_name.unwrap_or_else(|| "<none>".to_owned())).as_doc()?,
-                Markdown::Code(&param.ty.as_code()).as_doc()?,
+                Markdown::Code(&param.ty.as_string()).as_doc()?,
                 comment.unwrap_or_default(),
             ];
             self.write_piped(&row.join("|"))?;

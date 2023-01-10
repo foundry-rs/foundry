@@ -34,4 +34,4 @@ pub use parser::{
 pub use preprocessor::*;
 
 /// Traits for formatting items into doc output.
-pub use writer::{AsCode, AsDoc, AsDocResult, BufWriter, Markdown};
+pub use writer::{AsDoc, AsDocResult, AsString, BufWriter, Markdown};

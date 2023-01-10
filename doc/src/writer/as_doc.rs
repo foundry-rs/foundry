@@ -4,7 +4,7 @@ use crate::{
     document::{read_context, DocumentContent},
     parser::ParseSource,
     writer::BufWriter,
-    AsCode, CommentTag, Comments, CommentsRef, Document, Markdown, PreprocessorOutput,
+    AsString, CommentTag, Comments, CommentsRef, Document, Markdown, PreprocessorOutput,
     CONTRACT_INHERITANCE_ID, INHERITDOC_ID,
 };
 use itertools::Itertools;
@@ -77,7 +77,7 @@ impl AsDoc for Document {
                             "({})",
                             func.params
                                 .iter()
-                                .map(|p| p.1.as_ref().map(|p| p.ty.as_code()).unwrap_or_default())
+                                .map(|p| p.1.as_ref().map(|p| p.ty.as_string()).unwrap_or_default())
                                 .join(", ")
                         ));
                     }
