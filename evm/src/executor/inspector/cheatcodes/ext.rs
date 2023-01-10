@@ -364,7 +364,7 @@ fn value_to_token(value: &Value) -> eyre::Result<Token> {
             Ok(Token::String(string.to_owned()))
         }
     } else if let Ok(number) = U256::from_dec_str(&value.to_string()) {
-        Ok(Token::Int(number.into()))
+        Ok(Token::Uint(number))
     } else if let Ok(number) = I256::from_dec_str(&value.to_string()) {
         Ok(Token::Int(number.into_raw()))
     } else if let Some(array) = value.as_array() {
@@ -404,9 +404,9 @@ fn parse_json(
             )))
         }
         let final_val = if let Some(array) = values[0].as_array() {
-            array.iter().map(|v| v.to_string().replace("\"", "")).collect::<Vec<String>>()
+            array.iter().map(|v| v.to_string().replace('\"', "")).collect::<Vec<String>>()
         } else {
-            vec![values[0].to_string().replace("\"", "")]
+            vec![values[0].to_string().replace('\"', "")]
         };
         let bytes = parse(final_val, coercion_type, values[0].is_array());
         return bytes
