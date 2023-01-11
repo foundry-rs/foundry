@@ -27,6 +27,12 @@ pub struct DocArgs {
 
     #[clap(help = "Serve the documentation.", long, short)]
     serve: bool,
+
+    #[clap(help = "Hostname for serving documentation.", long, requires = "serve")]
+    hostname: Option<String>,
+
+    #[clap(help = "Port for serving documentation.", long, short, requires = "serve")]
+    port: Option<usize>,
 }
 
 impl Cmd for DocArgs {
@@ -80,7 +86,10 @@ impl Cmd for DocArgs {
             .build()?;
 
         if self.serve {
-            Server::new(doc_config.out).serve()?;
+            Server::new(doc_config.out)
+                .with_hostname(self.hostname.unwrap_or("localhost".to_owned()))
+                .with_port(self.port.unwrap_or(3000))
+                .serve()?;
         }
 
         Ok(())

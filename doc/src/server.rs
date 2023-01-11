@@ -15,12 +15,12 @@ const LIVE_RELOAD_ENDPOINT: &str = "__livereload";
 pub struct Server {
     path: PathBuf,
     hostname: String,
-    port: String,
+    port: usize,
 }
 
 impl Default for Server {
     fn default() -> Self {
-        Self { path: PathBuf::default(), hostname: "localhost".to_owned(), port: "3000".to_owned() }
+        Self { path: PathBuf::default(), hostname: "localhost".to_owned(), port: 3000 }
     }
 }
 
@@ -28,6 +28,18 @@ impl Server {
     /// Create new instance of [Server].
     pub fn new(path: PathBuf) -> Self {
         Self { path, ..Default::default() }
+    }
+
+    /// Set host on the [Server].
+    pub fn with_hostname(mut self, hostname: String) -> Self {
+        self.hostname = hostname;
+        self
+    }
+
+    /// Set port on the [Server].
+    pub fn with_port(mut self, port: usize) -> Self {
+        self.port = port;
+        self
     }
 
     /// Serve the mdbook.
