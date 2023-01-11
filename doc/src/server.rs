@@ -94,9 +94,7 @@ async fn serve(
         |ws: warp::ws::Ws, mut rx: broadcast::Receiver<Message>| {
             ws.on_upgrade(move |ws| async move {
                 let (mut user_ws_tx, _user_ws_rx) = ws.split();
-                // TODO: trace!("websocket got connection");
                 if let Ok(m) = rx.recv().await {
-                    // TODO: trace!("notify of reload");
                     let _ = user_ws_tx.send(m).await;
                 }
             })
@@ -111,7 +109,6 @@ async fn serve(
 
     std::panic::set_hook(Box::new(move |_panic_info| {
         // exit if serve panics
-        // TODO: error!("Unable to serve: {}", panic_info);
         std::process::exit(1);
     }));
 

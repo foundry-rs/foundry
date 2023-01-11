@@ -189,7 +189,6 @@ impl AsDoc for Document {
 
                                 // Write function docs
                                 writer.writeln_doc(
-                                    // TODO: think about multiple inheritdocs
                                     comments.exclude_tags(&[CommentTag::Param, CommentTag::Return]),
                                 )?;
 

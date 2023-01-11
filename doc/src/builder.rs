@@ -234,11 +234,6 @@ impl DocBuilder {
         fs::write(out_dir.join("book.css"), include_str!("../static/book.css"))?;
 
         // Write book config
-        // TODO:
-        // let mut book: toml::value::Table = toml::from_str(include_str!("../static/book.toml"))?;
-        // let book_entry = book["book"].as_table_mut().unwrap();
-        // book_entry.insert(String::from("title"), self.config.title.clone().into());
-        // let book_config = self.book_config()?; // TODO:
         fs::write(self.out_dir().join("book.toml"), self.book_config()?)?;
 
         // Write .gitignore
