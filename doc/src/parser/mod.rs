@@ -292,5 +292,28 @@ mod tests {
         assert!(contract.children.iter().all(|ch| ch.comments.is_empty()));
     }
 
+    #[test]
+    fn contract_with_fallback() {
+        let items = parse_source(
+            r#"
+            contract Contract {
+                fallback() external payable {}
+            }
+        "#,
+        );
+
+        assert_eq!(items.len(), 1);
+
+        let contract = items.first().unwrap();
+        assert!(contract.comments.is_empty());
+        assert_eq!(contract.children.len(), 1);
+        assert_eq!(contract.source.ident(), "Contract");
+        assert_matches!(contract.source, ParseSource::Contract(_));
+
+        let fallback = contract.children.first().unwrap();
+        assert_eq!(fallback.source.ident(), "fallback");
+        assert_matches!(fallback.source, ParseSource::Function(_));
+    }
+
     // TODO: test regular doc comments & natspec
 }

@@ -341,7 +341,9 @@ impl DocBuilder {
                 for file in files {
                     let ident = &file.identity;
 
-                    let summary_path = file.target_path.strip_prefix("docs/src")?;
+                    let summary_path = file
+                        .target_path
+                        .strip_prefix(self.out_dir().strip_prefix(&self.root)?.join(Self::SRC))?;
                     summary.write_link_list_item(
                         ident,
                         &summary_path.display().to_string(),
