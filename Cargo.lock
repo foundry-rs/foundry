@@ -2389,6 +2389,7 @@ dependencies = [
  "futures-util",
  "itertools",
  "mdbook",
+ "once_cell",
  "rayon",
  "solang-parser",
  "thiserror",

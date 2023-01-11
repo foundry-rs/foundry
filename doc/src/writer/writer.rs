@@ -1,8 +1,17 @@
 use itertools::Itertools;
+use once_cell::sync::Lazy;
 use solang_parser::pt::Parameter;
 use std::fmt::{self, Display, Write};
 
 use crate::{AsDoc, AsString, CommentTag, Comments, Markdown};
+
+/// Solidity language name.
+const SOLIDITY: &'static str = "solidity";
+
+/// Headers and separator for rendering parameter table.
+const PARAM_TABLE_HEADERS: &'static [&'static str] = &["Name", "Type", "Description"];
+static PARAM_TABLE_SEPARATOR: Lazy<String> =
+    Lazy::new(|| PARAM_TABLE_HEADERS.iter().map(|h| "-".repeat(h.len())).join("|"));
 
 /// The buffered writer.
 /// Writes various display items into the internal buffer.
@@ -12,8 +21,6 @@ pub struct BufWriter {
 }
 
 impl BufWriter {
-    const PARAM_TABLE_HEADERS: &'static [&'static str] = &["Name", "Type", "Description"];
-
     /// Create new instance of [BufWriter] from [ToString].
     pub fn new(content: impl ToString) -> Self {
         Self { buf: content.to_string() }
@@ -64,6 +71,11 @@ impl BufWriter {
         writeln!(self.buf, "{}", Markdown::H3(heading))
     }
 
+    /// Writes text in italics to the buffer formatted as [Markdown::Italic].
+    pub fn write_italic(&mut self, text: &str) -> fmt::Result {
+        writeln!(self.buf, "{}", Markdown::Italic(text))
+    }
+
     /// Writes bold text to the bufffer formatted as [Markdown::Bold].
     pub fn write_bold(&mut self, text: &str) -> fmt::Result {
         writeln!(self.buf, "{}", Markdown::Bold(text))
@@ -83,7 +95,7 @@ impl BufWriter {
 
     /// Writes a solidity code block block to the buffer.
     pub fn write_code(&mut self, code: &str) -> fmt::Result {
-        writeln!(self.buf, "{}", Markdown::CodeBlock("solidity", &code))
+        writeln!(self.buf, "{}", Markdown::CodeBlock(SOLIDITY, &code))
     }
 
     /// Write an item section to the buffer. First write comments, the item itself as code.
@@ -117,11 +129,8 @@ impl BufWriter {
         self.write_bold(heading)?;
         self.writeln()?;
 
-        self.write_piped(&Self::PARAM_TABLE_HEADERS.join("|"))?;
-
-        // TODO: lazy?
-        let separator = Self::PARAM_TABLE_HEADERS.iter().map(|h| "-".repeat(h.len())).join("|");
-        self.write_piped(&separator)?;
+        self.write_piped(&PARAM_TABLE_HEADERS.join("|"))?;
+        self.write_piped(&PARAM_TABLE_SEPARATOR)?;
 
         for (index, param) in params.into_iter().enumerate() {
             let param_name = param.name.as_ref().map(|n| n.name.to_owned());

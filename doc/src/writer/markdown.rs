@@ -9,6 +9,8 @@ pub enum Markdown<'a> {
     H2(&'a str),
     /// H3 heading item.
     H3(&'a str),
+    /// Italic item.
+    Italic(&'a str),
     /// Bold item.
     Bold(&'a str),
     /// Link item.
@@ -25,6 +27,7 @@ impl<'a> AsDoc for Markdown<'a> {
             Self::H1(val) => format!("# {val}"),
             Self::H2(val) => format!("## {val}"),
             Self::H3(val) => format!("### {val}"),
+            Self::Italic(val) => format!("*{val}*"),
             Self::Bold(val) => format!("**{val}**"),
             Self::Link(val, link) => format!("[{val}]({link})"),
             Self::Code(val) => format!("`{val}`"),

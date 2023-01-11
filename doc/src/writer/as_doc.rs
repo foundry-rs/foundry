@@ -33,9 +33,11 @@ impl AsDoc for Comments {
 }
 
 impl<'a> AsDoc for CommentsRef<'a> {
+    // TODO: support other tags
     fn as_doc(&self) -> AsDocResult {
         let mut writer = BufWriter::default();
 
+        // Write author tag(s)
         let authors = self.include_tag(CommentTag::Author);
         if !authors.is_empty() {
             writer.write_bold(&format!("Author{}:", if authors.len() == 1 { "" } else { "s" }))?;
@@ -43,10 +45,17 @@ impl<'a> AsDoc for CommentsRef<'a> {
             writer.writeln()?;
         }
 
-        // TODO: other tags
-        let docs = self.include_tags(&[CommentTag::Dev, CommentTag::Notice]);
-        for doc in docs.iter() {
-            writer.writeln_raw(&doc.value)?;
+        // Write notice tags
+        let notices = self.include_tag(CommentTag::Notice);
+        for notice in notices.iter() {
+            writer.writeln_raw(&notice.value)?;
+            writer.writeln()?;
+        }
+
+        // Write dev tags
+        let devs = self.include_tag(CommentTag::Dev);
+        for dev in devs.iter() {
+            writer.write_italic(&dev.value)?;
             writer.writeln()?;
         }
 
