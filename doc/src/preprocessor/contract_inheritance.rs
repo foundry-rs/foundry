@@ -11,7 +11,8 @@ pub const CONTRACT_INHERITANCE_ID: PreprocessorId = PreprocessorId("contract_inh
 /// to link them with the paths of the other contract documents.
 ///
 /// This preprocessor writes to [Document]'s context.
-#[derive(Debug)]
+#[derive(Default, Debug)]
+#[non_exhaustive]
 pub struct ContractInheritance;
 
 impl Preprocessor for ContractInheritance {

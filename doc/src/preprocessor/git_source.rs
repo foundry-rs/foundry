@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-
 use super::{Preprocessor, PreprocessorId};
 use crate::{Document, PreprocessorOutput};
 

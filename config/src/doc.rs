@@ -1,7 +1,6 @@
 //! Configuration specific to the `forge doc` command and the `forge_doc` package
 
 use std::path::PathBuf;
-
 use serde::{Deserialize, Serialize};
 
 /// Contains the config for parsing and rendering docs

@@ -10,7 +10,6 @@ use std::{
     path::{Path, PathBuf},
 };
 use toml::value;
-
 use crate::{
     document::DocumentContent, helpers::merge_toml_table, AsDoc, BufWriter, Document, ParseItem,
     ParseSource, Parser, Preprocessor,
