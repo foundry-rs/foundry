@@ -1,6 +1,7 @@
 //! The parser module.
 
 use forge_fmt::{FormatterConfig, Visitable, Visitor};
+use itertools::Itertools;
 use solang_parser::{
     doccomment::{parse_doccomments, DocComment},
     pt::{
@@ -111,6 +112,10 @@ impl Parser {
                 DocComment::Block { comments } => res.extend(comments.into_iter()),
             }
         }
+
+        // Filter out `@solidity` tags
+        // See https://docs.soliditylang.org/en/v0.8.17/assembly.html#memory-safety
+        let res = res.into_iter().filter(|c| c.tag.trim() != "solidity").collect_vec();
         Ok(res.try_into()?)
     }
 }
@@ -196,7 +201,7 @@ mod tests {
     #[inline]
     fn parse_source(src: &str) -> Vec<ParseItem> {
         let (mut source, comments) = parse(src, 0).expect("failed to parse source");
-        let mut doc = Parser::new(comments, src.to_owned()); // TODO:
+        let mut doc = Parser::new(comments, src.to_owned());
         source.visit(&mut doc).expect("failed to visit source");
         doc.items()
     }

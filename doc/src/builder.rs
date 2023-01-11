@@ -87,6 +87,7 @@ impl DocBuilder {
             .par_iter()
             .enumerate()
             .map(|(i, path)| {
+                // Read and parse source file
                 let source = fs::read_to_string(path)?;
                 let (mut source_unit, comments) =
                     solang_parser::parse(&source, i).map_err(|diags| {
@@ -96,6 +97,8 @@ impl DocBuilder {
                             diags
                         )
                     })?;
+
+                // Visit the parse tree
                 let mut doc = Parser::new(comments, source).with_fmt(self.fmt.clone());
                 source_unit
                     .visit(&mut doc)
