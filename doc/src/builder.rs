@@ -282,7 +282,7 @@ impl DocBuilder {
             } else {
                 let summary_path = path.join(Self::README);
                 summary.write_link_list_item(
-                    &title,
+                    &format!("❱ {title}"),
                     &summary_path.display().to_string(),
                     depth - 1,
                 )?;
