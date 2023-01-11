@@ -262,8 +262,16 @@ impl DocBuilder {
     fn book_config(&self) -> eyre::Result<String> {
         // Read the default book first
         let mut book: value::Table = toml::from_str(include_str!("../static/book.toml"))?;
-        let book_entry = book["book"].as_table_mut().unwrap();
-        book_entry.insert(String::from("title"), self.config.title.clone().into());
+        book["book"]
+            .as_table_mut()
+            .unwrap()
+            .insert(String::from("title"), self.config.title.clone().into());
+        if let Some(ref repo) = self.config.repository {
+            book["output"].as_table_mut().unwrap()["html"]
+                .as_table_mut()
+                .unwrap()
+                .insert(String::from("git-repository-url"), repo.clone().into());
+        }
 
         // Attempt to find the user provided book path
         let book_path = {

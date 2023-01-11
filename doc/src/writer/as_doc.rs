@@ -5,7 +5,7 @@ use crate::{
     parser::ParseSource,
     writer::BufWriter,
     AsString, CommentTag, Comments, CommentsRef, Document, Markdown, PreprocessorOutput,
-    CONTRACT_INHERITANCE_ID, INHERITDOC_ID,
+    CONTRACT_INHERITANCE_ID, GIT_SOURCE_ID, INHERITDOC_ID,
 };
 use itertools::Itertools;
 use solang_parser::pt::Base;
@@ -77,6 +77,10 @@ impl AsDoc for Document {
             DocumentContent::OverloadedFunctions(items) => {
                 writer
                     .write_title(&format!("function {}", items.first().unwrap().source.ident()))?;
+                if let Some(git_source) = read_context!(self, GIT_SOURCE_ID, GitSource) {
+                    writer.write_link("Git Source", &git_source)?;
+                    writer.writeln()?;
+                }
 
                 for item in items.iter() {
                     let func = item.as_function().unwrap();
@@ -96,6 +100,10 @@ impl AsDoc for Document {
             }
             DocumentContent::Constants(items) => {
                 writer.write_title("Constants")?;
+                if let Some(git_source) = read_context!(self, GIT_SOURCE_ID, GitSource) {
+                    writer.write_link("Git Source", &git_source)?;
+                    writer.writeln()?;
+                }
 
                 for item in items.iter() {
                     let var = item.as_variable().unwrap();
@@ -104,10 +112,14 @@ impl AsDoc for Document {
                 }
             }
             DocumentContent::Single(item) => {
+                writer.write_title(&item.source.ident())?;
+                if let Some(git_source) = read_context!(self, GIT_SOURCE_ID, GitSource) {
+                    writer.write_link("Git Source", &git_source)?;
+                    writer.writeln()?;
+                }
+
                 match &item.source {
                     ParseSource::Contract(contract) => {
-                        writer.write_title(&contract.name.name)?;
-
                         if !contract.base.is_empty() {
                             writer.write_bold("Inherits:")?;
 
@@ -246,38 +258,9 @@ impl AsDoc for Document {
                             })?;
                         }
                     }
-                    ParseSource::Variable(var) => {
-                        writer.write_title(&var.name.name)?;
-                        writer.write_section(&item.comments, &item.code)?;
-                    }
-                    ParseSource::Event(event) => {
-                        writer.write_title(&event.name.name)?;
-                        writer.write_section(&item.comments, &item.code)?;
-                    }
-                    ParseSource::Error(error) => {
-                        writer.write_title(&error.name.name)?;
-                        writer.write_section(&item.comments, &item.code)?;
-                    }
-                    ParseSource::Struct(structure) => {
-                        writer.write_title(&structure.name.name)?;
-                        writer.write_section(&item.comments, &item.code)?;
-                    }
-                    ParseSource::Enum(enumerable) => {
-                        writer.write_title(&enumerable.name.name)?;
-                        writer.write_section(&item.comments, &item.code)?;
-                    }
-                    ParseSource::Type(ty) => {
-                        writer.write_title(&ty.name.name)?;
-                        writer.write_section(&item.comments, &item.code)?;
-                    }
+
                     ParseSource::Function(func) => {
                         // TODO: cleanup
-                        // Write function name
-                        let func_name =
-                            func.name.as_ref().map_or(func.ty.to_string(), |n| n.name.to_owned());
-                        writer.write_heading(&func_name)?;
-                        writer.writeln()?;
-
                         // Write function docs
                         writer.writeln_doc(
                             item.comments.exclude_tags(&[CommentTag::Param, CommentTag::Return]),
@@ -301,6 +284,15 @@ impl AsDoc for Document {
                         )?;
 
                         writer.writeln()?;
+                    }
+
+                    ParseSource::Variable(_) |
+                    ParseSource::Event(_) |
+                    ParseSource::Error(_) |
+                    ParseSource::Struct(_) |
+                    ParseSource::Enum(_) |
+                    ParseSource::Type(_) => {
+                        writer.write_section(&item.comments, &item.code)?;
                     }
                 }
             }

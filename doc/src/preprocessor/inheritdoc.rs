@@ -9,6 +9,8 @@ use crate::{
 pub const INHERITDOC_ID: PreprocessorId = PreprocessorId("inheritdoc");
 
 /// The inheritdoc preprocessor.
+/// Traverses the documents and attempts to find inherited
+/// comments for inheritdoc comment tags.
 ///
 /// This preprocessor writes to [Document]'s context.
 #[derive(Debug)]

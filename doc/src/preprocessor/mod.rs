@@ -9,6 +9,9 @@ pub use contract_inheritance::{ContractInheritance, CONTRACT_INHERITANCE_ID};
 mod inheritdoc;
 pub use inheritdoc::{Inheritdoc, INHERITDOC_ID};
 
+mod git_source;
+pub use git_source::{GitSource, GIT_SOURCE_ID};
+
 /// The preprocessor id.
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub struct PreprocessorId(&'static str);
@@ -24,6 +27,9 @@ pub enum PreprocessorOutput {
     /// The inheritdoc output.
     /// The map of inherited item keys to their comments.
     Inheritdoc(HashMap<String, Comments>),
+    /// The git source output.
+    /// The git url of the item path.
+    GitSource(String),
 }
 
 /// Trait for preprocessing and/or modifying existing documents

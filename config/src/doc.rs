@@ -13,10 +13,18 @@ pub struct DocConfig {
     pub title: String,
     /// Path to user provided `book.toml`.
     pub book: PathBuf,
+    /// The repository url.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<String>,
 }
 
 impl Default for DocConfig {
     fn default() -> Self {
-        Self { out: PathBuf::from("docs"), title: String::default(), book: PathBuf::default() }
+        Self {
+            out: PathBuf::from("docs"),
+            title: String::default(),
+            book: PathBuf::default(),
+            repository: None,
+        }
     }
 }

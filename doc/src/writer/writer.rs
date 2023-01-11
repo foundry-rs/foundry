@@ -81,6 +81,11 @@ impl BufWriter {
         writeln!(self.buf, "{}", Markdown::Bold(text))
     }
 
+    /// Writes link to the buffer formatted as [Markdown::Link].
+    pub fn write_link(&mut self, name: &str, path: &str) -> fmt::Result {
+        writeln!(self.buf, "{}", Markdown::Link(name, path))
+    }
+
     /// Writes a list item to the bufffer indented by specified depth.
     pub fn write_list_item(&mut self, item: &str, depth: usize) -> fmt::Result {
         let indent = " ".repeat(depth * 2);

@@ -1,8 +1,8 @@
-use crate::cmd::Cmd;
+use crate::{cmd::Cmd, opts::GH_REPO_PREFIX_REGEX};
 use clap::{Parser, ValueHint};
-use forge_doc::{ContractInheritance, DocBuilder, Inheritdoc, Server};
+use forge_doc::{ContractInheritance, DocBuilder, GitSource, Inheritdoc, Server};
 use foundry_config::{find_project_root_path, load_config_with_root};
-use std::path::PathBuf;
+use std::{path::PathBuf, process::Command};
 
 #[derive(Debug, Clone, Parser)]
 pub struct DocArgs {
@@ -34,18 +34,49 @@ impl Cmd for DocArgs {
 
     fn run(self) -> eyre::Result<Self::Output> {
         let root = self.root.clone().unwrap_or(find_project_root_path()?);
-        let config = load_config_with_root(self.root.clone());
+        let config = load_config_with_root(Some(root.clone()));
 
         let mut doc_config = config.doc.clone();
         if let Some(out) = self.out {
             doc_config.out = out;
         }
+        if doc_config.repository.is_none() {
+            // Attempt to read repo from git
+            if let Ok(output) = Command::new("git").args(["remote", "get-url", "origin"]).output() {
+                if !output.stdout.is_empty() {
+                    let remote = String::from_utf8(output.stdout)?.trim().to_owned();
+                    if let Some(captures) = GH_REPO_PREFIX_REGEX.captures(&remote) {
+                        let brand = captures.name("brand").unwrap().as_str();
+                        let tld = captures.name("tld").unwrap().as_str();
+                        let project = GH_REPO_PREFIX_REGEX.replace(&remote, "");
+                        doc_config.repository = Some(format!(
+                            "https://{brand}.{tld}/{}",
+                            project.trim_end_matches(".git")
+                        ));
+                    }
+                }
+            }
+        }
 
-        DocBuilder::new(root, config.project_paths().sources)
+        let commit =
+            Command::new("git").args(["rev-parse", "HEAD"]).output().ok().and_then(|output| {
+                if !output.stdout.is_empty() {
+                    String::from_utf8(output.stdout).ok().map(|commit| commit.trim().to_owned())
+                } else {
+                    None
+                }
+            });
+
+        DocBuilder::new(root.clone(), config.project_paths().sources)
             .with_config(doc_config.clone())
             .with_fmt(config.fmt.clone())
             .with_preprocessor(ContractInheritance)
             .with_preprocessor(Inheritdoc)
+            .with_preprocessor(GitSource {
+                root,
+                commit,
+                repository: doc_config.repository.clone(),
+            })
             .build()?;
 
         if self.serve {
