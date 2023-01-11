@@ -1,3 +1,7 @@
+use crate::{
+    document::DocumentContent, helpers::merge_toml_table, AsDoc, BufWriter, Document, ParseItem,
+    ParseSource, Parser, Preprocessor,
+};
 use ethers_solc::utils::source_files_iter;
 use forge_fmt::{FormatterConfig, Visitable};
 use foundry_config::DocConfig;
@@ -10,10 +14,6 @@ use std::{
     path::{Path, PathBuf},
 };
 use toml::value;
-use crate::{
-    document::DocumentContent, helpers::merge_toml_table, AsDoc, BufWriter, Document, ParseItem,
-    ParseSource, Parser, Preprocessor,
-};
 
 /// Build Solidity documentation for a project from natspec comments.
 /// The builder parses the source files using [Parser],

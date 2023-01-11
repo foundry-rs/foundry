@@ -11,7 +11,7 @@ pub(crate) fn merge_toml_table(table: &mut Table, override_table: Table) {
                 }
             }
             Some(Value::Array(inner_array)) => {
-                // Override value must be an arry, otherwise discard
+                // Override value must be an array, otherwise discard
                 if let Value::Array(inner_override) = override_value {
                     for entry in inner_override {
                         if !inner_array.contains(&entry) {

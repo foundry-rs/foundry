@@ -1,6 +1,6 @@
-use std::path::PathBuf;
 use super::{Preprocessor, PreprocessorId};
 use crate::{Document, PreprocessorOutput};
+use std::path::PathBuf;
 
 /// [ContractInheritance] preprocessor id.
 pub const GIT_SOURCE_ID: PreprocessorId = PreprocessorId("git_source");
