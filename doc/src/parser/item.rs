@@ -83,7 +83,7 @@ impl ParseItem {
         let mut code = String::new();
         let mut fmt = Formatter::new(
             &mut code,
-            &source,
+            source,
             FmtComments::default(),
             InlineConfig::default(),
             config,

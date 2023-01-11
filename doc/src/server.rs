@@ -62,9 +62,8 @@ impl Server {
         // A channel used to broadcast to any websockets to reload when a file changes.
         let (tx, _rx) = tokio::sync::broadcast::channel::<Message>(100);
 
-        let reload_tx = tx.clone();
         let thread_handle = std::thread::spawn(move || {
-            serve(build_dir, sockaddr, reload_tx, &file_404);
+            serve(build_dir, sockaddr, tx, &file_404);
         });
 
         println!("Serving on: http://{address}");

@@ -64,7 +64,7 @@ impl Comment {
 
     /// Split the comment at first word.
     /// Useful for [CommentTag::Param] and [CommentTag::Return] comments.
-    pub fn split_first_word<'a>(&'a self) -> Option<(&'a str, &'a str)> {
+    pub fn split_first_word(&self) -> Option<(&str, &str)> {
         self.value.trim_start().split_once(' ')
     }
 

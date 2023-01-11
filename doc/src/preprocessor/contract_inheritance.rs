@@ -47,7 +47,7 @@ impl Preprocessor for ContractInheritance {
 }
 
 impl ContractInheritance {
-    fn try_link_base<'a>(&self, base: &str, documents: &Vec<Document>) -> Option<PathBuf> {
+    fn try_link_base(&self, base: &str, documents: &Vec<Document>) -> Option<PathBuf> {
         for candidate in documents {
             if let DocumentContent::Single(ref item) = candidate.content {
                 if let ParseSource::Contract(ref contract) = item.source {

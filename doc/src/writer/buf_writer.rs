@@ -6,10 +6,10 @@ use std::fmt::{self, Display, Write};
 use crate::{AsDoc, AsString, CommentTag, Comments, Markdown};
 
 /// Solidity language name.
-const SOLIDITY: &'static str = "solidity";
+const SOLIDITY: &str = "solidity";
 
 /// Headers and separator for rendering parameter table.
-const PARAM_TABLE_HEADERS: &'static [&'static str] = &["Name", "Type", "Description"];
+const PARAM_TABLE_HEADERS: &[&str] = &["Name", "Type", "Description"];
 static PARAM_TABLE_SEPARATOR: Lazy<String> =
     Lazy::new(|| PARAM_TABLE_HEADERS.iter().map(|h| "-".repeat(h.len())).join("|"));
 
@@ -100,12 +100,12 @@ impl BufWriter {
 
     /// Writes a solidity code block block to the buffer.
     pub fn write_code(&mut self, code: &str) -> fmt::Result {
-        writeln!(self.buf, "{}", Markdown::CodeBlock(SOLIDITY, &code))
+        writeln!(self.buf, "{}", Markdown::CodeBlock(SOLIDITY, code))
     }
 
     /// Write an item section to the buffer. First write comments, the item itself as code.
     pub fn write_section(&mut self, comments: &Comments, code: &str) -> fmt::Result {
-        self.writeln_raw(&comments.as_doc()?)?;
+        self.writeln_raw(comments.as_doc()?)?;
         self.write_code(code)?;
         self.writeln()
     }
@@ -137,7 +137,7 @@ impl BufWriter {
         self.write_piped(&PARAM_TABLE_HEADERS.join("|"))?;
         self.write_piped(&PARAM_TABLE_SEPARATOR)?;
 
-        for (index, param) in params.into_iter().enumerate() {
+        for (index, param) in params.iter().enumerate() {
             let param_name = param.name.as_ref().map(|n| n.name.to_owned());
 
             let mut comment = param_name.as_ref().and_then(|name| {

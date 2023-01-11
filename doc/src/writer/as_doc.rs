@@ -193,7 +193,7 @@ impl AsDoc for Document {
                                 )?;
 
                                 // Write function header
-                                writer.write_code(&code)?;
+                                writer.write_code(code)?;
 
                                 // Write function parameter comments in a table
                                 let params = func

@@ -343,7 +343,7 @@ impl DocBuilder {
 
                     let summary_path = file.target_path.strip_prefix("docs/src")?;
                     summary.write_link_list_item(
-                        &ident,
+                        ident,
                         &summary_path.display().to_string(),
                         depth,
                     )?;
@@ -352,7 +352,7 @@ impl DocBuilder {
                         .map(|path| summary_path.strip_prefix(path))
                         .transpose()?
                         .unwrap_or(summary_path);
-                    readme.write_link_list_item(&ident, &readme_path.display().to_string(), 0)?;
+                    readme.write_link_list_item(ident, &readme_path.display().to_string(), 0)?;
                 }
             } else {
                 let name = path.iter().last().unwrap().to_string_lossy();
