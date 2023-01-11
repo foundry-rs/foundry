@@ -1,5 +1,5 @@
 // config: line_length = 60
-// config: override_spacing = false
+// config: override_spacing = true
 contract ModifierDefinitions {
     modifier noParams() {}
     modifier oneParam(uint256 a) {}
@@ -11,5 +11,5 @@ contract ModifierDefinitions {
         uint256 c,
         uint256 d
     ) {}
-    modifier overridden() override(Base1, Base2) {}
+    modifier overridden() override (Base1, Base2) {}
 }

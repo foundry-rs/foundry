@@ -113,7 +113,7 @@ impl Default for FormatterConfig {
             quote_style: QuoteStyle::Double,
             number_underscore: NumberUnderscore::Preserve,
             single_line_statement_blocks: SingleLineBlockStyle::Preserve,
-            override_spacing: true,
+            override_spacing: false,
             wrap_comments: false,
             ignore: vec![],
         }

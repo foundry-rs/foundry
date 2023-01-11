@@ -164,7 +164,7 @@ Type: uint
 To fork a network within your chisel session, use the `!fork <rpc-url>` command or supply a `--fork-url <url>` flag
 to the chisel binary. The `!fork` command also accepts aliases from the `[rpc_endpoints]` section of your `foundry.toml`
 if chisel was launched in the root of a foundry project (ex. `!fork mainnet`), as well as interpolated environment variables
-(ex. `!fork https://https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}`).
+(ex. `!fork https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}`).
 
 ### Fetching an Interface of a Verified Contract
 

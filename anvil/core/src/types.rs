@@ -55,12 +55,24 @@ impl<'de> serde::Deserialize<'de> for Forking {
 #[cfg_attr(feature = "serde", serde(untagged))]
 pub enum EvmMineOptions {
     Options {
+        #[cfg_attr(
+            feature = "serde",
+            serde(
+                deserialize_with = "ethers_core::types::serde_helpers::deserialize_stringified_u64_opt"
+            )
+        )]
         timestamp: Option<u64>,
         // If `blocks` is given, it will mine exactly blocks number of blocks, regardless of any
         // other blocks mined or reverted during it's operation
         blocks: Option<u64>,
     },
     /// The timestamp the block should be mined with
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            deserialize_with = "ethers_core::types::serde_helpers::deserialize_stringified_u64_opt"
+        )
+    )]
     Timestamp(Option<u64>),
 }
 
@@ -156,8 +168,9 @@ impl<'a> serde::Deserialize<'a> for Index {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct NodeInfo {
     pub current_block_number: U64,
     pub current_block_timestamp: u64,
@@ -168,8 +181,9 @@ pub struct NodeInfo {
     pub fork_config: NodeForkConfig,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct NodeEnvironment {
     pub base_fee: U256,
     pub chain_id: U256,
@@ -177,8 +191,9 @@ pub struct NodeEnvironment {
     pub gas_price: U256,
 }
 
-#[derive(Debug, Clone, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct NodeForkConfig {
     pub fork_url: Option<String>,
     pub fork_block_number: Option<u64>,

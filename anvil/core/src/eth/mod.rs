@@ -583,7 +583,7 @@ pub enum EthRpcCall {
     PubSub(EthPubSub),
 }
 
-#[cfg(all(test, serde))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1037,6 +1037,35 @@ mod tests {
         let s = r#"{"method": "evm_mine", "params": []}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_custom_evm_mine_hex() {
+        let s = r#"{"method": "evm_mine", "params": ["0x63b6ff08"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::EvmMine(params) => {
+                assert_eq!(
+                    params.unwrap().params.unwrap_or_default(),
+                    EvmMineOptions::Timestamp(Some(1672937224))
+                )
+            }
+            _ => unreachable!(),
+        }
+
+        let s = r#"{"method": "evm_mine", "params": [{"timestamp": "0x63b6ff08"}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::EvmMine(params) => {
+                assert_eq!(
+                    params.unwrap().params.unwrap_or_default(),
+                    EvmMineOptions::Options { timestamp: Some(1672937224), blocks: None }
+                )
+            }
+            _ => unreachable!(),
+        }
     }
 
     #[test]
