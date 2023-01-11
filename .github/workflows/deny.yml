@@ -35,3 +35,4 @@ jobs:
         uses: EmbarkStudios/cargo-deny-action@v1
         with:
           command: check ${{ matrix.checks }}
+          arguments:
