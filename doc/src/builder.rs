@@ -211,7 +211,7 @@ impl DocBuilder {
 
         // Build the book if requested
         if self.should_build {
-            MDBook::load(&self.out_dir())
+            MDBook::load(self.out_dir())
                 .and_then(|book| book.build())
                 .map_err(|err| eyre::eyre!("failed to build book: {err:?}"))?;
         }
