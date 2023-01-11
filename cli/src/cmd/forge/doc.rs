@@ -69,7 +69,7 @@ impl Cmd for DocArgs {
 
         DocBuilder::new(root.clone(), config.project_paths().sources)
             .with_config(doc_config.clone())
-            .with_fmt(config.fmt.clone())
+            .with_fmt(config.fmt)
             .with_preprocessor(ContractInheritance)
             .with_preprocessor(Inheritdoc)
             .with_preprocessor(GitSource {
