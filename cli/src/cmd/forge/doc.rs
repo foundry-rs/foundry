@@ -25,6 +25,9 @@ pub struct DocArgs {
     )]
     out: Option<PathBuf>,
 
+    #[clap(help = "Build the documentation.", long, short)]
+    build: bool,
+
     #[clap(help = "Serve the documentation.", long, short)]
     serve: bool,
 
@@ -74,6 +77,7 @@ impl Cmd for DocArgs {
             });
 
         DocBuilder::new(root.clone(), config.project_paths().sources)
+            .with_should_build(self.build)
             .with_config(doc_config.clone())
             .with_fmt(config.fmt)
             .with_preprocessor(ContractInheritance::default())

@@ -6,6 +6,7 @@ use ethers_solc::utils::source_files_iter;
 use forge_fmt::{FormatterConfig, Visitable};
 use foundry_config::DocConfig;
 use itertools::Itertools;
+use mdbook::MDBook;
 use rayon::prelude::*;
 use std::{
     cmp::Ordering,
@@ -24,6 +25,8 @@ pub struct DocBuilder {
     pub root: PathBuf,
     /// Path to Solidity source files.
     pub sources: PathBuf,
+    /// Flag whether to build mdbook.
+    pub should_build: bool,
     /// Documentation configuration.
     pub config: DocConfig,
     /// The array of preprocessors to apply.
@@ -44,10 +47,17 @@ impl DocBuilder {
         Self {
             root,
             sources,
+            should_build: false,
             config: DocConfig::default(),
             preprocessors: Default::default(),
             fmt: Default::default(),
         }
+    }
+
+    /// Set `shoul_build` flag on the builder
+    pub fn with_should_build(mut self, should_build: bool) -> Self {
+        self.should_build = should_build;
+        self
     }
 
     /// Set config on the builder.
@@ -198,6 +208,13 @@ impl DocBuilder {
 
         // Write mdbook related files
         self.write_mdbook(documents.collect_vec())?;
+
+        // Build the book if requested
+        if self.should_build {
+            MDBook::load(&self.out_dir())
+                .and_then(|book| book.build())
+                .map_err(|err| eyre::eyre!("failed to build book: {err:?}"))?;
+        }
 
         Ok(())
     }
