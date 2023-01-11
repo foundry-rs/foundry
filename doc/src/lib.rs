@@ -11,6 +11,7 @@
 
 mod builder;
 mod document;
+mod helpers;
 mod parser;
 mod preprocessor;
 mod server;

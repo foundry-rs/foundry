@@ -11,10 +11,12 @@ pub struct DocConfig {
     pub out: PathBuf,
     /// The documentation title.
     pub title: String,
+    /// Path to user provided `book.toml`.
+    pub book: PathBuf,
 }
 
 impl Default for DocConfig {
     fn default() -> Self {
-        Self { out: PathBuf::from("docs"), title: "".to_owned() }
+        Self { out: PathBuf::from("docs"), title: String::default(), book: PathBuf::default() }
     }
 }

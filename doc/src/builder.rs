@@ -1,5 +1,6 @@
 use ethers_solc::utils::source_files_iter;
 use forge_fmt::{FormatterConfig, Visitable};
+use foundry_config::DocConfig;
 use itertools::Itertools;
 use rayon::prelude::*;
 use std::{
@@ -8,10 +9,11 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
+use toml::value;
 
 use crate::{
-    document::DocumentContent, AsDoc, BufWriter, Document, ParseItem, ParseSource, Parser,
-    Preprocessor,
+    document::DocumentContent, helpers::merge_toml_table, AsDoc, BufWriter, Document, ParseItem,
+    ParseSource, Parser, Preprocessor,
 };
 
 /// Build Solidity documentation for a project from natspec comments.
@@ -23,10 +25,8 @@ pub struct DocBuilder {
     pub root: PathBuf,
     /// Path to Solidity source files.
     pub sources: PathBuf,
-    /// Output path.
-    pub out: PathBuf,
-    /// The documentation title.
-    pub title: String,
+    /// Documentation configuration.
+    pub config: DocConfig,
     /// The array of preprocessors to apply.
     pub preprocessors: Vec<Box<dyn Preprocessor>>,
     /// The formatter config.
@@ -45,22 +45,15 @@ impl DocBuilder {
         Self {
             root,
             sources,
-            out: Default::default(),
-            title: Default::default(),
+            config: DocConfig::default(),
             preprocessors: Default::default(),
             fmt: Default::default(),
         }
     }
 
-    /// Set an `out` path on the builder.
-    pub fn with_out(mut self, out: PathBuf) -> Self {
-        self.out = out;
-        self
-    }
-
-    /// Set title on the builder.
-    pub fn with_title(mut self, title: String) -> Self {
-        self.title = title;
+    /// Set config on the builder.
+    pub fn with_config(mut self, config: DocConfig) -> Self {
+        self.config = config;
         self
     }
 
@@ -78,7 +71,7 @@ impl DocBuilder {
 
     /// Get the output directory
     pub fn out_dir(&self) -> PathBuf {
-        self.root.join(&self.out)
+        self.root.join(&self.config.out)
     }
 
     /// Parse the sources and build the documentation.
@@ -137,7 +130,7 @@ impl DocBuilder {
                     .into_iter()
                     .map(|item| {
                         let relative_path = path.strip_prefix(&self.root)?.join(item.filename());
-                        let target_path = self.out.join(Self::SRC).join(relative_path);
+                        let target_path = self.config.out.join(Self::SRC).join(relative_path);
                         let ident = item.source.ident();
                         Ok(Document::new(path.clone(), target_path)
                             .with_content(DocumentContent::Single(item), ident))
@@ -157,7 +150,7 @@ impl DocBuilder {
                         name
                     };
                     let relative_path = path.strip_prefix(&self.root)?.join(filename);
-                    let target_path = self.out.join(Self::SRC).join(relative_path);
+                    let target_path = self.config.out.join(Self::SRC).join(relative_path);
 
                     let identity = match filestem {
                         Some(stem) if stem.to_lowercase().contains("constants") => stem.to_owned(),
@@ -176,7 +169,7 @@ impl DocBuilder {
                     for (ident, funcs) in overloaded {
                         let filename = funcs.first().expect("no overloaded functions").filename();
                         let relative_path = path.strip_prefix(&self.root)?.join(filename);
-                        let target_path = self.out.join(Self::SRC).join(relative_path);
+                        let target_path = self.config.out.join(Self::SRC).join(relative_path);
                         files.push(
                             Document::new(path.clone(), target_path)
                                 .with_content(DocumentContent::OverloadedFunctions(funcs), ident),
@@ -241,10 +234,12 @@ impl DocBuilder {
         fs::write(out_dir.join("book.css"), include_str!("../static/book.css"))?;
 
         // Write book config
-        let mut book: toml::Value = toml::from_str(include_str!("../static/book.toml"))?;
-        let book_entry = book["book"].as_table_mut().unwrap();
-        book_entry.insert(String::from("title"), self.title.clone().into());
-        fs::write(self.out_dir().join("book.toml"), toml::to_string_pretty(&book)?)?;
+        // TODO:
+        // let mut book: toml::value::Table = toml::from_str(include_str!("../static/book.toml"))?;
+        // let book_entry = book["book"].as_table_mut().unwrap();
+        // book_entry.insert(String::from("title"), self.config.title.clone().into());
+        // let book_config = self.book_config()?; // TODO:
+        fs::write(self.out_dir().join("book.toml"), self.book_config()?)?;
 
         // Write .gitignore
         let gitignore = "book/";
@@ -262,6 +257,34 @@ impl DocBuilder {
         }
 
         Ok(())
+    }
+
+    fn book_config(&self) -> eyre::Result<String> {
+        // Read the default book first
+        let mut book: value::Table = toml::from_str(include_str!("../static/book.toml"))?;
+        let book_entry = book["book"].as_table_mut().unwrap();
+        book_entry.insert(String::from("title"), self.config.title.clone().into());
+
+        // Attempt to find the user provided book path
+        let book_path = {
+            if self.config.book.is_file() {
+                Some(self.config.book.clone())
+            } else {
+                let book_path = self.config.book.join("book.toml");
+                if book_path.is_file() {
+                    Some(book_path)
+                } else {
+                    None
+                }
+            }
+        };
+
+        // Merge two book configs
+        if let Some(book_path) = book_path {
+            merge_toml_table(&mut book, toml::from_str(&fs::read_to_string(book_path)?)?);
+        }
+
+        Ok(toml::to_string_pretty(&book)?)
     }
 
     fn write_summary_section(

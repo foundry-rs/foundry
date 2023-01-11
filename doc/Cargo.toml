@@ -12,6 +12,7 @@ readme = "README.md"
 # foundry internal
 foundry-common = { path = "../common" }
 forge-fmt = { path = "../fmt" }
+foundry-config = { path = "../config" }
 
 # ethers
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["async"] }

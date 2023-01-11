@@ -35,18 +35,21 @@ impl Cmd for DocArgs {
     fn run(self) -> eyre::Result<Self::Output> {
         let root = self.root.clone().unwrap_or(find_project_root_path()?);
         let config = load_config_with_root(self.root.clone());
-        let out = self.out.clone().unwrap_or(config.doc.out.clone());
+
+        let mut doc_config = config.doc.clone();
+        if let Some(out) = self.out {
+            doc_config.out = out;
+        }
 
         DocBuilder::new(root, config.project_paths().sources)
-            .with_out(out.clone())
-            .with_title(config.doc.title.clone())
+            .with_config(doc_config.clone())
             .with_fmt(config.fmt.clone())
             .with_preprocessor(ContractInheritance)
             .with_preprocessor(Inheritdoc)
             .build()?;
 
         if self.serve {
-            Server::new(out).serve()?;
+            Server::new(doc_config.out).serve()?;
         }
 
         Ok(())

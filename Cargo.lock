@@ -2386,6 +2386,7 @@ dependencies = [
  "eyre",
  "forge-fmt",
  "foundry-common",
+ "foundry-config",
  "futures-util",
  "itertools",
  "mdbook",
