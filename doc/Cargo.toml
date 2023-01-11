@@ -27,7 +27,7 @@ clap = { version = "3.0.10", features = [
 ] }
 
 # mdbook
-mdbook = "0.4.25"
+mdbook = { version = "0.4.25", default-features = false }
 warp = { version = "0.3.2", default-features = false, features = ["websocket"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 futures-util = "0.3.4"
