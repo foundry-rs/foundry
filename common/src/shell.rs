@@ -199,12 +199,14 @@ impl ShellWrite for WriteShellOut {
 }
 
 /// A `Write`able object, either with or without color support
+#[derive(Default)]
 pub enum ShellOut {
     /// A plain write object
     ///
     /// Can be used for debug purposes
     Write(WriteShellOut),
     /// Streams to `stdio`
+    #[default]
     Stream,
 }
 
@@ -279,18 +281,13 @@ impl ShellOut {
     }
 }
 
-impl Default for ShellOut {
-    fn default() -> Self {
-        ShellOut::Stream
-    }
-}
-
 /// The requested verbosity of output.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Verbosity {
     /// only allow json output
     Json,
     /// print as is
+    #[default]
     Normal,
     /// print nothing
     Silent,
@@ -312,11 +309,5 @@ impl Verbosity {
     /// Returns true if normal verbosity
     pub fn is_normal(&self) -> bool {
         matches!(self, Verbosity::Normal)
-    }
-}
-
-impl Default for Verbosity {
-    fn default() -> Self {
-        Verbosity::Normal
     }
 }
