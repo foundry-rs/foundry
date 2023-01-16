@@ -5,6 +5,7 @@ use crate::cmd::forge::{
     config, coverage,
     create::CreateArgs,
     debug::DebugArgs,
+    doc::DocArgs,
     flatten,
     fmt::FmtArgs,
     fourbyte::UploadSelectorsArgs,
@@ -149,6 +150,9 @@ pub enum Subcommands {
         about = "Detects usage of unsafe cheat codes in a foundry project and its dependencies."
     )]
     Geiger(geiger::GeigerArgs),
+
+    #[clap(about = "Generate documentation for the project.")]
+    Doc(DocArgs),
 }
 
 // A set of solc compiler settings that can be set via command line arguments, which are intended
