@@ -21,8 +21,8 @@ impl Default for DocConfig {
     fn default() -> Self {
         Self {
             out: PathBuf::from("docs"),
+            book: PathBuf::from("book.toml"),
             title: String::default(),
-            book: PathBuf::default(),
             repository: None,
         }
     }
