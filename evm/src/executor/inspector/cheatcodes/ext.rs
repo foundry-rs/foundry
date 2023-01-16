@@ -72,6 +72,7 @@ enum ArtifactBytecode {
     Hardhat(HardhatArtifact),
     Solc(JsonAbi),
     Forge(CompactContractBytecode),
+    Huff(HuffArtifact),
 }
 
 impl ArtifactBytecode {
@@ -82,6 +83,7 @@ impl ArtifactBytecode {
                 inner.bytecode.and_then(|bytecode| bytecode.object.into_bytes())
             }
             ArtifactBytecode::Solc(inner) => inner.bytecode(),
+            ArtifactBytecode::Huff(inner) => Some(inner.bytecode),
         }
     }
 
@@ -92,6 +94,7 @@ impl ArtifactBytecode {
                 bytecode.bytecode.and_then(|bytecode| bytecode.object.into_bytes())
             }),
             ArtifactBytecode::Solc(inner) => inner.deployed_bytecode(),
+            ArtifactBytecode::Huff(inner) => Some(inner.runtime),
         }
     }
 }
@@ -104,6 +107,15 @@ struct HardhatArtifact {
     bytecode: ethers::types::Bytes,
     #[serde(deserialize_with = "ethers::solc::artifacts::deserialize_bytes")]
     deployed_bytecode: ethers::types::Bytes,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HuffArtifact {
+    #[serde(deserialize_with = "ethers::solc::artifacts::deserialize_bytes")]
+    bytecode: ethers::types::Bytes,
+    #[serde(deserialize_with = "ethers::solc::artifacts::deserialize_bytes")]
+    runtime: ethers::types::Bytes,
 }
 
 /// Returns the _deployed_ bytecode (`bytecode`) of the matching artifact
