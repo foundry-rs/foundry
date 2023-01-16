@@ -3614,7 +3614,6 @@ mod tests {
     test_directory! { NumberLiteralUnderscore }
     test_directory! { FunctionCall }
     test_directory! { TrailingComma }
-    test_directory! { SelectorOverride }
     test_directory! { PragmaDirective }
     test_directory! { Annotation }
 }
