@@ -70,7 +70,7 @@ impl Operator for &mut Expression {
             FunctionCall(..) |
             FunctionCallBlock(..) |
             NamedFunctionCall(..) |
-            Ternary(..) |
+            ConditionalOperator(..) |
             BoolLiteral(..) |
             NumberLiteral(..) |
             RationalNumberLiteral(..) |
@@ -145,7 +145,7 @@ impl Operator for &mut Expression {
             AssignDivide(_, left, right) |
             AssignModulo(_, left, right) => (Some(left.as_mut()), Some(right.as_mut())),
             MemberAccess(..) |
-            Ternary(..) |
+            ConditionalOperator(..) |
             ArraySubscript(..) |
             ArraySlice(..) |
             FunctionCall(..) |

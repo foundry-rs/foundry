@@ -36,7 +36,7 @@ impl SolidityHelper {
     /// Get styles for a solidity source string
     pub fn get_styles(input: &str) -> Vec<(usize, Style, usize)> {
         let mut comments = Vec::new();
-        let mut out = Lexer::new(input, 0, &mut comments)
+        let mut out = Lexer::new(input, 0, &mut comments, &mut vec![])
             .flatten()
             .map(|(start, token, end)| (start, token.style(), end))
             .collect::<Vec<_>>();
@@ -97,7 +97,8 @@ impl SolidityHelper {
         let mut paren_depth = 0usize;
         let mut brace_depth = 0usize;
         let mut comments = Vec::new();
-        for res in Lexer::new(input, 0, &mut comments) {
+        let mut errors = Vec::new();
+        for res in Lexer::new(input, 0, &mut comments, &mut errors) {
             match res {
                 Err(err) => match err {
                     LexicalError::EndOfFileInComment(_) |

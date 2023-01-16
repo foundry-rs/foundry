@@ -752,7 +752,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serial_test",
- "solang-parser",
+ "solang-parser 0.2.1",
  "strum",
  "time 0.3.17",
  "tokio",
@@ -2108,7 +2108,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.6",
- "solang-parser",
+ "solang-parser 0.1.18",
  "svm-rs",
  "svm-rs-builds",
  "tempfile",
@@ -2319,7 +2319,7 @@ dependencies = [
  "itertools",
  "pretty_assertions",
  "semver",
- "solang-parser",
+ "solang-parser 0.2.1",
  "thiserror",
  "toml",
 ]
@@ -2396,7 +2396,7 @@ dependencies = [
  "serde_json",
  "serial_test",
  "similar",
- "solang-parser",
+ "solang-parser 0.2.1",
  "strsim",
  "strum",
  "svm-rs",
@@ -4449,9 +4449,19 @@ version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fabbf1ead8a5bcbc20f5f8b939ee3f5b0f6f281b6ad3468b84656b658b455259"
 dependencies = [
- "phf_macros",
+ "phf_macros 0.10.0",
  "phf_shared 0.10.0",
  "proc-macro-hack",
+]
+
+[[package]]
+name = "phf"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "928c6535de93548188ef63bb7c4036bd415cd8f36ad25af44b9789b2ee72a48c"
+dependencies = [
+ "phf_macros 0.11.1",
+ "phf_shared 0.11.1",
 ]
 
 [[package]]
@@ -4485,6 +4495,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "phf_generator"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1181c94580fa345f50f19d738aaa39c0ed30a600d95cb2d3e23f94266f14fbf"
+dependencies = [
+ "phf_shared 0.11.1",
+ "rand 0.8.5",
+]
+
+[[package]]
 name = "phf_macros"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4493,6 +4513,19 @@ dependencies = [
  "phf_generator 0.10.0",
  "phf_shared 0.10.0",
  "proc-macro-hack",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "phf_macros"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92aacdc5f16768709a569e913f7451034034178b05bdc8acda226659a3dccc66"
+dependencies = [
+ "phf_generator 0.11.1",
+ "phf_shared 0.11.1",
  "proc-macro2",
  "quote",
  "syn",
@@ -4512,6 +4545,15 @@ name = "phf_shared"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6796ad771acdc0123d2a88dc428b5e38ef24456743ddb1744ed628f9815c096"
+dependencies = [
+ "siphasher",
+]
+
+[[package]]
+name = "phf_shared"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1fb5f6f826b772a8d4c0394209441e7d37cbbb967ae9c7e0e8134365c9ee676"
 dependencies = [
  "siphasher",
 ]
@@ -5776,6 +5818,19 @@ dependencies = [
  "lalrpop",
  "lalrpop-util",
  "phf 0.10.1",
+ "unicode-xid",
+]
+
+[[package]]
+name = "solang-parser"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e9653f278d9531b60f042c29732bb835d519943f4167b1e5684c7e820dd9fec"
+dependencies = [
+ "itertools",
+ "lalrpop",
+ "lalrpop-util",
+ "phf 0.11.1",
  "unicode-xid",
 ]
 

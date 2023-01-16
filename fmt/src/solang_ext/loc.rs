@@ -84,6 +84,7 @@ impl LineOfCode for SourceUnitPart {
             SourceUnitPart::VariableDefinition(variable) => variable.loc,
             SourceUnitPart::TypeDefinition(def) => def.loc,
             SourceUnitPart::Using(using) => using.loc,
+            SourceUnitPart::Annotation(annotation) => annotation.loc,
         }
     }
 }
@@ -100,6 +101,7 @@ impl LineOfCode for ContractPart {
             ContractPart::StraySemicolon(loc) => *loc,
             ContractPart::Using(using) => using.loc,
             ContractPart::TypeDefinition(def) => def.loc,
+            ContractPart::Annotation(annotation) => annotation.loc,
         }
     }
 }
@@ -118,6 +120,7 @@ impl LineOfCode for YulStatement {
             YulStatement::Switch(s) => s.loc,
             YulStatement::FunctionDefinition(f) => f.loc,
             YulStatement::FunctionCall(f) => f.loc,
+            YulStatement::Error(loc) => *loc,
         }
     }
 }
@@ -170,6 +173,7 @@ impl LineOfCode for Statement {
             RevertNamedArgs(loc, _, _) => *loc,
             Emit(loc, _) => *loc,
             Try(loc, _, _, _) => *loc,
+            Statement::Error(loc) => *loc,
         }
     }
 }
@@ -293,7 +297,7 @@ impl LineOfCode for Expression {
                 LineOfCode::loc(&left).start(),
                 LineOfCode::loc(&right).end(),
             ),
-            Ternary(loc, left, _, right) => Loc::File(
+            ConditionalOperator(loc, left, _, right) => Loc::File(
                 loc.file_no(),
                 LineOfCode::loc(&left).start(),
                 LineOfCode::loc(&right).end(),
@@ -398,7 +402,7 @@ impl LineOfCode for FunctionAttribute {
             FunctionAttribute::Immutable(loc) |
             FunctionAttribute::Override(loc, _) |
             FunctionAttribute::BaseOrModifier(loc, _) |
-            FunctionAttribute::NameValue(loc, _, _) => *loc,
+            FunctionAttribute::Error(loc) => *loc,
         }
     }
 }
