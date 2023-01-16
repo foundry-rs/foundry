@@ -37,7 +37,7 @@ pub struct MultiContractRunner {
     /// All known errors, used for decoding reverts
     pub errors: Option<Abi>,
     /// The address which will be used as the `from` field in all EVM calls
-    sender: Option<Address>,
+    pub sender: Option<Address>,
     /// A map of contract names to absolute source file paths
     pub source_paths: BTreeMap<String, String>,
     /// The fork to use at launch
