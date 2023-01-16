@@ -6,8 +6,8 @@ use solang_parser::{
     doccomment::{parse_doccomments, DocComment},
     pt::{
         Comment as SolangComment, EnumDefinition, ErrorDefinition, EventDefinition,
-        FunctionDefinition, Loc, SourceUnit, SourceUnitPart, StructDefinition, TypeDefinition,
-        VariableDefinition,
+        FunctionDefinition, Identifier, Loc, SourceUnit, SourceUnitPart, StructDefinition,
+        TypeDefinition, VariableDefinition,
     },
 };
 
@@ -105,17 +105,25 @@ impl Parser {
 
     /// Parse the doc comments from the current start location.
     fn parse_docs(&mut self, end: usize) -> ParserResult<Comments> {
+        self.parse_docs_range(self.context.doc_start_loc, end)
+    }
+
+    /// Parse doc comments from the within specified range.
+    fn parse_docs_range(&mut self, start: usize, end: usize) -> ParserResult<Comments> {
         let mut res = vec![];
-        for comment in parse_doccomments(&self.comments, self.context.doc_start_loc, end) {
+        for comment in parse_doccomments(&self.comments, start, end) {
             match comment {
                 DocComment::Line { comment } => res.push(comment),
                 DocComment::Block { comments } => res.extend(comments.into_iter()),
             }
         }
 
-        // Filter out `@solidity` tags
+        // Filter out `@solidity` and empty tags
         // See https://docs.soliditylang.org/en/v0.8.17/assembly.html#memory-safety
-        let res = res.into_iter().filter(|c| c.tag.trim() != "solidity").collect_vec();
+        let res = res
+            .into_iter()
+            .filter(|c| c.tag.trim() != "solidity" && !c.tag.trim().is_empty())
+            .collect_vec();
         Ok(res.try_into()?)
     }
 }
@@ -164,6 +172,26 @@ impl Visitor for Parser {
     }
 
     fn visit_function(&mut self, func: &mut FunctionDefinition) -> ParserResult<()> {
+        // If the function parameter doesn't have a name, try to set it with
+        // `@custom:name` tag if any was provided
+        let mut start_loc = func.loc.start();
+        for (loc, param) in func.params.iter_mut() {
+            if let Some(param) = param {
+                if param.name.is_none() {
+                    let docs = self.parse_docs_range(start_loc, loc.end())?;
+                    let name_tag =
+                        docs.iter().find(|c| c.tag == CommentTag::Custom("name".to_owned()));
+                    if let Some(name_tag) = name_tag {
+                        if let Some(name) = name_tag.value.trim().split(' ').next() {
+                            param.name =
+                                Some(Identifier { loc: Loc::Implicit, name: name.to_owned() })
+                        }
+                    }
+                }
+            }
+            start_loc = loc.end();
+        }
+
         self.add_element_to_parent(ParseSource::Function(func.clone()), func.loc)
     }
 

@@ -38,7 +38,13 @@ impl FromStr for CommentTag {
             "return" => CommentTag::Return,
             "inheritdoc" => CommentTag::Inheritdoc,
             _ if trimmed.starts_with("custom:") => {
-                CommentTag::Custom(trimmed.trim_start_matches("custom:").trim().to_owned())
+                // `@custom:param` tag will be parsed as `CommentTag::Param` due to a limitation
+                // on specifying parameter docs for unnamed function arguments.
+                let custom_tag = trimmed.trim_start_matches("custom:").trim();
+                match custom_tag {
+                    "param" => CommentTag::Param,
+                    _ => CommentTag::Custom(custom_tag.to_owned()),
+                }
             }
             _ => eyre::bail!("unknown comment tag: {trimmed}"),
         };

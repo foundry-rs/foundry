@@ -141,21 +141,19 @@ impl BufWriter {
             let param_name = param.name.as_ref().map(|n| n.name.to_owned());
 
             let mut comment = param_name.as_ref().and_then(|name| {
-                comments.iter().find_map(|comment| {
-                    comment.match_first_word(name.as_str()).map(|rest| rest.replace('\n', " "))
-                })
+                comments.iter().find_map(|comment| comment.match_first_word(name.as_str()))
             });
 
             // If it's a return tag and couldn't match by first word,
             // lookup the doc by index.
             if comment.is_none() && matches!(tag, CommentTag::Return) {
-                comment = comments.get(index).map(|c| c.value.clone());
+                comment = comments.get(index).map(|c| &*c.value);
             }
 
             let row = [
                 Markdown::Code(&param_name.unwrap_or_else(|| "<none>".to_owned())).as_doc()?,
                 Markdown::Code(&param.ty.as_string()).as_doc()?,
-                comment.unwrap_or_default(),
+                comment.unwrap_or_default().replace('\n', " "),
             ];
             self.write_piped(&row.join("|"))?;
         }
