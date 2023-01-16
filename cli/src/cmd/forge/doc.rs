@@ -17,7 +17,7 @@ pub struct DocArgs {
 
     #[clap(
         help = "The doc's output path.",
-        long_help = "The path where the docs are gonna get generated. By default, this is gonna be the docs directory at the root of the project.",
+        long_help = "The output path for the generated mdbook. By default, it is the `docs/` in project root.",
         long = "out",
         short,
         value_hint = ValueHint::DirPath,
@@ -25,7 +25,7 @@ pub struct DocArgs {
     )]
     out: Option<PathBuf>,
 
-    #[clap(help = "Build the documentation.", long, short)]
+    #[clap(help = "Build the `mdbook` from generated files.", long, short)]
     build: bool,
 
     #[clap(help = "Serve the documentation.", long, short)]
