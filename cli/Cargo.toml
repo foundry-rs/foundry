@@ -54,7 +54,6 @@ async-trait = "0.1.53"
 # disk / paths
 walkdir = "2.3.2"
 dunce = "1.0.2"
-glob = "0.3.0"
 globset = "0.4.8"
 path-slash = "0.2.0"
 tempfile = "3.3.0"

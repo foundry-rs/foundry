@@ -7,6 +7,7 @@ use console::{style, Style};
 use forge_fmt::{format, parse};
 use foundry_common::{fs, term::cli_warn};
 use foundry_config::{impl_figment_convert_basic, Config};
+use foundry_utils::glob::expand_globs;
 use rayon::prelude::*;
 use similar::{ChangeTag, TextDiff};
 use std::{
@@ -90,21 +91,8 @@ impl Cmd for FmtArgs {
     fn run(self) -> eyre::Result<Self::Output> {
         let config = self.try_load_config_emit_warnings()?;
 
-        // collect ignore paths first
-        let mut ignored = vec![];
-        let expanded = config
-            .fmt
-            .ignore
-            .iter()
-            .map(|pattern| glob::glob(&config.__root.0.join(pattern).display().to_string()));
-        for res in expanded {
-            match res {
-                Ok(paths) => ignored.extend(paths.into_iter().collect::<Result<Vec<_>, _>>()?),
-                Err(err) => {
-                    eyre::bail!("failed to parse ignore glob pattern: {err}")
-                }
-            }
-        }
+        // Expand ignore globs
+        let ignored = expand_globs(&config.__root.0, config.fmt.ignore.iter())?;
 
         let cwd = std::env::current_dir()?;
         let mut inputs = vec![];

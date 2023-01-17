@@ -5,6 +5,7 @@ use crate::{
 use ethers_solc::utils::source_files_iter;
 use forge_fmt::{FormatterConfig, Visitable};
 use foundry_config::DocConfig;
+use foundry_utils::glob::expand_globs;
 use itertools::Itertools;
 use mdbook::MDBook;
 use rayon::prelude::*;
@@ -85,8 +86,13 @@ impl DocBuilder {
 
     /// Parse the sources and build the documentation.
     pub fn build(self) -> eyre::Result<()> {
+        // Expand ignore globs
+        let ignored = expand_globs(&self.root, self.config.ignore.iter())?;
+
         // Collect and parse source files
-        let sources: Vec<_> = source_files_iter(&self.sources).collect();
+        let sources = source_files_iter(&self.sources)
+            .filter(|file| !ignored.contains(file))
+            .collect::<Vec<_>>();
 
         if sources.is_empty() {
             println!("No sources detected at {}", self.sources.display());
