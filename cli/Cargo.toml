@@ -13,6 +13,7 @@ vergen = { version = "7.0", default-features = false, features = ["build", "rust
 [dependencies]
 # foundry internal
 forge-fmt = { path = "../fmt" }
+forge-doc = { path = "../doc" }
 foundry-utils = { path = "../utils" }
 forge = { path = "../forge" }
 foundry-config = { path = "../config" }

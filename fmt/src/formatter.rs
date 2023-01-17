@@ -72,7 +72,7 @@ macro_rules! bail {
 
 // TODO: store context entities as references without copying
 /// Current context of the Formatter (e.g. inside Contract or Function definition)
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct Context {
     contract: Option<ContractDefinition>,
     function: Option<FunctionDefinition>,
@@ -80,6 +80,7 @@ struct Context {
 }
 
 /// A Solidity formatter
+#[derive(Debug)]
 pub struct Formatter<'a, W> {
     buf: FormatBuffer<&'a mut W>,
     source: &'a str,
@@ -2073,7 +2074,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 let spaced = expr.has_space_around();
                 let op = expr.operator().unwrap();
 
-                match expr.into_components() {
+                match expr.components_mut() {
                     (Some(left), Some(right)) => {
                         left.visit(self)?;
 
@@ -2112,7 +2113,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Expression::AssignDivide(..) |
             Expression::AssignModulo(..) => {
                 let op = expr.operator().unwrap();
-                let (left, right) = expr.into_components();
+                let (left, right) = expr.components_mut();
                 let (left, right) = (left.unwrap(), right.unwrap());
 
                 left.visit(self)?;

@@ -63,7 +63,7 @@ impl DisabledRange {
 /// This is a list of Inline Config items for locations in a source file. This is
 /// usually acquired by parsing the comments for an `forgefmt:` items. See
 /// [`Comments::parse_inline_config_items`] for details.
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub struct InlineConfig {
     disabled_ranges: Vec<DisabledRange>,
 }
