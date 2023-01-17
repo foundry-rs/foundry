@@ -466,13 +466,13 @@ fn serialize_json(
 /// ellements. This is to signify that the elements of the array are string themselves.
 fn array_str_to_str<T: UIfmt>(array: &Vec<T>) -> String {
     format!(
-        "[{}",
+        "[{}]",
         array
             .iter()
             .enumerate()
             .map(|(index, value)| {
                 if index == array.len() - 1 {
-                    format!("\"{}\"]", value.pretty())
+                    format!("\"{}\"", value.pretty())
                 } else {
                     format!("\"{}\",", value.pretty())
                 }
@@ -486,13 +486,13 @@ fn array_str_to_str<T: UIfmt>(array: &Vec<T>) -> String {
 /// etc.)
 fn array_eval_to_str<T: UIfmt>(array: &Vec<T>) -> String {
     format!(
-        "[{}",
+        "[{}]",
         array
             .iter()
             .enumerate()
             .map(|(index, value)| {
                 if index == array.len() - 1 {
-                    format!("{}]", value.pretty())
+                    value.pretty()
                 } else {
                     format!("{},", value.pretty())
                 }

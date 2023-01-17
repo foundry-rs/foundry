@@ -168,7 +168,13 @@ contract WriteJson is DSTest {
         bytes[] memory data3 = new bytes[](3);
         data3[0] = bytes("123");
         data3[2] = bytes("fpovhpgjaiosfjhapiufpsdf");
-        string memory finalJson = vm.serializeBytes(json1, "array3", data3);
+        vm.serializeBytes(json1, "array3", data3);
+
+        uint256[] memory data4 = new uint256[](0);
+        vm.serializeUint(json1, "array4", data4);
+
+        address[] memory data5 = new address[](0);
+        string memory finalJson = vm.serializeAddress(json1, "array5", data5);
 
         string memory path = "../testdata/fixtures/Json/write_test_array.json";
         vm.writeJson(finalJson, path);
@@ -194,6 +200,15 @@ contract WriteJson is DSTest {
         assertEq(parsedData3[0], data3[0]);
         assertEq(parsedData3[1], data3[1]);
         assertEq(parsedData3[2], data3[2]);
+
+        rawData = vm.parseJson(json, ".array4");
+        uint256[] memory parsedData4 = new uint256[](0);
+        parsedData4 = abi.decode(rawData, (uint256[]));
+
+        rawData = vm.parseJson(json, ".array5");
+        address[] memory parsedData5 = new address[](0);
+        parsedData5 = abi.decode(rawData, (address[]));
+
         vm.removeFile(path);
     }
 
