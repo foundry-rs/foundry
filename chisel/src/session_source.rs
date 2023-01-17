@@ -10,6 +10,7 @@ use ethers_solc::{
 };
 use eyre::Result;
 use forge::executor::{opts::EvmOpts, Backend};
+use forge_fmt::solang_ext::SafeUnwrap;
 use foundry_config::Config;
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -428,19 +429,20 @@ contract {} {{
                                 }
                             }
                             pt::ContractPart::EventDefinition(def) => {
-                                intermediate.event_definitions.insert(def.name.name.clone(), def);
+                                let event_name = def.name.safe_unwrap().name.clone();
+                                intermediate.event_definitions.insert(event_name, def);
                             }
                             pt::ContractPart::StructDefinition(def) => {
-                                intermediate.struct_definitions.insert(def.name.name.clone(), def);
+                                let struct_name = def.name.safe_unwrap().name.clone();
+                                intermediate.struct_definitions.insert(struct_name, def);
                             }
                             pt::ContractPart::VariableDefinition(def) => {
-                                intermediate
-                                    .variable_definitions
-                                    .insert(def.name.name.clone(), def);
+                                let var_name = def.name.safe_unwrap().name.clone();
+                                intermediate.variable_definitions.insert(var_name, def);
                             }
                             _ => {}
                         });
-                        Some((cd.name.name, intermediate))
+                        Some((cd.name.safe_unwrap().name.clone(), intermediate))
                     }
                     _ => None,
                 })
@@ -461,7 +463,7 @@ contract {} {{
     pub fn get_statement_definitions(statement: &pt::Statement) -> Vec<(String, pt::Expression)> {
         match statement {
             pt::Statement::VariableDefinition(_, def, _) => {
-                vec![(def.name.name.clone(), def.ty.clone())]
+                vec![(def.name.safe_unwrap().name.clone(), def.ty.clone())]
             }
             pt::Statement::Expression(_, pt::Expression::Assign(_, left, _)) => {
                 if let pt::Expression::List(_, list) = left.as_ref() {

@@ -7,6 +7,7 @@ use crate::{
     AsString, CommentTag, Comments, CommentsRef, Document, Markdown, PreprocessorOutput,
     CONTRACT_INHERITANCE_ID, GIT_SOURCE_ID, INHERITDOC_ID,
 };
+use forge_fmt::solang_ext::SafeUnwrap;
 use itertools::Itertools;
 use solang_parser::pt::Base;
 
@@ -107,7 +108,7 @@ impl AsDoc for Document {
 
                 for item in items.iter() {
                     let var = item.as_variable().unwrap();
-                    writer.write_heading(&var.name.name)?;
+                    writer.write_heading(&var.name.safe_unwrap().name)?;
                     writer.write_section(&item.comments, &item.code)?;
                 }
             }
@@ -161,11 +162,11 @@ impl AsDoc for Document {
                             writer.write_subtitle("State Variables")?;
                             state_vars.into_iter().try_for_each(|(item, comments, code)| {
                                 let comments = comments.merge_inheritdoc(
-                                    &item.name.name,
+                                    &item.name.safe_unwrap().name,
                                     read_context!(self, INHERITDOC_ID, Inheritdoc),
                                 );
 
-                                writer.write_heading(&item.name.name)?;
+                                writer.write_heading(&item.name.safe_unwrap().name)?;
                                 writer.write_section(&comments, code)?;
                                 writer.writeln()
                             })?;
@@ -228,7 +229,7 @@ impl AsDoc for Document {
                         if let Some(events) = item.events() {
                             writer.write_subtitle("Events")?;
                             events.into_iter().try_for_each(|(item, comments, code)| {
-                                writer.write_heading(&item.name.name)?;
+                                writer.write_heading(&item.name.safe_unwrap().name)?;
                                 writer.write_section(comments, code)
                             })?;
                         }
@@ -236,7 +237,7 @@ impl AsDoc for Document {
                         if let Some(errors) = item.errors() {
                             writer.write_subtitle("Errors")?;
                             errors.into_iter().try_for_each(|(item, comments, code)| {
-                                writer.write_heading(&item.name.name)?;
+                                writer.write_heading(&item.name.safe_unwrap().name)?;
                                 writer.write_section(comments, code)
                             })?;
                         }
@@ -244,7 +245,7 @@ impl AsDoc for Document {
                         if let Some(structs) = item.structs() {
                             writer.write_subtitle("Structs")?;
                             structs.into_iter().try_for_each(|(item, comments, code)| {
-                                writer.write_heading(&item.name.name)?;
+                                writer.write_heading(&item.name.safe_unwrap().name)?;
                                 writer.write_section(comments, code)
                             })?;
                         }
@@ -252,7 +253,7 @@ impl AsDoc for Document {
                         if let Some(enums) = item.enums() {
                             writer.write_subtitle("Enums")?;
                             enums.into_iter().try_for_each(|(item, comments, code)| {
-                                writer.write_heading(&item.name.name)?;
+                                writer.write_heading(&item.name.safe_unwrap().name)?;
                                 writer.write_section(comments, code)
                             })?;
                         }

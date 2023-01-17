@@ -27,6 +27,9 @@ pub enum FormatterError {
     /// Error thrown by `std::fmt::Write` interfaces
     #[error(transparent)]
     Fmt(#[from] std::fmt::Error),
+    /// Encountered invalid parse tree item.
+    #[error("Encountered invalid parse tree item at {0:?}")]
+    InvalidParsedItem(Loc),
     /// All other errors
     #[error(transparent)]
     Custom(Box<dyn std::error::Error>),
@@ -1611,6 +1614,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 SourceUnitPart::VariableDefinition(_) => {
                     !matches!(unit, SourceUnitPart::VariableDefinition(_))
                 }
+                SourceUnitPart::Annotation(_) => false,
                 _ => true,
             },
         )?;
@@ -1627,19 +1631,21 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         return_source_if_disabled!(self, contract.loc);
 
         self.with_contract_context(contract.clone(), |fmt| {
+            let contract_name = contract.name.safe_unwrap();
+
             visit_source_if_disabled_else!(
                 fmt,
                 contract.loc.with_end_from(
-                    &contract.base.first().map(|b| b.loc).unwrap_or(contract.name.loc)
+                    &contract.base.first().map(|b| b.loc).unwrap_or(contract_name.loc)
                 ),
                 {
                     fmt.grouped(|fmt| {
                         write_chunk!(fmt, contract.loc.start(), "{}", contract.ty)?;
-                        write_chunk!(fmt, contract.name.loc.end(), "{}", contract.name.name)?;
+                        write_chunk!(fmt, contract_name.loc.end(), "{}", contract_name.name)?;
                         if !contract.base.is_empty() {
                             write_chunk!(
                                 fmt,
-                                contract.name.loc.end(),
+                                contract_name.loc.end(),
                                 contract.base.first().unwrap().loc.start(),
                                 "is"
                             )?;
@@ -1715,6 +1721,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                                 true
                             }
                         }
+                        ContractPart::Annotation(_) => false,
                         _ => true,
                     },
                 )
@@ -1734,9 +1741,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_pragma(
         &mut self,
         loc: Loc,
-        ident: &mut Identifier,
-        string: &mut StringLiteral,
+        ident: &mut Option<Identifier>,
+        string: &mut Option<StringLiteral>,
     ) -> Result<()> {
+        let (ident, string) = (ident.safe_unwrap(), string.safe_unwrap());
         return_source_if_disabled!(self, loc, ';');
 
         #[allow(clippy::if_same_then_else)]
@@ -1857,11 +1865,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_enum(&mut self, enumeration: &mut EnumDefinition) -> Result<()> {
         return_source_if_disabled!(self, enumeration.loc);
 
-        let mut name = self.visit_to_chunk(
-            enumeration.name.loc.start(),
-            Some(enumeration.name.loc.end()),
-            &mut enumeration.name,
-        )?;
+        let enum_name = enumeration.name.safe_unwrap_mut();
+        let mut name =
+            self.visit_to_chunk(enum_name.loc.start(), Some(enum_name.loc.end()), enum_name)?;
         name.content = format!("enum {}", name.content);
         self.write_chunk(&name)?;
 
@@ -1871,14 +1877,17 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             self.surrounded(
                 SurroundingChunk::new(
                     "{",
-                    Some(enumeration.values.first().unwrap().loc.start()),
+                    Some(enumeration.values.first_mut().unwrap().safe_unwrap().loc.start()),
                     None,
                 ),
                 SurroundingChunk::new("}", None, Some(enumeration.loc.end())),
                 |fmt, _multiline| {
                     let values = fmt.items_to_chunks(
                         Some(enumeration.loc.end()),
-                        enumeration.values.iter_mut().map(|ident| Ok((ident.loc, ident))),
+                        enumeration.values.iter_mut().map(|ident| {
+                            let ident = ident.safe_unwrap_mut();
+                            Ok((ident.loc, ident))
+                        }),
                     )?;
                     fmt.write_chunks_separated(&values, ",", true)?;
                     Ok(())
@@ -2111,7 +2120,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 write_chunk!(self, "{op}")?;
                 self.visit_assignment(right)?;
             }
-            Expression::Ternary(loc, cond, first_expr, second_expr) => {
+            Expression::ConditionalOperator(loc, cond, first_expr, second_expr) => {
                 cond.visit(self)?;
 
                 let first_expr = self.chunked(
@@ -2240,11 +2249,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             if let Some(storage) = &var.storage {
                 write_chunk!(fmt, storage.loc().end(), "{}", storage)?;
             }
+            let var_name = var.name.safe_unwrap();
             write_chunk!(
                 fmt,
-                var.name.loc.end(),
+                var_name.loc.end(),
                 "{}{}",
-                var.name.name,
+                var_name.name,
                 if is_assignment { " =" } else { "" }
             )?;
             Ok(())
@@ -2354,11 +2364,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     self.write_chunk(&base_or_modifier)?;
                 }
             }
-            // substrate compatibility
-            FunctionAttribute::NameValue(loc, ident, expr) => {
-                let expr = self.simulate_to_string(|fmt| expr.visit(fmt))?;
-                write_chunk!(self, loc.start(), loc.end(), "{}={}", ident.name, expr)?;
-            }
+            FunctionAttribute::Error(loc) => self.visit_parser_error(*loc)?,
         };
 
         Ok(())
@@ -2426,15 +2432,16 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_struct(&mut self, structure: &mut StructDefinition) -> Result<()> {
         return_source_if_disabled!(self, structure.loc);
         self.grouped(|fmt| {
-            write_chunk!(fmt, structure.name.loc.start(), "struct")?;
-            structure.name.visit(fmt)?;
+            let struct_name = structure.name.safe_unwrap_mut();
+            write_chunk!(fmt, struct_name.loc.start(), "struct")?;
+            struct_name.visit(fmt)?;
             if structure.fields.is_empty() {
                 return fmt.write_empty_brackets()
             }
 
             write!(fmt.buf(), " {{")?;
             fmt.surrounded(
-                SurroundingChunk::new("", Some(structure.name.loc.end()), None),
+                SurroundingChunk::new("", Some(struct_name.loc.end()), None),
                 SurroundingChunk::new("}", None, Some(structure.loc.end())),
                 |fmt, _multiline| {
                     let chunks = fmt.items_to_chunks(
@@ -2505,8 +2512,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_event(&mut self, event: &mut EventDefinition) -> Result<()> {
         return_source_if_disabled!(self, event.loc, ';');
 
+        let event_name = event.name.safe_unwrap_mut();
         let mut name =
-            self.visit_to_chunk(event.name.loc.start(), Some(event.loc.end()), &mut event.name)?;
+            self.visit_to_chunk(event_name.loc.start(), Some(event.loc.end()), event_name)?;
         name.content = format!("event {}(", name.content);
 
         let last_chunk = if event.anonymous { ") anonymous;" } else { ");" };
@@ -2554,7 +2562,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_error(&mut self, error: &mut ErrorDefinition) -> Result<()> {
         return_source_if_disabled!(self, error.loc, ';');
 
-        let mut name = self.visit_to_chunk(error.name.loc.start(), None, &mut error.name)?;
+        let error_name = error.name.safe_unwrap_mut();
+        let mut name = self.visit_to_chunk(error_name.loc.start(), None, error_name)?;
         name.content = format!("error {}", name.content);
 
         let formatted_name = self.chunk_to_string(&name)?;
@@ -2603,6 +2612,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 }
                 (false, chunks)
             }
+            UsingList::Error() => return self.visit_parser_error(using.loc),
         };
 
         let for_chunk = self.chunk_at(
@@ -2705,7 +2715,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         var.ty.visit(self)?;
 
         let multiline = self.grouped(|fmt| {
-            let name_start = var.name.loc.start();
+            let var_name = var.name.safe_unwrap_mut();
+            let name_start = var_name.loc.start();
 
             let attrs = fmt.items_to_chunks_sorted(
                 Some(name_start),
@@ -2715,8 +2726,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 fmt.write_chunks_separated(&attrs, "", true)?;
             }
 
-            let mut name =
-                fmt.visit_to_chunk(name_start, Some(var.name.loc.end()), &mut var.name)?;
+            let mut name = fmt.visit_to_chunk(name_start, Some(var_name.loc.end()), var_name)?;
             if var.initializer.is_some() {
                 name.content.push_str(" =");
             }
@@ -3395,6 +3405,21 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         })?;
         Ok(())
     }
+
+    // Support extension for Solana/Substrate
+    fn visit_annotation(&mut self, annotation: &mut Annotation) -> Result<()> {
+        return_source_if_disabled!(self, annotation.loc);
+        let id = self.simulate_to_string(|fmt| annotation.id.visit(fmt))?;
+        write!(self.buf(), "@{id}")?;
+        write!(self.buf(), "(")?;
+        annotation.value.visit(self)?;
+        write!(self.buf(), ")")?;
+        Ok(())
+    }
+
+    fn visit_parser_error(&mut self, loc: Loc) -> Result<()> {
+        Err(FormatterError::InvalidParsedItem(loc))
+    }
 }
 
 #[cfg(test)]
@@ -3576,7 +3601,7 @@ mod tests {
     test_directory! { RevertNamedArgsStatement }
     test_directory! { ReturnStatement }
     test_directory! { TryStatement }
-    test_directory! { TernaryExpression }
+    test_directory! { ConditionalOperatorExpression }
     test_directory! { NamedFunctionCallExpression }
     test_directory! { ArrayExpressions }
     test_directory! { UnitExpression }
@@ -3590,6 +3615,6 @@ mod tests {
     test_directory! { NumberLiteralUnderscore }
     test_directory! { FunctionCall }
     test_directory! { TrailingComma }
-    test_directory! { SelectorOverride }
     test_directory! { PragmaDirective }
+    test_directory! { Annotation }
 }

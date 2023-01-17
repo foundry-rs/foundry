@@ -76,7 +76,7 @@ impl Operator for Expression {
             FunctionCall(..) |
             FunctionCallBlock(..) |
             NamedFunctionCall(..) |
-            Ternary(..) |
+            ConditionalOperator(..) |
             BoolLiteral(..) |
             NumberLiteral(..) |
             RationalNumberLiteral(..) |
@@ -155,7 +155,7 @@ impl OperatorComponents for Expression {
             AssignDivide(_, left, right) |
             AssignModulo(_, left, right) => (Some(left), Some(right)),
             MemberAccess(..) |
-            Ternary(..) |
+            ConditionalOperator(..) |
             ArraySubscript(..) |
             ArraySlice(..) |
             FunctionCall(..) |
@@ -222,7 +222,7 @@ impl OperatorComponents for Expression {
             AssignDivide(_, left, right) |
             AssignModulo(_, left, right) => (Some(left.as_mut()), Some(right.as_mut())),
             MemberAccess(..) |
-            Ternary(..) |
+            ConditionalOperator(..) |
             ArraySubscript(..) |
             ArraySlice(..) |
             FunctionCall(..) |

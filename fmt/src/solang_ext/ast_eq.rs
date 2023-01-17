@@ -310,6 +310,7 @@ impl AstEq for Statement {
                 DoWhile(loc, stmt1, expr),
                 For(loc, stmt1, expr, stmt2, stmt3),
                 Try(loc, expr, params, claus),
+                Error(loc)
                 _
                 Block {
                     loc,
@@ -416,10 +417,12 @@ derive_ast_eq! { struct EventDefinition { loc, name, fields, anonymous } }
 derive_ast_eq! { struct ErrorDefinition { loc, name, fields } }
 derive_ast_eq! { struct StructDefinition { loc, name, fields } }
 derive_ast_eq! { struct EnumDefinition { loc, name, values } }
+derive_ast_eq! { struct Annotation { loc, id, value } }
 derive_ast_eq! { enum UsingList {
     _
     Library(expr),
     Functions(exprs),
+    Error(),
     _
 }}
 derive_ast_eq! { enum Visibility {
@@ -458,7 +461,7 @@ derive_ast_eq! { enum FunctionAttribute {
     Immutable(loc),
     Override(loc, idents),
     BaseOrModifier(loc, base),
-    NameValue(loc, ident, expr),
+    Error(loc),
     _
 }}
 derive_ast_eq! { enum StorageLocation {
@@ -526,7 +529,7 @@ derive_ast_eq! { enum Expression {
     NotEqual(loc, expr1, expr2),
     And(loc, expr1, expr2),
     Or(loc, expr1, expr2),
-    Ternary(loc, expr1, expr2, expr3),
+    ConditionalOperator(loc, expr1, expr2, expr3),
     Assign(loc, expr1, expr2),
     AssignOr(loc, expr1, expr2),
     AssignAnd(loc, expr1, expr2),
@@ -578,6 +581,7 @@ derive_ast_eq! { enum YulStatement {
     Block(block),
     FunctionDefinition(def),
     FunctionCall(func),
+    Error(loc),
     _
 }}
 derive_ast_eq! { enum YulExpression {
@@ -612,6 +616,7 @@ derive_ast_eq! { enum SourceUnitPart {
     TypeDefinition(def),
     Using(using),
     StraySemicolon(loc),
+    Annotation(annotation),
     _
 }}
 derive_ast_eq! { enum Import {
@@ -641,6 +646,7 @@ derive_ast_eq! { enum ContractPart {
     TypeDefinition(def),
     StraySemicolon(loc),
     Using(using),
+    Annotation(annotation),
     _
 }}
 derive_ast_eq! { enum ContractTy {

@@ -1,3 +1,5 @@
+use forge_fmt::solang_ext::SafeUnwrap;
+
 use super::{Preprocessor, PreprocessorId};
 use crate::{document::DocumentContent, Document, ParseSource, PreprocessorOutput};
 use std::{collections::HashMap, path::PathBuf};
@@ -52,7 +54,7 @@ impl ContractInheritance {
         for candidate in documents {
             if let DocumentContent::Single(ref item) = candidate.content {
                 if let ParseSource::Contract(ref contract) = item.source {
-                    if base == contract.name.name {
+                    if base == contract.name.safe_unwrap().name {
                         return Some(candidate.target_path.clone())
                     }
                 }

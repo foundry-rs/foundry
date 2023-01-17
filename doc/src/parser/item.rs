@@ -1,4 +1,7 @@
-use forge_fmt::{Comments as FmtComments, Formatter, FormatterConfig, InlineConfig, Visitor};
+use forge_fmt::{
+    solang_ext::SafeUnwrap, Comments as FmtComments, Formatter, FormatterConfig, InlineConfig,
+    Visitor,
+};
 use solang_parser::pt::{
     ContractDefinition, EnumDefinition, ErrorDefinition, EventDefinition, FunctionDefinition,
     StructDefinition, TypeDefinition, VariableDefinition,
@@ -164,12 +167,12 @@ impl ParseSource {
     /// Get the identity of the source
     pub fn ident(&self) -> String {
         match self {
-            ParseSource::Contract(contract) => contract.name.name.to_owned(),
-            ParseSource::Variable(var) => var.name.name.to_owned(),
-            ParseSource::Event(event) => event.name.name.to_owned(),
-            ParseSource::Error(error) => error.name.name.to_owned(),
-            ParseSource::Struct(structure) => structure.name.name.to_owned(),
-            ParseSource::Enum(enumerable) => enumerable.name.name.to_owned(),
+            ParseSource::Contract(contract) => contract.name.safe_unwrap().name.to_owned(),
+            ParseSource::Variable(var) => var.name.safe_unwrap().name.to_owned(),
+            ParseSource::Event(event) => event.name.safe_unwrap().name.to_owned(),
+            ParseSource::Error(error) => error.name.safe_unwrap().name.to_owned(),
+            ParseSource::Struct(structure) => structure.name.safe_unwrap().name.to_owned(),
+            ParseSource::Enum(enumerable) => enumerable.name.safe_unwrap().name.to_owned(),
             ParseSource::Function(func) => {
                 func.name.as_ref().map_or(func.ty.to_string(), |n| n.name.to_owned())
             }

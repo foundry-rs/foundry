@@ -215,7 +215,7 @@ impl AsString for FunctionAttribute {
             Self::BaseOrModifier(_, base) => {
                 base.name.identifiers.iter().map(|i| i.name.to_owned()).join(".")
             }
-            Self::NameValue(..) => unreachable!(),
+            Self::Error(_) => unreachable!(),
         }
     }
 }
