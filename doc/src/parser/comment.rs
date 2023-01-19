@@ -46,7 +46,9 @@ impl FromStr for CommentTag {
                     _ => CommentTag::Custom(custom_tag.to_owned()),
                 }
             }
-            _ => eyre::bail!("unknown comment tag: {trimmed}, custom tags must be preceded by \"custom:\""),
+            _ => eyre::bail!(
+                "unknown comment tag: {trimmed}, custom tags must be preceded by \"custom:\""
+            ),
         };
         Ok(tag)
     }
