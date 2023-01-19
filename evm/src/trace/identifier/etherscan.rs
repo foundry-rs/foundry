@@ -16,6 +16,7 @@ use futures::{
     future::{join_all, Future},
     stream::{FuturesUnordered, Stream, StreamExt},
     task::{Context, Poll},
+    TryFutureExt,
 };
 use std::{
     borrow::Cow,
@@ -79,7 +80,11 @@ impl EtherscanIdentifier {
             .clone()
             .map(|(address, metadata)| {
                 println!("Compiling: {} {address:?}", metadata.contract_name);
-                compile::compile_from_source(metadata)
+                let err_msg = format!(
+                    "Failed to compile contract {} from {address:?}",
+                    metadata.contract_name
+                );
+                compile::compile_from_source(metadata).map_err(move |err| err.wrap_err(err_msg))
             })
             .collect::<Vec<_>>();
 
