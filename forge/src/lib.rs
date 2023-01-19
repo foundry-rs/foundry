@@ -1,75 +1,71 @@
-mod runner;
-pub use runner::{ContractRunner, TestKind, TestKindGas, TestResult};
+use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
+use tracing::trace;
 
+/// Gas reports
+pub mod gas_report;
+
+/// Coverage reports
+pub mod coverage;
+
+/// The Forge test runner
+mod runner;
+pub use runner::ContractRunner;
+
+/// Forge test runners for multiple contracts
 mod multi_runner;
 pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 
-pub trait TestFilter {
-    fn matches_test(&self, test_name: &str) -> bool;
-    fn matches_contract(&self, contract_name: &str) -> bool;
+/// reexport
+pub use foundry_common::traits::TestFilter;
+
+pub mod result;
+
+/// The Forge EVM backend
+pub use foundry_evm::*;
+
+/// Metadata on how to run fuzz/invariant tests
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TestOptions {
+    /// The fuzz test configuration
+    pub fuzz: foundry_config::FuzzConfig,
+    /// The invariant test configuration
+    pub invariant: foundry_config::InvariantConfig,
 }
 
-#[cfg(test)]
-pub mod test_helpers {
-    use super::*;
-    use ethers::{
-        prelude::Lazy,
-        solc::{AggregatedCompilerOutput, Project, ProjectPathsConfig},
-        types::U256,
-    };
-    use evm_adapters::{
-        evm_opts::{Env, EvmOpts, EvmType},
-        sputnik::helpers::VICINITY,
-        FAUCET_ACCOUNT,
-    };
-    use regex::Regex;
-    use sputnik::backend::MemoryBackend;
-
-    pub static COMPILED: Lazy<AggregatedCompilerOutput> = Lazy::new(|| {
-        // NB: should we add a test-helper function that makes creating these
-        // ephemeral projects easier?
-        let paths =
-            ProjectPathsConfig::builder().root("testdata").sources("testdata").build().unwrap();
-        let project = Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap();
-        project.compile().unwrap().output()
-    });
-
-    pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
-        env: Env { gas_limit: 18446744073709551615, chain_id: Some(99), ..Default::default() },
-        initial_balance: U256::MAX,
-        evm_type: EvmType::Sputnik,
-        ..Default::default()
-    });
-
-    pub static BACKEND: Lazy<MemoryBackend<'static>> = Lazy::new(|| {
-        let mut backend = MemoryBackend::new(&*VICINITY, Default::default());
-        // max out the balance of the faucet
-        let faucet = backend.state_mut().entry(*FAUCET_ACCOUNT).or_insert_with(Default::default);
-        faucet.balance = U256::MAX;
-        backend
-    });
-
-    pub struct Filter {
-        test_regex: Regex,
-        contract_regex: Regex,
+impl TestOptions {
+    pub fn invariant_fuzzer(&self) -> TestRunner {
+        self.fuzzer_with_cases(self.invariant.runs)
     }
 
-    impl Filter {
-        pub fn new(test_pattern: &str, contract_pattern: &str) -> Self {
-            Filter {
-                test_regex: Regex::new(test_pattern).unwrap(),
-                contract_regex: Regex::new(contract_pattern).unwrap(),
-            }
-        }
+    pub fn fuzzer(&self) -> TestRunner {
+        self.fuzzer_with_cases(self.fuzz.runs)
     }
 
-    impl TestFilter for Filter {
-        fn matches_test(&self, test_name: &str) -> bool {
-            self.test_regex.is_match(test_name)
-        }
+    pub fn fuzzer_with_cases(&self, cases: u32) -> TestRunner {
+        let max_global_rejects = if self.fuzz.max_test_rejects !=
+            foundry_config::FuzzConfig::default().max_test_rejects
+        {
+            self.fuzz.max_test_rejects
+        } else {
+            self.fuzz.max_global_rejects
+        };
+        // TODO: Add Options to modify the persistence
+        let cfg = proptest::test_runner::Config {
+            failure_persistence: None,
+            cases,
+            max_global_rejects,
+            ..Default::default()
+        };
 
-        fn matches_contract(&self, contract_name: &str) -> bool {
-            self.contract_regex.is_match(contract_name)
+        if let Some(ref fuzz_seed) = self.fuzz.seed {
+            trace!(target: "forge::test", "building deterministic fuzzer with seed {}", fuzz_seed);
+            let mut bytes: [u8; 32] = [0; 32];
+            fuzz_seed.to_big_endian(&mut bytes);
+            let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &bytes);
+            proptest::test_runner::TestRunner::new_with_rng(cfg, rng)
+        } else {
+            trace!(target: "forge::test", "building stochastic fuzzer");
+            proptest::test_runner::TestRunner::new(cfg)
         }
     }
 }

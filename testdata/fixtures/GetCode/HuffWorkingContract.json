@@ -1,0 +1,32 @@
+{
+    "file": {
+      "path": "src/WorkingContract.huff"
+    },
+    "bytecode": "602d8060093d393df33d3560e01c63d1efd30d14610012573d3dfd5b6f656d6f2e6574682077757a206865726560801b3d523d6020f3",
+    "runtime": "3d3560e01c63d1efd30d14610012573d3dfd5b6f656d6f2e6574682077757a206865726560801b3d523d6020f3",
+    "abi": {
+      "constructor": null,
+      "functions": {
+        "secret": {
+          "name": "secret",
+          "inputs": [],
+          "outputs": [
+            {
+              "name": "",
+              "kind": {
+                "Uint": 256
+              },
+              "internal_type": null
+            }
+          ],
+          "constant": false,
+          "state_mutability": "View"
+        }
+      },
+      "events": {},
+      "errors": {},
+      "receive": false,
+      "fallback": false
+    }
+  }
+  

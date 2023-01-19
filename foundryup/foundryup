@@ -1,0 +1,272 @@
+#!/usr/bin/env bash
+set -e
+
+FOUNDRY_DIR=${FOUNDRY_DIR-"$HOME/.foundry"}
+FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
+FOUNDRY_MAN_DIR="$FOUNDRY_DIR/share/man/man1"
+
+main() {
+  banner
+  need_cmd git
+  need_cmd curl
+
+  while [[ $1 ]]; do
+    case $1 in
+      --)               shift; break;;
+
+      -r|--repo)        shift; FOUNDRYUP_REPO=$1;;
+      -b|--branch)      shift; FOUNDRYUP_BRANCH=$1;;
+      -v|--version)     shift; FOUNDRYUP_VERSION=$1;;
+      -p|--path)        shift; FOUNDRYUP_LOCAL_REPO=$1;;
+      -P|--pr)          shift; FOUNDRYUP_PR=$1;;
+      -C|--commit)      shift; FOUNDRYUP_COMMIT=$1;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        err "internal error: unknown option "$1"\n";;
+    esac; shift
+  done
+
+  if [ ! -z "$FOUNDRYUP_PR" ]; then
+    if [ -z "$FOUNDRYUP_BRANCH" ]; then
+      FOUNDRYUP_BRANCH="refs/pull/$FOUNDRYUP_PR/head"
+    else
+      err "can't use --pr and --branch at the same time"
+    fi
+  fi
+
+  # Installs foundry from a local repository if --path parameter is provided
+  if [[ -n "$FOUNDRYUP_LOCAL_REPO" ]]; then
+    need_cmd cargo
+
+    # Ignore branches/versions as we do not want to modify local git state
+    if [ -n "$FOUNDRYUP_REPO" ] || [ -n "$FOUNDRYUP_BRANCH" ] || [ -n "$FOUNDRYUP_VERSION" ]; then
+      warn "--branch, --version, and --repo arguments are ignored during local install"
+    fi
+
+    # Enter local repo and build
+    say "installing from $FOUNDRYUP_LOCAL_REPO"
+    cd $FOUNDRYUP_LOCAL_REPO
+    RUSTFLAGS="-C target-cpu=native" ensure cargo build --release # need 4 speed
+
+
+    # Remove prior installations if they exist
+    rm -f "$FOUNDRY_BIN_DIR/forge"
+    rm -f "$FOUNDRY_BIN_DIR/cast"
+    rm -f "$FOUNDRY_BIN_DIR/anvil"
+    rm -f "$FOUNDRY_BIN_DIR/chisel"
+
+    # Symlink from local repo binaries to bin dir
+    ensure ln -s "$PWD/target/release/forge" "$FOUNDRY_BIN_DIR/forge"
+    ensure ln -s "$PWD/target/release/cast" "$FOUNDRY_BIN_DIR/cast"
+    ensure ln -s "$PWD/target/release/anvil" "$FOUNDRY_BIN_DIR/anvil"
+    ensure ln -s "$PWD/target/release/chisel" "$FOUNDRY_BIN_DIR/chisel"
+
+    say "done"
+    exit 0
+  fi
+
+  FOUNDRYUP_REPO=${FOUNDRYUP_REPO-foundry-rs/foundry}
+
+  if [[ "$FOUNDRYUP_REPO" == "foundry-rs/foundry" && -z "$FOUNDRYUP_BRANCH" && -z "$FOUNDRYUP_COMMIT" ]]; then
+    FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION-nightly}
+    FOUNDRYUP_TAG=$FOUNDRYUP_VERSION
+
+    # Normalize versions (handle channels, versions without v prefix
+    if [[ "$FOUNDRYUP_VERSION" == "nightly" ]]; then
+      # Locate real nightly tag
+      SHA=$(ensure curl -sSf https://api.github.com/repos/${FOUNDRYUP_REPO}/git/refs/tags/nightly \
+        | grep -Eo '"sha"[^,]*' \
+        | grep -Eo '[^:]*$' \
+        | tr -d '"' \
+        | tr -d ' ')
+      FOUNDRYUP_TAG="nightly-${SHA}"
+    elif [[ "$FOUNDRYUP_VERSION" == nightly* ]]; then
+      FOUNDRYUP_VERSION="nightly"
+    elif [[ "$FOUNDRYUP_VERSION" == [[:digit:]]* ]]; then
+      # Add v prefix
+      FOUNDRYUP_VERSION="v${FOUNDRYUP_VERSION}"
+      FOUNDRYUP_TAG="${FOUNDRYUP_VERSION}"
+    fi
+
+    say "installing foundry (version ${FOUNDRYUP_VERSION}, tag ${FOUNDRYUP_TAG})"
+
+    PLATFORM="$(uname -s)"
+    case $PLATFORM in
+      Linux)
+        PLATFORM="linux"
+        ;;
+      Darwin)
+        PLATFORM="darwin"
+        ;;
+      *)
+        err "unsupported platform: $PLATFORM"
+        ;;
+    esac
+
+    ARCHITECTURE="$(uname -m)"
+    if [ "${ARCHITECTURE}" = "x86_64" ]; then
+      # Redirect stderr to /dev/null to avoid printing errors if non Rosetta.
+      if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = "1" ]; then
+        ARCHITECTURE="arm64" # Rosetta.
+      else
+        ARCHITECTURE="amd64" # Intel.
+      fi
+    elif [ "${ARCHITECTURE}" = "arm64" ] ||[ "${ARCHITECTURE}" = "aarch64" ] ; then
+      ARCHITECTURE="arm64" # Arm.
+    else
+      ARCHITECTURE="amd64" # Amd.
+    fi
+
+    # Compute the URL of the release tarball in the Foundry repository.
+    RELEASE_URL="https://github.com/${FOUNDRYUP_REPO}/releases/download/${FOUNDRYUP_TAG}/"
+    BIN_TARBALL_URL="${RELEASE_URL}foundry_${FOUNDRYUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.tar.gz"
+    MAN_TARBALL_URL="${RELEASE_URL}foundry_man_${FOUNDRYUP_VERSION}.tar.gz"
+
+    # Download the binaries tarball and unpack it into the .foundry bin directory.
+    say "downloading latest forge, cast, anvil, and chisel"
+    ensure curl -# -L $BIN_TARBALL_URL | tar -xzC $FOUNDRY_BIN_DIR
+    # Download the man tarball and unpack it into the .foundry man directory.
+    say "downloading manpages"
+    ensure curl -# -L $MAN_TARBALL_URL | tar -xzC $FOUNDRY_MAN_DIR
+    say "installed - $($FOUNDRY_BIN_DIR/forge --version)"
+    say "installed - $($FOUNDRY_BIN_DIR/cast --version)"
+    say "installed - $($FOUNDRY_BIN_DIR/anvil --version)"
+    say "installed - $($FOUNDRY_BIN_DIR/chisel --version)"
+    say "done"
+
+    if [[ $(which forge) =~ "cargo" ]]; then
+      warn "it appears your system has already has forge installed via cargo. you may need to run 'rm $(which forge)' to allow foundryup to take precedence!"
+    fi
+
+    if [[ $(which cast) =~ "cargo" ]]; then
+      warn "it appears your system has already has cast installed via cargo. you may need to run 'rm $(which cast)' to allow foundryup to take precedence!"
+    fi
+
+    if [[ $(which anvil) =~ "cargo" ]]; then
+      warn "it appears your system has already has anvil installed via cargo. you may need to run 'rm $(which anvil)' to allow foundryup to take precedence!"
+    fi
+
+    if [[ $(which chisel) =~ "cargo" ]]; then
+      warn "it appears your system has already has chisel installed via cargo. you may need to run 'rm $(which chisel)' to allow foundryup to take precedence!"
+    fi
+  else
+    need_cmd cargo
+    FOUNDRYUP_BRANCH=${FOUNDRYUP_BRANCH-master}
+    REPO_PATH="${FOUNDRY_DIR}/${FOUNDRYUP_REPO}"
+
+    if [ ! -d $REPO_PATH ]; then
+      # Repo path did not exist, grab the author from the repo, make a directory in .foundry, cd to it and clone.
+      IFS="/" read -ra AUTHOR <<< "$FOUNDRYUP_REPO"
+      ensure mkdir -p "$FOUNDRY_DIR/$AUTHOR"
+      cd "$FOUNDRY_DIR/$AUTHOR"
+      ensure git clone https://github.com/${FOUNDRYUP_REPO}
+    fi
+    # force checkout, discarding any local changes
+    cd $REPO_PATH
+    ensure git fetch origin ${FOUNDRYUP_BRANCH}:remotes/origin/${FOUNDRYUP_BRANCH}
+    ensure git checkout origin/${FOUNDRYUP_BRANCH}
+    # checkout submodules for Chisel build
+    ensure git submodule update --init --recursive
+    # If set, checkout specific commit from branch
+    if [ ! -z $FOUNDRYUP_COMMIT ]; then
+      say "installing at commit ${FOUNDRYUP_COMMIT}"
+      ensure git checkout ${FOUNDRYUP_COMMIT}
+    fi
+    # Build the repo and install it locally to the .foundry bin directory.
+    # --root appends /bin to the directory it is given, so we pass FOUNDRY_DIR.
+    RUSTFLAGS="-C target-cpu=native" ensure cargo install --path ./cli --bins --locked --force --root $FOUNDRY_DIR
+    # install anvil
+    RUSTFLAGS="-C target-cpu=native" ensure cargo install --path ./anvil --bin anvil --locked --force --root $FOUNDRY_DIR
+    # install chisel
+    RUSTFLAGS="-C target-cpu=native" ensure cargo install --path ./chisel --bin chisel --locked --force --root $FOUNDRY_DIR
+
+    # If help2man is installed, use it to add Foundry man pages.
+    if command -v help2man &> /dev/null ; then
+      help2man -N $FOUNDRY_BIN_DIR/forge > $FOUNDRY_MAN_DIR/forge.1
+      help2man -N $FOUNDRY_BIN_DIR/cast > $FOUNDRY_MAN_DIR/cast.1
+      help2man -N $FOUNDRY_BIN_DIR/anvil > $FOUNDRY_MAN_DIR/anvil.1
+      help2man -N $FOUNDRY_BIN_DIR/chisel > $FOUNDRY_MAN_DIR/chisel.1
+    fi
+    say "done"
+  fi
+}
+
+usage() {
+  cat 1>&2 <<EOF
+The installer for Foundry.
+
+Update or revert to a specific Foundry version with ease.
+
+USAGE:
+    foundryup <OPTIONS>
+
+OPTIONS:
+    -h, --help      Print help information
+    -v, --version   Install a specific version
+    -b, --branch    Install a specific branch
+    -P, --pr        Install a specific Pull Request
+    -C, --commit    Install a specific commit
+    -r, --repo      Install from a remote GitHub repo (uses default branch if no other options are set)
+    -p, --path      Install a local repository
+EOF
+}
+
+say() {
+  printf 'foundryup: %s\n' "$1"
+}
+
+warn() {
+  say "warning: ${1}" >&2
+}
+
+err() {
+  say "$1" >&2
+  exit 1
+}
+
+need_cmd() {
+  if ! check_cmd "$1"; then
+    err "need '$1' (command not found)"
+  fi
+}
+
+check_cmd() {
+  command -v "$1" > /dev/null 2>&1
+}
+
+# Run a command that should never fail. If the command fails execution
+# will immediately terminate with an error showing the failing
+# command.
+ensure() {
+  if ! "$@"; then err "command failed: $*"; fi
+}
+
+# Banner Function for Foundry 
+
+banner() {
+  printf '
+
+.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx
+ 
+ ╔═╗ ╔═╗ ╦ ╦ ╔╗╔ ╔╦╗ ╦═╗ ╦ ╦         Portable and modular toolkit
+ ╠╣  ║ ║ ║ ║ ║║║  ║║ ╠╦╝ ╚╦╝    for Ethereum Application Development 
+ ╚   ╚═╝ ╚═╝ ╝╚╝ ═╩╝ ╩╚═  ╩                 written in Rust.
+
+.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx
+
+Repo       : https://github.com/foundry-rs/
+Book       : https://book.getfoundry.sh/                      
+Chat       : https://t.me/foundry_rs/                         
+Support    : https://t.me/foundry_support/
+Contribute : https://github.com/orgs/foundry-rs/projects/2/
+
+.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx
+
+'
+}
+
+
+main "$@" || exit 1

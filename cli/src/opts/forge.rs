@@ -1,12 +1,28 @@
-use clap::{Parser, Subcommand, ValueHint};
-
-use ethers::{solc::EvmVersion, types::Address};
-use std::{path::PathBuf, str::FromStr};
-
-use crate::cmd::{
-    bind::BindArgs, build::BuildArgs, config, create::CreateArgs, flatten, init::InitArgs,
-    install::InstallArgs, remappings::RemappingArgs, run::RunArgs, snapshot, test,
+use crate::cmd::forge::{
+    bind::BindArgs,
+    build::BuildArgs,
+    cache::CacheArgs,
+    config, coverage,
+    create::CreateArgs,
+    debug::DebugArgs,
+    doc::DocArgs,
+    flatten,
+    fmt::FmtArgs,
+    fourbyte::UploadSelectorsArgs,
+    geiger,
+    init::InitArgs,
+    inspect,
+    install::InstallArgs,
+    remappings::RemappingArgs,
+    remove::RemoveArgs,
+    script::ScriptArgs,
+    snapshot, test, tree, update,
+    verify::{VerifyArgs, VerifyCheckArgs},
 };
+use clap::{Parser, Subcommand, ValueHint};
+use ethers::solc::{artifacts::output_selection::ContractOutputSelection, EvmVersion};
+use std::path::PathBuf;
+
 use serde::Serialize;
 
 #[derive(Debug, Parser)]
@@ -17,211 +33,162 @@ pub struct Opts {
 }
 
 #[derive(Debug, Subcommand)]
-#[clap(about = "Build, test, fuzz, formally verify, debug & deploy solidity contracts.")]
+#[clap(
+    about = "Build, test, fuzz, debug and deploy Solidity contracts.",
+    after_help = "Find more information in the book: http://book.getfoundry.sh/reference/forge/forge.html",
+    next_display_order = None
+)]
 #[allow(clippy::large_enum_variant)]
 pub enum Subcommands {
-    #[clap(about = "test your smart contracts")]
-    #[clap(alias = "t")]
+    #[clap(visible_alias = "t", about = "Run the project's tests.")]
     Test(test::TestArgs),
 
-    #[clap(about = "generate rust bindings for your smart contracts")]
+    #[clap(
+        about = "Run a smart contract as a script, building transactions that can be sent onchain."
+    )]
+    Script(ScriptArgs),
+
+    #[clap(about = "Generate coverage reports.")]
+    Coverage(coverage::CoverageArgs),
+
+    #[clap(alias = "bi", about = "Generate Rust bindings for smart contracts.")]
     Bind(BindArgs),
 
-    #[clap(about = "build your smart contracts")]
-    #[clap(alias = "b")]
+    #[clap(visible_alias = "b", about = "Build the project's smart contracts.")]
     Build(BuildArgs),
 
-    #[clap(about = "run a single smart contract as a script")]
-    #[clap(alias = "r")]
-    Run(RunArgs),
-
-    #[clap(alias = "u", about = "fetches all upstream lib changes")]
-    Update {
-        #[clap(
-            help = "the submodule name of the library you want to update (will update all if none is provided)",
-            value_hint = ValueHint::DirPath
-        )]
-        lib: Option<PathBuf>,
-    },
+    #[clap(visible_alias = "d", about = "Debugs a single smart contract as a script.")]
+    Debug(DebugArgs),
 
     #[clap(
-        alias = "i",
-        about = "installs one or more dependencies as git submodules (will install existing dependencies if no arguments are provided"
+        visible_alias = "u",
+        about = "Update one or multiple dependencies.",
+        long_about = "Update one or multiple dependencies. If no arguments are provided, then all dependencies are updated."
+    )]
+    Update(update::UpdateArgs),
+
+    #[clap(
+        visible_alias = "i",
+        about = "Install one or multiple dependencies.",
+        long_about = "Install one or multiple dependencies. If no arguments are provided, then existing dependencies will be installed."
     )]
     Install(InstallArgs),
 
-    #[clap(alias = "rm", about = "removes one or more dependencies from git submodules")]
-    Remove {
-        #[clap(help = "the submodule name of the library you want to remove")]
-        dependencies: Vec<Dependency>,
-    },
-
-    #[clap(about = "prints the automatically inferred remappings for this repository")]
-    Remappings(RemappingArgs),
+    #[clap(visible_alias = "rm", about = "Remove one or multiple dependencies.")]
+    Remove(RemoveArgs),
 
     #[clap(
-        about = "verify your smart contracts source code on Etherscan. Requires `ETHERSCAN_API_KEY` to be set."
+        visible_alias = "re",
+        about = "Get the automatically inferred remappings for the project."
     )]
-    VerifyContract {
-        #[clap(help = "contract source info `<path>:<contractname>`")]
-        contract: FullContractInfo,
-        #[clap(help = "the address of the contract to verify.")]
-        address: Address,
-        #[clap(help = "constructor args calldata arguments.")]
-        constructor_args: Vec<String>,
-    },
+    Remappings(RemappingArgs),
 
-    #[clap(alias = "c", about = "deploy a compiled contract")]
+    #[clap(visible_alias = "v", about = "Verify smart contracts on Etherscan.")]
+    VerifyContract(VerifyArgs),
+
+    #[clap(visible_alias = "vc", about = "Check verification status on Etherscan.")]
+    VerifyCheck(VerifyCheckArgs),
+
+    #[clap(visible_alias = "c", about = "Deploy a smart contract.")]
     Create(CreateArgs),
 
-    #[clap(alias = "i", about = "initializes a new forge sample project")]
+    #[clap(about = "Create a new Forge project.")]
     Init(InitArgs),
 
-    #[clap(about = "generate shell completions script")]
+    #[clap(visible_alias = "com", about = "Generate shell completions script.")]
     Completions {
-        #[clap(arg_enum)]
+        #[clap(value_enum)]
         shell: clap_complete::Shell,
     },
-
-    #[clap(about = "removes the build artifacts and cache directories")]
+    #[clap(visible_alias = "fig", about = "Generate Fig autocompletion spec.")]
+    GenerateFigSpec,
+    #[clap(visible_alias = "cl", about = "Remove the build artifacts and cache directories.")]
     Clean {
         #[clap(
-            help = "the project's root path, default being the current working directory",
+            help = "The project's root path. Defaults to the current working directory.",
             long,
-            value_hint = ValueHint::DirPath
+            value_hint = ValueHint::DirPath,
+            value_name = "PATH"
         )]
         root: Option<PathBuf>,
     },
 
-    #[clap(about = "creates a snapshot of each test's gas usage")]
+    #[clap(about = "Manage the Foundry cache.")]
+    Cache(CacheArgs),
+
+    #[clap(visible_alias = "s", about = "Create a snapshot of each test's gas usage.")]
     Snapshot(snapshot::SnapshotArgs),
 
-    #[clap(about = "shows the currently set config values")]
+    #[clap(visible_alias = "co", about = "Display the current config.")]
     Config(config::ConfigArgs),
 
-    #[clap(about = "concats a file with all of its imports")]
+    #[clap(
+        visible_alias = "f",
+        about = "Flatten a source file and all of its imports into one file."
+    )]
     Flatten(flatten::FlattenArgs),
+
+    #[clap(about = "Formats Solidity source files.")]
+    Fmt(FmtArgs),
+
+    #[clap(visible_alias = "in", about = "Get specialized information about a smart contract.")]
+    Inspect(inspect::InspectArgs),
+
+    #[clap(
+        visible_alias = "up",
+        about = "Uploads abi of given contract to https://sig.eth.samczsun.com function selector database."
+    )]
+    UploadSelectors(UploadSelectorsArgs),
+
+    #[clap(
+        visible_alias = "tr",
+        about = "Display a tree visualization of the project's dependency graph."
+    )]
+    Tree(tree::TreeArgs),
+
+    #[clap(
+        about = "Detects usage of unsafe cheat codes in a foundry project and its dependencies."
+    )]
+    Geiger(geiger::GeigerArgs),
+
+    #[clap(about = "Generate documentation for the project.")]
+    Doc(DocArgs),
 }
 
-/// A set of solc compiler settings that can be set via command line arguments, which are intended
-/// to be merged into an existing `foundry_config::Config`.
-///
-/// See also [`BuildArgs`]
+// A set of solc compiler settings that can be set via command line arguments, which are intended
+// to be merged into an existing `foundry_config::Config`.
+//
+// See also [`BuildArgs`]
 #[derive(Default, Debug, Clone, Parser, Serialize)]
+#[clap(next_help_heading = "Compiler options")]
 pub struct CompilerArgs {
-    #[clap(help = "choose the evm version", long)]
+    #[clap(help = "The target EVM version.", long, value_name = "VERSION")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evm_version: Option<EvmVersion>,
 
-    #[clap(help = "activate the solidity optimizer", long)]
-    // skipped because, optimize is opt-in
+    #[clap(help = "Activate the Solidity optimizer.", long)]
     #[serde(skip)]
     pub optimize: bool,
 
-    #[clap(help = "optimizer parameter runs", long)]
+    #[clap(help = "The number of optimizer runs.", long, value_name = "RUNS")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub optimize_runs: Option<usize>,
+    pub optimizer_runs: Option<usize>,
 
-    #[clap(
-        help = "extra output types [evm.assembly, ewasm, ir, irOptimized] eg: `--extra-output evm.assembly`",
-        long
-    )]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub extra_output: Option<Vec<String>>,
-}
+    /// Extra output to include in the contract's artifact.
+    ///
+    /// Example keys: evm.assembly, ewasm, ir, irOptimized, metadata
+    ///
+    /// For a full description, see https://docs.soliditylang.org/en/v0.8.13/using-the-compiler.html#input-description
+    #[clap(long, num_args(1..), value_name = "SELECTOR")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub extra_output: Vec<ContractOutputSelection>,
 
-/// Represents the common dapp argument pattern for `<path>:<contractname>` where `<path>:` is
-/// optional.
-#[derive(Clone, Debug)]
-pub struct ContractInfo {
-    /// Location of the contract
-    pub path: Option<String>,
-    /// Name of the contract
-    pub name: String,
-}
-
-impl FromStr for ContractInfo {
-    type Err = eyre::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut iter = s.rsplit(':');
-        let name = iter.next().unwrap().to_string();
-        let path = iter.next().map(str::to_string);
-        Ok(Self { path, name })
-    }
-}
-
-/// Represents the common dapp argument pattern `<path>:<contractname>`
-#[derive(Clone, Debug)]
-pub struct FullContractInfo {
-    /// Location of the contract
-    pub path: String,
-    /// Name of the contract
-    pub name: String,
-}
-
-impl FromStr for FullContractInfo {
-    type Err = eyre::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (path, name) = s
-            .split_once(':')
-            .ok_or_else(|| eyre::eyre!("Expected `<path>:<contractname>`, got `{}`", s))?;
-        Ok(Self { path: path.to_string(), name: name.to_string() })
-    }
-}
-
-/// A git dependency which will be installed as a submodule
-///
-/// A dependency can be provided as a raw URL, or as a path to a Github repository
-/// e.g. `org-name/repo-name`
-///
-/// Providing a ref can be done in the following 3 ways:
-/// * branch: master
-/// * tag: v0.1.1
-/// * commit: 8e8128
-///
-/// Non Github URLs must be provided with an https:// prefix.
-/// Adding dependencies as local paths is not supported yet.
-#[derive(Clone, Debug)]
-pub struct Dependency {
-    /// The name of the dependency
-    pub name: String,
-    /// The url to the git repository corresponding to the dependency
-    pub url: String,
-    /// Optional tag corresponding to a Git SHA, tag, or branch.
-    pub tag: Option<String>,
-}
-
-const GITHUB: &str = "github.com";
-const VERSION_SEPARATOR: char = '@';
-
-impl FromStr for Dependency {
-    type Err = eyre::Error;
-    fn from_str(dependency: &str) -> Result<Self, Self::Err> {
-        // TODO: Is there a better way to normalize these paths to having a
-        // `https://github.com/` prefix?
-        let path = if dependency.starts_with("https://") {
-            dependency.to_string()
-        } else if dependency.starts_with(GITHUB) {
-            format!("https://{}", dependency)
-        } else {
-            format!("https://{}/{}", GITHUB, dependency)
-        };
-
-        // everything after the "@" should be considered the version
-        let mut split = path.split(VERSION_SEPARATOR);
-        let url =
-            split.next().ok_or_else(|| eyre::eyre!("no dependency path was provided"))?.to_string();
-        let name = url
-            .split('/')
-            .last()
-            .ok_or_else(|| eyre::eyre!("no dependency name found"))?
-            .to_string();
-        let tag = split.next().map(ToString::to_string);
-
-        Ok(Dependency { name, url, tag })
-    }
+    /// Extra output to write to separate files.
+    ///
+    /// Valid values: metadata, ir, irOptimized, ewasm, evm.assembly
+    #[clap(long, num_args(1..), value_name = "SELECTOR")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub extra_output_files: Vec<ContractOutputSelection>,
 }
 
 #[cfg(test)]
@@ -229,26 +196,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_dependencies() {
-        [
-            ("gakonst/lootloose", "https://github.com/gakonst/lootloose", None),
-            ("github.com/gakonst/lootloose", "https://github.com/gakonst/lootloose", None),
-            ("https://github.com/gakonst/lootloose", "https://github.com/gakonst/lootloose", None),
-            ("https://gitlab.com/gakonst/lootloose", "https://gitlab.com/gakonst/lootloose", None),
-            ("gakonst/lootloose@0.1.0", "https://github.com/gakonst/lootloose", Some("0.1.0")),
-            ("gakonst/lootloose@develop", "https://github.com/gakonst/lootloose", Some("develop")),
-            (
-                "gakonst/lootloose@98369d0edc900c71d0ec33a01dfba1d92111deed",
-                "https://github.com/gakonst/lootloose",
-                Some("98369d0edc900c71d0ec33a01dfba1d92111deed"),
-            ),
-        ]
-        .iter()
-        .for_each(|(input, expected_path, expected_tag)| {
-            let dep = Dependency::from_str(input).unwrap();
-            assert_eq!(dep.url, expected_path.to_string());
-            assert_eq!(dep.tag, expected_tag.map(ToString::to_string));
-            assert_eq!(dep.name, "lootloose");
-        });
+    fn can_parse_evm_version() {
+        let args: CompilerArgs =
+            CompilerArgs::parse_from(["foundry-cli", "--evm-version", "london"]);
+        assert_eq!(args.evm_version, Some(EvmVersion::London));
+    }
+
+    #[test]
+    fn can_parse_extra_output() {
+        let args: CompilerArgs =
+            CompilerArgs::parse_from(["foundry-cli", "--extra-output", "metadata", "ir-optimized"]);
+        assert_eq!(
+            args.extra_output,
+            vec![ContractOutputSelection::Metadata, ContractOutputSelection::IrOptimized]
+        );
+    }
+
+    #[test]
+    fn can_parse_extra_output_files() {
+        let args: CompilerArgs = CompilerArgs::parse_from([
+            "foundry-cli",
+            "--extra-output-files",
+            "metadata",
+            "ir-optimized",
+        ]);
+        assert_eq!(
+            args.extra_output_files,
+            vec![ContractOutputSelection::Metadata, ContractOutputSelection::IrOptimized]
+        );
     }
 }

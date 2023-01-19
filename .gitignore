@@ -2,3 +2,5 @@
 /target
 out/
 out.json
+.idea
+.vscode
