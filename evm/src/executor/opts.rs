@@ -5,7 +5,7 @@ use ethers::{
     types::{Address, Chain, H256, U256},
 };
 use eyre::WrapErr;
-use foundry_common::{self, try_get_http_provider, RpcUrl};
+use foundry_common::{self, ProviderBuilder, RpcUrl, ALCHEMY_FREE_TIER_CUPS};
 use foundry_config::Config;
 use revm::{BlockEnv, CfgEnv, SpecId, TxEnv};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -26,6 +26,12 @@ pub struct EvmOpts {
 
     /// initial retry backoff
     pub fork_retry_backoff: Option<u64>,
+
+    /// The available compute units per second
+    pub compute_units_per_second: Option<u64>,
+
+    /// Disables rate limiting entirely.
+    pub no_rate_limit: bool,
 
     /// Disables storage caching entirely.
     pub no_storage_caching: bool,
@@ -75,7 +81,9 @@ impl EvmOpts {
     /// Returns the `revm::Env` configured with settings retrieved from the endpoints
     pub async fn fork_evm_env(&self, fork_url: impl AsRef<str>) -> eyre::Result<revm::Env> {
         let fork_url = fork_url.as_ref();
-        let provider = try_get_http_provider(fork_url)?;
+        let provider = ProviderBuilder::new(fork_url)
+            .compute_units_per_second(self.get_compute_units_per_second())
+            .build()?;
         environment(
             &provider,
             self.memory_limit,
@@ -153,6 +161,20 @@ impl EvmOpts {
             return id
         }
         self.get_remote_chain_id().map_or(Chain::Mainnet as u64, |id| id as u64)
+    }
+
+    /// Returns the available compute units per second, which will be
+    /// - u64::MAX, if `no_rate_limit` if set (as rate limiting is disabled)
+    /// - the assigned compute units, if `compute_units_per_second` is set
+    /// - ALCHEMY_FREE_TIER_CUPS (330) otherwise
+    pub fn get_compute_units_per_second(&self) -> u64 {
+        if self.no_rate_limit {
+            return u64::MAX
+        } else if let Some(cups) = self.compute_units_per_second {
+            return cups
+        } else {
+            ALCHEMY_FREE_TIER_CUPS
+        }
     }
 
     /// Returns the chain ID from the RPC, if any.
