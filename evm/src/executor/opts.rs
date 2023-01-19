@@ -169,7 +169,7 @@ impl EvmOpts {
     /// - ALCHEMY_FREE_TIER_CUPS (330) otherwise
     pub fn get_compute_units_per_second(&self) -> u64 {
         if self.no_rate_limit {
-            return u64::MAX
+            u64::MAX
         } else if let Some(cups) = self.compute_units_per_second {
             return cups
         } else {
