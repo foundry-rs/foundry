@@ -6,11 +6,12 @@ use crate::{
     cmd::{cast::wallet::vanity::VanityArgs, Cmd},
     opts::{EthereumOpts, Wallet, WalletType},
 };
+use bip39::{Language, Mnemonic, MnemonicType};
 use cast::SimpleCast;
 use clap::Parser;
 use ethers::{
     core::rand::thread_rng,
-    signers::{LocalWallet, Signer},
+    signers::{coins_bip39::English, LocalWallet, MnemonicBuilder, Signer},
     types::{Address, Chain, Signature},
 };
 use eyre::Context;
@@ -42,6 +43,15 @@ pub enum WalletSubcommands {
             value_name = "PASSWORD"
         )]
         unsafe_password: Option<String>,
+        #[clap(long, short, help = "Create a random mnemonic key and the corresponding keypairs.")]
+        mnemonic: bool,
+        #[clap(
+            long,
+            help = "The length of the mnemonic key.  Must be in the list [12, 15, 18, 21, 25].",
+            default_value_t = 12,
+            requires = "mnemonic"
+        )]
+        word_count: usize,
     },
     #[clap(name = "vanity", visible_alias = "va", about = "Generate a vanity address.")]
     Vanity(VanityArgs),
@@ -77,10 +87,33 @@ pub enum WalletSubcommands {
 impl WalletSubcommands {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
-            WalletSubcommands::New { path, unsafe_password, .. } => {
+            WalletSubcommands::New { path, unsafe_password, mnemonic, word_count, .. } => {
                 let mut rng = thread_rng();
+                if mnemonic {
+                    let mnemonic_type_result = MnemonicType::for_word_count(word_count);
 
-                if let Some(path) = path {
+                    let mnemonic_type = match mnemonic_type_result {
+                        Ok(m_type) => m_type,
+                        Err(err) => {
+                            eyre::bail!("Error determining mnemonic type : {}", err);
+                        }
+                    };
+
+                    let mnemonic_key = Mnemonic::new(mnemonic_type, Language::English);
+                    let phrase = mnemonic_key.phrase();
+
+                    let wallet = MnemonicBuilder::<English>::default()
+                        .word_count(word_count)
+                        .derivation_path("m/44'/60'/0'/0/0")?
+                        .phrase(phrase)
+                        .build()?;
+                    println!(
+                        "Successfully created new keypair.\nAddress: {}\nPrivate Key: 0x{}\nMnemonic: {}",
+                        SimpleCast::to_checksum_address(&wallet.address()),
+                        hex::encode(wallet.signer().to_bytes()),
+                        phrase
+                    );
+                } else if let Some(path) = path {
                     let path = dunce::canonicalize(path)?;
                     if !path.is_dir() {
                         // we require path to be an existing directory
