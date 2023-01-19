@@ -759,7 +759,7 @@ impl ChiselDispatcher {
         // Check if the input is a builtin command.
         // Commands are denoted with a `!` leading character.
         if input.starts_with(COMMAND_LEADER) {
-            let split: Vec<&str> = input.split(' ').collect();
+            let split: Vec<&str> = input.split_whitespace().collect();
             let raw_cmd = &split[0][1..];
 
             return match raw_cmd.parse::<ChiselCommand>() {
@@ -773,8 +773,8 @@ impl ChiselDispatcher {
                     DispatchResult::UnrecognizedCommand(e)
                 }
             }
-        } else if input.is_empty() {
-            return DispatchResult::CommandFailed(Self::make_error("Input is empty."))
+        } else if input.trim().is_empty() {
+            return DispatchResult::CommandSuccess(None)
         }
 
         // Get a mutable reference to the session source
