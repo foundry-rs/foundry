@@ -98,6 +98,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
             endpoints: CachedEndpoints::Remote,
         },
         no_storage_caching: true,
+        no_rate_limit: true,
         bytecode_hash: Default::default(),
         cbor_metadata: true,
         revert_strings: Some(RevertStrings::Strip),
