@@ -149,6 +149,7 @@ impl SessionSource {
             } else {
                 self.infer_inner_expr_type(&source)
             };
+            eprintln!("ty_opt={ty_opt:?}");
 
             let ty = if let Some(ty) =
                 ty_opt.and_then(|ty| ty.try_as_ethabi(&generated_output.intermediate))
@@ -158,6 +159,7 @@ impl SessionSource {
                 // Move on gracefully; This type was denied for inspection.
                 return Ok(None)
             };
+            eprintln!("ty={ty:?}");
             let memory_offset = if let Some(offset) = stack.data().last() {
                 offset.as_usize()
             } else {
@@ -362,11 +364,12 @@ enum Type {
     Builtin(ParamType),
     Array(Box<Type>),
     FixedArray(Box<Type>, usize),
+    Function(Option<Box<Type>>, Vec<Option<Type>>, Vec<Option<Type>>),
     Custom(Vec<String>),
 }
 
 impl Type {
-    /// Convert an [pt::Expression] to a [Type]
+    /// Convert a [pt::Expression] to a [Type]
     ///
     /// ### Takes
     ///
@@ -376,21 +379,12 @@ impl Type {
     ///
     /// Optionally, an owned [Type]
     fn from_expression(expr: &pt::Expression) -> Option<Self> {
+        eprintln!("from_expression({expr:?})");
         Some(match expr {
-            pt::Expression::Type(_, ty) => match ty {
-                pt::Type::Address | pt::Type::AddressPayable | pt::Type::Payable => {
-                    Self::Builtin(ParamType::Address)
-                }
-                pt::Type::Bool => Self::Builtin(ParamType::Bool),
-                pt::Type::String => Self::Builtin(ParamType::String),
-                pt::Type::Int(size) => Self::Builtin(ParamType::Int(*size as usize)),
-                pt::Type::Uint(size) => Self::Builtin(ParamType::Uint(*size as usize)),
-                pt::Type::Bytes(size) => Self::Builtin(ParamType::FixedBytes(*size as usize)),
-                pt::Type::DynamicBytes => Self::Builtin(ParamType::Bytes),
-                pt::Type::Mapping(_, _, right) => Self::from_expression(right)?,
-                _ => return None,
-            },
+            pt::Expression::Type(_, ty) => Self::from_type(ty)?,
+
             pt::Expression::Variable(ident) => Self::Custom(vec![ident.name.clone()]),
+
             pt::Expression::ArraySubscript(_, expr, num) => {
                 let num = num.as_ref().and_then(|num| {
                     if let pt::Expression::NumberLiteral(_, num, exp) = num.as_ref() {
@@ -463,10 +457,56 @@ impl Type {
             pt::Expression::Not(_, _) => Self::Builtin(ParamType::Bool),
             pt::Expression::StringLiteral(_) => Self::Builtin(ParamType::String),
             pt::Expression::HexLiteral(_) => Self::Builtin(ParamType::Bytes),
-            pt::Expression::FunctionCall(_, outer_expr, _) => Self::from_expression(outer_expr)?,
-            pt::Expression::New(_, inner) => Self::from_expression(inner)?,
+
+            // function
+            pt::Expression::FunctionCall(_, name, args) => {
+                let name = Self::from_expression(name).map(Box::new);
+                let args = args.iter().map(Self::from_expression).collect();
+                Self::Function(name, args, vec![])
+            }
+            pt::Expression::NamedFunctionCall(_, name, args) => {
+                let name = Self::from_expression(name).map(Box::new);
+                let args = args.iter().map(|arg| Self::from_expression(&arg.expr)).collect();
+                Self::Function(name, args, vec![])
+            }
+
             _ => return None,
         })
+    }
+
+    /// Convert a [pt::Type] to a [Type]
+    ///
+    /// ### Takes
+    ///
+    /// A reference to a [pt::Type] to convert.
+    ///
+    /// ### Returns
+    ///
+    /// Optionally, an owned [Type]
+    fn from_type(ty: &pt::Type) -> Option<Self> {
+        let ty = match ty {
+            pt::Type::Address | pt::Type::AddressPayable | pt::Type::Payable => {
+                Self::Builtin(ParamType::Address)
+            }
+            pt::Type::Bool => Self::Builtin(ParamType::Bool),
+            pt::Type::String => Self::Builtin(ParamType::String),
+            pt::Type::Int(size) => Self::Builtin(ParamType::Int(*size as usize)),
+            pt::Type::Uint(size) => Self::Builtin(ParamType::Uint(*size as usize)),
+            pt::Type::Bytes(size) => Self::Builtin(ParamType::FixedBytes(*size as usize)),
+            pt::Type::DynamicBytes => Self::Builtin(ParamType::Bytes),
+            pt::Type::Mapping(_, _, right) => Self::from_expression(right)?,
+            pt::Type::Function { params, returns, .. } => {
+                let params = map_parameters(params);
+                let returns = returns
+                    .as_ref()
+                    .map(|(returns, _)| map_parameters(returns))
+                    .unwrap_or_default();
+                Self::Function(None, params, returns)
+            }
+            // TODO
+            pt::Type::Rational => return None,
+        };
+        Some(ty)
     }
 
     /// Infers a custom type's true type by recursing up the parse tree
@@ -685,10 +725,15 @@ impl Type {
                     .try_as_ethabi(intermediate)
                     .map(|inner| ParamType::FixedArray(Box::new(inner), size)),
             },
+            Self::Function(_, _, _) => {
+                todo!();
+            }
             Self::Custom(mut types) => {
                 // Cover any local non-state-modifying function call expressions
+                eprintln!("custom={types:?}");
                 match Self::infer_custom_type(intermediate, &mut types, None) {
                     Ok(opt) => {
+                        eprintln!("inferred={opt:?}");
                         if opt.is_some() {
                             return opt
                         }
@@ -754,6 +799,18 @@ impl Type {
             }
         }
     }
+}
+
+fn map_parameters(params: &Vec<(pt::Loc, Option<pt::Parameter>)>) -> Vec<Option<Type>> {
+    params
+        .iter()
+        .map(|(_, param)| {
+            param.as_ref().and_then(|param| match &param.ty {
+                pt::Expression::Type(_, ty) => Type::from_type(ty),
+                _ => None, // Should not happen
+            })
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash)]
