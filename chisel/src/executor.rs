@@ -355,7 +355,7 @@ fn format_token(token: Token) -> String {
     }
 }
 
-// Ripped from
+// Modified from
 // [soli](https://github.com/jpopesculian/soli)
 // =============================================
 
@@ -396,35 +396,35 @@ impl Type {
                     }
                 });
 
-                let ty = Self::from_expression(expr)?;
+                let ty = Box::new(Self::from_expression(expr)?);
                 if let Some(num) = num {
-                    Self::FixedArray(Box::new(ty), num)
+                    Self::FixedArray(ty, num)
                 } else {
-                    Self::Array(Box::new(ty))
+                    Self::Array(ty)
                 }
             }
             pt::Expression::MemberAccess(_, expr, ident) => {
                 let mut out = vec![ident.name.clone()];
                 let mut cur_expr = expr;
                 while let pt::Expression::FunctionCall(_, func_expr, _) = cur_expr.as_ref() {
-                    if let pt::Expression::MemberAccess(_, member_expr, ident) = func_expr.as_ref()
-                    {
-                        out.push(ident.name.clone());
-                        cur_expr = member_expr;
-                    } else if let pt::Expression::Variable(ident) = func_expr.as_ref() {
-                        out.push(ident.name.clone());
-                        break
-                    } else if let pt::Expression::Type(_, ty) = func_expr.as_ref() {
-                        match ty {
+                    match func_expr.as_ref() {
+                        pt::Expression::MemberAccess(_, member_expr, ident) => {
+                            out.push(ident.name.clone());
+                            cur_expr = member_expr;
+                            continue
+                        }
+                        pt::Expression::Variable(ident) => {
+                            out.push(ident.name.clone());
+                        }
+                        pt::Expression::Type(_, ty) => match ty {
                             pt::Type::Address => {
                                 out.push("address".to_owned());
-                                break
                             }
-                            _ => break,
-                        }
-                        // Shouldn't ever hit here- just in case.
-                        // break;
+                            _ => {}
+                        },
+                        _ => {}
                     }
+                    break
                 }
                 if let pt::Expression::Variable(ident) = cur_expr.as_ref() {
                     out.push(ident.name.clone());
@@ -432,6 +432,9 @@ impl Type {
                 Self::Custom(out)
             }
             pt::Expression::Parenthesis(_, inner) => Self::from_expression(inner)?,
+            pt::Expression::New(_, inner) => Self::from_expression(inner)?,
+
+            // uint
             pt::Expression::Add(_, _, _) |
             pt::Expression::Subtract(_, _, _) |
             pt::Expression::Multiply(_, _, _) |
@@ -446,6 +449,8 @@ impl Type {
             pt::Expression::ShiftLeft(_, _, _) |
             pt::Expression::NumberLiteral(_, _, _) |
             pt::Expression::HexNumberLiteral(_, _) => Self::Builtin(ParamType::Uint(256)),
+
+            // bool
             pt::Expression::And(_, _, _) |
             pt::Expression::Or(_, _, _) |
             pt::Expression::Equal(_, _, _) |
@@ -455,7 +460,11 @@ impl Type {
             pt::Expression::More(_, _, _) |
             pt::Expression::MoreEqual(_, _, _) |
             pt::Expression::Not(_, _) => Self::Builtin(ParamType::Bool),
+
+            // string
             pt::Expression::StringLiteral(_) => Self::Builtin(ParamType::String),
+
+            // bytes
             pt::Expression::HexLiteral(_) => Self::Builtin(ParamType::Bytes),
 
             // function
