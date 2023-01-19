@@ -101,6 +101,36 @@ pub struct EvmArgs {
     #[clap(flatten)]
     #[serde(flatten)]
     pub env: EnvArgs,
+
+    /// Sets the number of assumed available compute units per second for this provider
+    ///
+    /// default value: 330
+    ///
+    /// See --fork-url.
+    /// See also, https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups
+    #[clap(
+        long,
+        requires = "fork_url",
+        alias = "cups",
+        value_name = "CUPS",
+        help_heading = "Fork config"
+    )]
+    pub compute_units_per_second: Option<u64>,
+
+    /// Disables rate limiting for this node's provider.
+    ///
+    /// default value: false
+    ///
+    /// See --fork-url.
+    /// See also, https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups
+    #[clap(
+        long,
+        requires = "fork_url",
+        value_name = "NO_RATE_LIMITS",
+        help = "Disables rate limiting for this node provider.",
+        help_heading = "Fork config"
+    )]
+    pub no_rate_limit: bool,
 }
 
 // Make this set of options a `figment::Provider` so that it can be merged into the `Config`
