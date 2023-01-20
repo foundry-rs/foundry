@@ -123,7 +123,7 @@ impl SessionSource {
     /// If successful, a formatted inspection output.
     /// If unsuccessful but valid source, `Some(None)`
     /// If unsuccessful, `Err(e)`
-    pub async fn inspect(&mut self, input: &str) -> Result<Option<String>> {
+    pub async fn inspect(&self, input: &str) -> Result<Option<String>> {
         let mut source = if let Ok((source, _)) =
             self.clone_with_new_line(format!("bytes memory inspectoor = abi.encode({input})"))
         {
@@ -146,7 +146,7 @@ impl SessionSource {
                 .intermediate
                 .repl_contract_expressions
                 .get(input)
-                .or_else(|| self.infer_inner_expr_type(&source));
+                .or_else(|| source.infer_inner_expr_type());
             eprintln!("{contract_expr:?}");
 
             let ty =
@@ -201,11 +201,8 @@ impl SessionSource {
     /// ### Returns
     ///
     /// Optionally, a [Type]
-    fn infer_inner_expr_type<'s>(
-        &mut self,
-        source: &'s SessionSource,
-    ) -> Option<&'s pt::Expression> {
-        let out = source.generated_output.as_ref()?;
+    fn infer_inner_expr_type(&self) -> Option<&pt::Expression> {
+        let out = self.generated_output.as_ref()?;
         let run = out.intermediate.run_func_body().ok()?.last();
         match run {
             Some(pt::Statement::VariableDefinition(
