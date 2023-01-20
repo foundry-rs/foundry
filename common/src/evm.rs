@@ -128,7 +128,8 @@ pub struct EvmArgs {
         requires = "fork_url",
         value_name = "NO_RATE_LIMITS",
         help = "Disables rate limiting for this node provider.",
-        help_heading = "Fork config"
+        help_heading = "Fork config",
+        visible_alias = "no-rpc-rate-limit"
     )]
     pub no_rate_limit: bool,
 }
@@ -158,7 +159,7 @@ impl Provider for EvmArgs {
         }
 
         if self.no_rate_limit {
-            dict.insert("no_rate_limit".to_string(), self.no_rate_limit.into());
+            dict.insert("no_rpc_rate_limit".to_string(), self.no_rate_limit.into());
         }
 
         if let Some(fork_url) = &self.fork_url {
