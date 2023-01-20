@@ -311,8 +311,8 @@ fn format_token(token: Token) -> String {
             format!(
                 "Type: {}\n{}├ Hex (Memory):\n├─ Length ({}): {}\n├─ Contents ({}): {}\n├ Hex (Tuple Encoded):\n├─ Pointer ({}): {}\n├─ Length ({}): {}\n└─ Contents ({}): {}",
                 Paint::red(if s.is_some() { "string" } else { "dynamic bytes" }),
-                if s.is_some() {
-                    format!("├ UTF-8: {}\n", Paint::cyan(s.unwrap()))
+                if let Some(s) = s {
+                    format!("├ UTF-8: {}\n", Paint::cyan(s))
                 } else {
                     String::default()
                 },
@@ -583,7 +583,7 @@ impl Type {
         Some(ty)
     }
 
-    /// Handle special expressions like global variables and methods
+    /// Handle special expressions like [global variables and methods](https://docs.soliditylang.org/en/latest/cheatsheet.html#global-variables)
     fn map_special(self) -> Self {
         if !matches!(self, Self::Function(_, _, _) | Self::Access(_, _) | Self::Custom(_),) {
             return self
@@ -595,69 +595,94 @@ impl Type {
         eprintln!("{types:?}");
         eprintln!("{args:?}");
 
-        if !(1..=2).contains(&types.len()) {
+        let len = types.len();
+        if len == 0 {
             return self
         }
 
-        let this = match types.len() {
-            1 => {
-                let name = types.pop().unwrap();
-                match name.as_str() {
+        let this = {
+            let name = types.get(len - 1).unwrap().as_str();
+            match len {
+                1 => match name {
                     "gasleft" | "addmod" | "mulmod" => Some(ParamType::Uint(256)),
                     "keccak256" | "sha256" | "blockhash" => Some(ParamType::FixedBytes(32)),
                     "ripemd160" => Some(ParamType::FixedBytes(20)),
                     "ecrecover" => Some(ParamType::Address),
                     _ => None,
-                }
-            }
-            2 => {
-                let name = types.pop().unwrap();
-                let access_s = types.pop().unwrap();
-                let access = access_s.as_str();
-                match name.as_str() {
-                    "block" => match access {
-                        "coinbase" => Some(ParamType::Address),
-                        _ => Some(ParamType::Uint(256)),
-                    },
-                    "msg" => match access {
-                        "data" => Some(ParamType::Bytes),
-                        "sender" => Some(ParamType::Address),
-                        "sig" => Some(ParamType::FixedBytes(4)),
-                        "value" => Some(ParamType::Uint(256)),
-                        _ => None,
-                    },
-                    "tx" => match access {
-                        "gasprice" => Some(ParamType::Uint(256)),
-                        "origin" => Some(ParamType::Address),
-                        _ => None,
-                    },
-                    "abi" => {
-                        if access.starts_with("decode") {
-                            // TODO: Fill value types
-                            Some(ParamType::Tuple(vec![ParamType::Uint(256)]))
-                        } else {
-                            Some(ParamType::Bytes)
+                },
+                2 => {
+                    let access = types.get(len - 2).unwrap().as_str();
+                    match name {
+                        "block" => match access {
+                            "coinbase" => Some(ParamType::Address),
+                            "basefee" | "chainid" | "difficulty" | "gaslimit" | "number" |
+                            "timestamp" => Some(ParamType::Uint(256)),
+                            _ => None,
+                        },
+                        "msg" => match access {
+                            "data" => Some(ParamType::Bytes),
+                            "sender" => Some(ParamType::Address),
+                            "sig" => Some(ParamType::FixedBytes(4)),
+                            "value" => Some(ParamType::Uint(256)),
+                            _ => None,
+                        },
+                        "tx" => match access {
+                            "gasprice" => Some(ParamType::Uint(256)),
+                            "origin" => Some(ParamType::Address),
+                            _ => None,
+                        },
+                        "abi" => {
+                            match access {
+                                "decode" => {
+                                    // args = Some([Bytes(_), Tuple(args)])
+                                    // unwrapping is safe because this is first compiled by solc so
+                                    // it is guaranteed to be a valid call
+                                    let mut args = args.unwrap();
+                                    let last = args.pop().unwrap();
+                                    last.and_then(Type::builtin)
+                                }
+                                s if s.starts_with("encode") => Some(ParamType::Bytes),
+                                _ => None,
+                            }
                         }
+                        "address" => match access {
+                            "balance" => Some(ParamType::Uint(256)),
+                            "code" => Some(ParamType::Bytes),
+                            "codehash" => Some(ParamType::FixedBytes(32)),
+                            // TODO
+                            // "send" => Some(ParamType::Bool),
+                            _ => None,
+                        },
+                        "type" => match access {
+                            "name" => Some(ParamType::String),
+                            "creationCode" | "runtimeCode" => Some(ParamType::Bytes),
+                            "interfaceId" => Some(ParamType::FixedBytes(4)),
+                            "min" | "max" => Some(ParamType::Uint(256)),
+                            _ => None,
+                        },
+                        "string" => match access {
+                            "concat" => Some(ParamType::String),
+                            _ => None,
+                        },
+                        "bytes" => match access {
+                            "concat" => Some(ParamType::Bytes),
+                            _ => None,
+                        },
+                        _ => None,
                     }
-                    "address" => match access {
-                        "balance" => Some(ParamType::Uint(256)),
-                        "code" => Some(ParamType::Bytes),
-                        "codehash" => Some(ParamType::FixedBytes(32)),
-                        _ => None,
-                    },
-                    "type" => match access {
-                        "name" => Some(ParamType::String),
-                        "creationCode" | "runtimeCode" => Some(ParamType::Bytes),
-                        "interfaceId" => Some(ParamType::FixedBytes(4)),
-                        "min" | "max" => Some(ParamType::Uint(256)),
-                        _ => None,
-                    },
-                    _ => None,
                 }
+                _ => unreachable!(),
             }
-            _ => unreachable!(),
         };
-        this.map(Self::Builtin).unwrap_or(self)
+
+        this.map(Self::Builtin).unwrap_or_else(|| match types.last().unwrap().as_str() {
+            "this" | "super" => Self::Custom(types),
+            _ => match self {
+                Self::Custom(_) | Self::Access(_, _) => Self::Custom(types),
+                Self::Function(_, _, _) => self,
+                _ => unreachable!(),
+            },
+        })
     }
 
     /// Recurses over itself, appending all the idents and function arguments in the order that they
