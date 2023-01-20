@@ -147,6 +147,7 @@ impl SessionSource {
                 .repl_contract_expressions
                 .get(input)
                 .or_else(|| self.infer_inner_expr_type(&source));
+            eprintln!("{contract_expr:?}");
 
             let ty =
                 match contract_expr.and_then(|e| Type::ethabi(e, &generated_output.intermediate)) {
@@ -154,6 +155,7 @@ impl SessionSource {
                     // this type was denied for inspection, thus we move on gracefully
                     None => return Ok(None),
                 };
+            eprintln!("{ty:?}");
 
             let memory_offset = if let Some(offset) = stack.data().last() {
                 offset.as_usize()
@@ -372,7 +374,10 @@ enum Type {
     FixedArray(Box<Type>, usize),
 
     /// (name, params, returns)
-    Function(Option<Box<Type>>, Vec<Option<Type>>, Vec<Option<Type>>),
+    Function(Box<Type>, Vec<Option<Type>>, Vec<Option<Type>>),
+
+    /// (lhs, rhs)
+    Access(Box<Type>, String),
 
     /// (types)
     Custom(Vec<String>),
@@ -389,59 +394,41 @@ impl Type {
     ///
     /// Optionally, an owned [Type]
     fn from_expression(expr: &pt::Expression) -> Option<Self> {
-        Some(match expr {
-            pt::Expression::Type(_, ty) => Self::from_type(ty)?,
+        match expr {
+            pt::Expression::Type(_, ty) => Self::from_type(ty),
 
-            pt::Expression::Variable(ident) => Self::Custom(vec![ident.name.clone()]),
-            pt::Expression::This(_) => Self::Custom(vec!["this".to_string()]),
+            pt::Expression::Variable(ident) => Some(Self::Custom(vec![ident.name.clone()])),
+            pt::Expression::This(_) => Some(Self::Custom(vec!["this".to_string()])),
 
             // array
             pt::Expression::ArraySubscript(_, expr, num) => {
-                let ty = Box::new(Self::from_expression(expr)?);
-                let num = num.as_deref().and_then(parse_number_literal);
-                if let Some(num) = num {
-                    // overflow check
-                    if num > U256::from(usize::MAX) {
-                        return None
+                Self::from_expression(expr).and_then(|ty| {
+                    let ty = Box::new(ty);
+                    let num = num.as_deref().and_then(parse_number_literal);
+                    if let Some(num) = num {
+                        // overflow check
+                        if num > U256::from(usize::MAX) {
+                            None
+                        } else {
+                            Some(Self::FixedArray(ty, num.as_usize()))
+                        }
+                    } else {
+                        Some(Self::Array(ty))
                     }
-                    Self::FixedArray(ty, num.as_usize())
-                } else {
-                    Self::Array(ty)
-                }
+                })
             }
             // TODO: offset and length do not get encoded when inspecting, so this always throws
             // pt::Expression::ArrayLiteral(_, values) => {
-            //     let ty = values.first().and_then(Self::from_expression)?;
-            //     Self::Array(Box::new(ty))
+            //     values.first().and_then(Self::from_expression).map(|ty| {
+            //         Self::Array(Box::new(ty))
+            //     })
             // }
 
-            pt::Expression::MemberAccess(_, expr, ident) => {
-                let mut out = vec![ident.name.clone()];
-                let mut cur_expr = expr;
-                while let pt::Expression::FunctionCall(_, func_expr, _) = cur_expr.as_ref() {
-                    match func_expr.as_ref() {
-                        pt::Expression::MemberAccess(_, member_expr, ident) => {
-                            out.push(ident.name.clone());
-                            cur_expr = member_expr;
-                            continue
-                        }
-                        pt::Expression::Variable(ident) => {
-                            out.push(ident.name.clone());
-                        }
-                        pt::Expression::Type(_, ty) => match ty {
-                            pt::Type::Address => {
-                                out.push("address".to_owned());
-                            }
-                            _ => {}
-                        },
-                        _ => {}
-                    }
-                    break
-                }
-                if let pt::Expression::Variable(ident) = cur_expr.as_ref() {
-                    out.push(ident.name.clone());
-                }
-                Self::Custom(out)
+            // <lhs>.<rhs>
+            pt::Expression::MemberAccess(_, lhs, rhs) => {
+                Self::from_expression(lhs).map(|lhs| {
+                    Self::Access(Box::new(lhs), rhs.name.clone())
+                })
             }
 
             // <inner>
@@ -458,19 +445,19 @@ impl Type {
             // pt::Expression::PostDecrement(_, inner) |    // <inner>--
             // pt::Expression::PreIncrement(_, inner) |     // ++<inner>
             // pt::Expression::PostIncrement(_, inner)      // <inner>++
-            => Self::from_expression(inner)?,
+            => Self::from_expression(inner),
 
             // *condition* ? <if_true> : <if_false>
             pt::Expression::ConditionalOperator(_, _, if_true, if_false) => {
-                Self::from_expression(if_true).or_else(|| Self::from_expression(if_false))?
+                Self::from_expression(if_true).or_else(|| Self::from_expression(if_false))
             }
 
             // address
-            pt::Expression::AddressLiteral(_, _) => Self::Builtin(ParamType::Address),
+            pt::Expression::AddressLiteral(_, _) => Some(Self::Builtin(ParamType::Address)),
 
             // uint and int
             // invert
-            pt::Expression::UnaryMinus(_, inner) => Self::from_expression(inner)?.invert_sign(),
+            pt::Expression::UnaryMinus(_, inner) => Self::from_expression(inner).map(Self::invert_sign),
 
             // assume uint
             // TODO: Perform operations to find negative numbers
@@ -486,11 +473,11 @@ impl Type {
             pt::Expression::ShiftRight(_, _, _) |
             pt::Expression::ShiftLeft(_, _, _) |
             pt::Expression::NumberLiteral(_, _, _) |
-            pt::Expression::HexNumberLiteral(_, _) => Self::Builtin(ParamType::Uint(256)),
+            pt::Expression::HexNumberLiteral(_, _) => Some(Self::Builtin(ParamType::Uint(256))),
 
             // TODO
             pt::Expression::RationalNumberLiteral(_, _, _, _) => {
-                Self::Builtin(ParamType::Uint(256))
+                Some(Self::Builtin(ParamType::Uint(256)))
             }
 
             // bool
@@ -503,28 +490,30 @@ impl Type {
             pt::Expression::LessEqual(_, _, _) |
             pt::Expression::More(_, _, _) |
             pt::Expression::MoreEqual(_, _, _) |
-            pt::Expression::Not(_, _) => Self::Builtin(ParamType::Bool),
+            pt::Expression::Not(_, _) => Some(Self::Builtin(ParamType::Bool)),
 
             // string
-            pt::Expression::StringLiteral(_) => Self::Builtin(ParamType::String),
+            pt::Expression::StringLiteral(_) => Some(Self::Builtin(ParamType::String)),
 
             // bytes
-            pt::Expression::HexLiteral(_) => Self::Builtin(ParamType::Bytes),
+            pt::Expression::HexLiteral(_) => Some(Self::Builtin(ParamType::Bytes)),
 
             // function
             pt::Expression::FunctionCall(_, name, args) => {
-                let name = Self::from_expression(name).map(Box::new);
-                let args = args.iter().map(Self::from_expression).collect();
-                Self::Function(name, args, vec![])
+                Self::from_expression(name).map(|name| {
+                    let args = args.iter().map(Self::from_expression).collect();
+                    Self::Function(Box::new(name), args, vec![])
+                })
             }
             pt::Expression::NamedFunctionCall(_, name, args) => {
-                let name = Self::from_expression(name).map(Box::new);
-                let args = args.iter().map(|arg| Self::from_expression(&arg.expr)).collect();
-                Self::Function(name, args, vec![])
+                Self::from_expression(name).map(|name| {
+                    let args = args.iter().map(|arg| Self::from_expression(&arg.expr)).collect();
+                    Self::Function(Box::new(name), args, vec![])
+                })
             }
 
-            _ => return None,
-        })
+            _ => None,
+        }
     }
 
     /// Convert a [pt::Type] to a [Type]
@@ -554,12 +543,113 @@ impl Type {
                     .as_ref()
                     .map(|(returns, _)| map_parameters(returns))
                     .unwrap_or_default();
-                Self::Function(None, params, returns)
+                Self::Function(
+                    Box::new(Type::Custom(vec!["__fn_type__".to_string()])),
+                    params,
+                    returns,
+                )
             }
             // TODO
             pt::Type::Rational => return None,
         };
         Some(ty)
+    }
+
+    /// Handle special expressions like global variables and methods
+    fn map_special(self) -> Self {
+        if !matches!(self, Self::Function(_, _, _) | Self::Access(_, _) | Self::Custom(_),) {
+            return self
+        }
+
+        let mut types = Vec::with_capacity(5);
+        let mut args = None;
+        self.recurse(&mut types, &mut args);
+        eprintln!("{types:?}");
+        eprintln!("{args:?}");
+
+        if !(1..=2).contains(&types.len()) {
+            return self
+        }
+
+        let this = match types.len() {
+            1 => {
+                let name = types.pop().unwrap();
+                match name.as_str() {
+                    "gasleft" | "addmod" | "mulmod" => Some(ParamType::Uint(256)),
+                    "keccak256" | "sha256" | "blockhash" => Some(ParamType::FixedBytes(32)),
+                    "ripemd160" => Some(ParamType::FixedBytes(20)),
+                    "ecrecover" => Some(ParamType::Address),
+                    _ => None,
+                }
+            }
+            2 => {
+                let name = types.pop().unwrap();
+                let access_s = types.pop().unwrap();
+                let access = access_s.as_str();
+                match name.as_str() {
+                    "block" => match access {
+                        "coinbase" => Some(ParamType::Address),
+                        _ => Some(ParamType::Uint(256)),
+                    },
+                    "msg" => match access {
+                        "data" => Some(ParamType::Bytes),
+                        "sender" => Some(ParamType::Address),
+                        "sig" => Some(ParamType::FixedBytes(4)),
+                        "value" => Some(ParamType::Uint(256)),
+                        _ => None,
+                    },
+                    "tx" => match access {
+                        "gasprice" => Some(ParamType::Uint(256)),
+                        "origin" => Some(ParamType::Address),
+                        _ => None,
+                    },
+                    "abi" => {
+                        if access.starts_with("decode") {
+                            // TODO: Fill value types
+                            Some(ParamType::Tuple(vec![ParamType::Uint(256)]))
+                        } else {
+                            Some(ParamType::Bytes)
+                        }
+                    }
+                    "address" => match access {
+                        "balance" => Some(ParamType::Uint(256)),
+                        "code" => Some(ParamType::Bytes),
+                        "codehash" => Some(ParamType::FixedBytes(32)),
+                        _ => None,
+                    },
+                    "type" => match access {
+                        "name" => Some(ParamType::String),
+                        "creationCode" | "runtimeCode" => Some(ParamType::Bytes),
+                        "interfaceId" => Some(ParamType::FixedBytes(4)),
+                        "min" | "max" => Some(ParamType::Uint(256)),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            }
+            _ => unreachable!(),
+        };
+        this.map(Self::Builtin).unwrap_or(self)
+    }
+
+    /// Recurses over itself, appending all the idents and function arguments in the order that they
+    /// are found
+    fn recurse(&self, types: &mut Vec<String>, args: &mut Option<Vec<Option<Type>>>) {
+        match self {
+            Self::Builtin(ty) => types.push(ty.to_string()),
+            Self::Custom(tys) => types.extend(tys.clone()),
+            Self::Access(expr, name) => {
+                types.push(name.clone());
+                expr.recurse(types, args);
+            }
+            Self::Function(fn_name, fn_args, _fn_ret) => {
+                if args.is_none() && !fn_args.is_empty() {
+                    *args = Some(fn_args.clone());
+                }
+                fn_name.recurse(types, args);
+            }
+            _ => {}
+        }
     }
 
     /// Infers a custom type's true type by recursing up the parse tree
@@ -745,18 +835,16 @@ impl Type {
                     .try_as_ethabi(intermediate)
                     .map(|inner| ParamType::FixedArray(Box::new(inner), size)),
             },
-            Self::Function(name, _, _) => match name.map(|b| *b) {
-                Some(Type::Builtin(ty)) => Some(ty),
+            Self::Function(name, _, _) => match *name {
+                Type::Builtin(ty) => Some(ty),
                 _ => None,
             },
+            Self::Access(_, _) => None,
             Self::Custom(mut types) => {
                 // Cover any local non-state-modifying function call expressions
                 match Self::infer_custom_type(intermediate, &mut types, None) {
-                    Ok(opt) => {
-                        if opt.is_some() {
-                            return opt
-                        }
-                    }
+                    Ok(opt @ Some(_)) => return opt,
+                    Ok(None) => {}
                     Err(_) => return None,
                 }
 
@@ -819,9 +907,11 @@ impl Type {
         }
     }
 
-    /// Equivalent to `Type::from_expression` + `Type::try_as_ethabi)`
+    /// Equivalent to `Type::from_expression` + `Type::map_special` + `Type::try_as_ethabi)`
     fn ethabi(expr: &pt::Expression, intermediate: &IntermediateOutput) -> Option<ParamType> {
-        Self::from_expression(expr).and_then(|ty| ty.try_as_ethabi(intermediate))
+        Self::from_expression(expr)
+            .map(Self::map_special)
+            .and_then(|ty| ty.try_as_ethabi(intermediate))
     }
 
     /// Inverts Int to Uint and viceversa.
