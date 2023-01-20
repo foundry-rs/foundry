@@ -129,9 +129,9 @@ pub struct EvmArgs {
         value_name = "NO_RATE_LIMITS",
         help = "Disables rate limiting for this node provider.",
         help_heading = "Fork config",
-        visible_alias = "no-rpc-rate-limit"
+        visible_alias = "no-rate-limit"
     )]
-    pub no_rate_limit: bool,
+    pub no_rpc_rate_limit: bool,
 }
 
 // Make this set of options a `figment::Provider` so that it can be merged into the `Config`
@@ -158,8 +158,8 @@ impl Provider for EvmArgs {
             dict.insert("no_storage_caching".to_string(), self.no_storage_caching.into());
         }
 
-        if self.no_rate_limit {
-            dict.insert("no_rpc_rate_limit".to_string(), self.no_rate_limit.into());
+        if self.no_rpc_rate_limit {
+            dict.insert("no_rpc_rate_limit".to_string(), self.no_rpc_rate_limit.into());
         }
 
         if let Some(fork_url) = &self.fork_url {
