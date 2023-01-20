@@ -341,7 +341,7 @@ fn format_token(token: Token) -> String {
             let mut out = format!(
                 "{}({}) = {}",
                 Paint::red("tuple"),
-                Paint::yellow(tokens.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(",")),
+                Paint::yellow(tokens.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")),
                 Paint::red('(')
             );
             for token in tokens {
@@ -355,16 +355,26 @@ fn format_token(token: Token) -> String {
     }
 }
 
+// =============================================
 // Modified from
 // [soli](https://github.com/jpopesculian/soli)
 // =============================================
 
 #[derive(Debug, Clone)]
 enum Type {
+    /// (type)
     Builtin(ParamType),
+
+    /// (type)
     Array(Box<Type>),
+
+    /// (type, length)
     FixedArray(Box<Type>, usize),
+
+    /// (name, params, returns)
     Function(Option<Box<Type>>, Vec<Option<Type>>, Vec<Option<Type>>),
+
+    /// (types)
     Custom(Vec<String>),
 }
 
@@ -379,30 +389,32 @@ impl Type {
     ///
     /// Optionally, an owned [Type]
     fn from_expression(expr: &pt::Expression) -> Option<Self> {
-        eprintln!("from_expression({expr:?})");
         Some(match expr {
             pt::Expression::Type(_, ty) => Self::from_type(ty)?,
 
             pt::Expression::Variable(ident) => Self::Custom(vec![ident.name.clone()]),
+            pt::Expression::This(_) => Self::Custom(vec!["this".to_string()]),
 
+            // array
             pt::Expression::ArraySubscript(_, expr, num) => {
-                let num = num.as_ref().and_then(|num| {
-                    if let pt::Expression::NumberLiteral(_, num, exp) = num.as_ref() {
-                        let num = if num.is_empty() { 0usize } else { num.parse().ok()? };
-                        let exp = if exp.is_empty() { 0u32 } else { exp.parse().ok()? };
-                        Some(num * 10usize.pow(exp))
-                    } else {
-                        None
-                    }
-                });
-
                 let ty = Box::new(Self::from_expression(expr)?);
+                let num = num.as_deref().and_then(parse_number_literal);
                 if let Some(num) = num {
-                    Self::FixedArray(ty, num)
+                    // overflow check
+                    if num > U256::from(usize::MAX) {
+                        return None
+                    }
+                    Self::FixedArray(ty, num.as_usize())
                 } else {
                     Self::Array(ty)
                 }
             }
+            // TODO: offset and length do not get encoded when inspecting, so this always throws
+            // pt::Expression::ArrayLiteral(_, values) => {
+            //     let ty = values.first().and_then(Self::from_expression)?;
+            //     Self::Array(Box::new(ty))
+            // }
+
             pt::Expression::MemberAccess(_, expr, ident) => {
                 let mut out = vec![ident.name.clone()];
                 let mut cur_expr = expr;
@@ -431,17 +443,43 @@ impl Type {
                 }
                 Self::Custom(out)
             }
-            pt::Expression::Parenthesis(_, inner) => Self::from_expression(inner)?,
-            pt::Expression::New(_, inner) => Self::from_expression(inner)?,
 
-            // uint
+            // <inner>
+            pt::Expression::Parenthesis(_, inner) |      // (<inner>)
+            pt::Expression::New(_, inner) |              // new <inner>
+            pt::Expression::UnaryPlus(_, inner) |        // +<inner>
+            pt::Expression::Unit(_, inner, _) |          // <inner> *unit*
+            // ops
+            pt::Expression::Complement(_, inner) |       // ~<inner>
+            pt::Expression::ArraySlice(_, inner, _, _)   // <inner>[*start*:*end*]
+            // assign ops
+            // TODO: If this returns Some and gets "inspected", the assignment does not happen
+            // pt::Expression::PreDecrement(_, inner) |     // --<inner>
+            // pt::Expression::PostDecrement(_, inner) |    // <inner>--
+            // pt::Expression::PreIncrement(_, inner) |     // ++<inner>
+            // pt::Expression::PostIncrement(_, inner)      // <inner>++
+            => Self::from_expression(inner)?,
+
+            // *condition* ? <if_true> : <if_false>
+            pt::Expression::ConditionalOperator(_, _, if_true, if_false) => {
+                Self::from_expression(if_true).or_else(|| Self::from_expression(if_false))?
+            }
+
+            // address
+            pt::Expression::AddressLiteral(_, _) => Self::Builtin(ParamType::Address),
+
+            // uint and int
+            // invert
+            pt::Expression::UnaryMinus(_, inner) => Self::from_expression(inner)?.invert_sign(),
+
+            // assume uint
+            // TODO: Perform operations to find negative numbers
             pt::Expression::Add(_, _, _) |
             pt::Expression::Subtract(_, _, _) |
             pt::Expression::Multiply(_, _, _) |
             pt::Expression::Divide(_, _, _) |
             pt::Expression::Modulo(_, _, _) |
             pt::Expression::Power(_, _, _) |
-            pt::Expression::Complement(_, _) |
             pt::Expression::BitwiseOr(_, _, _) |
             pt::Expression::BitwiseAnd(_, _, _) |
             pt::Expression::BitwiseXor(_, _, _) |
@@ -450,7 +488,13 @@ impl Type {
             pt::Expression::NumberLiteral(_, _, _) |
             pt::Expression::HexNumberLiteral(_, _) => Self::Builtin(ParamType::Uint(256)),
 
+            // TODO
+            pt::Expression::RationalNumberLiteral(_, _, _, _) => {
+                Self::Builtin(ParamType::Uint(256))
+            }
+
             // bool
+            pt::Expression::BoolLiteral(_, _) |
             pt::Expression::And(_, _, _) |
             pt::Expression::Or(_, _, _) |
             pt::Expression::Equal(_, _, _) |
