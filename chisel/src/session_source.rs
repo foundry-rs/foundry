@@ -106,25 +106,29 @@ pub struct SessionSource {
 impl SessionSource {
     /// Creates a new source given a solidity compiler version
     ///
+    /// # Panics
+    ///
+    /// If no Solc binary is set, cannot be found or the `--version` command fails
+    ///
     /// ### Takes
     ///
-    /// - A reference to a [Solc] instance
-    /// - A reference to a [SessionSourceConfig]
+    /// - An instance of [Solc]
+    /// - An instance of [SessionSourceConfig]
     ///
     /// ### Returns
     ///
-    /// A blank [SessionSource]
-    pub fn new(solc: &Solc, config: &SessionSourceConfig) -> Self {
+    /// A new instance of [SessionSource]
+    pub fn new(solc: Solc, config: SessionSourceConfig) -> Self {
         assert!(solc.version().is_ok());
         Self {
             file_name: PathBuf::from("ReplContract.sol".to_string()),
             contract_name: "REPL".to_string(),
-            solc: solc.clone(),
+            solc,
+            config,
             global_code: Default::default(),
             top_level_code: Default::default(),
             run_code: Default::default(),
             generated_output: None,
-            config: config.clone(),
         }
     }
 
@@ -155,20 +159,23 @@ impl SessionSource {
     /// Optionally, a shallow-cloned [SessionSource] with the passed content appended to the
     /// source code.
     pub fn clone_with_new_line(&self, mut content: String) -> Result<(SessionSource, bool)> {
-        let mut new_source = self.shallow_clone();
-        if let Some(parsed) = parse_fragment(&new_source.solc, &new_source.config, &content)
+        let new_source = self.shallow_clone();
+        if let Some(parsed) = parse_fragment(new_source.solc, new_source.config, &content)
             .or_else(|| {
-                content = format!("{content};");
-                parse_fragment(&new_source.solc, &new_source.config, &content)
+                let new_source = self.shallow_clone();
+                content.push(';');
+                parse_fragment(new_source.solc, new_source.config, &content)
             })
             .or_else(|| {
+                let new_source = self.shallow_clone();
                 parse_fragment(
-                    &new_source.solc,
-                    &new_source.config,
+                    new_source.solc,
+                    new_source.config,
                     content.trim_end().trim_end_matches(';'),
                 )
             })
         {
+            let mut new_source = self.shallow_clone();
             // Flag that tells the dispatcher whether to build or execute the session
             // source based on the scope of the new code.
             match parsed {
@@ -187,21 +194,24 @@ impl SessionSource {
 
     /// Appends global-level code to the source
     pub fn with_global_code(&mut self, content: &str) -> &mut Self {
-        self.global_code.push_str(&format!("{}\n", content.trim()));
+        self.global_code.push_str(content.trim());
+        self.global_code.push('\n');
         self.generated_output = None;
         self
     }
 
     /// Appends top-level code to the source
     pub fn with_top_level_code(&mut self, content: &str) -> &mut Self {
-        self.top_level_code.push_str(&format!("{}\n", content.trim()));
+        self.top_level_code.push_str(content.trim());
+        self.top_level_code.push('\n');
         self.generated_output = None;
         self
     }
 
     /// Appends code to the "run()" function
     pub fn with_run_code(&mut self, content: &str) -> &mut Self {
-        self.run_code.push_str(&format!("{}\n", content.trim()));
+        self.run_code.push_str(content.trim());
+        self.run_code.push('\n');
         self.generated_output = None;
         self
     }
@@ -210,21 +220,21 @@ impl SessionSource {
 
     /// Clears global code from the source
     pub fn drain_global_code(&mut self) -> &mut Self {
-        self.global_code = Default::default();
+        self.global_code.clear();
         self.generated_output = None;
         self
     }
 
     /// Clears top-level code from the source
     pub fn drain_top_level_code(&mut self) -> &mut Self {
-        self.top_level_code = Default::default();
+        self.top_level_code.clear();
         self.generated_output = None;
         self
     }
 
     /// Clears the "run()" function's code
     pub fn drain_run(&mut self) -> &mut Self {
-        self.run_code = Default::default();
+        self.run_code.clear();
         self.generated_output = None;
         self
     }
@@ -530,8 +540,8 @@ pub enum ParseTreeFragment {
 /// Parses a fragment of solidity code with solang_parser and assigns
 /// it a scope within the [SessionSource].
 pub fn parse_fragment(
-    solc: &Solc,
-    config: &SessionSourceConfig,
+    solc: Solc,
+    config: SessionSourceConfig,
     buffer: &str,
 ) -> Option<ParseTreeFragment> {
     let mut base = SessionSource::new(solc, config);

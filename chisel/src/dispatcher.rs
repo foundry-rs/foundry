@@ -109,7 +109,7 @@ pub fn format_source(source: &str, config: FormatterConfig) -> eyre::Result<Stri
 
 impl ChiselDispatcher {
     /// Associated public function to create a new Dispatcher instance
-    pub fn new(config: &SessionSourceConfig) -> eyre::Result<Self> {
+    pub fn new(config: SessionSourceConfig) -> eyre::Result<Self> {
         ChiselSession::new(config).map(|session| Self { errored: false, session })
     }
 
