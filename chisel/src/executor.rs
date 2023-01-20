@@ -825,9 +825,9 @@ impl Type {
         } else {
             // Check if the custom type is a variable or function within the REPL contract before
             // anything. If it is, we can stop here.
-            match Self::infer_custom_type(intermediate, custom_type, Some("REPL".into())) {
-                Ok(res) => return Ok(res),
-                _ => {}
+            if let Ok(res) = Self::infer_custom_type(intermediate, custom_type, Some("REPL".into()))
+            {
+                return Ok(res)
             }
 
             // Check if the first element of the custom type is a known contract. If it is, begin
@@ -940,7 +940,7 @@ impl Type {
     }
 }
 
-fn map_parameters(params: &Vec<(pt::Loc, Option<pt::Parameter>)>) -> Vec<Option<Type>> {
+fn map_parameters(params: &[(pt::Loc, Option<pt::Parameter>)]) -> Vec<Option<Type>> {
     params
         .iter()
         .map(|(_, param)| {
