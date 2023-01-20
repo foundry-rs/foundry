@@ -317,10 +317,13 @@ impl SessionSource {
         };
 
         // Add all statements within the run function to the repl_contract_expressions map
-        for (key, val) in
-            intermediate_output.run_func_body()?.iter().flat_map(Self::get_statement_definitions)
+        for (key, val) in intermediate_output
+            .run_func_body()?
+            .clone()
+            .iter()
+            .flat_map(Self::get_statement_definitions)
         {
-            intermediate_output.repl_contract_expressions.insert(key.to_string(), val);
+            intermediate_output.repl_contract_expressions.insert(key, val);
         }
 
         // Construct generated output
@@ -492,7 +495,7 @@ impl IntermediateOutput {
     /// ### Returns
     ///
     /// Optionally, the last statement within the "run" function of the REPL contract.
-    pub fn run_func_body(&self) -> Result<Vec<pt::Statement>> {
+    pub fn run_func_body(&self) -> Result<&Vec<pt::Statement>> {
         match self
             .intermediate_contracts
             .get("REPL")
@@ -504,7 +507,7 @@ impl IntermediateOutput {
             .as_ref()
             .ok_or(eyre::eyre!("Could not find run function body!"))?
         {
-            pt::Statement::Block { statements, .. } => Ok(statements.to_vec()),
+            pt::Statement::Block { statements, .. } => Ok(statements),
             _ => eyre::bail!("Could not find statements within run function body!"),
         }
     }
