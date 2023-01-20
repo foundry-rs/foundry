@@ -729,7 +729,7 @@ impl ChiselDispatcher {
 
                 // Copy the variable's stack contents into a bytes32 variable without updating
                 // the current session source.
-                if let Ok((mut new_source, _)) = source.clone_with_new_line(format!(
+                if let Ok((new_source, _)) = source.clone_with_new_line(format!(
                     "bytes32 __raw__; assembly {{ __raw__ := {to_inspect} }}"
                 )) {
                     match new_source.inspect("__raw__").await {
