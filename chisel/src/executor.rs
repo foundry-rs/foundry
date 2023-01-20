@@ -539,151 +539,121 @@ impl Type {
         // First, check if the contract name has been defined
         if let Some(contract_name) = contract_name {
             // Next, check if an intermediate contract exists for `contract_name`
-            if let Some(intermediate_contract) =
-                intermediate.intermediate_contracts.get(&contract_name)
-            {
-                let cur_type = custom_type.last().ok_or(eyre::eyre!(""))?;
+            let Some(intermediate_contract) = intermediate.intermediate_contracts.get(&contract_name) else {
+                eyre::bail!("Could not find intermediate contract!")
+            };
+            let cur_type = custom_type.last().ok_or(eyre::eyre!(""))?;
 
-                if let Some(func) = intermediate_contract.function_definitions.get(cur_type) {
-                    // Because tuple types cannot be passed to `abi.encode`, we will only be
-                    // receiving functions that have 0 or 1 return parameters
-                    // here.
-                    if func.returns.is_empty() {
-                        eyre::bail!(
-                            "This call expression does not return any values to inspect. Insert as statement."
-                        )
-                    } else {
-                        // TODO: yuck
-                        let return_ty = &func
-                            .returns
-                            .get(0)
-                            .ok_or(eyre::eyre!("Could not find return type!"))?
-                            .1
-                            .as_ref()
-                            .ok_or(eyre::eyre!("Could not pull expression from return type!"))?
-                            .ty;
+            if let Some(func) = intermediate_contract.function_definitions.get(cur_type) {
+                // Because tuple types cannot be passed to `abi.encode`, we will only be
+                // receiving functions that have 0 or 1 return parameters here.
+                if func.returns.is_empty() {
+                    eyre::bail!(
+                        "This call expression does not return any values to inspect. Insert as statement."
+                    )
+                }
 
-                        // If the return type is a variable (not a type expression), re-enter the
-                        // recursion on the same contract for a variable / struct search. It could
-                        // be a contract, struct, array, etc.
-                        if let pt::Expression::Variable(pt::Identifier { loc: _, name: ident }) =
-                            return_ty
-                        {
-                            custom_type.push(ident.clone());
-                            return Self::infer_custom_type(
-                                intermediate,
-                                custom_type,
-                                Some(contract_name),
-                            )
-                        }
+                // Empty return types check is done above
+                let (_, param) = func.returns.first().unwrap();
+                // Return type should always be present
+                let return_ty = &param.as_ref().unwrap().ty;
 
-                        // Check if our final function call alters the state. If it does, we bail so
-                        // that it will be inserted normally without inspecting. If the state
-                        // mutability was not expressly set, the function is inferred to alter
-                        // state.
-                        if let Some(pt::FunctionAttribute::Mutability(_mut)) = func
-                            .attributes
-                            .iter()
-                            .find(|attr| matches!(attr, pt::FunctionAttribute::Mutability(_)))
-                        {
-                            if let pt::Mutability::Payable(_) = _mut {
-                                eyre::bail!("This function mutates state. Insert as a statement.")
-                            }
-                        } else {
-                            eyre::bail!("This function mutates state. Insert as a statement.")
-                        }
+                // If the return type is a variable (not a type expression), re-enter the recursion
+                // on the same contract for a variable / struct search. It could be a contract,
+                // struct, array, etc.
+                if let pt::Expression::Variable(ident) = return_ty {
+                    custom_type.push(ident.name.clone());
+                    return Self::infer_custom_type(intermediate, custom_type, Some(contract_name))
+                }
 
-                        Ok(Type::from_expression(return_ty).unwrap().try_as_ethabi(intermediate))
-                    }
-                } else if let Some(var_def) =
-                    intermediate_contract.variable_definitions.get(cur_type)
+                // Check if our final function call alters the state. If it does, we bail so that it
+                // will be inserted normally without inspecting. If the state mutability was not
+                // expressly set, the function is inferred to alter state.
+                if let Some(pt::FunctionAttribute::Mutability(_mut)) = func
+                    .attributes
+                    .iter()
+                    .find(|attr| matches!(attr, pt::FunctionAttribute::Mutability(_)))
                 {
-                    match &var_def.ty {
-                        // If we're here, we're indexing an array within this contract. Use the
-                        // inner type.
-                        pt::Expression::ArraySubscript(_, expr, _) => {
-                            Ok(Type::from_expression(expr).unwrap().try_as_ethabi(intermediate))
-                        }
-                        // Custom variable handling
-                        pt::Expression::Variable(pt::Identifier { loc: _, name: ident }) => {
-                            if intermediate_contract.struct_definitions.get(ident).is_some() {
-                                // A struct type was found- we set the custom type to just the
-                                // struct's name and re-enter the
-                                // recursion one last time.
-                                custom_type.clear();
-                                custom_type.push(ident.to_owned());
+                    if let pt::Mutability::Payable(_) = _mut {
+                        eyre::bail!("This function mutates state. Insert as a statement.")
+                    }
+                } else {
+                    eyre::bail!("This function mutates state. Insert as a statement.")
+                }
 
+                Ok(Type::ethabi(return_ty, intermediate))
+            } else if let Some(var_def) = intermediate_contract.variable_definitions.get(cur_type) {
+                match &var_def.ty {
+                    // If we're here, we're indexing an array within this contract:
+                    // use the inner type
+                    pt::Expression::ArraySubscript(_, expr, _) => {
+                        Ok(Type::ethabi(expr, intermediate))
+                    }
+                    // Custom variable handling
+                    pt::Expression::Variable(pt::Identifier { loc: _, name }) => {
+                        if intermediate_contract.struct_definitions.get(name).is_some() {
+                            // A struct type was found: we set the custom type to just the struct's
+                            // name and re-enter the recursion one last time.
+                            custom_type.clear();
+                            custom_type.push(name.clone());
+
+                            Self::infer_custom_type(intermediate, custom_type, Some(contract_name))
+                        } else if intermediate.intermediate_contracts.get(name).is_some() {
+                            if custom_type.len() > 1 {
+                                // There is still some recursing left to do: jump into the contract.
+                                custom_type.pop();
                                 Self::infer_custom_type(
                                     intermediate,
                                     custom_type,
-                                    Some(contract_name),
+                                    Some(name.clone()),
                                 )
-                            } else if intermediate.intermediate_contracts.get(ident).is_some() {
-                                if custom_type.len() > 1 {
-                                    // There is still some recursing left to do- jump into the
-                                    // contract.
-                                    custom_type.pop();
-                                    Self::infer_custom_type(
-                                        intermediate,
-                                        custom_type,
-                                        Some(ident.clone()),
-                                    )
-                                } else {
-                                    // We have no types left to recurse- return the address of the
-                                    // contract.
-                                    Ok(Some(ParamType::Address))
-                                }
                             } else {
-                                eyre::bail!("Could not infer variable type")
+                                // We have no types left to recurse: return the address of the
+                                // contract.
+                                Ok(Some(ParamType::Address))
                             }
+                        } else {
+                            eyre::bail!("Could not infer variable type")
                         }
-                        _ => Ok(Type::from_expression(&var_def.ty)
-                            .unwrap()
-                            .try_as_ethabi(intermediate)),
                     }
-                } else if let Some(struct_def) =
-                    intermediate_contract.struct_definitions.get(cur_type)
-                {
-                    let inner_types = struct_def
-                        .fields
-                        .iter()
-                        .map(|var| {
-                            // TODO: Check safety of these unwraps
-                            Type::from_expression(&var.ty)
-                                .unwrap()
-                                .try_as_ethabi(intermediate)
-                                .unwrap()
-                        })
-                        .collect::<Vec<_>>();
-                    Ok(Some(ParamType::Tuple(inner_types)))
-                } else {
-                    eyre::bail!("Could not find function definitions for contract!")
+                    ty => Ok(Type::ethabi(ty, intermediate)),
                 }
+            } else if let Some(struct_def) = intermediate_contract.struct_definitions.get(cur_type)
+            {
+                let inner_types = struct_def
+                    .fields
+                    .iter()
+                    .map(|var| {
+                        Type::ethabi(&var.ty, intermediate)
+                            .ok_or_else(|| eyre::eyre!("Struct `{cur_type}` has invalid fields"))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(Some(ParamType::Tuple(inner_types)))
             } else {
-                eyre::bail!("Could not find intermediate contract!")
+                eyre::bail!("Could not find function definitions for contract!")
             }
         } else {
             // Check if the custom type is a variable or function within the REPL contract before
             // anything. If it is, we can stop here.
-            if let Ok(res) =
-                Self::infer_custom_type(intermediate, custom_type, Some("REPL".to_owned()))
-            {
-                return Ok(res)
+            match Self::infer_custom_type(intermediate, custom_type, Some("REPL".into())) {
+                Ok(res) => return Ok(res),
+                _ => {}
             }
 
             // Check if the first element of the custom type is a known contract. If it is, begin
             // our recursion on on that contract's definitions.
-            if intermediate.intermediate_contracts.get(custom_type.last().unwrap()).is_some() {
-                let removed = custom_type.pop();
-                return Self::infer_custom_type(intermediate, custom_type, removed)
+            let contract = intermediate.intermediate_contracts.get(custom_type.last().unwrap());
+            if contract.is_some() {
+                let contract_name = custom_type.pop();
+                return Self::infer_custom_type(intermediate, custom_type, contract_name)
             }
 
             // If the first element of the custom type is a variable within the REPL contract,
             // that variable could be a contract itself, so we recurse back into this function
             // with a contract name set.
             //
-            // We also check for an array subscript here, which could be an indexing of a mapping
-            // or array. In this case, we return the type of the array.
+            // Otherwise, we return the type of the expression, as defined in
+            // `Type::from_expression`.
             let var_def = intermediate.repl_contract_expressions.get(custom_type.last().unwrap());
             if let Some(var_def) = var_def {
                 match &var_def {
@@ -695,10 +665,7 @@ impl Type {
                             Some(contract_name.clone()),
                         )
                     }
-                    pt::Expression::ArraySubscript(_, expr, _) => {
-                        return Ok(Type::from_expression(expr).unwrap().try_as_ethabi(intermediate))
-                    }
-                    _ => {}
+                    expr => return Ok(Type::ethabi(expr, intermediate)),
                 }
             }
 
@@ -734,15 +701,14 @@ impl Type {
                     .try_as_ethabi(intermediate)
                     .map(|inner| ParamType::FixedArray(Box::new(inner), size)),
             },
-            Self::Function(_, _, _) => {
-                todo!();
-            }
+            Self::Function(name, _, _) => match name.map(|b| *b) {
+                Some(Type::Builtin(ty)) => Some(ty),
+                _ => None,
+            },
             Self::Custom(mut types) => {
                 // Cover any local non-state-modifying function call expressions
-                eprintln!("custom={types:?}");
                 match Self::infer_custom_type(intermediate, &mut types, None) {
                     Ok(opt) => {
-                        eprintln!("inferred={opt:?}");
                         if opt.is_some() {
                             return opt
                         }
