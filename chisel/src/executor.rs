@@ -123,9 +123,9 @@ impl SessionSource {
     /// If successful, a formatted inspection output.
     /// If unsuccessful but valid source, `Some(None)`
     /// If unsuccessful, `Err(e)`
-    pub async fn inspect(&mut self, item: &str) -> Result<Option<String>> {
+    pub async fn inspect(&mut self, input: &str) -> Result<Option<String>> {
         let mut source = if let Ok((source, _)) =
-            self.clone_with_new_line(format!("bytes memory inspectoor = abi.encode({item})"))
+            self.clone_with_new_line(format!("bytes memory inspectoor = abi.encode({input})"))
         {
             source
         } else {
@@ -140,26 +140,21 @@ impl SessionSource {
                 .as_ref()
                 .ok_or(eyre::eyre!("Could not find generated output!"))?;
 
-            // If the expression is a variable declaration within the REPL contract,
-            // use its type- otherwise, attempt to infer the type.
-            let ty_opt = if let Some(expr) =
-                generated_output.intermediate.repl_contract_expressions.get(item)
-            {
-                Type::from_expression(expr)
-            } else {
-                self.infer_inner_expr_type(&source)
-            };
-            eprintln!("ty_opt={ty_opt:?}");
+            // If the expression is a variable declaration within the REPL contract, use its type;
+            // otherwise, attempt to infer the type.
+            let contract_expr = generated_output
+                .intermediate
+                .repl_contract_expressions
+                .get(input)
+                .or_else(|| self.infer_inner_expr_type(&source));
 
-            let ty = if let Some(ty) =
-                ty_opt.and_then(|ty| ty.try_as_ethabi(&generated_output.intermediate))
-            {
-                ty
-            } else {
-                // Move on gracefully; This type was denied for inspection.
-                return Ok(None)
-            };
-            eprintln!("ty={ty:?}");
+            let ty =
+                match contract_expr.and_then(|e| Type::ethabi(e, &generated_output.intermediate)) {
+                    Some(ty) => ty,
+                    // this type was denied for inspection, thus we move on gracefully
+                    None => return Ok(None),
+                };
+
             let memory_offset = if let Some(offset) = stack.data().last() {
                 offset.as_usize()
             } else {
@@ -169,6 +164,7 @@ impl SessionSource {
                 eyre::bail!("Memory size insufficient");
             }
             let data = &memory.data()[memory_offset + 32..];
+            // TODO: Encode array length and relative offset for dynamic arrays
             let mut tokens = ethabi::decode(&[ty], data).wrap_err("Could not decode ABI")?;
 
             tokens.pop().map_or(Err(eyre::eyre!("No tokens decoded")), |token| {
@@ -203,20 +199,24 @@ impl SessionSource {
     /// ### Returns
     ///
     /// Optionally, a [Type]
-    fn infer_inner_expr_type(&mut self, source: &SessionSource) -> Option<Type> {
-        if let Some(pt::Statement::VariableDefinition(
-            _,
-            _,
-            Some(pt::Expression::FunctionCall(_, _, expressions)),
-        )) =
-            source.generated_output.as_ref().unwrap().intermediate.run_func_body().unwrap().last()
-        {
-            // We can safely unwrap the first expression because this function
-            // will only be called on a session source that has just had an
-            // `inspectoor` variable appended to it.
-            Type::from_expression(expressions.first().unwrap())
-        } else {
-            None
+    fn infer_inner_expr_type<'s>(
+        &mut self,
+        source: &'s SessionSource,
+    ) -> Option<&'s pt::Expression> {
+        let out = source.generated_output.as_ref()?;
+        let run = out.intermediate.run_func_body().ok()?.last();
+        match run {
+            Some(pt::Statement::VariableDefinition(
+                _,
+                _,
+                Some(pt::Expression::FunctionCall(_, _, expressions)),
+            )) => {
+                // We can safely unwrap the first expression because this function
+                // will only be called on a session source that has just had an
+                // `inspectoor` variable appended to it.
+                Some(expressions.first().unwrap())
+            }
+            _ => None,
         }
     }
 
@@ -808,6 +808,20 @@ impl Type {
             }
         }
     }
+
+    /// Equivalent to `Type::from_expression` + `Type::try_as_ethabi)`
+    fn ethabi(expr: &pt::Expression, intermediate: &IntermediateOutput) -> Option<ParamType> {
+        Self::from_expression(expr).and_then(|ty| ty.try_as_ethabi(intermediate))
+    }
+
+    /// Inverts Int to Uint and viceversa.
+    fn invert_sign(self) -> Self {
+        match self {
+            Self::Builtin(ParamType::Uint(n)) => Self::Builtin(ParamType::Int(n)),
+            Self::Builtin(ParamType::Int(n)) => Self::Builtin(ParamType::Uint(n)),
+            x => x,
+        }
+    }
 }
 
 fn map_parameters(params: &Vec<(pt::Loc, Option<pt::Parameter>)>) -> Vec<Option<Type>> {
@@ -820,6 +834,44 @@ fn map_parameters(params: &Vec<(pt::Loc, Option<pt::Parameter>)>) -> Vec<Option<
             })
         })
         .collect()
+}
+
+fn parse_number_literal(expr: &pt::Expression) -> Option<U256> {
+    match expr {
+        pt::Expression::NumberLiteral(_, num, exp) => {
+            let num = U256::from_dec_str(num).unwrap_or(U256::zero());
+            let exp = exp.parse().unwrap_or(0u32);
+            if exp > 77 {
+                None
+            } else {
+                Some(num * U256::from(10usize.pow(exp)))
+            }
+        }
+        pt::Expression::HexNumberLiteral(_, num) => num.parse::<U256>().ok(),
+        // TODO
+        pt::Expression::RationalNumberLiteral(_, _, _, _) => None,
+
+        pt::Expression::Unit(_, expr, unit) => {
+            parse_number_literal(expr).map(|x| x * unit_multiplier(unit))
+        }
+
+        _ => None,
+    }
+}
+
+#[inline]
+const fn unit_multiplier(unit: &pt::Unit) -> usize {
+    use pt::Unit::*;
+    match unit {
+        Seconds(_) => 1,
+        Minutes(_) => 60,
+        Hours(_) => 60 * 60,
+        Days(_) => 60 * 60 * 24,
+        Weeks(_) => 60 * 60 * 24 * 7,
+        Wei(_) => 1,
+        Gwei(_) => 10_usize.pow(9),
+        Ether(_) => 10_usize.pow(18),
+    }
 }
 
 #[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash)]
