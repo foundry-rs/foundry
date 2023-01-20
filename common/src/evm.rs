@@ -157,6 +157,10 @@ impl Provider for EvmArgs {
             dict.insert("no_storage_caching".to_string(), self.no_storage_caching.into());
         }
 
+        if self.no_rate_limit {
+            dict.insert("no_rate_limit".to_string(), self.no_rate_limit.into());
+        }
+
         if let Some(fork_url) = &self.fork_url {
             dict.insert("eth_rpc_url".to_string(), fork_url.clone().into());
         }
