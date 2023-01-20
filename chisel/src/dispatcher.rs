@@ -790,15 +790,15 @@ impl ChiselDispatcher {
         // TODO: Cloning / parsing the session source twice on non-inspected inputs kinda sucks.
         // Should change up how this works.
         match source.inspect(input).await {
-            Ok(res) => {
-                // If the input was inspected, hault here.
-                if let Some(res) = res {
-                    self.errored = false;
-                    return DispatchResult::Success(Some(res))
-                }
+            // If the input was inspected, halt here.
+            Ok(Some(res)) => {
+                self.errored = false;
+                return DispatchResult::Success(Some(res))
             }
+            Ok(None) => {}
+
+            // If there was an explicit error thrown, halt here.
             Err(e) => {
-                // If there was an explicit error thrown, hault here.
                 self.errored = true;
                 return DispatchResult::CommandFailed(Self::make_error(e))
             }
