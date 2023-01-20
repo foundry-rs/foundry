@@ -8,6 +8,7 @@ use clap::{Parser, ValueHint};
 use ethers::{abi::Address, solc::info::ContractInfo};
 use foundry_config::{figment, impl_figment_convert, Chain, Config};
 use provider::VerificationProviderType;
+use reqwest::Url;
 use std::path::PathBuf;
 
 mod etherscan;
@@ -184,8 +185,24 @@ impl VerifyArgs {
             return Ok(())
         }
 
+        let verifier_url = self.verifier.verifier_url.clone();
         println!("Start verifying contract `{:?}` deployed on {}", self.address, self.chain);
-        self.verifier.verifier.client(&self.etherscan_key)?.verify(self).await
+        self.verifier.verifier.client(&self.etherscan_key)?.verify(self).await.map_err(|err| {
+            if let Some(verifier_url) = verifier_url {
+                 match Url::parse(&verifier_url) {
+                    Ok(url) => {
+                        if is_host_only(&url) {
+                            return  err.wrap_err(format!("Provided URL `{verifier_url}` is host only.\n Did you mean to use the API endpoint`{verifier_url}/api` ?"))
+                        }
+                    }
+                    Err(url_err) => {
+                       return  err.wrap_err(format!("Invalid URL {verifier_url} provided: {url_err}"))
+                    }
+                }
+            }
+
+            err
+        })
     }
 
     /// Returns the configured verification provider
@@ -256,5 +273,25 @@ impl<'a> From<&'a VerifyCheckArgs> for Config {
     fn from(args: &'a VerifyCheckArgs) -> Self {
         let figment: figment::Figment = args.into();
         Config::from_provider(figment).sanitized()
+    }
+}
+
+/// Returns `true` if the URL only consists of host.
+///
+/// This is used to check user input url for missing /api path
+#[inline]
+fn is_host_only(url: &Url) -> bool {
+    matches!(url.path(), "/" | "")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_host_only() {
+        assert!(!is_host_only(&Url::parse("https://blockscout.net/api").unwrap()));
+        assert!(is_host_only(&Url::parse("https://blockscout.net/").unwrap()));
+        assert!(is_host_only(&Url::parse("https://blockscout.net").unwrap()));
     }
 }
