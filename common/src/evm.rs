@@ -131,6 +131,7 @@ pub struct EvmArgs {
         help_heading = "Fork config",
         visible_alias = "no-rate-limit"
     )]
+    #[serde(skip)]
     pub no_rpc_rate_limit: bool,
 }
 

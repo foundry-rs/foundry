@@ -116,7 +116,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
     };
     prj.write_config(input.clone());
     let config = cmd.config();
-    assert_eq!(input, config);
+    pretty_assertions::assert_eq!(input, config);
 });
 
 // tests config gets printed to std out
