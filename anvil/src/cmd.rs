@@ -405,7 +405,8 @@ pub struct AnvilEvmArgs {
         requires = "fork_url",
         value_name = "NO_RATE_LIMITS",
         help = "Disables rate limiting for this node provider.",
-        help_heading = "Fork config"
+        help_heading = "Fork config",
+        visible_alias = "no-rpc-rate-limit"
     )]
     pub no_rate_limit: bool,
 

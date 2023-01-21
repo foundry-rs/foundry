@@ -98,6 +98,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
             endpoints: CachedEndpoints::Remote,
         },
         no_storage_caching: true,
+        no_rpc_rate_limit: true,
         bytecode_hash: Default::default(),
         cbor_metadata: true,
         revert_strings: Some(RevertStrings::Strip),
@@ -115,7 +116,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
     };
     prj.write_config(input.clone());
     let config = cmd.config();
-    assert_eq!(input, config);
+    pretty_assertions::assert_eq!(input, config);
 });
 
 // tests config gets printed to std out
