@@ -875,30 +875,21 @@ impl Type {
     fn try_as_ethabi(self, intermediate: &IntermediateOutput) -> Option<ParamType> {
         match self {
             Self::Builtin(param) => Some(param),
+            Self::Tuple(types) => Some(ParamType::Tuple(types_to_parameters(types, intermediate))),
             Self::Array(inner) => match *inner {
-                Self::Custom(mut types) => {
-                    Self::infer_custom_type(intermediate, &mut types, None).unwrap_or(None)
-                }
+                ty @ Self::Custom(_) => ty.try_as_ethabi(intermediate),
                 _ => {
                     inner.try_as_ethabi(intermediate).map(|inner| ParamType::Array(Box::new(inner)))
                 }
             },
             Self::FixedArray(inner, size) => match *inner {
-                Self::Custom(mut types) => {
-                    Self::infer_custom_type(intermediate, &mut types, None).unwrap_or(None)
-                }
+                ty @ Self::Custom(_) => ty.try_as_ethabi(intermediate),
                 _ => inner
                     .try_as_ethabi(intermediate)
                     .map(|inner| ParamType::FixedArray(Box::new(inner), size)),
             },
-            Self::Tuple(params) => {
-                let params = types_to_parameters(params);
-                Some(ParamType::Tuple(params))
-            }
-            Self::Function(name, _, _) => match *name {
-                Type::Builtin(ty) => Some(ty),
-                _ => None,
-            },
+            Self::Function(name, _, _) => name.try_as_ethabi(intermediate),
+            // Should've been converted to Custom in previous steps
             Self::Access(_, _) => None,
             Self::Custom(mut types) => {
                 // Cover any local non-state-modifying function call expressions
@@ -930,30 +921,20 @@ impl Type {
             _ => None,
         }
     }
-
-    #[allow(dead_code)]
-    fn into_param_types(self) -> Option<Vec<ParamType>> {
-        match self {
-            Self::Tuple(types) | Self::Function(_, types, _) => Some(types_to_parameters(types)),
-            _ => None,
-        }
-    }
 }
 
 fn map_parameters(params: &[(pt::Loc, Option<pt::Parameter>)]) -> Vec<Option<Type>> {
     params
         .iter()
-        .map(|(_, param)| {
-            param.as_ref().and_then(|param| match &param.ty {
-                pt::Expression::Type(_, ty) => Type::from_type(ty),
-                _ => None, // Should not happen
-            })
-        })
+        .map(|(_, param)| param.as_ref().and_then(|param| Type::from_expression(&param.ty)))
         .collect()
 }
 
-fn types_to_parameters(types: Vec<Option<Type>>) -> Vec<ParamType> {
-    types.into_iter().filter_map(|ty| ty.and_then(Type::builtin)).collect()
+fn types_to_parameters(
+    types: Vec<Option<Type>>,
+    intermediate: &IntermediateOutput,
+) -> Vec<ParamType> {
+    types.into_iter().filter_map(|ty| ty.and_then(|ty| ty.try_as_ethabi(intermediate))).collect()
 }
 
 fn parse_number_literal(expr: &pt::Expression) -> Option<U256> {
