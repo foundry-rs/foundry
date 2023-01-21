@@ -31,6 +31,7 @@ pub struct EvmOpts {
     pub compute_units_per_second: Option<u64>,
 
     /// Disables rate limiting entirely.
+    #[serde(default)]
     pub no_rpc_rate_limit: bool,
 
     /// Disables storage caching entirely.

@@ -3241,6 +3241,7 @@ mod tests {
                 memory_limit = 33554432
                 names = false
                 no_storage_caching = false
+                no_rpc_rate_limit = false
                 offline = false
                 optimizer = true
                 optimizer_runs = 200
