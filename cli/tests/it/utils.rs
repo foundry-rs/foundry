@@ -8,7 +8,7 @@ use ethers::prelude::Chain;
 pub fn millis_since_epoch() -> u128 {
     let now = std::time::SystemTime::now();
     now.duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .unwrap_or_else(|err| panic!("Current time {:?} is invalid: {:?}", now, err))
+        .unwrap_or_else(|err| panic!("Current time {now:?} is invalid: {err:?}"))
         .as_millis()
 }
 
