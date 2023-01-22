@@ -145,7 +145,7 @@ impl SessionSource {
             let generated_output = source
                 .generated_output
                 .as_ref()
-                .ok_or(eyre::eyre!("Could not find generated output!"))?;
+                .ok_or_else(|| eyre::eyre!("Could not find generated output!"))?;
 
             // If the expression is a variable declaration within the REPL contract, use its type;
             // otherwise, attempt to infer the type.
@@ -154,7 +154,6 @@ impl SessionSource {
                 .repl_contract_expressions
                 .get(input)
                 .or_else(|| source.infer_inner_expr_type());
-            eprintln!("{contract_expr:?}");
 
             let ty =
                 match contract_expr.and_then(|e| Type::ethabi(e, &generated_output.intermediate)) {
@@ -162,22 +161,19 @@ impl SessionSource {
                     // this type was denied for inspection, thus we move on gracefully
                     None => return Ok(None),
                 };
-            eprintln!("{ty:?}");
 
-            let memory_offset = if let Some(offset) = stack.data().last() {
-                offset.as_usize()
-            } else {
-                eyre::bail!("No result found");
-            };
-            if memory_offset + 32 > memory.len() {
-                eyre::bail!("Memory size insufficient");
-            }
-            let data = &memory.data()[memory_offset + 32..];
-            let mut tokens = ethabi::decode(&[ty], data).wrap_err("Could not decode ABI")?;
-
-            tokens.pop().map_or(Err(eyre::eyre!("No tokens decoded")), |token| {
-                Ok(Some(format_token(token)))
-            })
+            // the file compiled correctly, thus the last stack item must be the memory offset of
+            // the `bytes memory inspectoor` value
+            let mut offset = stack.data().last().unwrap().as_usize();
+            let mem = memory.data();
+            let len = U256::from(&mem[offset..offset + 32]).as_usize();
+            offset += 32;
+            let data = &mem[offset..offset + len];
+            let mut tokens =
+                ethabi::decode(&[ty], data).wrap_err("Could not decode inspected values")?;
+            // tokens is guaranteed to have the same length as the provided types
+            let token = tokens.pop().unwrap();
+            Ok(Some(format_token(token)))
         } else {
             if let Ok(decoder) = ChiselDispatcher::decode_traces(&source.config, &mut res) {
                 if ChiselDispatcher::show_traces(&decoder, &mut res).await.is_err() {
@@ -193,7 +189,7 @@ impl SessionSource {
                     }
                 }
             }
-            eyre::bail!("Failed to inspect expression")
+            Err(eyre::eyre!("Failed to inspect expression"))
         }
     }
 
@@ -414,7 +410,6 @@ impl Type {
                     if let Some(num) = num {
                         // overflow check
                         const MAX_U64_AS_U256: U256 = U256([0, 0, 0, usize::MAX as u64]);
-                        debug_assert_eq!(MAX_U64_AS_U256.as_usize(), usize::MAX);
                         if num > MAX_U64_AS_U256 {
                             None
                         } else {
@@ -592,8 +587,6 @@ impl Type {
         let mut types = Vec::with_capacity(5);
         let mut args = None;
         self.recurse(&mut types, &mut args);
-        eprintln!("{types:?}");
-        eprintln!("{args:?}");
 
         let len = types.len();
         if len == 0 {
