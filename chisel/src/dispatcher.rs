@@ -667,11 +667,9 @@ impl ChiselDispatcher {
                                 if let Ok(decoder) =
                                     Self::decode_traces(&new_session_source.config, &mut res)
                                 {
-                                    if Self::show_traces(&decoder, &mut res).await.is_err() {
+                                    if let Err(e) = Self::show_traces(&decoder, &mut res).await {
                                         self.errored = true;
-                                        return DispatchResult::CommandFailed(
-                                            "Failed to display traces".to_owned(),
-                                        )
+                                        return DispatchResult::CommandFailed(e.to_string())
                                     };
 
                                     // Show console logs, if there are any
@@ -824,11 +822,9 @@ impl ChiselDispatcher {
                     // traces.
                     if new_source.config.traces || failed {
                         if let Ok(decoder) = Self::decode_traces(&new_source.config, &mut res) {
-                            if Self::show_traces(&decoder, &mut res).await.is_err() {
+                            if let Err(e) = Self::show_traces(&decoder, &mut res).await {
                                 self.errored = true;
-                                return DispatchResult::CommandFailed(
-                                    "Failed to display traces".to_owned(),
-                                )
+                                return DispatchResult::CommandFailed(e.to_string())
                             };
 
                             // Show console logs, if there are any
