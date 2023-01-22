@@ -25,11 +25,11 @@ use strum::IntoEnumIterator;
 use yansi::Paint;
 
 /// Prompt arrow slice
-static PROMPT_ARROW: char = '➜';
+pub static PROMPT_ARROW: char = '➜';
 /// Command leader character
-static COMMAND_LEADER: char = '!';
+pub static COMMAND_LEADER: char = '!';
 /// Chisel character
-static CHISEL_CHAR: &str = "⚒️";
+pub static CHISEL_CHAR: &str = "⚒️";
 
 /// Chisel input dispatcher
 #[derive(Debug)]
@@ -281,7 +281,7 @@ impl ChiselDispatcher {
                         session_source.config.foundry_config.fmt.clone(),
                     ) {
                         Ok(formatted_source) => DispatchResult::CommandSuccess(Some(
-                            SolidityHelper::highlight(&formatted_source),
+                            SolidityHelper::highlight(&formatted_source).into_owned(),
                         )),
                         Err(_) => DispatchResult::CommandFailed(String::from(
                             "Failed to format session source",
