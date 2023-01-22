@@ -173,7 +173,6 @@ impl SessionSource {
                 eyre::bail!("Memory size insufficient");
             }
             let data = &memory.data()[memory_offset + 32..];
-            // TODO: Encode array length and relative offset for dynamic arrays
             let mut tokens = ethabi::decode(&[ty], data).wrap_err("Could not decode ABI")?;
 
             tokens.pop().map_or(Err(eyre::eyre!("No tokens decoded")), |token| {
@@ -414,7 +413,9 @@ impl Type {
                     let num = num.as_deref().and_then(parse_number_literal);
                     if let Some(num) = num {
                         // overflow check
-                        if num > U256::from(usize::MAX) {
+                        const MAX_U64_AS_U256: U256 = U256([0, 0, 0, usize::MAX as u64]);
+                        debug_assert_eq!(MAX_U64_AS_U256.as_usize(), usize::MAX);
+                        if num > MAX_U64_AS_U256 {
                             None
                         } else {
                             Some(Self::FixedArray(ty, num.as_usize()))
@@ -424,12 +425,11 @@ impl Type {
                     }
                 })
             }
-            // TODO: offset and length do not get encoded when inspecting, so this always throws
-            // pt::Expression::ArrayLiteral(_, values) => {
-            //     values.first().and_then(Self::from_expression).map(|ty| {
-            //         Self::Array(Box::new(ty))
-            //     })
-            // }
+            pt::Expression::ArrayLiteral(_, values) => {
+                values.first().and_then(Self::from_expression).map(|ty| {
+                    Self::FixedArray(Box::new(ty), values.len())
+                })
+            }
 
             // tuple
             pt::Expression::List(_, params) => {
