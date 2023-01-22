@@ -26,9 +26,10 @@ fn add_unique(prj: &TestProject) {
 pragma solidity >=0.4.0;
 
 contract Unique {{
-    uint public _timestamp = {timestamp};
+    uint public _timestamp = {};
 }}
-"#
+"#,
+                timestamp
             ),
         )
         .unwrap();
@@ -159,7 +160,7 @@ fn verify_flag_on_create_on_chain(
     // only execute if keys present
     if let Some(info) = info {
         for verifier in VERIFICATION_PROVIDERS {
-            println!("verifying with {verifier}");
+            println!("verifying with {}", verifier);
 
             add_unique(&prj);
             add_verify_target(&prj);
