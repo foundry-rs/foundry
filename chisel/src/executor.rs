@@ -478,12 +478,31 @@ impl Type {
             // invert
             pt::Expression::UnaryMinus(_, inner) => Self::from_expression(inner).map(Self::invert_int),
 
-            // assume uint
-            // TODO: Perform operations to find negative numbers
-            pt::Expression::Add(_, _, _) |
-            pt::Expression::Subtract(_, _, _) |
-            pt::Expression::Multiply(_, _, _) |
-            pt::Expression::Divide(_, _, _) |
+            // int if either operand is int
+            // TODO: will need an update for Solidity v0.8.18 custom operand implementations:
+            // https://github.com/ethereum/solidity/issues/13718#issuecomment-1341058649
+            pt::Expression::Add(_, lhs, rhs) |
+            pt::Expression::Subtract(_, lhs, rhs) |
+            pt::Expression::Multiply(_, lhs, rhs) |
+            pt::Expression::Divide(_, lhs, rhs) => {
+                #[allow(clippy::match_like_matches_macro)]
+                let is_int = match (Self::from_expression(lhs), Self::from_expression(rhs)) {
+                    (Some(Self::Builtin(ParamType::Int(_))), Some(Self::Builtin(ParamType::Int(_)))) |
+                    (Some(Self::Builtin(ParamType::Int(_))), Some(Self::Builtin(ParamType::Uint(_)))) |
+                    (Some(Self::Builtin(ParamType::Uint(_))), Some(Self::Builtin(ParamType::Int(_)))) => {
+                        true
+                    }
+                    _ => false
+                };
+                let ty = if is_int {
+                    Self::Builtin(ParamType::Int(256))
+                } else {
+                    Self::Builtin(ParamType::Uint(256))
+                };
+                Some(ty)
+            }
+
+            // always assume uint
             pt::Expression::Modulo(_, _, _) |
             pt::Expression::Power(_, _, _) |
             pt::Expression::BitwiseOr(_, _, _) |
@@ -494,7 +513,7 @@ impl Type {
             pt::Expression::NumberLiteral(_, _, _) |
             pt::Expression::HexNumberLiteral(_, _) => Some(Self::Builtin(ParamType::Uint(256))),
 
-            // TODO
+            // TODO: Rational numbers
             pt::Expression::RationalNumberLiteral(_, _, _, _) => {
                 Some(Self::Builtin(ParamType::Uint(256)))
             }
@@ -572,7 +591,7 @@ impl Type {
                     returns,
                 )
             }
-            // TODO
+            // TODO: Rational numbers
             pt::Type::Rational => return None,
         };
         Some(ty)
@@ -642,7 +661,7 @@ impl Type {
                             "balance" => Some(ParamType::Uint(256)),
                             "code" => Some(ParamType::Bytes),
                             "codehash" => Some(ParamType::FixedBytes(32)),
-                            // TODO: same as assignment exprs
+                            // TODO: Same as assignment exprs
                             // "send" => Some(ParamType::Bool),
                             _ => None,
                         },
@@ -942,7 +961,7 @@ fn parse_number_literal(expr: &pt::Expression) -> Option<U256> {
             }
         }
         pt::Expression::HexNumberLiteral(_, num) => num.parse::<U256>().ok(),
-        // TODO
+        // TODO: Rational numbers
         pt::Expression::RationalNumberLiteral(_, _, _, _) => None,
 
         pt::Expression::Unit(_, expr, unit) => {
