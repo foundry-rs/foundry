@@ -776,6 +776,7 @@ dependencies = [
  "foundry-common",
  "foundry-config",
  "foundry-evm",
+ "regex",
  "reqwest",
  "revm",
  "rustyline",

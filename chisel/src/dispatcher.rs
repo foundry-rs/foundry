@@ -7,7 +7,7 @@ use crate::prelude::{
     ChiselCommand, ChiselResult, ChiselSession, CmdCategory, CmdDescriptor, SessionSourceConfig,
     SolidityHelper,
 };
-use ethers::{abi::ParamType, utils::hex};
+use ethers::{abi::ParamType, contract::Lazy, utils::hex};
 use forge::{
     decode::decode_console_logs,
     trace::{
@@ -17,6 +17,7 @@ use forge::{
 };
 use forge_fmt::FormatterConfig;
 use foundry_config::{Config, RpcEndpoint};
+use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use solang_parser::diagnostics::Diagnostic;
@@ -30,6 +31,10 @@ static PROMPT_ARROW: char = '➜';
 static COMMAND_LEADER: char = '!';
 /// Chisel character
 static CHISEL_CHAR: &str = "⚒️";
+
+/// Matches Solidity comments
+static COMMENT_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^\s*(?://.*\s*$)|(/*[\s\S]*?\*/\s*$)").unwrap());
 
 /// Chisel input dispatcher
 #[derive(Debug)]
@@ -787,7 +792,7 @@ impl ChiselDispatcher {
         };
 
         // If the input is a comment, add it to the run code so we avoid running with empty input
-        if is_comment(input) {
+        if COMMENT_RE.is_match(input) {
             source.with_run_code(input);
             return DispatchResult::Success(None)
         }
@@ -961,10 +966,18 @@ impl ChiselDispatcher {
     }
 }
 
-#[inline]
-fn is_comment(input: &str) -> bool {
-    let trimmed_input = input.trim();
-    (trimmed_input.starts_with("//") &&
-        input.split_once('\n').map(|(_, nl)| nl.trim().is_empty()).unwrap_or(true)) ||
-        (trimmed_input.starts_with("/*") && trimmed_input.ends_with("*/"))
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_comment_regex() {
+        assert!(COMMENT_RE.is_match("// line comment"));
+        assert!(COMMENT_RE.is_match("  \n// line \tcomment\n"));
+        assert!(!COMMENT_RE.is_match("// line \ncomment"));
+
+        assert!(COMMENT_RE.is_match("/* block comment */"));
+        assert!(COMMENT_RE.is_match(" \t\n  /* block \n \t comment */\n"));
+        assert!(!COMMENT_RE.is_match("/* block \n \t comment */\nwith \tother"));
+    }
 }
