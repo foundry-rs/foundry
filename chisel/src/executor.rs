@@ -174,9 +174,7 @@ impl SessionSource {
             })
         } else {
             if let Ok(decoder) = ChiselDispatcher::decode_traces(&source.config, &mut res) {
-                if ChiselDispatcher::show_traces(&decoder, &mut res).await.is_err() {
-                    eyre::bail!("Failed to display traces");
-                };
+                ChiselDispatcher::show_traces(&decoder, &mut res).await?;
 
                 // Show console logs, if there are any
                 let decoded_logs = decode_console_logs(&res.logs);
