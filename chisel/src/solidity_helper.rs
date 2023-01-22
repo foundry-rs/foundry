@@ -3,7 +3,7 @@
 //! This module contains the `SolidityHelper`, a [rustyline::Helper] implementation for
 //! usage in Chisel. It is ported from [soli](https://github.com/jpopesculian/soli/blob/master/src/main.rs).
 
-use crate::prelude::ChiselCommand;
+use crate::prelude::{ChiselCommand, COMMAND_LEADER};
 use rustyline::{
     completion::Completer,
     highlight::Highlighter,
@@ -18,45 +18,57 @@ use solang_parser::{
 use std::{borrow::Cow, str::FromStr};
 use yansi::{Color, Paint, Style};
 
+/// The default pre-allocation for solang parsed comments
+const DEFAULT_COMMENTS: usize = 5;
+
+/// The maximum length of an ANSI prefix + suffix characters using [SolidityHelper].
+///
+/// * 5 - prefix:
+///   * 2 - start: `\x1B[`
+///   * 2 - fg: `3<fg_code>`
+///   * 1 - end: `m`
+/// * 4 - suffix: `\x1B[0m`
+const MAX_ANSI_LEN: usize = 9;
+
+/// `(start, style, end)`
+pub type SpannedStyle = (usize, Style, usize);
+
 /// A rustyline helper for Solidity code
 pub struct SolidityHelper;
 
-/// Highlighter implementation for `SolHighlighter`
-impl Highlighter for SolidityHelper {
-    fn highlight<'l>(&self, line: &'l str, _pos: usize) -> Cow<'l, str> {
-        Cow::Owned(SolidityHelper::highlight(line))
-    }
-
-    fn highlight_char(&self, line: &str, pos: usize) -> bool {
-        pos == line.len()
-    }
-}
-
 impl SolidityHelper {
     /// Get styles for a solidity source string
-    pub fn get_styles(input: &str) -> Vec<(usize, Style, usize)> {
-        let mut comments = Vec::new();
-        let mut out = Lexer::new(input, 0, &mut comments, &mut vec![])
+    pub fn get_styles(input: &str) -> Vec<SpannedStyle> {
+        let mut comments = Vec::with_capacity(DEFAULT_COMMENTS);
+        let mut errors = Vec::with_capacity(5);
+        let mut out = Lexer::new(input, 0, &mut comments, &mut errors)
             .flatten()
             .map(|(start, token, end)| (start, token.style(), end))
             .collect::<Vec<_>>();
-        for comment in comments {
+
+        // highlight comments too
+        let comments_iter = comments.into_iter().map(|comment| {
             let loc = match comment {
                 pt::Comment::Line(loc, _) |
                 pt::Comment::Block(loc, _) |
                 pt::Comment::DocLine(loc, _) |
                 pt::Comment::DocBlock(loc, _) => loc,
             };
-            out.push((loc.start(), Style::default().dimmed(), loc.end()))
-        }
+            (loc.start(), Style::default().dimmed(), loc.end())
+        });
+        out.extend(comments_iter);
+
         out
     }
 
     /// Get contiguous styles for a solidity source string
-    pub fn get_contiguous_styles(input: &str) -> Vec<(usize, Style, usize)> {
+    pub fn get_contiguous_styles(input: &str) -> Vec<SpannedStyle> {
         let mut styles = Self::get_styles(input);
-        styles.sort_by_key(|(start, _, _)| *start);
-        let mut out = vec![];
+        styles.sort_unstable_by_key(|(start, _, _)| *start);
+
+        let len = input.len();
+        // len / 4 is just a random average of whitespaces in the input
+        let mut out = Vec::with_capacity(styles.len() + len / 4 + 1);
         let mut index = 0;
         for (start, style, end) in styles {
             if index < start {
@@ -65,30 +77,57 @@ impl SolidityHelper {
             out.push((start, style, end));
             index = end;
         }
-        if index < input.len() {
-            out.push((index, Style::default(), input.len()));
+        if index < len {
+            out.push((index, Style::default(), len));
         }
         out
     }
 
     /// Highlights a solidity source string
-    pub fn highlight(input: &str) -> String {
-        let mut out = String::new();
+    pub fn highlight(input: &str) -> Cow<str> {
+        if !Paint::is_enabled() {
+            return Cow::Borrowed(input)
+        }
+
         // Highlight commands separately
-        if input.starts_with('!') {
-            let split: Vec<&str> = input.split(' ').collect();
-            let cmd = ChiselCommand::from_str(&split[0][1..]);
-            out = format!(
-                "!{} {}",
-                if cmd.is_ok() { Paint::green(&split[0][1..]) } else { Paint::red(&split[0][1..]) },
-                split[1..].join(" ")
-            );
+        if input.starts_with(COMMAND_LEADER) {
+            let (cmd, rest) = match input.split_once(' ') {
+                Some((cmd, rest)) => (cmd, Some(rest)),
+                None => (input, None),
+            };
+            let cmd = cmd.strip_prefix(COMMAND_LEADER).unwrap_or(cmd);
+
+            let mut out = String::with_capacity(input.len() + MAX_ANSI_LEN);
+
+            // cmd
+            out.push(COMMAND_LEADER);
+            let cmd_res = ChiselCommand::from_str(cmd);
+            let style = Style::new(if cmd_res.is_ok() { Color::Green } else { Color::Red });
+            Self::paint_unchecked(cmd, style, &mut out);
+
+            // rest
+            match rest {
+                Some(rest) if !rest.is_empty() => {
+                    out.push(' ');
+                    out.push_str(rest);
+                }
+                _ => {}
+            }
+
+            Cow::Owned(out)
         } else {
-            for (start, style, end) in Self::get_contiguous_styles(input) {
-                out.push_str(&format!("{}", style.paint(&input[start..end])))
+            let styles = Self::get_contiguous_styles(input);
+            let len = styles.len();
+            if len == 0 {
+                Cow::Borrowed(input)
+            } else {
+                let mut out = String::with_capacity(input.len() + MAX_ANSI_LEN * len);
+                for (start, style, end) in styles {
+                    Self::paint_unchecked(&input[start..end], style, &mut out);
+                }
+                Cow::Owned(out)
             }
         }
-        out
     }
 
     /// Validate that a source snippet is closed (i.e., all braces and parenthesis are matched).
@@ -96,8 +135,9 @@ impl SolidityHelper {
         let mut bracket_depth = 0usize;
         let mut paren_depth = 0usize;
         let mut brace_depth = 0usize;
-        let mut comments = Vec::new();
-        let mut errors = Vec::new();
+        let mut comments = Vec::with_capacity(DEFAULT_COMMENTS);
+        // returns on any encountered error, so allocate for just one
+        let mut errors = Vec::with_capacity(1);
         for res in Lexer::new(input, 0, &mut comments, &mut errors) {
             match res {
                 Err(err) => match err {
@@ -108,13 +148,13 @@ impl SolidityHelper {
                 },
                 Ok((_, token, _)) => match token {
                     Token::OpenBracket => {
-                        bracket_depth = bracket_depth.saturating_add(1);
+                        bracket_depth += 1;
                     }
                     Token::OpenCurlyBrace => {
-                        brace_depth = brace_depth.saturating_add(1);
+                        brace_depth += 1;
                     }
                     Token::OpenParenthesis => {
-                        paren_depth = paren_depth.saturating_add(1);
+                        paren_depth += 1;
                     }
                     Token::CloseBracket => {
                         bracket_depth = bracket_depth.saturating_sub(1);
@@ -134,6 +174,25 @@ impl SolidityHelper {
         } else {
             ValidationResult::Incomplete
         }
+    }
+
+    /// Formats `input` with `style` into `out`, without checking `style.wrapping` or
+    /// `Paint::is_enabled`
+    #[inline]
+    fn paint_unchecked(string: &str, style: Style, out: &mut String) {
+        let _ = style.fmt_prefix(out);
+        out.push_str(string);
+        let _ = style.fmt_suffix(out);
+    }
+}
+
+impl Highlighter for SolidityHelper {
+    fn highlight<'l>(&self, line: &'l str, _pos: usize) -> Cow<'l, str> {
+        Self::highlight(line)
+    }
+
+    fn highlight_char(&self, line: &str, pos: usize) -> bool {
+        pos == line.len()
     }
 }
 
