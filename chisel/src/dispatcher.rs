@@ -764,15 +764,16 @@ impl ChiselDispatcher {
                 Ok(cmd) => {
                     let command_dispatch = self.dispatch_command(cmd, &split[1..]).await;
                     self.errored = !matches!(command_dispatch, DispatchResult::CommandSuccess(_));
-                    return command_dispatch
+                    command_dispatch
                 }
                 Err(e) => {
                     self.errored = true;
                     DispatchResult::UnrecognizedCommand(e)
                 }
             }
-        } else if input.trim().is_empty() {
-            return DispatchResult::CommandSuccess(None)
+        }
+        if input.trim().is_empty() {
+            return DispatchResult::Success(None)
         }
 
         // Get a mutable reference to the session source
@@ -782,6 +783,23 @@ impl ChiselDispatcher {
             Err(e) => {
                 self.errored = true;
                 return e
+            }
+        };
+
+        // If the input is a comment, add it to the run code so we avoid running with empty input
+        if is_comment(input) {
+            source.with_run_code(input);
+            return DispatchResult::Success(None)
+        }
+
+        // Create new source with exact input appended and parse
+        let (mut new_source, do_execute) = match source.clone_with_new_line(input.to_string()) {
+            Ok(new) => new,
+            Err(e) => {
+                self.errored = true;
+                return DispatchResult::CommandFailed(Self::make_error(format!(
+                    "Failed to parse input! {e}"
+                )))
             }
         };
 
@@ -801,17 +819,6 @@ impl ChiselDispatcher {
                 return DispatchResult::CommandFailed(Self::make_error(e))
             }
         }
-
-        // Create new source with exact input appended and parse
-        let (mut new_source, do_execute) = match source.clone_with_new_line(input.to_string()) {
-            Ok(new) => new,
-            Err(e) => {
-                self.errored = true;
-                return DispatchResult::CommandFailed(Self::make_error(format!(
-                    "Failed to parse input! {e}"
-                )))
-            }
-        };
 
         if do_execute {
             match new_source.execute().await {
@@ -952,4 +959,12 @@ impl ChiselDispatcher {
     pub fn make_error<T: std::fmt::Display>(msg: T) -> String {
         format!("{} {}", Paint::red(format!("{CHISEL_CHAR} Chisel Error:")), Paint::red(msg))
     }
+}
+
+#[inline]
+fn is_comment(input: &str) -> bool {
+    let trimmed_input = input.trim();
+    (trimmed_input.starts_with("//") &&
+        input.split_once('\n').map(|(_, nl)| nl.trim().is_empty()).unwrap_or(true)) ||
+        (trimmed_input.starts_with("/*") && trimmed_input.ends_with("*/"))
 }
