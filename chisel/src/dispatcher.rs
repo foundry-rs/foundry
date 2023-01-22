@@ -300,26 +300,28 @@ impl ChiselDispatcher {
             },
             ChiselCommand::Fork => {
                 if let Some(session_source) = self.session.session_source.as_mut() {
-                    if args.is_empty() {
+                    if args.is_empty() || args[0].trim().is_empty() {
                         session_source.config.evm_opts.fork_url = None;
-                        return DispatchResult::CommandSuccess(Some(String::from(
-                            "Now using local environment.",
-                        )))
-                    } else if args.len() != 1 || args[0].trim().is_empty() {
+                        return DispatchResult::CommandSuccess(Some(
+                            "Now using local environment.".to_string(),
+                        ))
+                    }
+                    if args.len() != 1 {
                         return DispatchResult::CommandFailed(Self::make_error(
                             "Must supply a session ID as the argument.",
                         ))
                     }
+                    let arg = *args.first().unwrap();
 
                     // If the argument is an RPC alias designated in the
                     // `[rpc_endpoints]` section of the `foundry.toml` within
                     // the pwd, use the URL matched to the key.
                     let endpoint = if let Some(endpoint) =
-                        session_source.config.foundry_config.rpc_endpoints.get(args[0])
+                        session_source.config.foundry_config.rpc_endpoints.get(arg)
                     {
                         endpoint.clone()
                     } else {
-                        RpcEndpoint::Env(args[0].to_string())
+                        RpcEndpoint::Env(arg.to_string())
                     };
                     let fork_url = match endpoint.resolve() {
                         Ok(fork_url) => fork_url,
@@ -485,7 +487,7 @@ impl ChiselDispatcher {
                 match reqwest::get(&request_url).await {
                     Ok(response) => {
                         let json = response.json::<EtherscanABIResponse>().await.unwrap();
-                        if json.status.eq("1") && json.result.is_some() {
+                        if json.status == "1" && json.result.is_some() {
                             let abi = json.result.unwrap();
                             if let Ok(abi) = ethers::abi::Abi::load(abi.as_bytes()) {
                                 let mut interface = format!(
@@ -586,9 +588,9 @@ impl ChiselDispatcher {
                             )))
                         }
                     }
-                    Err(_) => DispatchResult::CommandFailed(Self::make_error(
-                        "Failed to communicate with Etherscan API; Are you offline?",
-                    )),
+                    Err(e) => DispatchResult::CommandFailed(Self::make_error(format!(
+                        "Failed to communicate with Etherscan API: {e}"
+                    ))),
                 }
             }
             ChiselCommand::Exec => {
@@ -707,43 +709,36 @@ impl ChiselDispatcher {
                 }
             }
             ChiselCommand::RawStack => {
-                if args.is_empty() {
-                    return DispatchResult::CommandFailed(Self::make_error("No variable supplied!"))
-                } else if args.len() > 1 {
-                    return DispatchResult::CommandFailed(Self::make_error(
-                        "!rawstack only takes one argument.",
-                    ))
+                let len = args.len();
+                if len != 1 {
+                    let msg = match len {
+                        0 => "No variable supplied!",
+                        _ => "!rawstack only takes one argument.",
+                    };
+                    return DispatchResult::CommandFailed(Self::make_error(msg))
                 }
 
                 // Store the variable that we want to inspect
-                let to_inspect = args[0];
+                let to_inspect = args.first().unwrap();
 
                 // Get a mutable reference to the session source
-                let source =
-                    match self.session.session_source.as_mut().ok_or(DispatchResult::CommandFailed(
-                        "Session source not present".to_string(),
-                    )) {
-                        Ok(session_source) => session_source,
-                        Err(e) => return e,
-                    };
+                let source = match self.session.session_source.as_mut() {
+                    Some(session_source) => session_source,
+                    _ => {
+                        return DispatchResult::CommandFailed(
+                            "Session source not present".to_string(),
+                        )
+                    }
+                };
 
                 // Copy the variable's stack contents into a bytes32 variable without updating
                 // the current session source.
-                if let Ok((new_source, _)) = source.clone_with_new_line(format!(
-                    "bytes32 __raw__; assembly {{ __raw__ := {to_inspect} }}"
-                )) {
+                let line = format!("bytes32 __raw__; assembly {{ __raw__ := {to_inspect} }}");
+                if let Ok((new_source, _)) = source.clone_with_new_line(line) {
                     match new_source.inspect("__raw__").await {
-                        Ok(res) => {
-                            // If the input was inspected, hault here and display the contents
-                            // of the `__raw__` variable's stack allocation.
-                            if let Some(res) = res {
-                                return DispatchResult::CommandSuccess(Some(res))
-                            }
-                        }
-                        Err(e) => {
-                            // If there was an explicit error thrown, hault here.
-                            return DispatchResult::CommandFailed(Self::make_error(e))
-                        }
+                        Ok((_, Some(res))) => return DispatchResult::CommandSuccess(Some(res)),
+                        Ok((_, None)) => {}
+                        Err(e) => return DispatchResult::CommandFailed(Self::make_error(e)),
                     }
                 }
 
@@ -790,14 +785,13 @@ impl ChiselDispatcher {
         // TODO: Cloning / parsing the session source twice on non-inspected inputs kinda sucks.
         // Should change up how this works.
         match source.inspect(input).await {
-            // If the input was inspected, halt here.
-            Ok(Some(res)) => {
-                self.errored = false;
-                return DispatchResult::Success(Some(res))
-            }
-            Ok(None) => {}
+            // Continue and print
+            Ok((true, Some(res))) => println!("{res}"),
+            Ok((true, None)) => {}
+            // Return successfully
+            Ok((false, res)) => return DispatchResult::Success(res),
 
-            // If there was an explicit error thrown, halt here.
+            // Return with the error
             Err(e) => {
                 self.errored = true;
                 return DispatchResult::CommandFailed(Self::make_error(e))

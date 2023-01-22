@@ -32,7 +32,7 @@ impl SessionSource {
         // Recompile the project and ensure no errors occurred.
         let compiled = self.build()?;
         if let Some((_, contract)) =
-            compiled.compiler_output.contracts_into_iter().find(|(name, _)| name.eq(&"REPL"))
+            compiled.compiler_output.contracts_into_iter().find(|(name, _)| name == "REPL")
         {
             // These *should* never panic after a successful compilation.
             let bytecode = contract.get_bytecode_bytes().expect("No bytecode for contract.");
@@ -120,14 +120,14 @@ impl SessionSource {
     ///
     /// ### Returns
     ///
-    /// If successful, a formatted inspection output.
-    /// If unsuccessful but valid source, `Some(None)`
-    /// If unsuccessful, `Err(e)`
-    pub async fn inspect(&self, input: &str) -> Result<Option<String>> {
+    /// If the input is valid `Ok((formatted_output, continue))` where:
+    /// - `continue` is true if the input should be appended to the source
+    /// - `formatted_output` is the formatted value
+    pub async fn inspect(&self, input: &str) -> Result<(bool, Option<String>)> {
         let line = format!("bytes memory inspectoor = abi.encode({input});");
         let mut source = match self.clone_with_new_line(line) {
             Ok((source, _)) => source,
-            Err(_) => return Ok(None),
+            Err(_) => return Ok((true, None)),
         };
 
         // TODO: Any tuple fails compilation due to it not being able to be encoded in `inspectoor`
@@ -137,7 +137,7 @@ impl SessionSource {
                 if self.config.foundry_config.verbosity >= 3 {
                     eprintln!("Could not inspect: {e}");
                 }
-                return Ok(None)
+                return Ok((true, None))
             }
         };
 
@@ -155,12 +155,13 @@ impl SessionSource {
                 .get(input)
                 .or_else(|| source.infer_inner_expr_type());
 
-            let ty =
-                match contract_expr.and_then(|e| Type::ethabi(e, &generated_output.intermediate)) {
-                    Some(ty) => ty,
-                    // this type was denied for inspection, thus we move on gracefully
-                    None => return Ok(None),
-                };
+            let (contract_expr, ty) = match contract_expr
+                .and_then(|e| Type::ethabi(e, &generated_output.intermediate).map(|ty| (e, ty)))
+            {
+                Some(res) => res,
+                // this type was denied for inspection, thus we move on gracefully
+                None => return Ok((true, None)),
+            };
 
             // the file compiled correctly, thus the last stack item must be the memory offset of
             // the `bytes memory inspectoor` value
@@ -171,9 +172,9 @@ impl SessionSource {
             let data = &mem[offset..offset + len];
             let mut tokens =
                 ethabi::decode(&[ty], data).wrap_err("Could not decode inspected values")?;
-            // tokens is guaranteed to have the same length as the provided types
+            // `tokens` is guaranteed to have the same length as the provided types
             let token = tokens.pop().unwrap();
-            Ok(Some(format_token(token)))
+            Ok((should_continue(contract_expr), Some(format_token(token))))
         } else {
             if let Ok(decoder) = ChiselDispatcher::decode_traces(&source.config, &mut res) {
                 if ChiselDispatcher::show_traces(&decoder, &mut res).await.is_err() {
@@ -446,24 +447,23 @@ impl Type {
             pt::Expression::Unit(_, inner, _) |             // <inner> *unit*
             // ops
             pt::Expression::Complement(_, inner) |          // ~<inner>
-            pt::Expression::ArraySlice(_, inner, _, _)      // <inner>[*start*:*end*]
+            pt::Expression::ArraySlice(_, inner, _, _) |    // <inner>[*start*:*end*]
             // assign ops
-            // TODO: If this returns Some and gets "inspected", the assignment does not happen
-            // pt::Expression::PreDecrement(_, inner) |        // --<inner>
-            // pt::Expression::PostDecrement(_, inner) |       // <inner>--
-            // pt::Expression::PreIncrement(_, inner) |        // ++<inner>
-            // pt::Expression::PostIncrement(_, inner) |       // <inner>++
-            // pt::Expression::Assign(_, inner, _) |           // <inner>   = ...
-            // pt::Expression::AssignAdd(_, inner, _) |        // <inner>  += ...
-            // pt::Expression::AssignSubtract(_, inner, _) |   // <inner>  -= ...
-            // pt::Expression::AssignMultiply(_, inner, _) |   // <inner>  *= ...
-            // pt::Expression::AssignDivide(_, inner, _) |     // <inner>  /= ...
-            // pt::Expression::AssignModulo(_, inner, _) |     // <inner>  %= ...
-            // pt::Expression::AssignAnd(_, inner, _) |        // <inner>  &= ...
-            // pt::Expression::AssignOr(_, inner, _) |         // <inner>  |= ...
-            // pt::Expression::AssignXor(_, inner, _) |        // <inner>  ^= ...
-            // pt::Expression::AssignShiftLeft(_, inner, _) |  // <inner> <<= ...
-            // pt::Expression::AssignShiftRight(_, inner, _)   // <inner> >>= ...
+            pt::Expression::PreDecrement(_, inner) |        // --<inner>
+            pt::Expression::PostDecrement(_, inner) |       // <inner>--
+            pt::Expression::PreIncrement(_, inner) |        // ++<inner>
+            pt::Expression::PostIncrement(_, inner) |       // <inner>++
+            pt::Expression::Assign(_, inner, _) |           // <inner>   = ...
+            pt::Expression::AssignAdd(_, inner, _) |        // <inner>  += ...
+            pt::Expression::AssignSubtract(_, inner, _) |   // <inner>  -= ...
+            pt::Expression::AssignMultiply(_, inner, _) |   // <inner>  *= ...
+            pt::Expression::AssignDivide(_, inner, _) |     // <inner>  /= ...
+            pt::Expression::AssignModulo(_, inner, _) |     // <inner>  %= ...
+            pt::Expression::AssignAnd(_, inner, _) |        // <inner>  &= ...
+            pt::Expression::AssignOr(_, inner, _) |         // <inner>  |= ...
+            pt::Expression::AssignXor(_, inner, _) |        // <inner>  ^= ...
+            pt::Expression::AssignShiftLeft(_, inner, _) |  // <inner> <<= ...
+            pt::Expression::AssignShiftRight(_, inner, _)   // <inner> >>= ...
             => Self::from_expression(inner),
 
             // *condition* ? <if_true> : <if_false>
@@ -479,7 +479,7 @@ impl Type {
             pt::Expression::UnaryMinus(_, inner) => Self::from_expression(inner).map(Self::invert_int),
 
             // int if either operand is int
-            // TODO: will need an update for Solidity v0.8.18 custom operand implementations:
+            // TODO: will need an update for Solidity v0.8.18 user defined operators:
             // https://github.com/ethereum/solidity/issues/13718#issuecomment-1341058649
             pt::Expression::Add(_, lhs, rhs) |
             pt::Expression::Subtract(_, lhs, rhs) |
@@ -551,10 +551,7 @@ impl Type {
             }
 
             // explicitly None
-            pt::Expression::Delete(_, _) => None,
-
-            // TODO: Remove when exhaustive
-            _ => None,
+            pt::Expression::Delete(_, _) | pt::Expression::FunctionCallBlock(_, _, _) => None,
         }
     }
 
@@ -661,8 +658,7 @@ impl Type {
                             "balance" => Some(ParamType::Uint(256)),
                             "code" => Some(ParamType::Bytes),
                             "codehash" => Some(ParamType::FixedBytes(32)),
-                            // TODO: Same as assignment exprs
-                            // "send" => Some(ParamType::Bool),
+                            "send" => Some(ParamType::Bool),
                             _ => None,
                         },
                         "type" => match access {
@@ -744,7 +740,7 @@ impl Type {
             let Some(intermediate_contract) = intermediate.intermediate_contracts.get(&contract_name) else {
                 eyre::bail!("Could not find intermediate contract!")
             };
-            let cur_type = custom_type.last().ok_or(eyre::eyre!(""))?;
+            let cur_type = custom_type.last().ok_or_else(|| eyre::eyre!(""))?;
 
             if let Some(func) = intermediate_contract.function_definitions.get(cur_type) {
                 // Because tuple types cannot be passed to `abi.encode`, we will only be
@@ -932,6 +928,33 @@ impl Type {
             Self::Builtin(ty) => Some(ty),
             _ => None,
         }
+    }
+}
+
+/// Whether execution should continue after inspecting this expression
+#[inline]
+fn should_continue(expr: &pt::Expression) -> bool {
+    #[allow(clippy::match_like_matches_macro)]
+    match expr {
+        pt::Expression::PreDecrement(_, _) |       // --<inner>
+        pt::Expression::PostDecrement(_, _) |      // <inner>--
+        pt::Expression::PreIncrement(_, _) |       // ++<inner>
+        pt::Expression::PostIncrement(_, _) |      // <inner>++
+        pt::Expression::Assign(_, _, _) |          // <inner>   = ...
+        pt::Expression::AssignAdd(_, _, _) |       // <inner>  += ...
+        pt::Expression::AssignSubtract(_, _, _) |  // <inner>  -= ...
+        pt::Expression::AssignMultiply(_, _, _) |  // <inner>  *= ...
+        pt::Expression::AssignDivide(_, _, _) |    // <inner>  /= ...
+        pt::Expression::AssignModulo(_, _, _) |    // <inner>  %= ...
+        pt::Expression::AssignAnd(_, _, _) |       // <inner>  &= ...
+        pt::Expression::AssignOr(_, _, _) |        // <inner>  |= ...
+        pt::Expression::AssignXor(_, _, _) |       // <inner>  ^= ...
+        pt::Expression::AssignShiftLeft(_, _, _) | // <inner> <<= ...
+        pt::Expression::AssignShiftRight(_, _, _)  // <inner> >>= ...
+        => {
+            true
+        }
+        _ => false
     }
 }
 
