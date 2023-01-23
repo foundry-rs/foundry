@@ -85,7 +85,7 @@ impl SolidityHelper {
 
     /// Highlights a solidity source string
     pub fn highlight(input: &str) -> Cow<str> {
-        if !Paint::is_enabled() {
+        if !Paint::is_enabled() || Self::skip_input(input) {
             return Cow::Borrowed(input)
         }
 
@@ -132,6 +132,11 @@ impl SolidityHelper {
 
     /// Validate that a source snippet is closed (i.e., all braces and parenthesis are matched).
     fn validate_closed(input: &str) -> ValidationResult {
+        if Self::skip_input(input) {
+            let msg = Paint::red("\nInput must not start with `.<number>`");
+            return ValidationResult::Invalid(Some(msg.to_string()))
+        }
+
         let mut bracket_depth = 0usize;
         let mut paren_depth = 0usize;
         let mut brace_depth = 0usize;
@@ -183,6 +188,14 @@ impl SolidityHelper {
         let _ = style.fmt_prefix(out);
         out.push_str(string);
         let _ = style.fmt_suffix(out);
+    }
+
+    /// Whether to skip parsing this input due to known errors or panics
+    #[inline]
+    fn skip_input(input: &str) -> bool {
+        // input.startsWith(/\.[0-9]/)
+        let mut chars = input.chars();
+        chars.next() == Some('.') && chars.next().map(|c| c.is_ascii_digit()).unwrap_or_default()
     }
 }
 
