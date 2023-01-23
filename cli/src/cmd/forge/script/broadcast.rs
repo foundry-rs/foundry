@@ -538,6 +538,14 @@ impl ScriptArgs {
 
                 println!("\n==========================");
                 println!("\nChain {}", provider_info.chain);
+
+                println!(
+                    "\nEstimated gas price: {} gwei",
+                    format_units(per_gas, 9)
+                        .unwrap_or_else(|_| "[Could not calculate]".to_string())
+                        .trim_end_matches('0')
+                        .trim_end_matches('.')
+                );
                 println!("\nEstimated total gas used for script: {total_gas}");
                 println!(
                     "\nEstimated amount required: {} ETH",
