@@ -119,7 +119,6 @@ impl SessionSource {
     ///
     /// A new instance of [SessionSource]
     pub fn new(solc: Solc, config: SessionSourceConfig) -> Self {
-        #[cfg(not(test))]
         assert!(solc.version().is_ok());
 
         Self {

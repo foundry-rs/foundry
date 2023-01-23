@@ -1211,6 +1211,7 @@ impl<'a> Iterator for InstructionIter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ethers_solc::Solc;
 
     #[test]
     fn test_const() {
@@ -1477,7 +1478,8 @@ mod tests {
     }
 
     fn source() -> SessionSource {
-        SessionSource::new(Default::default(), Default::default())
+        let solc = Solc::find_or_install_svm_version("0.8.17").expect("could not install solc");
+        SessionSource::new(solc, Default::default())
     }
 
     fn array(ty: ParamType) -> ParamType {
