@@ -25,7 +25,7 @@ use ethers::{
         MnemonicBuilder, Signer,
     },
     types::BlockNumber,
-    utils::{format_ether, hex, WEI_IN_ETHER},
+    utils::{format_ether, hex, WEI_IN_ETHER, to_checksum},
 };
 use foundry_common::{ProviderBuilder, ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT};
 use foundry_config::Config;
@@ -172,7 +172,7 @@ Available Accounts
         );
         let balance = format_ether(self.genesis_balance);
         for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
-            let _ = write!(config_string, "\n({idx}) {:?} ({balance} ETH)", wallet.address());
+            let _ = write!(config_string, "\n({idx}) {:?} ({balance} ETH)", to_checksum(&wallet.address(), None));
         }
 
         let _ = write!(
