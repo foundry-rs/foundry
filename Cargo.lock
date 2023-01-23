@@ -2394,6 +2394,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "toml",
+ "tracing",
  "warp",
 ]
 
