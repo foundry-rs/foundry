@@ -1368,29 +1368,53 @@ impl Backend {
         let block_number: U256 = self.convert_block_number(block_number).into();
 
         if block_number < self.env.read().block.number {
-            let mut states = self.states.write();
-            return if let Some((state, block)) = self
-                .get_block(block_number.as_u64())
-                .and_then(|block| Some((states.get(&block.header.hash())?, block)))
             {
-                let block = BlockEnv {
-                    number: block.header.number,
-                    coinbase: block.header.beneficiary,
-                    timestamp: block.header.timestamp.into(),
-                    difficulty: block.header.difficulty,
-                    prevrandao: Some(block.header.mix_hash),
-                    basefee: block.header.base_fee_per_gas.unwrap_or_default(),
-                    gas_limit: block.header.gas_limit,
-                };
-                Ok(f(Box::new(state), block))
-            } else {
-                warn!(target: "backend", "Not historic state found for block={}", block_number);
-                Err(BlockchainError::BlockOutOfRange(
-                    self.env.read().block.number.as_u64(),
-                    block_number.as_u64(),
-                ))
+                let mut states = self.states.write();
+
+                if let Some((state, block)) = self
+                    .get_block(block_number.as_u64())
+                    .and_then(|block| Some((states.get(&block.header.hash())?, block)))
+                {
+                    let block = BlockEnv {
+                        number: block.header.number,
+                        coinbase: block.header.beneficiary,
+                        timestamp: block.header.timestamp.into(),
+                        difficulty: block.header.difficulty,
+                        prevrandao: Some(block.header.mix_hash),
+                        basefee: block.header.base_fee_per_gas.unwrap_or_default(),
+                        gas_limit: block.header.gas_limit,
+                    };
+                    return Ok(f(Box::new(state), block))
+                }
             }
+
+            // there's an edge case in forking mode if the requested `block_number` is __exactly__
+            // the forked block, which should be fetched from remote but since we allow genesis
+            // accounts this may not be accurate data because an account could be provided via
+            // genesis
+            // So this provides calls the given provided function `f` with a genesis aware database
+            if let Some(fork) = self.get_fork() {
+                if block_number == U256::from(fork.block_number()) {
+                    let mut block = self.env().read().block.clone();
+                    let db = self.db.read().await;
+                    let gen_db = self.genesis.state_db_at_genesis(Box::new(&*db));
+
+                    block.number = block_number;
+                    block.timestamp = fork.timestamp().into();
+                    block.difficulty = fork.total_difficulty();
+                    block.basefee = fork.base_fee().unwrap_or_default();
+
+                    return Ok(f(Box::new(&gen_db), block))
+                }
+            }
+
+            warn!(target: "backend", "Not historic state found for block={}", block_number);
+            return Err(BlockchainError::BlockOutOfRange(
+                self.env.read().block.number.as_u64(),
+                block_number.as_u64(),
+            ))
         }
+
         let db = self.db.read().await;
         let block = self.env().read().block.clone();
         Ok(f(Box::new(&*db), block))

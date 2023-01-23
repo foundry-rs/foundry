@@ -77,6 +77,50 @@ async fn test_fork_eth_get_balance() {
     }
 }
 
+// <https://github.com/foundry-rs/foundry/issues/4082>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_eth_get_balance_after_mine() {
+    let (api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+    let info = api.anvil_node_info().await.unwrap();
+    let number = info.fork_config.fork_block_number.unwrap();
+    assert_eq!(number, BLOCK_NUMBER);
+
+    let address = Address::random();
+
+    let _balance = provider
+        .get_balance(address, Some(BlockNumber::Number(number.into()).into()))
+        .await
+        .unwrap();
+
+    api.evm_mine(None).await.unwrap();
+
+    let _balance = provider
+        .get_balance(address, Some(BlockNumber::Number(number.into()).into()))
+        .await
+        .unwrap();
+}
+
+// <https://github.com/foundry-rs/foundry/issues/4082>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_eth_get_code_after_mine() {
+    let (api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+    let info = api.anvil_node_info().await.unwrap();
+    let number = info.fork_config.fork_block_number.unwrap();
+    assert_eq!(number, BLOCK_NUMBER);
+
+    let address = Address::random();
+
+    let _code =
+        provider.get_code(address, Some(BlockNumber::Number(number.into()).into())).await.unwrap();
+
+    api.evm_mine(None).await.unwrap();
+
+    let _code =
+        provider.get_code(address, Some(BlockNumber::Number(number.into()).into())).await.unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_eth_get_code() {
     let (api, handle) = spawn(fork_config()).await;
