@@ -20,7 +20,7 @@ ethers-contract = { git = "https://github.com/gakonst/ethers-rs", default-featur
 ] }
 curl = { version = "0.4", default-features = false, features = ["http2"] }
 eyre = "0.6"
-git2 = { version = "0.15.0", default-features = false }
+git2 = { version = "0.16.1", default-features = false }
 url = "2.2"
 tracing = "0.1"
 tempfile = "3.3.0"
