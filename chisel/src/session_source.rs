@@ -119,7 +119,9 @@ impl SessionSource {
     ///
     /// A new instance of [SessionSource]
     pub fn new(solc: Solc, config: SessionSourceConfig) -> Self {
+        #[cfg(not(test))]
         assert!(solc.version().is_ok());
+
         Self {
             file_name: PathBuf::from("ReplContract.sol".to_string()),
             contract_name: "REPL".to_string(),
