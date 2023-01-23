@@ -20,6 +20,8 @@ use forge::{
 use solang_parser::pt::{self, CodeLocation};
 use yansi::Paint;
 
+const USIZE_MAX_AS_U256: U256 = U256([usize::MAX as u64, 0, 0, 0]);
+
 /// Executor implementation for [SessionSource]
 impl SessionSource {
     /// Runs the source with the [ChiselRunner]
@@ -134,7 +136,7 @@ impl SessionSource {
         let mut res = match source.execute().await {
             Ok((_, res)) => res,
             Err(e) => {
-                if self.config.traces {
+                if self.config.foundry_config.verbosity >= 3 {
                     eprintln!("Could not inspect: {e}");
                 }
                 return Ok((true, None))
@@ -360,7 +362,7 @@ fn format_token(token: Token) -> String {
 // [soli](https://github.com/jpopesculian/soli)
 // =============================================
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 enum Type {
     /// (type)
     Builtin(ParamType),
@@ -370,6 +372,9 @@ enum Type {
 
     /// (type, length)
     FixedArray(Box<Type>, usize),
+
+    /// (type, index)
+    ArrayIndex(Box<Type>, Option<usize>),
 
     /// (types)
     Tuple(Vec<Option<Type>>),
@@ -403,19 +408,36 @@ impl Type {
 
             // array
             pt::Expression::ArraySubscript(_, expr, num) => {
+                // eprintln!("ARR: {expr:?} - {num:?}");
+                // if num is Some then this is either an index operation (arr[<num>])
+                // or a FixedArray statement (new uint256[<num>])
                 Self::from_expression(expr).and_then(|ty| {
                     let ty = Box::new(ty);
-                    let num = num.as_deref().and_then(parse_number_literal);
-                    if let Some(num) = num {
+                    let boxed = Box::new(ty);
+                    let num = num.as_deref().and_then(parse_number_literal).and_then(|n| {
                         // overflow check
-                        const MAX_U64_AS_U256: U256 = U256([0, 0, 0, usize::MAX as u64]);
-                        if num > MAX_U64_AS_U256 {
+                        if n > USIZE_MAX_AS_U256 {
                             None
                         } else {
-                            Some(Self::FixedArray(ty, num.as_usize()))
+                            Some(n.as_usize())
                         }
-                    } else {
-                        Some(Self::Array(ty))
+                    });
+                    match expr.as_ref() {
+                        // statement
+                        pt::Expression::Type(_, _) => {
+                            eprintln!("  ty");
+                            if let Some(num) = num {
+                                Some(Self::FixedArray(boxed, num))
+                            } else {
+                                Some(Self::Array(boxed))
+                            }
+                        }
+                        // index
+                        pt::Expression::Variable(_) => {
+                            eprintln!("  var");
+                            Some(Self::ArrayIndex(boxed, num))
+                        }
+                        _ => None
                     }
                 })
             }
@@ -426,10 +448,7 @@ impl Type {
             }
 
             // tuple
-            pt::Expression::List(_, params) => {
-                let params = map_parameters(params);
-                Some(Self::Tuple(params))
-            }
+            pt::Expression::List(_, params) => Some(Self::Tuple(map_parameters(params))),
 
             // <lhs>.<rhs>
             pt::Expression::MemberAccess(_, lhs, rhs) => {
@@ -471,6 +490,21 @@ impl Type {
 
             // address
             pt::Expression::AddressLiteral(_, _) => Some(Self::Builtin(ParamType::Address)),
+            pt::Expression::HexNumberLiteral(_, s) => {
+                match s.parse() {
+                    Ok(addr) => {
+                        let checksummed = ethers::utils::to_checksum(&addr, None);
+                        if *s == checksummed {
+                            Some(Self::Builtin(ParamType::Address))
+                        } else {
+                            Some(Self::Builtin(ParamType::Uint(256)))
+                        }
+                    },
+                    _ => {
+                        Some(Self::Builtin(ParamType::Uint(256)))
+                    }
+                }
+            }
 
             // uint and int
             // invert
@@ -483,21 +517,16 @@ impl Type {
             pt::Expression::Subtract(_, lhs, rhs) |
             pt::Expression::Multiply(_, lhs, rhs) |
             pt::Expression::Divide(_, lhs, rhs) => {
-                #[allow(clippy::match_like_matches_macro)]
-                let is_int = match (Self::from_expression(lhs), Self::from_expression(rhs)) {
-                    (Some(Self::Builtin(ParamType::Int(_))), Some(Self::Builtin(ParamType::Int(_)))) |
-                    (Some(Self::Builtin(ParamType::Int(_))), Some(Self::Builtin(ParamType::Uint(_)))) |
-                    (Some(Self::Builtin(ParamType::Uint(_))), Some(Self::Builtin(ParamType::Int(_)))) => {
-                        true
+                match (Self::ethabi_normal(lhs), Self::ethabi_normal(rhs)) {
+                    (Some(ParamType::Int(_)), Some(ParamType::Int(_))) |
+                    (Some(ParamType::Int(_)), Some(ParamType::Uint(_))) |
+                    (Some(ParamType::Uint(_)), Some(ParamType::Int(_))) => {
+                        Some(Self::Builtin(ParamType::Int(256)))
                     }
-                    _ => false
-                };
-                let ty = if is_int {
-                    Self::Builtin(ParamType::Int(256))
-                } else {
-                    Self::Builtin(ParamType::Uint(256))
-                };
-                Some(ty)
+                    _ => {
+                        Some(Self::Builtin(ParamType::Uint(256)))
+                    }
+                }
             }
 
             // always assume uint
@@ -508,8 +537,7 @@ impl Type {
             pt::Expression::BitwiseXor(_, _, _) |
             pt::Expression::ShiftRight(_, _, _) |
             pt::Expression::ShiftLeft(_, _, _) |
-            pt::Expression::NumberLiteral(_, _, _) |
-            pt::Expression::HexNumberLiteral(_, _) => Some(Self::Builtin(ParamType::Uint(256))),
+            pt::Expression::NumberLiteral(_, _, _) => Some(Self::Builtin(ParamType::Uint(256))),
 
             // TODO: Rational numbers
             pt::Expression::RationalNumberLiteral(_, _, _, _) => {
@@ -592,7 +620,7 @@ impl Type {
         Some(ty)
     }
 
-    /// Handle special expressions like [global variables and methods](https://docs.soliditylang.org/en/latest/cheatsheet.html#global-variables)
+    /// Handle special expressions like [global variables](https://docs.soliditylang.org/en/latest/cheatsheet.html#global-variables)
     fn map_special(self) -> Self {
         if !matches!(self, Self::Function(_, _, _) | Self::Access(_, _) | Self::Custom(_)) {
             return self
@@ -942,6 +970,7 @@ impl Type {
                     .try_as_ethabi(intermediate)
                     .map(|inner| ParamType::FixedArray(Box::new(inner), size)),
             },
+            Self::ArrayIndex(inner, _) => inner.into_array_index(Some(intermediate)),
             Self::Custom(mut types) => {
                 // Cover any local non-state-modifying function call expressions
                 Self::infer_custom_type(intermediate, &mut types, None).ok().flatten()
@@ -966,6 +995,7 @@ impl Type {
             Self::FixedArray(inner, size) => inner
                 .try_as_ethabi_normal()
                 .map(|inner| ParamType::FixedArray(Box::new(inner), size)),
+            Self::ArrayIndex(inner, _) => inner.into_array_index(None),
             Self::Function(name, _, _) => name.try_as_ethabi_normal(),
             // Should've been converted to Custom in previous steps
             Self::Access(_, _) => None,
@@ -973,11 +1003,16 @@ impl Type {
         }
     }
 
-    /// Equivalent to `Type::from_expression` + `Type::map_special` + `Type::try_as_ethabi)`
+    /// Equivalent to `Type::from_expression` + `Type::map_special` + `Type::try_as_ethabi`
     fn ethabi(expr: &pt::Expression, intermediate: &IntermediateOutput) -> Option<ParamType> {
         Self::from_expression(expr)
             .map(Self::map_special)
             .and_then(|ty| ty.try_as_ethabi(intermediate))
+    }
+
+    /// Equivalent to `Type::from_expression` + `Type::map_special` + `Type::try_as_ethabi_normal`
+    fn ethabi_normal(expr: &pt::Expression) -> Option<ParamType> {
+        Self::from_expression(expr).map(Self::map_special).and_then(Self::try_as_ethabi_normal)
     }
 
     /// Inverts Int to Uint and viceversa.
@@ -994,6 +1029,28 @@ impl Type {
     fn into_builtin(self) -> Option<ParamType> {
         match self {
             Self::Builtin(ty) => Some(ty),
+            _ => None,
+        }
+    }
+
+    /// Returns the resulting `ParamType` of indexing self
+    fn into_array_index(self, intermediate: Option<&IntermediateOutput>) -> Option<ParamType> {
+        match self {
+            Self::Array(inner) | Self::FixedArray(inner, _) | Self::ArrayIndex(inner, _) => {
+                let ty = match intermediate {
+                    Some(intermediate) => inner.try_as_ethabi(intermediate),
+                    None => inner.try_as_ethabi_normal(),
+                };
+                match ty {
+                    Some(ParamType::Array(inner)) | Some(ParamType::FixedArray(inner, _)) => {
+                        Some(*inner)
+                    }
+                    Some(ParamType::Bytes) | Some(ParamType::String) => {
+                        Some(ParamType::FixedBytes(1))
+                    }
+                    ty => ty,
+                }
+            }
             _ => None,
         }
     }
