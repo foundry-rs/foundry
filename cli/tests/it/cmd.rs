@@ -368,7 +368,7 @@ forgetest_init!(can_clean_config, |prj: TestProject, mut cmd: TestCommand| {
     cmd.assert_non_empty_stdout();
 
     // default test contract is written in custom out directory
-    let artifact = prj.root().join(format!("custom-out/{}", TEMPLATE_TEST_CONTRACT_ARTIFACT_JSON));
+    let artifact = prj.root().join(format!("custom-out/{TEMPLATE_TEST_CONTRACT_ARTIFACT_JSON}"));
     assert!(artifact.exists());
 
     cmd.forge_fuse().arg("clean");
@@ -390,7 +390,7 @@ forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| 
     cmd.assert_non_empty_stdout();
 
     let metadata_path =
-        prj.paths().artifacts.join(format!("{}.metadata.json", TEMPLATE_CONTRACT_ARTIFACT_BASE));
+        prj.paths().artifacts.join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.metadata.json"));
     let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
 });
 
@@ -419,14 +419,14 @@ forgetest_init!(can_emit_multiple_extra_output, |prj: TestProject, mut cmd: Test
     cmd.assert_non_empty_stdout();
 
     let metadata_path =
-        prj.paths().artifacts.join(format!("{}.metadata.json", TEMPLATE_CONTRACT_ARTIFACT_BASE));
+        prj.paths().artifacts.join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.metadata.json"));
     let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
 
-    let iropt = prj.paths().artifacts.join(format!("{}.iropt", TEMPLATE_CONTRACT_ARTIFACT_BASE));
+    let iropt = prj.paths().artifacts.join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.iropt"));
     std::fs::read_to_string(iropt).unwrap();
 
     let sourcemap =
-        prj.paths().artifacts.join(format!("{}.sourcemap", TEMPLATE_CONTRACT_ARTIFACT_BASE));
+        prj.paths().artifacts.join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.sourcemap"));
     std::fs::read_to_string(sourcemap).unwrap();
 });
 
@@ -903,7 +903,7 @@ forgetest!(can_install_latest_release_tag, |prj: TestProject, mut cmd: TestComma
     let version: Version = "4.8.0".parse().unwrap();
     let out = Command::new("git").current_dir(&dep).args(["describe", "--tags"]).output().unwrap();
     let tag = String::from_utf8_lossy(&out.stdout);
-    let current: Version = tag.as_ref().trim_start_matches("v").trim().parse().unwrap();
+    let current: Version = tag.as_ref().trim_start_matches('v').trim().parse().unwrap();
 
     assert!(current >= version);
 });

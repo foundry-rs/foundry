@@ -42,7 +42,7 @@ reqwest = { version = "0.11.8", default-features = false, features = [
     "rustls",
     "rustls-native-certs",
 ] }
-dotenv = "0.15.0"
+dotenvy = "0.15"
 dialoguer = { version = "0.10.2", default-features = false }
 
 # async / parallel

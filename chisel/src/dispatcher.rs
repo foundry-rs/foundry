@@ -7,7 +7,7 @@ use crate::prelude::{
     ChiselCommand, ChiselResult, ChiselSession, CmdCategory, CmdDescriptor, SessionSourceConfig,
     SolidityHelper,
 };
-use ethers::{abi::ParamType, utils::hex};
+use ethers::{abi::ParamType, contract::Lazy, utils::hex};
 use forge::{
     decode::decode_console_logs,
     trace::{
@@ -17,6 +17,7 @@ use forge::{
 };
 use forge_fmt::FormatterConfig;
 use foundry_config::{Config, RpcEndpoint};
+use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use solang_parser::diagnostics::Diagnostic;
@@ -30,6 +31,10 @@ static PROMPT_ARROW: char = '➜';
 static COMMAND_LEADER: char = '!';
 /// Chisel character
 static CHISEL_CHAR: &str = "⚒️";
+
+/// Matches Solidity comments
+static COMMENT_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^\s*(?://.*\s*$)|(/*[\s\S]*?\*/\s*$)").unwrap());
 
 /// Chisel input dispatcher
 #[derive(Debug)]
@@ -759,15 +764,16 @@ impl ChiselDispatcher {
                 Ok(cmd) => {
                     let command_dispatch = self.dispatch_command(cmd, &split[1..]).await;
                     self.errored = !matches!(command_dispatch, DispatchResult::CommandSuccess(_));
-                    return command_dispatch
+                    command_dispatch
                 }
                 Err(e) => {
                     self.errored = true;
                     DispatchResult::UnrecognizedCommand(e)
                 }
             }
-        } else if input.trim().is_empty() {
-            return DispatchResult::CommandSuccess(None)
+        }
+        if input.trim().is_empty() {
+            return DispatchResult::Success(None)
         }
 
         // Get a mutable reference to the session source
@@ -777,6 +783,23 @@ impl ChiselDispatcher {
             Err(e) => {
                 self.errored = true;
                 return e
+            }
+        };
+
+        // If the input is a comment, add it to the run code so we avoid running with empty input
+        if COMMENT_RE.is_match(input) {
+            source.with_run_code(input);
+            return DispatchResult::Success(None)
+        }
+
+        // Create new source with exact input appended and parse
+        let (mut new_source, do_execute) = match source.clone_with_new_line(input.to_string()) {
+            Ok(new) => new,
+            Err(e) => {
+                self.errored = true;
+                return DispatchResult::CommandFailed(Self::make_error(format!(
+                    "Failed to parse input! {e}"
+                )))
             }
         };
 
@@ -795,17 +818,6 @@ impl ChiselDispatcher {
                 return DispatchResult::CommandFailed(Self::make_error(e))
             }
         }
-
-        // Create new source with exact input appended and parse
-        let (mut new_source, do_execute) = match source.clone_with_new_line(input.to_string()) {
-            Ok(new) => new,
-            Err(e) => {
-                self.errored = true;
-                return DispatchResult::CommandFailed(Self::make_error(format!(
-                    "Failed to parse input! {e}"
-                )))
-            }
-        };
 
         if do_execute {
             match new_source.execute().await {
@@ -945,5 +957,21 @@ impl ChiselDispatcher {
     /// A formatted error [String].
     pub fn make_error<T: std::fmt::Display>(msg: T) -> String {
         format!("{} {}", Paint::red(format!("{CHISEL_CHAR} Chisel Error:")), Paint::red(msg))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_comment_regex() {
+        assert!(COMMENT_RE.is_match("// line comment"));
+        assert!(COMMENT_RE.is_match("  \n// line \tcomment\n"));
+        assert!(!COMMENT_RE.is_match("// line \ncomment"));
+
+        assert!(COMMENT_RE.is_match("/* block comment */"));
+        assert!(COMMENT_RE.is_match(" \t\n  /* block \n \t comment */\n"));
+        assert!(!COMMENT_RE.is_match("/* block \n \t comment */\nwith \tother"));
     }
 }

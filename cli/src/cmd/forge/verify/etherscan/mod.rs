@@ -242,14 +242,20 @@ impl EtherscanVerificationProvider {
     ) -> eyre::Result<Client> {
         let etherscan_config = config.get_etherscan_config_with_chain(Some(chain))?;
 
-        let url = verifier_url.or_else(|| etherscan_config.as_ref().map(|c| c.api_url.as_str()));
+        let api_url =
+            verifier_url.or_else(|| etherscan_config.as_ref().map(|c| c.api_url.as_str()));
+        let base_url = etherscan_config
+            .as_ref()
+            .and_then(|c| c.browser_url.as_deref())
+            .or_else(|| chain.etherscan_urls().map(|urls| urls.1));
+
         let etherscan_key =
             etherscan_key.or_else(|| etherscan_config.as_ref().map(|c| c.key.as_str()));
 
         let mut builder = Client::builder();
 
-        builder = if let Some(url) = url {
-            builder.with_api_url(url)?.with_url(url)?
+        builder = if let Some(api_url) = api_url {
+            builder.with_api_url(api_url)?.with_url(base_url.unwrap_or(api_url))?
         } else {
             builder.chain(chain.to_owned().try_into()?)?
         };

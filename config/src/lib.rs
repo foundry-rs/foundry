@@ -305,6 +305,9 @@ pub struct Config {
     /// Disables storage caching entirely. This overrides any settings made in
     /// `rpc_storage_caching`
     pub no_storage_caching: bool,
+    /// Disables rate limiting entirely. This overrides any settings made in
+    /// `compute_units_per_second`
+    pub no_rpc_rate_limit: bool,
     /// Multiple rpc endpoints and their aliases
     #[serde(default, skip_serializing_if = "RpcEndpoints::is_empty")]
     pub rpc_endpoints: RpcEndpoints,
@@ -1738,6 +1741,7 @@ impl Default for Config {
             rpc_endpoints: Default::default(),
             etherscan: Default::default(),
             no_storage_caching: false,
+            no_rpc_rate_limit: false,
             bytecode_hash: BytecodeHash::Ipfs,
             cbor_metadata: true,
             revert_strings: None,
@@ -3237,6 +3241,7 @@ mod tests {
                 memory_limit = 33554432
                 names = false
                 no_storage_caching = false
+                no_rpc_rate_limit = false
                 offline = false
                 optimizer = true
                 optimizer_runs = 200
