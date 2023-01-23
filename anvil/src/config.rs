@@ -172,7 +172,8 @@ Available Accounts
         );
         let balance = format_ether(self.genesis_balance);
         for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
-            let _ = write!(config_string, "\n({idx}) {:?} ({balance} ETH)", to_checksum(&wallet.address(), None));
+            let _ = write!(config_string, "\n({idx}) {:?} ({balance} ETH)", to_checksum(&wallet.address(), self.chain_id.and_then(|c|Some(u8::try_from(c).unwrap_or_default()))
+        ));
         }
 
         let _ = write!(
