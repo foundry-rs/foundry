@@ -608,8 +608,9 @@ impl Type {
         }
 
         let this = {
-            let name = types.get(len - 1).unwrap().as_str();
+            let name = types.last().unwrap().as_str();
             match len {
+                0 => unreachable!(),
                 1 => match name {
                     "gasleft" | "addmod" | "mulmod" => Some(ParamType::Uint(256)),
                     "keccak256" | "sha256" | "blockhash" => Some(ParamType::FixedBytes(32)),
@@ -618,7 +619,7 @@ impl Type {
                     _ => None,
                 },
                 2 => {
-                    let access = types.get(len - 2).unwrap().as_str();
+                    let access = types.first().unwrap().as_str();
                     match name {
                         "block" => match access {
                             "coinbase" => Some(ParamType::Address),
@@ -638,20 +639,26 @@ impl Type {
                             "origin" => Some(ParamType::Address),
                             _ => None,
                         },
-                        "abi" => {
-                            match access {
-                                "decode" => {
-                                    // args = Some([Bytes(_), Tuple(args)])
-                                    // unwrapping is safe because this is first compiled by solc so
-                                    // it is guaranteed to be a valid call
-                                    let mut args = args.unwrap();
-                                    let last = args.pop().unwrap();
-                                    last.and_then(Type::builtin)
+                        "abi" => match access {
+                            "decode" => {
+                                // args = Some([Bytes(_), Tuple(args)])
+                                // unwrapping is safe because this is first compiled by solc so
+                                // it is guaranteed to be a valid call
+                                let mut args = args.unwrap();
+                                let last = args.pop().unwrap();
+                                match last {
+                                    Some(ty) => {
+                                        return match ty {
+                                            Self::Tuple(_) => ty,
+                                            ty => Self::Tuple(vec![Some(ty)]),
+                                        }
+                                    }
+                                    None => None,
                                 }
-                                s if s.starts_with("encode") => Some(ParamType::Bytes),
-                                _ => None,
                             }
-                        }
+                            s if s.starts_with("encode") => Some(ParamType::Bytes),
+                            _ => None,
+                        },
                         "address" => match access {
                             "balance" => Some(ParamType::Uint(256)),
                             "code" => Some(ParamType::Bytes),
@@ -680,7 +687,7 @@ impl Type {
                         _ => None,
                     }
                 }
-                _ => unreachable!(),
+                _ => None,
             }
         };
 
@@ -730,17 +737,31 @@ impl Type {
     fn infer_custom_type(
         intermediate: &IntermediateOutput,
         custom_type: &mut Vec<String>,
-        contract_name: Option<String>,
+        mut contract_name: Option<String>,
     ) -> Result<Option<ParamType>> {
+        if let Some("this") | Some("super") = custom_type.last().map(String::as_str) {
+            custom_type.pop();
+            contract_name = Some("REPL".into());
+        }
+        if custom_type.is_empty() {
+            return Ok(None)
+        }
+
         // First, check if the contract name has been defined
         if let Some(contract_name) = contract_name {
             // Next, check if an intermediate contract exists for `contract_name`
-            let Some(intermediate_contract) = intermediate.intermediate_contracts.get(&contract_name) else {
-                eyre::bail!("Could not find intermediate contract!")
-            };
-            let cur_type = custom_type.last().ok_or_else(|| eyre::eyre!(""))?;
+            let intermediate_contract = intermediate
+                .intermediate_contracts
+                .get(&contract_name)
+                .ok_or_else(|| eyre::eyre!("Could not find intermediate contract!"))?;
 
+            let cur_type = custom_type.last().unwrap();
             if let Some(func) = intermediate_contract.function_definitions.get(cur_type) {
+                // Check if the custom type is a function pointer member access
+                if let res @ Some(_) = func_members(&func, custom_type) {
+                    return Ok(res)
+                }
+
                 // Because tuple types cannot be passed to `abi.encode`, we will only be
                 // receiving functions that have 0 or 1 return parameters here.
                 if func.returns.is_empty() {
@@ -926,6 +947,31 @@ impl Type {
             Self::Builtin(ty) => Some(ty),
             _ => None,
         }
+    }
+}
+
+/// Returns Some if the custom type is a function member access
+///
+/// Ref: <https://docs.soliditylang.org/en/latest/types.html#function-types>
+#[inline]
+fn func_members(func: &pt::FunctionDefinition, custom_type: &[String]) -> Option<ParamType> {
+    if !matches!(func.ty, pt::FunctionTy::Function) {
+        return None
+    }
+
+    let vis = func.attributes.iter().find_map(|attr| match attr {
+        pt::FunctionAttribute::Visibility(vis) => Some(vis),
+        _ => None,
+    });
+    match vis {
+        Some(pt::Visibility::External(_)) | Some(pt::Visibility::Public(_)) => {
+            match custom_type.first().unwrap().as_str() {
+                "address" => Some(ParamType::Address),
+                "selector" => Some(ParamType::FixedBytes(4)),
+                _ => None,
+            }
+        }
+        _ => None,
     }
 }
 
