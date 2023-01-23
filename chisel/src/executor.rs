@@ -173,7 +173,7 @@ impl SessionSource {
             .or_else(|| source.infer_inner_expr_type());
 
         let (contract_expr, ty) = match contract_expr
-            .and_then(|e| Type::ethabi(e, &generated_output.intermediate).map(|ty| (e, ty)))
+            .and_then(|e| Type::ethabi(e, Some(&generated_output.intermediate)).map(|ty| (e, ty)))
         {
             Some(res) => res,
             // this type was denied for inspection, continue
@@ -522,7 +522,7 @@ impl Type {
             pt::Expression::Subtract(_, lhs, rhs) |
             pt::Expression::Multiply(_, lhs, rhs) |
             pt::Expression::Divide(_, lhs, rhs) => {
-                match (Self::ethabi_normal(lhs), Self::ethabi_normal(rhs)) {
+                match (Self::ethabi(lhs, None), Self::ethabi(rhs, None)) {
                     (Some(ParamType::Int(_)), Some(ParamType::Int(_))) |
                     (Some(ParamType::Int(_)), Some(ParamType::Uint(_))) |
                     (Some(ParamType::Uint(_)), Some(ParamType::Int(_))) => {
@@ -644,7 +644,7 @@ impl Type {
         #[allow(clippy::single_match)]
         match &self {
             Self::Access(inner, access) => {
-                if let Some(ty) = inner.as_ref().clone().try_as_ethabi_normal() {
+                if let Some(ty) = inner.as_ref().clone().try_as_ethabi(None) {
                     // Array / bytes members
                     let ty = Self::Builtin(ty);
                     match access.as_str() {
@@ -852,15 +852,15 @@ impl Type {
                     eyre::bail!("This function mutates state. Insert as a statement.")
                 }
 
-                Ok(Self::ethabi(return_ty, intermediate))
+                Ok(Self::ethabi(return_ty, Some(intermediate)))
             } else if let Some(var) = intermediate_contract.variable_definitions.get(cur_type) {
-                Self::infer_var_expr(&var.ty, intermediate, custom_type)
+                Self::infer_var_expr(&var.ty, Some(intermediate), custom_type)
             } else if let Some(strukt) = intermediate_contract.struct_definitions.get(cur_type) {
                 let inner_types = strukt
                     .fields
                     .iter()
                     .map(|var| {
-                        Self::ethabi(&var.ty, intermediate)
+                        Self::ethabi(&var.ty, Some(intermediate))
                             .ok_or_else(|| eyre::eyre!("Struct `{cur_type}` has invalid fields"))
                     })
                     .collect::<Result<Vec<_>>>()?;
@@ -888,7 +888,7 @@ impl Type {
             // See [`Type::infer_var_expr`]
             let name = custom_type.last().unwrap();
             if let Some(expr) = intermediate.repl_contract_expressions.get(name) {
-                return Self::infer_var_expr(expr, intermediate, custom_type)
+                return Self::infer_var_expr(expr, Some(intermediate), custom_type)
             }
 
             // The first element of our custom type was neither a variable or a function within the
@@ -900,7 +900,7 @@ impl Type {
     /// Infers the type from a variable's type
     fn infer_var_expr(
         expr: &pt::Expression,
-        intermediate: &IntermediateOutput,
+        intermediate: Option<&IntermediateOutput>,
         custom_type: &mut Vec<String>,
         // contract_name: Option<String>,
         // intermediate_contract: Option<&IntermediateContract>,
@@ -911,28 +911,32 @@ impl Type {
             pt::Expression::Variable(ident) => {
                 let name = &ident.name;
 
-                // if let Some(intermediate_contract) = intermediate_contract {
-                //     if intermediate_contract.struct_definitions.contains_key(name) {
-                //         custom_type.clear();
-                //         custom_type.push(name.clone());
-                //         return Self::infer_custom_type(intermediate, custom_type, contract_name)
-                //     }
-                // }
+                if let Some(intermediate) = intermediate {
+                    // if let Some(intermediate_contract) = intermediate_contract {
+                    //     if intermediate_contract.struct_definitions.contains_key(name) {
+                    //         custom_type.clear();
+                    //         custom_type.push(name.clone());
+                    //         return Self::infer_custom_type(intermediate, custom_type,
+                    // contract_name)     }
+                    // }
 
-                // expression in `run`
-                if let Some(expr) = intermediate.repl_contract_expressions.get(name) {
-                    Self::infer_var_expr(expr, intermediate, custom_type)
-                } else if intermediate.intermediate_contracts.contains_key(name) {
-                    if custom_type.len() > 1 {
-                        // There is still some recursing left to do: jump into the contract.
-                        custom_type.pop();
-                        Self::infer_custom_type(intermediate, custom_type, Some(name.clone()))
+                    // expression in `run`
+                    if let Some(expr) = intermediate.repl_contract_expressions.get(name) {
+                        Self::infer_var_expr(expr, Some(intermediate), custom_type)
+                    } else if intermediate.intermediate_contracts.contains_key(name) {
+                        if custom_type.len() > 1 {
+                            // There is still some recursing left to do: jump into the contract.
+                            custom_type.pop();
+                            Self::infer_custom_type(intermediate, custom_type, Some(name.clone()))
+                        } else {
+                            // We have no types left to recurse: return the address of the contract.
+                            Ok(Some(ParamType::Address))
+                        }
                     } else {
-                        // We have no types left to recurse: return the address of the contract.
-                        Ok(Some(ParamType::Address))
+                        Err(eyre::eyre!("Could not infer variable type"))
                     }
                 } else {
-                    Err(eyre::eyre!("Could not infer variable type"))
+                    Ok(None)
                 }
             }
             ty => Ok(Self::ethabi(ty, intermediate)),
@@ -960,7 +964,7 @@ impl Type {
     ///
     /// ### Returns
     /// Optionally, a [ParamType]
-    fn try_as_ethabi(self, intermediate: &IntermediateOutput) -> Option<ParamType> {
+    fn try_as_ethabi(self, intermediate: Option<&IntermediateOutput>) -> Option<ParamType> {
         match self {
             Self::Tuple(types) => Some(ParamType::Tuple(types_to_parameters(types, intermediate))),
             Self::Array(inner) => match *inner {
@@ -975,49 +979,25 @@ impl Type {
                     .try_as_ethabi(intermediate)
                     .map(|inner| ParamType::FixedArray(Box::new(inner), size)),
             },
-            ty @ Self::ArrayIndex(_, _) => ty.into_array_index(Some(intermediate)),
+            ty @ Self::ArrayIndex(_, _) => ty.into_array_index(intermediate),
             Self::Custom(mut types) => {
                 // Cover any local non-state-modifying function call expressions
-                Self::infer_custom_type(intermediate, &mut types, None).ok().flatten()
+                intermediate.and_then(|intermediate| {
+                    Self::infer_custom_type(intermediate, &mut types, None).ok().flatten()
+                })
             }
-            ty => ty.try_as_ethabi_normal(),
-        }
-    }
-
-    /// Same as [`Type::try_as_ethabi`] but without resolving custom types.
-    fn try_as_ethabi_normal(self) -> Option<ParamType> {
-        match self {
-            Self::Builtin(param) => Some(param),
-            Self::Tuple(types) => Some(ParamType::Tuple(
-                types
-                    .into_iter()
-                    .filter_map(|ty| ty.and_then(Self::try_as_ethabi_normal))
-                    .collect(),
-            )),
-            Self::Array(inner) => {
-                inner.try_as_ethabi_normal().map(|inner| ParamType::Array(Box::new(inner)))
-            }
-            Self::FixedArray(inner, size) => inner
-                .try_as_ethabi_normal()
-                .map(|inner| ParamType::FixedArray(Box::new(inner), size)),
-            ty @ Self::ArrayIndex(_, _) => ty.into_array_index(None),
-            Self::Function(name, _, _) => name.try_as_ethabi_normal(),
-            // Should've been converted to Custom in previous steps
-            Self::Access(_, _) => None,
-            Self::Custom(_) => None,
+            ty => ty.try_as_ethabi(None),
         }
     }
 
     /// Equivalent to `Type::from_expression` + `Type::map_special` + `Type::try_as_ethabi`
-    fn ethabi(expr: &pt::Expression, intermediate: &IntermediateOutput) -> Option<ParamType> {
+    fn ethabi(
+        expr: &pt::Expression,
+        intermediate: Option<&IntermediateOutput>,
+    ) -> Option<ParamType> {
         Self::from_expression(expr)
             .map(Self::map_special)
             .and_then(|ty| ty.try_as_ethabi(intermediate))
-    }
-
-    /// Equivalent to `Type::from_expression` + `Type::map_special` + `Type::try_as_ethabi_normal`
-    fn ethabi_normal(expr: &pt::Expression) -> Option<ParamType> {
-        Self::from_expression(expr).map(Self::map_special).and_then(Self::try_as_ethabi_normal)
     }
 
     /// Inverts Int to Uint and viceversa.
@@ -1042,11 +1022,7 @@ impl Type {
     fn into_array_index(self, intermediate: Option<&IntermediateOutput>) -> Option<ParamType> {
         match self {
             Self::Array(inner) | Self::FixedArray(inner, _) | Self::ArrayIndex(inner, _) => {
-                let ty = match intermediate {
-                    Some(intermediate) => inner.try_as_ethabi(intermediate),
-                    None => inner.try_as_ethabi_normal(),
-                };
-                match ty {
+                match inner.try_as_ethabi(intermediate) {
                     Some(ParamType::Array(inner)) | Some(ParamType::FixedArray(inner, _)) => {
                         Some(*inner)
                     }
@@ -1160,7 +1136,7 @@ fn map_parameters(params: &[(pt::Loc, Option<pt::Parameter>)]) -> Vec<Option<Typ
 
 fn types_to_parameters(
     types: Vec<Option<Type>>,
-    intermediate: &IntermediateOutput,
+    intermediate: Option<&IntermediateOutput>,
 ) -> Vec<ParamType> {
     types.into_iter().filter_map(|ty| ty.and_then(|ty| ty.try_as_ethabi(intermediate))).collect()
 }
@@ -1563,7 +1539,7 @@ mod tests {
 
     fn get_type_ethabi(s: &mut SessionSource, input: &str, clear: bool) -> Option<ParamType> {
         let (ty, intermediate) = get_type(s, input, clear);
-        ty.and_then(|ty| ty.try_as_ethabi(&intermediate))
+        ty.and_then(|ty| ty.try_as_ethabi(Some(&intermediate)))
     }
 
     #[track_caller]
