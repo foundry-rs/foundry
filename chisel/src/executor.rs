@@ -179,6 +179,8 @@ impl SessionSource {
             // this type was denied for inspection, continue
             None => return Ok((true, None)),
         };
+        eprintln!("ex={contract_expr:?}");
+        eprintln!("ty={ty:?}");
 
         // the file compiled correctly, thus the last stack item must be the memory offset of
         // the `bytes memory inspectoor` value
@@ -187,6 +189,11 @@ impl SessionSource {
         let len = U256::from(&mem[offset..offset + 32]).as_usize();
         offset += 32;
         let data = &mem[offset..offset + len];
+        eprintln!(
+            "{len} @ {offset}:\n  1. {}\n  2. {}",
+            hex::encode(&mem[offset..]),
+            hex::encode(data),
+        );
         let mut tokens =
             ethabi::decode(&[ty], data).wrap_err("Could not decode inspected values")?;
         // `tokens` is guaranteed to have the same length as the provided types
@@ -400,6 +407,7 @@ impl Type {
     ///
     /// Optionally, an owned [Type]
     fn from_expression(expr: &pt::Expression) -> Option<Self> {
+        eprintln!("from_expression():\n  - {expr:?}");
         match expr {
             pt::Expression::Type(_, ty) => Self::from_type(ty),
 
@@ -412,7 +420,6 @@ impl Type {
                 // if num is Some then this is either an index operation (arr[<num>])
                 // or a FixedArray statement (new uint256[<num>])
                 Self::from_expression(expr).and_then(|ty| {
-                    let ty = Box::new(ty);
                     let boxed = Box::new(ty);
                     let num = num.as_deref().and_then(parse_number_literal).and_then(|n| {
                         // overflow check
@@ -425,7 +432,6 @@ impl Type {
                     match expr.as_ref() {
                         // statement
                         pt::Expression::Type(_, _) => {
-                            eprintln!("  ty");
                             if let Some(num) = num {
                                 Some(Self::FixedArray(boxed, num))
                             } else {
@@ -434,7 +440,6 @@ impl Type {
                         }
                         // index
                         pt::Expression::Variable(_) => {
-                            eprintln!("  var");
                             Some(Self::ArrayIndex(boxed, num))
                         }
                         _ => None
@@ -970,7 +975,7 @@ impl Type {
                     .try_as_ethabi(intermediate)
                     .map(|inner| ParamType::FixedArray(Box::new(inner), size)),
             },
-            Self::ArrayIndex(inner, _) => inner.into_array_index(Some(intermediate)),
+            ty @ Self::ArrayIndex(_, _) => ty.into_array_index(Some(intermediate)),
             Self::Custom(mut types) => {
                 // Cover any local non-state-modifying function call expressions
                 Self::infer_custom_type(intermediate, &mut types, None).ok().flatten()
@@ -995,7 +1000,7 @@ impl Type {
             Self::FixedArray(inner, size) => inner
                 .try_as_ethabi_normal()
                 .map(|inner| ParamType::FixedArray(Box::new(inner), size)),
-            Self::ArrayIndex(inner, _) => inner.into_array_index(None),
+            ty @ Self::ArrayIndex(_, _) => ty.into_array_index(None),
             Self::Function(name, _, _) => name.try_as_ethabi_normal(),
             // Should've been converted to Custom in previous steps
             Self::Access(_, _) => None,
@@ -1233,5 +1238,344 @@ impl<'a> Iterator for InstructionIter<'a> {
             ([0; 32], 0)
         };
         Some(Instruction { pc, opcode, data, data_len })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_const() {
+        assert_eq!(USIZE_MAX_AS_U256.low_u64(), usize::MAX as u64);
+        assert_eq!(USIZE_MAX_AS_U256.as_u64(), usize::MAX as u64);
+    }
+
+    #[test]
+    fn test_expressions() {
+        static EXPRESSIONS: &[(&str, ParamType)] = {
+            use ParamType::*;
+            &[
+                // units
+                // uint
+                ("1 seconds", Uint(256)),
+                ("1 minutes", Uint(256)),
+                ("1 hours", Uint(256)),
+                ("1 days", Uint(256)),
+                ("1 weeks", Uint(256)),
+                ("1 wei", Uint(256)),
+                ("1 gwei", Uint(256)),
+                ("1 ether", Uint(256)),
+                // int
+                ("-1 seconds", Int(256)),
+                ("-1 minutes", Int(256)),
+                ("-1 hours", Int(256)),
+                ("-1 days", Int(256)),
+                ("-1 weeks", Int(256)),
+                ("-1 wei", Int(256)),
+                ("-1 gwei", Int(256)),
+                ("-1 ether", Int(256)),
+                //
+                ("true ? 1 : 0", Uint(256)),
+                ("true ? -1 : 0", Int(256)),
+                // misc
+                //
+
+                // ops
+                // uint
+                ("1 + 1", Uint(256)),
+                ("1 - 1", Uint(256)),
+                ("1 * 1", Uint(256)),
+                ("1 / 1", Uint(256)),
+                ("1 % 1", Uint(256)),
+                ("1 ** 1", Uint(256)),
+                ("1 | 1", Uint(256)),
+                ("1 & 1", Uint(256)),
+                ("1 ^ 1", Uint(256)),
+                ("1 >> 1", Uint(256)),
+                ("1 << 1", Uint(256)),
+                // int
+                ("int(1) + 1", Int(256)),
+                ("int(1) - 1", Int(256)),
+                ("int(1) * 1", Int(256)),
+                ("int(1) / 1", Int(256)),
+                ("1 + int(1)", Int(256)),
+                ("1 - int(1)", Int(256)),
+                ("1 * int(1)", Int(256)),
+                ("1 / int(1)", Int(256)),
+                //
+
+                // assign
+                ("uint256 a; a--", Uint(256)),
+                ("uint256 a; --a", Uint(256)),
+                ("uint256 a; a++", Uint(256)),
+                ("uint256 a; ++a", Uint(256)),
+                ("uint256 a; a   = 1", Uint(256)),
+                ("uint256 a; a  += 1", Uint(256)),
+                ("uint256 a; a  -= 1", Uint(256)),
+                ("uint256 a; a  *= 1", Uint(256)),
+                ("uint256 a; a  /= 1", Uint(256)),
+                ("uint256 a; a  %= 1", Uint(256)),
+                ("uint256 a; a  &= 1", Uint(256)),
+                ("uint256 a; a  |= 1", Uint(256)),
+                ("uint256 a; a  ^= 1", Uint(256)),
+                ("uint256 a; a <<= 1", Uint(256)),
+                ("uint256 a; a >>= 1", Uint(256)),
+                //
+
+                // bool
+                ("true && true", Bool),
+                ("true || true", Bool),
+                ("true == true", Bool),
+                ("true != true", Bool),
+                ("true < true", Bool),
+                ("true <= true", Bool),
+                ("true > true", Bool),
+                ("true >= true", Bool),
+                ("!true", Bool),
+                //
+            ]
+        };
+
+        let ref mut source = source();
+
+        let array_expressions: &[(&str, ParamType)] = &[
+            ("[1, 2, 3]", fixed_array(ParamType::Uint(256), 3)),
+            ("[uint8(1), 2, 3]", fixed_array(ParamType::Uint(8), 3)),
+            ("[int8(1), 2, 3]", fixed_array(ParamType::Int(8), 3)),
+            ("new uint256[](3)", array(ParamType::Uint(256))),
+            ("uint256[] memory a = new uint256[](3);\na[0]", ParamType::Uint(256)),
+            ("uint256[] memory a = new uint256[](3);\na[0:3]", array(ParamType::Uint(256))),
+        ];
+        generic_type_test(source, array_expressions);
+        generic_type_test(source, EXPRESSIONS);
+    }
+
+    #[test]
+    fn test_types() {
+        static TYPES: &[(&str, ParamType)] = {
+            use ParamType::*;
+            &[
+                // bool
+                ("bool", Bool),
+                ("true", Bool),
+                ("false", Bool),
+                //
+
+                // int and uint
+                ("uint", Uint(256)),
+                ("uint(1)", Uint(256)),
+                ("1", Uint(256)),
+                ("0x01", Uint(256)),
+                ("int", Int(256)),
+                ("int(1)", Int(256)),
+                ("int(-1)", Int(256)),
+                ("-1", Int(256)),
+                ("-0x01", Int(256)),
+                //
+
+                // address
+                ("address", Address),
+                ("address(0)", Address),
+                ("0x690B9A9E9aa1C9dB991C7721a92d351Db4FaC990", Address),
+                ("payable(0)", Address),
+                ("payable(address(0))", Address),
+                //
+
+                // string
+                ("string", String),
+                ("string(\"hello world\")", String),
+                ("\"hello world\"", String),
+                ("unicode\"hello world 😀\"", String),
+                //
+
+                // bytes
+                ("bytes", Bytes),
+                ("bytes(\"hello world\")", Bytes),
+                ("bytes(unicode\"hello world 😀\")", Bytes),
+                ("hex\"68656c6c6f20776f726c64\"", Bytes),
+                //
+            ]
+        };
+
+        let mut types: Vec<(String, ParamType)> = Vec::with_capacity(96 + 32 + 100);
+        for (n, b) in (8..=256).step_by(8).zip(1..=32) {
+            types.push((format!("uint{n}(0)"), ParamType::Uint(n)));
+            types.push((format!("int{n}(0)"), ParamType::Int(n)));
+            types.push((format!("bytes{b}(0x00)"), ParamType::FixedBytes(b)));
+        }
+
+        for n in 0..=32 {
+            types.push((
+                format!("uint256[{n}]"),
+                ParamType::FixedArray(Box::new(ParamType::Uint(256)), n),
+            ));
+        }
+
+        generic_type_test(&mut source(), TYPES);
+        generic_type_test(&mut source(), &types);
+    }
+
+    #[test]
+    fn test_global_vars() {
+        // https://docs.soliditylang.org/en/latest/cheatsheet.html#global-variables
+        let global_variables = {
+            use ParamType::*;
+            &[
+                // abi
+                ("abi.decode(bytes, (uint8[13]))", Tuple(vec![FixedArray(Box::new(Uint(8)), 13)])),
+                ("abi.decode(bytes, (address, bytes))", Tuple(vec![Address, Bytes])),
+                ("abi.decode(bytes, (uint112, uint48))", Tuple(vec![Uint(112), Uint(48)])),
+                ("abi.encode(_, _)", Bytes),
+                ("abi.encodePacked(_, _)", Bytes),
+                ("abi.encodeWithSelector(bytes4, _, _)", Bytes),
+                ("abi.encodeCall(function(), (_, _))", Bytes),
+                ("abi.encodeWithSignature(string, _, _)", Bytes),
+                //
+
+                //
+                ("bytes.concat()", Bytes),
+                ("bytes.concat(_)", Bytes),
+                ("bytes.concat(_, _)", Bytes),
+                ("string.concat()", String),
+                ("string.concat(_)", String),
+                ("string.concat(_, _)", String),
+                //
+
+                // block
+                ("block.basefee", Uint(256)),
+                ("block.chainid", Uint(256)),
+                ("block.coinbase", Address),
+                ("block.difficulty", Uint(256)),
+                ("block.gaslimit", Uint(256)),
+                ("block.number", Uint(256)),
+                ("block.timestamp", Uint(256)),
+                //
+
+                // tx
+                ("gasleft()", Uint(256)),
+                ("msg.data", Bytes),
+                ("msg.sender", Address),
+                ("msg.sig", FixedBytes(4)),
+                ("msg.value", Uint(256)),
+                ("tx.gasprice", Uint(256)),
+                ("tx.origin", Address),
+                //
+
+                // assertions
+                // assert(bool)
+                // require(bool)
+                // revert()
+                // revert(string)
+                //
+
+                //
+                ("blockhash(uint)", FixedBytes(32)),
+                ("keccak256(bytes)", FixedBytes(32)),
+                ("sha256(bytes)", FixedBytes(32)),
+                ("ripemd160(bytes)", FixedBytes(20)),
+                ("ecrecover(bytes32, uint8, bytes32, bytes32)", Address),
+                ("addmod(uint, uint, uint)", Uint(256)),
+                ("mulmod(uint, uint, uint)", Uint(256)),
+                //
+
+                // address
+                ("address(_)", Address),
+                ("address(this)", Address),
+                // ("super", Type::Custom("super".to_string))
+                // (selfdestruct(address payable), None)
+                ("address.balance", Uint(256)),
+                ("address.code", Bytes),
+                ("address.codehash", FixedBytes(32)),
+                ("address.send(uint256)", Bool),
+                // (address.transfer(uint256), None)
+                //
+
+                // type
+                ("type(C).name", String),
+                ("type(C).creationCode", Bytes),
+                ("type(C).runtimeCode", Bytes),
+                ("type(I).interfaceId", FixedBytes(4)),
+                ("type(uint256).min", Uint(256)),
+                ("type(int256).min", Int(256)),
+                ("type(uint256).max", Uint(256)),
+                ("type(int256).max", Int(256)),
+                // function
+                ("this.run.address", Address),
+                ("this.run.selector", FixedBytes(4)),
+            ]
+        };
+
+        generic_type_test(&mut source(), global_variables);
+    }
+
+    fn source() -> SessionSource {
+        SessionSource::new(Default::default(), Default::default())
+    }
+
+    fn array(ty: ParamType) -> ParamType {
+        ParamType::Array(Box::new(ty))
+    }
+
+    fn fixed_array(ty: ParamType, len: usize) -> ParamType {
+        ParamType::FixedArray(Box::new(ty), len)
+    }
+
+    fn parse(s: &mut SessionSource, input: &str, clear: bool) -> IntermediateOutput {
+        if clear {
+            s.drain_run();
+            s.drain_top_level_code();
+            s.drain_global_code();
+        }
+
+        let input = input.trim_end().trim_end_matches(';').to_string() + ";";
+        let (mut _s, _) = s.clone_with_new_line(input).unwrap();
+        *s = _s.clone();
+        let ref mut s = _s;
+
+        if let Err(e) = s.parse() {
+            for err in e {
+                eprintln!("{} @ {}:{}", err.message, err.loc.start(), err.loc.end());
+            }
+            let source = s.to_repl_source();
+            panic!("could not parse input:\n{source}")
+        }
+        s.generate_intermediate_output().expect("could not generate intermediate output")
+    }
+
+    fn expr(stmts: &[pt::Statement]) -> pt::Expression {
+        match stmts.last().expect("no statements") {
+            pt::Statement::Expression(_, e) => e.clone(),
+            s => panic!("Not an expression: {s:?}"),
+        }
+    }
+
+    fn get_type(
+        s: &mut SessionSource,
+        input: &str,
+        clear: bool,
+    ) -> (Option<Type>, IntermediateOutput) {
+        let intermediate = parse(s, input, clear);
+        let run_func_body = intermediate.run_func_body().expect("no run func body");
+        let expr = expr(run_func_body);
+        (Type::from_expression(&expr).map(Type::map_special), intermediate)
+    }
+
+    fn get_type_ethabi(s: &mut SessionSource, input: &str, clear: bool) -> Option<ParamType> {
+        let (ty, intermediate) = get_type(s, input, clear);
+        ty.and_then(|ty| ty.try_as_ethabi(&intermediate))
+    }
+
+    #[track_caller]
+    fn generic_type_test<'a, T, I>(s: &mut SessionSource, input: I)
+    where
+        T: AsRef<str> + std::fmt::Display + 'a,
+        I: IntoIterator<Item = &'a (T, ParamType)> + 'a,
+    {
+        for (input, expected) in input.into_iter() {
+            let input = input.as_ref();
+            let ty = get_type_ethabi(s, input, true);
+            assert_eq!(ty.as_ref(), Some(expected), "\n{input}");
+        }
     }
 }

@@ -132,13 +132,13 @@ impl SessionSource {
         }
     }
 
-    // Clones a [SessionSource] without copying the [GeneratedOutput], as it will
-    // need to be regenerated as soon as new code is added.
-    //
-    // ### Returns
-    //
-    // A shallow-cloned [SessionSource]
-    fn shallow_clone(&self) -> Self {
+    /// Clones a [SessionSource] without copying the [GeneratedOutput], as it will
+    /// need to be regenerated as soon as new code is added.
+    ///
+    /// ### Returns
+    ///
+    /// A shallow-cloned [SessionSource]
+    pub fn shallow_clone(&self) -> Self {
         Self {
             file_name: self.file_name.clone(),
             contract_name: self.contract_name.clone(),
@@ -168,11 +168,8 @@ impl SessionSource {
             })
             .or_else(|| {
                 let new_source = self.shallow_clone();
-                parse_fragment(
-                    new_source.solc,
-                    new_source.config,
-                    content.trim_end().trim_end_matches(';'),
-                )
+                content = content.trim_end().trim_end_matches(';').to_string();
+                parse_fragment(new_source.solc, new_source.config, &content)
             })
         {
             let mut new_source = self.shallow_clone();
@@ -267,13 +264,46 @@ impl SessionSource {
     /// ### Returns
     ///
     /// Optionally, a map of contract names to a vec of [IntermediateContract]s.
-    fn generate_intermediate_contracts(&self) -> Result<HashMap<String, IntermediateContract>> {
+    pub fn generate_intermediate_contracts(&self) -> Result<HashMap<String, IntermediateContract>> {
         let mut res_map = HashMap::new();
         let parsed_map = self.compiler_input().sources;
         for source in parsed_map.values() {
             Self::get_intermediate_contract(&source.content, &mut res_map);
         }
         Ok(res_map)
+    }
+
+    /// Generate intermediate output for the REPL contract
+    pub fn generate_intermediate_output(&self) -> Result<IntermediateOutput> {
+        // Parse generate intermediate contracts
+        let intermediate_contracts = self.generate_intermediate_contracts()?;
+
+        // Construct variable definitions
+        let variable_definitions = intermediate_contracts
+            .get("REPL")
+            .ok_or(eyre::eyre!("Could not find intermediate REPL contract!"))?
+            .variable_definitions
+            .clone()
+            .into_iter()
+            .map(|(k, v)| (k, v.ty))
+            .collect::<HashMap<String, pt::Expression>>();
+        // Construct intermediate output
+        let mut intermediate_output = IntermediateOutput {
+            repl_contract_expressions: variable_definitions,
+            intermediate_contracts,
+        };
+
+        // Add all statements within the run function to the repl_contract_expressions map
+        for (key, val) in intermediate_output
+            .run_func_body()?
+            .clone()
+            .iter()
+            .flat_map(Self::get_statement_definitions)
+        {
+            intermediate_output.repl_contract_expressions.insert(key, val);
+        }
+
+        Ok(intermediate_output)
     }
 
     /// Compile the contract
@@ -308,33 +338,8 @@ impl SessionSource {
         // Compile
         let compiler_output = self.compile()?;
 
-        // Parse generate intermediate contracts
-        let intermediate_contracts = self.generate_intermediate_contracts()?;
-
-        // Construct variable definitions
-        let variable_definitions = intermediate_contracts
-            .get("REPL")
-            .ok_or(eyre::eyre!("Could not find intermediate REPL contract!"))?
-            .variable_definitions
-            .clone()
-            .into_iter()
-            .map(|(k, v)| (k, v.ty))
-            .collect::<HashMap<String, pt::Expression>>();
-        // Construct intermediate output
-        let mut intermediate_output = IntermediateOutput {
-            repl_contract_expressions: variable_definitions,
-            intermediate_contracts,
-        };
-
-        // Add all statements within the run function to the repl_contract_expressions map
-        for (key, val) in intermediate_output
-            .run_func_body()?
-            .clone()
-            .iter()
-            .flat_map(Self::get_statement_definitions)
-        {
-            intermediate_output.repl_contract_expressions.insert(key, val);
-        }
+        // Generate intermediate output
+        let intermediate_output = self.generate_intermediate_output()?;
 
         // Construct generated output
         let generated_output =
@@ -406,7 +411,7 @@ contract {} {{
     /// ### Takes
     /// - `content` - A Solidity source string
     /// - `res_map` - A mutable reference to a map of contract names to [IntermediateContract]s
-    fn get_intermediate_contract(
+    pub fn get_intermediate_contract(
         content: &str,
         res_map: &mut HashMap<String, IntermediateContract>,
     ) {
