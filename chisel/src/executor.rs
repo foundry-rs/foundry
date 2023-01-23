@@ -179,8 +179,6 @@ impl SessionSource {
             // this type was denied for inspection, continue
             None => return Ok((true, None)),
         };
-        eprintln!("ex={contract_expr:?}");
-        eprintln!("ty={ty:?}");
 
         // the file compiled correctly, thus the last stack item must be the memory offset of
         // the `bytes memory inspectoor` value
@@ -189,11 +187,6 @@ impl SessionSource {
         let len = U256::from(&mem[offset..offset + 32]).as_usize();
         offset += 32;
         let data = &mem[offset..offset + len];
-        eprintln!(
-            "{len} @ {offset}:\n  1. {}\n  2. {}",
-            hex::encode(&mem[offset..]),
-            hex::encode(data),
-        );
         let mut tokens =
             ethabi::decode(&[ty], data).wrap_err("Could not decode inspected values")?;
         // `tokens` is guaranteed to have the same length as the provided types
@@ -407,7 +400,6 @@ impl Type {
     ///
     /// Optionally, an owned [Type]
     fn from_expression(expr: &pt::Expression) -> Option<Self> {
-        eprintln!("from_expression():\n  - {expr:?}");
         match expr {
             pt::Expression::Type(_, ty) => Self::from_type(ty),
 
@@ -416,7 +408,6 @@ impl Type {
 
             // array
             pt::Expression::ArraySubscript(_, expr, num) => {
-                // eprintln!("ARR: {expr:?} - {num:?}");
                 // if num is Some then this is either an index operation (arr[<num>])
                 // or a FixedArray statement (new uint256[<num>])
                 Self::from_expression(expr).and_then(|ty| {
