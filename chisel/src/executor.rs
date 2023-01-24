@@ -957,6 +957,7 @@ impl Type {
     /// Optionally, a [ParamType]
     fn try_as_ethabi(self, intermediate: Option<&IntermediateOutput>) -> Option<ParamType> {
         match self {
+            Self::Builtin(ty) => Some(ty),
             Self::Tuple(types) => Some(ParamType::Tuple(types_to_parameters(types, intermediate))),
             Self::Array(inner) => match *inner {
                 ty @ Self::Custom(_) => ty.try_as_ethabi(intermediate),
@@ -971,13 +972,15 @@ impl Type {
                     .map(|inner| ParamType::FixedArray(Box::new(inner), size)),
             },
             ty @ Self::ArrayIndex(_, _) => ty.into_array_index(intermediate),
+            Self::Function(ty, _, _) => ty.try_as_ethabi(intermediate),
+            // should have been mapped to `Custom` in previous steps
+            Self::Access(_, _) => None,
             Self::Custom(mut types) => {
                 // Cover any local non-state-modifying function call expressions
                 intermediate.and_then(|intermediate| {
                     Self::infer_custom_type(intermediate, &mut types, None).ok().flatten()
                 })
             }
-            ty => ty.try_as_ethabi(None),
         }
     }
 
