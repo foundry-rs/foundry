@@ -310,6 +310,12 @@ impl EthApi {
                     err @ Err(_) => err.to_rpc_result(),
                 }
             }
+            EthRequest::EvmSetTime(timestamp) => {
+                match u64::try_from(timestamp).map_err(BlockchainError::UintConversion) {
+                    Ok(timestamp) => self.evm_set_time(timestamp).to_rpc_result(),
+                    err @ Err(_) => err.to_rpc_result(),
+                }
+            }
             EthRequest::EvmSetBlockGasLimit(gas_limit) => {
                 self.evm_set_block_gas_limit(gas_limit).to_rpc_result()
             }
@@ -1594,6 +1600,20 @@ impl EthApi {
     pub fn evm_set_next_block_timestamp(&self, seconds: u64) -> Result<()> {
         node_info!("evm_setNextBlockTimestamp");
         self.backend.time().set_next_block_timestamp(seconds)
+    }
+
+    /// Sets the specific timestamp and returns the number of seconds between the given timestamp
+    /// and the current time.
+    ///
+    /// Handler for RPC call: `evm_setTime`
+    pub fn evm_set_time(&self, timestamp: u64) -> Result<u64> {
+        node_info!("evm_setTime");
+        let now = self.backend.time().current_call_timestamp();
+        self.backend.time().reset(timestamp);
+
+        // number of seconds between the given timestamp and the current time.
+        let offset = timestamp.saturating_sub(now);
+        Ok(Duration::from_millis(offset).as_secs())
     }
 
     /// Set the next block gas limit

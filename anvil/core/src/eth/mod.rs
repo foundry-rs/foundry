@@ -441,6 +441,19 @@ pub enum EthRequest {
     )]
     SetNextBlockBaseFeePerGas(U256),
 
+    /// Sets the specific timestamp
+    /// Accepts timestamp (Unix epoch) with millisecond precision and returns the number of seconds
+    /// between the given timestamp and the current time.
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            rename = "anvil_setTime",
+            alias = "evm_setTime",
+            deserialize_with = "deserialize_number_seq"
+        )
+    )]
+    EvmSetTime(U256),
+
     /// Serializes the current state (including contracts code, contract's storage, accounts
     /// properties, etc.) into a savable data blob
     #[cfg_attr(
@@ -925,6 +938,17 @@ mod tests {
     #[test]
     fn test_serde_custom_next_block_base_fee() {
         let s = r#"{"method": "anvil_setNextBlockBaseFeePerGas", "params": ["0x0"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_set_time() {
+        let s = r#"{"method": "anvil_setTime", "params": ["0x0"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "anvil_increaseTime", "params": 1}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
