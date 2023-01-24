@@ -54,7 +54,7 @@ pub enum Subcommands {
     #[clap(alias = "bi", about = "Generate Rust bindings for smart contracts.")]
     Bind(BindArgs),
 
-    #[clap(visible_alias = "b", about = "Build the project's smart contracts.")]
+    #[clap(visible_aliases = ["b", "compile"], about = "Build the project's smart contracts.")]
     Build(BuildArgs),
 
     #[clap(visible_alias = "d", about = "Debugs a single smart contract as a script.")]
