@@ -258,6 +258,50 @@ async fn test_set_next_timestamp() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_evm_set_time() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+
+    let timestamp = now + Duration::from_secs(120);
+
+    // mock timestamp
+    api.evm_set_time(timestamp.as_secs()).unwrap();
+
+    // mine a block
+    api.evm_mine(None).await.unwrap();
+    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+
+    assert!(block.timestamp.as_u64() >= timestamp.as_secs());
+
+    api.evm_mine(None).await.unwrap();
+    let next = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+
+    assert!(next.timestamp > block.timestamp);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_evm_set_time_in_past() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+
+    let timestamp = now - Duration::from_secs(120);
+
+    // mock timestamp
+    api.evm_set_time(timestamp.as_secs()).unwrap();
+
+    // mine a block
+    api.evm_mine(None).await.unwrap();
+    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+
+    assert!(block.timestamp.as_u64() >= timestamp.as_secs());
+    assert!(block.timestamp.as_u64() < now.as_secs());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_timestamp_interval() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
