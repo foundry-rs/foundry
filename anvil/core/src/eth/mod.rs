@@ -375,7 +375,14 @@ pub enum EthRequest {
     SetCode(Address, Bytes),
 
     /// Sets the nonce of an address
-    #[cfg_attr(feature = "serde", serde(rename = "anvil_setNonce", alias = "hardhat_setNonce"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            rename = "anvil_setNonce",
+            alias = "hardhat_setNonce",
+            alias = "evm_setAccountNonce"
+        )
+    )]
     SetNonce(
         Address,
         #[cfg_attr(feature = "serde", serde(deserialize_with = "deserialize_number"))] U256,
@@ -873,6 +880,12 @@ mod tests {
     #[test]
     fn test_custom_set_nonce() {
         let s = r#"{"method": "anvil_setNonce", "params": ["0xd84de507f3fada7df80908082d3239466db55a71", "0x0"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let s = r#"{"method": "hardhat_setNonce", "params": ["0xd84de507f3fada7df80908082d3239466db55a71", "0x0"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let s = r#"{"method": "evm_setAccountNonce", "params": ["0xd84de507f3fada7df80908082d3239466db55a71", "0x0"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
