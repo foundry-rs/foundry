@@ -27,6 +27,9 @@ clap = { version = "3.0.10", features = [
     "wrap_help",
 ] }
 
+# tracing
+tracing = "0.1"
+
 # mdbook
 mdbook = { version = "0.4.25", default-features = false, features = ["search"] }
 warp = { version = "0.3.2", default-features = false, features = ["websocket"] }
