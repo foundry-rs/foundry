@@ -1,14 +1,15 @@
 use super::{
     assert_invariants,
     filters::{ArtifactFilters, SenderFilters},
-    BasicTxDetails, FuzzRunIdentifiedContracts, InvariantContract, InvariantFuzzError,
-    InvariantFuzzTestResult, RandomCallGenerator, TargetedContracts,
+    BasicTxDetails, FuzzRunIdentifiedContracts, InvariantFuzzError, InvariantFuzzTestResult,
+    RandomCallGenerator, TargetedContracts,
 };
 use crate::{
     executor::{
         inspector::Fuzzer, Executor, RawCallResult, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS,
     },
     fuzz::{
+        invariant::contract::InvariantContract,
         strategies::{
             build_initial_state, collect_created_contracts, collect_state_from_call,
             invariant_strat, override_call_strat, EvmFuzzState,
@@ -26,7 +27,7 @@ use eyre::ContextCompat;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::InvariantConfig;
 use hashbrown::HashMap;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use proptest::{
     strategy::{BoxedStrategy, Strategy, ValueTree},
     test_runner::{TestCaseError, TestRunner},
@@ -208,7 +209,7 @@ impl<'a> InvariantExecutor<'a> {
 
                 // We clear all the targeted contracts created during this run.
                 if !created_contracts.is_empty() {
-                    let mut writable_targeted = targeted_contracts.lock();
+                    let mut writable_targeted = targeted_contracts.write();
                     for addr in created_contracts.iter() {
                         writable_targeted.remove(addr);
                     }
@@ -259,7 +260,7 @@ impl<'a> InvariantExecutor<'a> {
         // During execution, any newly created contract is added here and used through the rest of
         // the fuzz run.
         let targeted_contracts: FuzzRunIdentifiedContracts =
-            Arc::new(Mutex::new(targeted_contracts));
+            Arc::new(RwLock::new(targeted_contracts));
 
         // Creates the invariant strategy.
         let strat = invariant_strat(
@@ -597,8 +598,8 @@ fn can_continue(
     (true, call_results)
 }
 
-#[derive(Clone)]
 /// Stores information about failures and reverts of the invariant tests.
+#[derive(Clone)]
 pub struct InvariantFailures {
     /// The latest revert reason of a run.
     pub revert_reason: Option<String>,

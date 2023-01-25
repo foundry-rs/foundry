@@ -1,8 +1,11 @@
-use super::{BasicTxDetails, InvariantContract};
+use super::BasicTxDetails;
 use crate::{
     decode::decode_revert,
     executor::{Executor, RawCallResult},
-    fuzz::{invariant::set_up_inner_replay, *},
+    fuzz::{
+        invariant::{set_up_inner_replay, InvariantContract},
+        *,
+    },
     trace::{load_contracts, TraceKind, Traces},
     CALLER,
 };

@@ -220,7 +220,7 @@ pub fn collect_created_contracts(
     targeted_contracts: FuzzRunIdentifiedContracts,
     created_contracts: &mut Vec<Address>,
 ) -> eyre::Result<()> {
-    let mut writable_targeted = targeted_contracts.lock();
+    let mut writable_targeted = targeted_contracts.write();
 
     for (address, account) in state_changeset {
         if !setup_contracts.contains_key(address) {

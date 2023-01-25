@@ -1,38 +1,31 @@
 //! Fuzzing support abstracted over the [`Evm`](crate::Evm) used
 use crate::{fuzz::*, CALLER};
-mod error;
-pub use error::InvariantFuzzError;
-mod filters;
-pub use filters::{ArtifactFilters, SenderFilters};
 mod call_override;
-pub use call_override::{set_up_inner_replay, RandomCallGenerator};
-mod executor;
+mod error;
 use crate::executor::Executor;
 use ethers::{
     abi::{Abi, Function},
     types::{Address, Bytes, U256},
 };
-pub use executor::{InvariantExecutor, InvariantFailures};
-use parking_lot::Mutex;
-pub use proptest::test_runner::Config as FuzzConfig;
+use parking_lot::RwLock;
 use std::{collections::BTreeMap, sync::Arc};
 
+mod contract;
+mod executor;
+mod filters;
+
+pub use call_override::{set_up_inner_replay, RandomCallGenerator};
+pub use contract::InvariantContract;
+pub use error::InvariantFuzzError;
+pub use executor::{InvariantExecutor, InvariantFailures};
+pub use filters::{ArtifactFilters, SenderFilters};
+pub use proptest::test_runner::Config as FuzzConfig;
+
 pub type TargetedContracts = BTreeMap<Address, (String, Abi, Vec<Function>)>;
-pub type FuzzRunIdentifiedContracts = Arc<Mutex<TargetedContracts>>;
+pub type FuzzRunIdentifiedContracts = Arc<RwLock<TargetedContracts>>;
 
 /// (Sender, (TargetContract, Calldata))
 pub type BasicTxDetails = (Address, (Address, Bytes));
-
-/// Test contract which is testing its invariants.
-#[derive(Debug, Clone)]
-pub struct InvariantContract<'a> {
-    /// Address of the test contract.
-    pub address: Address,
-    /// Invariant functions present in the test contract.
-    pub invariant_functions: Vec<&'a Function>,
-    /// Abi of the test contract.
-    pub abi: &'a Abi,
-}
 
 /// Given the executor state, asserts that no invariant has been broken. Otherwise, it fills the
 /// external `invariant_failures.failed_invariant` map and returns a generic error.

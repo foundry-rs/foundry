@@ -24,7 +24,7 @@ pub fn override_call_strat(
     let contracts_ref = contracts.clone();
 
     let random_contract = any::<prop::sample::Selector>()
-        .prop_map(move |selector| *selector.select(contracts_ref.lock().keys()));
+        .prop_map(move |selector| *selector.select(contracts_ref.read().keys()));
     let target = any::<prop::sample::Selector>().prop_map(move |_| *target.read());
 
     proptest::strategy::Union::new_weighted(vec![
@@ -33,7 +33,7 @@ pub fn override_call_strat(
     ])
     .prop_flat_map(move |target_address| {
         let fuzz_state = fuzz_state.clone();
-        let (_, abi, functions) = contracts.lock().get(&target_address).unwrap().clone();
+        let (_, abi, functions) = contracts.read().get(&target_address).unwrap().clone();
 
         let func = select_random_function(abi, functions);
         func.prop_flat_map(move |func| {
@@ -72,16 +72,21 @@ fn generate_call(
     contracts: FuzzRunIdentifiedContracts,
     dictionary_weight: u32,
 ) -> BoxedStrategy<BasicTxDetails> {
-    let random_contract = select_random_contract(contracts);
+    let random_contract = select_random_contract(contracts.clone());
     let senders = Rc::new(senders);
     random_contract
         .prop_flat_map(move |(contract, abi, functions)| {
             let func = select_random_function(abi, functions);
             let senders = senders.clone();
             let fuzz_state = fuzz_state.clone();
+            let contracts = contracts.clone();
             func.prop_flat_map(move |func| {
-                let sender =
-                    select_random_sender(fuzz_state.clone(), senders.clone(), dictionary_weight);
+                let sender = select_random_sender(
+                    fuzz_state.clone(),
+                    senders.clone(),
+                    contracts.clone(),
+                    dictionary_weight,
+                );
                 (sender, fuzz_contract_with_calldata(fuzz_state.clone(), contract, func))
             })
         })
@@ -94,6 +99,7 @@ fn generate_call(
 fn select_random_sender(
     fuzz_state: EvmFuzzState,
     senders: Rc<SenderFilters>,
+    contracts: FuzzRunIdentifiedContracts,
     dictionary_weight: u32,
 ) -> impl Strategy<Value = Address> {
     let senders_ref = senders.clone();
@@ -112,7 +118,15 @@ fn select_random_sender(
         ),
     ])
     // Too many exclusions can slow down testing.
-    .prop_filter("senders not allowed", move |addr| !senders_ref.excluded.contains(addr))
+    .prop_filter("senders not allowed", move |addr| {
+        let is_excluded = senders_ref.excluded.contains(addr);
+        if is_excluded {
+            return false
+        }
+        // Exclude all deployed contracts from being selected as sender as this would violate
+        // EIP-3607
+        !contracts.read().contains_key(addr)
+    })
     .boxed();
 
     if !senders.targeted.is_empty() {
@@ -131,7 +145,7 @@ fn select_random_contract(
     let selectors = any::<prop::sample::Selector>();
 
     selectors.prop_map(move |selector| {
-        let contracts = contracts.lock();
+        let contracts = contracts.read();
         let (addr, (_, abi, functions)) =
             selector.select(contracts.iter().filter(|(_, (_, abi, _))| !abi.functions.is_empty()));
         (*addr, abi.clone(), functions.clone())
