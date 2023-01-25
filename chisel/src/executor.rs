@@ -784,9 +784,6 @@ impl Type {
     ) -> Result<Option<ParamType>> {
         if let Some("this") | Some("super") = custom_type.last().map(String::as_str) {
             custom_type.pop();
-            // if contract_name.is_none() {
-            //     contract_name = Some("REPL".into());
-            // }
         }
         if custom_type.is_empty() {
             return Ok(None)
@@ -893,8 +890,6 @@ impl Type {
         expr: &pt::Expression,
         intermediate: Option<&IntermediateOutput>,
         custom_type: &mut Vec<String>,
-        // contract_name: Option<String>,
-        // intermediate_contract: Option<&IntermediateContract>,
     ) -> Result<Option<ParamType>> {
         // Resolve local (in `run` function) or global (in the `REPL` or other contract) variable
         let res = match &expr {
@@ -903,14 +898,6 @@ impl Type {
                 let name = &ident.name;
 
                 if let Some(intermediate) = intermediate {
-                    // if let Some(intermediate_contract) = intermediate_contract {
-                    //     if intermediate_contract.struct_definitions.contains_key(name) {
-                    //         custom_type.clear();
-                    //         custom_type.push(name.clone());
-                    //         return Self::infer_custom_type(intermediate, custom_type,
-                    // contract_name)     }
-                    // }
-
                     // expression in `run`
                     if let Some(expr) = intermediate.repl_contract_expressions.get(name) {
                         Self::infer_var_expr(expr, Some(intermediate), custom_type)
