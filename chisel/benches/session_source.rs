@@ -60,8 +60,8 @@ fn inspect(c: &mut Criterion) {
 fn get_empty_session_source() -> SessionSource {
     let solc = Solc::find_or_install_svm_version("0.8.17").unwrap();
     SessionSource::new(
-        &solc,
-        &SessionSourceConfig {
+        solc,
+        SessionSourceConfig {
             foundry_config: Config::default(),
             evm_opts: EvmOpts::default(),
             backend: None,

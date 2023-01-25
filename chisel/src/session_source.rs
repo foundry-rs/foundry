@@ -106,35 +106,40 @@ pub struct SessionSource {
 impl SessionSource {
     /// Creates a new source given a solidity compiler version
     ///
+    /// # Panics
+    ///
+    /// If no Solc binary is set, cannot be found or the `--version` command fails
+    ///
     /// ### Takes
     ///
-    /// - A reference to a [Solc] instance
-    /// - A reference to a [SessionSourceConfig]
+    /// - An instance of [Solc]
+    /// - An instance of [SessionSourceConfig]
     ///
     /// ### Returns
     ///
-    /// A blank [SessionSource]
-    pub fn new(solc: &Solc, config: &SessionSourceConfig) -> Self {
+    /// A new instance of [SessionSource]
+    pub fn new(solc: Solc, config: SessionSourceConfig) -> Self {
         assert!(solc.version().is_ok());
+
         Self {
             file_name: PathBuf::from("ReplContract.sol".to_string()),
             contract_name: "REPL".to_string(),
-            solc: solc.clone(),
+            solc,
+            config,
             global_code: Default::default(),
             top_level_code: Default::default(),
             run_code: Default::default(),
             generated_output: None,
-            config: config.clone(),
         }
     }
 
-    // Clones a [SessionSource] without copying the [GeneratedOutput], as it will
-    // need to be regenerated as soon as new code is added.
-    //
-    // ### Returns
-    //
-    // A shallow-cloned [SessionSource]
-    fn shallow_clone(&self) -> Self {
+    /// Clones a [SessionSource] without copying the [GeneratedOutput], as it will
+    /// need to be regenerated as soon as new code is added.
+    ///
+    /// ### Returns
+    ///
+    /// A shallow-cloned [SessionSource]
+    pub fn shallow_clone(&self) -> Self {
         Self {
             file_name: self.file_name.clone(),
             contract_name: self.contract_name.clone(),
@@ -155,20 +160,20 @@ impl SessionSource {
     /// Optionally, a shallow-cloned [SessionSource] with the passed content appended to the
     /// source code.
     pub fn clone_with_new_line(&self, mut content: String) -> Result<(SessionSource, bool)> {
-        let mut new_source = self.shallow_clone();
-        if let Some(parsed) = parse_fragment(&new_source.solc, &new_source.config, &content)
+        let new_source = self.shallow_clone();
+        if let Some(parsed) = parse_fragment(new_source.solc, new_source.config, &content)
             .or_else(|| {
-                content = format!("{content};");
-                parse_fragment(&new_source.solc, &new_source.config, &content)
+                let new_source = self.shallow_clone();
+                content.push(';');
+                parse_fragment(new_source.solc, new_source.config, &content)
             })
             .or_else(|| {
-                parse_fragment(
-                    &new_source.solc,
-                    &new_source.config,
-                    content.trim_end().trim_end_matches(';'),
-                )
+                let new_source = self.shallow_clone();
+                content = content.trim_end().trim_end_matches(';').to_string();
+                parse_fragment(new_source.solc, new_source.config, &content)
             })
         {
+            let mut new_source = self.shallow_clone();
             // Flag that tells the dispatcher whether to build or execute the session
             // source based on the scope of the new code.
             match parsed {
@@ -187,21 +192,24 @@ impl SessionSource {
 
     /// Appends global-level code to the source
     pub fn with_global_code(&mut self, content: &str) -> &mut Self {
-        self.global_code.push_str(&format!("{}\n", content.trim()));
+        self.global_code.push_str(content.trim());
+        self.global_code.push('\n');
         self.generated_output = None;
         self
     }
 
     /// Appends top-level code to the source
     pub fn with_top_level_code(&mut self, content: &str) -> &mut Self {
-        self.top_level_code.push_str(&format!("{}\n", content.trim()));
+        self.top_level_code.push_str(content.trim());
+        self.top_level_code.push('\n');
         self.generated_output = None;
         self
     }
 
     /// Appends code to the "run()" function
     pub fn with_run_code(&mut self, content: &str) -> &mut Self {
-        self.run_code.push_str(&format!("{}\n", content.trim()));
+        self.run_code.push_str(content.trim());
+        self.run_code.push('\n');
         self.generated_output = None;
         self
     }
@@ -210,21 +218,21 @@ impl SessionSource {
 
     /// Clears global code from the source
     pub fn drain_global_code(&mut self) -> &mut Self {
-        self.global_code = Default::default();
+        self.global_code.clear();
         self.generated_output = None;
         self
     }
 
     /// Clears top-level code from the source
     pub fn drain_top_level_code(&mut self) -> &mut Self {
-        self.top_level_code = Default::default();
+        self.top_level_code.clear();
         self.generated_output = None;
         self
     }
 
     /// Clears the "run()" function's code
     pub fn drain_run(&mut self) -> &mut Self {
-        self.run_code = Default::default();
+        self.run_code.clear();
         self.generated_output = None;
         self
     }
@@ -257,13 +265,46 @@ impl SessionSource {
     /// ### Returns
     ///
     /// Optionally, a map of contract names to a vec of [IntermediateContract]s.
-    fn generate_intermediate_contracts(&self) -> Result<HashMap<String, IntermediateContract>> {
+    pub fn generate_intermediate_contracts(&self) -> Result<HashMap<String, IntermediateContract>> {
         let mut res_map = HashMap::new();
         let parsed_map = self.compiler_input().sources;
         for source in parsed_map.values() {
             Self::get_intermediate_contract(&source.content, &mut res_map);
         }
         Ok(res_map)
+    }
+
+    /// Generate intermediate output for the REPL contract
+    pub fn generate_intermediate_output(&self) -> Result<IntermediateOutput> {
+        // Parse generate intermediate contracts
+        let intermediate_contracts = self.generate_intermediate_contracts()?;
+
+        // Construct variable definitions
+        let variable_definitions = intermediate_contracts
+            .get("REPL")
+            .ok_or(eyre::eyre!("Could not find intermediate REPL contract!"))?
+            .variable_definitions
+            .clone()
+            .into_iter()
+            .map(|(k, v)| (k, v.ty))
+            .collect::<HashMap<String, pt::Expression>>();
+        // Construct intermediate output
+        let mut intermediate_output = IntermediateOutput {
+            repl_contract_expressions: variable_definitions,
+            intermediate_contracts,
+        };
+
+        // Add all statements within the run function to the repl_contract_expressions map
+        for (key, val) in intermediate_output
+            .run_func_body()?
+            .clone()
+            .iter()
+            .flat_map(Self::get_statement_definitions)
+        {
+            intermediate_output.repl_contract_expressions.insert(key, val);
+        }
+
+        Ok(intermediate_output)
     }
 
     /// Compile the contract
@@ -298,30 +339,8 @@ impl SessionSource {
         // Compile
         let compiler_output = self.compile()?;
 
-        // Parse generate intermediate contracts
-        let intermediate_contracts = self.generate_intermediate_contracts()?;
-
-        // Construct variable definitions
-        let variable_definitions = intermediate_contracts
-            .get("REPL")
-            .ok_or(eyre::eyre!("Could not find intermediate REPL contract!"))?
-            .variable_definitions
-            .clone()
-            .into_iter()
-            .map(|(k, v)| (k, v.ty))
-            .collect::<HashMap<String, pt::Expression>>();
-        // Construct intermediate output
-        let mut intermediate_output = IntermediateOutput {
-            repl_contract_expressions: variable_definitions,
-            intermediate_contracts,
-        };
-
-        // Add all statements within the run function to the repl_contract_expressions map
-        for (key, val) in
-            intermediate_output.run_func_body()?.iter().flat_map(Self::get_statement_definitions)
-        {
-            intermediate_output.repl_contract_expressions.insert(key.to_string(), val);
-        }
+        // Generate intermediate output
+        let intermediate_output = self.generate_intermediate_output()?;
 
         // Construct generated output
         let generated_output =
@@ -393,7 +412,7 @@ contract {} {{
     /// ### Takes
     /// - `content` - A Solidity source string
     /// - `res_map` - A mutable reference to a map of contract names to [IntermediateContract]s
-    fn get_intermediate_contract(
+    pub fn get_intermediate_contract(
         content: &str,
         res_map: &mut HashMap<String, IntermediateContract>,
     ) {
@@ -492,7 +511,7 @@ impl IntermediateOutput {
     /// ### Returns
     ///
     /// Optionally, the last statement within the "run" function of the REPL contract.
-    pub fn run_func_body(&self) -> Result<Vec<pt::Statement>> {
+    pub fn run_func_body(&self) -> Result<&Vec<pt::Statement>> {
         match self
             .intermediate_contracts
             .get("REPL")
@@ -504,7 +523,7 @@ impl IntermediateOutput {
             .as_ref()
             .ok_or(eyre::eyre!("Could not find run function body!"))?
         {
-            pt::Statement::Block { statements, .. } => Ok(statements.to_vec()),
+            pt::Statement::Block { statements, .. } => Ok(statements),
             _ => eyre::bail!("Could not find statements within run function body!"),
         }
     }
@@ -527,8 +546,8 @@ pub enum ParseTreeFragment {
 /// Parses a fragment of solidity code with solang_parser and assigns
 /// it a scope within the [SessionSource].
 pub fn parse_fragment(
-    solc: &Solc,
-    config: &SessionSourceConfig,
+    solc: Solc,
+    config: SessionSourceConfig,
     buffer: &str,
 ) -> Option<ParseTreeFragment> {
     let mut base = SessionSource::new(solc, config);
