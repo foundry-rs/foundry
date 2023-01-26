@@ -437,6 +437,11 @@ where
                         let account =
                             data.journaled_state.state().get_mut(&broadcast.new_origin).unwrap();
 
+                        // This is a heuristic for determening if the gas_limit was set
+                        // manually for the call and should therefore be forwarded.
+                        // TODO: Find a more precise way of determining this
+                        let is_manual_gas_limit = U256::from(data.env.tx.gas_limit) > data.env.block.gas_limit && U256::from(call.gas_limit) <= data.env.block.gas_limit;
+
                         self.broadcastable_transactions.push_back(BroadcastableTransaction {
                             rpc: data.db.active_fork_url(),
                             transaction: TypedTransaction::Legacy(TransactionRequest {
@@ -445,7 +450,7 @@ where
                                 value: Some(call.transfer.value),
                                 data: Some(call.input.clone().into()),
                                 nonce: Some(account.info.nonce.into()),
-                                gas: Some(call.gas_limit.into()),
+                                gas: if is_manual_gas_limit { Some(call.gas_limit.into()) } else { None },
                                 ..Default::default()
                             }),
                         });
@@ -645,6 +650,11 @@ where
                     }
                 };
 
+                // This is a heuristic for determening if the gas_limit was set
+                // manually for the call and should therefore be forwarded.
+                // TODO: Find a more precise way of determining this
+                let is_manual_gas_limit = U256::from(data.env.tx.gas_limit) > data.env.block.gas_limit && U256::from(call.gas_limit) <= data.env.block.gas_limit;
+
                 self.broadcastable_transactions.push_back(BroadcastableTransaction {
                     rpc: data.db.active_fork_url(),
                     transaction: TypedTransaction::Legacy(TransactionRequest {
@@ -653,7 +663,7 @@ where
                         value: Some(call.value),
                         data: Some(bytecode.into()),
                         nonce: Some(nonce.into()),
-                        gas: Some(call.gas_limit.into()),
+                        gas: if is_manual_gas_limit {Some(call.gas_limit.into())} else {None},
                         ..Default::default()
                     }),
                 });

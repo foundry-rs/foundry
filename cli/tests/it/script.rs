@@ -172,6 +172,7 @@ contract DeployScript is Script {
             &handle.http_endpoint(),
             "-vvvvv",
             "--slow",
+            "--broadcast",
             "--private-key",
             &private_key,
         ]);
@@ -353,6 +354,7 @@ contract RunScript is Script {
         ]);
 
         let output = cmd.stdout_lossy();
+        println!("{}", output);
         assert!(output.contains("SKIPPING ON CHAIN SIMULATION"));
         assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
     }
