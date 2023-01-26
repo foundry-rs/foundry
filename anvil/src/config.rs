@@ -945,6 +945,7 @@ impl NodeConfig {
             self.enable_steps_tracing,
             self.prune_history,
             self.transaction_block_keeper,
+            self.block_time,
         )
         .await;
 

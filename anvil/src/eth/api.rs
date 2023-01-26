@@ -1397,7 +1397,12 @@ impl EthApi {
         let mining_mode = if secs == 0 {
             MiningMode::None
         } else {
-            MiningMode::FixedBlockTime(FixedBlockTimeMiner::new(Duration::from_secs(secs)))
+            let block_time = Duration::from_secs(secs);
+
+            // This ensures that memory limits are stricter in interval-mine mode
+            self.backend.update_interval_mine_block_time(block_time);
+
+            MiningMode::FixedBlockTime(FixedBlockTimeMiner::new(block_time))
         };
         self.miner.set_mining_mode(mining_mode);
         Ok(())
