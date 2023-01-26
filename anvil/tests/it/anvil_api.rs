@@ -212,6 +212,8 @@ async fn can_impersonate_multiple_account() {
 
     let receipt = provider.get_transaction_receipt(res1.transaction_hash).await.unwrap().unwrap();
     assert_eq!(res1, receipt);
+
+    assert_ne!(res0, res1);
 }
 
 #[tokio::test(flavor = "multi_thread")]
