@@ -66,7 +66,7 @@ use foundry_evm::{
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;
 use parking_lot::{Mutex, RwLock};
-use std::{collections::HashMap, ops::Deref, sync::Arc};
+use std::{collections::HashMap, ops::Deref, sync::Arc, time::Duration};
 use storage::{Blockchain, MinedTransaction};
 use tokio::sync::RwLock as AsyncRwLock;
 use tracing::{trace, warn};
@@ -161,6 +161,7 @@ impl Backend {
         enable_steps_tracing: bool,
         prune_history: bool,
         transaction_block_keeper: Option<usize>,
+        automine_block_time: Option<Duration>,
     ) -> Self {
         // if this is a fork then adjust the blockchain storage
         let blockchain = if let Some(ref fork) = fork {
@@ -193,9 +194,18 @@ impl Backend {
             transaction_block_keeper,
         };
 
+        if let Some(interval_block_time) = automine_block_time {
+            backend.update_interval_mine_block_time(interval_block_time);
+        }
+
         // Note: this can only fail in forking mode, in which case we can't recover
         backend.apply_genesis().await.expect("Failed to create genesis");
         backend
+    }
+
+    /// Updates memory limits that should be more strict when auto-mine is enabled
+    pub(crate) fn update_interval_mine_block_time(&self, block_time: Duration) {
+        self.states.write().update_interval_mine_block_time(block_time)
     }
 
     /// Applies the configured genesis settings
