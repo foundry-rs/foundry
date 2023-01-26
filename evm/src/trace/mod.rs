@@ -127,6 +127,8 @@ impl CallTraceArena {
                 Instruction::OpCode(opc) => {
                     match opc {
                         // If yes, descend into a child trace
+                        opcode::CREATE |
+                        opcode::CREATE2 |
                         opcode::DELEGATECALL |
                         opcode::CALL |
                         opcode::STATICCALL |
