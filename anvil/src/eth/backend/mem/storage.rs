@@ -21,7 +21,12 @@ use std::{
     collections::{HashMap, VecDeque},
     fmt,
     sync::Arc,
+    time::Duration,
 };
+
+const DEFAULT_HISTORY_LIMIT: usize = 75;
+const MIN_HISTORY_LIMIT: usize = 5;
+const INTERVAL_MINING_HISTORY_LIMIT: usize = 3;
 
 // === impl DiskStateCache ===
 
@@ -50,10 +55,26 @@ impl InMemoryBlockStates {
             states: Default::default(),
             on_disk_states: Default::default(),
             limit,
-            min_limit: limit.min(10),
+            min_limit: limit.min(MIN_HISTORY_LIMIT),
             present: Default::default(),
             disk_cache: Default::default(),
         }
+    }
+
+    /// This modifies the `limit` what to keep stored in memory.
+    ///
+    /// This will ensure the new limit is between the configured min limit and the
+    /// `DEFAULT_HISTORY_LIMIT` Lower block times will result in `min_limit`.
+    pub fn update_interval_mine_block_time(&mut self, block_time: Duration) {
+        self.min_limit = INTERVAL_MINING_HISTORY_LIMIT;
+        let block_time = block_time.as_secs();
+        let max = DEFAULT_HISTORY_LIMIT as u64;
+        // a low block time would result in a lot of additional state (block)
+        let limit = (max.saturating_mul(block_time) / max) as usize;
+
+        self.limit = limit.clamp(self.min_limit, DEFAULT_HISTORY_LIMIT);
+
+        self.enforce_limits();
     }
 
     /// Inserts a new (hash -> state) pair
@@ -72,6 +93,14 @@ impl InMemoryBlockStates {
             self.limit = self.limit.saturating_sub(1).max(self.min_limit);
         }
 
+        self.enforce_limits();
+
+        self.states.insert(hash, state);
+        self.present.push_back(hash);
+    }
+
+    /// Enforces configured limits
+    fn enforce_limits(&mut self) {
         while self.present.len() >= self.limit {
             // evict the oldest block
             if let Some((hash, mut state)) = self
@@ -84,9 +113,6 @@ impl InMemoryBlockStates {
                 self.on_disk_states.insert(hash, state);
             }
         }
-
-        self.states.insert(hash, state);
-        self.present.push_back(hash);
     }
 
     /// Returns the state for the given `hash` if present
@@ -126,8 +152,8 @@ impl fmt::Debug for InMemoryBlockStates {
 
 impl Default for InMemoryBlockStates {
     fn default() -> Self {
-        // enough in memory to store 250 blocks in memory
-        Self::new(250)
+        // enough in memory to store `DEFAULT_HISTORY_LIMIT` blocks in memory
+        Self::new(DEFAULT_HISTORY_LIMIT)
     }
 }
 
@@ -341,6 +367,13 @@ mod tests {
     use forge::revm::{db::DatabaseRef, AccountInfo};
     use foundry_evm::executor::backend::MemDb;
 
+    #[test]
+    fn test_interval_update() {
+        let mut storage = InMemoryBlockStates::default();
+        storage.update_interval_mine_block_time(Duration::from_secs(1));
+        assert_eq!(storage.limit, storage.min_limit);
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn can_read_write_cached_state() {
         let mut storage = InMemoryBlockStates::new(1);
@@ -368,7 +401,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn can_decrease_state_cache_size() {
-        let limit = 20;
+        let limit = 15;
         let mut storage = InMemoryBlockStates::new(limit);
 
         let num_states = 30;

@@ -751,7 +751,7 @@ impl EthApi {
             let bypass_signature = self.backend.cheats().bypass_signature();
             let transaction = sign::build_typed_transaction(request, bypass_signature)?;
             trace!(target : "node", ?from, "eth_sendTransaction: impersonating");
-            PendingTransaction::with_sender(transaction, from)
+            PendingTransaction::with_impersonated(transaction, from)
         } else {
             let transaction = self.sign_request(&from, request)?;
             PendingTransaction::new(transaction)?
@@ -1397,7 +1397,12 @@ impl EthApi {
         let mining_mode = if secs == 0 {
             MiningMode::None
         } else {
-            MiningMode::FixedBlockTime(FixedBlockTimeMiner::new(Duration::from_secs(secs)))
+            let block_time = Duration::from_secs(secs);
+
+            // This ensures that memory limits are stricter in interval-mine mode
+            self.backend.update_interval_mine_block_time(block_time);
+
+            MiningMode::FixedBlockTime(FixedBlockTimeMiner::new(block_time))
         };
         self.miner.set_mining_mode(mining_mode);
         Ok(())
@@ -1738,7 +1743,7 @@ impl EthApi {
         let bypass_signature = self.backend.cheats().bypass_signature();
         let transaction = sign::build_typed_transaction(request, bypass_signature)?;
 
-        let pending_transaction = PendingTransaction::with_sender(transaction, from);
+        let pending_transaction = PendingTransaction::with_impersonated(transaction, from);
 
         // pre-validate
         self.backend.validate_pool_transaction(&pending_transaction).await?;
