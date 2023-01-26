@@ -178,7 +178,7 @@ contract DeployScript is Script {
         ]);
 
         let output = cmd.stdout_lossy();
-        println!("{}", output);
+        assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
 });
 
 // Tests that the run command can run functions with arguments
