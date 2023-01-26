@@ -238,31 +238,17 @@ impl Backend {
         if self.cheats.is_impersonated(addr) {
             return Ok(true)
         }
-        // need to bypass EIP-3607: Reject transactions from senders with deployed code by setting
-        // the code hash to `KECCAK_EMPTY` temporarily and also remove the code itself and add back
-        // when we stop impersonating
-        let mut account = self.get_account(addr).await?;
-        let mut code_hash = None;
-        let mut code = None;
-        if account.code_hash != KECCAK_EMPTY {
-            code_hash = Some(std::mem::replace(&mut account.code_hash, KECCAK_EMPTY));
-            code = account.code.take();
-            self.db.write().await.insert_account(addr, account);
-        }
-        Ok(self.cheats.impersonate(addr, code_hash, code))
+        // Ensure EIP-3607 is disabled
+        let mut env = self.env.write();
+        env.cfg.disable_eip3607 = true;
+        Ok(self.cheats.impersonate(addr))
     }
 
     /// Removes the account that from the impersonated set
     ///
     /// If the impersonated `addr` is a contract then we also reset the code here
     pub async fn stop_impersonating(&self, addr: Address) -> DatabaseResult<()> {
-        if let Some((Some(code_hash), code)) = self.cheats.stop_impersonating(&addr) {
-            let mut db = self.db.write().await;
-            let mut account = db.basic(addr)?.unwrap_or_default();
-            account.code_hash = code_hash;
-            account.code = code;
-            db.insert_account(addr, account)
-        }
+        self.cheats.stop_impersonating(&addr);
         Ok(())
     }
 

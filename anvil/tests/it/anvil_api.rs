@@ -152,8 +152,7 @@ async fn can_impersonate_gnosis_safe() {
     api.anvil_impersonate_account(safe).await.unwrap();
 
     let code = provider.get_code(safe, None).await.unwrap();
-    // impersonated contract code is temporarily removed
-    assert!(code.is_empty());
+    assert!(!code.is_empty());
 
     let balance = U256::from(1e18 as u64);
     // fund the impersonated account
