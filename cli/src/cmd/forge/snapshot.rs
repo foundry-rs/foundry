@@ -19,7 +19,6 @@ use regex::Regex;
 use std::{
     cmp::Ordering,
     collections::HashMap,
-    fmt::Write,
     fs,
     io::{self, BufRead},
     path::{Path, PathBuf},
@@ -288,17 +287,24 @@ fn read_snapshot(path: impl AsRef<Path>) -> eyre::Result<Vec<SnapshotEntry>> {
     Ok(entries)
 }
 
-/// Writes a series of tests to a snapshot file
+/// Writes a series of tests to a snapshot file after sorting them
 fn write_to_snapshot_file(
     tests: &[Test],
     path: impl AsRef<Path>,
     _format: Option<Format>,
 ) -> eyre::Result<()> {
-    let mut out = String::new();
-    for test in tests {
-        writeln!(out, "{}:{} {}", test.contract_name(), test.signature, test.result.kind.report())?;
-    }
-    Ok(fs::write(path, out)?)
+    let mut reports = tests
+        .iter()
+        .map(|test| {
+            format!("{}:{} {}", test.contract_name(), test.signature, test.result.kind.report())
+        })
+        .collect::<Vec<_>>();
+
+    // sort all reports
+    reports.sort();
+
+    let content = reports.join("\n");
+    Ok(fs::write(path, content)?)
 }
 
 /// A Snapshot entry diff
