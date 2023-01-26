@@ -240,6 +240,7 @@ impl ScriptArgs {
                 if has_different_gas_calc(provider.get_chainid().await?.as_u64()) ||
                     self.skip_simulation
                 {
+                    // TODO: Check that this case also works when setting gas limit for tx manually
                     self.estimate_gas(&mut tx, &provider).await?;
                 }
 

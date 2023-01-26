@@ -182,8 +182,11 @@ impl ScriptArgs {
                         runner.executor.env_mut().block.number += U256::one();
                     }
 
-                    // We inflate the gas used by the user specified percentage
-                    tx.gas = Some(U256::from(result.gas_used * self.gas_estimate_multiplier / 100));
+                    // If tx.gas is already set that means it was specified in script
+                    if tx.gas.is_none() {
+                        // We inflate the gas used by the user specified percentage
+                        tx.gas = Some(U256::from(result.gas_used * self.gas_estimate_multiplier / 100));
+                    }
 
                     let tx = TransactionWithMetadata::new(
                         tx.into(),
