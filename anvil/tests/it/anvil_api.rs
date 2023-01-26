@@ -170,8 +170,6 @@ async fn can_impersonate_gnosis_safe() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
-// <https://github.com/foundry-rs/foundry/issues/3759>
 async fn can_impersonate_multiple_account() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
@@ -214,6 +212,8 @@ async fn can_impersonate_multiple_account() {
 
     let receipt = provider.get_transaction_receipt(res1.transaction_hash).await.unwrap().unwrap();
     assert_eq!(res1, receipt);
+
+    assert_ne!(res0, res1);
 }
 
 #[tokio::test(flavor = "multi_thread")]
