@@ -30,9 +30,7 @@ impl ScriptArgs {
 
         self.maybe_load_private_key(&mut script_config)?;
 
-        if self.opts.args.silent {
-            shell::set_shell(shell::Shell::from_args(true, false))?;
-        }
+        shell::set_shell(shell::Shell::from_args(self.opts.args.silent, self.json))?;
 
         if let Some(ref fork_url) = script_config.evm_opts.fork_url {
             // when forking, override the sender's nonce to the onchain value

@@ -111,7 +111,6 @@ impl ScriptSequence {
                 &self,
             )?;
             shell::println(format!("\nTransactionsdffs saved to: {path}\n"))?;
-            // println!("\nTransactions saved to: {path}\n");
         }
 
         Ok(())
