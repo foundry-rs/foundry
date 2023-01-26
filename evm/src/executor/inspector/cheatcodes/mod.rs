@@ -445,6 +445,7 @@ where
                                 value: Some(call.transfer.value),
                                 data: Some(call.input.clone().into()),
                                 nonce: Some(account.info.nonce.into()),
+                                gas: Some(call.gas_limit.into()),
                                 ..Default::default()
                             }),
                         });
@@ -652,6 +653,7 @@ where
                         value: Some(call.value),
                         data: Some(bytecode.into()),
                         nonce: Some(nonce.into()),
+                        gas: Some(call.gas_limit.into()),
                         ..Default::default()
                     }),
                 });
