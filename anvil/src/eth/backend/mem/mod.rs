@@ -1143,7 +1143,7 @@ impl Backend {
             let info = storage.transactions.get(&hash)?.info.clone();
             let tx = block.transactions.get(info.transaction_index as usize)?.clone();
 
-            let tx = transaction_build(tx, Some(block), Some(info), true, base_fee);
+            let tx = transaction_build(Some(hash), tx, Some(block), Some(info), true, base_fee);
             transactions.push(tx);
         }
         Some(transactions)
@@ -1742,7 +1742,14 @@ impl Backend {
             (info, block, tx)
         };
 
-        Some(transaction_build(tx, Some(&block), Some(info), true, block.header.base_fee_per_gas))
+        Some(transaction_build(
+            Some(info.transaction_hash),
+            tx,
+            Some(&block),
+            Some(info),
+            true,
+            block.header.base_fee_per_gas,
+        ))
     }
 
     pub async fn transaction_by_hash(
@@ -1771,7 +1778,14 @@ impl Backend {
         };
         let tx = block.transactions.get(info.transaction_index as usize)?.clone();
 
-        Some(transaction_build(tx, Some(&block), Some(info), true, block.header.base_fee_per_gas))
+        Some(transaction_build(
+            Some(info.transaction_hash),
+            tx,
+            Some(&block),
+            Some(info),
+            true,
+            block.header.base_fee_per_gas,
+        ))
     }
 
     /// Prove an account's existence or nonexistence in the state trie.
@@ -1975,7 +1989,9 @@ impl TransactionValidator for Backend {
 }
 
 /// Creates a `Transaction` as it's expected for the `eth` RPC api from storage data
+#[allow(clippy::too_many_arguments)]
 pub fn transaction_build(
+    tx_hash: Option<H256>,
     eth_transaction: TypedTransaction,
     block: Option<&Block>,
     info: Option<TransactionInfo>,
@@ -1983,6 +1999,13 @@ pub fn transaction_build(
     base_fee: Option<U256>,
 ) -> Transaction {
     let mut transaction: Transaction = eth_transaction.clone().into();
+
+    // if a specific hash was provided we update the transaction's hash
+    // This is important for impersonated transactions since they all use the `BYPASS_SIGNATURE`
+    // which would result in different hashes
+    if let Some(tx_hash) = tx_hash {
+        transaction.hash = tx_hash;
+    }
 
     if let TypedTransaction::EIP1559(_) = eth_transaction {
         if block.is_none() && info.is_none() {

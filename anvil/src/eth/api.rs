@@ -939,6 +939,7 @@ impl EthApi {
         let mut tx = self.pool.get_transaction(hash).map(|pending| {
             let from = *pending.sender();
             let mut tx = transaction_build(
+                Some(*pending.hash()),
                 pending.transaction,
                 None,
                 None,
@@ -1808,6 +1809,7 @@ impl EthApi {
         fn convert(tx: Arc<PoolTransaction>) -> Transaction {
             let from = *tx.pending_transaction.sender();
             let mut tx = transaction_build(
+                Some(*tx.hash()),
                 tx.pending_transaction.transaction.clone(),
                 None,
                 None,
@@ -2095,7 +2097,14 @@ impl EthApi {
         for info in transactions {
             let tx = block.transactions.get(info.transaction_index as usize)?.clone();
 
-            let tx = transaction_build(tx, Some(&block), Some(info), true, Some(base_fee));
+            let tx = transaction_build(
+                Some(info.transaction_hash),
+                tx,
+                Some(&block),
+                Some(info),
+                true,
+                Some(base_fee),
+            );
             block_transactions.push(tx);
         }
 
