@@ -145,10 +145,41 @@ impl<'de> Deserialize<'de> for BlockchainDbMeta {
     where
         D: Deserializer<'de>,
     {
+        /// A backwards compatible representation of [revm::CfgEnv]
+        ///
+        /// This prevents deserialization errors of cache files caused by breaking changes to the
+        /// default [revm::CfgEnv], for example enabling an optional feature.
+        /// By hand rolling deserialize impl we can prevent cache file issues
+        struct CfgEnvBackwardsCompat {
+            inner: revm::CfgEnv,
+        }
+
+        impl<'de> Deserialize<'de> for CfgEnvBackwardsCompat {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let mut value = serde_json::Value::deserialize(deserializer)?;
+
+                // we check for breaking changes here
+                if let Some(obj) = value.as_object_mut() {
+                    // additional field `disable_eip3607` enabled by the `optional_eip3607` feature
+                    let key = "disable_eip3607";
+                    if !obj.contains_key(key) {
+                        obj.insert(key.to_string(), true.into());
+                    }
+                }
+
+                let cfg_env: revm::CfgEnv =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(Self { inner: cfg_env })
+            }
+        }
+
         // custom deserialize impl to not break existing cache files
         #[derive(Deserialize)]
         struct Meta {
-            cfg_env: revm::CfgEnv,
+            cfg_env: CfgEnvBackwardsCompat,
             block_env: revm::BlockEnv,
             /// all the hosts used to connect to
             #[serde(alias = "host")]
@@ -164,7 +195,7 @@ impl<'de> Deserialize<'de> for BlockchainDbMeta {
 
         let Meta { cfg_env, block_env, hosts } = Meta::deserialize(deserializer)?;
         Ok(Self {
-            cfg_env,
+            cfg_env: cfg_env.inner,
             block_env,
             hosts: match hosts {
                 Hosts::Multi(hosts) => hosts,
