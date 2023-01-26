@@ -8,7 +8,10 @@ use anvil_core::{
 use ethers::{
     abi::{ethereum_types::BigEndianHash, AbiDecode},
     prelude::{Middleware, SignerMiddleware},
-    types::{Address, BlockNumber, TransactionRequest, H256, U256, U64},
+    types::{
+        transaction::eip2718::TypedTransaction, Address, BlockNumber, Eip1559TransactionRequest,
+        TransactionRequest, H256, U256, U64,
+    },
     utils::hex,
 };
 use forge::revm::SpecId;
@@ -409,4 +412,34 @@ async fn can_get_node_info() {
     };
 
     assert_eq!(node_info, expected_node_info);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_get_transaction_receipt() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    // set the base fee
+    let new_base_fee = U256::from(1_000);
+    api.anvil_set_next_block_base_fee_per_gas(new_base_fee).await.unwrap();
+
+    // send a EIP-1559 transaction
+    let tx =
+        TypedTransaction::Eip1559(Eip1559TransactionRequest::new().gas(U256::from(30_000_000)));
+    let receipt =
+        provider.send_transaction(tx.clone(), None).await.unwrap().await.unwrap().unwrap();
+
+    // the block should have the new base fee
+    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+    assert_eq!(block.base_fee_per_gas.unwrap().as_u64(), new_base_fee.as_u64());
+
+    // mine block
+    api.evm_mine(None).await.unwrap();
+
+    // the transaction receipt should have the original effective gas price
+    let new_receipt = provider.get_transaction_receipt(receipt.transaction_hash).await.unwrap();
+    assert_eq!(
+        receipt.effective_gas_price.unwrap().as_u64(),
+        new_receipt.unwrap().effective_gas_price.unwrap().as_u64()
+    );
 }

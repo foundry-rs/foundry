@@ -1653,8 +1653,10 @@ impl Backend {
         let effective_gas_price = match transaction {
             TypedTransaction::Legacy(t) => t.gas_price,
             TypedTransaction::EIP2930(t) => t.gas_price,
-            TypedTransaction::EIP1559(t) => self
-                .base_fee()
+            TypedTransaction::EIP1559(t) => block
+                .header
+                .base_fee_per_gas
+                .unwrap_or(self.base_fee())
                 .checked_add(t.max_priority_fee_per_gas)
                 .unwrap_or_else(U256::max_value),
         };
