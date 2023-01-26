@@ -167,7 +167,10 @@ impl InMemoryBlockStates {
 impl fmt::Debug for InMemoryBlockStates {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("InMemoryBlockStates")
-            .field("limit", &self.in_memory_limit)
+            .field("in_memory_limit", &self.in_memory_limit)
+            .field("min_in_memory_limit", &self.min_in_memory_limit)
+            .field("max_on_disk_limit", &self.max_on_disk_limit)
+            .field("oldest_on_disk", &self.oldest_on_disk)
             .field("present", &self.present)
             .finish_non_exhaustive()
     }
