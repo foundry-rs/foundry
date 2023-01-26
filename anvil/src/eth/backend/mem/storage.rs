@@ -24,9 +24,12 @@ use std::{
     time::Duration,
 };
 
+// === various limits in number of blocks ===
+
 const DEFAULT_HISTORY_LIMIT: usize = 75;
 const MIN_HISTORY_LIMIT: usize = 5;
 const INTERVAL_MINING_HISTORY_LIMIT: usize = 3;
+const MAX_ON_DISK_HISTORY_LIMIT: usize = 100;
 
 // === impl DiskStateCache ===
 
@@ -37,10 +40,16 @@ pub struct InMemoryBlockStates {
     /// states which data is moved to disk
     on_disk_states: HashMap<H256, StateDb>,
     /// How many states to store at most
-    limit: usize,
+    in_memory_limit: usize,
     /// minimum amount of states we keep in memory
-    min_limit: usize,
-    /// all states present, used to enforce `limit`
+    min_in_memory_limit: usize,
+    /// maximum amount of states we keep on disk
+    ///
+    /// Limiting the states will prevent disk blow up, especially in interval mining mode
+    max_on_disk_limit: usize,
+    /// the oldest states written to disk
+    oldest_on_disk: VecDeque<H256>,
+    /// all states present, used to enforce `in_memory_limit`
     present: VecDeque<H256>,
     /// Stores old states on disk
     disk_cache: DiskStateCache,
@@ -54,8 +63,10 @@ impl InMemoryBlockStates {
         Self {
             states: Default::default(),
             on_disk_states: Default::default(),
-            limit,
-            min_limit: limit.min(MIN_HISTORY_LIMIT),
+            in_memory_limit: limit,
+            min_in_memory_limit: limit.min(MIN_HISTORY_LIMIT),
+            max_on_disk_limit: MAX_ON_DISK_HISTORY_LIMIT,
+            oldest_on_disk: Default::default(),
             present: Default::default(),
             disk_cache: Default::default(),
         }
@@ -66,13 +77,13 @@ impl InMemoryBlockStates {
     /// This will ensure the new limit is between the configured min limit and the
     /// `DEFAULT_HISTORY_LIMIT` Lower block times will result in `min_limit`.
     pub fn update_interval_mine_block_time(&mut self, block_time: Duration) {
-        self.min_limit = INTERVAL_MINING_HISTORY_LIMIT;
+        self.min_in_memory_limit = INTERVAL_MINING_HISTORY_LIMIT;
         let block_time = block_time.as_secs();
         let max = DEFAULT_HISTORY_LIMIT as u64;
         // a low block time would result in a lot of additional state (block)
         let limit = (max.saturating_mul(block_time) / max) as usize;
 
-        self.limit = limit.clamp(self.min_limit, DEFAULT_HISTORY_LIMIT);
+        self.in_memory_limit = limit.clamp(self.min_in_memory_limit, DEFAULT_HISTORY_LIMIT);
 
         self.enforce_limits();
     }
@@ -88,9 +99,10 @@ impl InMemoryBlockStates {
     ///
     /// When a state that was previously written to disk is requested, it is simply read from disk.
     pub fn insert(&mut self, hash: H256, state: StateDb) {
-        if self.present.len() >= self.limit {
+        if self.present.len() >= self.in_memory_limit {
             // once we hit the max limit we decrease it
-            self.limit = self.limit.saturating_sub(1).max(self.min_limit);
+            self.in_memory_limit =
+                self.in_memory_limit.saturating_sub(1).max(self.min_in_memory_limit);
         }
 
         self.enforce_limits();
@@ -101,7 +113,8 @@ impl InMemoryBlockStates {
 
     /// Enforces configured limits
     fn enforce_limits(&mut self) {
-        while self.present.len() >= self.limit {
+        // enforce memory limits
+        while self.present.len() >= self.in_memory_limit {
             // evict the oldest block
             if let Some((hash, mut state)) = self
                 .present
@@ -111,6 +124,16 @@ impl InMemoryBlockStates {
                 let snapshot = state.0.clear_into_snapshot();
                 self.disk_cache.write(hash, snapshot);
                 self.on_disk_states.insert(hash, state);
+                self.oldest_on_disk.push_back(hash);
+            }
+        }
+
+        // enforce on disk limit and purge the oldest state cached on disk
+        while self.oldest_on_disk.len() >= self.max_on_disk_limit {
+            // evict the oldest block
+            if let Some(hash) = self.oldest_on_disk.pop_front() {
+                self.on_disk_states.remove(&hash);
+                self.disk_cache.remove(hash);
             }
         }
     }
@@ -130,7 +153,7 @@ impl InMemoryBlockStates {
 
     /// Sets the maximum number of stats we keep in memory
     pub fn set_cache_limit(&mut self, limit: usize) {
-        self.limit = limit;
+        self.in_memory_limit = limit;
     }
 
     /// Clears all entries
@@ -144,7 +167,10 @@ impl InMemoryBlockStates {
 impl fmt::Debug for InMemoryBlockStates {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("InMemoryBlockStates")
-            .field("limit", &self.limit)
+            .field("in_memory_limit", &self.in_memory_limit)
+            .field("min_in_memory_limit", &self.min_in_memory_limit)
+            .field("max_on_disk_limit", &self.max_on_disk_limit)
+            .field("oldest_on_disk", &self.oldest_on_disk)
             .field("present", &self.present)
             .finish_non_exhaustive()
     }
@@ -371,7 +397,7 @@ mod tests {
     fn test_interval_update() {
         let mut storage = InMemoryBlockStates::default();
         storage.update_interval_mine_block_time(Duration::from_secs(1));
-        assert_eq!(storage.limit, storage.min_limit);
+        assert_eq!(storage.in_memory_limit, storage.min_in_memory_limit);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -418,8 +444,8 @@ mod tests {
         // wait for files to be flushed
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-        assert_eq!(storage.on_disk_states.len(), num_states - storage.min_limit);
-        assert_eq!(storage.present.len(), storage.min_limit);
+        assert_eq!(storage.on_disk_states.len(), num_states - storage.min_in_memory_limit);
+        assert_eq!(storage.present.len(), storage.min_in_memory_limit);
 
         for idx in 0..num_states {
             let hash = H256::from_uint(&U256::from(idx));
