@@ -740,6 +740,10 @@ impl NodeConfig {
                 spec_id: self.get_hardfork().into(),
                 chain_id: self.get_chain_id().into(),
                 limit_contract_code_size: self.code_size_limit,
+                // EIP-3607 rejects transactions from senders with deployed code.
+                // If EIP-3607 is enabled it can cause issues during fuzz/invariant tests if the
+                // caller is a contract. So we disable the check by default.
+                disable_eip3607: true,
                 ..Default::default()
             },
             block: BlockEnv {
