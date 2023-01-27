@@ -331,7 +331,7 @@ impl ScriptArgs {
         if !console_logs.is_empty() {
             shell::println("\n== Logs ==")?;
             for log in console_logs {
-                shell::println(log)?;
+                shell::println(format!("  {log}"))?;
             }
         }
 
