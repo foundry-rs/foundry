@@ -26,9 +26,8 @@ use std::{
 
 // === various limits in number of blocks ===
 
-const DEFAULT_HISTORY_LIMIT: usize = 100;
-const MIN_HISTORY_LIMIT: usize = 5;
-const INTERVAL_MINING_HISTORY_LIMIT: usize = 3;
+const DEFAULT_HISTORY_LIMIT: usize = 500;
+const MIN_HISTORY_LIMIT: usize = 10;
 // 1hr of up-time at lowest 1s interval
 const MAX_ON_DISK_HISTORY_LIMIT: usize = 3_600;
 
@@ -75,18 +74,17 @@ impl InMemoryBlockStates {
 
     /// This modifies the `limit` what to keep stored in memory.
     ///
-    /// This will ensure the new limit is between the configured min limit and the
-    /// `DEFAULT_HISTORY_LIMIT` Lower block times will result in `min_limit`.
+    /// This will ensure the new limit adjusts based on the block time.
+    /// The lowest blocktime is 1s which should increase the limit slightly
     pub fn update_interval_mine_block_time(&mut self, block_time: Duration) {
-        self.min_in_memory_limit = INTERVAL_MINING_HISTORY_LIMIT;
         let block_time = block_time.as_secs();
-        let max = DEFAULT_HISTORY_LIMIT as u64;
-        // a low block time would result in a lot of additional state (block)
-        let limit = (max.saturating_mul(block_time) / max) as usize;
-
-        self.in_memory_limit = limit.clamp(self.min_in_memory_limit, DEFAULT_HISTORY_LIMIT);
-
-        self.enforce_limits();
+        // for block times lower than 2s we increase the mem limit since we're mining _small_ blocks
+        // very fast
+        // this will gradually be decreased once the max limit was reached
+        if block_time <= 2 {
+            self.in_memory_limit = DEFAULT_HISTORY_LIMIT * 3;
+            self.enforce_limits();
+        }
     }
 
     /// Inserts a new (hash -> state) pair
@@ -101,7 +99,7 @@ impl InMemoryBlockStates {
     /// When a state that was previously written to disk is requested, it is simply read from disk.
     pub fn insert(&mut self, hash: H256, state: StateDb) {
         if self.present.len() >= self.in_memory_limit {
-            // once we hit the max limit we decrease it
+            // once we hit the max limit we gradually decrease it
             self.in_memory_limit =
                 self.in_memory_limit.saturating_sub(1).max(self.min_in_memory_limit);
         }
@@ -401,7 +399,7 @@ mod tests {
     fn test_interval_update() {
         let mut storage = InMemoryBlockStates::default();
         storage.update_interval_mine_block_time(Duration::from_secs(1));
-        assert_eq!(storage.in_memory_limit, storage.min_in_memory_limit);
+        assert_eq!(storage.in_memory_limit, DEFAULT_HISTORY_LIMIT * 3);
     }
 
     #[tokio::test(flavor = "multi_thread")]
