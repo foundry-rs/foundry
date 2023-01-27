@@ -179,6 +179,7 @@ contract DeployScript is Script {
 
         let output = cmd.stdout_lossy();
         assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+        assert!(output.contains("Transaction gas limit was set in script to 500000"));
 });
 
 // Tests that the run command can run functions with arguments
