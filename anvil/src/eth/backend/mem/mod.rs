@@ -8,6 +8,7 @@ use crate::{
             executor::{ExecutedTransactions, TransactionExecutor},
             fork::ClientFork,
             genesis::GenesisConfig,
+            mem::storage::MinedTransactionReceipt,
             notifications::{NewBlockNotification, NewBlockNotifications},
             time::{utc_from_secs, TimeManager},
             validate::TransactionValidator,
@@ -1587,8 +1588,8 @@ impl Backend {
         &self,
         hash: H256,
     ) -> Result<Option<TransactionReceipt>, BlockchainError> {
-        if let tx @ Some(_) = self.mined_transaction_receipt(hash) {
-            return Ok(tx)
+        if let Some(receipt) = self.mined_transaction_receipt(hash) {
+            return Ok(Some(receipt.inner))
         }
 
         if let Some(fork) = self.get_fork() {
@@ -1611,7 +1612,7 @@ impl Backend {
     }
 
     /// Returns the transaction receipt for the given hash
-    fn mined_transaction_receipt(&self, hash: H256) -> Option<TransactionReceipt> {
+    pub(crate) fn mined_transaction_receipt(&self, hash: H256) -> Option<MinedTransactionReceipt> {
         let MinedTransaction { info, receipt, block_hash, .. } =
             self.blockchain.storage.read().transactions.get(&hash)?.clone();
 
@@ -1647,7 +1648,7 @@ impl Backend {
                 .unwrap_or_else(U256::max_value),
         };
 
-        Some(TransactionReceipt {
+        let inner = TransactionReceipt {
             transaction_hash: info.transaction_hash,
             transaction_index: info.transaction_index.into(),
             block_hash: Some(block_hash),
@@ -1688,7 +1689,9 @@ impl Backend {
             logs_bloom,
             transaction_type: None,
             effective_gas_price: Some(effective_gas_price),
-        })
+        };
+
+        Some(MinedTransactionReceipt { inner, out: info.out.clone() })
     }
 
     pub async fn transaction_by_block_number_and_index(
