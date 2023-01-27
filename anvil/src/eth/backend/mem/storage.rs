@@ -162,6 +162,9 @@ impl InMemoryBlockStates {
         self.states.clear();
         self.on_disk_states.clear();
         self.present.clear();
+        for on_disk in std::mem::take(&mut self.oldest_on_disk) {
+            self.disk_cache.remove(on_disk)
+        }
     }
 }
 
