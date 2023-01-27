@@ -26,10 +26,11 @@ use std::{
 
 // === various limits in number of blocks ===
 
-const DEFAULT_HISTORY_LIMIT: usize = 75;
+const DEFAULT_HISTORY_LIMIT: usize = 100;
 const MIN_HISTORY_LIMIT: usize = 5;
 const INTERVAL_MINING_HISTORY_LIMIT: usize = 3;
-const MAX_ON_DISK_HISTORY_LIMIT: usize = 100;
+// 1hr of up-time at lowest 1s interval
+const MAX_ON_DISK_HISTORY_LIMIT: usize = 3_600;
 
 // === impl DiskStateCache ===
 
