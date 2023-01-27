@@ -1,3 +1,4 @@
+use crate::utils::apply_chain_and_block_specific_env_changes;
 use ethers::{
     providers::Middleware,
     types::{Address, U256},
@@ -48,7 +49,7 @@ where
         eyre::bail!("Failed to get block for block number: {}", block_number)
     };
 
-    Ok(Env {
+    let mut env = Env {
         cfg: CfgEnv {
             chain_id: override_chain_id.unwrap_or(rpc_chain_id.as_u64()).into(),
             memory_limit,
@@ -75,5 +76,9 @@ where
             gas_limit: block.gas_limit.as_u64(),
             ..Default::default()
         },
-    })
+    };
+
+    apply_chain_and_block_specific_env_changes(&mut env, &block);
+
+    Ok(env)
 }

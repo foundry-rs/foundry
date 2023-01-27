@@ -33,6 +33,7 @@ use foundry_evm::{
     executor::fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     revm,
     revm::{BlockEnv, CfgEnv, SpecId, TxEnv},
+    utils::apply_chain_and_block_specific_env_changes,
 };
 use parking_lot::RwLock;
 use serde_json::{json, to_writer, Value};
@@ -839,6 +840,9 @@ impl NodeConfig {
                 coinbase: env.block.coinbase,
                 basefee: env.block.basefee,
             };
+
+            // apply changes such as difficulty -> prevrandao
+            apply_chain_and_block_specific_env_changes(&mut env, &block);
 
             // if not set explicitly we use the base fee of the latest block
             if self.base_fee.is_none() {
