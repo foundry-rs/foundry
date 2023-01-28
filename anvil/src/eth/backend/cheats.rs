@@ -1,20 +1,11 @@
 //! Support for "cheat codes" / bypass functions
 
-use anvil_core::eth::transaction::TypedTransaction;
-use ethers::types::{Address, Signature, U256};
+use anvil_core::eth::transaction::IMPERSONATED_SIGNATURE;
+use ethers::types::{Address, Signature};
 use forge::hashbrown::HashSet;
 use parking_lot::RwLock;
 use std::sync::Arc;
 use tracing::trace;
-
-/// The signature used to bypass signing via the `eth_sendUnsignedTransaction` cheat RPC
-const BYPASS_SIGNATURE: Signature =
-    Signature { r: U256([0, 0, 0, 0]), s: U256([0, 0, 0, 0]), v: 0 };
-
-/// Returns `true` if the signature of the `transaction` is the `BYPASS_SIGNATURE`
-pub fn is_bypassed(transaction: &TypedTransaction) -> bool {
-    transaction.signature() == BYPASS_SIGNATURE
-}
 
 /// Manages user modifications that may affect the node's behavior
 ///
@@ -71,6 +62,6 @@ pub struct CheatsState {
 
 impl Default for CheatsState {
     fn default() -> Self {
-        Self { impersonated_accounts: Default::default(), bypass_signature: BYPASS_SIGNATURE }
+        Self { impersonated_accounts: Default::default(), bypass_signature: IMPERSONATED_SIGNATURE }
     }
 }

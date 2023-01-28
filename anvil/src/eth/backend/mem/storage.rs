@@ -9,7 +9,7 @@ use crate::eth::{
 use anvil_core::eth::{
     block::{Block, PartialHeader},
     receipt::TypedReceipt,
-    transaction::TransactionInfo,
+    transaction::{MaybeImpersonatedTransaction, TransactionInfo},
 };
 use ethers::{
     prelude::{BlockId, BlockNumber, GethTrace, Trace, H256, H256 as TxHash, U64},
@@ -217,7 +217,7 @@ impl BlockchainStorage {
             difficulty: env.block.difficulty,
             ..Default::default()
         };
-        let block = Block::new(partial_header, vec![], vec![]);
+        let block = Block::new::<MaybeImpersonatedTransaction>(partial_header, vec![], vec![]);
         let genesis_hash = block.header.hash();
         let best_hash = genesis_hash;
         let best_number: U64 = 0u64.into();
