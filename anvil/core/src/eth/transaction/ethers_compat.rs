@@ -1,8 +1,17 @@
 //! ethers compatibility, this is mainly necessary so we can use all of `ethers` signers
 
 use super::EthTransactionRequest;
-use crate::eth::transaction::{EIP1559TransactionRequest, EIP2930TransactionRequest, LegacyTransactionRequest, MaybeImpersonatedTransaction, TypedTransaction, TypedTransactionRequest};
-use ethers_core::types::{transaction::eip2718::TypedTransaction as EthersTypedTransactionRequest, Address, Eip1559TransactionRequest as EthersEip1559TransactionRequest, Eip2930TransactionRequest as EthersEip2930TransactionRequest, NameOrAddress, Transaction as EthersTransaction, TransactionRequest as EthersLegacyTransactionRequest, TransactionRequest, U256, U64, H256};
+use crate::eth::transaction::{
+    EIP1559TransactionRequest, EIP2930TransactionRequest, LegacyTransactionRequest,
+    MaybeImpersonatedTransaction, TypedTransaction, TypedTransactionRequest,
+};
+use ethers_core::types::{
+    transaction::eip2718::TypedTransaction as EthersTypedTransactionRequest, Address,
+    Eip1559TransactionRequest as EthersEip1559TransactionRequest,
+    Eip2930TransactionRequest as EthersEip2930TransactionRequest, NameOrAddress,
+    Transaction as EthersTransaction, TransactionRequest as EthersLegacyTransactionRequest,
+    TransactionRequest, H256, U256, U64,
+};
 
 impl From<TypedTransactionRequest> for EthersTypedTransactionRequest {
     fn from(tx: TypedTransactionRequest) -> Self {
@@ -82,8 +91,11 @@ impl From<TypedTransactionRequest> for EthersTypedTransactionRequest {
     }
 }
 
-
-fn to_ethers_transaction_with_hash_and_sender(transaction: TypedTransaction, hash: H256, from: Address) -> EthersTransaction {
+fn to_ethers_transaction_with_hash_and_sender(
+    transaction: TypedTransaction,
+    hash: H256,
+    from: Address,
+) -> EthersTransaction {
     match transaction {
         TypedTransaction::Legacy(t) => EthersTransaction {
             hash,
