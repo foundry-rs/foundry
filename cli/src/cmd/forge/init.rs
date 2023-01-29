@@ -103,12 +103,16 @@ impl Cmd for InitArgs {
             // Navigate back.
             std::env::set_current_dir(initial_dir)?;
         } else {
-            // check if target is empty
-            if !force && root.read_dir().map(|mut i| i.next().is_some()).unwrap_or(false) {
-                eyre::bail!(
-                    "Cannot run `init` on a non-empty directory.\n\
-                    Run with the `--force` flag to initialize regardless."
-                );
+            // if target is not empty
+            if root.read_dir().map(|mut i| i.next().is_some()).unwrap_or(false) {
+                if !force {
+                    eyre::bail!(
+                        "Cannot run `init` on a non-empty directory.\n\
+                        Run with the `--force` flag to initialize regardless."
+                    );
+                }
+
+                p_println!(!quiet => "Target directory is not empty, but `--force` was specified");
             }
 
             // ensure git status is clean before generating anything
