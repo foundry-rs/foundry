@@ -1,7 +1,7 @@
 use super::Cheatcodes;
 use crate::{
     abi::HEVMCalls,
-    executor::backend::error::{DatabaseError, DatabaseResult},
+    executor::backend::{DatabaseExt, error::{DatabaseError, DatabaseResult}},
     utils::h256_to_u256_be,
 };
 use bytes::{BufMut, Bytes, BytesMut};
@@ -18,7 +18,7 @@ use ethers::{
 };
 use foundry_common::{fmt::*, RpcUrl};
 use hex::FromHex;
-use revm::{Account, CreateInputs, Database, EVMData, JournaledState, TransactTo};
+use revm::{Account, CallInputs, CreateInputs, Database, EVMData, JournaledState, TransactTo};
 use std::{collections::VecDeque, str::FromStr};
 use tracing::trace;
 
@@ -322,6 +322,16 @@ pub fn parse_private_key(private_key: U256) -> Result<SigningKey, Bytes> {
     private_key.to_big_endian(&mut bytes);
 
     SigningKey::from_bytes(&bytes).map_err(|err| err.to_string().encode().into())
+}
+
+// Determines if the gas limit on a given call was manually set in thes cript and should therefore not be
+// overwritten by later estimations
+pub fn check_if_fixed_gas_limit<DB: DatabaseExt>(data: &EVMData<'_, DB>, call_gas_limit: u64) -> bool {
+    // If the gas limit was not set in the source code it is set to the estimated gas left at the
+    // time of the call, which should be rather close to configured gas limit.
+    // TODO: Find a way to reliably make this determenation. (for example by
+    // generating it in the compilation or evm simulation process)
+    return U256::from(data.env.tx.gas_limit) > data.env.block.gas_limit && U256::from(call_gas_limit) <= data.env.block.gas_limit;
 }
 
 #[cfg(test)]

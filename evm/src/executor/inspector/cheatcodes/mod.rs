@@ -1,7 +1,7 @@
 use self::{
     env::Broadcast,
     expect::{handle_expect_emit, handle_expect_revert},
-    util::{process_create, BroadcastableTransactions},
+    util::{check_if_fixed_gas_limit, process_create, BroadcastableTransactions},
 };
 use crate::{
     abi::HEVMCalls,
@@ -434,13 +434,11 @@ where
                             return (Return::Revert, Gas::new(call.gas_limit), err.encode_string())
                         }
 
+                        let is_fixed_gas_limit = check_if_fixed_gas_limit(data, call.gas_limit);
+                        
                         let account =
                             data.journaled_state.state().get_mut(&broadcast.new_origin).unwrap();
 
-                        // This is a heuristic for determening if the gas_limit was set
-                        // manually for the call and should therefore be forwarded.
-                        // TODO: Find a more precise way of determining this
-                        let is_manual_gas_limit = U256::from(data.env.tx.gas_limit) > data.env.block.gas_limit && U256::from(call.gas_limit) <= data.env.block.gas_limit;
 
                         self.broadcastable_transactions.push_back(BroadcastableTransaction {
                             rpc: data.db.active_fork_url(),
@@ -450,7 +448,7 @@ where
                                 value: Some(call.transfer.value),
                                 data: Some(call.input.clone().into()),
                                 nonce: Some(account.info.nonce.into()),
-                                gas: if is_manual_gas_limit { Some(call.gas_limit.into()) } else { None },
+                                gas: if is_fixed_gas_limit { Some(call.gas_limit.into()) } else { None },
                                 ..Default::default()
                             }),
                         });
@@ -650,10 +648,7 @@ where
                     }
                 };
 
-                // This is a heuristic for determening if the gas_limit was set
-                // manually for the call and should therefore be forwarded.
-                // TODO: Find a more precise way of determining this
-                let is_manual_gas_limit = U256::from(data.env.tx.gas_limit) > data.env.block.gas_limit && U256::from(call.gas_limit) <= data.env.block.gas_limit;
+                let is_fixed_gas_limit = check_if_fixed_gas_limit(data, call.gas_limit);
 
                 self.broadcastable_transactions.push_back(BroadcastableTransaction {
                     rpc: data.db.active_fork_url(),
@@ -663,7 +658,7 @@ where
                         value: Some(call.value),
                         data: Some(bytecode.into()),
                         nonce: Some(nonce.into()),
-                        gas: if is_manual_gas_limit {Some(call.gas_limit.into())} else {None},
+                        gas: if is_fixed_gas_limit {Some(call.gas_limit.into())} else {None},
                         ..Default::default()
                     }),
                 });
