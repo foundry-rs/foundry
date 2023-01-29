@@ -138,7 +138,7 @@ impl Cmd for InitArgs {
             let contract_path = script.join("Counter.s.sol");
             fs::write(contract_path, include_str!("../../../assets/CounterTemplate.s.sol"))?;
 
-            // write foundry.toml
+            // write foundry.toml, if it doesn't exist already
             let dest = root.join(Config::FILE_NAME);
             let mut config = Config::load_with_root(&root);
             if !dest.exists() {
@@ -202,10 +202,11 @@ pub fn get_commit_hash(root: &Path) -> Option<String> {
     }
 }
 
-/// Initialises `root` as a git repository.
+/// Initialises `root` as a git repository, if it isn't one already.
 ///
-/// Creates `.gitignore` and `.github/workflows/test.yml`, and commits everything in `root` if
-/// `no_commit` is false.
+/// Creates `.gitignore` and `.github/workflows/test.yml`, if they don't exist already.
+///
+/// Commits everything in `root` if `no_commit` is false.
 fn init_git_repo(root: &Path, no_commit: bool) -> eyre::Result<()> {
     // git init
     if !is_git(root)? {
@@ -214,13 +215,17 @@ fn init_git_repo(root: &Path, no_commit: bool) -> eyre::Result<()> {
 
     // .gitignore
     let gitignore = root.join(".gitignore");
-    fs::write(gitignore, include_str!("../../../assets/.gitignoreTemplate"))?;
+    if !gitignore.exists() {
+        fs::write(gitignore, include_str!("../../../assets/.gitignoreTemplate"))?;
+    }
 
     // github workflow
     let gh = root.join(".github").join("workflows");
-    fs::create_dir_all(&gh)?;
-    let workflow_path = gh.join("test.yml");
-    fs::write(workflow_path, include_str!("../../../assets/workflowTemplate.yml"))?;
+    if !gh.exists() {
+        fs::create_dir_all(&gh)?;
+        let workflow_path = gh.join("test.yml");
+        fs::write(workflow_path, include_str!("../../../assets/workflowTemplate.yml"))?;
+    }
 
     // commit everything
     if !no_commit {
