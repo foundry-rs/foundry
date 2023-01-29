@@ -187,6 +187,8 @@ impl ScriptSequence {
         if verify.etherscan_key.is_some() ||
             verify.verifier.verifier != VerificationProviderType::Etherscan
         {
+            trace!(target: "script", "prepare future verifications");
+
             let mut future_verifications = Vec::with_capacity(self.receipts.len());
             let mut unverifiable_contracts = vec![];
 
@@ -220,6 +222,8 @@ impl ScriptSequence {
                     };
                 }
             }
+
+            trace!(target: "script", "collected {} verification jobs and {} unverifiable contracts", future_verifications.len(), unverifiable_contracts.len());
 
             self.check_unverified(unverifiable_contracts, verify);
 
