@@ -305,7 +305,10 @@ fn commit_after_install(libs: &Path, target_dir: &str, tag: Option<&str>) -> eyr
 
 pub fn ensure_git_status_clean(root: impl AsRef<Path>) -> eyre::Result<()> {
     if !git_status_clean(root)? {
-        eyre::bail!("This command requires clean working and staging areas, including no untracked files. Modify .gitignore and/or add/commit first, or add the --no-commit option.")
+        eyre::bail!(
+            "This command requires clean working and staging areas, including no untracked files.\n\
+            Modify .gitignore and/or add/commit first, or add the --no-commit option."
+        )
     }
     Ok(())
 }
@@ -314,7 +317,7 @@ pub fn ensure_git_status_clean(root: impl AsRef<Path>) -> eyre::Result<()> {
 fn git_status_clean(root: impl AsRef<Path>) -> eyre::Result<bool> {
     let stdout =
         Command::new("git").args(["status", "--short"]).current_dir(root).get_stdout_lossy()?;
-    Ok(stdout.is_empty())
+    Ok(stdout.trim().is_empty())
 }
 
 /// Executes a git clone

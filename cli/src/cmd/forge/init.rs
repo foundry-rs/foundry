@@ -94,7 +94,7 @@ impl Cmd for InitArgs {
                 Command::new("git").args(["rev-parse", "--short", "HEAD"]).output()?.stdout;
             let commit_hash = String::from_utf8(git_output)?;
             std::fs::remove_dir_all(".git")?;
-            Command::new("git").args(["init"]).exec()?;
+            Command::new("git").arg("init").exec()?;
             Command::new("git").args(["add", "--all"]).exec()?;
 
             let commit_msg = format!("chore: init from {template} at {commit_hash}");
@@ -104,14 +104,11 @@ impl Cmd for InitArgs {
             std::env::set_current_dir(initial_dir)?;
         } else {
             // check if target is empty
-            if !force && root.read_dir().map(|mut i| i.next().is_some()).unwrap_or(false) {
-                eprintln!(
-                    r#"{}: `forge init` cannot be run on a non-empty directory.
-
-        run `forge init --force` to initialize regardless."#,
-                    Paint::red("error")
+            if !force && root.read_dir().map(|mut i| i.next().is_none()).unwrap_or(true) {
+                eyre::bail!(
+                    "Cannot run `init` on a non-empty directory.\n\
+                    Run with the `--force` flag to initialize regardless."
                 );
-                std::process::exit(1);
             }
 
             // ensure git status is clean before generating anything
@@ -141,10 +138,10 @@ impl Cmd for InitArgs {
             let contract_path = script.join("Counter.s.sol");
             fs::write(contract_path, include_str!("../../../assets/CounterTemplate.s.sol"))?;
 
+            // write foundry.toml
             let dest = root.join(Config::FILE_NAME);
             let mut config = Config::load_with_root(&root);
             if !dest.exists() {
-                // write foundry.toml
                 fs::write(dest, config.clone().into_basic().to_string_pretty()?)?;
             }
 
@@ -153,18 +150,20 @@ impl Cmd for InitArgs {
                 init_git_repo(&root, no_commit)?;
             }
 
+            // install forge-std
             if !offline {
                 let opts = DependencyInstallOpts { no_git, no_commit, quiet };
 
                 if root.join("lib/forge-std").exists() {
-                    println!("\"lib/forge-std\" already exists, skipping install....");
+                    p_println!(!quiet => "\"lib/forge-std\" already exists, skipping install....");
                     install(&mut config, vec![], opts)?;
                 } else {
                     Dependency::from_str("https://github.com/foundry-rs/forge-std")
                         .and_then(|dependency| install(&mut config, vec![dependency], opts))?;
                 }
             }
-            // vscode init
+
+            // init vscode settings
             if vscode {
                 init_vscode(&root)?;
             }
@@ -182,8 +181,7 @@ fn is_git(root: &Path) -> eyre::Result<bool> {
         .current_dir(root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()?
-        .wait()?;
+        .status()?;
 
     Ok(is_git.success())
 }
