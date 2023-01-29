@@ -244,7 +244,7 @@ forgetest!(can_detect_dirty_git_status_on_init, |prj: TestProject, mut cmd: Test
     // initialize new git repo
     let status = Command::new("git")
         .arg("init")
-        .current_dir(&root)
+        .current_dir(prj.root())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
