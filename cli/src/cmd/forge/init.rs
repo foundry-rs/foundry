@@ -104,7 +104,7 @@ impl Cmd for InitArgs {
             std::env::set_current_dir(initial_dir)?;
         } else {
             // check if target is empty
-            if !force && root.read_dir().map(|mut i| i.next().is_none()).unwrap_or(true) {
+            if !force && root.read_dir().map(|mut i| i.next().is_some()).unwrap_or(false) {
                 eyre::bail!(
                     "Cannot run `init` on a non-empty directory.\n\
                     Run with the `--force` flag to initialize regardless."
@@ -194,14 +194,12 @@ pub fn get_commit_hash(root: &Path) -> Option<String> {
             .current_dir(root)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()
-            .ok()?
-            .wait_with_output()
+            .get_stdout_lossy()
             .ok()?;
-
-        return Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        Some(output)
+    } else {
+        None
     }
-    None
 }
 
 /// Initialises `root` as a git repository.
