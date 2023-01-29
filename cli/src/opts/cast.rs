@@ -1,9 +1,9 @@
 use super::{ClapChain, EthereumOpts};
 use crate::{
     cmd::cast::{
-        call::CallArgs, create2::Create2Args, estimate::EstimateArgs, find_block::FindBlockArgs,
-        interface::InterfaceArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs,
-        storage::StorageArgs, wallet::WalletSubcommands,
+        bind::BindArgs, call::CallArgs, create2::Create2Args, estimate::EstimateArgs,
+        find_block::FindBlockArgs, interface::InterfaceArgs, rpc::RpcArgs, run::RunArgs,
+        send::SendTxArgs, storage::StorageArgs, wallet::WalletSubcommands,
     },
     utils::parse_u256,
 };
@@ -698,6 +698,14 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
         long_about = "Generate a Solidity interface from a given ABI. Currently does not support ABI encoder v2."
     )]
     Interface(InterfaceArgs),
+    #[clap(
+        name = "bind",
+        visible_alias = "bi",
+        about = "Generate a rust binding from a given ABI.",
+        long_about = "Generate a rust binding from a given ABI. Currently does not support ABI encoder v2."
+    )]
+    Bind(BindArgs),
+
     #[clap(name = "sig", visible_alias = "si", about = "Get the selector for a function.")]
     Sig {
         #[clap(

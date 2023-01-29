@@ -178,6 +178,7 @@ async fn main() -> eyre::Result<()> {
             println!("{}", SimpleCast::calldata_encode(sig, &args)?);
         }
         Subcommands::Interface(cmd) => cmd.run()?.await?,
+        Subcommands::Bind(cmd) => cmd.run()?.await?,
         Subcommands::PrettyCalldata { calldata, offline } => {
             if !calldata.starts_with("0x") {
                 eprintln!("Expected calldata hex string, received \"{calldata}\"");
