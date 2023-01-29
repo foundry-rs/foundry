@@ -21,7 +21,7 @@ use ethers::{
 };
 use foundry_common::{fmt::*, RpcUrl};
 use hex::FromHex;
-use revm::{Account, CallInputs, CreateInputs, Database, EVMData, JournaledState, TransactTo};
+use revm::{Account, CreateInputs, Database, EVMData, JournaledState, TransactTo};
 use std::{collections::VecDeque, str::FromStr};
 use tracing::trace;
 
@@ -337,7 +337,7 @@ pub fn check_if_fixed_gas_limit<DB: DatabaseExt>(
     // time of the call, which should be rather close to configured gas limit.
     // TODO: Find a way to reliably make this determenation. (for example by
     // generating it in the compilation or evm simulation process)
-    return U256::from(data.env.tx.gas_limit) > data.env.block.gas_limit &&
+    U256::from(data.env.tx.gas_limit) > data.env.block.gas_limit &&
         U256::from(call_gas_limit) <= data.env.block.gas_limit
 }
 
