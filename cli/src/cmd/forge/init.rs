@@ -204,28 +204,30 @@ pub fn get_commit_hash(root: &Path) -> Option<String> {
     None
 }
 
-/// Initialises the `root` as git repository if it's not a git repository yet
+/// Initialises `root` as a git repository.
+///
+/// Creates `.gitignore` and `.github/workflows/test.yml`, and commits everything in `root` if
+/// `no_commit` is false.
 fn init_git_repo(root: &Path, no_commit: bool) -> eyre::Result<()> {
+    // git init
     if !is_git(root)? {
-        let gitignore_path = root.join(".gitignore");
-        fs::write(gitignore_path, include_str!("../../../assets/.gitignoreTemplate"))?;
-
-        // git init
         Command::new("git").arg("init").current_dir(root).exec()?;
+    }
 
-        // create github workflow
-        let gh = root.join(".github").join("workflows");
-        fs::create_dir_all(&gh)?;
-        let workflow_path = gh.join("test.yml");
-        fs::write(workflow_path, include_str!("../../../assets/workflowTemplate.yml"))?;
+    // .gitignore
+    let gitignore = root.join(".gitignore");
+    fs::write(gitignore, include_str!("../../../assets/.gitignoreTemplate"))?;
 
-        if !no_commit {
-            Command::new("git").args(["add", "."]).current_dir(root).exec()?;
-            Command::new("git")
-                .args(["commit", "-m", "chore: forge init"])
-                .current_dir(root)
-                .exec()?;
-        }
+    // github workflow
+    let gh = root.join(".github").join("workflows");
+    fs::create_dir_all(&gh)?;
+    let workflow_path = gh.join("test.yml");
+    fs::write(workflow_path, include_str!("../../../assets/workflowTemplate.yml"))?;
+
+    // commit everything
+    if !no_commit {
+        Command::new("git").args(["add", "."]).current_dir(root).exec()?;
+        Command::new("git").args(["commit", "-m", "chore: forge init"]).current_dir(root).exec()?;
     }
 
     Ok(())
