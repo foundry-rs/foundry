@@ -116,7 +116,7 @@ impl Cmd for InitArgs {
             }
 
             // ensure git status is clean before generating anything
-            if !no_git && !no_commit && is_git(&root)? {
+            if !no_git && !no_commit && !force && is_git(&root)? {
                 ensure_git_status_clean(&root)?;
             }
 
