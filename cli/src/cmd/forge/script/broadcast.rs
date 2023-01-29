@@ -368,7 +368,6 @@ impl ScriptArgs {
         decoder: &mut CallTraceDecoder,
         known_contracts: &ContractsByArtifact,
     ) -> eyre::Result<Vec<ScriptSequence>> {
-        println!("broadcastable_transactions: {:#?}", txs);
         if !txs.is_empty() {
             let gas_filled_txs = self
                 .fills_transactions_with_gas(txs, script_config, decoder, known_contracts)
