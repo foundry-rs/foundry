@@ -306,16 +306,8 @@ fn commit_after_install(libs: &Path, target_dir: &str, tag: Option<&str>) -> eyr
 pub fn ensure_git_status_clean(root: impl AsRef<Path>) -> eyre::Result<()> {
     if !git_status_clean(root)? {
         eyre::bail!(
-            "\
-This command's target directory is, or is in an already initialized git repository,
-and it requires clean working and staging areas, including no untracked files.
-
-Check the current git repository's status with `git status`.
-Then, you can track files with `git add ...` and then commit them with `git commit`,
-ignore them in the `.gitignore` file, or run this command again with the `--no-commit` flag.
-
-If none of the previous steps worked, please open an issue at:
-https://github.com/foundry-rs/foundry/issues/new/choose"
+            "This command requires clean working and staging areas, including no untracked files.\n\
+            Modify .gitignore and/or add/commit first, or add the --no-commit option."
         )
     }
     Ok(())
