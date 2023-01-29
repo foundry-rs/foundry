@@ -126,13 +126,15 @@ contract Demo {
 });
 
 // Tests that the run command can run functions with arguments
-forgetest_async!(can_execute_script_command_with_manual_gas_limit, |prj: TestProject, mut cmd: TestCommand| async move {
-    foundry_cli_test_utils::util::initialize(prj.root());
-    let deploy_script = prj
-        .inner()
-        .add_source(
-            "Foo",
-            r#"
+forgetest_async!(
+    can_execute_script_command_with_manual_gas_limit,
+    |prj: TestProject, mut cmd: TestCommand| async move {
+        foundry_cli_test_utils::util::initialize(prj.root());
+        let deploy_script = prj
+            .inner()
+            .add_source(
+                "Foo",
+                r#"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.10;
 import "forge-std/Script.sol";
@@ -150,8 +152,8 @@ contract DeployScript is Script {
     }
 }
    "#,
-        )
-        .unwrap();
+            )
+            .unwrap();
 
         let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
 
@@ -180,7 +182,8 @@ contract DeployScript is Script {
         let output = cmd.stdout_lossy();
         assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
         assert!(output.contains("Gas limit was set in script to 500000"));
-});
+    }
+);
 
 // Tests that the run command can run functions with arguments
 forgetest!(can_execute_script_command_with_args, |prj: TestProject, mut cmd: TestCommand| {

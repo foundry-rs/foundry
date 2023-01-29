@@ -186,7 +186,8 @@ impl ScriptArgs {
                     // If tx.gas is already set that means it was specified in script
                     if !is_fixed_gas_limit {
                         // We inflate the gas used by the user specified percentage
-                        tx.gas = Some(U256::from(result.gas_used * self.gas_estimate_multiplier / 100));
+                        tx.gas =
+                            Some(U256::from(result.gas_used * self.gas_estimate_multiplier / 100));
                     } else {
                         println!("Gas limit was set in script to {:}", tx.gas.unwrap());
                     }
@@ -198,7 +199,7 @@ impl ScriptArgs {
                         &address_to_abi,
                         decoder,
                         created_contracts,
-                        is_fixed_gas_limit
+                        is_fixed_gas_limit,
                     )?;
 
                     Ok((Some(tx), result.traces))

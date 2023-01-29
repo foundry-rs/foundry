@@ -435,10 +435,9 @@ where
                         }
 
                         let is_fixed_gas_limit = check_if_fixed_gas_limit(data, call.gas_limit);
-                        
+
                         let account =
                             data.journaled_state.state().get_mut(&broadcast.new_origin).unwrap();
-
 
                         self.broadcastable_transactions.push_back(BroadcastableTransaction {
                             rpc: data.db.active_fork_url(),
@@ -448,7 +447,11 @@ where
                                 value: Some(call.transfer.value),
                                 data: Some(call.input.clone().into()),
                                 nonce: Some(account.info.nonce.into()),
-                                gas: if is_fixed_gas_limit { Some(call.gas_limit.into()) } else { None },
+                                gas: if is_fixed_gas_limit {
+                                    Some(call.gas_limit.into())
+                                } else {
+                                    None
+                                },
                                 ..Default::default()
                             }),
                         });
@@ -658,7 +661,7 @@ where
                         value: Some(call.value),
                         data: Some(bytecode.into()),
                         nonce: Some(nonce.into()),
-                        gas: if is_fixed_gas_limit {Some(call.gas_limit.into())} else {None},
+                        gas: if is_fixed_gas_limit { Some(call.gas_limit.into()) } else { None },
                         ..Default::default()
                     }),
                 });

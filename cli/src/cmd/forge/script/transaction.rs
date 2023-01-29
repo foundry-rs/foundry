@@ -40,7 +40,7 @@ pub struct TransactionWithMetadata {
     pub rpc: Option<RpcUrl>,
     pub transaction: TypedTransaction,
     pub additional_contracts: Vec<AdditionalContract>,
-    pub is_fixed_gas_limit: bool
+    pub is_fixed_gas_limit: bool,
 }
 
 fn default_string() -> Option<String> {
@@ -67,7 +67,7 @@ impl TransactionWithMetadata {
         local_contracts: &BTreeMap<Address, ArtifactInfo>,
         decoder: &CallTraceDecoder,
         additional_contracts: Vec<AdditionalContract>,
-        is_fixed_gas_limit: bool
+        is_fixed_gas_limit: bool,
     ) -> eyre::Result<Self> {
         let mut metadata = Self { transaction, rpc, is_fixed_gas_limit, ..Default::default() };
 

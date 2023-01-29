@@ -146,7 +146,7 @@ impl ScriptArgs {
                         kind,
                         sequential_broadcast,
                         fork_url,
-                        is_fixed_gas_limit
+                        is_fixed_gas_limit,
                     );
 
                     if sequential_broadcast {
@@ -219,7 +219,7 @@ impl ScriptArgs {
         kind: SendTransactionKind<'_>,
         sequential_broadcast: bool,
         fork_url: &str,
-        is_fixed_gas_limit: bool
+        is_fixed_gas_limit: bool,
     ) -> eyre::Result<TxHash> {
         let from = tx.from().expect("no sender");
 
@@ -241,8 +241,9 @@ impl ScriptArgs {
 
                 // Chains which use `eth_estimateGas` are being sent sequentially and require their
                 // gas to be re-estimated right before broadcasting.
-                if !is_fixed_gas_limit && (has_different_gas_calc(provider.get_chainid().await?.as_u64()) ||
-                    self.skip_simulation)
+                if !is_fixed_gas_limit &&
+                    (has_different_gas_calc(provider.get_chainid().await?.as_u64()) ||
+                        self.skip_simulation)
                 {
                     // TODO: Check that this case also works when setting gas limit for tx manually
                     self.estimate_gas(&mut tx, &provider).await?;
