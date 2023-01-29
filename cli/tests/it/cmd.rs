@@ -311,7 +311,7 @@ forgetest!(can_init_non_empty, |prj: TestProject, mut cmd: TestCommand| {
 });
 
 // `forge init --force` works on already initialized git repository
-forgetest!(can_init_with_repo, |prj: TestProject, mut cmd: TestCommand| {
+forgetest!(can_init_in_empty_repo, |prj: TestProject, mut cmd: TestCommand| {
     let root = prj.root();
 
     // initialize new git repo
@@ -331,6 +331,37 @@ forgetest!(can_init_with_repo, |prj: TestProject, mut cmd: TestCommand| {
     cmd.arg("--force");
     cmd.assert_non_empty_stdout();
     assert!(root.join("lib/forge-std").exists());
+});
+
+// `forge init --force` works on already initialized git repository
+forgetest!(can_init_in_non_empty_repo, |prj: TestProject, mut cmd: TestCommand| {
+    let root = prj.root();
+
+    // initialize new git repo
+    let status = Command::new("git")
+        .arg("init")
+        .current_dir(&root)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("could not run git init");
+    assert!(status.success());
+    assert!(root.join(".git").exists());
+
+    prj.create_file("README.md", "non-empty dir");
+    prj.create_file(".gitignore", "not foundry .gitignore");
+
+    cmd.arg("init").arg(&root);
+    cmd.assert_err();
+
+    cmd.arg("--force");
+    cmd.assert_non_empty_stdout();
+    assert!(root.join("lib/forge-std").exists());
+
+    // not overwritten
+    let gitignore = root.join(".gitignore");
+    let gitignore = fs::read_to_string(gitignore).unwrap();
+    assert_eq!(gitignore, "not foundry .gitignore");
 });
 
 // Checks that remappings.txt and .vscode/settings.json is generated
