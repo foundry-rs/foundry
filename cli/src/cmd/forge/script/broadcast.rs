@@ -227,7 +227,7 @@ impl ScriptArgs {
             let tx_nonce = tx.nonce().expect("no nonce");
 
             if nonce != *tx_nonce {
-                bail!("EOA nonce changed unexpectedly while sending transactions.")
+                bail!("EOA nonce changed unexpectedly while sending transactions. Expected {tx_nonce} got {nonce} from provider.")
             }
         }
 
