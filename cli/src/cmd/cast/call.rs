@@ -39,7 +39,6 @@ pub struct CallArgs {
     #[clap(flatten)]
     tx: TransactionOpts,
 
-    // TODO: We only need RPC URL and Etherscan API key from here.
     #[clap(flatten)]
     eth: EthereumOpts,
 
