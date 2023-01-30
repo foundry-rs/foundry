@@ -13,7 +13,7 @@ use ethers::{
     types::transaction::eip2718::TypedTransaction,
 };
 use eyre::{ContextCompat, WrapErr};
-use foundry_common::{fs, SELECTOR_LEN};
+use foundry_common::{fs, shell, SELECTOR_LEN};
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -110,8 +110,7 @@ impl ScriptSequence {
                 )?),
                 &self,
             )?;
-
-            println!("\nTransactions saved to: {path}\n");
+            shell::println(format!("\nTransactionsdffs saved to: {path}\n"))?;
         }
 
         Ok(())

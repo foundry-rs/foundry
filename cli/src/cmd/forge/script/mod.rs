@@ -35,7 +35,8 @@ use forge::{
     CallKind,
 };
 use foundry_common::{
-    abi::format_token, evm::EvmArgs, ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE, SELECTOR_LEN,
+    abi::format_token, evm::EvmArgs, shell, ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE,
+    SELECTOR_LEN,
 };
 use foundry_config::{figment, Config};
 use serde::{Deserialize, Serialize};
@@ -256,7 +257,7 @@ impl ScriptArgs {
                 }
             }
             Err(_) => {
-                println!("{:x?}", (&returned));
+                shell::println(format!("{:x?}", (&returned)))?;
             }
         }
 
@@ -277,7 +278,7 @@ impl ScriptArgs {
                 eyre::bail!("Unexpected error: No traces despite verbosity level. Please report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
             }
 
-            println!("Traces:");
+            shell::println("Traces:")?;
             for (kind, trace) in &mut result.traces {
                 let should_include = match kind {
                     TraceKind::Setup => verbosity >= 5,
@@ -287,22 +288,22 @@ impl ScriptArgs {
 
                 if should_include {
                     decoder.decode(trace).await;
-                    println!("{trace}");
+                    shell::println(format!("{trace}"))?;
                 }
             }
-            println!();
+            shell::println(String::new())?;
         }
 
         if result.success {
-            println!("{}", Paint::green("Script ran successfully."));
+            shell::println(format!("{}", Paint::green("Script ran successfully.")))?;
         }
 
         if script_config.evm_opts.fork_url.is_none() {
-            println!("Gas used: {}", result.gas_used);
+            shell::println(format!("Gas used: {}", result.gas_used))?;
         }
 
         if result.success && !result.returned.is_empty() {
-            println!("\n== Return ==");
+            shell::println("\n== Return ==")?;
             match func.decode_output(&result.returned) {
                 Ok(decoded) => {
                     for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
@@ -313,20 +314,24 @@ impl ScriptArgs {
                         } else {
                             index.to_string()
                         };
-                        println!("{}: {internal_type} {}", label.trim_end(), format_token(token));
+                        shell::println(format!(
+                            "{}: {internal_type} {}",
+                            label.trim_end(),
+                            format_token(token)
+                        ))?;
                     }
                 }
                 Err(_) => {
-                    println!("{:x?}", (&result.returned));
+                    shell::println(format!("{:x?}", (&result.returned)))?;
                 }
             }
         }
 
         let console_logs = decode_console_logs(&result.logs);
         if !console_logs.is_empty() {
-            println!("\n== Logs ==");
+            shell::println("\n== Logs ==")?;
             for log in console_logs {
-                println!("  {log}");
+                shell::println(format!("  {log}"))?;
             }
         }
 
@@ -351,7 +356,7 @@ impl ScriptArgs {
         let console_logs = decode_console_logs(&result.logs);
         let output = JsonResult { logs: console_logs, gas_used: result.gas_used, returns };
         let j = serde_json::to_string(&output)?;
-        println!("{j}");
+        shell::println(j)?;
 
         Ok(())
     }
@@ -378,7 +383,7 @@ impl ScriptArgs {
                                 let sender = tx.from.expect("no sender");
                                 if let Some(ns) = new_sender {
                                     if sender != ns {
-                                        println!("You have more than one deployer who could predeploy libraries. Using `--sender` instead.");
+                                        shell::println("You have more than one deployer who could predeploy libraries. Using `--sender` instead.")?;
                                         return Ok(None)
                                     }
                                 } else if sender != evm_opts.sender {
@@ -577,12 +582,12 @@ impl ScriptArgs {
 
                 if deployment_size > CONTRACT_MAX_SIZE {
                     prompt_user = self.broadcast;
-                    println!(
+                    shell::println(format!(
                         "{}",
                         Paint::red(format!(
                             "`{name}` is above the EIP-170 contract size limit ({deployment_size} > {CONTRACT_MAX_SIZE})."
                         ))
-                    );
+                    ))?;
                 }
             }
         }
@@ -677,12 +682,12 @@ impl ScriptConfig {
     /// error. [library support]
     fn check_multi_chain_constraints(&self, libraries: &Libraries) -> eyre::Result<()> {
         if self.has_multiple_rpcs() || (self.missing_rpc && !self.total_rpcs.is_empty()) {
-            eprintln!(
+            shell::eprintln(format!(
                 "{}",
                 Paint::yellow(
                     "Multi chain deployment is still under development. Use with caution."
                 )
-            );
+            ))?;
             if !libraries.libs.is_empty() {
                 eyre::bail!(
                     "Multi chain deployment does not support library linking at the moment."
