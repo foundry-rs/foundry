@@ -314,7 +314,7 @@ pub fn ensure_git_status_clean(root: impl AsRef<Path>) -> eyre::Result<()> {
 fn git_status_clean(root: impl AsRef<Path>) -> eyre::Result<bool> {
     let stdout =
         Command::new("git").args(["status", "--short"]).current_dir(root).get_stdout_lossy()?;
-    Ok(stdout.is_empty())
+    Ok(stdout.trim().is_empty())
 }
 
 /// Executes a git clone
