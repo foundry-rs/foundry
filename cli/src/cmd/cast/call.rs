@@ -10,7 +10,7 @@ use cast::{Cast, TxBuilder};
 use clap::Parser;
 use ethers::{
     providers::Middleware,
-    types::{Address, BlockId, NameOrAddress, U256},
+    types::{BlockId, NameOrAddress, U256},
 };
 use eyre::WrapErr;
 use foundry_common::try_get_http_provider;
@@ -81,8 +81,8 @@ impl CallArgs {
         let chain: Chain =
             if let Some(chain) = eth.chain { chain } else { provider.get_chainid().await?.into() };
 
-        let from = eth.wallet.from.unwrap_or(Address::zero());
-        let mut builder = TxBuilder::new(&provider, from, to, chain, tx.legacy).await?;
+        let sender = eth.sender().await;
+        let mut builder = TxBuilder::new(&provider, sender, to, chain, tx.legacy).await?;
         builder
             .gas(tx.gas_limit)
             .etherscan_api_key(config.get_etherscan_api_key(Some(chain)))
