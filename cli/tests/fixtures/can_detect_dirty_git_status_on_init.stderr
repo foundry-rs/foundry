@@ -1,5 +1,5 @@
 Error: 
-This command's target directory is, or is in an already initialized git repository,
+The target directory is a part of or on its own an already initialized git repository,
 and it requires clean working and staging areas, including no untracked files.
 
 Check the current git repository's status with `git status`.

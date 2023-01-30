@@ -307,7 +307,7 @@ pub fn ensure_git_status_clean(root: impl AsRef<Path>) -> eyre::Result<()> {
     if !git_status_clean(root)? {
         eyre::bail!(
             "\
-This command's target directory is, or is in an already initialized git repository,
+The target directory is a part of or on its own an already initialized git repository,
 and it requires clean working and staging areas, including no untracked files.
 
 Check the current git repository's status with `git status`.
