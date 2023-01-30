@@ -1692,7 +1692,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 }
 
                 if fmt.config.contract_new_lines {
-                    fmt.write_whitespace_separator(true)?;
+                    write_chunk!(fmt, "\n")?;
                 }
 
                 fmt.write_lined_visitable(
@@ -1735,7 +1735,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 fmt.write_whitespace_separator(true)?;
 
                 if fmt.config.contract_new_lines {
-                    fmt.write_whitespace_separator(true)?;
+                    write_chunk!(fmt, "\n")?;
                 }
             }
 
