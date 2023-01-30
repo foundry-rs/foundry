@@ -39,7 +39,7 @@ pub fn apply_chain_and_block_specific_env_changes<T>(env: &mut revm::Env, block:
     if let Ok(chain) = Chain::try_from(env.cfg.chain_id) {
         let block_number = block.number.unwrap_or_default();
 
-        #[allow(clippy::single-match)]
+        #[allow(clippy::single_match)]
         match chain {
             Chain::Mainnet => {
                 // after merge difficulty is supplanted with prevrandao EIP-4399
