@@ -757,6 +757,28 @@ mod tests {
     }
 
     #[test]
+    fn can_parse_verifier_url() {
+        let args: ScriptArgs = ScriptArgs::parse_from([
+            "foundry-cli",
+            "script",
+            "script/Test.s.sol:TestScript",
+            "--fork-url",
+            "http://localhost:8545",
+            "--verifier-url",
+            "http://localhost:3000/api/verify",
+            "--etherscan-api-key",
+            "blacksmith",
+            "--broadcast",
+            "--verify",
+            "-vvvv",
+        ]);
+        assert_eq!(
+            args.verifier.verifier_url,
+            Some("http://localhost:3000/api/verify".to_string())
+        );
+    }
+
+    #[test]
     fn can_extract_script_etherscan_key() {
         let temp = tempdir().unwrap();
         let root = temp.path();
