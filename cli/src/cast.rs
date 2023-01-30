@@ -180,6 +180,7 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::Interface(cmd) => cmd.run()?.await?,
         Subcommands::PrettyCalldata { calldata, offline } => {
+            let calldata = stdin::unwrap_line(calldata)?;
             println!("{}", pretty_calldata(&calldata, offline).await?);
         }
         Subcommands::Sig { sig } => {

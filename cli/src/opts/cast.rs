@@ -508,7 +508,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
     )]
     PrettyCalldata {
         #[clap(help = "The calldata.", value_name = "CALLDATA")]
-        calldata: String,
+        calldata: Option<String>,
         #[clap(long, short, help = "Skip the https://sig.eth.samczsun.com lookup.")]
         offline: bool,
     },
