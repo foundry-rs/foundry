@@ -38,6 +38,7 @@ pub fn h256_to_u256_le(storage: H256) -> U256 {
 pub fn apply_chain_and_block_specific_env_changes<T>(env: &mut revm::Env, block: &Block<T>) {
     if let Ok(chain) = Chain::try_from(env.cfg.chain_id) {
         let block_number = block.number.unwrap_or_default();
+
         #[allow(clippy::single-match)]
         match chain {
             Chain::Mainnet => {
