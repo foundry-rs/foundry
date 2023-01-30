@@ -83,7 +83,9 @@ pub fn read_bytes(read_line: bool) -> Result<Vec<u8>> {
         let mut buf = String::new();
         stdin.read_line(&mut buf)?;
         // remove the trailing newline
-        buf.pop();
+        if buf.as_bytes().last().copied() == Some(b'\n') {
+            buf.pop();
+        }
         Ok(buf.into_bytes())
     } else {
         let mut buf = Vec::new();
