@@ -223,7 +223,7 @@ Examples:
         #[clap(flatten)]
         base: ToBaseArgs,
         #[clap(value_name = "BASE", help = "The output base")]
-        base_out: String,
+        base_out: Option<String>,
     },
     #[clap(name = "access-list")]
     #[clap(visible_aliases = &["ac", "acl"])]

@@ -145,7 +145,7 @@ async fn main() -> eyre::Result<()> {
             println!("{}", SimpleCast::to_base(&value, base_in, "dec")?);
         }
         Subcommands::ToBase { base: ToBaseArgs { value, base_in }, base_out } => {
-            let value = stdin::unwrap_line(value)?;
+            let (value, base_out) = stdin::unwrap2(value, base_out)?;
             println!("{}", SimpleCast::to_base(&value, base_in, &base_out)?);
         }
         Subcommands::ToBytes32 { bytes } => {
