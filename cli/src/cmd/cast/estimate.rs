@@ -7,7 +7,7 @@ use cast::{Cast, TxBuilder};
 use clap::Parser;
 use ethers::{
     providers::Middleware,
-    types::{Address, NameOrAddress, U256},
+    types::{NameOrAddress, U256},
 };
 use foundry_common::try_get_http_provider;
 use foundry_config::{Chain, Config};
@@ -69,8 +69,8 @@ impl EstimateArgs {
         let chain: Chain =
             if let Some(chain) = eth.chain { chain } else { provider.get_chainid().await?.into() };
 
-        let from = eth.wallet.from.unwrap_or(Address::zero());
-        let mut builder = TxBuilder::new(&provider, from, to, chain, false).await?;
+        let sender = eth.sender().await;
+        let mut builder = TxBuilder::new(&provider, sender, to, chain, false).await?;
         builder.etherscan_api_key(config.get_etherscan_api_key(Some(chain)));
         match command {
             Some(EstimateSubcommands::Create { code, sig, args, value }) => {
@@ -86,7 +86,8 @@ impl EstimateArgs {
                 builder.set_data(data);
             }
             _ => {
-                builder.value(value).set_args(sig.unwrap().as_str(), args).await?;
+                let sig = sig.ok_or_else(|| eyre::eyre!("Function signature must be provided."))?;
+                builder.value(value).set_args(sig.as_str(), args).await?;
             }
         };
 
