@@ -1,14 +1,11 @@
 //! Utility functions for reading from [`stdin`](std::io::stdin).
 
-use ethers::types::{BlockId, BlockNumber};
 use eyre::Result;
 use std::{
     error::Error as StdError,
     io::{self, BufRead, Read},
     str::FromStr,
 };
-
-use crate::opts::cast::parse_block_id;
 
 /// Unwraps the given `Option<T>` or [reads stdin into a String](read) and parses it as `T`.
 pub fn unwrap<T>(value: Option<T>, read_line: bool) -> eyre::Result<T>
@@ -19,6 +16,20 @@ where
     match value {
         Some(value) => Ok(value),
         None => read(read_line)?.parse().map_err(Into::into),
+    }
+}
+
+#[inline]
+pub fn unwrap2<A, B>(a: Option<A>, b: Option<B>) -> Result<(A, B)>
+where
+    A: FromStr,
+    B: FromStr,
+    A::Err: StdError + Send + Sync + 'static,
+    B::Err: StdError + Send + Sync + 'static,
+{
+    match (a, b) {
+        (Some(a), Some(b)) => Ok((a, b)),
+        (a, b) => Ok((unwrap(a, true)?, unwrap(b, true)?)),
     }
 }
 
@@ -37,34 +48,20 @@ where
     Ok(value)
 }
 
-pub fn unwrap2<A, B>(a: Option<A>, b: Option<B>) -> Result<(A, B)>
+/// Short-hand for `unwrap(value, true)`.
+#[inline]
+pub fn unwrap_line<T>(value: Option<T>) -> eyre::Result<T>
 where
-    A: FromStr,
-    B: FromStr,
-    A::Err: StdError + Send + Sync + 'static,
-    B::Err: StdError + Send + Sync + 'static,
+    T: FromStr,
+    T::Err: StdError + Send + Sync + 'static,
 {
-    match (a, b) {
-        (Some(a), Some(b)) => Ok((a, b)),
-        (a, b) => Ok((unwrap(a, true)?, unwrap(b, true)?)),
-    }
-}
-
-// TODO: Use [BlockId::from_str]
-pub fn unwrap_block_id(block: Option<BlockId>) -> Result<BlockId> {
-    match block {
-        Some(block) => Ok(block),
-        None => {
-            let s = read(true)?;
-            let block = parse_block_id(&s).unwrap_or(BlockId::Number(BlockNumber::Latest));
-            Ok(block)
-        }
-    }
+    unwrap(value, true)
 }
 
 /// Reads bytes from [`stdin`][io::stdin] into a String.
 ///
 /// If `read_line` is true, stop at the first newline (the `0xA` byte).
+#[inline]
 pub fn read(read_line: bool) -> Result<String> {
     let bytes = read_bytes(read_line)?;
 

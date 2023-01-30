@@ -257,7 +257,7 @@ Examples:
         #[clap(
             help = "The block height you want to query at.",
             long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
-             value_parser = parse_block_id,
+            value_parser = parse_block_id,
             value_name = "BLOCK"
         )]
         block: BlockId,
@@ -321,19 +321,19 @@ Examples:
     #[clap(visible_alias = "ca")]
     #[clap(about = "Compute the contract address from a given nonce and deployer address.")]
     ComputeAddress {
-        #[clap(long, env = "ETH_RPC_URL", value_name = "URL")]
-        rpc_url: Option<String>,
         #[clap(help = "The deployer address.", value_name = "ADDRESS")]
-        address: String,
+        address: Option<String>,
         #[clap(long, help = "The nonce of the deployer address.", value_parser = parse_u256, value_name = "NONCE")]
         nonce: Option<U256>,
+        #[clap(long, env = "ETH_RPC_URL", value_name = "URL")]
+        rpc_url: Option<String>,
     },
     #[clap(name = "namehash")]
     #[clap(visible_aliases = &["na", "nh"])]
     #[clap(about = "Calculate the ENS namehash of a name.")]
     Namehash {
         #[clap(value_name = "NAME")]
-        name: String,
+        name: Option<String>,
     },
     #[clap(name = "tx")]
     #[clap(visible_alias = "t")]
@@ -462,7 +462,7 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
     )]
     FourByte {
         #[clap(help = "The function selector.", value_name = "SELECTOR")]
-        selector: String,
+        selector: Option<String>,
     },
     #[clap(name = "4byte-decode")]
     #[clap(visible_aliases = &["4d", "4bd"])]
@@ -478,7 +478,7 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
     )]
     FourByteEvent {
         #[clap(help = "Topic 0", value_name = "TOPIC_0")]
-        topic: String,
+        topic: Option<String>,
     },
     #[clap(name = "upload-signature")]
     #[clap(visible_aliases = &["ups"])]
@@ -592,14 +592,14 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
     #[clap(about = "Generate event signatures from event string.")]
     SigEvent {
         #[clap(value_name = "EVENT_STRING")]
-        event_string: String,
+        event_string: Option<String>,
     },
     #[clap(name = "keccak")]
     #[clap(visible_alias = "k")]
-    #[clap(about = "Hash arbitrary data using keccak-256.")]
+    #[clap(about = "Hash arbitrary data using Keccak-256.")]
     Keccak {
         #[clap(value_name = "DATA")]
-        data: String,
+        data: Option<String>,
     },
     #[clap(name = "resolve-name")]
     #[clap(visible_alias = "rn")]
@@ -704,7 +704,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
             help = "The function signature, e.g. transfer(address,uint256).",
             value_name = "SIG"
         )]
-        sig: String,
+        sig: Option<String>,
     },
     #[clap(
         name = "create2",
@@ -753,7 +753,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
 #[derive(Debug, Parser)]
 pub struct ToBaseArgs {
     #[clap(allow_hyphen_values = true, value_name = "VALUE")]
-    pub value: String,
+    pub value: Option<String>,
     #[clap(long = "base-in", short = 'i', help = "The input base")]
     pub base_in: Option<String>,
 }
