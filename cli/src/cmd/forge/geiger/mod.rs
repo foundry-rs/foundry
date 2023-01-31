@@ -77,7 +77,7 @@ impl GeigerArgs {
                 if ignore.is_absolute() {
                     abs_path.starts_with(ignore)
                 } else {
-                    abs_path.starts_with(&cwd.join(ignore))
+                    abs_path.starts_with(cwd.join(ignore))
                 }
             })
         });
