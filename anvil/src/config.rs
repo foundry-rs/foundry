@@ -830,7 +830,8 @@ impl NodeConfig {
                 number: fork_block_number.into(),
                 timestamp: block.timestamp,
                 difficulty: block.difficulty,
-                prevrandao: block.mix_hash,
+                // ensures prevrandao is set
+                prevrandao: Some(block.mix_hash.unwrap_or_default()),
                 gas_limit,
                 // Keep previous `coinbase` and `basefee` value
                 coinbase: env.block.coinbase,
