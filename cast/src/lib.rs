@@ -1269,14 +1269,9 @@ impl SimpleCast {
     ) -> Result<Vec<InterfaceSource>> {
         let (contract_abis, contract_names): (Vec<RawAbi>, Vec<String>) = match address_or_path {
             InterfacePath::Local { path, name } => {
-                println!("Hello2");
                 let file = std::fs::read_to_string(path).wrap_err("unable to read abi file")?;
-
                 let mut json: serde_json::Value = serde_json::from_str(&file)?;
-
                 let json = if !json["abi"].is_null() { json["abi"].take() } else { json };
-
-                // println!("Abi : \n{}", json.to_string());
                 let abi: RawAbi =
                     serde_json::from_value(json).wrap_err("unable to parse json ABI from file")?;
 
