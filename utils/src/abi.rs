@@ -150,7 +150,7 @@ fn expand_input_param_type(
         }
         ParamType::Tuple(_) => {
             let ty = if let Some(struct_name) =
-                structs.get_function_input_struct_type(&fun.name, param)
+                structs.get_function_input_struct_solidity_id(&fun.name, param)
             {
                 struct_name.to_string()
             } else {
@@ -183,7 +183,7 @@ fn expand_output_param_type(
                     kind.to_string().trim_start_matches('(').trim_end_matches(')').to_string();
                 Ok(result)
             } else {
-                let ty = if let Some(struct_name) = structs.get_function_output_struct_type(
+                let ty = if let Some(struct_name) = structs.get_function_output_struct_solidity_id(
                     &fun.name,
                     param.internal_type.as_ref().unwrap(),
                 ) {
@@ -257,12 +257,13 @@ fn expand_event_param_type(
             Ok(format!("{ty}[{}]", *size))
         }
         ParamType::Tuple(_) => {
-            let ty =
-                if let Some(struct_name) = structs.get_event_input_struct_type(&event.name, idx) {
-                    struct_name.to_string()
-                } else {
-                    kind.to_string()
-                };
+            let ty = if let Some(struct_name) =
+                structs.get_event_input_struct_solidity_id(&event.name, idx)
+            {
+                struct_name.to_string()
+            } else {
+                kind.to_string()
+            };
             Ok(ty)
         }
         _ => Ok(kind.to_string()),
@@ -342,11 +343,11 @@ mod tests {
             "../../testdata/fixtures/SolidityGeneration/InterfaceABI.json"
         ))
         .unwrap();
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             include_str!("../../testdata/fixtures/SolidityGeneration/GeneratedNamedInterface.sol"),
             abi_to_solidity(&contract_abi, "test").unwrap()
         );
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             include_str!(
                 "../../testdata/fixtures/SolidityGeneration/GeneratedUnnamedInterface.sol"
             ),
@@ -360,7 +361,7 @@ mod tests {
             "../../testdata/fixtures/SolidityGeneration/GaugeController.json"
         ))
         .unwrap();
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             include_str!("../../testdata/fixtures/SolidityGeneration/GeneratedGaugeController.sol"),
             abi_to_solidity(&contract_abi, "test").unwrap()
         );
@@ -372,7 +373,7 @@ mod tests {
             "../../testdata/fixtures/SolidityGeneration/LiquidityGaugeV4.json"
         ))
         .unwrap();
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             include_str!(
                 "../../testdata/fixtures/SolidityGeneration/GeneratedLiquidityGaugeV4.sol"
             ),
@@ -386,7 +387,7 @@ mod tests {
             "../../testdata/fixtures/SolidityGeneration/Fastlane.json"
         ))
         .unwrap();
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             include_str!("../../testdata/fixtures/SolidityGeneration/GeneratedFastLane.sol"),
             abi_to_solidity(&contract_abi, "test").unwrap()
         );
@@ -399,7 +400,7 @@ mod tests {
             "../../testdata/fixtures/SolidityGeneration/WithStructs.json"
         ))
         .unwrap();
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             include_str!("../../testdata/fixtures/SolidityGeneration/WithStructs.sol").trim(),
             abi_to_solidity(&contract_abi, "test").unwrap().trim()
         );
