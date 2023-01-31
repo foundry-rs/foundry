@@ -1,9 +1,10 @@
 #![allow(unused_variables, dead_code)]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use cast::InterfacePath;
+use cast::BindPath;
 use clap::{Parser, ValueHint};
 use ethers::prelude::{errors::EtherscanError, Abigen, Client, MultiAbigen};
+use eyre::Context;
 use forge::Address;
 use futures::future::BoxFuture;
 
@@ -22,6 +23,9 @@ If an address is specified, then the ABI is fetched from Etherscan."#,
         value_name = "PATH_OR_ADDRESS"
     )]
     path_or_address: String,
+
+    #[clap(long, short, help = "The name to use for the generated interface", value_name = "NAME")]
+    name: Option<String>,
 
     #[clap(long, short, env = "ETHERSCAN_API_KEY", help = "etherscan API key", value_name = "KEY")]
     etherscan_api_key: Option<String>,
@@ -60,6 +64,7 @@ impl Cmd for BindArgs {
         let cmd = Box::pin(async move {
             let BindArgs {
                 path_or_address,
+                name,
                 etherscan_api_key,
                 bindings,
                 crate_name,
@@ -67,12 +72,21 @@ impl Cmd for BindArgs {
                 chain,
             } = self.clone();
 
-            self.generate_bindings(InterfacePath::Etherscan {
-                address: path_or_address.parse::<Address>().unwrap(),
-                chain: chain.inner,
-                api_key: etherscan_api_key.unwrap(),
-            })
-            .await
+            if Path::new(&path_or_address).exists() {
+                return self
+                    .generate_bindings(BindPath::Local {
+                        path: path_or_address,
+                        name: Some(name.unwrap_or_else(|| "Sample".to_owned())),
+                    })
+                    .await
+            } else {
+                self.generate_bindings(BindPath::Etherscan {
+                    address: path_or_address.parse::<Address>().unwrap(),
+                    chain: chain.inner,
+                    api_key: etherscan_api_key.unwrap(),
+                })
+                .await
+            }
         });
 
         Ok(cmd)
@@ -80,9 +94,9 @@ impl Cmd for BindArgs {
 }
 
 impl BindArgs {
-    pub async fn generate_bindings(self, address_or_path: InterfacePath) -> eyre::Result<()> {
+    pub async fn generate_bindings(self, address_or_path: BindPath) -> eyre::Result<()> {
         match address_or_path {
-            InterfacePath::Etherscan { address, chain, api_key } => {
+            BindPath::Etherscan { address, chain, api_key } => {
                 let client = Client::new(chain, api_key)?;
                 // get the source
                 let source = match client.contract_source_code(address).await {
@@ -104,7 +118,6 @@ impl BindArgs {
                     .collect::<Vec<Abigen>>();
 
                 let multi = MultiAbigen::from_abigens(abigens);
-                // Abigen::new(contract_name, abi_source)
 
                 let bindings = multi.build().unwrap();
                 bindings.write_to_crate(
@@ -114,8 +127,26 @@ impl BindArgs {
                     false,
                 )?;
             }
-            InterfacePath::Local { path, name } => {
-                todo!()
+            BindPath::Local { path, name } => {
+                let file = std::fs::read_to_string(path).wrap_err("unable to read abi file")?;
+                let mut json: serde_json::Value = serde_json::from_str(&file)?;
+                if let Some(abi) = json.get_mut("abi") {
+                    let abi = abi.take().to_string();
+
+                    let abigen = Abigen::new(name.unwrap(), abi)?;
+                    let abigens = vec![abigen];
+                    let multi = MultiAbigen::from_abigens(abigens);
+
+                    let bindings = multi.build().unwrap();
+                    bindings.write_to_crate(
+                        &self.crate_name,
+                        &self.crate_version,
+                        self.get_binding_root(),
+                        false,
+                    )?;
+                } else {
+                    eyre::bail!("abi not found in json")
+                }
             }
         };
         Ok(())
