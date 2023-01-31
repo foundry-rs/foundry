@@ -2652,6 +2652,7 @@ dependencies = [
  "glob",
  "hex",
  "once_cell",
+ "pretty_assertions",
  "rand 0.8.5",
  "reqwest",
  "rlp",

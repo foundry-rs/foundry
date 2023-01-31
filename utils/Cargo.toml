@@ -41,6 +41,7 @@ foundry-common = { path = "./../common" }
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = [
     "solc-full",
 ] }
+pretty_assertions = "1.0.0"
 
 [features]
 test = ["tracing-subscriber"]
