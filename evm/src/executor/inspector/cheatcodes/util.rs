@@ -327,7 +327,7 @@ pub fn parse_private_key(private_key: U256) -> Result<SigningKey, Bytes> {
     SigningKey::from_bytes(&bytes).map_err(|err| err.to_string().encode().into())
 }
 
-// Determines if the gas limit on a given call was manually set in thes cript and should therefore
+// Determines if the gas limit on a given call was manually set in the script and should therefore
 // not be overwritten by later estimations
 pub fn check_if_fixed_gas_limit<DB: DatabaseExt>(
     data: &EVMData<'_, DB>,

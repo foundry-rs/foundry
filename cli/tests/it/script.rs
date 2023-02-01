@@ -358,7 +358,6 @@ contract RunScript is Script {
         ]);
 
         let output = cmd.stdout_lossy();
-        println!("{}", output);
         assert!(output.contains("SKIPPING ON CHAIN SIMULATION"));
         assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
     }
