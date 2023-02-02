@@ -546,7 +546,7 @@ fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String
             Ok(i) if i == 0 => return Ok(tag.into()),
             Ok(i) if (1..=n_candidates).contains(&i) => {
                 let c = &candidates[i];
-                println!("[{i}] {} selected", c);
+                println!("[{i}] {c} selected");
                 return Ok(c.clone())
             }
             _ => continue,
