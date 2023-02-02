@@ -12,7 +12,7 @@ use foundry_cli::{
     cmd::Cmd,
     handler,
     opts::cast::{Opts, Subcommands, ToBaseArgs},
-    stdin, utils,
+    prompt, stdin, utils,
     utils::try_consume_config_rpc_url,
 };
 use foundry_common::{
@@ -26,7 +26,6 @@ use foundry_common::{
 };
 use foundry_config::{Chain, Config};
 use rustc_hex::ToHex;
-use std::io::{self, Write};
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -346,9 +345,7 @@ async fn main() -> eyre::Result<()> {
                 0 => eyre::bail!("No signatures found"),
                 1 => sigs.get(0).unwrap(),
                 _ => {
-                    print!("Select a function signature by number: ");
-                    io::stdout().flush()?;
-                    let i: usize = stdin::unwrap_line(None)?;
+                    let i: usize = prompt!("Select a function signature by number: ")?;
                     sigs.get(i - 1).ok_or_else(|| eyre::eyre!("Invalid signature index"))?
                 }
             };

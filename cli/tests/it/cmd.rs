@@ -317,7 +317,7 @@ forgetest!(can_init_in_empty_repo, |prj: TestProject, mut cmd: TestCommand| {
     // initialize new git repo
     let status = Command::new("git")
         .arg("init")
-        .current_dir(&root)
+        .current_dir(root)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -325,7 +325,7 @@ forgetest!(can_init_in_empty_repo, |prj: TestProject, mut cmd: TestCommand| {
     assert!(status.success());
     assert!(root.join(".git").exists());
 
-    cmd.arg("init").arg(&root);
+    cmd.arg("init").arg(root);
     cmd.assert_err();
 
     cmd.arg("--force");
@@ -340,7 +340,7 @@ forgetest!(can_init_in_non_empty_repo, |prj: TestProject, mut cmd: TestCommand| 
     // initialize new git repo
     let status = Command::new("git")
         .arg("init")
-        .current_dir(&root)
+        .current_dir(root)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -351,7 +351,7 @@ forgetest!(can_init_in_non_empty_repo, |prj: TestProject, mut cmd: TestCommand| 
     prj.create_file("README.md", "non-empty dir");
     prj.create_file(".gitignore", "not foundry .gitignore");
 
-    cmd.arg("init").arg(&root);
+    cmd.arg("init").arg(root);
     cmd.assert_err();
 
     cmd.arg("--force");
