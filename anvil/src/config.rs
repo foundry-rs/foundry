@@ -33,6 +33,7 @@ use foundry_evm::{
     executor::fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     revm,
     revm::{BlockEnv, CfgEnv, SpecId, TxEnv},
+    utils::apply_chain_and_block_specific_env_changes,
 };
 use parking_lot::RwLock;
 use serde_json::{json, to_writer, Value};
@@ -804,14 +805,10 @@ impl NodeConfig {
                     )
                 };
 
-            let block = if self.fork_chain_id.is_some() {
-                Some(Default::default())
-            } else {
-                provider
-                    .get_block(BlockNumber::Number(fork_block_number.into()))
-                    .await
-                    .expect("Failed to get fork block")
-            };
+            let block = provider
+                .get_block(BlockNumber::Number(fork_block_number.into()))
+                .await
+                .expect("Failed to get fork block");
 
             let block = if let Some(block) = block {
                 block
@@ -839,6 +836,9 @@ impl NodeConfig {
                 coinbase: env.block.coinbase,
                 basefee: env.block.basefee,
             };
+
+            // apply changes such as difficulty -> prevrandao
+            apply_chain_and_block_specific_env_changes(&mut env, &block);
 
             // if not set explicitly we use the base fee of the latest block
             if self.base_fee.is_none() {

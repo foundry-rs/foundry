@@ -6,8 +6,9 @@ use clap::{Parser, ValueHint};
 use ethers::solc::Graph;
 use eyre::WrapErr;
 use foundry_config::{impl_figment_convert_basic, Config};
+use itertools::Itertools;
 use rayon::prelude::*;
-use std::{collections::HashSet, path::PathBuf};
+use std::path::PathBuf;
 use yansi::Paint;
 
 mod error;
@@ -38,6 +39,14 @@ pub struct GeigerArgs {
         long
     )]
     check: bool,
+    #[clap(
+        help = "Globs to ignore.",
+        value_hint = ValueHint::FilePath,
+        value_name = "PATH",
+        num_args(1..),
+        long
+    )]
+    ignore: Vec<PathBuf>,
     #[clap(help = "print a full report of all files even if no unsafe functions are found.", long)]
     full: bool,
 }
@@ -48,16 +57,32 @@ impl_figment_convert_basic!(GeigerArgs);
 
 impl GeigerArgs {
     pub fn sources(&self, config: &Config) -> eyre::Result<Vec<PathBuf>> {
-        if !self.paths.is_empty() {
-            let mut files = HashSet::new();
-            for path in &self.paths {
-                files.extend(foundry_common::fs::files_with_ext(path, "sol"));
-            }
-            return Ok(files.into_iter().collect())
-        }
+        let cwd = std::env::current_dir()?;
 
-        let graph = Graph::resolve(&config.project_paths())?;
-        Ok(graph.files().keys().cloned().collect())
+        let mut sources: Vec<PathBuf> = {
+            if self.paths.is_empty() {
+                Graph::resolve(&config.project_paths())?.files().keys().cloned().collect()
+            } else {
+                self.paths
+                    .iter()
+                    .flat_map(|path| foundry_common::fs::files_with_ext(path, "sol"))
+                    .unique()
+                    .collect()
+            }
+        };
+
+        sources.retain(|path| {
+            let abs_path = if path.is_absolute() { path.clone() } else { cwd.join(path) };
+            !self.ignore.iter().any(|ignore| {
+                if ignore.is_absolute() {
+                    abs_path.starts_with(ignore)
+                } else {
+                    abs_path.starts_with(cwd.join(ignore))
+                }
+            })
+        });
+
+        Ok(sources)
     }
 }
 

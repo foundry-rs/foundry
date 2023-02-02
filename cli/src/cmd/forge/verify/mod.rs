@@ -33,7 +33,7 @@ pub struct VerifierArgs {
         help = "The verifier URL, if using a custom provider",
         value_name = "VERIFIER_URL"
     )]
-    verifier_url: Option<String>,
+    pub verifier_url: Option<String>,
 }
 
 impl Default for VerifierArgs {

@@ -18,7 +18,7 @@ vergen = { version = "7.0", default-features = false, features = ["build", "rust
 [dependencies]
 # foundry internal
 foundry-evm = { path = "../evm" }
-anvil-core = { path = "core", features = ["fastrlp", "serde"] }
+anvil-core = { path = "core", features = ["fastrlp", "serde", "impersonated-tx"] }
 anvil-rpc = { path = "rpc" }
 anvil-server = { path = "server" }
 foundry-utils = { path = "../utils" }

@@ -7,7 +7,7 @@ use ethers::{
     prelude::{Middleware, Signer},
     types::{transaction::eip2718::TypedTransaction, U256},
 };
-use foundry_common::{contracts::flatten_contracts, try_get_http_provider};
+use foundry_common::{contracts::flatten_contracts, shell, try_get_http_provider};
 use std::sync::Arc;
 use tracing::trace;
 
@@ -29,6 +29,8 @@ impl ScriptArgs {
         };
 
         self.maybe_load_private_key(&mut script_config)?;
+
+        shell::set_shell(shell::Shell::from_args(self.opts.args.silent, self.json))?;
 
         if let Some(ref fork_url) = script_config.evm_opts.fork_url {
             // when forking, override the sender's nonce to the onchain value

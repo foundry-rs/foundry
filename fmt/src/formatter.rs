@@ -1691,6 +1691,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     return Ok(())
                 }
 
+                if fmt.config.contract_new_lines {
+                    write_chunk!(fmt, "\n")?;
+                }
+
                 fmt.write_lined_visitable(
                     contract.loc,
                     contract.parts.iter_mut(),
@@ -1729,7 +1733,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
             if !contract.parts.is_empty() {
                 fmt.write_whitespace_separator(true)?;
+
+                if fmt.config.contract_new_lines {
+                    write_chunk!(fmt, "\n")?;
+                }
             }
+
             write_chunk!(fmt, contract.loc.end(), "}}")?;
 
             Ok(())

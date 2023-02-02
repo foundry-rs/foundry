@@ -381,6 +381,30 @@
     "type": "event"
   },
   {
+    "anonymous": false,
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "address",
+            "name": "implem",
+            "type": "address"
+          },
+          {
+            "internalType": "uint256",
+            "name": "id",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct NFToken",
+        "name": "token",
+        "type": "tuple"
+      }
+    ],
+    "name": "NFTokenAdded",
+    "type": "event"
+  },
+  {
     "inputs": [],
     "name": "MAX_AUCTION_VALUE",
     "outputs": [
@@ -1213,6 +1237,56 @@
     ],
     "name": "withdrawStuckNativeToken",
     "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "address",
+            "name": "implem",
+            "type": "address"
+          },
+          {
+            "internalType": "uint256",
+            "name": "id",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct NFToken",
+        "name": "nft",
+        "type": "tuple"
+      }
+    ],
+    "name": "storeNFToken",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "viewNFToken",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "address",
+            "name": "implem",
+            "type": "address"
+          },
+          {
+            "internalType": "uint256",
+            "name": "id",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct NFToken",
+        "name": "nft",
+        "type": "tuple"
+      }
+    ],
     "stateMutability": "nonpayable",
     "type": "function"
   }

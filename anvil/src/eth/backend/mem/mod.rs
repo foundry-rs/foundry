@@ -2,7 +2,6 @@
 use crate::{
     eth::{
         backend::{
-            cheats,
             cheats::CheatsManager,
             db::{AsHashDB, Db, MaybeHashDatabase, SerializableState},
             executor::{ExecutedTransactions, TransactionExecutor},
@@ -32,7 +31,8 @@ use anvil_core::{
         receipt::{EIP658Receipt, TypedReceipt},
         state::StateOverride,
         transaction::{
-            EthTransactionRequest, PendingTransaction, TransactionInfo, TypedTransaction,
+            EthTransactionRequest, MaybeImpersonatedTransaction, PendingTransaction,
+            TransactionInfo, TypedTransaction,
         },
         trie::RefTrieDB,
         utils::to_access_list,
@@ -1637,7 +1637,7 @@ impl Backend {
 
         let transaction = block.transactions[index].clone();
 
-        let effective_gas_price = match transaction {
+        let effective_gas_price = match transaction.transaction {
             TypedTransaction::Legacy(t) => t.gas_price,
             TypedTransaction::EIP2930(t) => t.gas_price,
             TypedTransaction::EIP1559(t) => block
@@ -1993,7 +1993,7 @@ impl TransactionValidator for Backend {
 #[allow(clippy::too_many_arguments)]
 pub fn transaction_build(
     tx_hash: Option<H256>,
-    eth_transaction: TypedTransaction,
+    eth_transaction: MaybeImpersonatedTransaction,
     block: Option<&Block>,
     info: Option<TransactionInfo>,
     is_eip1559: bool,
@@ -2001,14 +2001,7 @@ pub fn transaction_build(
 ) -> Transaction {
     let mut transaction: Transaction = eth_transaction.clone().into();
 
-    // if a specific hash was provided we update the transaction's hash
-    // This is important for impersonated transactions since they all use the `BYPASS_SIGNATURE`
-    // which would result in different hashes
-    if let Some(tx_hash) = tx_hash {
-        transaction.hash = tx_hash;
-    }
-
-    if let TypedTransaction::EIP1559(_) = eth_transaction {
+    if let TypedTransaction::EIP1559(_) = eth_transaction.as_ref() {
         if block.is_none() && info.is_none() {
             // transaction is not mined yet, gas price is considered just `max_fee_per_gas`
             transaction.gas_price = transaction.max_fee_per_gas;
@@ -2035,12 +2028,23 @@ pub fn transaction_build(
 
     transaction.transaction_index = info.as_ref().map(|status| status.transaction_index.into());
 
-    // need to check if the signature of the transaction is the `BYPASS_SIGNATURE`, if so then we
-    // can't recover the sender, instead we use the sender from the executed transaction
-    if cheats::is_bypassed(&eth_transaction) {
-        transaction.from = info.as_ref().map(|info| info.from).unwrap_or_default()
+    // need to check if the signature of the transaction is impersonated, if so then we
+    // can't recover the sender, instead we use the sender from the executed transaction and set the
+    // impersonated hash.
+    if eth_transaction.is_impersonated() {
+        transaction.from = info.as_ref().map(|info| info.from).unwrap_or_default();
+        transaction.hash = eth_transaction.impersonated_hash(transaction.from);
     } else {
         transaction.from = eth_transaction.recover().expect("can recover signed tx");
+    }
+
+    // if a specific hash was provided we update the transaction's hash
+    // This is important for impersonated transactions since they all use the `BYPASS_SIGNATURE`
+    // which would result in different hashes
+    // Note: for impersonated transactions this only concerns pending transactions because there's
+    // no `info` yet.
+    if let Some(tx_hash) = tx_hash {
+        transaction.hash = tx_hash;
     }
 
     transaction.to = info.as_ref().map_or(eth_transaction.to().cloned(), |status| status.to);

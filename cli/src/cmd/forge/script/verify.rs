@@ -68,7 +68,8 @@ impl VerifyBundle {
         // chain_id.
         let mut config = config.clone();
         config.chain_id = Some(chain);
-        self.etherscan_key = config.get_etherscan_api_key(Some(chain));
+        self.etherscan_key =
+            config.get_etherscan_api_key(Some(chain)).or_else(|| config.etherscan_api_key.clone());
         self.chain = chain;
     }
 

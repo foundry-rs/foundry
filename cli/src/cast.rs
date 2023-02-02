@@ -6,12 +6,13 @@ use ethers::{
     core::types::{BlockId, BlockNumber::Latest, H256},
     providers::Middleware,
     types::{Address, I256, U256},
+    utils::keccak256,
 };
 use foundry_cli::{
     cmd::Cmd,
     handler,
-    opts::cast::{Opts, Subcommands},
-    utils,
+    opts::cast::{Opts, Subcommands, ToBaseArgs},
+    stdin, utils,
     utils::try_consume_config_rpc_url,
 };
 use foundry_common::{
@@ -25,10 +26,7 @@ use foundry_common::{
 };
 use foundry_config::{Chain, Config};
 use rustc_hex::ToHex;
-use std::{
-    io::{self, Read, Write},
-    str::FromStr,
-};
+use std::io::{self, Write};
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -58,35 +56,35 @@ async fn main() -> eyre::Result<()> {
 
         // Conversions & transformations
         Subcommands::FromUtf8 { text } => {
-            let value = unwrap_or_stdin(text)?;
+            let value = stdin::unwrap(text, false)?;
             println!("{}", SimpleCast::from_utf8(&value));
         }
         Subcommands::ToAscii { hexdata } => {
-            let value = unwrap_or_stdin(hexdata)?;
+            let value = stdin::unwrap(hexdata, false)?;
             println!("{}", SimpleCast::to_ascii(&value)?);
         }
-        Subcommands::FromFixedPoint { decimals, value } => {
-            let value = unwrap_or_stdin(value)?;
-            let decimals = unwrap_or_stdin(decimals)?;
+        Subcommands::FromFixedPoint { value, decimals } => {
+            let (value, decimals) = stdin::unwrap2(value, decimals)?;
             println!("{}", SimpleCast::from_fixed_point(&value, &decimals)?);
         }
-        Subcommands::ToFixedPoint { decimals, value } => {
-            let value = unwrap_or_stdin(value)?;
-            let decimals = unwrap_or_stdin(decimals)?;
+        Subcommands::ToFixedPoint { value, decimals } => {
+            let (value, decimals) = stdin::unwrap2(value, decimals)?;
             println!("{}", SimpleCast::to_fixed_point(&value, &decimals)?);
         }
         Subcommands::ConcatHex { data } => {
-            println!("{}", SimpleCast::concat_hex(data))
+            if data.is_empty() {
+                let s = stdin::read(true)?;
+                println!("{}", SimpleCast::concat_hex(s.split_whitespace()))
+            } else {
+                println!("{}", SimpleCast::concat_hex(data))
+            }
         }
-        Subcommands::FromBin {} => {
-            let hex: String = io::stdin()
-                .bytes()
-                .map(|x| format!("{:02x}", x.expect("invalid binary data")))
-                .collect();
-            println!("0x{hex}");
+        Subcommands::FromBin => {
+            let hex = stdin::read_bytes(false)?;
+            println!("0x{}", hex::encode(hex));
         }
         Subcommands::ToHexdata { input } => {
-            let value = unwrap_or_stdin(input)?;
+            let value = stdin::unwrap_line(input)?;
             let output = match value {
                 s if s.starts_with('@') => {
                     let var = std::env::var(&s[1..])?;
@@ -107,56 +105,59 @@ async fn main() -> eyre::Result<()> {
             println!("0x{output}");
         }
         Subcommands::ToCheckSumAddress { address } => {
-            let value = unwrap_or_stdin(address)?;
+            let value = stdin::unwrap_line(address)?;
             println!("{}", SimpleCast::to_checksum_address(&value));
         }
         Subcommands::ToUint256 { value } => {
-            let value = unwrap_or_stdin(value)?;
+            let value = stdin::unwrap_line(value)?;
             println!("{}", SimpleCast::to_uint256(&value)?);
         }
         Subcommands::ToInt256 { value } => {
-            let value = unwrap_or_stdin(value)?;
+            let value = stdin::unwrap_line(value)?;
             println!("{}", SimpleCast::to_int256(&value)?);
         }
         Subcommands::ToUnit { value, unit } => {
-            let value = unwrap_or_stdin(value)?;
+            let value = stdin::unwrap_line(value)?;
             println!("{}", SimpleCast::to_unit(&value, &unit)?);
         }
         Subcommands::FromWei { value, unit } => {
-            let value = unwrap_or_stdin(value)?;
+            let value = stdin::unwrap_line(value)?;
             println!("{}", SimpleCast::from_wei(&value, &unit)?);
         }
         Subcommands::ToWei { value, unit } => {
-            let value = unwrap_or_stdin(value)?;
+            let value = stdin::unwrap_line(value)?;
             println!("{}", SimpleCast::to_wei(&value, &unit)?);
         }
         Subcommands::FromRlp { value } => {
-            let value = unwrap_or_stdin(value)?;
+            let value = stdin::unwrap_line(value)?;
             println!("{}", SimpleCast::from_rlp(value)?);
         }
         Subcommands::ToRlp { value } => {
-            let value = unwrap_or_stdin(value)?;
+            let value = stdin::unwrap_line(value)?;
             println!("{}", SimpleCast::to_rlp(&value)?);
         }
-        Subcommands::ToHex(base) => {
-            println!("{}", SimpleCast::to_base(&base.value, base.base_in, "hex")?);
+        Subcommands::ToHex(ToBaseArgs { value, base_in }) => {
+            let value = stdin::unwrap_line(value)?;
+            println!("{}", SimpleCast::to_base(&value, base_in, "hex")?);
         }
-        Subcommands::ToDec(base) => {
-            println!("{}", SimpleCast::to_base(&base.value, base.base_in, "dec")?);
+        Subcommands::ToDec(ToBaseArgs { value, base_in }) => {
+            let value = stdin::unwrap_line(value)?;
+            println!("{}", SimpleCast::to_base(&value, base_in, "dec")?);
         }
-        Subcommands::ToBase { base, base_out } => {
-            println!("{}", SimpleCast::to_base(&base.value, base.base_in, &base_out)?);
+        Subcommands::ToBase { base: ToBaseArgs { value, base_in }, base_out } => {
+            let (value, base_out) = stdin::unwrap2(value, base_out)?;
+            println!("{}", SimpleCast::to_base(&value, base_in, &base_out)?);
         }
         Subcommands::ToBytes32 { bytes } => {
-            let value = unwrap_or_stdin(bytes)?;
+            let value = stdin::unwrap_line(bytes)?;
             println!("{}", SimpleCast::to_bytes32(&value)?);
         }
         Subcommands::FormatBytes32String { string } => {
-            let value = unwrap_or_stdin(string)?;
+            let value = stdin::unwrap_line(string)?;
             println!("{}", SimpleCast::format_bytes32_string(&value)?);
         }
         Subcommands::ParseBytes32String { bytes } => {
-            let value = unwrap_or_stdin(bytes)?;
+            let value = stdin::unwrap_line(bytes)?;
             println!("{}", SimpleCast::parse_bytes32_string(&value)?);
         }
 
@@ -179,14 +180,11 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::Interface(cmd) => cmd.run()?.await?,
         Subcommands::PrettyCalldata { calldata, offline } => {
-            if !calldata.starts_with("0x") {
-                eprintln!("Expected calldata hex string, received \"{calldata}\"");
-                std::process::exit(0)
-            }
-            let pretty_data = pretty_calldata(&calldata, offline).await?;
-            println!("{pretty_data}");
+            let calldata = stdin::unwrap_line(calldata)?;
+            println!("{}", pretty_calldata(&calldata, offline).await?);
         }
         Subcommands::Sig { sig } => {
+            let sig = stdin::unwrap_line(sig)?;
             let selector = HumanReadableParser::parse_function(&sig)?.short_signature();
             println!("0x{}", hex::encode(selector));
         }
@@ -224,7 +222,6 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::BaseFee { block, rpc_url } => {
             let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-
             let provider = try_get_http_provider(rpc_url)?;
             println!(
                 "{}",
@@ -248,13 +245,11 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::ChainId { rpc_url } => {
             let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-
             let provider = try_get_http_provider(rpc_url)?;
             println!("{}", Cast::new(provider).chain_id().await?);
         }
         Subcommands::Client { rpc_url } => {
             let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-
             let provider = try_get_http_provider(rpc_url)?;
             println!("{}", provider.client_version().await?);
         }
@@ -263,13 +258,13 @@ async fn main() -> eyre::Result<()> {
             let provider = try_get_http_provider(rpc_url)?;
             println!("{}", Cast::new(provider).code(who, block).await?);
         }
-        Subcommands::ComputeAddress { rpc_url, address, nonce } => {
+        Subcommands::ComputeAddress { address, nonce, rpc_url } => {
             let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-
-            let pubkey = Address::from_str(&address).expect("invalid pubkey provided");
             let provider = try_get_http_provider(rpc_url)?;
-            let addr = Cast::new(&provider).compute_address(pubkey, nonce).await?;
-            println!("Computed Address: {}", SimpleCast::to_checksum_address(&addr));
+
+            let address: Address = stdin::unwrap_line(address)?.parse()?;
+            let computed = Cast::new(&provider).compute_address(address, nonce).await?;
+            println!("Computed Address: {}", SimpleCast::to_checksum_address(&computed));
         }
         Subcommands::FindBlock(cmd) => cmd.run()?.await?,
         Subcommands::GasPrice { rpc_url } => {
@@ -283,13 +278,11 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::Nonce { block, who, rpc_url } => {
             let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-
             let provider = try_get_http_provider(rpc_url)?;
             println!("{}", Cast::new(provider).nonce(who, block).await?);
         }
         Subcommands::Proof { address, slots, rpc_url, block } => {
             let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-
             let provider = try_get_http_provider(rpc_url)?;
             let value = provider.get_proof(address, slots, block).await?;
             println!("{}", serde_json::to_string(&value)?);
@@ -327,7 +320,7 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::Run(cmd) => cmd.run()?,
         Subcommands::SendTx(cmd) => cmd.run().await?,
-        Subcommands::Tx { rpc_url, tx_hash, field, to_json } => {
+        Subcommands::Tx { tx_hash, field, to_json, rpc_url } => {
             let rpc_url = try_consume_config_rpc_url(rpc_url)?;
             let provider = try_get_http_provider(rpc_url)?;
             println!("{}", Cast::new(&provider).transaction(tx_hash, field, to_json).await?)
@@ -335,37 +328,48 @@ async fn main() -> eyre::Result<()> {
 
         // 4Byte
         Subcommands::FourByte { selector } => {
+            let selector = stdin::unwrap_line(selector)?;
             let sigs = decode_function_selector(&selector).await?;
-            sigs.iter().for_each(|sig| println!("{sig}"));
+            if sigs.is_empty() {
+                eyre::bail!("No matching function signatures found for selector `{selector}`");
+            }
+            for sig in sigs {
+                println!("{sig}");
+            }
         }
         Subcommands::FourByteDecode { calldata } => {
-            let calldata = unwrap_or_stdin(calldata)?;
+            let calldata = stdin::unwrap_line(calldata)?;
             let sigs = decode_calldata(&calldata).await?;
             sigs.iter().enumerate().for_each(|(i, sig)| println!("{}) \"{sig}\"", i + 1));
 
             let sig = match sigs.len() {
-                0 => Err(eyre::eyre!("No signatures found")),
-                1 => Ok(sigs.get(0).unwrap()),
+                0 => eyre::bail!("No signatures found"),
+                1 => sigs.get(0).unwrap(),
                 _ => {
                     print!("Select a function signature by number: ");
                     io::stdout().flush()?;
-                    let mut input = String::new();
-                    io::stdin().read_line(&mut input)?;
-                    let i: usize = input.trim().parse()?;
-                    Ok(sigs.get(i - 1).expect("Invalid signature index"))
+                    let i: usize = stdin::unwrap_line(None)?;
+                    sigs.get(i - 1).ok_or_else(|| eyre::eyre!("Invalid signature index"))?
                 }
-            }?;
+            };
 
             let tokens = SimpleCast::abi_decode(sig, &calldata, true)?;
-            let tokens = format_tokens(&tokens);
-
-            tokens.for_each(|t| println!("{t}"));
+            for token in format_tokens(&tokens) {
+                println!("{token}");
+            }
         }
         Subcommands::FourByteEvent { topic } => {
+            let topic = stdin::unwrap_line(topic)?;
             let sigs = decode_event_topic(&topic).await?;
-            sigs.iter().for_each(|sig| println!("{sig}"));
+            if sigs.is_empty() {
+                eyre::bail!("No matching event signatures found for topic `{topic}`");
+            }
+            for sig in sigs {
+                println!("{sig}");
+            }
         }
         Subcommands::UploadSignature { signatures } => {
+            let signatures = stdin::unwrap_vec(signatures)?;
             let ParsedSignatures { signatures, abis } = parse_signatures(signatures);
             if !abis.is_empty() {
                 import_selectors(SelectorImportData::Abi(abis)).await?.describe();
@@ -376,27 +380,30 @@ async fn main() -> eyre::Result<()> {
         }
 
         // ENS
+        Subcommands::Namehash { name } => {
+            let name = stdin::unwrap_line(name)?;
+            println!("{}", SimpleCast::namehash(&name)?);
+        }
         Subcommands::LookupAddress { who, rpc_url, verify } => {
             let rpc_url = try_consume_config_rpc_url(rpc_url)?;
             let provider = try_get_http_provider(rpc_url)?;
-            let who = unwrap_or_stdin(who)?;
+
+            let who = stdin::unwrap_line(who)?;
             let name = provider.lookup_address(who).await?;
             if verify {
                 let address = provider.resolve_name(&name).await?;
-                assert_eq!(
-                    address, who,
-                    "forward lookup verification failed. got {name}, expected {who}"
+                eyre::ensure!(
+                    address == who,
+                    "Forward lookup verification failed: got `{name:?}`, expected `{who:?}`"
                 );
             }
             println!("{name}");
         }
-        Subcommands::Namehash { name } => {
-            println!("{}", SimpleCast::namehash(&name)?);
-        }
         Subcommands::ResolveName { who, rpc_url, verify } => {
             let rpc_url = try_consume_config_rpc_url(rpc_url)?;
             let provider = try_get_http_provider(rpc_url)?;
-            let who = unwrap_or_stdin(who)?;
+
+            let who = stdin::unwrap_line(who)?;
             let address = provider.resolve_name(&who).await?;
             if verify {
                 let name = provider.lookup_address(address).await?;
@@ -410,9 +417,24 @@ async fn main() -> eyre::Result<()> {
 
         // Misc
         Subcommands::Keccak { data } => {
-            println!("{}", SimpleCast::keccak(&data)?);
+            let bytes = match data {
+                Some(data) => data.into_bytes(),
+                None => stdin::read_bytes(false)?,
+            };
+            match String::from_utf8(bytes) {
+                Ok(s) => {
+                    let s = SimpleCast::keccak(&s)?;
+                    println!("{s}");
+                }
+                Err(e) => {
+                    let hash = keccak256(e.as_bytes());
+                    let s = hex::encode(hash);
+                    println!("0x{s}");
+                }
+            };
         }
         Subcommands::SigEvent { event_string } => {
+            let event_string = stdin::unwrap_line(event_string)?;
             let parsed_event = get_event(&event_string)?;
             println!("{:?}", parsed_event.signature());
         }
@@ -466,20 +488,4 @@ async fn main() -> eyre::Result<()> {
         ),
     };
     Ok(())
-}
-
-fn unwrap_or_stdin<T>(what: Option<T>) -> eyre::Result<T>
-where
-    T: FromStr + Send + Sync,
-    T::Err: Send + Sync + std::error::Error + 'static,
-{
-    Ok(match what {
-        Some(what) => what,
-        None => {
-            let input = std::io::stdin();
-            let mut what = String::new();
-            input.read_line(&mut what)?;
-            T::from_str(&what.replace('\n', ""))?
-        }
-    })
 }
