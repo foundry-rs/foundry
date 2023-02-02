@@ -5,7 +5,7 @@ FOUNDRY_DIR=${FOUNDRY_DIR-"$HOME/.foundry"}
 FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
 FOUNDRY_MAN_DIR="$FOUNDRY_DIR/share/man/man1"
 
-bins=(forge cast anvil chisel)
+BINS=(forge cast anvil chisel)
 
 export RUSTFLAGS="-C target-cpu=native"
 
@@ -55,7 +55,7 @@ main() {
     cd "$FOUNDRYUP_LOCAL_REPO"
     ensure cargo build --release # need 4 speed
 
-    for bin in "${bins[@]}"; do
+    for bin in "${BINS[@]}"; do
       # Remove prior installations if they exist
       rm -f "$FOUNDRY_BIN_DIR/$bin"
       # Symlink from local repo binaries to bin dir
@@ -132,7 +132,7 @@ main() {
     say "downloading manpages"
     ensure curl -# -L "$MAN_TARBALL_URL" | tar -xzC "$FOUNDRY_MAN_DIR"
 
-    for bin in "${bins[@]}"; do
+    for bin in "${BINS[@]}"; do
       bin_path="$FOUNDRY_BIN_DIR/$bin"
 
       # Print installed msg
@@ -189,7 +189,7 @@ EOF
 
     # If help2man is installed, use it to add Foundry man pages.
     if check_cmd help2man; then
-      for bin in "${bins[@]}"; do
+      for bin in "${BINS[@]}"; do
         help2man -N "$FOUNDRY_BIN_DIR/$bin" > "$FOUNDRY_MAN_DIR/$bin.1"
       done
     fi
