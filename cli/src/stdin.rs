@@ -7,6 +7,36 @@ use std::{
     str::FromStr,
 };
 
+/// Prints a message to [`stdout`][io::stdout] and [reads a line from stdin into a String](read).
+///
+/// Returns `eyre::Result<T>`, so sometimes `T` must be explicitly specified, like in `str::parse`.
+///
+/// # Examples
+///
+/// ```no_run
+/// let response: String = prompt!("Would you like to continue? [y/N] ")?;
+/// if !matches!(response.as_str(), "y" | "Y") {
+///     return Ok(())
+/// }
+/// # Ok::<(), Box<dyn std::error::Error>>()
+/// ```
+#[macro_export]
+macro_rules! prompt {
+    () => {
+        $crate::stdin::parse_line()
+    };
+
+    ($($tt:tt)+) => {
+        {
+            ::std::print!($($tt)+);
+            match ::std::io::Write::flush(&mut ::std::io::stdout()) {
+                ::core::result::Result::Ok(_) => $crate::prompt!(),
+                ::core::result::Result::Err(e) => ::core::result::Result::Err(::eyre::eyre!("Could not flush stdout: {}", e))
+            }
+        }
+    };
+}
+
 /// Unwraps the given `Option<T>` or [reads stdin into a String](read) and parses it as `T`.
 pub fn unwrap<T>(value: Option<T>, read_line: bool) -> eyre::Result<T>
 where
@@ -15,7 +45,7 @@ where
 {
     match value {
         Some(value) => Ok(value),
-        None => read(read_line)?.parse().map_err(Into::into),
+        None => parse(read_line),
     }
 }
 
@@ -62,6 +92,28 @@ where
 ///
 /// If `read_line` is true, stop at the first newline (the `0xA` byte).
 #[inline]
+pub fn parse<T>(read_line: bool) -> Result<T>
+where
+    T: FromStr,
+    T::Err: StdError + Send + Sync + 'static,
+{
+    read(read_line).and_then(|s| s.parse().map_err(Into::into))
+}
+
+/// Short-hand for `parse(true)`.
+#[inline]
+pub fn parse_line<T>() -> Result<T>
+where
+    T: FromStr,
+    T::Err: StdError + Send + Sync + 'static,
+{
+    parse(true)
+}
+
+/// Reads bytes from [`stdin`][io::stdin] into a String.
+///
+/// If `read_line` is true, stop at the first newline (the `0xA` byte).
+#[inline]
 pub fn read(read_line: bool) -> Result<String> {
     let bytes = read_bytes(read_line)?;
 
@@ -83,7 +135,7 @@ pub fn read_bytes(read_line: bool) -> Result<Vec<u8>> {
         let mut buf = String::new();
         stdin.read_line(&mut buf)?;
         // remove the trailing newline
-        if buf.as_bytes().last().copied() == Some(b'\n') {
+        if let Some(b'\n') = buf.as_bytes().last() {
             buf.pop();
         }
         Ok(buf.into_bytes())

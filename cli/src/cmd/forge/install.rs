@@ -2,6 +2,7 @@
 use crate::{
     cmd::{Cmd, LoadConfig},
     opts::Dependency,
+    prompt,
     utils::{p_println, CommandUtils},
 };
 use atty::{self, Stream};
@@ -13,7 +14,6 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use semver::Version;
 use std::{
-    io::{stdin, stdout, Write},
     path::{Path, PathBuf},
     process::Command,
     str,
@@ -521,20 +521,11 @@ fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String
 
     // only one candidate, ask whether the user wants to accept or not
     if candidates.len() == 1 {
-        let matched_tag = candidates[0].clone();
-        print!(
-            "Found a similar version tag: {matched_tag}, do you want to use this insead? ([y]/n): "
-        );
-        stdout().flush()?;
-        let mut input = String::new();
-        stdin().read_line(&mut input)?;
-        input = input.trim().to_lowercase();
-        return if input.is_empty() || input == "y" || input == "yes" {
-            Ok(matched_tag)
-        } else {
-            // user rejects, fall back to the user-provided tag
-            Ok(tag.into())
-        }
+        let matched_tag = &candidates[0];
+        let input = prompt!(
+            "Found a similar version tag: {matched_tag}, do you want to use this instead? [Y/n] "
+        )?;
+        return if match_yn(input) { Ok(matched_tag.clone()) } else { Ok(tag.into()) }
     }
 
     // multiple candidates, ask the user to choose one or skip
@@ -546,21 +537,17 @@ fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String
 
     let n_candidates = candidates.len();
     loop {
-        print!("Please select a tag (0-{}, default: 1): ", n_candidates - 1);
-        stdout().flush()?;
-        let mut input = String::new();
-        stdin().read_line(&mut input)?;
+        let input: String = prompt!("Please select a tag (0-{}, default: 1): ", n_candidates - 1)?;
+        let s = input.trim();
         // default selection, return first candidate
-        if input.trim().is_empty() {
-            println!("[1] {} selected", candidates[1]);
-            return Ok(candidates[1].clone())
-        }
+        let n = if s.is_empty() { Ok(1) } else { s.parse() };
         // match user input, 0 indicates skipping and use original tag
-        match input.trim().parse::<usize>() {
+        match n {
             Ok(i) if i == 0 => return Ok(tag.into()),
             Ok(i) if (1..=n_candidates).contains(&i) => {
-                println!("[{i}] {} selected", candidates[i]);
-                return Ok(candidates[i].clone())
+                let c = &candidates[i];
+                println!("[{i}] {} selected", c);
+                return Ok(c.clone())
             }
             _ => continue,
         }
@@ -598,17 +585,11 @@ fn match_branch(tag: &str, libs: &Path, target_dir: &str) -> eyre::Result<Option
 
     // only one candidate, ask whether the user wants to accept or not
     if candidates.len() == 1 {
-        let matched_tag = candidates[0].clone();
-        print!("Found a similar branch: {matched_tag}, do you want to use this instead? ([y]/n)");
-        stdout().flush()?;
-        let mut input = String::new();
-        stdin().read_line(&mut input)?;
-        input = input.trim().to_lowercase();
-        return if input.is_empty() || input == "y" || input == "yes" {
-            Ok(Some(matched_tag))
-        } else {
-            Ok(None)
-        }
+        let matched_tag = &candidates[0];
+        let input = prompt!(
+            "Found a similar branch: {matched_tag}, do you want to use this instead? [Y/n] "
+        )?;
+        return if match_yn(input) { Ok(Some(matched_tag.clone())) } else { Ok(None) }
     }
 
     // multiple candidates, ask the user to choose one or skip
@@ -619,27 +600,36 @@ fn match_branch(tag: &str, libs: &Path, target_dir: &str) -> eyre::Result<Option
     }
 
     let n_candidates = candidates.len();
-    print!("Please select a tag (0-{}, default: 1, Press <enter> to cancel): ", n_candidates - 1);
-    stdout().flush()?;
-    let mut input = String::new();
-    stdin().read_line(&mut input)?;
+    let input: String = prompt!(
+        "Please select a tag (0-{}, default: 1, Press <enter> to cancel): ",
+        n_candidates - 1
+    )?;
     let input = input.trim();
 
-    // default selection, return first candidate
+    // default selection, return None
     if input.is_empty() {
-        println!("cancel branch matching");
+        println!("Canceled branch matching");
         return Ok(None)
     }
 
     // match user input, 0 indicates skipping and use original tag
     match input.parse::<usize>() {
-        Ok(i) if i == 0 => Ok(Some(tag.to_string())),
+        Ok(i) if i == 0 => Ok(Some(tag.into())),
         Ok(i) if (1..=n_candidates).contains(&i) => {
-            println!("[{i}] {} selected", candidates[i]);
-            Ok(Some(candidates.remove(i)))
+            let c = &candidates[i];
+            println!("[{i}] {c} selected");
+            Ok(Some(c.clone()))
         }
         _ => Ok(None),
     }
+}
+
+/// Matches on the result of a prompt for yes/no.
+///
+/// Defaults to true.
+fn match_yn(input: String) -> bool {
+    let s = input.trim().to_lowercase();
+    matches!(s.as_str(), "" | "y" | "yes")
 }
 
 #[cfg(test)]
