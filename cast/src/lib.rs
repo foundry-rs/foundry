@@ -712,12 +712,7 @@ pub struct InterfaceSource {
     pub source: String,
 }
 
-pub enum InterfacePath {
-    Local { path: String, name: Option<String> },
-    Etherscan { address: Address, chain: Chain, api_key: String },
-}
-
-pub enum BindPath {
+pub enum AbiPath {
     Local { path: String, name: Option<String> },
     Etherscan { address: Address, chain: Chain, api_key: String },
 }
@@ -1264,11 +1259,9 @@ impl SimpleCast {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn generate_interface(
-        address_or_path: InterfacePath,
-    ) -> Result<Vec<InterfaceSource>> {
+    pub async fn generate_interface(address_or_path: AbiPath) -> Result<Vec<InterfaceSource>> {
         let (contract_abis, contract_names): (Vec<RawAbi>, Vec<String>) = match address_or_path {
-            InterfacePath::Local { path, name } => {
+            AbiPath::Local { path, name } => {
                 let file = std::fs::read_to_string(path).wrap_err("unable to read abi file")?;
                 let mut json: serde_json::Value = serde_json::from_str(&file)?;
                 let json = if !json["abi"].is_null() { json["abi"].take() } else { json };
@@ -1277,7 +1270,7 @@ impl SimpleCast {
 
                 (vec![abi], vec![name.unwrap_or_else(|| "Interface".to_owned())])
             }
-            InterfacePath::Etherscan { address, chain, api_key } => {
+            AbiPath::Etherscan { address, chain, api_key } => {
                 let client = Client::new(chain, api_key)?;
 
                 // get the source
@@ -1305,7 +1298,6 @@ impl SimpleCast {
                 (abis, names)
             }
         };
-        println!("Length {}", contract_abis.len());
         contract_abis
             .iter()
             .zip(contract_names)

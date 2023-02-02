@@ -1,7 +1,6 @@
-#![allow(unused_variables, dead_code)]
 use std::path::{Path, PathBuf};
 
-use cast::BindPath;
+use cast::AbiPath;
 use clap::{Parser, ValueHint};
 use ethers::prelude::{errors::EtherscanError, Abigen, Client, MultiAbigen};
 use eyre::Context;
@@ -53,6 +52,9 @@ If an address is specified, then the ABI is fetched from Etherscan."#,
     )]
     crate_version: String,
 
+    #[clap(long = "seperate-files", help = "Generate bindings as seperate files.")]
+    seperate_files: bool,
+
     #[clap(flatten)]
     chain: ClapChain,
 }
@@ -62,28 +64,18 @@ impl Cmd for BindArgs {
 
     fn run(self) -> eyre::Result<Self::Output> {
         let cmd = Box::pin(async move {
-            let BindArgs {
-                path_or_address,
-                name,
-                etherscan_api_key,
-                bindings,
-                crate_name,
-                crate_version,
-                chain,
-            } = self.clone();
-
-            if Path::new(&path_or_address).exists() {
-                return self
-                    .generate_bindings(BindPath::Local {
-                        path: path_or_address,
-                        name: Some(name.unwrap_or_else(|| "Sample".to_owned())),
-                    })
-                    .await
+            let bind_args = self.clone();
+            if Path::new(&self.path_or_address).exists() {
+                self.generate_bindings(AbiPath::Local {
+                    path: bind_args.path_or_address,
+                    name: bind_args.name,
+                })
+                .await
             } else {
-                self.generate_bindings(BindPath::Etherscan {
-                    address: path_or_address.parse::<Address>().unwrap(),
-                    chain: chain.inner,
-                    api_key: etherscan_api_key.unwrap(),
+                self.generate_bindings(AbiPath::Etherscan {
+                    address: bind_args.path_or_address.parse::<Address>().unwrap(),
+                    chain: bind_args.chain.inner,
+                    api_key: bind_args.etherscan_api_key.unwrap(),
                 })
                 .await
             }
@@ -94,11 +86,10 @@ impl Cmd for BindArgs {
 }
 
 impl BindArgs {
-    pub async fn generate_bindings(self, address_or_path: BindPath) -> eyre::Result<()> {
+    pub async fn generate_bindings(&self, address_or_path: AbiPath) -> eyre::Result<()> {
         match address_or_path {
-            BindPath::Etherscan { address, chain, api_key } => {
+            AbiPath::Etherscan { address, chain, api_key } => {
                 let client = Client::new(chain, api_key)?;
-                // get the source
                 let source = match client.contract_source_code(address).await {
                     Ok(source) => source,
                     Err(EtherscanError::InvalidApiKey) => {
@@ -114,7 +105,7 @@ impl BindArgs {
                 let abigens = source
                     .items
                     .iter()
-                    .map(|item| Abigen::new(&item.contract_name.clone(), item.abi.clone()).unwrap())
+                    .map(|item| Abigen::new(item.contract_name.clone(), item.abi.clone()).unwrap())
                     .collect::<Vec<Abigen>>();
 
                 let multi = MultiAbigen::from_abigens(abigens);
@@ -124,28 +115,27 @@ impl BindArgs {
                     &self.crate_name,
                     &self.crate_version,
                     self.get_binding_root(),
-                    false,
+                    !self.seperate_files,
                 )?;
             }
-            BindPath::Local { path, name } => {
+            AbiPath::Local { path, name } => {
                 let file = std::fs::read_to_string(path).wrap_err("unable to read abi file")?;
                 let mut json: serde_json::Value = serde_json::from_str(&file)?;
                 if let Some(abi) = json.get_mut("abi") {
                     let abi = abi.take().to_string();
 
-                    let abigen = Abigen::new(name.unwrap(), abi)?;
-                    let abigens = vec![abigen];
-                    let multi = MultiAbigen::from_abigens(abigens);
+                    let abigen = Abigen::new(name.unwrap_or_else(|| "Sample".to_owned()), abi)?;
+                    let multi = MultiAbigen::from_abigens(vec![abigen]);
 
                     let bindings = multi.build().unwrap();
                     bindings.write_to_crate(
                         &self.crate_name,
                         &self.crate_version,
                         self.get_binding_root(),
-                        false,
+                        !self.seperate_files,
                     )?;
                 } else {
-                    eyre::bail!("abi not found in json")
+                    eyre::bail!("ABI not found in json")
                 }
             }
         };
