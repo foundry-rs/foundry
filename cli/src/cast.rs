@@ -276,6 +276,16 @@ async fn main() -> eyre::Result<()> {
             let encoded = SimpleCast::index(&key_type, &key, &slot_number)?;
             println!("{encoded}");
         }
+        Subcommands::Implementation { block, who, rpc_url } => {
+            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
+            let provider = try_get_http_provider(rpc_url)?;
+            println!("{}", Cast::new(provider).implementation(who, block).await?);
+        }
+        Subcommands::Admin { block, who, rpc_url } => {
+            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
+            let provider = try_get_http_provider(rpc_url)?;
+            println!("{}", Cast::new(provider).admin(who, block).await?);
+        }
         Subcommands::Nonce { block, who, rpc_url } => {
             let rpc_url = try_consume_config_rpc_url(rpc_url)?;
             let provider = try_get_http_provider(rpc_url)?;

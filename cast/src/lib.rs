@@ -503,6 +503,62 @@ where
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
+    /// let implementation = cast.implementation(addr, None).await?;
+    /// println!("{}", implementation);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn implementation<T: Into<NameOrAddress> + Send + Sync>(
+        &self,
+        who: T,
+        block: Option<BlockId>,
+    ) -> Result<String> {
+        let slot = H256::from_str("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc")?;
+        let value = self.provider.get_storage_at(who, slot, block).await?;
+        let addr: H160 = value.into();
+        Ok(format!("{:?}", addr))
+    }
+
+    /// # Example
+    ///
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_providers::{Provider, Http};
+    /// use ethers_core::types::Address;
+    /// use std::{str::FromStr, convert::TryFrom};
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
+    /// let admin = cast.admin(addr, None).await?;
+    /// println!("{}", admin);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn admin<T: Into<NameOrAddress> + Send + Sync>(
+        &self,
+        who: T,
+        block: Option<BlockId>,
+    ) -> Result<String> {
+        let slot = H256::from_str("0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103")?;
+        let value = self.provider.get_storage_at(who, slot, block).await?;
+        let addr: H160 = value.into();
+        Ok(format!("{:?}", addr))
+    }
+
+    /// # Example
+    ///
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_providers::{Provider, Http};
+    /// use ethers_core::types::Address;
+    /// use std::{str::FromStr, convert::TryFrom};
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
     /// let nonce = cast.nonce(addr, None).await? + 5;
     /// let computed_address = cast.compute_address(addr, Some(nonce)).await?;
     /// println!("Computed address for address {} with nonce {}: {}", addr, nonce, computed_address);
