@@ -251,7 +251,7 @@ impl CommandUtils for Command {
     #[track_caller]
     fn exec(&mut self) -> eyre::Result<Output> {
         let output = self.output()?;
-        if !&output.status.success() {
+        if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             eyre::bail!("{}", stderr.trim())
         }

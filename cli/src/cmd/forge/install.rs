@@ -291,7 +291,7 @@ fn commit_after_install(libs: &Path, target_dir: &str, tag: Option<&str>) -> eyr
 
     let output = Command::new("git").args(["commit", "-m", &message]).current_dir(libs).output()?;
 
-    if !&output.status.success() {
+    if !output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         warn!(?stdout, ?stderr, "git commit -m");
@@ -390,7 +390,7 @@ fn git_semver_tags(repo: &Path) -> eyre::Result<Vec<(String, Version)>> {
 /// Install the given dependency as git submodule in the `target_dir`
 fn git_submodule(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Result<PathBuf> {
     let url = dep.url.as_ref().ok_or_else(|| eyre::eyre!("No dependency url"))?;
-    trace!("installing git submodule {:?} in {} from `{}`", dep, target_dir, url);
+    trace!("installing git submodule {dep:?} in {target_dir} from `{url}`");
 
     let output = Command::new("git")
         .args(["submodule", "add", "--force", url, target_dir])
@@ -398,7 +398,7 @@ fn git_submodule(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Resul
         .output()?;
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    trace!(?stderr, "`git submodule add --force {} {}`", url, target_dir);
+    trace!(?stderr, "`git submodule add --force {url} {target_dir}`");
 
     if stderr.contains("remote: Repository not found") {
         eyre::bail!("Repo: \"{}\" not found!", url)
@@ -413,7 +413,7 @@ fn git_submodule(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Resul
         let error =
             stderr.lines().filter(|l| !l.starts_with("hint:")).collect::<Vec<&str>>().join("\n");
         eyre::bail!("{error}")
-    } else if !&output.status.success() {
+    } else if !output.status.success() {
         eyre::bail!("{}", stderr.trim())
     }
 
@@ -455,22 +455,18 @@ fn git_checkout(
     }
     let url = dep.url.as_ref().unwrap();
 
-    let checkout = |tag: &str| {
-        let args = if recurse {
-            vec!["checkout", "--recurse-submodules", tag]
-        } else {
-            vec!["checkout", tag]
-        };
-        trace!(?tag, ?recurse, "git checkout");
-        Command::new("git").args(args).current_dir(libs.join(target_dir)).output()
-    };
+    trace!(?tag, ?recurse, "git checkout");
 
-    let output = checkout(&tag)?;
+    let mut args = vec!["checkout", tag.as_str()];
+    if recurse {
+        args.push("--recurse-submodules");
+    }
+    let output = Command::new("git").args(args).current_dir(libs.join(target_dir)).output()?;
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     trace!(?stderr, ?tag, "checked out");
 
-    if !&output.status.success() {
+    if !output.status.success() {
         // remove dependency on failed checkout
         fs::remove_dir_all(libs.join(target_dir))?;
 
@@ -502,7 +498,7 @@ fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String
     // then v1.5.2 is a valid candidate, but v3.1.5 is not
     let trimmed_tag = tag.trim_start_matches('v').to_string();
     let output =
-        Command::new("git").args(["tag"]).current_dir(&libs.join(target_dir)).get_stdout_lossy()?;
+        Command::new("git").arg("tag").current_dir(&libs.join(target_dir)).get_stdout_lossy()?;
     let mut candidates: Vec<String> = output
         .trim()
         .split('\n')
@@ -582,7 +578,7 @@ fn match_branch(tag: &str, libs: &Path, target_dir: &str) -> eyre::Result<Option
         .lines()
         .map(|x| x.trim().trim_start_matches("origin/"))
         .filter(|x| x.starts_with(tag))
-        .map(str::to_string)
+        .map(ToString::to_string)
         .rev()
         .collect::<Vec<_>>();
 
@@ -595,7 +591,7 @@ fn match_branch(tag: &str, libs: &Path, target_dir: &str) -> eyre::Result<Option
 
     // have exact match
     for candidate in candidates.iter() {
-        if candidate.as_str() == tag {
+        if candidate == tag {
             return Ok(Some(tag.to_string()))
         }
     }
