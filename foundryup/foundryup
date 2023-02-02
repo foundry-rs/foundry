@@ -140,8 +140,6 @@ main() {
 
       # Check if the default path of the binary is not in FOUNDRY_BIN_DIR
       which_path="$(which "$bin")"
-      echo "WHICH=$which_path"
-      echo "BIN=$bin_path"
       if [ "$which_path" != "$bin_path" ]; then
         warn ""
         cat 1>&2 <<EOF
