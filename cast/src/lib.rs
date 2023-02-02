@@ -513,7 +513,8 @@ where
         who: T,
         block: Option<BlockId>,
     ) -> Result<String> {
-        let slot = H256::from_str("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc")?;
+        let slot =
+            H256::from_str("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc")?;
         let value = self.provider.get_storage_at(who, slot, block).await?;
         let addr: H160 = value.into();
         Ok(format!("{:?}", addr))
@@ -541,7 +542,8 @@ where
         who: T,
         block: Option<BlockId>,
     ) -> Result<String> {
-        let slot = H256::from_str("0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103")?;
+        let slot =
+            H256::from_str("0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103")?;
         let value = self.provider.get_storage_at(who, slot, block).await?;
         let addr: H160 = value.into();
         Ok(format!("{:?}", addr))
