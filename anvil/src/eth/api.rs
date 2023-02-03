@@ -49,7 +49,7 @@ use ethers::{
             eip712::TypedData,
         },
         Address, Block, BlockId, BlockNumber, Bytes, FeeHistory, Filter, FilteredParams,
-        GethDebugTracingOptions, Log, Trace, Transaction, TransactionReceipt, TxHash,
+        GethDebugTracingOptions, GethTrace, Log, Trace, Transaction, TransactionReceipt, TxHash,
         TxpoolContent, TxpoolInspectSummary, TxpoolStatus, H256, U256, U64,
     },
     utils::rlp,
@@ -1268,7 +1268,7 @@ impl EthApi {
         &self,
         tx_hash: H256,
         opts: GethDebugTracingOptions,
-    ) -> Result<DefaultFrame> {
+    ) -> Result<GethTrace> {
         node_info!("debug_traceTransaction");
         if opts.tracer.is_some() {
             return Err(RpcError::invalid_params("non-default tracer not supported yet").into())
