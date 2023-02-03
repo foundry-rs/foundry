@@ -6,9 +6,9 @@ use ethers::{
     prelude::BlockNumber,
     providers::{Middleware, ProviderError},
     types::{
-        transaction::eip2930::AccessListWithGasUsed, Address, Block, BlockId, Bytes, FeeHistory,
-        Filter, GethDebugTracingOptions, GethTrace, Log, Trace, Transaction, TransactionReceipt,
-        TxHash, H256, U256,
+        transaction::eip2930::AccessListWithGasUsed, Address, Block, BlockId, Bytes, DefaultFrame,
+        FeeHistory, Filter, GethDebugTracingOptions, GethTrace, Log, Trace, Transaction,
+        TransactionReceipt, TxHash, H256, U256,
     },
 };
 use foundry_common::{ProviderBuilder, RetryProvider};

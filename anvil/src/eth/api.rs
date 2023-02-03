@@ -41,7 +41,7 @@ use anvil_core::{
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use ethers::{
     abi::ethereum_types::H64,
-    prelude::{GethTrace, TxpoolInspect},
+    prelude::{DefaultFrame, TxpoolInspect},
     providers::ProviderError,
     types::{
         transaction::{
@@ -1268,7 +1268,7 @@ impl EthApi {
         &self,
         tx_hash: H256,
         opts: GethDebugTracingOptions,
-    ) -> Result<GethTrace> {
+    ) -> Result<DefaultFrame> {
         node_info!("debug_traceTransaction");
         if opts.tracer.is_some() {
             return Err(RpcError::invalid_params("non-default tracer not supported yet").into())
@@ -1285,7 +1285,7 @@ impl EthApi {
         request: EthTransactionRequest,
         block_number: Option<BlockId>,
         opts: GethDebugTracingOptions,
-    ) -> Result<GethTrace> {
+    ) -> Result<DefaultFrame> {
         node_info!("debug_traceCall");
         if opts.tracer.is_some() {
             return Err(RpcError::invalid_params("non-default tracer not supported yet").into())
