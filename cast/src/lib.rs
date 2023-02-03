@@ -1248,9 +1248,9 @@ impl SimpleCast {
     /// interface and their name.
     /// ```no_run
     /// use cast::SimpleCast as Cast;
-    /// use cast::InterfacePath;
+    /// use cast::AbiPath;
     /// # async fn foo() -> eyre::Result<()> {
-    /// let path = InterfacePath::Local {
+    /// let path = AbiPath::Local {
     ///     path: "utils/testdata/interfaceTestABI.json".to_owned(),
     ///     name: None,
     /// };
