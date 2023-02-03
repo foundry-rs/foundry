@@ -2,7 +2,10 @@ use crate::fork::fork_config;
 use anvil::{spawn, NodeConfig};
 use ethers::{
     contract::Contract,
-    prelude::{Action, ContractFactory, Middleware, Signer, SignerMiddleware, TransactionRequest},
+    prelude::{
+        Action, ContractFactory, GethTrace, GethTraceFrame, Middleware, Signer, SignerMiddleware,
+        TransactionRequest,
+    },
     types::{ActionType, Address, GethDebugTracingCallOptions, Trace},
     utils::hex,
 };
@@ -136,7 +139,19 @@ contract Contract {
         .debug_trace_call(call.tx, None, GethDebugTracingCallOptions::default())
         .await
         .unwrap();
-    assert!(!traces.failed);
+    match traces {
+        GethTrace::Known(traces) => match traces {
+            GethTraceFrame::Default(traces) => {
+                assert!(!traces.failed);
+            }
+            GethTraceFrame::CallTracer(_) => {
+                unreachable!()
+            }
+        },
+        GethTrace::Unknown(_) => {
+            unreachable!()
+        }
+    }
 }
 
 // <https://github.com/foundry-rs/foundry/issues/2656>
