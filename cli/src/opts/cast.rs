@@ -455,6 +455,42 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
         #[clap(help = "The storage slot of the mapping.", value_name = "SLOT_NUMBER")]
         slot_number: String,
     },
+    #[clap(name = "implementation")]
+    #[clap(visible_alias = "impl")]
+    #[clap(about = "Fetch the EIP-1967 implementation account")]
+    Implementation {
+        #[clap(
+            long,
+            short = 'B',
+            help = "The block height you want to query at.",
+            long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
+             value_parser = parse_block_id,
+            value_name = "BLOCK"
+        )]
+        block: Option<BlockId>,
+        #[clap(help = "The address you want to get the nonce for.",  value_parser = parse_name_or_address, value_name = "WHO")]
+        who: NameOrAddress,
+        #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
+        rpc_url: Option<String>,
+    },
+    #[clap(name = "admin")]
+    #[clap(visible_alias = "adm")]
+    #[clap(about = "Fetch the EIP-1967 admin account")]
+    Admin {
+        #[clap(
+            long,
+            short = 'B',
+            help = "The block height you want to query at.",
+            long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
+             value_parser = parse_block_id,
+            value_name = "BLOCK"
+        )]
+        block: Option<BlockId>,
+        #[clap(help = "The address you want to get the nonce for.",  value_parser = parse_name_or_address, value_name = "WHO")]
+        who: NameOrAddress,
+        #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
+        rpc_url: Option<String>,
+    },
     #[clap(name = "4byte")]
     #[clap(visible_aliases = &["4", "4b"])]
     #[clap(
