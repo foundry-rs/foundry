@@ -1,5 +1,6 @@
 //! In memory blockchain backend
 use crate::{
+    config::PruneStateHistoryConfig,
     eth::{
         backend::{
             cheats::CheatsManager,
@@ -143,8 +144,8 @@ pub struct Backend {
     /// keeps track of active snapshots at a specific block
     active_snapshots: Arc<Mutex<HashMap<U256, (u64, H256)>>>,
     enable_steps_tracing: bool,
-    /// Whether to keep history state
-    prune_history: bool,
+    /// How to keep history state
+    prune_state_history_config: PruneStateHistoryConfig,
     /// max number of blocks with transactions in memory
     transaction_block_keeper: Option<usize>,
 }
@@ -159,7 +160,7 @@ impl Backend {
         fees: FeeManager,
         fork: Option<ClientFork>,
         enable_steps_tracing: bool,
-        prune_history: bool,
+        prune_state_history_config: PruneStateHistoryConfig,
         transaction_block_keeper: Option<usize>,
         automine_block_time: Option<Duration>,
     ) -> Self {
@@ -177,10 +178,22 @@ impl Backend {
 
         let start_timestamp =
             if let Some(fork) = fork.as_ref() { fork.timestamp() } else { genesis.timestamp };
+
+        let states = if prune_state_history_config.is_config_enabled() {
+            // if prune state history is enabled, configure the state cache only for memory
+            prune_state_history_config
+                .max_memory_history
+                .map(InMemoryBlockStates::new)
+                .unwrap_or_default()
+                .memory_only()
+        } else {
+            Default::default()
+        };
+
         let backend = Self {
             db,
             blockchain,
-            states: Arc::new(RwLock::new(Default::default())),
+            states: Arc::new(RwLock::new(states)),
             env,
             fork,
             time: TimeManager::new(start_timestamp),
@@ -190,7 +203,7 @@ impl Backend {
             genesis,
             active_snapshots: Arc::new(Mutex::new(Default::default())),
             enable_steps_tracing,
-            prune_history,
+            prune_state_history_config,
             transaction_block_keeper,
         };
 
@@ -669,7 +682,7 @@ impl Backend {
 
             let best_hash = self.blockchain.storage.read().best_hash;
 
-            if !self.prune_history {
+            if self.prune_state_history_config.is_state_history_supported() {
                 let db = self.db.read().await.current_state();
                 // store current state before executing all transactions
                 self.states.write().insert(best_hash, db);

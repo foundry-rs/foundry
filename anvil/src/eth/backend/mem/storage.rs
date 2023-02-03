@@ -72,6 +72,12 @@ impl InMemoryBlockStates {
         }
     }
 
+    /// Configures no disk caching
+    pub fn memory_only(mut self) -> Self {
+        self.max_on_disk_limit = 0;
+        self
+    }
+
     /// This modifies the `limit` what to keep stored in memory.
     ///
     /// This will ensure the new limit adjusts based on the block time.
@@ -87,6 +93,11 @@ impl InMemoryBlockStates {
         }
     }
 
+    /// Returns true if only memory caching is supported.
+    fn is_memory_only(&self) -> bool {
+        self.max_on_disk_limit == 0
+    }
+
     /// Inserts a new (hash -> state) pair
     ///
     /// When the configured limit for the number of states that can be stored in memory is reached,
@@ -98,7 +109,7 @@ impl InMemoryBlockStates {
     ///
     /// When a state that was previously written to disk is requested, it is simply read from disk.
     pub fn insert(&mut self, hash: H256, state: StateDb) {
-        if self.present.len() >= self.in_memory_limit {
+        if !self.is_memory_only() && self.present.len() >= self.in_memory_limit {
             // once we hit the max limit we gradually decrease it
             self.in_memory_limit =
                 self.in_memory_limit.saturating_sub(1).max(self.min_in_memory_limit);
@@ -120,10 +131,13 @@ impl InMemoryBlockStates {
                 .pop_front()
                 .and_then(|hash| self.states.remove(&hash).map(|state| (hash, state)))
             {
-                let snapshot = state.0.clear_into_snapshot();
-                self.disk_cache.write(hash, snapshot);
-                self.on_disk_states.insert(hash, state);
-                self.oldest_on_disk.push_back(hash);
+                // only write to disk if supported
+                if !self.is_memory_only() {
+                    let snapshot = state.0.clear_into_snapshot();
+                    self.disk_cache.write(hash, snapshot);
+                    self.on_disk_states.insert(hash, state);
+                    self.oldest_on_disk.push_back(hash);
+                }
             }
         }
 
