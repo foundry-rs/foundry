@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use cast::AbiPath;
 use clap::{Parser, ValueHint};
 use ethers::prelude::{errors::EtherscanError, Abigen, Client, MultiAbigen};
-use eyre::Context;
 use forge::Address;
+use foundry_common::fs::json_files;
 use futures::future::BoxFuture;
 
 use crate::{cmd::Cmd, opts::ClapChain};
@@ -15,28 +15,25 @@ static DEFAULT_CRATE_VERSION: &str = "0.0.1";
 #[derive(Debug, Clone, Parser)]
 pub struct BindArgs {
     #[clap(
-        help = "The contract address, or the path to an ABI file.",
-        long_help = r#"The contract address, or the path to an ABI file.
+        help = "The contract address, or the path to an ABI Directory.",
+        long_help = r#"The contract address, or the path to an ABI Directory.
 
 If an address is specified, then the ABI is fetched from Etherscan."#,
         value_name = "PATH_OR_ADDRESS"
     )]
     path_or_address: String,
 
-    #[clap(long, short, help = "The name to use for the generated interface", value_name = "NAME")]
-    name: Option<String>,
-
     #[clap(long, short, env = "ETHERSCAN_API_KEY", help = "etherscan API key", value_name = "KEY")]
     etherscan_api_key: Option<String>,
-
     #[clap(
-        help = "Path to where the contract artifacts are stored",
-        long = "bindings-path",
+        help = "Path to where bindings will be stored",
+        long = "output-dir",
         short,
         value_hint = ValueHint::DirPath,
         value_name = "PATH"
     )]
-    pub bindings: Option<PathBuf>,
+    pub output_dir: Option<PathBuf>,
+
     #[clap(
         long = "crate-name",
         help = "The name of the Rust crate to generate. This should be a valid crates.io crate name. However, it is not currently validated by this command.",
@@ -68,7 +65,7 @@ impl Cmd for BindArgs {
             if Path::new(&self.path_or_address).exists() {
                 self.generate_bindings(AbiPath::Local {
                     path: bind_args.path_or_address,
-                    name: bind_args.name,
+                    name: None,
                 })
                 .await
             } else {
@@ -118,31 +115,34 @@ impl BindArgs {
                     !self.seperate_files,
                 )?;
             }
-            AbiPath::Local { path, name } => {
-                let file = std::fs::read_to_string(path).wrap_err("unable to read abi file")?;
-                let mut json: serde_json::Value = serde_json::from_str(&file)?;
-                if let Some(abi) = json.get_mut("abi") {
-                    let abi = abi.take().to_string();
+            AbiPath::Local { path, name: _ } => {
+                let abis = json_files(Path::new(&path))
+                    .into_iter()
+                    .filter_map(|path| {
+                        let stem = path.file_stem()?;
+                        if stem.to_str()?.ends_with(".metadata") {
+                            None
+                        } else {
+                            Some(path)
+                        }
+                    })
+                    .map(Abigen::from_file)
+                    .collect::<Result<Vec<_>, _>>()?;
+                let multi = MultiAbigen::from_abigens(abis);
 
-                    let abigen = Abigen::new(name.unwrap_or_else(|| "Sample".to_owned()), abi)?;
-                    let multi = MultiAbigen::from_abigens(vec![abigen]);
-
-                    let bindings = multi.build().unwrap();
-                    bindings.write_to_crate(
-                        &self.crate_name,
-                        &self.crate_version,
-                        self.get_binding_root(),
-                        !self.seperate_files,
-                    )?;
-                } else {
-                    eyre::bail!("ABI not found in json")
-                }
+                let bindings = multi.build().unwrap();
+                bindings.write_to_crate(
+                    &self.crate_name,
+                    &self.crate_version,
+                    self.get_binding_root(),
+                    !self.seperate_files,
+                )?;
             }
         };
         Ok(())
     }
 
     fn get_binding_root(&self) -> PathBuf {
-        self.bindings.clone().unwrap_or_else(|| std::env::current_dir().unwrap().join("bindings"))
+        self.output_dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap().join("bindings"))
     }
 }
