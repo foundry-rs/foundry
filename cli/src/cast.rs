@@ -5,7 +5,7 @@ use ethers::{
     abi::HumanReadableParser,
     core::types::{BlockId, BlockNumber::Latest, H256},
     providers::Middleware,
-    types::{Address, I256, U256},
+    types::Address,
     utils::keccak256,
 };
 use foundry_cli::{
@@ -37,14 +37,14 @@ async fn main() -> eyre::Result<()> {
     let opts = Opts::parse();
     match opts.sub {
         // Constants
-        Subcommands::MaxInt => {
-            println!("{}", I256::MAX);
+        Subcommands::MaxInt { r#type } => {
+            println!("{}", SimpleCast::max_int(&r#type)?);
         }
-        Subcommands::MaxUint => {
-            println!("{}", U256::MAX);
+        Subcommands::MinInt { r#type } => {
+            println!("{}", SimpleCast::min_int(&r#type)?);
         }
-        Subcommands::MinInt => {
-            println!("{}", I256::MIN);
+        Subcommands::MaxUint { r#type } => {
+            println!("{}", SimpleCast::max_int(&r#type)?);
         }
         Subcommands::AddressZero => {
             println!("{:?}", Address::zero());

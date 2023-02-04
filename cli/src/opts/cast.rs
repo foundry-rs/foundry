@@ -30,22 +30,32 @@ pub struct Opts {
 pub enum Subcommands {
     #[clap(name = "--max-int")]
     #[clap(visible_aliases = &["max-int", "maxi"])]
-    #[clap(about = "Get the maximum i256 value.")]
-    MaxInt,
+    #[clap(about = "Get the maximum value of the given integer type.")]
+    MaxInt {
+        #[clap(default_value = "int256")]
+        r#type: String,
+    },
     #[clap(name = "--min-int")]
     #[clap(visible_aliases = &["min-int", "mini"])]
-    #[clap(about = "Get the minimum i256 value.")]
-    MinInt,
+    #[clap(about = "Get the minimum value of the given integer type.")]
+    MinInt {
+        #[clap(default_value = "int256")]
+        r#type: String,
+    },
     #[clap(name = "--max-uint")]
     #[clap(visible_aliases = &["max-uint", "maxu"])]
-    #[clap(about = "Get the maximum u256 value.")]
-    MaxUint,
+    #[clap(about = "Get the maximum value of the given integer type.")]
+    MaxUint {
+        #[clap(default_value = "uint256")]
+        r#type: String,
+    },
     #[clap(name = "--address-zero", about = "Get zero address")]
     #[clap(visible_aliases = &["address-zero", "az"])]
     AddressZero,
     #[clap(name = "--hash-zero", about = "Get zero hash")]
     #[clap(visible_aliases = &["hash-zero", "hz"])]
     HashZero,
+
     #[clap(name = "--from-utf8")]
     #[clap(visible_aliases = &["from-utf8", "--from-ascii", "from-ascii", "fu", "fa"])]
     #[clap(about = "Convert UTF8 text to hex.")]

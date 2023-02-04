@@ -8,7 +8,7 @@ use chrono::NaiveDateTime;
 use ethers_core::{
     abi::{
         token::{LenientTokenizer, Tokenizer},
-        Function, HumanReadableParser, RawAbi, Token,
+        Function, HumanReadableParser, ParamType, RawAbi, Token,
     },
     types::{Chain, *},
     utils::{
@@ -777,6 +777,69 @@ pub enum InterfacePath {
 
 pub struct SimpleCast;
 impl SimpleCast {
+    /// Returns the maximum value of the given integer type
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use cast::SimpleCast;
+    /// # use ethers_core::types::{I256, U256};
+    /// assert_eq!(SimpleCast::max_int("uint256")?, format!("{}", U256::MAX));
+    /// assert_eq!(SimpleCast::max_int("int256")?, format!("{}", I256::MAX));
+    /// assert_eq!(SimpleCast::max_int("int32")?, format!("{}", i32::MAX));
+    /// # Ok::<(), eyre::Report>(())
+    /// ```
+    pub fn max_int(s: &str) -> Result<String> {
+        Self::max_min_int::<true>(s)
+    }
+
+    /// Returns the maximum value of the given integer type
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use cast::SimpleCast;
+    /// # use ethers_core::types::{I256, U256};
+    /// assert_eq!(SimpleCast::min_int("uint256")?, "0");
+    /// assert_eq!(SimpleCast::min_int("int256")?, format!("{}", I256::MIN));
+    /// assert_eq!(SimpleCast::min_int("int32")?, format!("{}", i32::MIN));
+    /// # Ok::<(), eyre::Report>(())
+    /// ```
+    pub fn min_int(s: &str) -> Result<String> {
+        Self::max_min_int::<false>(s)
+    }
+
+    fn max_min_int<const MAX: bool>(s: &str) -> Result<String> {
+        let ty = HumanReadableParser::parse_type(s).wrap_err("Invalid type")?;
+        match ty {
+            ParamType::Int(n) => match n / 8 {
+                1 => Ok(if MAX { i8::MAX } else { i8::MIN }.to_string()),
+                2 => Ok(if MAX { i16::MAX } else { i16::MIN }.to_string()),
+                3..=4 => Ok(if MAX { i32::MAX } else { i32::MIN }.to_string()),
+                5..=8 => Ok(if MAX { i64::MAX } else { i64::MIN }.to_string()),
+                9..=16 => Ok(if MAX { i128::MAX } else { i128::MIN }.to_string()),
+                17..=32 => Ok(if MAX { I256::MAX } else { I256::MIN }.to_string()),
+                _ => Err(eyre::eyre!("Unsupported solidity type: int{n}")),
+            },
+            ParamType::Uint(n) => {
+                if MAX {
+                    match n / 8 {
+                        1 => Ok(u8::MAX.to_string()),
+                        2 => Ok(u16::MAX.to_string()),
+                        3..=4 => Ok(u32::MAX.to_string()),
+                        5..=8 => Ok(u64::MAX.to_string()),
+                        9..=16 => Ok(u128::MAX.to_string()),
+                        17..=32 => Ok(U256::MAX.to_string()),
+                        _ => Err(eyre::eyre!("Unsupported solidity type: uint{n}")),
+                    }
+                } else {
+                    Ok("0".to_string())
+                }
+            }
+            _ => Err(eyre::eyre!("Type is not int/uint: {s}")),
+        }
+    }
+
     /// Converts UTF-8 text input to hex
     ///
     /// # Example
