@@ -8,7 +8,7 @@ use chrono::NaiveDateTime;
 use ethers_core::{
     abi::{
         token::{LenientTokenizer, Tokenizer},
-        Function, HumanReadableParser, RawAbi, Token,
+        Function, HumanReadableParser, ParamType, RawAbi, Token,
     },
     types::{Chain, *},
     utils::{
@@ -503,6 +503,64 @@ where
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
+    /// let implementation = cast.implementation(addr, None).await?;
+    /// println!("{}", implementation);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn implementation<T: Into<NameOrAddress> + Send + Sync>(
+        &self,
+        who: T,
+        block: Option<BlockId>,
+    ) -> Result<String> {
+        let slot =
+            H256::from_str("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc")?;
+        let value = self.provider.get_storage_at(who, slot, block).await?;
+        let addr: H160 = value.into();
+        Ok(format!("{addr:?}"))
+    }
+
+    /// # Example
+    ///
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_providers::{Provider, Http};
+    /// use ethers_core::types::Address;
+    /// use std::{str::FromStr, convert::TryFrom};
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
+    /// let admin = cast.admin(addr, None).await?;
+    /// println!("{}", admin);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn admin<T: Into<NameOrAddress> + Send + Sync>(
+        &self,
+        who: T,
+        block: Option<BlockId>,
+    ) -> Result<String> {
+        let slot =
+            H256::from_str("0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103")?;
+        let value = self.provider.get_storage_at(who, slot, block).await?;
+        let addr: H160 = value.into();
+        Ok(format!("{addr:?}"))
+    }
+
+    /// # Example
+    ///
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_providers::{Provider, Http};
+    /// use ethers_core::types::Address;
+    /// use std::{str::FromStr, convert::TryFrom};
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
     /// let nonce = cast.nonce(addr, None).await? + 5;
     /// let computed_address = cast.compute_address(addr, Some(nonce)).await?;
     /// println!("Computed address for address {} with nonce {}: {}", addr, nonce, computed_address);
@@ -719,6 +777,67 @@ pub enum InterfacePath {
 
 pub struct SimpleCast;
 impl SimpleCast {
+    /// Returns the maximum value of the given integer type
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use cast::SimpleCast;
+    /// # use ethers_core::types::{I256, U256};
+    /// assert_eq!(SimpleCast::max_int("uint256")?, format!("{}", U256::MAX));
+    /// assert_eq!(SimpleCast::max_int("int256")?, format!("{}", I256::MAX));
+    /// assert_eq!(SimpleCast::max_int("int32")?, format!("{}", i32::MAX));
+    /// # Ok::<(), eyre::Report>(())
+    /// ```
+    pub fn max_int(s: &str) -> Result<String> {
+        Self::max_min_int::<true>(s)
+    }
+
+    /// Returns the maximum value of the given integer type
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use cast::SimpleCast;
+    /// # use ethers_core::types::{I256, U256};
+    /// assert_eq!(SimpleCast::min_int("uint256")?, "0");
+    /// assert_eq!(SimpleCast::min_int("int256")?, format!("{}", I256::MIN));
+    /// assert_eq!(SimpleCast::min_int("int32")?, format!("{}", i32::MIN));
+    /// # Ok::<(), eyre::Report>(())
+    /// ```
+    pub fn min_int(s: &str) -> Result<String> {
+        Self::max_min_int::<false>(s)
+    }
+
+    fn max_min_int<const MAX: bool>(s: &str) -> Result<String> {
+        let ty = HumanReadableParser::parse_type(s)
+            .wrap_err("Invalid type, expected `(u)int<bit size>`")?;
+        match ty {
+            ParamType::Int(n) => {
+                let mask = U256::one() << U256::from(n - 1);
+                let max = (U256::MAX & mask) - 1;
+                if MAX {
+                    Ok(max.to_string())
+                } else {
+                    let min = I256::from_raw(max).wrapping_neg() + I256::minus_one();
+                    Ok(min.to_string())
+                }
+            }
+            ParamType::Uint(n) => {
+                if MAX {
+                    let mut max = U256::MAX;
+                    if n < 255 {
+                        max &= U256::one() << U256::from(n);
+                    }
+                    Ok(max.to_string())
+                } else {
+                    Ok("0".to_string())
+                }
+            }
+            _ => Err(eyre::eyre!("Type is not int/uint: {s}")),
+        }
+    }
+
     /// Converts UTF-8 text input to hex
     ///
     /// # Example

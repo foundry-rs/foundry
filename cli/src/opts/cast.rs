@@ -30,22 +30,32 @@ pub struct Opts {
 pub enum Subcommands {
     #[clap(name = "--max-int")]
     #[clap(visible_aliases = &["max-int", "maxi"])]
-    #[clap(about = "Get the maximum i256 value.")]
-    MaxInt,
+    #[clap(about = "Get the maximum value of the given integer type.")]
+    MaxInt {
+        #[clap(default_value = "int256")]
+        r#type: String,
+    },
     #[clap(name = "--min-int")]
     #[clap(visible_aliases = &["min-int", "mini"])]
-    #[clap(about = "Get the minimum i256 value.")]
-    MinInt,
+    #[clap(about = "Get the minimum value of the given integer type.")]
+    MinInt {
+        #[clap(default_value = "int256")]
+        r#type: String,
+    },
     #[clap(name = "--max-uint")]
     #[clap(visible_aliases = &["max-uint", "maxu"])]
-    #[clap(about = "Get the maximum u256 value.")]
-    MaxUint,
+    #[clap(about = "Get the maximum value of the given integer type.")]
+    MaxUint {
+        #[clap(default_value = "uint256")]
+        r#type: String,
+    },
     #[clap(name = "--address-zero", about = "Get zero address")]
     #[clap(visible_aliases = &["address-zero", "az"])]
     AddressZero,
     #[clap(name = "--hash-zero", about = "Get zero hash")]
     #[clap(visible_aliases = &["hash-zero", "hz"])]
     HashZero,
+
     #[clap(name = "--from-utf8")]
     #[clap(visible_aliases = &["from-utf8", "--from-ascii", "from-ascii", "fu", "fa"])]
     #[clap(about = "Convert UTF8 text to hex.")]
@@ -454,6 +464,42 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
         key: String,
         #[clap(help = "The storage slot of the mapping.", value_name = "SLOT_NUMBER")]
         slot_number: String,
+    },
+    #[clap(name = "implementation")]
+    #[clap(visible_alias = "impl")]
+    #[clap(about = "Fetch the EIP-1967 implementation account")]
+    Implementation {
+        #[clap(
+            long,
+            short = 'B',
+            help = "The block height you want to query at.",
+            long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
+             value_parser = parse_block_id,
+            value_name = "BLOCK"
+        )]
+        block: Option<BlockId>,
+        #[clap(help = "The address you want to get the nonce for.",  value_parser = parse_name_or_address, value_name = "WHO")]
+        who: NameOrAddress,
+        #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
+        rpc_url: Option<String>,
+    },
+    #[clap(name = "admin")]
+    #[clap(visible_alias = "adm")]
+    #[clap(about = "Fetch the EIP-1967 admin account")]
+    Admin {
+        #[clap(
+            long,
+            short = 'B',
+            help = "The block height you want to query at.",
+            long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
+             value_parser = parse_block_id,
+            value_name = "BLOCK"
+        )]
+        block: Option<BlockId>,
+        #[clap(help = "The address you want to get the nonce for.",  value_parser = parse_name_or_address, value_name = "WHO")]
+        who: NameOrAddress,
+        #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
+        rpc_url: Option<String>,
     },
     #[clap(name = "4byte")]
     #[clap(visible_aliases = &["4", "4b"])]

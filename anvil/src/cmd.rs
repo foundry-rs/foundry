@@ -176,8 +176,11 @@ pub struct NodeArgs {
     )]
     pub ipc: Option<Option<String>>,
 
-    #[clap(long, help = "Don't keep full chain history.")]
-    pub prune_history: bool,
+    #[clap(
+        long,
+        help = "Don't keep full chain history. If a number argument is specified, at most this number of states is kept in memory."
+    )]
+    pub prune_history: Option<Option<usize>>,
 
     #[clap(long, help = "Number of blocks with transactions to keep in memory.")]
     pub transaction_block_keeper: Option<usize>,
@@ -641,5 +644,14 @@ mod tests {
     fn can_parse_hardfork() {
         let args: NodeArgs = NodeArgs::parse_from(["anvil", "--hardfork", "berlin"]);
         assert_eq!(args.hardfork, Some(Hardfork::Berlin));
+    }
+
+    #[test]
+    fn can_parse_prune_config() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--prune-history"]);
+        assert!(args.prune_history.is_some());
+
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--prune-history", "100"]);
+        assert_eq!(args.prune_history, Some(Some(100)));
     }
 }

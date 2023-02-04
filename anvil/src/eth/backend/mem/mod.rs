@@ -1,5 +1,6 @@
 //! In memory blockchain backend
 use crate::{
+    config::PruneStateHistoryConfig,
     eth::{
         backend::{
             cheats::CheatsManager,
@@ -42,11 +43,11 @@ use anvil_core::{
 use anvil_rpc::error::RpcError;
 use ethers::{
     abi::ethereum_types::BigEndianHash,
-    prelude::{BlockNumber, TxHash, H256, U256, U64},
+    prelude::{BlockNumber, GethTraceFrame, TxHash, H256, U256, U64},
     types::{
-        transaction::eip2930::AccessList, Address, Block as EthersBlock, BlockId, Bytes, Filter,
-        FilteredParams, GethDebugTracingOptions, GethTrace, Log, Trace, Transaction,
-        TransactionReceipt,
+        transaction::eip2930::AccessList, Address, Block as EthersBlock, BlockId, Bytes,
+        DefaultFrame, Filter, FilteredParams, GethDebugTracingOptions, GethTrace, Log, Trace,
+        Transaction, TransactionReceipt,
     },
     utils::{get_contract_address, keccak256, rlp},
 };
@@ -144,8 +145,8 @@ pub struct Backend {
     /// keeps track of active snapshots at a specific block
     active_snapshots: Arc<Mutex<HashMap<U256, (u64, H256)>>>,
     enable_steps_tracing: bool,
-    /// Whether to keep history state
-    prune_history: bool,
+    /// How to keep history state
+    prune_state_history_config: PruneStateHistoryConfig,
     /// max number of blocks with transactions in memory
     transaction_block_keeper: Option<usize>,
 }
@@ -160,7 +161,7 @@ impl Backend {
         fees: FeeManager,
         fork: Option<ClientFork>,
         enable_steps_tracing: bool,
-        prune_history: bool,
+        prune_state_history_config: PruneStateHistoryConfig,
         transaction_block_keeper: Option<usize>,
         automine_block_time: Option<Duration>,
     ) -> Self {
@@ -178,10 +179,22 @@ impl Backend {
 
         let start_timestamp =
             if let Some(fork) = fork.as_ref() { fork.timestamp() } else { genesis.timestamp };
+
+        let states = if prune_state_history_config.is_config_enabled() {
+            // if prune state history is enabled, configure the state cache only for memory
+            prune_state_history_config
+                .max_memory_history
+                .map(InMemoryBlockStates::new)
+                .unwrap_or_default()
+                .memory_only()
+        } else {
+            Default::default()
+        };
+
         let backend = Self {
             db,
             blockchain,
-            states: Arc::new(RwLock::new(Default::default())),
+            states: Arc::new(RwLock::new(states)),
             env,
             fork,
             time: TimeManager::new(start_timestamp),
@@ -191,7 +204,7 @@ impl Backend {
             genesis,
             active_snapshots: Arc::new(Mutex::new(Default::default())),
             enable_steps_tracing,
-            prune_history,
+            prune_state_history_config,
             transaction_block_keeper,
         };
 
@@ -670,7 +683,7 @@ impl Backend {
 
             let best_hash = self.blockchain.storage.read().best_hash;
 
-            if !self.prune_history {
+            if self.prune_state_history_config.is_state_history_supported() {
                 let db = self.db.read().await.current_state();
                 // store current state before executing all transactions
                 self.states.write().insert(best_hash, db);
@@ -898,7 +911,7 @@ impl Backend {
         fee_details: FeeDetails,
         block_request: Option<BlockRequest>,
         opts: GethDebugTracingOptions,
-    ) -> Result<GethTrace, BlockchainError> {
+    ) -> Result<DefaultFrame, BlockchainError> {
         self.with_database_at(block_request, |state, block| {
             let mut inspector = Inspector::default().with_steps_tracing();
             let block_number = block.number;
@@ -1550,21 +1563,21 @@ impl Backend {
         opts: GethDebugTracingOptions,
     ) -> Result<GethTrace, BlockchainError> {
         if let Some(traces) = self.mined_geth_trace_transaction(hash, opts.clone()) {
-            return Ok(traces)
+            return Ok(GethTrace::Known(GethTraceFrame::Default(traces)))
         }
 
         if let Some(fork) = self.get_fork() {
             return Ok(fork.debug_trace_transaction(hash, opts).await?)
         }
 
-        Ok(GethTrace::default())
+        Ok(GethTrace::Known(GethTraceFrame::Default(Default::default())))
     }
 
     fn mined_geth_trace_transaction(
         &self,
         hash: H256,
         opts: GethDebugTracingOptions,
-    ) -> Option<GethTrace> {
+    ) -> Option<DefaultFrame> {
         self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.geth_trace(opts))
     }
 
@@ -1691,7 +1704,7 @@ impl Backend {
             effective_gas_price: Some(effective_gas_price),
         };
 
-        Some(MinedTransactionReceipt { inner, out: info.out.clone() })
+        Some(MinedTransactionReceipt { inner, out: info.out })
     }
 
     pub async fn transaction_by_block_number_and_index(
