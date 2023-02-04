@@ -810,7 +810,8 @@ impl SimpleCast {
     }
 
     fn max_min_int<const MAX: bool>(s: &str) -> Result<String> {
-        let ty = HumanReadableParser::parse_type(s).wrap_err("Invalid type")?;
+        let ty = HumanReadableParser::parse_type(s)
+            .wrap_err("Invalid type, expected `(u)int<bit size>`")?;
         match ty {
             ParamType::Int(n) => {
                 let mask = U256::one() << U256::from(n - 1);
