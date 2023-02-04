@@ -12,7 +12,7 @@ use anvil_core::eth::{
     transaction::{MaybeImpersonatedTransaction, TransactionInfo},
 };
 use ethers::{
-    prelude::{BlockId, BlockNumber, GethTrace, Trace, H256, H256 as TxHash, U64},
+    prelude::{BlockId, BlockNumber, DefaultFrame, Trace, H256, H256 as TxHash, U64},
     types::{ActionType, GethDebugTracingOptions, U256},
 };
 use forge::revm::{Env, Return};
@@ -396,7 +396,7 @@ impl MinedTransaction {
         traces
     }
 
-    pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> GethTrace {
+    pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> DefaultFrame {
         self.info.traces.geth_trace(self.receipt.gas_used(), opts)
     }
 }

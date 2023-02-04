@@ -42,11 +42,11 @@ use anvil_core::{
 use anvil_rpc::error::RpcError;
 use ethers::{
     abi::ethereum_types::BigEndianHash,
-    prelude::{BlockNumber, TxHash, H256, U256, U64},
+    prelude::{BlockNumber, GethTraceFrame, TxHash, H256, U256, U64},
     types::{
-        transaction::eip2930::AccessList, Address, Block as EthersBlock, BlockId, Bytes, Filter,
-        FilteredParams, GethDebugTracingOptions, GethTrace, Log, Trace, Transaction,
-        TransactionReceipt,
+        transaction::eip2930::AccessList, Address, Block as EthersBlock, BlockId, Bytes,
+        DefaultFrame, Filter, FilteredParams, GethDebugTracingOptions, GethTrace, Log, Trace,
+        Transaction, TransactionReceipt,
     },
     utils::{get_contract_address, keccak256, rlp},
 };
@@ -910,7 +910,7 @@ impl Backend {
         fee_details: FeeDetails,
         block_request: Option<BlockRequest>,
         opts: GethDebugTracingOptions,
-    ) -> Result<GethTrace, BlockchainError> {
+    ) -> Result<DefaultFrame, BlockchainError> {
         self.with_database_at(block_request, |state, block| {
             let mut inspector = Inspector::default().with_steps_tracing();
             let block_number = block.number;
@@ -1562,21 +1562,21 @@ impl Backend {
         opts: GethDebugTracingOptions,
     ) -> Result<GethTrace, BlockchainError> {
         if let Some(traces) = self.mined_geth_trace_transaction(hash, opts.clone()) {
-            return Ok(traces)
+            return Ok(GethTrace::Known(GethTraceFrame::Default(traces)))
         }
 
         if let Some(fork) = self.get_fork() {
             return Ok(fork.debug_trace_transaction(hash, opts).await?)
         }
 
-        Ok(GethTrace::default())
+        Ok(GethTrace::Known(GethTraceFrame::Default(Default::default())))
     }
 
     fn mined_geth_trace_transaction(
         &self,
         hash: H256,
         opts: GethDebugTracingOptions,
-    ) -> Option<GethTrace> {
+    ) -> Option<DefaultFrame> {
         self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.geth_trace(opts))
     }
 
