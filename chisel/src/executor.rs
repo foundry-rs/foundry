@@ -1202,6 +1202,8 @@ impl<'a> Iterator for InstructionIter<'a> {
 mod tests {
     use super::*;
     use ethers_solc::Solc;
+    use once_cell::sync::Lazy;
+    use std::sync::Mutex;
 
     #[test]
     fn test_const() {
@@ -1468,6 +1470,17 @@ mod tests {
     }
 
     fn source() -> SessionSource {
+        // synchronize solc install
+        static PRE_INSTALL_SOLC_LOCK: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
+        let mut is_preinstalled = PRE_INSTALL_SOLC_LOCK.lock().unwrap();
+        if !*is_preinstalled {
+            let solc = Solc::find_or_install_svm_version("0.8.17").and_then(|solc| solc.version());
+            if solc.is_err() {
+                // try reinstalling
+                let solc = Solc::blocking_install(&"0.8.17".parse().unwrap());
+                *is_preinstalled = solc.is_ok();
+            }
+        }
         let solc = Solc::find_or_install_svm_version("0.8.17").expect("could not install solc");
         SessionSource::new(solc, Default::default())
     }
