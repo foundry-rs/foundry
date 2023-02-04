@@ -812,26 +812,23 @@ impl SimpleCast {
     fn max_min_int<const MAX: bool>(s: &str) -> Result<String> {
         let ty = HumanReadableParser::parse_type(s).wrap_err("Invalid type")?;
         match ty {
-            ParamType::Int(n) => match n / 8 {
-                1 => Ok(if MAX { i8::MAX } else { i8::MIN }.to_string()),
-                2 => Ok(if MAX { i16::MAX } else { i16::MIN }.to_string()),
-                3..=4 => Ok(if MAX { i32::MAX } else { i32::MIN }.to_string()),
-                5..=8 => Ok(if MAX { i64::MAX } else { i64::MIN }.to_string()),
-                9..=16 => Ok(if MAX { i128::MAX } else { i128::MIN }.to_string()),
-                17..=32 => Ok(if MAX { I256::MAX } else { I256::MIN }.to_string()),
-                _ => Err(eyre::eyre!("Unsupported solidity type: int{n}")),
-            },
+            ParamType::Int(n) => {
+                let mask = U256::one() << U256::from(n - 1);
+                let max = (U256::MAX & mask) - 1;
+                if MAX {
+                    Ok(max.to_string())
+                } else {
+                    let min = I256::from_raw(max).wrapping_neg() + I256::minus_one();
+                    Ok(min.to_string())
+                }
+            }
             ParamType::Uint(n) => {
                 if MAX {
-                    match n / 8 {
-                        1 => Ok(u8::MAX.to_string()),
-                        2 => Ok(u16::MAX.to_string()),
-                        3..=4 => Ok(u32::MAX.to_string()),
-                        5..=8 => Ok(u64::MAX.to_string()),
-                        9..=16 => Ok(u128::MAX.to_string()),
-                        17..=32 => Ok(U256::MAX.to_string()),
-                        _ => Err(eyre::eyre!("Unsupported solidity type: uint{n}")),
+                    let mut max = U256::MAX;
+                    if n < 255 {
+                        max &= U256::one() << U256::from(n);
                     }
+                    Ok(max.to_string())
                 } else {
                     Ok("0".to_string())
                 }
