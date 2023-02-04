@@ -8,7 +8,7 @@ use chrono::NaiveDateTime;
 use ethers_core::{
     abi::{
         token::{LenientTokenizer, Tokenizer},
-        Function, HumanReadableParser, RawAbi, Token,
+        Function, HumanReadableParser, ParamType, RawAbi, Token,
     },
     types::{Chain, *},
     utils::{
@@ -777,6 +777,67 @@ pub enum InterfacePath {
 
 pub struct SimpleCast;
 impl SimpleCast {
+    /// Returns the maximum value of the given integer type
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use cast::SimpleCast;
+    /// # use ethers_core::types::{I256, U256};
+    /// assert_eq!(SimpleCast::max_int("uint256")?, format!("{}", U256::MAX));
+    /// assert_eq!(SimpleCast::max_int("int256")?, format!("{}", I256::MAX));
+    /// assert_eq!(SimpleCast::max_int("int32")?, format!("{}", i32::MAX));
+    /// # Ok::<(), eyre::Report>(())
+    /// ```
+    pub fn max_int(s: &str) -> Result<String> {
+        Self::max_min_int::<true>(s)
+    }
+
+    /// Returns the maximum value of the given integer type
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use cast::SimpleCast;
+    /// # use ethers_core::types::{I256, U256};
+    /// assert_eq!(SimpleCast::min_int("uint256")?, "0");
+    /// assert_eq!(SimpleCast::min_int("int256")?, format!("{}", I256::MIN));
+    /// assert_eq!(SimpleCast::min_int("int32")?, format!("{}", i32::MIN));
+    /// # Ok::<(), eyre::Report>(())
+    /// ```
+    pub fn min_int(s: &str) -> Result<String> {
+        Self::max_min_int::<false>(s)
+    }
+
+    fn max_min_int<const MAX: bool>(s: &str) -> Result<String> {
+        let ty = HumanReadableParser::parse_type(s)
+            .wrap_err("Invalid type, expected `(u)int<bit size>`")?;
+        match ty {
+            ParamType::Int(n) => {
+                let mask = U256::one() << U256::from(n - 1);
+                let max = (U256::MAX & mask) - 1;
+                if MAX {
+                    Ok(max.to_string())
+                } else {
+                    let min = I256::from_raw(max).wrapping_neg() + I256::minus_one();
+                    Ok(min.to_string())
+                }
+            }
+            ParamType::Uint(n) => {
+                if MAX {
+                    let mut max = U256::MAX;
+                    if n < 255 {
+                        max &= U256::one() << U256::from(n);
+                    }
+                    Ok(max.to_string())
+                } else {
+                    Ok("0".to_string())
+                }
+            }
+            _ => Err(eyre::eyre!("Type is not int/uint: {s}")),
+        }
+    }
+
     /// Converts UTF-8 text input to hex
     ///
     /// # Example
