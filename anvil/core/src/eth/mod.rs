@@ -1093,7 +1093,7 @@ mod tests {
         let s = r#"{"method": "anvil_mine_detailed", "params": [100]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
-        let s = r#"{"method": "evm_mine", "params": [{
+        let s = r#"{"method": "anvil_mine_detailed", "params": [{
             "timestamp": 100,
             "blocks": 100
         }]}"#;
