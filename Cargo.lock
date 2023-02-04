@@ -776,6 +776,7 @@ dependencies = [
  "foundry-common",
  "foundry-config",
  "foundry-evm",
+ "once_cell",
  "regex",
  "reqwest",
  "revm",
