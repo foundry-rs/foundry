@@ -1606,7 +1606,14 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.transaction_receipt(hash).await?)
+            let receipt = fork.transaction_receipt(hash).await?;
+            let number = self.convert_block_number(
+                receipt.clone().and_then(|r| r.block_number).map(|n| BlockNumber::from(n.as_u64())),
+            );
+
+            if fork.predates_fork_inclusive(number) {
+                return Ok(receipt)
+            }
         }
 
         Ok(None)
