@@ -385,7 +385,7 @@ fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> eyre::Result<()> {
         }
     }
     let mut overall_gas_change = 0i128;
-    let mut overall_gas_diff = 0f64;
+    let mut overall_gas_used = 0i128;
 
     diffs.sort_by(|a, b| {
         a.gas_diff().abs().partial_cmp(&b.gas_diff().abs()).unwrap_or(Ordering::Equal)
@@ -394,8 +394,8 @@ fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> eyre::Result<()> {
     for diff in diffs {
         let gas_change = diff.gas_change();
         overall_gas_change += gas_change;
+        overall_gas_used += diff.target_gas_used.gas() as i128;
         let gas_diff = diff.gas_diff();
-        overall_gas_diff += gas_diff;
         println!(
             "{} (gas: {} ({})) ",
             diff.signature,
@@ -404,6 +404,7 @@ fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> eyre::Result<()> {
         );
     }
 
+    let overall_gas_diff = overall_gas_change as f64 / overall_gas_used as f64;
     println!(
         "Overall gas change: {} ({})",
         fmt_change(overall_gas_change),
