@@ -10,7 +10,7 @@ foundry-common = { path = "./../common" }
 foundry-config = { path = "./../config" }
 foundry-evm = { path = "./../evm" }
 
-ethers = { git = "https://github.com/iFrostizz/ethers-rs", rev = "ce3cc16", default-features = false, features = [
+ethers = { git = "https://github.com/iFrostizz/ethers-rs", branch = "franfran/visitor", default-features = false, features = [
     "solc-full",
 ] }
 eyre = "0.6.5"
@@ -33,7 +33,7 @@ comfy-table = "6.0.0"
 parking_lot = "0.12"
 
 [dev-dependencies]
-ethers = { git = "https://github.com/iFrostizz/ethers-rs", rev = "ce3cc16", default-features = false, features = [
+ethers = { git = "https://github.com/iFrostizz/ethers-rs", branch = "franfran/visitor", default-features = false, features = [
     "solc-full",
     "solc-tests",
 ] }

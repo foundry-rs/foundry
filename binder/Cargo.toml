@@ -10,12 +10,12 @@ keywords = ["ethereum", "web3", "solidity"]
 
 [dependencies]
 foundry-config = { path = "../config" }
-ethers-solc = { git = "https://github.com/iFrostizz/ethers-rs", rev = "ce3cc16", default-features = false, features = [
+ethers-solc = { git = "https://github.com/iFrostizz/ethers-rs", branch = "franfran/visitor", default-features = false, features = [
     "async",
     "svm-solc",
     "project-util",
 ] }
-ethers-contract = { git = "https://github.com/iFrostizz/ethers-rs", rev = "ce3cc16", default-features = false, features = [
+ethers-contract = { git = "https://github.com/iFrostizz/ethers-rs", branch = "franfran/visitor", default-features = false, features = [
     "abigen",
 ] }
 curl = { version = "0.4", default-features = false, features = ["http2"] }

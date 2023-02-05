@@ -21,7 +21,7 @@ cast = { path = "../cast" }
 ui = { path = "../ui" }
 
 # eth
-ethers = { git = "https://github.com/iFrostizz/ethers-rs", rev = "ce3cc16", default-features = false, features = ["rustls"] }
+ethers = { git = "https://github.com/iFrostizz/ethers-rs", branch = "franfran/visitor", default-features = false, features = ["rustls"] }
 solang-parser = "0.1.11"
 
 # cli
