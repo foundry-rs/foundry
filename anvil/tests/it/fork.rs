@@ -805,6 +805,30 @@ async fn test_total_difficulty_fork() {
     assert_eq!(block.difficulty, U256::zero());
 }
 
+// <https://etherscan.io/block/14608400>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_transaction_receipt() {
+    let (api, _) = spawn(fork_config()).await;
+
+    // A transaction from the forked block (14608400)
+    let receipt = api
+        .transaction_receipt(
+            "0xce495d665e9091613fd962351a5cbca27a992b919d6a87d542af97e2723ec1e4".parse().unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(receipt.is_some());
+
+    // A transaction from a block in the future (14608401)
+    let receipt = api
+        .transaction_receipt(
+            "0x1a15472088a4a97f29f2f9159511dbf89954b58d9816e58a32b8dc17171dc0e8".parse().unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(receipt.is_none());
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn can_override_fork_chain_id() {
     let chain_id_override = 5u64;
