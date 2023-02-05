@@ -127,6 +127,7 @@ pub(crate) fn install(
     let libs = root.join(&install_lib_dir);
 
     if dependencies.is_empty() && !opts.no_git {
+        p_println!(!opts.quiet => "Updating dependencies in {:?}", libs);
         let mut cmd = Command::new("git");
         cmd.current_dir(&root).args([
             "submodule",
