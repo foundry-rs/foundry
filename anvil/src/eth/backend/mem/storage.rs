@@ -13,7 +13,7 @@ use anvil_core::eth::{
 };
 use ethers::{
     prelude::{BlockId, BlockNumber, DefaultFrame, Trace, H256, H256 as TxHash, U64},
-    types::{ActionType, GethDebugTracingOptions, U256},
+    types::{ActionType, Bytes, GethDebugTracingOptions, TransactionReceipt, U256},
 };
 use forge::revm::{Env, Return};
 use parking_lot::RwLock;
@@ -399,6 +399,15 @@ impl MinedTransaction {
     pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> DefaultFrame {
         self.info.traces.geth_trace(self.receipt.gas_used(), opts)
     }
+}
+
+/// Intermediary Anvil representation of a receipt
+#[derive(Debug, Clone)]
+pub struct MinedTransactionReceipt {
+    /// The actual json rpc receipt object
+    pub inner: TransactionReceipt,
+    /// Output data fo the transaction
+    pub out: Option<Bytes>,
 }
 
 #[cfg(test)]

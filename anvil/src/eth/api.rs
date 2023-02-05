@@ -6,7 +6,8 @@ use crate::{
             validate::TransactionValidator,
         },
         error::{
-            BlockchainError, FeeHistoryError, InvalidTransactionError, Result, ToRpcResponseResult,
+            decode_revert_reason, BlockchainError, FeeHistoryError, InvalidTransactionError,
+            Result, ToRpcResponseResult,
         },
         fees::{FeeDetails, FeeHistoryCache},
         macros::node_info,
@@ -327,6 +328,9 @@ impl EthApi {
             }
             EthRequest::EvmMine(mine) => {
                 self.evm_mine(mine.and_then(|p| p.params)).await.to_rpc_result()
+            }
+            EthRequest::EvmMineDetailed(mine) => {
+                self.evm_mine_detailed(mine.and_then(|p| p.params)).await.to_rpc_result()
             }
             EthRequest::SetRpcUrl(url) => self.anvil_set_rpc_url(url).to_rpc_result(),
             EthRequest::EthSendUnsignedTransaction(tx) => {
@@ -1656,30 +1660,61 @@ impl EthApi {
     /// **Note**: ganache returns `0x0` here as placeholder for additional meta-data in the future.
     pub async fn evm_mine(&self, opts: Option<EvmMineOptions>) -> Result<String> {
         node_info!("evm_mine");
-        let mut blocks_to_mine = 1u64;
 
-        if let Some(opts) = opts {
-            let timestamp = match opts {
-                EvmMineOptions::Timestamp(timestamp) => timestamp,
-                EvmMineOptions::Options { timestamp, blocks } => {
-                    if let Some(blocks) = blocks {
-                        blocks_to_mine = blocks;
+        self.do_evm_mine(opts).await?;
+
+        Ok("0x0".to_string())
+    }
+
+    /// Mine blocks, instantly and return the mined blocks.
+    ///
+    /// Handler for RPC call: `evm_mine_detailed`
+    ///
+    /// This will mine the blocks regardless of the configured mining mode.
+    ///
+    /// **Note**: This behaves exactly as [Self::evm_mine] but returns different output, for
+    /// compatibility reasons, this is a separate call since `evm_mine` is not an anvil original.
+    /// and `ganache` may change the `0x0` placeholder.
+    pub async fn evm_mine_detailed(
+        &self,
+        opts: Option<EvmMineOptions>,
+    ) -> Result<Vec<Block<Transaction>>> {
+        node_info!("evm_mine_detailed");
+
+        let mined_blocks = self.do_evm_mine(opts).await?;
+
+        let mut blocks = Vec::with_capacity(mined_blocks as usize);
+
+        let latest = self.backend.best_number().as_u64();
+        for offset in (0..mined_blocks).rev() {
+            let block_num = latest - offset;
+            if let Some(mut block) =
+                self.backend.block_by_number_full(BlockNumber::Number(block_num.into())).await?
+            {
+                for tx in block.transactions.iter_mut() {
+                    if let Some(receipt) = self.backend.mined_transaction_receipt(tx.hash) {
+                        if let Some(output) = receipt.out {
+                            // insert revert reason if failure
+                            if receipt.inner.status.unwrap_or_default().as_u64() == 0 {
+                                if let Some(reason) = decode_revert_reason(&output) {
+                                    tx.other.insert(
+                                        "revertReason".to_string(),
+                                        serde_json::to_value(reason).expect("Infallible"),
+                                    );
+                                }
+                            }
+                            tx.other.insert(
+                                "output".to_string(),
+                                serde_json::to_value(output).expect("Infallible"),
+                            );
+                        }
                     }
-                    timestamp
                 }
-            };
-            if let Some(timestamp) = timestamp {
-                // timestamp was explicitly provided to be the next timestamp
-                self.evm_set_next_block_timestamp(timestamp)?;
+                blocks.push(block);
             }
         }
 
-        // mine all the blocks
-        for _ in 0..blocks_to_mine {
-            self.mine_one().await;
-        }
-
-        Ok("0x0".to_string())
+        Ok(blocks)
     }
 
     /// Sets the reported block number
@@ -1846,6 +1881,34 @@ impl EthApi {
 // === impl EthApi utility functions ===
 
 impl EthApi {
+    /// Executes the `evm_mine` and returns the number of blocks mined
+    async fn do_evm_mine(&self, opts: Option<EvmMineOptions>) -> Result<u64> {
+        let mut blocks_to_mine = 1u64;
+
+        if let Some(opts) = opts {
+            let timestamp = match opts {
+                EvmMineOptions::Timestamp(timestamp) => timestamp,
+                EvmMineOptions::Options { timestamp, blocks } => {
+                    if let Some(blocks) = blocks {
+                        blocks_to_mine = blocks;
+                    }
+                    timestamp
+                }
+            };
+            if let Some(timestamp) = timestamp {
+                // timestamp was explicitly provided to be the next timestamp
+                self.evm_set_next_block_timestamp(timestamp)?;
+            }
+        }
+
+        // mine all the blocks
+        for _ in 0..blocks_to_mine {
+            self.mine_one().await;
+        }
+
+        Ok(blocks_to_mine)
+    }
+
     async fn do_estimate_gas(
         &self,
         request: EthTransactionRequest,
