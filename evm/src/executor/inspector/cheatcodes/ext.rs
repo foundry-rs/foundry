@@ -411,7 +411,7 @@ fn parse_json(
     // an entire JSON object.
     dbg!(&values);
     if let Some(coercion_type) = coerce {
-        if !values.iter().filter(|value| value.is_object()).collect::<Vec<&&Value>>().is_empty() {
+        if values.iter().any(|value| value.is_object()) {
             return Err(error::encode_error(format!(
                 "You can only coerce values or arrays, not JSON objects. The key '{key}' returns an object",
             )))
