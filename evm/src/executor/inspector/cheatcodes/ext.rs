@@ -397,7 +397,7 @@ fn value_to_token(value: &Value) -> eyre::Result<Token> {
 /// Canonicalize a json path key to always start from the root of the document.
 /// Read more about json path syntax: https://goessner.net/articles/JsonPath/
 fn canonicalize_json_key(key: &str) -> String {
-    if !key.starts_with("$") {
+    if !key.starts_with('$') {
         format!("${key}")
     } else {
         key.to_owned()
