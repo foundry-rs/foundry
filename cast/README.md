@@ -34,32 +34,32 @@
 -   [x] `basefee`
 -   [x] `block`
 -   [x] `block-number`
--   [ ] `bundle-source`
+-   [x] `bundle-source`
 -   [x] `call` (partial)
 -   [x] `calldata`
 -   [x] `chain`
 -   [x] `chain-id`
 -   [x] `client`
 -   [x] `code`
--   [ ] `debug`
+-   [x] `debug`
 -   [x] `estimate`
 -   [x] `etherscan-source`
--   [ ] `events`
+-   [x] `events`
 -   [x] `gas-price`
 -   [x] `index`
 -   [x] `keccak`
--   [ ] `logs`
+-   [x] `logs`
 -   [x] `lookup-address`
--   [ ] `ls`
--   [ ] `mktx`
+-   [x] `ls`
+-   [x] `mktx`
 -   [x] `namehash`
 -   [x] `nonce`
 -   [x] `publish`
 -   [x] `receipt`
 -   [x] `resolve-name`
--   [ ] `run-tx`
--   [x] `send` (partial)
+-   [x] `run-tx`
+-   [x] `send` (full-balance)
 -   [x] `sig`
--   [ ] `sign`
+-   [x] `sign`
 -   [x] `storage`
 -   [x] `tx`
