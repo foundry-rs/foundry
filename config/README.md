@@ -146,7 +146,7 @@ no_storage_caching = false
 # To not include the metadata hash, to allow for deterministic code: https://docs.soliditylang.org/en/latest/metadata.html, use "none"
 bytecode_hash = "ipfs"
 # Whether to append the metadata hash to the bytecode
-cbor_metadata = false
+cbor_metadata = true
 # How to treat revert (and require) reason strings.
 # Possible values are: "default", "strip", "debug" and "verboseDebug".
 #  "default" does not inject compiler-generated revert strings and keeps user-supplied ones.
