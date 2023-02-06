@@ -166,4 +166,11 @@ contract ExpectRevertTest is DSTest {
     function testFailExpectRevertDangling() public {
         cheats.expectRevert("dangling");
     }
+
+    function testExpectRevertInvalidEnv() public {
+        cheats.expectRevert(
+            "Failed to get environment variable `_testExpectRevertInvalidEnv` as type `string`: environment variable not found"
+        );
+        string memory val = cheats.envString("_testExpectRevertInvalidEnv");
+    }
 }
