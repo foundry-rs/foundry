@@ -409,8 +409,9 @@ fn parse_json(
     // values is an array of items. Depending on the JsonPath key, they
     // can be many or a single item. An item can be a single value or
     // an entire JSON object.
+    dbg!(&values);
     if let Some(coercion_type) = coerce {
-        if values.len() != 1 || values[0].is_object() {
+        if !values.iter().filter(|value| value.is_object()).collect::<Vec<&&Value>>().is_empty() {
             return Err(error::encode_error(format!(
                 "You can only coerce values or arrays, not JSON objects. The key '{key}' returns an object",
             )))
@@ -430,9 +431,13 @@ fn parse_json(
                 error::encode_error(err.wrap_err(format!("Failed to parse key {key}")))
             })
         })
-        .collect::<Result<Vec<Token>, Bytes>>();
+        .collect::<Result<Vec<Token>, Bytes>>()?;
     // encode the bytes as the 'bytes' solidity type
-    let abi_encoded = abi::encode(&[Token::Bytes(abi::encode(&res?))]);
+    let abi_encoded = if res.len() == 1 {
+        abi::encode(&[Token::Bytes(abi::encode(&res))])
+    } else {
+        abi::encode(&[Token::Bytes(abi::encode(&[Token::Array(res)]))])
+    };
     Ok(abi_encoded.into())
 }
 /// Serializes a key:value pair to a specific object. By calling this function multiple times,
@@ -501,7 +506,7 @@ fn array_eval_to_str<T: UIfmt>(array: &Vec<T>) -> String {
     )
 }
 
-/// Write an object to a new file OR replaces the value of an existing JSON file with the supplied
+/// Write an object to a new file OR replace the value of an existing JSON file with the supplied
 /// object.
 fn write_json(
     _state: &mut Cheatcodes,
@@ -518,7 +523,7 @@ fn write_json(
             .map_err(error::encode_error)?;
         let data = serde_json::from_str(&fs::read_to_string(path).map_err(error::encode_error)?)
             .map_err(error::encode_error)?;
-        jsonpath_lib::replace_with(data, &format!("${json_path}"), &mut |_| Some(json.clone()))
+        jsonpath_lib::replace_with(data, json_path, &mut |_| Some(json.clone()))
             .map_err(error::encode_error)?
     } else {
         json
@@ -724,7 +729,9 @@ pub fn apply(
             serialize_json(state, &inner.0, &inner.1, &array_str_to_str(&inner.2))
         }
         HEVMCalls::WriteJson0(inner) => write_json(state, &inner.0, &inner.1, None),
-        HEVMCalls::WriteJson1(inner) => write_json(state, &inner.0, &inner.1, Some(&inner.2)),
+        HEVMCalls::WriteJson1(inner) => {
+            write_json(state, &inner.0, &inner.1, Some(&format!("$.{}", &inner.2)))
+        }
         _ => return None,
     })
 }
