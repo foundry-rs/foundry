@@ -23,5 +23,6 @@
   "numberInt": -12,
   "hexInt": "0x-C",
   "booleanString": "true",
-  "booleanArray": [true, "false"]
+  "booleanArray": [true, "false"],
+  "advancedJsonPath": [{ "id": 1 }, { "id": 2 }]
 }

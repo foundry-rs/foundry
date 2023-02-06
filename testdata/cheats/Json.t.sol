@@ -15,53 +15,53 @@ contract ParseJson is DSTest {
     }
 
     function test_uintArray() public {
-        bytes memory data = cheats.parseJson(json, ".uintArray");
+        bytes memory data = cheats.parseJson(json, "uintArray");
         uint256[] memory decodedData = abi.decode(data, (uint256[]));
         assertEq(42, decodedData[0]);
         assertEq(43, decodedData[1]);
     }
 
     function test_str() public {
-        bytes memory data = cheats.parseJson(json, ".str");
+        bytes memory data = cheats.parseJson(json, "str");
         string memory decodedData = abi.decode(data, (string));
         assertEq("hai", decodedData);
     }
 
     function test_strArray() public {
-        bytes memory data = cheats.parseJson(json, ".strArray");
+        bytes memory data = cheats.parseJson(json, "strArray");
         string[] memory decodedData = abi.decode(data, (string[]));
         assertEq("hai", decodedData[0]);
         assertEq("there", decodedData[1]);
     }
 
     function test_bool() public {
-        bytes memory data = cheats.parseJson(json, ".bool");
+        bytes memory data = cheats.parseJson(json, "bool");
         bool decodedData = abi.decode(data, (bool));
         assertTrue(decodedData);
     }
 
     function test_boolArray() public {
-        bytes memory data = cheats.parseJson(json, ".boolArray");
+        bytes memory data = cheats.parseJson(json, "boolArray");
         bool[] memory decodedData = abi.decode(data, (bool[]));
         assertTrue(decodedData[0]);
         assertTrue(!decodedData[1]);
     }
 
     function test_address() public {
-        bytes memory data = cheats.parseJson(json, ".address");
+        bytes memory data = cheats.parseJson(json, "address");
         address decodedData = abi.decode(data, (address));
         assertEq(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, decodedData);
     }
 
     function test_addressArray() public {
-        bytes memory data = cheats.parseJson(json, ".addressArray");
+        bytes memory data = cheats.parseJson(json, "addressArray");
         address[] memory decodedData = abi.decode(data, (address[]));
         assertEq(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, decodedData[0]);
         assertEq(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, decodedData[1]);
     }
 
     function test_H160ButNotaddress() public {
-        string memory data = abi.decode(cheats.parseJson(json, ".H160NotAddress"), (string));
+        string memory data = abi.decode(cheats.parseJson(json, "H160NotAddress"), (string));
         assertEq("0000000000000000000000000000000000001337", data);
     }
 
@@ -111,25 +111,32 @@ contract ParseJson is DSTest {
         assertEq(number, 115792089237316195423570985008687907853269984665640564039457584007913129639935);
         number = cheats.parseJsonUint(json, "numberUint");
         assertEq(number, 115792089237316195423570985008687907853269984665640564039457584007913129639935);
-        uint256[] memory numbers = cheats.parseJsonUintArray(json, ".arrayUint");
+        uint256[] memory numbers = cheats.parseJsonUintArray(json, "arrayUint");
         assertEq(numbers[0], 1231232);
         assertEq(numbers[1], 1231232);
         assertEq(numbers[2], 1231232);
     }
 
     function test_coercionInt() public {
-        int256 number = cheats.parseJsonInt(json, ".hexInt");
+        int256 number = cheats.parseJsonInt(json, "hexInt");
         assertEq(number, -12);
         number = cheats.parseJsonInt(json, "stringInt");
         assertEq(number, -12);
     }
 
-    function test_coercion_bool() public {
-        bool boolean = cheats.parseJsonBool(json, ".booleanString");
+    function test_coercionBool() public {
+        bool boolean = cheats.parseJsonBool(json, "booleanString");
         assertEq(boolean, true);
-        bool[] memory booleans = cheats.parseJsonBoolArray(json, ".booleanArray");
+        bool[] memory booleans = cheats.parseJsonBoolArray(json, "booleanArray");
         assert(booleans[0]);
         assert(!booleans[1]);
+    }
+
+    function test_advancedJsonPath() public {
+         bytes memory data = cheats.parseJson(json, "advancedJsonPath[*].id");
+         uint256[] memory numbers = abi.decode(data, (uint256[]));
+         assertEq(numbers[0], 1);
+         assertEq(numbers[1], 2);
     }
 }
 
@@ -168,47 +175,32 @@ contract WriteJson is DSTest {
         bytes[] memory data3 = new bytes[](3);
         data3[0] = bytes("123");
         data3[2] = bytes("fpovhpgjaiosfjhapiufpsdf");
-        vm.serializeBytes(json1, "array3", data3);
-
-        uint256[] memory data4 = new uint256[](0);
-        vm.serializeUint(json1, "array4", data4);
-
-        address[] memory data5 = new address[](0);
-        string memory finalJson = vm.serializeAddress(json1, "array5", data5);
+        string memory finalJson = vm.serializeBytes(json1, "array3", data3);
 
         string memory path = "../testdata/fixtures/Json/write_test_array.json";
         vm.writeJson(finalJson, path);
 
         string memory json = vm.readFile(path);
-        bytes memory rawData = vm.parseJson(json, ".array1");
+        bytes memory rawData = vm.parseJson(json, "array1");
         bool[] memory parsedData1 = new bool[](3);
         parsedData1 = abi.decode(rawData, (bool[]));
         assertEq(parsedData1[0], data1[0]);
         assertEq(parsedData1[1], data1[1]);
         assertEq(parsedData1[2], data1[2]);
 
-        rawData = vm.parseJson(json, ".array2");
+        rawData = vm.parseJson(json, "array2");
         address[] memory parsedData2 = new address[](3);
         parsedData2 = abi.decode(rawData, (address[]));
         assertEq(parsedData2[0], data2[0]);
         assertEq(parsedData2[1], data2[1]);
         assertEq(parsedData2[2], data2[2]);
 
-        rawData = vm.parseJson(json, ".array3");
+        rawData = vm.parseJson(json, "array3");
         bytes[] memory parsedData3 = new bytes[](3);
         parsedData3 = abi.decode(rawData, (bytes[]));
         assertEq(parsedData3[0], data3[0]);
         assertEq(parsedData3[1], data3[1]);
         assertEq(parsedData3[2], data3[2]);
-
-        rawData = vm.parseJson(json, ".array4");
-        uint256[] memory parsedData4 = new uint256[](0);
-        parsedData4 = abi.decode(rawData, (uint256[]));
-
-        rawData = vm.parseJson(json, ".array5");
-        address[] memory parsedData5 = new address[](0);
-        parsedData5 = abi.decode(rawData, (address[]));
-
         vm.removeFile(path);
     }
 
@@ -250,19 +242,19 @@ contract WriteJson is DSTest {
         assertEq(decodedData.b, "test");
 
         // write json3 to key b
-        vm.writeJson(finalJson, path, ".b");
+        vm.writeJson(finalJson, path, "b");
         // read again
         json = vm.readFile(path);
-        data = vm.parseJson(json, ".b");
+        data = vm.parseJson(json, "b");
         decodedData = abi.decode(data, (simpleJson));
         assertEq(decodedData.a, 123);
         assertEq(decodedData.b, "test");
 
         // replace a single value to key b
         address ex = address(0xBEEF);
-        vm.writeJson(vm.toString(ex), path, ".b");
+        vm.writeJson(vm.toString(ex), path, "b");
         json = vm.readFile(path);
-        data = vm.parseJson(json, ".b");
+        data = vm.parseJson(json, "b");
         address decodedAddress = abi.decode(data, (address));
         assertEq(decodedAddress, ex);
     }
