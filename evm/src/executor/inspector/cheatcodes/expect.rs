@@ -82,7 +82,7 @@ pub fn handle_expect_revert(
         return Err("Call reverted as expected, but without data".to_string().encode().into())
     }
 
-    let string_data = match retdata {
+    let maybe_prefixed_error_string = match retdata {
         _ if retdata.len() >= REVERT_PREFIX.len() &&
             retdata[..REVERT_PREFIX.len()] == REVERT_PREFIX =>
         {
@@ -103,8 +103,8 @@ pub fn handle_expect_revert(
             .unwrap_or_else(|| format!("0x{}", hex::encode(data)))
     };
 
-    let (err, actual_revert): (_, Bytes) = if let Some(data) = string_data {
-        // It's a revert string, so we do some conversion to perform the check
+    let (err_message, actual_revert): (_, Bytes) = if let Some(data) = maybe_prefixed_error_string {
+        // It's a prefixed revert string, so we do some conversion to perform the check
         let decoded_data = ethers::prelude::Bytes::decode(data)
             .expect("String error code, but data can't be decoded as bytes");
 
@@ -134,7 +134,7 @@ pub fn handle_expect_revert(
     if actual_revert == expected_revert {
         success_return!()
     } else {
-        Err(err)
+        Err(err_message)
     }
 }
 

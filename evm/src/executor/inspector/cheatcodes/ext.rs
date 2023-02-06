@@ -124,7 +124,7 @@ fn get_code(state: &Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
     if let Some(bin) = bytecode.into_bytecode() {
         Ok(abi::encode(&[Token::Bytes(bin.to_vec())]).into())
     } else {
-        Err("No bytecode for contract. Is it abstract or unlinked?".to_string().encode().into())
+        Err(error::encode_error("No bytecode for contract. Is it abstract or unlinked?"))
     }
 }
 
@@ -134,7 +134,7 @@ fn get_deployed_code(state: &Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
     if let Some(bin) = bytecode.into_deployed_bytecode() {
         Ok(abi::encode(&[Token::Bytes(bin.to_vec())]).into())
     } else {
-        Err("No bytecode for contract. Is it abstract or unlinked?".to_string().encode().into())
+        Err(error::encode_error("No bytecode for contract. Is it abstract or unlinked?"))
     }
 }
 
@@ -152,19 +152,13 @@ fn set_env(key: &str, val: &str) -> Result<Bytes, Bytes> {
     // `std::env::set_var` may panic in the following situations
     // ref: https://doc.rust-lang.org/std/env/fn.set_var.html
     if key.is_empty() {
-        Err("Environment variable key can't be empty".to_string().encode().into())
+        Err(error::encode_error("Environment variable key can't be empty"))
     } else if key.contains('=') {
-        Err("Environment variable key can't contain equal sign `=`".to_string().encode().into())
+        Err(error::encode_error("Environment variable key can't contain equal sign `=`"))
     } else if key.contains('\0') {
-        Err("Environment variable key can't contain NUL character `\\0`"
-            .to_string()
-            .encode()
-            .into())
+        Err(error::encode_error("Environment variable key can't contain NUL character `\\0`"))
     } else if val.contains('\0') {
-        Err("Environment variable value can't contain NUL character `\\0`"
-            .to_string()
-            .encode()
-            .into())
+        Err(error::encode_error("Environment variable value can't contain NUL character `\\0`"))
     } else {
         env::set_var(key, val);
         Ok(Bytes::new())
@@ -181,7 +175,7 @@ fn get_env(
     let val = if let Some(value) = default {
         env::var(key).unwrap_or(value)
     } else {
-        env::var(key).map_err::<Bytes, _>(|e| format!("{msg}: {e}").encode().into())?
+        env::var(key).map_err::<Bytes, _>(|e| error::encode_error(format!("{msg}: {e}")))?
     };
     let val = if let Some(d) = delim {
         val.split(d).map(|v| v.trim().to_string()).collect()
@@ -189,7 +183,8 @@ fn get_env(
         vec![val]
     };
     let is_array: bool = delim.is_some();
-    util::value_to_abi(val, r#type, is_array).map_err(|e| format!("{msg}: {e}").encode().into())
+    util::value_to_abi(val, r#type, is_array)
+        .map_err(|e| error::encode_error(format!("{msg}: {e}")))
 }
 
 fn project_root(state: &Cheatcodes) -> Result<Bytes, Bytes> {
@@ -553,7 +548,7 @@ pub fn apply(
     Some(match call {
         HEVMCalls::Ffi(inner) => {
             if !ffi_enabled {
-                Err("FFI disabled: run again with `--ffi` if you want to allow tests to call external scripts.".to_string().encode().into())
+                Err(error::encode_error("FFI disabled: run again with `--ffi` if you want to allow tests to call external scripts."))
             } else {
                 ffi(state, &inner.0)
             }

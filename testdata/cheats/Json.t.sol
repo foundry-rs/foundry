@@ -133,17 +133,16 @@ contract ParseJson is DSTest {
     }
 
     function test_advancedJsonPath() public {
-         bytes memory data = cheats.parseJson(json, ".advancedJsonPath[*].id");
-         uint256[] memory numbers = abi.decode(data, (uint256[]));
-         assertEq(numbers[0], 1);
-         assertEq(numbers[1], 2);
+        bytes memory data = cheats.parseJson(json, ".advancedJsonPath[*].id");
+        uint256[] memory numbers = abi.decode(data, (uint256[]));
+        assertEq(numbers[0], 1);
+        assertEq(numbers[1], 2);
     }
 
     function test_canonicalizePath() public {
         bytes memory data = cheats.parseJson(json, "$.str");
         string memory decodedData = abi.decode(data, (string));
         assertEq("hai", decodedData);
-
     }
 }
 
