@@ -394,6 +394,16 @@ fn value_to_token(value: &Value) -> eyre::Result<Token> {
     }
 }
 
+/// Canonicalize a json path key to always start from the root of the document.
+/// Read more about json path syntax: https://goessner.net/articles/JsonPath/
+fn canonicalize_json_key(key: &str) -> String {
+    if !key.starts_with("$") {
+        format!("${key}")
+    } else {
+        key.to_owned()
+    }
+}
+
 /// Parses a JSON and returns a single value, an array or an entire JSON object encoded as tuple.
 /// As the JSON object is parsed serially, with the keys ordered alphabetically, they must be
 /// deserialized in the same order. That means that the solidity `struct` should order it's fields
@@ -405,11 +415,11 @@ fn parse_json(
     coerce: Option<ParamType>,
 ) -> Result<Bytes, Bytes> {
     let json = serde_json::from_str(json_str).map_err(error::encode_error)?;
-    let values: Vec<&Value> = jsonpath_lib::select(&json, key).map_err(error::encode_error)?;
+    let values: Vec<&Value> =
+        jsonpath_lib::select(&json, &canonicalize_json_key(key)).map_err(error::encode_error)?;
     // values is an array of items. Depending on the JsonPath key, they
     // can be many or a single item. An item can be a single value or
     // an entire JSON object.
-    dbg!(&values);
     if let Some(coercion_type) = coerce {
         if values.iter().any(|value| value.is_object()) {
             return Err(error::encode_error(format!(
@@ -523,8 +533,10 @@ fn write_json(
             .map_err(error::encode_error)?;
         let data = serde_json::from_str(&fs::read_to_string(path).map_err(error::encode_error)?)
             .map_err(error::encode_error)?;
-        jsonpath_lib::replace_with(data, json_path, &mut |_| Some(json.clone()))
-            .map_err(error::encode_error)?
+        jsonpath_lib::replace_with(data, &canonicalize_json_key(json_path), &mut |_| {
+            Some(json.clone())
+        })
+        .map_err(error::encode_error)?
     } else {
         json
     })
@@ -641,50 +653,48 @@ pub fn apply(
         // If no key argument is passed, return the whole JSON object.
         // "$" is the JSONPath key for the root of the object
         HEVMCalls::ParseJson0(inner) => parse_json(state, &inner.0, "$", None),
-        HEVMCalls::ParseJson1(inner) => {
-            parse_json(state, &inner.0, &format!("$.{}", &inner.1), None)
-        }
+        HEVMCalls::ParseJson1(inner) => parse_json(state, &inner.0, &inner.1, None),
         HEVMCalls::ParseJsonBool(inner) => {
-            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::Bool))
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::Bool))
         }
         HEVMCalls::ParseJsonBoolArray(inner) => {
-            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::Bool))
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::Bool))
         }
         HEVMCalls::ParseJsonUint(inner) => {
-            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::Uint(256)))
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::Uint(256)))
         }
         HEVMCalls::ParseJsonUintArray(inner) => {
-            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::Uint(256)))
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::Uint(256)))
         }
         HEVMCalls::ParseJsonInt(inner) => {
-            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::Int(256)))
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::Int(256)))
         }
         HEVMCalls::ParseJsonIntArray(inner) => {
-            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::Int(256)))
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::Int(256)))
         }
         HEVMCalls::ParseJsonString(inner) => {
-            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::String))
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::String))
         }
         HEVMCalls::ParseJsonStringArray(inner) => {
-            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::String))
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::String))
         }
         HEVMCalls::ParseJsonAddress(inner) => {
-            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::Address))
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::Address))
         }
         HEVMCalls::ParseJsonAddressArray(inner) => {
-            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::Address))
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::Address))
         }
         HEVMCalls::ParseJsonBytes(inner) => {
-            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::Bytes))
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::Bytes))
         }
         HEVMCalls::ParseJsonBytesArray(inner) => {
-            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::Bytes))
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::Bytes))
         }
         HEVMCalls::ParseJsonBytes32(inner) => {
-            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::FixedBytes(32)))
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::FixedBytes(32)))
         }
         HEVMCalls::ParseJsonBytes32Array(inner) => {
-            parse_json(state, &inner.0, &format!("$.{}", &inner.1), Some(ParamType::FixedBytes(32)))
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::FixedBytes(32)))
         }
         HEVMCalls::SerializeBool0(inner) => {
             serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
@@ -729,9 +739,7 @@ pub fn apply(
             serialize_json(state, &inner.0, &inner.1, &array_str_to_str(&inner.2))
         }
         HEVMCalls::WriteJson0(inner) => write_json(state, &inner.0, &inner.1, None),
-        HEVMCalls::WriteJson1(inner) => {
-            write_json(state, &inner.0, &inner.1, Some(&format!("$.{}", &inner.2)))
-        }
+        HEVMCalls::WriteJson1(inner) => write_json(state, &inner.0, &inner.1, Some(&inner.2)),
         _ => return None,
     })
 }
