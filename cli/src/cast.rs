@@ -214,13 +214,15 @@ async fn main() -> eyre::Result<()> {
                 Cast::new(provider).age(block.unwrap_or(BlockId::Number(Latest))).await?
             );
         }
-        Subcommands::Balance { block, who, rpc_url, to_ether} => {
+        Subcommands::Balance { block, who, rpc_url, to_ether } => {
             let rpc_url = try_consume_config_rpc_url(rpc_url)?;
             let provider = try_get_http_provider(rpc_url)?;
             let value = Cast::new(provider).balance(who, block).await?;
             if to_ether {
                 println!("{}", SimpleCast::from_wei(&value.to_string(), "eth")?);
-            } else { println!("{}", value); }
+            } else {
+                println!("{value}");
+            }
         }
         Subcommands::BaseFee { block, rpc_url } => {
             let rpc_url = try_consume_config_rpc_url(rpc_url)?;
