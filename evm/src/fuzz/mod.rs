@@ -196,9 +196,11 @@ impl<'a> FuzzedExecutor<'a> {
                 let reason = reason.to_string();
                 result.reason = if reason.is_empty() { None } else { Some(reason) };
 
-                let args = func
-                    .decode_input(&calldata.as_ref()[4..])
-                    .map_err(|_| FuzzError::FailedDecodeInput)?;
+                let args = if calldata.len() < 4 || func.inputs.is_empty() {
+                    vec![]
+                } else {
+                    func.decode_input(&calldata[4..]).map_err(|_| FuzzError::FailedDecodeInput)?
+                };
 
                 result.counterexample = Some(CounterExample::Single(BaseCounterExample {
                     sender: None,
