@@ -1,13 +1,11 @@
-use std::path::{Path, PathBuf};
-
+use crate::{cmd::Cmd, opts::ClapChain};
 use cast::AbiPath;
 use clap::{Parser, ValueHint};
 use ethers::prelude::{errors::EtherscanError, Abigen, Client, MultiAbigen};
 use forge::Address;
 use foundry_common::fs::json_files;
 use futures::future::BoxFuture;
-
-use crate::{cmd::Cmd, opts::ClapChain};
+use std::path::{Path, PathBuf};
 
 static DEFAULT_CRATE_NAME: &str = "foundry-contracts";
 static DEFAULT_CRATE_VERSION: &str = "0.0.1";
@@ -87,6 +85,12 @@ impl BindArgs {
         match address_or_path {
             AbiPath::Etherscan { address, chain, api_key } => {
                 let client = Client::new(chain, api_key)?;
+                let metadata = &client.contract_source_code(address).await?.items[0];
+                let address = if metadata.implementation.is_some() {
+                    metadata.implementation.unwrap()
+                } else {
+                    address
+                };
                 let source = match client.contract_source_code(address).await {
                     Ok(source) => source,
                     Err(EtherscanError::InvalidApiKey) => {
@@ -108,6 +112,7 @@ impl BindArgs {
                 let multi = MultiAbigen::from_abigens(abigens);
 
                 let bindings = multi.build().unwrap();
+                println!("Generating bindings for {} contracts", bindings.len());
                 bindings.write_to_crate(
                     &self.crate_name,
                     &self.crate_version,
@@ -131,6 +136,7 @@ impl BindArgs {
                 let multi = MultiAbigen::from_abigens(abis);
 
                 let bindings = multi.build().unwrap();
+                println!("Generating bindings for {} contracts", bindings.len());
                 bindings.write_to_crate(
                     &self.crate_name,
                     &self.crate_version,
