@@ -712,6 +712,8 @@ pub struct InterfaceSource {
     pub source: String,
 }
 
+// Local is a path to the directory containing the ABI files
+// In case of etherscan, ABI is fetched from the address on the chain
 pub enum AbiPath {
     Local { path: String, name: Option<String> },
     Etherscan { address: Address, chain: Chain, api_key: String },
