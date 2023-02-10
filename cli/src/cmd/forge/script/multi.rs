@@ -73,12 +73,20 @@ impl MultiChainSequence {
             out.push(DRY_RUN_DIR);
         }
 
-        let target_fname = target.source.file_name().wrap_err("No filename.")?.to_string_lossy();
+        let target_fname = target
+            .source
+            .file_name()
+            .wrap_err_with(|| format!("No filename for {:?}", target.source))?
+            .to_string_lossy();
         out.push(format!("{target_fname}-latest"));
 
         fs::create_dir_all(&out)?;
 
-        let filename = sig.split_once('(').wrap_err("Sig is invalid.")?.0.to_owned();
+        let filename = sig
+            .split_once('(')
+            .wrap_err_with(|| format!("Failed to compute file name: Signature {sig} is invalid."))?
+            .0
+            .to_string();
         out.push(format!("{filename}.json"));
 
         Ok(out)
