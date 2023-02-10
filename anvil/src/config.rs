@@ -84,6 +84,8 @@ pub struct NodeConfig {
     pub chain_id: Option<u64>,
     /// Default gas limit for all txs
     pub gas_limit: U256,
+    /// If set to `true`, disables the block gas limit
+    pub disable_block_gas_limit: bool,
     /// Default gas price for all txs
     pub gas_price: Option<U256>,
     /// Default base fee
@@ -339,6 +341,7 @@ impl Default for NodeConfig {
         Self {
             chain_id: None,
             gas_limit: U256::from(30_000_000),
+            disable_block_gas_limit: false,
             gas_price: None,
             hardfork: None,
             signer_accounts: genesis_accounts.clone(),
@@ -443,6 +446,15 @@ impl NodeConfig {
         if let Some(gas_limit) = gas_limit {
             self.gas_limit = gas_limit.into();
         }
+        self
+    }
+
+    /// Disable block gas limit check
+    ///
+    /// If set to `true` block gas limit will not be enforced
+    #[must_use]
+    pub fn disable_block_gas_limit(mut self, disable_block_gas_limit: bool) -> Self {
+        self.disable_block_gas_limit = disable_block_gas_limit;
         self
     }
 
@@ -747,6 +759,7 @@ impl NodeConfig {
                 // If EIP-3607 is enabled it can cause issues during fuzz/invariant tests if the
                 // caller is a contract. So we disable the check by default.
                 disable_eip3607: true,
+                disable_block_gas_limit: self.disable_block_gas_limit,
                 ..Default::default()
             },
             block: BlockEnv {
