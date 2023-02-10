@@ -25,8 +25,18 @@ impl AsString for Expression {
                 Type::DynamicBytes => "bytes".to_owned(),
                 Type::Int(n) => format!("int{n}"),
                 Type::Uint(n) => format!("uint{n}"),
-                Type::Mapping(_, from, to) => {
-                    format!("mapping({} => {})", from.as_string(), to.as_string())
+                Type::Mapping { key, key_name, value, value_name, .. } => {
+                    let mut key = key.as_string();
+                    if let Some(name) = key_name {
+                        key.push(' ');
+                        key.push_str(&name.to_string());
+                    }
+                    let mut value = value.as_string();
+                    if let Some(name) = value_name {
+                        value.push(' ');
+                        value.push_str(&name.to_string());
+                    }
+                    format!("mapping({key} => {value})")
                 }
                 Type::Function { params, attributes, returns } => {
                     let params = params.as_string();

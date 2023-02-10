@@ -1931,14 +1931,31 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                         _ => write_chunk!(self, loc.start(), "{int}{n}")?,
                     }
                 }
-                Type::Mapping(loc, from, to) => {
+                Type::Mapping { loc, key, key_name, value, value_name } => {
                     write_chunk!(self, loc.start(), "mapping(")?;
                     let arrow_loc = self.find_next_str_in_src(loc.start(), "=>");
-                    let key_chunk = self.visit_to_chunk(from.loc().start(), arrow_loc, from)?;
+                    // let key_chunk = self.visit_to_chunk(key.loc().start(), arrow_loc, key)?;
+                    let key_chunk = self.chunked(key.loc().start(), arrow_loc, |fmt| {
+                        key.visit(fmt)?;
+                        if let Some(name) = key_name {
+                            name.visit(fmt)?;
+                        }
+                        Ok(())
+                    })?;
                     self.write_chunk(&key_chunk)?;
+
                     write!(self.buf(), " => ")?;
-                    let close_paren_loc = self.find_next_in_src(to.loc().end(), ')');
-                    let value_chunk = self.visit_to_chunk(to.loc().start(), close_paren_loc, to)?;
+                    let close_paren_loc = self.find_next_in_src(value.loc().end(), ')');
+                    // let value_chunk =
+                    //     self.visit_to_chunk(value.loc().start(), close_paren_loc, value)?;
+                    let value_chunk =
+                        self.chunked(value.loc().start(), close_paren_loc, |fmt| {
+                            value.visit(fmt)?;
+                            if let Some(name) = value_name {
+                                name.visit(fmt)?;
+                            }
+                            Ok(())
+                        })?;
                     self.write_chunk(&value_chunk)?;
                     write!(self.buf(), ")")?;
                 }
@@ -3626,4 +3643,5 @@ mod tests {
     test_directory! { TrailingComma }
     test_directory! { PragmaDirective }
     test_directory! { Annotation }
+    test_directory! { MappingType }
 }
