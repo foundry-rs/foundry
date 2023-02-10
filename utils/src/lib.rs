@@ -27,6 +27,21 @@ pub struct PostLinkInput<'a, T, U> {
     pub dependencies: Vec<(String, Bytes)>,
 }
 
+/// A possible link for a `target`
+struct LinkReferences {
+    /// All references of the target's bytecode
+    references: Vec<LinkReference>,
+    /// identifier of the target
+    version: ArtifactId
+}
+
+struct LinkReference {
+    file_name: String,
+    file: String,
+    key: String,
+}
+
+
 #[allow(clippy::too_many_arguments)]
 pub fn link_with_nonce_or_address<T, U>(
     contracts: ArtifactContracts,
@@ -56,6 +71,8 @@ pub fn link_with_nonce_or_address<T, U>(
         })
         .collect();
 
+    dbg!(&link_tree);
+
     let contracts_by_slug = contracts
         .iter()
         .map(|(i, c)| (i.slug(), c.clone()))
@@ -82,6 +99,7 @@ pub fn link_with_nonce_or_address<T, U>(
 
             match bytecode.object {
                 BytecodeObject::Unlinked(_) => {
+                    trace!(target : "forge::link", target=id.slug(), "unlinked contract");
                     // link needed
                     recurse_link(
                         id.slug(),
@@ -143,6 +161,7 @@ pub fn recurse_link<'a>(
     // check if we have dependencies
     if let Some(dependencies) = dependency_tree.get(&target) {
         trace!(target : "forge::link", ?target, "linking contract");
+        dbg!(&dependencies);
         // for each dependency, try to link
         dependencies.iter().for_each(|(next_target, file, key)| {
             // get the dependency
@@ -295,8 +314,8 @@ impl Retry {
     }
 
     pub fn run<T, F>(mut self, mut callback: F) -> eyre::Result<T>
-    where
-        F: FnMut() -> eyre::Result<T>,
+        where
+            F: FnMut() -> eyre::Result<T>,
     {
         loop {
             match callback() {
@@ -307,8 +326,8 @@ impl Retry {
     }
 
     pub async fn run_async<'a, T, F>(mut self, mut callback: F) -> eyre::Result<T>
-    where
-        F: FnMut() -> BoxFuture<'a, eyre::Result<T>>,
+        where
+            F: FnMut() -> BoxFuture<'a, eyre::Result<T>>,
     {
         loop {
             match callback().await {
@@ -451,7 +470,7 @@ mod tests {
                 Ok(())
             },
         )
-        .unwrap();
+            .unwrap();
     }
 
     #[test]
@@ -485,7 +504,7 @@ mod tests {
                 NameOrAddress::Name("contractnotpresent".to_string()),
                 Some(Chain::Mainnet)
             )
-            .ok(),
+                .ok(),
             Some(NameOrAddress::Name("contractnotpresent".to_string())),
         );
 
