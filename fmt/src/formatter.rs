@@ -1957,7 +1957,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                             };
 
                             let rest_str = fmt.simulate_to_string(&mut write_arrow_and_value)?;
-                            let multiline = multiline && !fmt.will_it_fit(&rest_str);
+                            let multiline = multiline && !fmt.will_it_fit(rest_str);
                             fmt.write_whitespace_separator(multiline)?;
 
                             write_arrow_and_value(fmt)?;
