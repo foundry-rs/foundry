@@ -1932,32 +1932,44 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     }
                 }
                 Type::Mapping { loc, key, key_name, value, value_name } => {
-                    write_chunk!(self, loc.start(), "mapping(")?;
                     let arrow_loc = self.find_next_str_in_src(loc.start(), "=>");
-                    // let key_chunk = self.visit_to_chunk(key.loc().start(), arrow_loc, key)?;
-                    let key_chunk = self.chunked(key.loc().start(), arrow_loc, |fmt| {
-                        key.visit(fmt)?;
-                        if let Some(name) = key_name {
-                            name.visit(fmt)?;
-                        }
+                    let first = SurroundingChunk::new(
+                        "mapping(",
+                        Some(loc.start()),
+                        Some(key.loc().start()),
+                    );
+                    let last = SurroundingChunk::new(")", None, Some(loc.end()));
+                    self.surrounded(first, last, |fmt, multiline| {
+                        fmt.grouped(|fmt| {
+                            key.visit(fmt)?;
+                            if let Some(name) = key_name {
+                                let end_loc = arrow_loc.unwrap_or(value.loc().start());
+                                write_chunk!(fmt, name.loc.start(), end_loc, " {}", name)?;
+                            }
+
+                            let mut write_arrow_and_value = |fmt: &mut Self| {
+                                write!(fmt.buf(), "=> ")?;
+                                value.visit(fmt)?;
+                                if let Some(name) = value_name {
+                                    write_chunk!(fmt, name.loc.start(), " {}", name)?;
+                                }
+                                Ok(())
+                            };
+
+                            let rest_str = fmt.simulate_to_string(&mut write_arrow_and_value)?;
+                            let multiline = multiline && !fmt.will_it_fit(&rest_str);
+                            fmt.write_whitespace_separator(multiline)?;
+
+                            write_arrow_and_value(fmt)?;
+
+                            let close_paren_loc =
+                                fmt.find_next_in_src(value.loc().end(), ')').unwrap_or(loc.end());
+                            fmt.write_postfix_comments_before(close_paren_loc)?;
+                            fmt.write_prefix_comments_before(close_paren_loc)
+                        })?;
+
                         Ok(())
                     })?;
-                    self.write_chunk(&key_chunk)?;
-
-                    write!(self.buf(), " => ")?;
-                    let close_paren_loc = self.find_next_in_src(value.loc().end(), ')');
-                    // let value_chunk =
-                    //     self.visit_to_chunk(value.loc().start(), close_paren_loc, value)?;
-                    let value_chunk =
-                        self.chunked(value.loc().start(), close_paren_loc, |fmt| {
-                            value.visit(fmt)?;
-                            if let Some(name) = value_name {
-                                name.visit(fmt)?;
-                            }
-                            Ok(())
-                        })?;
-                    self.write_chunk(&value_chunk)?;
-                    write!(self.buf(), ")")?;
                 }
                 Type::Function { .. } => self.visit_source(*loc)?,
             },

@@ -39,6 +39,10 @@ impl SurroundingChunk {
         SurroundingChunk { before, next, content: format!("{content}") }
     }
 
+    pub fn empty() -> Self {
+        Self { before: None, next: None, content: String::new() }
+    }
+
     pub fn loc_before(&self) -> usize {
         self.before.unwrap_or_default()
     }
