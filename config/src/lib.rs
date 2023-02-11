@@ -3846,7 +3846,8 @@ mod tests {
                         ModelCheckerTarget::Assert,
                         ModelCheckerTarget::OutOfBounds
                     ]),
-                    timeout: Some(10000)
+                    timeout: Some(10000),
+                    invariants: None,
                 })
             );
 
@@ -3902,7 +3903,8 @@ mod tests {
                         ModelCheckerTarget::Assert,
                         ModelCheckerTarget::OutOfBounds
                     ]),
-                    timeout: Some(10000)
+                    timeout: Some(10000),
+                    invariants: None,
                 })
             );
 
