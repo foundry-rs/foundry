@@ -597,7 +597,7 @@ impl Type {
             pt::Type::Uint(size) => Self::Builtin(ParamType::Uint(*size as usize)),
             pt::Type::Bytes(size) => Self::Builtin(ParamType::FixedBytes(*size as usize)),
             pt::Type::DynamicBytes => Self::Builtin(ParamType::Bytes),
-            pt::Type::Mapping(_, _, right) => Self::from_expression(right)?,
+            pt::Type::Mapping { value, .. } => Self::from_expression(value)?,
             pt::Type::Function { params, returns, .. } => {
                 let params = map_parameters(params);
                 let returns = returns

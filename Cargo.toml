@@ -4,8 +4,9 @@ members = [
     "anvil/core",
     "anvil/rpc",
     "anvil/server",
-    "cast",
     "binder",
+    "cast",
+    "chisel",
     "cli",
     "cli/test-utils",
     "common",
@@ -14,11 +15,10 @@ members = [
     "evm",
     "fmt",
     "forge",
-    "ui",
-    "utils",
-    "chisel",
     "macros",
     "macros/impl",
+    "ui",
+    "utils",
 ]
 
 [profile.dev]

@@ -591,6 +591,8 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
         who: NameOrAddress,
         #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
         rpc_url: Option<String>,
+        #[clap(long = "ether", short = 'e', help_heading = "format to ether")]
+        to_ether: bool,
     },
     #[clap(name = "basefee")]
     #[clap(visible_aliases = &["ba", "fee"])]
@@ -729,7 +731,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
         address: String,
         #[clap(short, help = "The output directory to expand source tree into.", value_hint = ValueHint::DirPath, value_name = "DIRECTORY")]
         directory: Option<PathBuf>,
-        #[clap(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
+        #[clap(long, short, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
         etherscan_api_key: Option<String>,
     },
     #[clap(name = "wallet", visible_alias = "w", about = "Wallet management utilities.")]

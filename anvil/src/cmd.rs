@@ -208,6 +208,7 @@ impl NodeArgs {
 
         NodeConfig::default()
             .with_gas_limit(self.evm_opts.gas_limit)
+            .disable_block_gas_limit(self.evm_opts.disable_block_gas_limit)
             .with_gas_price(self.evm_opts.gas_price)
             .with_hardfork(self.hardfork)
             .with_blocktime(self.block_time.map(Duration::from_secs))
@@ -426,6 +427,16 @@ pub struct AnvilEvmArgs {
     /// The block gas limit.
     #[clap(long, value_name = "GAS_LIMIT", help_heading = "Environment config")]
     pub gas_limit: Option<u64>,
+
+    /// Disable the `call.gas_limit <= block.gas_limit` constraint.
+    #[clap(
+        long,
+        value_name = "DISABLE_GAS_LIMIT",
+        help_heading = "Environment config",
+        alias = "disable-gas-limit",
+        conflicts_with = "gas_limit"
+    )]
+    pub disable_block_gas_limit: bool,
 
     /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests. By
     /// default, it is 0x6000 (~25kb).
@@ -653,5 +664,15 @@ mod tests {
 
         let args: NodeArgs = NodeArgs::parse_from(["anvil", "--prune-history", "100"]);
         assert_eq!(args.prune_history, Some(Some(100)));
+    }
+
+    #[test]
+    fn can_parse_disable_block_gas_limit() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--disable-block-gas-limit"]);
+        assert!(args.evm_opts.disable_block_gas_limit);
+
+        let args =
+            NodeArgs::try_parse_from(["anvil", "--disable-block-gas-limit", "--gas-limit", "100"]);
+        assert!(args.is_err());
     }
 }

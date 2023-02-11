@@ -10,7 +10,6 @@ BINS=(forge cast anvil chisel)
 export RUSTFLAGS="-C target-cpu=native"
 
 main() {
-  banner
   need_cmd git
   need_cmd curl
 
@@ -29,9 +28,14 @@ main() {
         exit 0
         ;;
       *)
-        err "internal error: unknown option \"$1\"\n";;
+        warn "unknown option: $1"
+        usage
+        exit 1
     esac; shift
   done
+
+  # Print the banner after successfully parsing args
+  banner
 
   if [ -n "$FOUNDRYUP_PR" ]; then
     if [ -z "$FOUNDRYUP_BRANCH" ]; then

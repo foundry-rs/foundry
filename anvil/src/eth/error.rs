@@ -152,7 +152,7 @@ pub enum InvalidTransactionError {
 /// Returns the revert reason from the `revm::TransactOut` data, if it's an abi encoded String.
 ///
 /// **Note:** it's assumed the `out` buffer starts with the call's signature
-fn decode_revert_reason(out: impl AsRef<[u8]>) -> Option<String> {
+pub(crate) fn decode_revert_reason(out: impl AsRef<[u8]>) -> Option<String> {
     let out = out.as_ref();
     if out.len() < SELECTOR_LEN {
         return None

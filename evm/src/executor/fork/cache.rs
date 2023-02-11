@@ -168,6 +168,13 @@ impl<'de> Deserialize<'de> for BlockchainDbMeta {
                     if !obj.contains_key(key) {
                         obj.insert(key.to_string(), true.into());
                     }
+                    // additional field `disable_block_gas_limit` enabled by the
+                    // `optional_block_gas_limit` feature
+                    let key = "disable_block_gas_limit";
+                    if !obj.contains_key(key) {
+                        // keep default value
+                        obj.insert(key.to_string(), false.into());
+                    }
                 }
 
                 let cfg_env: revm::CfgEnv =

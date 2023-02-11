@@ -1,7 +1,7 @@
 use crate::fork::fork_config;
 use anvil::{spawn, NodeConfig};
 use ethers::{
-    contract::Contract,
+    contract::ContractInstance,
     prelude::{
         Action, ContractFactory, GethTrace, GethTraceFrame, Middleware, Signer, SignerMiddleware,
         TransactionRequest,
@@ -80,7 +80,7 @@ contract Contract {
     let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
     let contract = factory.deploy(()).unwrap().send().await.unwrap();
 
-    let contract = Contract::new(
+    let contract = ContractInstance::new(
         contract.address(),
         abi.unwrap(),
         SignerMiddleware::new(handle.http_provider(), wallets[1].clone()),
@@ -127,7 +127,7 @@ contract Contract {
     let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
     let contract = factory.deploy(()).unwrap().send().await.unwrap();
 
-    let contract = Contract::new(
+    let contract = ContractInstance::new(
         contract.address(),
         abi.unwrap(),
         SignerMiddleware::new(handle.http_provider(), wallets[1].clone()),
@@ -144,7 +144,7 @@ contract Contract {
             GethTraceFrame::Default(traces) => {
                 assert!(!traces.failed);
             }
-            GethTraceFrame::CallTracer(_) => {
+            _ => {
                 unreachable!()
             }
         },
