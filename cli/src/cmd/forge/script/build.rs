@@ -285,7 +285,7 @@ pub fn filter_sources_and_artifacts(
             }
 
             if !is_standalone {
-                target_tree.get(&resolved).map(|source| (id, source.content.clone()))
+                target_tree.get(&resolved).map(|source| (id, source.content.as_str().to_string()))
             } else {
                 Some((
                     id,

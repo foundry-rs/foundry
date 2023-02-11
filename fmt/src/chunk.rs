@@ -27,6 +27,7 @@ impl From<&str> for Chunk {
 pub struct SurroundingChunk {
     pub before: Option<usize>,
     pub next: Option<usize>,
+    pub spaced: Option<bool>,
     pub content: String,
 }
 
@@ -36,14 +37,24 @@ impl SurroundingChunk {
         before: Option<usize>,
         next: Option<usize>,
     ) -> Self {
-        SurroundingChunk { before, next, content: format!("{content}") }
+        SurroundingChunk { before, next, content: format!("{content}"), spaced: None }
+    }
+
+    pub fn spaced(mut self) -> Self {
+        self.spaced = Some(true);
+        self
+    }
+
+    pub fn non_spaced(mut self) -> Self {
+        self.spaced = Some(false);
+        self
     }
 
     pub fn loc_before(&self) -> usize {
         self.before.unwrap_or_default()
     }
 
-    pub fn loc_next(&self) -> usize {
-        self.next.unwrap_or_default()
+    pub fn loc_next(&self) -> Option<usize> {
+        self.next
     }
 }
