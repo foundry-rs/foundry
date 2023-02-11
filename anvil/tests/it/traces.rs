@@ -1,7 +1,7 @@
 use crate::fork::fork_config;
 use anvil::{spawn, NodeConfig};
 use ethers::{
-    contract::{Contract, ContractInstance},
+    contract::ContractInstance,
     prelude::{
         Action, ContractFactory, GethTrace, GethTraceFrame, Middleware, Signer, SignerMiddleware,
         TransactionRequest,

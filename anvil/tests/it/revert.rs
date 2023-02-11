@@ -1,6 +1,6 @@
 use anvil::{spawn, NodeConfig};
 use ethers::{
-    contract::{Contract, ContractFactory, ContractInstance},
+    contract::{ContractFactory, ContractInstance},
     middleware::SignerMiddleware,
     types::U256,
     utils::WEI_IN_ETHER,
