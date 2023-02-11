@@ -16,7 +16,8 @@ Foundry consists of:
 
 -   [**Forge**](./forge): Ethereum testing framework (like Truffle, Hardhat and DappTools).
 -   [**Cast**](./cast): Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   [**Anvil**](./anvil): local Ethereum node, akin to Ganache, Hardhat Network.
+-   [**Anvil**](./anvil): Local Ethereum node, akin to Ganache, Hardhat Network.
+-   [**Chisel**](./chisel): Fast, utilitarian, and verbose solidity REPL.
 
 **Need help getting started with Foundry? Read the [📖 Foundry Book][foundry-book] (WIP)!**
 
