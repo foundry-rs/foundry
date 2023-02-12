@@ -69,12 +69,17 @@ pub const VERSION_MESSAGE: &str = concat!(
 );
 
 const BANNER: &str = r#"
-                             _   _
-                            (_) | |
-      __ _   _ __   __   __  _  | |
-     / _` | | '_ \  \ \ / / | | | |
-    | (_| | | | | |  \ V /  | | | |
-     \__,_| |_| |_|   \_/   |_| |_|
+.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.
+
+╔═╗ ╔╗╔ ╦  ╦ ╦ ╦        Local Ethereum node, 
+╠═╣ ║║║ ╚╗╔╝ ║ ║         akin to Ganache
+╩ ╩ ╝╚╝  ╚╝  ╩ ╩═╝       Hardhat Network
+
+.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.
+
+Book:   https://book.getfoundry.sh/anvil/
+
+.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.
 "#;
 
 /// Configurations of the EVM node
