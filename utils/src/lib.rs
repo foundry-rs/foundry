@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 #![doc = include_str!("../README.md")]
 use ethers_addressbook::contract;
 use ethers_core::types::*;
@@ -28,19 +29,65 @@ pub struct PostLinkInput<'a, T, U> {
 }
 
 /// A possible link for a `target`
-struct LinkReferences {
-    /// All references of the target's bytecode
-    references: Vec<LinkReference>,
-    /// identifier of the target
-    version: ArtifactId
+#[derive(Debug)]
+struct ArtifactDependencies {
+    /// All references of the artifact's bytecode
+    dependencies: Vec<ArtifactDependency>,
+    /// identifier of the artifact
+    artifact_id: ArtifactId,
 }
 
-struct LinkReference {
+#[derive(Debug)]
+struct ArtifactDependency {
     file_name: String,
     file: String,
     key: String,
 }
 
+struct ArtifactCode {
+    code: CompactContractBytecode,
+    artifact_id: ArtifactId,
+}
+
+impl std::fmt::Debug for ArtifactCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.artifact_id.fmt(f)
+    }
+}
+
+#[derive(Debug)]
+struct AllArtifactsBySlug {
+    /// all artifacts grouped by slug
+    inner: BTreeMap<String, ArtifactCode>,
+}
+
+impl AllArtifactsBySlug {
+    /// Finds the code for the target of the artifact and the matching key.
+    ///
+    /// In multi-version builds the identifier also includes the version number. So we try to find
+    /// that artifact first. If there's no matching, versioned artifact we continue with the
+    /// `target_slug`
+    fn find_code(
+        &self,
+        artifact: &ArtifactId,
+        target_slug: &str,
+        key: &str,
+    ) -> Option<(String, CompactContractBytecode)> {
+        // try to find by versioned slug first to match the exact version
+        let major = artifact.version.major;
+        let minor = artifact.version.minor;
+        let patch = artifact.version.patch;
+        let version_slug =
+            format!("{key}.{major}.{minor}.{patch}.json:{key}.{major}.{minor}.{patch}");
+        let (identifier, code) = if let Some(code) = self.inner.get(&version_slug) {
+            (version_slug, code)
+        } else {
+            let code = self.inner.get(target_slug)?;
+            (target_slug.to_string(), code)
+        };
+        Some((identifier, code.code.clone()))
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 pub fn link_with_nonce_or_address<T, U>(
@@ -54,29 +101,36 @@ pub fn link_with_nonce_or_address<T, U>(
     post_link: impl Fn(PostLinkInput<T, U>) -> eyre::Result<()>,
 ) -> eyre::Result<()> {
     // create a mapping of fname => Vec<(fname, file, key)>,
-    let link_tree: BTreeMap<String, Vec<(String, String, String)>> = contracts
+    let link_tree: BTreeMap<String, ArtifactDependencies> = contracts
         .iter()
         .map(|(id, contract)| {
-            (
-                id.slug(),
-                contract
-                    .all_link_references()
-                    .iter()
-                    .flat_map(|(file, link)| {
-                        link.keys()
-                            .map(|key| link_key_construction(file.to_string(), key.to_string()))
-                    })
-                    .collect::<Vec<(String, String, String)>>(),
-            )
+            let key = id.slug();
+            let references = contract
+                .all_link_references()
+                .iter()
+                .flat_map(|(file, link)| {
+                    link.keys().map(|key| link_key_construction(file.to_string(), key.to_string()))
+                })
+                .map(|(file_name, file, key)| ArtifactDependency { file_name, file, key })
+                .collect();
+
+            let references =
+                ArtifactDependencies { dependencies: references, artifact_id: id.clone() };
+            (key, references)
         })
         .collect();
 
-    dbg!(&link_tree);
-
-    let contracts_by_slug = contracts
-        .iter()
-        .map(|(i, c)| (i.slug(), c.clone()))
-        .collect::<BTreeMap<String, CompactContractBytecode>>();
+    let artifacts_by_slug = AllArtifactsBySlug {
+        inner: contracts
+            .iter()
+            .map(|(artifact_id, c)| {
+                (
+                    artifact_id.slug(),
+                    ArtifactCode { code: c.clone(), artifact_id: artifact_id.clone() },
+                )
+            })
+            .collect(),
+    };
 
     for (id, contract) in contracts.into_iter() {
         let (abi, maybe_deployment_bytes, maybe_runtime) = (
@@ -99,12 +153,13 @@ pub fn link_with_nonce_or_address<T, U>(
 
             match bytecode.object {
                 BytecodeObject::Unlinked(_) => {
-                    trace!(target : "forge::link", target=id.slug(), "unlinked contract");
+                    trace!(target : "forge::link", target=id.slug(), version=?id.version, "unlinked contract");
+
                     // link needed
                     recurse_link(
                         id.slug(),
                         (&mut target_bytecode, &mut target_bytecode_runtime),
-                        &contracts_by_slug,
+                        &artifacts_by_slug,
                         &link_tree,
                         &mut dependencies,
                         &deployed_library_addresses,
@@ -140,15 +195,15 @@ pub fn link_with_nonce_or_address<T, U>(
 /// a mapping of contract artifact name to bytecode, a dependency mapping, a mutable list that
 /// will be filled with the predeploy libraries, initial nonce, and the sender.
 #[allow(clippy::too_many_arguments)]
-pub fn recurse_link<'a>(
+fn recurse_link<'a>(
     // target name
     target: String,
     // to-be-modified/linked bytecode
     target_bytecode: (&'a mut CompactBytecode, &'a mut CompactBytecode),
-    // Contracts
-    contracts: &'a BTreeMap<String, CompactContractBytecode>,
+    // All contract artifacts
+    artifacts: &'a AllArtifactsBySlug,
     // fname => Vec<(fname, file, key)>
-    dependency_tree: &'a BTreeMap<String, Vec<(String, String, String)>>,
+    dependency_tree: &'a BTreeMap<String, ArtifactDependencies>,
     // library deployment vector (file:contract:address, bytecode)
     deployment: &'a mut Vec<(String, Bytes)>,
     // deployed library addresses fname => adddress
@@ -161,32 +216,33 @@ pub fn recurse_link<'a>(
     // check if we have dependencies
     if let Some(dependencies) = dependency_tree.get(&target) {
         trace!(target : "forge::link", ?target, "linking contract");
-        dbg!(&dependencies);
+
         // for each dependency, try to link
-        dependencies.iter().for_each(|(next_target, file, key)| {
+        dependencies.dependencies.iter().for_each(|dep| {
+            let ArtifactDependency { file_name: next_target, file, key } = dep;
             // get the dependency
-            trace!(target : "forge::link", dependency = next_target, file, key,  "get dependency");
-            let contract = contracts
-                .get(next_target)
+            trace!(target : "forge::link", dependency = next_target, file, key, version=?dependencies.artifact_id.version,  "get dependency");
+            let (next_identifier, artifact) = artifacts
+                .find_code(&dependencies.artifact_id, next_target, key)
                 .unwrap_or_else(|| panic!("No target contract named {next_target}"))
-                .clone();
-            let mut next_target_bytecode = contract
+                ;
+            let mut next_target_bytecode = artifact
                 .bytecode
                 .unwrap_or_else(|| panic!("No bytecode for contract {next_target}"));
-            let mut next_target_runtime_bytecode = contract
+            let mut next_target_runtime_bytecode = artifact
                 .deployed_bytecode
                 .expect("No target runtime bytecode")
                 .bytecode
                 .expect("No target runtime");
 
             // make sure dependency is fully linked
-            if let Some(deps) = dependency_tree.get(next_target) {
-                if !deps.is_empty() {
+            if let Some(deps) = dependency_tree.get(&next_identifier) {
+                if !deps.dependencies.is_empty() {
                     // actually link the nested dependencies to this dependency
                     recurse_link(
-                        next_target.to_string(),
+                        next_identifier,
                         (&mut next_target_bytecode, &mut next_target_runtime_bytecode),
-                        contracts,
+                        artifacts,
                         dependency_tree,
                         deployment,
                         deployed_library_addresses,
@@ -222,7 +278,7 @@ pub fn recurse_link<'a>(
                 // push the dependency into the library deployment vector
                 deployment.push((
                     library,
-                    next_target_bytecode.object.into_bytes().expect("Bytecode should be linked"),
+                    next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!( "Bytecode should be linked for {next_target}")),
                 ));
             }
         });
@@ -314,8 +370,8 @@ impl Retry {
     }
 
     pub fn run<T, F>(mut self, mut callback: F) -> eyre::Result<T>
-        where
-            F: FnMut() -> eyre::Result<T>,
+    where
+        F: FnMut() -> eyre::Result<T>,
     {
         loop {
             match callback() {
@@ -326,8 +382,8 @@ impl Retry {
     }
 
     pub async fn run_async<'a, T, F>(mut self, mut callback: F) -> eyre::Result<T>
-        where
-            F: FnMut() -> BoxFuture<'a, eyre::Result<T>>,
+    where
+        F: FnMut() -> BoxFuture<'a, eyre::Result<T>>,
     {
         loop {
             match callback().await {
@@ -470,7 +526,7 @@ mod tests {
                 Ok(())
             },
         )
-            .unwrap();
+        .unwrap();
     }
 
     #[test]
@@ -504,7 +560,7 @@ mod tests {
                 NameOrAddress::Name("contractnotpresent".to_string()),
                 Some(Chain::Mainnet)
             )
-                .ok(),
+            .ok(),
             Some(NameOrAddress::Name("contractnotpresent".to_string())),
         );
 
