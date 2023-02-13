@@ -461,6 +461,9 @@ pub fn apply<DB: DatabaseExt>(
             )?
         }
         HEVMCalls::StopBroadcast(_) => {
+            if state.broadcast.is_none() {
+                return Err("No broadcast in progress to stop".to_string().encode().into())
+            }
             state.broadcast = None;
             Bytes::new()
         }

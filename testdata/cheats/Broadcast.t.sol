@@ -155,6 +155,10 @@ contract BroadcastTest is DSTest {
         Test test2 = new Test();
         cheats.stopBroadcast();
     }
+
+    function testFailNoBroadcast() public {
+        cheats.stopBroadcast();
+    }
 }
 
 contract NoLink is DSTest {
