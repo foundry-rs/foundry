@@ -1,3 +1,4 @@
+use crate::{error::ParserResult, Comments};
 use forge_fmt::{
     solang_ext::SafeUnwrap, Comments as FmtComments, Formatter, FormatterConfig, InlineConfig,
     Visitor,
@@ -6,8 +7,6 @@ use solang_parser::pt::{
     ContractDefinition, EnumDefinition, ErrorDefinition, EventDefinition, FunctionDefinition,
     StructDefinition, TypeDefinition, VariableDefinition,
 };
-
-use crate::{error::ParserResult, Comments};
 
 /// The parsed item.
 #[derive(PartialEq, Debug)]
@@ -28,7 +27,7 @@ pub struct ParseItem {
 macro_rules! filter_children_fn {
     ($vis:vis fn $name:ident(&self, $variant:ident) -> $ret:ty) => {
         /// Filter children items for [ParseSource::$variant] variants.
-        $vis fn $name<'a>(&'a self) -> Option<Vec<(&'a $ret, &'a Comments, &'a String)>> {
+        $vis fn $name(&self) -> Option<Vec<(&$ret,  &Comments, &String)>> {
             let items = self.children.iter().filter_map(|item| match item.source {
                 ParseSource::$variant(ref inner) => Some((inner, &item.comments, &item.code)),
                 _ => None,

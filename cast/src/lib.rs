@@ -770,7 +770,9 @@ pub struct InterfaceSource {
     pub source: String,
 }
 
-pub enum InterfacePath {
+// Local is a path to the directory containing the ABI files
+// In case of etherscan, ABI is fetched from the address on the chain
+pub enum AbiPath {
     Local { path: String, name: Option<String> },
     Etherscan { address: Address, chain: Chain, api_key: String },
 }
@@ -1365,9 +1367,9 @@ impl SimpleCast {
     /// interface and their name.
     /// ```no_run
     /// use cast::SimpleCast as Cast;
-    /// use cast::InterfacePath;
+    /// use cast::AbiPath;
     /// # async fn foo() -> eyre::Result<()> {
-    /// let path = InterfacePath::Local {
+    /// let path = AbiPath::Local {
     ///     path: "utils/testdata/interfaceTestABI.json".to_owned(),
     ///     name: None,
     /// };
@@ -1376,22 +1378,18 @@ impl SimpleCast {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn generate_interface(
-        address_or_path: InterfacePath,
-    ) -> Result<Vec<InterfaceSource>> {
+    pub async fn generate_interface(address_or_path: AbiPath) -> Result<Vec<InterfaceSource>> {
         let (contract_abis, contract_names): (Vec<RawAbi>, Vec<String>) = match address_or_path {
-            InterfacePath::Local { path, name } => {
+            AbiPath::Local { path, name } => {
                 let file = std::fs::read_to_string(path).wrap_err("unable to read abi file")?;
-
                 let mut json: serde_json::Value = serde_json::from_str(&file)?;
                 let json = if !json["abi"].is_null() { json["abi"].take() } else { json };
-
                 let abi: RawAbi =
                     serde_json::from_value(json).wrap_err("unable to parse json ABI from file")?;
 
                 (vec![abi], vec![name.unwrap_or_else(|| "Interface".to_owned())])
             }
-            InterfacePath::Etherscan { address, chain, api_key } => {
+            AbiPath::Etherscan { address, chain, api_key } => {
                 let client = Client::new(chain, api_key)?;
 
                 // get the source

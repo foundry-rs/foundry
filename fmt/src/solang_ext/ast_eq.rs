@@ -483,8 +483,8 @@ derive_ast_eq! { enum Type {
     Int(int),
     Uint(int),
     Bytes(int),
-    Mapping(loc, expr1, expr2),
     _
+    Mapping{ loc, key, key_name, value, value_name },
     Function { params, attributes, returns },
 }}
 derive_ast_eq! { enum Expression {

@@ -524,7 +524,7 @@ impl ChiselDispatcher {
                                             .inputs
                                             .iter()
                                             .map(|input| {
-                                                let mut formatted = format_param!(input);
+                                                let mut formatted = format!("{}", input.kind);
                                                 if input.indexed {
                                                     formatted.push_str(" indexed");
                                                 }
