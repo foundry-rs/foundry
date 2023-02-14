@@ -873,36 +873,35 @@ mod tests {
             expect: BlockId,
         }
 
-        let test_cases = vec!([
-            TestCase{
+        let test_cases = vec![[
+            TestCase {
                 input: "0".to_string(),
                 expect: BlockId::Number(BlockNumber::Number(0u64.into())),
             },
-            TestCase{
-                input: "0x56462c47c03df160f66819f0a79ea07def1569f8aac0fe91bb3a081159b61b4a".to_string(),
-                expect: BlockId::Hash("0x56462c47c03df160f66819f0a79ea07def1569f8aac0fe91bb3a081159b61b4a".parse().unwrap()),
+            TestCase {
+                input: "0x56462c47c03df160f66819f0a79ea07def1569f8aac0fe91bb3a081159b61b4a"
+                    .to_string(),
+                expect: BlockId::Hash(
+                    "0x56462c47c03df160f66819f0a79ea07def1569f8aac0fe91bb3a081159b61b4a"
+                        .parse()
+                        .unwrap(),
+                ),
             },
-            TestCase{
-                input: "latest".to_string(),
-                expect: BlockId::Number(BlockNumber::Latest),
-            },
-            TestCase{
+            TestCase { input: "latest".to_string(), expect: BlockId::Number(BlockNumber::Latest) },
+            TestCase {
                 input: "earliest".to_string(),
                 expect: BlockId::Number(BlockNumber::Earliest),
             },
-            TestCase{
+            TestCase {
                 input: "pending".to_string(),
                 expect: BlockId::Number(BlockNumber::Pending),
             },
-            TestCase{
-                input: "safe".to_string(),
-                expect: BlockId::Number(BlockNumber::Safe),
-            },
-            TestCase{
+            TestCase { input: "safe".to_string(), expect: BlockId::Number(BlockNumber::Safe) },
+            TestCase {
                 input: "finalized".to_string(),
                 expect: BlockId::Number(BlockNumber::Finalized),
             },
-        ]);
+        ]];
 
         for test in test_cases {
             let result = parse_block_id(&test[0].input).unwrap();
