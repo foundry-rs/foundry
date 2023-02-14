@@ -813,6 +813,7 @@ pub fn parse_slot(s: &str) -> eyre::Result<H256> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ethers::types::BlockNumber;
 
     #[test]
     fn parse_call_data() {
@@ -874,7 +875,7 @@ mod tests {
         ]];
 
         for test in test_cases {
-            let result = parse_block_id(&test[0].input).unwrap();
+            let result: BlockId = test[0].input.parse().unwrap();
             assert_eq!(result, test[0].expect);
         }
     }
