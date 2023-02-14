@@ -1504,6 +1504,12 @@ impl EthApi {
     /// Handler for RPC call: `anvil_setNextBlockBaseFeePerGas`
     pub async fn anvil_set_next_block_base_fee_per_gas(&self, basefee: U256) -> Result<()> {
         node_info!("anvil_setNextBlockBaseFeePerGas");
+        if !self.backend.is_eip1559() {
+            return Err(RpcError::invalid_params(
+                "anvil_setNextBlockBaseFeePerGas is only supported when EIP-1559 is active",
+            )
+            .into())
+        }
         self.backend.set_base_fee(basefee);
         Ok(())
     }
