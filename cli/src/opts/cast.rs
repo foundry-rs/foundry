@@ -844,7 +844,7 @@ mod tests {
             expect: BlockId,
         }
 
-        let test_cases = vec![[
+        let test_cases = [
             TestCase {
                 input: "0".to_string(),
                 expect: BlockId::Number(BlockNumber::Number(0u64.into())),
@@ -872,11 +872,11 @@ mod tests {
                 input: "finalized".to_string(),
                 expect: BlockId::Number(BlockNumber::Finalized),
             },
-        ]];
+        ];
 
         for test in test_cases {
-            let result: BlockId = test[0].input.parse().unwrap();
-            assert_eq!(result, test[0].expect);
+            let result: BlockId = test.input.parse().unwrap();
+            assert_eq!(result, test.expect);
         }
     }
 }
