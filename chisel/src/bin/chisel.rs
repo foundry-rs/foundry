@@ -127,8 +127,33 @@ async fn main() -> eyre::Result<()> {
         None => { /* No chisel subcommand present; Continue */ }
     }
 
-    // Print welcome header
-    println!("Welcome to Chisel! Type `{}` to show available commands.", Paint::green("!help"));
+    // Print welcome header with asciiart
+    println!(
+        "{}",
+        Paint::rgb(
+            255,
+            252,
+            144,
+            "
+.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.
+
+╔═╗ ╦ ╦ ╦ ╔═╗ ╔═╗ ╦             Fast, utilitarian, 
+║   ╠═╣ ║ ╚═╗ ║╣  ║         and verbose solidity REPL.
+╚═╝ ╩ ╩ ╩ ╚═╝ ╚═╝ ╩═╝
+
+.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.
+
+Book: https://book.getfoundry.sh/reference/chisel/
+
+.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.
+"
+        )
+    );
+    println!(
+        "Type `{}` to show available commands. Exit `{}`",
+        Paint::green("!help"),
+        Paint::red("ctrl/cmd+d")
+    );
 
     // Begin Rustyline loop
     loop {
