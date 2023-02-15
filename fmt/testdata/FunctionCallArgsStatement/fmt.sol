@@ -1,4 +1,3 @@
-// config: bracket_spacing = true
 interface ITarget {
     function run() external payable;
     function veryAndVeryLongNameOfSomeRunFunction() external payable;
