@@ -19,3 +19,11 @@ contract FunctionCall {
         return;
     }
 }
+
+function a(uint256 foo) {
+    foo;
+}
+
+function b() {
+    a( {foo: 5} );
+}

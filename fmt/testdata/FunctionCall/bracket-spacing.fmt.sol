@@ -1,4 +1,5 @@
 // config: line_length = 120
+// config: bracket_spacing = true
 contract FunctionCall {
     function foo() public pure {
         bar(1111111111111111111111111111111111111111111111111111, 111111111111111111111111111111111111111111111111111);
@@ -32,5 +33,5 @@ function a(uint256 foo) {
 }
 
 function b() {
-    a({foo: 5});
+    a({ foo: 5 });
 }
