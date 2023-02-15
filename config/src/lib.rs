@@ -3848,6 +3848,9 @@ mod tests {
                     ]),
                     timeout: Some(10000),
                     invariants: None,
+                    show_unproved: None,
+                    div_mod_with_slacks: None,
+                    solvers: None,
                 })
             );
 
@@ -3905,6 +3908,9 @@ mod tests {
                     ]),
                     timeout: Some(10000),
                     invariants: None,
+                    show_unproved: None,
+                    div_mod_with_slacks: None,
+                    solvers: None,
                 })
             );
 
