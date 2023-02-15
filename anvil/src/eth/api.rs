@@ -2190,7 +2190,7 @@ impl EthApi {
         request: EthTransactionRequest,
         nonce: U256,
     ) -> Result<TypedTransactionRequest> {
-        let chain_id = self.chain_id();
+        let chain_id = request.chain_id.map(|c| c.as_u64()).unwrap_or_else(|| self.chain_id());
         let max_fee_per_gas = request.max_fee_per_gas;
         let gas_price = request.gas_price;
 

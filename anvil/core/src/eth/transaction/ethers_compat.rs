@@ -184,7 +184,7 @@ impl From<MaybeImpersonatedTransaction> for EthersTransaction {
 
 impl From<TransactionRequest> for EthTransactionRequest {
     fn from(req: TransactionRequest) -> Self {
-        let TransactionRequest { from, to, gas, gas_price, value, data, nonce, .. } = req;
+        let TransactionRequest { from, to, gas, gas_price, value, data, nonce, chain_id, .. } = req;
         EthTransactionRequest {
             from,
             to: to.and_then(|to| match to {
@@ -198,6 +198,7 @@ impl From<TransactionRequest> for EthTransactionRequest {
             value,
             data,
             nonce,
+            chain_id,
             access_list: None,
             transaction_type: None,
         }
