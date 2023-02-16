@@ -1,8 +1,4 @@
-use crate::{
-    cmd::forge::build,
-    opts::cast::{parse_block_id, parse_name_or_address, parse_slot},
-    utils::try_consume_config_rpc_url,
-};
+use crate::{cmd::forge::build, opts::cast::parse_slot, utils::try_consume_config_rpc_url};
 use cast::Cast;
 use clap::Parser;
 use comfy_table::{presets::ASCII_MARKDOWN, Table};
@@ -29,7 +25,7 @@ const MIN_SOLC: Version = Version::new(0, 6, 5);
 #[derive(Debug, Clone, Parser)]
 pub struct StorageArgs {
     // Storage
-    #[clap(help = "The contract address.", value_parser = parse_name_or_address, value_name = "ADDRESS")]
+    #[clap(help = "The contract address.", value_name = "ADDRESS")]
     address: NameOrAddress,
     #[clap(
         help = "The storage slot number (hex or decimal)",
@@ -44,7 +40,6 @@ pub struct StorageArgs {
         short = 'B',
         help = "The block height you want to query at.",
         long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
-        value_parser = parse_block_id,
         value_name = "BLOCK"
     )]
     block: Option<BlockId>,

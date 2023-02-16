@@ -1,8 +1,5 @@
 // cast estimate subcommands
-use crate::{
-    opts::{cast::parse_name_or_address, EthereumOpts},
-    utils::parse_ether_value,
-};
+use crate::{opts::EthereumOpts, utils::parse_ether_value};
 use cast::{Cast, TxBuilder};
 use clap::Parser;
 use ethers::{
@@ -15,7 +12,7 @@ use foundry_config::{Chain, Config};
 /// CLI arguments for `cast estimate`.
 #[derive(Debug, Parser)]
 pub struct EstimateArgs {
-    #[clap(help = "The destination of the transaction.", value_parser = parse_name_or_address, value_name = "TO")]
+    #[clap(help = "The destination of the transaction.", value_name = "TO")]
     to: Option<NameOrAddress>,
     #[clap(help = "The signature of the function to call.", value_name = "SIG")]
     sig: Option<String>,
