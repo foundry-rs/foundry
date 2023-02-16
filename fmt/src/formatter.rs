@@ -2993,7 +2993,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         }
 
         if let Some(first) = chunks.first_mut() {
-            if first.prefixes.is_empty() && first.postfixes_before.is_empty() {
+            if first.prefixes.is_empty() &&
+                first.postfixes_before.is_empty() &&
+                !self.config.bracket_spacing
+            {
                 first.needs_space = Some(false);
             }
         }
@@ -3003,7 +3006,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         let prefix = if multiline && !self.is_beginning_of_line() { "\n" } else { "" };
         let closing_bracket = format!("{prefix}{}", "}");
         let closing_bracket_loc = args.last().unwrap().loc.end();
-        write_chunk_spaced!(self, closing_bracket_loc, Some(false), "{closing_bracket}")?;
+        write_chunk_spaced!(
+            self,
+            closing_bracket_loc,
+            Some(self.config.bracket_spacing),
+            "{closing_bracket}"
+        )?;
 
         Ok(())
     }
