@@ -44,5 +44,7 @@ contract FunctionCallArgsStatement {
             value: 1,
             // comment6
             gas: gasleft()};
+
+        vm.expectEmit({ checkTopic1: false, checkTopic2: false    });
     }
 }
