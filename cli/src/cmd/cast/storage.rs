@@ -15,6 +15,7 @@ use foundry_common::{
 use foundry_config::Config;
 use futures::future::join_all;
 use semver::Version;
+use std::str::FromStr;
 
 /// The minimum Solc version for outputting storage layouts.
 ///
@@ -25,7 +26,11 @@ const MIN_SOLC: Version = Version::new(0, 6, 5);
 #[derive(Debug, Clone, Parser)]
 pub struct StorageArgs {
     // Storage
-    #[clap(help = "The contract address.", value_name = "ADDRESS")]
+    #[clap(
+        help = "The contract address.", 
+        value_parser = NameOrAddress::from_str, 
+        value_name = "ADDRESS",
+    )]
     address: NameOrAddress,
     #[clap(
         help = "The storage slot number (hex or decimal)",

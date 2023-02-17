@@ -5,14 +5,15 @@ use clap::Parser;
 use ethers::{providers::Middleware, types::NameOrAddress};
 use foundry_common::try_get_http_provider;
 use foundry_config::{Chain, Config};
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 
 /// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
 pub struct SendTxArgs {
     #[clap(
         help = "The destination of the transaction. If not provided, you must use cast send --create.",
-        value_name = "TO"
+        value_parser = NameOrAddress::from_str,
+        value_name = "TO",
     )]
     to: Option<NameOrAddress>,
     #[clap(help = "The signature of the function to call.", value_name = "SIG")]
