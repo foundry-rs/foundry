@@ -239,7 +239,11 @@ Examples:
     #[clap(visible_aliases = &["ac", "acl"])]
     #[clap(about = "Create an access list for a transaction.")]
     AccessList {
-        #[clap(help = "The destination of the transaction.", value_name = "ADDRESS")]
+        #[clap(
+            help = "The destination of the transaction.",
+            value_parser = NameOrAddress::from_str,
+            value_name = "ADDRESS"
+        )]
         address: NameOrAddress,
         #[clap(help = "The signature of the function to call.", value_name = "SIG")]
         sig: String,
@@ -475,7 +479,7 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
-        #[clap(help = "The address you want to get the nonce for.", value_name = "WHO")]
+        #[clap(help = "The address you want to get the nonce for.", value_parser = NameOrAddress::from_str, value_name = "WHO")]
         who: NameOrAddress,
         #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
         rpc_url: Option<String>,
@@ -492,7 +496,7 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
-        #[clap(help = "The address you want to get the nonce for.", value_name = "WHO")]
+        #[clap(help = "The address you want to get the nonce for.", value_parser = NameOrAddress::from_str, value_name = "WHO")]
         who: NameOrAddress,
         #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
         rpc_url: Option<String>,
@@ -581,7 +585,11 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
-        #[clap(help = "The account you want to query", value_name = "WHO")]
+        #[clap(
+            help = "The account you want to query",
+            value_parser = NameOrAddress::from_str,
+            value_name = "WHO"
+        )]
         who: NameOrAddress,
         #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
         rpc_url: Option<String>,
@@ -615,7 +623,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
-        #[clap(help = "The contract address.", value_name = "WHO")]
+        #[clap(help = "The contract address.", value_parser = NameOrAddress::from_str, value_name = "WHO")]
         who: NameOrAddress,
         #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
         rpc_url: Option<String>,
@@ -679,7 +687,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
         about = "Generate a storage proof for a given storage slot."
     )]
     Proof {
-        #[clap(help = "The contract address.", value_name = "ADDRESS")]
+        #[clap(help = "The contract address.", value_parser = NameOrAddress::from_str, value_name = "ADDRESS")]
         address: NameOrAddress,
         #[clap(help = "The storage slot numbers (hex or decimal).",  value_parser = parse_slot, value_name = "SLOTS")]
         slots: Vec<H256>,
@@ -706,7 +714,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
-        #[clap(help = "The address you want to get the nonce for.", value_name = "WHO")]
+        #[clap(help = "The address you want to get the nonce for.", value_parser = NameOrAddress::from_str, value_name = "WHO")]
         who: NameOrAddress,
         #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
         rpc_url: Option<String>,
