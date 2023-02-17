@@ -12,10 +12,15 @@ use ethers::{
 use eyre::WrapErr;
 use foundry_common::try_get_http_provider;
 use foundry_config::{Chain, Config};
+use std::str::FromStr;
 
 #[derive(Debug, Parser)]
 pub struct CallArgs {
-    #[clap(help = "The destination of the transaction.", value_name = "TO")]
+    #[clap(
+        help = "The destination of the transaction.", 
+        value_name = "TO",
+        value_parser = NameOrAddress::from_str
+    )]
     to: Option<NameOrAddress>,
 
     #[clap(help = "The signature of the function to call.", value_name = "SIG")]
