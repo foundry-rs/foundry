@@ -334,6 +334,7 @@ async fn main() -> eyre::Result<()> {
             );
         }
         Subcommands::Run(cmd) => cmd.run()?,
+        Subcommands::Prestate(cmd) => cmd.run()?,
         Subcommands::SendTx(cmd) => cmd.run().await?,
         Subcommands::Tx { tx_hash, field, to_json, rpc_url } => {
             let rpc_url = try_consume_config_rpc_url(rpc_url)?;

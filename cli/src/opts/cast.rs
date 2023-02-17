@@ -2,8 +2,8 @@ use super::{ClapChain, EthereumOpts};
 use crate::{
     cmd::cast::{
         bind::BindArgs, call::CallArgs, create2::Create2Args, estimate::EstimateArgs,
-        find_block::FindBlockArgs, interface::InterfaceArgs, rpc::RpcArgs, run::RunArgs,
-        send::SendTxArgs, storage::StorageArgs, wallet::WalletSubcommands,
+        find_block::FindBlockArgs, interface::InterfaceArgs, prestate::PrestateArgs, rpc::RpcArgs,
+        run::RunArgs, send::SendTxArgs, storage::StorageArgs, wallet::WalletSubcommands,
     },
     utils::parse_u256,
 };
@@ -785,6 +785,14 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
         about = "Runs a published transaction in a local environment and prints the trace."
     )]
     Run(RunArgs),
+    #[clap(
+        name = "prestate",
+        about = "Gets the state of all accounts necessary to execute a published transaction.",
+        long_about = r#"Gets the state of all accounts necessary to execute a published transaction.
+
+The accounts and their state, are written to a JSON-encoded file, along with a description of the transaction and the block the transaction resides in."#
+    )]
+    Prestate(PrestateArgs),
     #[clap(name = "rpc")]
     #[clap(visible_alias = "rp")]
     #[clap(about = "Perform a raw JSON-RPC request")]
