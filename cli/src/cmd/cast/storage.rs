@@ -28,8 +28,8 @@ pub struct StorageArgs {
     // Storage
     #[clap(
         help = "The contract address.", 
-        value_parser = NameOrAddress::from_str, 
         value_name = "ADDRESS",
+        value_parser = NameOrAddress::from_str
     )]
     address: NameOrAddress,
     #[clap(

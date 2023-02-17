@@ -18,8 +18,8 @@ use std::str::FromStr;
 pub struct CallArgs {
     #[clap(
         help = "The destination of the transaction.", 
-        value_parser = NameOrAddress::from_str, 
         value_name = "TO",
+        value_parser = NameOrAddress::from_str
     )]
     to: Option<NameOrAddress>,
 
