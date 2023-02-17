@@ -128,7 +128,7 @@ The formatter can be disabled on specific lines by adding a comment `// forgefmt
 uint x = 100;
 ```
 
-The commend can also be placed at the end of the line:
+The comment can also be placed at the end of the line:
 
 ```solidity
 uint x = 100; // forgefmt: disable-line
