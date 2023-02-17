@@ -3003,15 +3003,16 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         let multiline = self.are_chunks_separated_multiline("{}}", &chunks, ",")?;
         self.indented_if(multiline, 1, |fmt| fmt.write_chunks_separated(&chunks, ",", multiline))?;
 
-        let prefix = if multiline && !self.is_beginning_of_line() { "\n" } else { "" };
+        let prefix = if multiline && !self.is_beginning_of_line() {
+            "\n"
+        } else if self.config.bracket_spacing {
+            " "
+        } else {
+            ""
+        };
         let closing_bracket = format!("{prefix}{}", "}");
         let closing_bracket_loc = args.last().unwrap().loc.end();
-        write_chunk_spaced!(
-            self,
-            closing_bracket_loc,
-            Some(self.config.bracket_spacing),
-            "{closing_bracket}"
-        )?;
+        write_chunk!(self, closing_bracket_loc, "{closing_bracket}")?;
 
         Ok(())
     }

@@ -1,3 +1,4 @@
+// config: bracket_spacing = true
 interface ITarget {
     function run() external payable;
     function veryAndVeryLongNameOfSomeRunFunction() external payable;
@@ -22,20 +23,20 @@ contract FunctionCallArgsStatement {
     }
 
     function test() external {
-        target.run{gas: gasleft(), value: 1 wei};
+        target.run{ gas: gasleft(), value: 1 wei };
 
-        target.run{gas: 1, value: 0x00}();
+        target.run{ gas: 1, value: 0x00 }();
 
-        target.run{gas: 1000, value: 1 ether}();
+        target.run{ gas: 1000, value: 1 ether }();
 
-        target.run{gas: estimate(), value: value(1)}();
+        target.run{ gas: estimate(), value: value(1) }();
 
         target.run{
             value: value(1 ether),
             gas: veryAndVeryLongNameOfSomeGasEstimateFunction()
         }();
 
-        target.run{ /* comment 1 */ value: /* comment2 */ 1};
+        target.run{ /* comment 1 */ value: /* comment2 */ 1 };
 
         target.run{ /* comment3 */
             value: 1, // comment4
@@ -49,6 +50,6 @@ contract FunctionCallArgsStatement {
             gas: gasleft()
         };
 
-        vm.expectEmit({checkTopic1: false, checkTopic2: false});
+        vm.expectEmit({ checkTopic1: false, checkTopic2: false });
     }
 }
