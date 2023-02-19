@@ -1926,7 +1926,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#a69036f07b183f2a3050359f690f508a9131b175"
+source = "git+https://github.com/gakonst/ethers-rs#8d511dbd6483b56185672dddcf9f10874c5f006f"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1941,7 +1941,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#a69036f07b183f2a3050359f690f508a9131b175"
+source = "git+https://github.com/gakonst/ethers-rs#8d511dbd6483b56185672dddcf9f10874c5f006f"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1952,7 +1952,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#a69036f07b183f2a3050359f690f508a9131b175"
+source = "git+https://github.com/gakonst/ethers-rs#8d511dbd6483b56185672dddcf9f10874c5f006f"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1970,7 +1970,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#a69036f07b183f2a3050359f690f508a9131b175"
+source = "git+https://github.com/gakonst/ethers-rs#8d511dbd6483b56185672dddcf9f10874c5f006f"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -1997,7 +1997,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#a69036f07b183f2a3050359f690f508a9131b175"
+source = "git+https://github.com/gakonst/ethers-rs#8d511dbd6483b56185672dddcf9f10874c5f006f"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -2012,7 +2012,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#a69036f07b183f2a3050359f690f508a9131b175"
+source = "git+https://github.com/gakonst/ethers-rs#8d511dbd6483b56185672dddcf9f10874c5f006f"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -2045,7 +2045,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#a69036f07b183f2a3050359f690f508a9131b175"
+source = "git+https://github.com/gakonst/ethers-rs#8d511dbd6483b56185672dddcf9f10874c5f006f"
 dependencies = [
  "ethers-core",
  "ethers-solc",
@@ -2062,7 +2062,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#a69036f07b183f2a3050359f690f508a9131b175"
+source = "git+https://github.com/gakonst/ethers-rs#8d511dbd6483b56185672dddcf9f10874c5f006f"
 dependencies = [
  "async-trait",
  "auto_impl 0.5.0",
@@ -2087,7 +2087,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#a69036f07b183f2a3050359f690f508a9131b175"
+source = "git+https://github.com/gakonst/ethers-rs#8d511dbd6483b56185672dddcf9f10874c5f006f"
 dependencies = [
  "async-trait",
  "auto_impl 1.0.1",
@@ -2126,7 +2126,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#a69036f07b183f2a3050359f690f508a9131b175"
+source = "git+https://github.com/gakonst/ethers-rs#8d511dbd6483b56185672dddcf9f10874c5f006f"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -2153,7 +2153,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#a69036f07b183f2a3050359f690f508a9131b175"
+source = "git+https://github.com/gakonst/ethers-rs#8d511dbd6483b56185672dddcf9f10874c5f006f"
 dependencies = [
  "cfg-if 1.0.0",
  "dunce",
@@ -4335,9 +4335,9 @@ dependencies = [
 
 [[package]]
 name = "once_cell"
-version = "1.17.0"
+version = "1.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f61fba1741ea2b3d6a1e3178721804bb716a68a6aeba1149b5d52e3d464ea66"
+checksum = "b7e5500299e16ebb147ae15a00a942af264cf3688f47923b8fc2cd5858f23ad3"
 
 [[package]]
 name = "oorandom"
