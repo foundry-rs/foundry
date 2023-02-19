@@ -475,10 +475,8 @@ impl AnvilEvmArgs {
                 return
             }
             let config = Config::load();
-            if let Some(rpc_endpoint) = config.rpc_endpoints.get(&fork_url.url) {
-                if let Some(url) = rpc_endpoint.as_url() {
-                    self.fork_url = Some(ForkUrl { url: url.to_string(), block: fork_url.block });
-                }
+            if let Some(Ok(url)) = config.rpc_endpoints.resolved().get(&fork_url.url) {
+                self.fork_url = Some(ForkUrl { url: url.to_string(), block: fork_url.block });
             }
         }
     }
