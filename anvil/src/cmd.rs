@@ -8,7 +8,7 @@ use anvil_server::ServerConfig;
 use clap::Parser;
 use core::fmt;
 use ethers::utils::WEI_IN_ETHER;
-use foundry_config::Chain;
+use foundry_config::{Chain, Config};
 use futures::FutureExt;
 use std::{
     future::Future,
@@ -466,6 +466,22 @@ pub struct AnvilEvmArgs {
         visible_alias = "tracing"
     )]
     pub steps_tracing: bool,
+}
+
+impl AnvilEvmArgs {
+    pub fn resolve_rpc_alias(&mut self) {
+        if let Some(fork_url) = &self.fork_url {
+            if fork_url.url.starts_with("http://") || fork_url.url.starts_with("https://") {
+                return
+            }
+            let config = Config::load();
+            if let Some(rpc_endpoint) = config.rpc_endpoints.get(&fork_url.url) {
+                if let Some(url) = rpc_endpoint.as_url() {
+                    self.fork_url = Some(ForkUrl { url: url.to_string(), block: fork_url.block });
+                }
+            }
+        }
+    }
 }
 
 /// Helper type to periodically dump the state of the chain to disk
