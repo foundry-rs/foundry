@@ -49,11 +49,11 @@ use ethers::{
         DefaultFrame, Filter, FilteredParams, GethDebugTracingOptions, GethTrace, Log, Trace,
         Transaction, TransactionReceipt,
     },
-    utils::{get_contract_address, keccak256, rlp},
+    utils::{get_contract_address, hex, keccak256, rlp},
 };
 use forge::{
     executor::inspector::AccessListTracer,
-    revm::{return_ok, return_revert, BlockEnv, ExecutionResult, Return},
+    revm::{return_ok, BlockEnv, ExecutionResult, Return},
 };
 use foundry_evm::{
     decode::decode_revert,
@@ -746,16 +746,28 @@ impl Backend {
                     node_info!("    Gas used: {}", receipt.gas_used());
                     match info.exit {
                         return_ok!() => (),
-                        return_revert!() => {
+                        Return::OutOfFund => {
+                            node_info!("    Error: reverted due to running out of funds");
+                        }
+                        Return::CallTooDeep => {
+                            node_info!("    Error: reverted with call too deep");
+                        }
+                        Return::Revert => {
                             if let Some(ref r) = info.out {
                                 if let Ok(reason) = decode_revert(r.as_ref(), None, None) {
                                     node_info!("    Error: reverted with '{}'", reason);
                                 } else {
-                                    node_info!("    Error: reverted without a reason string");
+                                    node_info!(
+                                        "    Error: reverted with custom error: {}",
+                                        hex::encode(r)
+                                    );
                                 }
                             } else {
-                                node_info!("    Error: reverted without a reason string");
+                                node_info!("    Error: reverted without a reason");
                             }
+                        }
+                        Return::OutOfGas => {
+                            node_info!("    Error: ran out of gas");
                         }
                         reason => {
                             node_info!("    Error: failed due to {:?}", reason);
