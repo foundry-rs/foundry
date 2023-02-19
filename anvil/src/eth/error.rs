@@ -137,7 +137,7 @@ pub enum InvalidTransactionError {
     /// But transaction is still valid.
     #[error("Insufficient funds for gas * price + value")]
     ExhaustsGasResources,
-    #[error("Out of gas: required gas exceeds allowance: {0:?}")]
+    #[error("Out of gas: gas required exceeds allowance: {0:?}")]
     OutOfGas(U256),
 
     /// Thrown post London if the transaction's fee is less than the base fee of the block
