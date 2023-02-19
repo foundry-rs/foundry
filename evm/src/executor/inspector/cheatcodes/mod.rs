@@ -321,12 +321,9 @@ where
                         }
                     }
                     _ => {
-                        match self.gas_metering_create {
-                            Some(None) => {
-                                // if just starting with CREATE opcodes, record its inner frame gas
-                                self.gas_metering_create = Some(Some(interpreter.gas))
-                            }
-                            _ => {}
+                        // if just starting with CREATE opcodes, record its inner frame gas
+                        if let Some(None) = self.gas_metering_create {
+                            self.gas_metering_create = Some(Some(interpreter.gas))
                         }
 
                         // dont monitor gas changes, keep it constant
