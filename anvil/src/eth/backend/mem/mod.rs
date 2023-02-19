@@ -463,12 +463,12 @@ impl Backend {
         (self.spec_id() as u8) >= (SpecId::LONDON as u8)
     }
 
-    /// Returns true for post muirGlacier
+    /// Returns true for post Berlin
     pub fn is_eip2930(&self) -> bool {
-        (self.spec_id() as u8) >= (SpecId::MUIR_GLACIER as u8)
+        (self.spec_id() as u8) >= (SpecId::BERLIN as u8)
     }
 
-    /// Returns an error if EIP1559 is not active (pre London)
+    /// Returns an error if EIP1559 is not active (pre Berlin)
     pub fn ensure_eip1559_active(&self) -> Result<(), BlockchainError> {
         if self.is_eip1559() {
             return Ok(())
