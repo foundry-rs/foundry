@@ -453,9 +453,35 @@ impl Backend {
         self.db.write().await.set_storage_at(address, slot, val.into_uint())
     }
 
+    /// Returns the configured specid
+    pub fn spec_id(&self) -> SpecId {
+        self.env.read().cfg.spec_id
+    }
+
     /// Returns true for post London
     pub fn is_eip1559(&self) -> bool {
-        (self.env().read().cfg.spec_id as u8) >= (SpecId::LONDON as u8)
+        (self.spec_id() as u8) >= (SpecId::LONDON as u8)
+    }
+
+    /// Returns true for post muirGlacier
+    pub fn is_eip2930(&self) -> bool {
+        (self.spec_id() as u8) >= (SpecId::MUIR_GLACIER as u8)
+    }
+
+    /// Returns an error if EIP1559 is not active (pre London)
+    pub fn ensure_eip1559_active(&self) -> Result<(), BlockchainError> {
+        if self.is_eip1559() {
+            return Ok(())
+        }
+        Err(BlockchainError::EIP1559TransactionUnsupportedAtHardfork)
+    }
+
+    /// Returns an error if EIP1559 is not active (pre muirGlacier)
+    pub fn ensure_eip2930_active(&self) -> Result<(), BlockchainError> {
+        if self.is_eip1559() {
+            return Ok(())
+        }
+        Err(BlockchainError::EIP1559TransactionUnsupportedAtHardfork)
     }
 
     /// Returns the block gas limit

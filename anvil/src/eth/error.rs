@@ -72,6 +72,8 @@ pub enum BlockchainError {
     TimestampError(String),
     #[error(transparent)]
     DatabaseError(#[from] DatabaseError),
+    #[error("EIP-1559 style fee params (maxFeePerGas or maxPriorityFeePerGas) received but they are not supported by the current hardfork.\n\nYou can use them by running anvil with '--hardfork londong' or later.")]
+    EIP1559TransactionUnsupportedAtHardfork,
 }
 
 impl From<RpcError> for BlockchainError {
@@ -280,6 +282,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 }
                 BlockchainError::DatabaseError(err) => {
                     RpcError::internal_error_with(err.to_string())
+                }
+                err @ BlockchainError::EIP1559TransactionUnsupportedAtHardfork => {
+                    RpcError::invalid_params(err.to_string())
                 }
             }
             .into(),
