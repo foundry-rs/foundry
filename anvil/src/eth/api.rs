@@ -754,10 +754,12 @@ impl EthApi {
         let pending_transaction = if self.is_impersonated(from) {
             let bypass_signature = self.backend.cheats().bypass_signature();
             let transaction = sign::build_typed_transaction(request, bypass_signature)?;
+            self.ensure_typed_transaction_supported(&transaction)?;
             trace!(target : "node", ?from, "eth_sendTransaction: impersonating");
             PendingTransaction::with_impersonated(transaction, from)
         } else {
             let transaction = self.sign_request(&from, request)?;
+            self.ensure_typed_transaction_supported(&transaction)?;
             PendingTransaction::new(transaction)?
         };
 
@@ -792,10 +794,14 @@ impl EthApi {
             // valid rlp and then rlp decode impl of `TypedTransaction` will remove and check the
             // version byte
             let extend = rlp::encode(&data);
-            match rlp::decode::<TypedTransaction>(&extend[..]) {
+            let tx = match rlp::decode::<TypedTransaction>(&extend[..]) {
                 Ok(transaction) => transaction,
                 Err(_) => return Err(BlockchainError::FailedToDecodeSignedTransaction),
-            }
+            };
+
+            self.ensure_typed_transaction_supported(&tx)?;
+
+            tx
         };
 
         let pending_transaction = PendingTransaction::new(transaction)?;
@@ -1784,6 +1790,8 @@ impl EthApi {
         let bypass_signature = self.backend.cheats().bypass_signature();
         let transaction = sign::build_typed_transaction(request, bypass_signature)?;
 
+        self.ensure_typed_transaction_supported(&transaction)?;
+
         let pending_transaction = PendingTransaction::with_impersonated(transaction, from);
 
         // pre-validate
@@ -2293,6 +2301,15 @@ impl EthApi {
     /// Returns the current state root
     pub async fn state_root(&self) -> Option<H256> {
         self.backend.get_db().read().await.maybe_state_root()
+    }
+
+    /// additional validation against hardfork
+    fn ensure_typed_transaction_supported(&self, tx: &TypedTransaction) -> Result<()> {
+        match &tx {
+            TypedTransaction::EIP2930(_) => self.backend.ensure_eip2930_active(),
+            TypedTransaction::EIP1559(_) => self.backend.ensure_eip1559_active(),
+            TypedTransaction::Legacy(_) => Ok(()),
+        }
     }
 }
 
