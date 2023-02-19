@@ -277,14 +277,13 @@ where
 
     fn step(&mut self, interpreter: &mut Interpreter, _: &mut EVMData<'_, DB>, _: bool) -> Return {
         // reset gas if gas metering is turned off
-        let opcode = interpreter.contract.bytecode.bytecode()[interpreter.program_counter()];
         match self.gas_metering {
             Some(None) => {
                 // need to store gas metering
                 self.gas_metering = Some(Some(interpreter.gas));
             }
             Some(Some(gas)) => {
-                match opcode {
+                match interpreter.contract.bytecode.bytecode()[interpreter.program_counter()] {
                     opcode::CREATE | opcode::CREATE2 => {
                         // set we're about to enter CREATE frame to meter its gas on first opcode
                         // inside it
@@ -309,13 +308,13 @@ where
                                 //
                                 // If we however set gas limit to the limit of outer frame, it would
                                 // cause a panic after erasing gas cost post-create. Reason for this
-                                // is, pre-create REVM records `gas_limit - (gas_limit / 64)` as gas
-                                // used, and erasing costs by `remaining` gas post-create.
+                                // is pre-create REVM records `gas_limit - (gas_limit / 64)` as gas
+                                // used, and erases costs by `remaining` gas post-create.
                                 // gas used ref: https://github.com/bluealloy/revm/blob/2cb991091d32330cfe085320891737186947ce5a/crates/revm/src/instructions/host.rs#L254-L258
                                 // post-create erase ref: https://github.com/bluealloy/revm/blob/2cb991091d32330cfe085320891737186947ce5a/crates/revm/src/instructions/host.rs#L279
                                 interpreter.gas = revm::Gas::new(gas.limit());
 
-                                // reset CREATE gas metering because we're about the exit its frame
+                                // reset CREATE gas metering because we're about to exit its frame
                                 self.gas_metering_create = None
                             }
                         }
