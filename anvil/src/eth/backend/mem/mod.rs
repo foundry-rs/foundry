@@ -478,10 +478,10 @@ impl Backend {
 
     /// Returns an error if EIP1559 is not active (pre muirGlacier)
     pub fn ensure_eip2930_active(&self) -> Result<(), BlockchainError> {
-        if self.is_eip1559() {
+        if self.is_eip2930() {
             return Ok(())
         }
-        Err(BlockchainError::EIP1559TransactionUnsupportedAtHardfork)
+        Err(BlockchainError::EIP2930TransactionUnsupportedAtHardfork)
     }
 
     /// Returns the block gas limit

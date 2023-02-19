@@ -754,10 +754,12 @@ impl EthApi {
         let pending_transaction = if self.is_impersonated(from) {
             let bypass_signature = self.backend.cheats().bypass_signature();
             let transaction = sign::build_typed_transaction(request, bypass_signature)?;
+            self.ensure_typed_transaction_supported(&transaction)?;
             trace!(target : "node", ?from, "eth_sendTransaction: impersonating");
             PendingTransaction::with_impersonated(transaction, from)
         } else {
             let transaction = self.sign_request(&from, request)?;
+            self.ensure_typed_transaction_supported(&transaction)?;
             PendingTransaction::new(transaction)?
         };
 
@@ -1787,6 +1789,8 @@ impl EthApi {
 
         let bypass_signature = self.backend.cheats().bypass_signature();
         let transaction = sign::build_typed_transaction(request, bypass_signature)?;
+
+        self.ensure_typed_transaction_supported(&transaction)?;
 
         let pending_transaction = PendingTransaction::with_impersonated(transaction, from);
 
