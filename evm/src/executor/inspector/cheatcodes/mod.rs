@@ -153,6 +153,11 @@ pub struct Cheatcodes {
     /// the interpreter, we copy the gas struct. Then each time there is an execution of an
     /// operation, we reset the gas.
     pub gas_metering: Option<Option<revm::Gas>>,
+
+    /// Holds stored gas info for when we pause gas metering, and we're entering/inside
+    /// CREATE / CREATE2 frames. This is needed to make gas meter pausing work correctly when
+    /// paused and creating new contracts.
+    pub gas_metering_create: Option<Option<revm::Gas>>,
 }
 
 impl Cheatcodes {
@@ -272,13 +277,19 @@ where
 
     fn step(&mut self, interpreter: &mut Interpreter, _: &mut EVMData<'_, DB>, _: bool) -> Return {
         // reset gas if gas metering is turned off
+        let opcode = interpreter.contract.bytecode.bytecode()[interpreter.program_counter()];
         match self.gas_metering {
             Some(None) => {
                 // need to store gas metering
                 self.gas_metering = Some(Some(interpreter.gas));
             }
             Some(Some(gas)) => {
-                match interpreter.contract.bytecode.bytecode()[interpreter.program_counter()] {
+                match opcode {
+                    opcode::CREATE | opcode::CREATE2 => {
+                        // set we're about to enter CREATE frame to meter its gas on first opcode
+                        // inside it
+                        self.gas_metering_create = Some(None)
+                    }
                     opcode::STOP | opcode::RETURN | opcode::SELFDESTRUCT | opcode::REVERT => {
                         // If we are ending current execution frame, we want to just fully reset gas
                         // otherwise weird things with returning gas from a call happen
@@ -286,9 +297,38 @@ where
                         //
                         // It would be nice if we had access to the interpreter in `call_end`, as we
                         // could just do this there instead.
-                        interpreter.gas = revm::Gas::new(0);
+                        match self.gas_metering_create {
+                            None | Some(None) => {
+                                interpreter.gas = revm::Gas::new(0);
+                            }
+                            Some(Some(gas)) => {
+                                // If this was CREATE frame, set correct gas limit. This is needed
+                                // because CREATE opcodes deduct additional gas for code storage,
+                                // and deducted amount is compared to gas limit. If we set this to
+                                // 0, the CREATE would fail with out of gas.
+                                //
+                                // If we however set gas limit to the limit of outer frame, it would
+                                // cause a panic after erasing gas cost post-create. Reason for this
+                                // is, pre-create REVM records `gas_limit - (gas_limit / 64)` as gas
+                                // used, and erasing costs by `remaining` gas post-create.
+                                // gas used ref: https://github.com/bluealloy/revm/blob/2cb991091d32330cfe085320891737186947ce5a/crates/revm/src/instructions/host.rs#L254-L258
+                                // post-create erase ref: https://github.com/bluealloy/revm/blob/2cb991091d32330cfe085320891737186947ce5a/crates/revm/src/instructions/host.rs#L279
+                                interpreter.gas = revm::Gas::new(gas.limit());
+
+                                // reset CREATE gas metering because we're about the exit its frame
+                                self.gas_metering_create = None
+                            }
+                        }
                     }
                     _ => {
+                        match self.gas_metering_create {
+                            Some(None) => {
+                                // if just starting with CREATE opcodes, record its inner frame gas
+                                self.gas_metering_create = Some(Some(interpreter.gas))
+                            }
+                            _ => {}
+                        }
+
                         // dont monitor gas changes, keep it constant
                         interpreter.gas = gas;
                     }
