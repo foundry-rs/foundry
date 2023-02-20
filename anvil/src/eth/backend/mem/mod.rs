@@ -897,6 +897,9 @@ impl Backend {
         let gas_limit = gas.unwrap_or(block_env.gas_limit);
         let mut env = self.env.read().clone();
         env.block = block_env;
+        // we want to disable this in eth_call, since this is common practice used by other node
+        // impls and providers <https://github.com/foundry-rs/foundry/issues/4388>
+        env.cfg.disable_block_gas_limit = true;
 
         if let Some(base) = max_fee_per_gas {
             env.block.basefee = base;
