@@ -766,12 +766,35 @@ impl Config {
     /// ```
     pub fn get_rpc_url(&self) -> Option<Result<Cow<str>, UnresolvedEnvVarError>> {
         let maybe_alias = self.eth_rpc_url.as_ref().or(self.etherscan_api_key.as_ref())?;
-        let mut endpoints = self.rpc_endpoints.clone().resolved();
-        if let Some(alias) = endpoints.remove(maybe_alias) {
-            Some(alias.map(Cow::Owned))
+        if let Some(alias) = self.get_rpc_url_with_alias(maybe_alias) {
+            Some(alias)
         } else {
             Some(Ok(Cow::Borrowed(self.eth_rpc_url.as_deref()?)))
         }
+    }
+
+    /// Resolves the given alias to a matching rpc url
+    ///
+    /// Returns:
+    ///    - the matching, resolved url of  `rpc_endpoints` if `maybe_alias` is an alias
+    ///    - None otherwise
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// 
+    /// use foundry_config::Config;
+    /// # fn t() {
+    ///     let config = Config::with_root("./");
+    ///     let rpc_url = config.get_rpc_url_with_alias("mainnet").unwrap().unwrap();
+    /// # }
+    /// ```
+    pub fn get_rpc_url_with_alias(
+        &self,
+        maybe_alias: &str,
+    ) -> Option<Result<Cow<str>, UnresolvedEnvVarError>> {
+        let mut endpoints = self.rpc_endpoints.clone().resolved();
+        Some(endpoints.remove(maybe_alias)?.map(Cow::Owned))
     }
 
     /// Returns the configured rpc, or the fallback url

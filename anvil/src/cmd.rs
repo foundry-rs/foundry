@@ -468,14 +468,14 @@ pub struct AnvilEvmArgs {
     pub steps_tracing: bool,
 }
 
+/// Resolves an alias passed as fork-url to the matching url defined in the rpc_endpoints section
+/// of the project configuration file.
+/// Does nothing if the fork-url is not a configured alias.
 impl AnvilEvmArgs {
     pub fn resolve_rpc_alias(&mut self) {
         if let Some(fork_url) = &self.fork_url {
-            if fork_url.url.starts_with("http://") || fork_url.url.starts_with("https://") {
-                return
-            }
             let config = Config::load();
-            if let Some(Ok(url)) = config.rpc_endpoints.resolved().get(&fork_url.url) {
+            if let Some(Ok(url)) = config.get_rpc_url_with_alias(&fork_url.url) {
                 self.fork_url = Some(ForkUrl { url: url.to_string(), block: fork_url.block });
             }
         }
