@@ -144,6 +144,11 @@ pub enum InvalidTransactionError {
     #[error("max fee per gas less than block base fee")]
     FeeTooLow,
 
+    /// Thrown to ensure no one is able to specify a transaction with a tip higher than the total
+    /// fee cap.
+    #[error("max priority fee per gas higher than max fee per gas")]
+    TipAboveFeeCap,
+
     /// Thrown when a tx was signed with a different chain_id
     #[error("invalid chain id for signer")]
     InvalidChainId,
