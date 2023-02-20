@@ -2015,9 +2015,20 @@ impl TransactionValidator for Backend {
             return Err(InvalidTransactionError::NonceTooLow)
         }
 
-        if (env.cfg.spec_id as u8) >= (SpecId::LONDON as u8) && tx.gas_price() < env.block.basefee {
-            warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.block.basefee);
-            return Err(InvalidTransactionError::FeeTooLow)
+        if (env.cfg.spec_id as u8) >= (SpecId::LONDON as u8) {
+            if tx.gas_price() < env.block.basefee {
+                warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.block.basefee);
+                return Err(InvalidTransactionError::FeeTooLow)
+            }
+
+            if let (Some(max_priority_fee_per_gas), Some(max_fee_per_gas)) =
+                (tx.essentials().max_priority_fee_per_gas, tx.essentials().max_fee_per_gas)
+            {
+                if max_priority_fee_per_gas > max_fee_per_gas {
+                    warn!(target: "backend", "max priority fee per gas={}, too high, max fee per gas={}", max_priority_fee_per_gas, max_fee_per_gas);
+                    return Err(InvalidTransactionError::TipAboveFeeCap)
+                }
+            }
         }
 
         let max_cost = tx.max_cost();
