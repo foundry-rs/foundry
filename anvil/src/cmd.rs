@@ -8,7 +8,7 @@ use anvil_server::ServerConfig;
 use clap::Parser;
 use core::fmt;
 use ethers::utils::WEI_IN_ETHER;
-use foundry_config::Chain;
+use foundry_config::{Chain, Config};
 use futures::FutureExt;
 use std::{
     future::Future,
@@ -466,6 +466,20 @@ pub struct AnvilEvmArgs {
         visible_alias = "tracing"
     )]
     pub steps_tracing: bool,
+}
+
+/// Resolves an alias passed as fork-url to the matching url defined in the rpc_endpoints section
+/// of the project configuration file.
+/// Does nothing if the fork-url is not a configured alias.
+impl AnvilEvmArgs {
+    pub fn resolve_rpc_alias(&mut self) {
+        if let Some(fork_url) = &self.fork_url {
+            let config = Config::load();
+            if let Some(Ok(url)) = config.get_rpc_url_with_alias(&fork_url.url) {
+                self.fork_url = Some(ForkUrl { url: url.to_string(), block: fork_url.block });
+            }
+        }
+    }
 }
 
 /// Helper type to periodically dump the state of the chain to disk
