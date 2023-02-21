@@ -22,6 +22,7 @@ solang-parser = "=0.2.2"
 semver = "1.0.4"
 itertools = "0.10.3"
 thiserror = "1.0.30"
+ariadne = "0.1.5"
 
 [dev-dependencies]
 pretty_assertions = "1.0.0"
