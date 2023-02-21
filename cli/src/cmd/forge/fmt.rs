@@ -122,7 +122,7 @@ impl Cmd for FmtArgs {
                     Input::Stdin(source) => source.to_string()
                 };
 
-                let parsed = match parse(&source ) {
+                let parsed = match parse(&source) {
                     Ok(result) => result,
                     Err(diagnostics) => {
                         let path = if let Input::Path(path) = input {Some(path)} else {None};
