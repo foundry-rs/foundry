@@ -68,6 +68,8 @@ docker pull ghcr.io/foundry-rs/foundry:latest
 ```
 
 For examples and guides on using this image, see the [Docker section](https://book.getfoundry.sh/tutorials/foundry-docker.html) in the book.
+### Installing on Windows
+ If you encounter issues installing Foundry on your machine, we recommend trying to use Windows Subsystem for Linux (WSL) as an alternative. WSL allows you to run Linux applications directly on Windows, which can help avoid some common installation problems. You can follow the instructions provided by Microsoft to install WSL on your Windows machine [WSL](https://learn.microsoft.com/en-us/windows/wsl/install)<br/>
 
 ### Manual Download
 
