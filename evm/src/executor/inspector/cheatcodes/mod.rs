@@ -20,6 +20,7 @@ use ethers::{
         U256,
     },
 };
+use itertools::Itertools;
 use revm::{
     opcode, BlockEnv, CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return,
     TransactTo,
@@ -402,9 +403,9 @@ where
                 if let Some(found_match) = expecteds.iter().position(|expected| {
                     expected.calldata.len() <= call.input.len() &&
                         expected.calldata == call.input[..expected.calldata.len()] &&
-                        expected.value.map(|value| value == call.transfer.value).unwrap_or(true) &&
-                        expected.gas.map(|gas| gas == call.gas_limit).unwrap_or(true) &&
-                        expected.min_gas.map(|min_gas| min_gas <= call.gas_limit).unwrap_or(true)
+                        expected.value.map_or(true, |value| value == call.transfer.value) &&
+                        expected.gas.map_or(true, |gas| gas == call.gas_limit) &&
+                        expected.min_gas.map_or(true, |min_gas| min_gas <= call.gas_limit)
                 }) {
                     expecteds.remove(found_match);
                 }
@@ -582,22 +583,23 @@ where
             if let Some((address, expecteds)) =
                 self.expected_calls.iter().find(|(_, expecteds)| !expecteds.is_empty())
             {
+                let ExpectedCallData { calldata, gas, min_gas, value } = &expecteds[0];
+                let calldata = ethers::types::Bytes::from(calldata.clone());
+                let expected_values = [
+                    Some(format!("data {calldata}")),
+                    value.map(|v| format!("value {v}")),
+                    gas.map(|g| format!("gas {g}")),
+                    min_gas.map(|g| format!("minimum gas {g}")),
+                ]
+                .into_iter()
+                .flatten()
+                .join(" and ");
                 return (
                     Return::Revert,
                     remaining_gas,
-                    format!(
-                        "Expected a call to {:?} with data {}{}{}{}, but got none",
-                        address,
-                        ethers::types::Bytes::from(expecteds[0].calldata.clone()),
-                        expecteds[0].value.map(|v| format!(" and value {v}")).unwrap_or_default(),
-                        expecteds[0].gas.map(|g| format!(" and gas {g}")).unwrap_or_default(),
-                        expecteds[0]
-                            .min_gas
-                            .map(|g| format!(" and minimum gas {g}"))
-                            .unwrap_or_default(),
-                    )
-                    .encode()
-                    .into(),
+                    format!("Expected a call to {address:?} with {expected_values}, but got none")
+                        .encode()
+                        .into(),
                 )
             }
 
