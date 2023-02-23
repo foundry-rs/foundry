@@ -33,6 +33,14 @@ contract NestedContract {
         return inner.numberA() + inner.numberB();
     }
 
+    function forwardPay() public payable returns (uint256) {
+        return inner.pay{ gas: 50_000, value: 1 }(1);
+    }
+
+    function addHardGasLimit() public view returns (uint256) {
+        return inner.add{ gas: 50_000 }(1, 1);
+    }
+
     function hello() public pure returns (string memory) {
         return "hi";
     }
@@ -103,5 +111,29 @@ contract ExpectCallTest is DSTest {
         Contract target = new Contract();
         cheats.expectCall(address(target), 3, abi.encodeWithSelector(target.pay.selector));
         target.pay{value: 3}(100);
+    }
+
+    function testExpectCallWithValueAndGas() public {
+        Contract inner = new Contract();
+        NestedContract target = new NestedContract(inner);
+
+        cheats.expectCall(address(inner), 1, 50_000, abi.encodeWithSelector(inner.pay.selector, 1));
+        target.forwardPay{ value: 1 }();
+    }
+
+    function testExpectCallWithNoValueAndGas() public {
+        Contract inner = new Contract();
+        NestedContract target = new NestedContract(inner);
+
+        cheats.expectCall(address(inner), 0, 50_000, abi.encodeWithSelector(inner.add.selector, 1, 1));
+        target.addHardGasLimit();
+    }
+
+    function testFailExpectCallWithNoValueAndWrongGas() public {
+        Contract inner = new Contract();
+        NestedContract target = new NestedContract(inner);
+
+        cheats.expectCall(address(inner), 0, 25_000, abi.encodeWithSelector(inner.add.selector, 1, 1));
+        target.addHardGasLimit();
     }
 }

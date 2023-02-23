@@ -81,6 +81,7 @@ ethers::contract::abigen!(
             clearMockedCalls()
             expectCall(address,bytes)
             expectCall(address,uint256,bytes)
+            expectCall(address,uint256,uint64,bytes)
             getCode(string)
             getDeployedCode(string)
             label(address,string)
