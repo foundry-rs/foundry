@@ -136,4 +136,28 @@ contract ExpectCallTest is DSTest {
         cheats.expectCall(address(inner), 0, 25_000, abi.encodeWithSelector(inner.add.selector, 1, 1));
         target.addHardGasLimit();
     }
+
+    function testExpectCallWithValueAndMinGas() public {
+        Contract inner = new Contract();
+        NestedContract target = new NestedContract(inner);
+
+        cheats.expectCallMinGas(address(inner), 1, 50_000, abi.encodeWithSelector(inner.pay.selector, 1));
+        target.forwardPay{value: 1}();
+    }
+
+    function testExpectCallWithNoValueAndMinGas() public {
+        Contract inner = new Contract();
+        NestedContract target = new NestedContract(inner);
+
+        cheats.expectCallMinGas(address(inner), 0, 25_000, abi.encodeWithSelector(inner.add.selector, 1, 1));
+        target.addHardGasLimit();
+    }
+
+    function testFailExpectCallWithNoValueAndWrongMinGas() public {
+        Contract inner = new Contract();
+        NestedContract target = new NestedContract(inner);
+
+        cheats.expectCallMinGas(address(inner), 0, 50_001, abi.encodeWithSelector(inner.add.selector, 1, 1));
+        target.addHardGasLimit();
+    }
 }

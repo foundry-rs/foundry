@@ -403,7 +403,8 @@ where
                     expected.calldata.len() <= call.input.len() &&
                         expected.calldata == call.input[..expected.calldata.len()] &&
                         expected.value.map(|value| value == call.transfer.value).unwrap_or(true) &&
-                        expected.gas.map(|gas| gas == call.gas_limit).unwrap_or(true)
+                        expected.gas.map(|gas| gas == call.gas_limit).unwrap_or(true) &&
+                        expected.min_gas.map(|min_gas| min_gas <= call.gas_limit).unwrap_or(true)
                 }) {
                     expecteds.remove(found_match);
                 }
@@ -585,11 +586,15 @@ where
                     Return::Revert,
                     remaining_gas,
                     format!(
-                        "Expected a call to {:?} with data {}{}{}, but got none",
+                        "Expected a call to {:?} with data {}{}{}{}, but got none",
                         address,
                         ethers::types::Bytes::from(expecteds[0].calldata.clone()),
                         expecteds[0].value.map(|v| format!(" and value {v}")).unwrap_or_default(),
                         expecteds[0].gas.map(|g| format!(" and gas {g}")).unwrap_or_default(),
+                        expecteds[0]
+                            .min_gas
+                            .map(|g| format!(" and minimum gas {g}"))
+                            .unwrap_or_default(),
                     )
                     .encode()
                     .into(),
