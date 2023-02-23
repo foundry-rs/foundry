@@ -34,11 +34,11 @@ contract NestedContract {
     }
 
     function forwardPay() public payable returns (uint256) {
-        return inner.pay{ gas: 50_000, value: 1 }(1);
+        return inner.pay{gas: 50_000, value: 1}(1);
     }
 
     function addHardGasLimit() public view returns (uint256) {
-        return inner.add{ gas: 50_000 }(1, 1);
+        return inner.add{gas: 50_000}(1, 1);
     }
 
     function hello() public pure returns (string memory) {
@@ -118,7 +118,7 @@ contract ExpectCallTest is DSTest {
         NestedContract target = new NestedContract(inner);
 
         cheats.expectCall(address(inner), 1, 50_000, abi.encodeWithSelector(inner.pay.selector, 1));
-        target.forwardPay{ value: 1 }();
+        target.forwardPay{value: 1}();
     }
 
     function testExpectCallWithNoValueAndGas() public {
