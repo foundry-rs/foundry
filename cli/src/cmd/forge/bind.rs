@@ -134,9 +134,10 @@ impl BindArgs {
                 "console[2]?",
                 "CommonBase",
                 "Components",
-                "[Ss]td(Math|Error|Json|Utils|Cheats|Assertions|Storage(Safe)?)",
+                "[Ss]td(Chains|Math|Error|Json|Utils|Cheats|Assertions|Storage(Safe)?)",
                 "[Vv]m.*",
             ])
+            .extend_names(["IMulticall3"])
             .into()
     }
 
