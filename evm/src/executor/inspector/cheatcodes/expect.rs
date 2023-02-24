@@ -208,7 +208,7 @@ pub struct ExpectedCallData {
     pub value: Option<U256>,
     /// The expected gas supplied to the call
     pub gas: Option<u64>,
-    /// The expected *miniumum* gas supplied to the call
+    /// The expected *minimum* gas supplied to the call
     pub min_gas: Option<u64>,
 }
 
