@@ -20,7 +20,30 @@ use watchexec::{
 };
 
 #[derive(Debug, Clone, Parser, Default)]
+#[clap(next_help_heading = "Watch options")]
 pub struct WatchArgs {
+    /// Watch the given files or directories for changes.
+    ///
+    /// If no paths are provided, the source and test directories of the project are watched.
+    #[clap(
+        short,
+        long,
+        value_name = "PATH",
+        num_args(0..),
+        action = ArgAction::Append,
+    )]
+    pub watch: Option<Vec<PathBuf>>,
+
+    /// Do not restart the command while it's still running.
+    #[clap(long)]
+    pub no_restart: bool,
+
+    /// Explicitly re-run all tests when a change is made.
+    ///
+    /// By default, only the tests of the last modified test file are executed.
+    #[clap(long)]
+    pub run_all: bool,
+
     /// File update debounce delay
     ///
     /// During the delay, incoming change events are accumulated and
@@ -36,28 +59,6 @@ pub struct WatchArgs {
     /// overloading disk I/O.
     #[clap(long = "watch-delay", value_parser = clap::builder::NonEmptyStringValueParser::default(), value_name = "DELAY")]
     pub watch_delay: Option<String>,
-
-    #[clap(long = "no-restart", help = "Do not restart the command while it's still running.")]
-    pub no_restart: bool,
-
-    /// Explicitly re-run all tests when a change is made.
-    ///
-    /// By default, only the tests of the last modified test file are executed.
-    #[clap(long = "run-all")]
-    pub run_all: bool,
-
-    /// Watch specific file(s) or folder(s)
-    ///
-    /// By default, the project's source directory is watched.
-    #[clap(
-        short = 'w',
-        long = "watch",
-        value_name = "PATH",
-        num_args(0..),
-        action = ArgAction::Append,
-        help = "Watches the given files or directories for changes. If no paths are provided, the source and test directories of the project are watched."
-    )]
-    pub watch: Option<Vec<PathBuf>>,
 }
 
 impl WatchArgs {
@@ -135,10 +136,10 @@ pub async fn watch_test(args: TestArgs) -> eyre::Result<()> {
     let filter = args.filter(&config);
 
     // marker to check whether to override the command
-    let no_reconfigure = filter.pattern.is_some() ||
-        filter.test_pattern.is_some() ||
-        filter.path_pattern.is_some() ||
-        filter.contract_pattern.is_some() ||
+    let no_reconfigure = filter.args().pattern.is_some() ||
+        filter.args().test_pattern.is_some() ||
+        filter.args().path_pattern.is_some() ||
+        filter.args().contract_pattern.is_some() ||
         args.watch.run_all;
 
     let state = WatchTestState {

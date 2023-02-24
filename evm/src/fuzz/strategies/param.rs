@@ -1,10 +1,9 @@
+use super::state::EvmFuzzState;
 use ethers::{
     abi::{ParamType, Token, Tokenizable},
     types::{Address, Bytes, I256, U256},
 };
 use proptest::prelude::*;
-
-use super::state::EvmFuzzState;
 
 /// The max length of arrays we fuzz for is 256.
 pub const MAX_ARRAY_LEN: usize = 256;
@@ -57,8 +56,7 @@ pub fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
 /// Works with ABI Encoder v2 tuples.
 pub fn fuzz_param_from_state(param: &ParamType, arc_state: EvmFuzzState) -> BoxedStrategy<Token> {
     // These are to comply with lifetime requirements
-    let state = arc_state.read();
-    let state_len = state.len();
+    let state_len = arc_state.read().len();
 
     // Select a value from the state
     let st = arc_state.clone();
@@ -105,19 +103,18 @@ pub fn fuzz_param_from_state(param: &ParamType, arc_state: EvmFuzzState) -> Boxe
                 )
             })
             .boxed(),
-        ParamType::Array(param) => proptest::collection::vec(
-            fuzz_param_from_state(param, arc_state.clone()),
-            0..MAX_ARRAY_LEN,
-        )
-        .prop_map(Token::Array)
-        .boxed(),
+        ParamType::Array(param) => {
+            proptest::collection::vec(fuzz_param_from_state(param, arc_state), 0..MAX_ARRAY_LEN)
+                .prop_map(Token::Array)
+                .boxed()
+        }
         ParamType::FixedBytes(size) => {
             let size = *size;
             value.prop_map(move |value| Token::FixedBytes(value[32 - size..].to_vec())).boxed()
         }
         ParamType::FixedArray(param, size) => {
             let fixed_size = *size;
-            proptest::collection::vec(fuzz_param_from_state(param, arc_state.clone()), fixed_size)
+            proptest::collection::vec(fuzz_param_from_state(param, arc_state), fixed_size)
                 .prop_map(Token::FixedArray)
                 .boxed()
         }

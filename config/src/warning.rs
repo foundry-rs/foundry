@@ -60,10 +60,10 @@ impl fmt::Display for Warning {
                 f.write_fmt(format_args!("No local TOML found to fix at {path}. Change the current directory to a project path or set the foundry.toml path with the FOUNDRY_CONFIG environment variable"))
             }
             Self::CouldNotReadToml { path, err } => {
-                f.write_fmt(format_args!("Could not read TOML at {}: {}", path.display(), err))
+                f.write_fmt(format_args!("Could not read TOML at {}: {err}", path.display()))
             }
             Self::CouldNotWriteToml { path, err } => {
-                f.write_fmt(format_args!("Could not write TOML to {}: {}", path.display(), err))
+                f.write_fmt(format_args!("Could not write TOML to {}: {err}", path.display()))
             }
             Self::CouldNotFixProfile { path, profile, err } => f.write_fmt(format_args!(
                 "Could not fix [{}] in TOML at {}: {}",

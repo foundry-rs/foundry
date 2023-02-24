@@ -1,11 +1,13 @@
 use super::*;
+use cast::executor::ExecutionErr;
 use ethers::types::{Address, Bytes, NameOrAddress, U256};
 use forge::{
     executor::{CallResult, DeployResult, EvmError, Executor, RawCallResult},
     revm::{return_ok, Return},
-    trace::{CallTraceArena, TraceKind},
+    trace::{TraceKind, Traces},
     CALLER,
 };
+use tracing::log::trace;
 
 /// Represents which simulation stage is the script execution at.
 pub enum SimulationStage {
@@ -14,6 +16,7 @@ pub enum SimulationStage {
 }
 
 /// Drives script execution
+#[derive(Debug)]
 pub struct ScriptRunner {
     pub executor: Executor,
     pub initial_balance: U256,
@@ -35,6 +38,8 @@ impl ScriptRunner {
         is_broadcast: bool,
         need_create2_deployer: bool,
     ) -> eyre::Result<(Address, ScriptResult)> {
+        trace!(target: "script", "executing setUP()");
+
         if !is_broadcast {
             if self.sender == Config::DEFAULT_SENDER {
                 // We max out their balance so that they can deploy and make calls.
@@ -52,7 +57,7 @@ impl ScriptRunner {
         self.executor.set_balance(CALLER, U256::MAX)?;
 
         // Deploy libraries
-        let mut traces: Vec<(TraceKind, CallTraceArena)> = libraries
+        let mut traces: Traces = libraries
             .iter()
             .filter_map(|code| {
                 let DeployResult { traces, .. } = self
@@ -83,6 +88,7 @@ impl ScriptRunner {
         // Optionally call the `setUp` function
         let (success, gas_used, labeled_addresses, transactions, debug, script_wallets) = if !setup
         {
+            self.executor.backend_mut().set_test_contract(address);
             (
                 true,
                 0,
@@ -103,31 +109,39 @@ impl ScriptRunner {
                     transactions,
                     script_wallets,
                     ..
-                }) |
-                Err(EvmError::Execution {
-                    reverted,
-                    traces: setup_traces,
-                    labels,
-                    logs: setup_logs,
-                    debug,
-                    gas_used,
-                    transactions,
-                    script_wallets,
-                    ..
                 }) => {
                     traces
                         .extend(setup_traces.map(|traces| (TraceKind::Setup, traces)).into_iter());
                     logs.extend_from_slice(&setup_logs);
 
-                    // We call the `setUp()` function with self.sender, and if there haven't been
-                    // any broadcasts, then the EVM cheatcode module hasn't corrected the nonce.
-                    // So we have to
-                    if transactions.is_none() || transactions.as_ref().unwrap().is_empty() {
-                        self.executor.set_nonce(
-                            self.sender,
-                            sender_nonce.as_u64() + libraries.len() as u64,
-                        )?;
-                    }
+                    self.maybe_correct_nonce(sender_nonce, libraries.len())?;
+
+                    (
+                        !reverted,
+                        gas_used,
+                        labels,
+                        transactions,
+                        vec![constructor_debug, debug].into_iter().collect(),
+                        script_wallets,
+                    )
+                }
+                Err(EvmError::Execution(err)) => {
+                    let ExecutionErr {
+                        reverted,
+                        traces: setup_traces,
+                        labels,
+                        logs: setup_logs,
+                        debug,
+                        gas_used,
+                        transactions,
+                        script_wallets,
+                        ..
+                    } = *err;
+                    traces
+                        .extend(setup_traces.map(|traces| (TraceKind::Setup, traces)).into_iter());
+                    logs.extend_from_slice(&setup_logs);
+
+                    self.maybe_correct_nonce(sender_nonce, libraries.len())?;
 
                     (
                         !reverted,
@@ -159,6 +173,29 @@ impl ScriptRunner {
         ))
     }
 
+    /// We call the `setUp()` function with self.sender, and if there haven't been
+    /// any broadcasts, then the EVM cheatcode module hasn't corrected the nonce.
+    /// So we have to.
+    fn maybe_correct_nonce(
+        &mut self,
+        sender_initial_nonce: U256,
+        libraries_len: usize,
+    ) -> eyre::Result<()> {
+        if let Some(ref cheatcodes) = self.executor.inspector_config().cheatcodes {
+            if !cheatcodes.corrected_nonce {
+                self.executor
+                    .set_nonce(self.sender, sender_initial_nonce.as_u64() + libraries_len as u64)?;
+            }
+            self.executor
+                .inspector_config_mut()
+                .cheatcodes
+                .as_mut()
+                .expect("exists")
+                .corrected_nonce = false;
+        }
+        Ok(())
+    }
+
     /// Executes the method that will collect all broadcastable transactions.
     pub fn script(&mut self, address: Address, calldata: Bytes) -> eyre::Result<ScriptResult> {
         self.call(self.sender, address, calldata, U256::zero(), false)
@@ -184,7 +221,8 @@ impl ScriptRunner {
                 Ok(DeployResult { address, gas_used, logs, traces, debug, .. }) => {
                     (address, gas_used, logs, traces, debug)
                 }
-                Err(EvmError::Execution { reason, traces, gas_used, logs, debug, .. }) => {
+                Err(EvmError::Execution(err)) => {
+                    let ExecutionErr { reason, traces, gas_used, logs, debug, .. } = *err;
                     println!("{}", Paint::red(format!("\nFailed with `{reason}`:\n")));
 
                     (Address::zero(), gas_used, logs, traces, debug)
@@ -229,25 +267,70 @@ impl ScriptRunner {
         value: U256,
         commit: bool,
     ) -> eyre::Result<ScriptResult> {
-        let fs_commit_changed =
-            if let Some(ref mut cheatcodes) = self.executor.inspector_config_mut().cheatcodes {
-                let original_fs_commit = cheatcodes.fs_commit;
-                cheatcodes.fs_commit = false;
-                original_fs_commit != cheatcodes.fs_commit
-            } else {
-                false
-            };
-
         let mut res = self.executor.call_raw(from, to, calldata.0.clone(), value)?;
+        let mut gas_used = res.gas_used;
+
+        // We should only need to calculate realistic gas costs when preparing to broadcast
+        // something. This happens during the onchain simulation stage, where we commit each
+        // collected transactions.
+        //
+        // Otherwise don't re-execute, or some usecases might be broken: https://github.com/foundry-rs/foundry/issues/3921
+        if commit {
+            gas_used = self.search_optimal_gas_usage(&res, from, to, &calldata, value)?;
+            res = self.executor.call_raw_committing(from, to, calldata.0, value)?;
+        }
+
+        let RawCallResult {
+            result,
+            reverted,
+            logs,
+            traces,
+            labels,
+            debug,
+            transactions,
+            script_wallets,
+            ..
+        } = res;
+
+        Ok(ScriptResult {
+            returned: result,
+            success: !reverted,
+            gas_used,
+            logs,
+            traces: traces
+                .map(|mut traces| {
+                    // Manually adjust gas for the trace to add back the stipend/real used gas
+                    traces.arena[0].trace.gas_cost = gas_used;
+                    vec![(TraceKind::Execution, traces)]
+                })
+                .unwrap_or_default(),
+            debug: vec![debug].into_iter().collect(),
+            labeled_addresses: labels,
+            transactions,
+            address: None,
+            script_wallets,
+        })
+    }
+
+    /// The executor will return the _exact_ gas value this transaction consumed, setting this value
+    /// as gas limit will result in `OutOfGas` so to come up with a better estimate we search over a
+    /// possible range we pick a higher gas limit 3x of a succeeded call should be safe.
+    ///
+    /// This might result in executing the same script multiple times. Depending on the user's goal,
+    /// it might be problematic when using `ffi`.
+    fn search_optimal_gas_usage(
+        &mut self,
+        res: &RawCallResult,
+        from: Address,
+        to: Address,
+        calldata: &Bytes,
+        value: U256,
+    ) -> eyre::Result<u64> {
         let mut gas_used = res.gas_used;
         if matches!(res.exit_reason, return_ok!()) {
             // store the current gas limit and reset it later
             let init_gas_limit = self.executor.env_mut().tx.gas_limit;
 
-            // the executor will return the _exact_ gas value this transaction consumed, setting
-            // this value as gas limit will result in `OutOfGas` so to come up with a
-            // better estimate we search over a possible range we pick a higher gas
-            // limit 3x of a succeeded call should be safe
             let mut highest_gas_limit = gas_used * 3;
             let mut lowest_gas_limit = gas_used;
             let mut last_highest_gas_limit = highest_gas_limit;
@@ -282,51 +365,6 @@ impl ScriptRunner {
             // reset gas limit in the
             self.executor.env_mut().tx.gas_limit = init_gas_limit;
         }
-
-        // if we changed `fs_commit` during gas limit search, re-execute the call with original
-        // value
-        if fs_commit_changed {
-            if let Some(ref mut cheatcodes) = self.executor.inspector_config_mut().cheatcodes {
-                cheatcodes.fs_commit = !cheatcodes.fs_commit;
-            }
-
-            res = self.executor.call_raw(from, to, calldata.0.clone(), value)?;
-        }
-
-        if commit {
-            // if explicitly requested we can now commit the call
-            res = self.executor.call_raw_committing(from, to, calldata.0, value)?;
-        }
-
-        let RawCallResult {
-            result,
-            reverted,
-            logs,
-            traces,
-            labels,
-            debug,
-            transactions,
-            script_wallets,
-            ..
-        } = res;
-
-        Ok(ScriptResult {
-            returned: result,
-            success: !reverted,
-            gas_used,
-            logs,
-            traces: traces
-                .map(|mut traces| {
-                    // Manually adjust gas for the trace to add back the stipend/real used gas
-                    traces.arena[0].trace.gas_cost = gas_used;
-                    vec![(TraceKind::Execution, traces)]
-                })
-                .unwrap_or_default(),
-            debug: vec![debug].into_iter().collect(),
-            labeled_addresses: labels,
-            transactions,
-            address: None,
-            script_wallets,
-        })
+        Ok(gas_used)
     }
 }

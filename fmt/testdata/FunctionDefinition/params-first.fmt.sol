@@ -698,7 +698,7 @@ contract FunctionOverrides is
     }
 
     function oneParam(uint256 x)
-        override (
+        override(
             FunctionInterfaces,
             FunctionDefinitions,
             SomeOtherFunctionContract,

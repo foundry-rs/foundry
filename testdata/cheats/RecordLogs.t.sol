@@ -42,6 +42,10 @@ contract Emitterv2 {
     function emitEvent(uint256 topic1, uint256 topic2, uint256 topic3, bytes memory data) public {
         emitter.emitEvent(topic1, topic2, topic3, data);
     }
+
+    function getEmitterAddr() public view returns (address) {
+        return address(emitter);
+    }
 }
 
 contract RecordLogsTest is DSTest {
@@ -97,6 +101,7 @@ contract RecordLogsTest is DSTest {
         assertEq(entries[0].topics[2], bytes32(uint256(2)));
         assertEq(entries[0].topics[3], bytes32(uint256(3)));
         assertEq(abi.decode(entries[0].data, (string)), string(testData));
+        assertEq(entries[0].emitter, address(emitter));
     }
 
     // TODO
@@ -126,6 +131,7 @@ contract RecordLogsTest is DSTest {
         assertEq(entries[0].topics[0], keccak256("LogTopic0(bytes)"));
         // While not a proper string, this conversion allows the comparison.
         assertEq(abi.decode(entries[0].data, (string)), string(testData));
+        assertEq(entries[0].emitter, address(emitter));
     }
 
     function testEmitRecordEmit() public {
@@ -142,6 +148,7 @@ contract RecordLogsTest is DSTest {
         assertEq(entries[0].topics[0], keccak256("LogTopic1(uint256,bytes)"));
         assertEq(entries[0].topics[1], bytes32(uint256(3)));
         assertEq(abi.decode(entries[0].data, (string)), string(testData1));
+        assertEq(entries[0].emitter, address(emitter));
     }
 
     function testRecordOnEmitDifferentDepths() public {
@@ -165,12 +172,14 @@ contract RecordLogsTest is DSTest {
         assertEq(entries[0].topics[0], keccak256("LogTopic(uint256,bytes)"));
         assertEq(entries[0].topics[1], bytes32(uint256(1)));
         assertEq(abi.decode(entries[0].data, (string)), string(testData0));
+        assertEq(entries[0].emitter, address(this));
 
         assertEq(entries[1].topics.length, 3);
         assertEq(entries[1].topics[0], keccak256("LogTopic12(uint256,uint256,bytes)"));
         assertEq(entries[1].topics[1], bytes32(uint256(2)));
         assertEq(entries[1].topics[2], bytes32(uint256(3)));
         assertEq(abi.decode(entries[1].data, (string)), string(testData1));
+        assertEq(entries[1].emitter, address(emitter));
 
         assertEq(entries[2].topics.length, 4);
         assertEq(entries[2].topics[0], keccak256("LogTopic123(uint256,uint256,uint256,bytes)"));
@@ -178,6 +187,7 @@ contract RecordLogsTest is DSTest {
         assertEq(entries[2].topics[2], bytes32(uint256(5)));
         assertEq(entries[2].topics[3], bytes32(uint256(6)));
         assertEq(abi.decode(entries[2].data, (string)), string(testData2));
+        assertEq(entries[2].emitter, emitter2.getEmitterAddr());
     }
 
     function testRecordsConsumednAsRead() public {
@@ -197,6 +207,7 @@ contract RecordLogsTest is DSTest {
         entries = cheats.getRecordedLogs();
         assertEq(entries.length, 1);
         assertEq(entries[0].topics.length, 3);
+        assertEq(entries[0].emitter, address(emitter));
 
         // let's emit two more!
         emitter.emitEvent(4, 5, 6, generateTestData(20));
@@ -206,6 +217,8 @@ contract RecordLogsTest is DSTest {
         assertEq(entries.length, 2);
         assertEq(entries[0].topics.length, 4);
         assertEq(entries[1].topics.length, 1);
+        assertEq(entries[0].emitter, address(emitter));
+        assertEq(entries[1].emitter, address(emitter));
 
         // the last one
         emitter.emitEvent(7, 8, 9, generateTestData(24));
@@ -213,5 +226,6 @@ contract RecordLogsTest is DSTest {
         entries = cheats.getRecordedLogs();
         assertEq(entries.length, 1);
         assertEq(entries[0].topics.length, 4);
+        assertEq(entries[0].emitter, address(emitter));
     }
 }

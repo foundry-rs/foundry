@@ -1,15 +1,15 @@
 //! error handling and support
 
 use bytes::Bytes;
-use ethers::{abi::AbiEncode, utils::keccak256};
-use once_cell::sync::Lazy;
+use ethers::abi::AbiEncode;
 use std::fmt::Display;
 
-// keccak(Error(string))
+// keccak(Error(string)) "08c379a0"
 pub static REVERT_PREFIX: [u8; 4] = [8, 195, 121, 160];
 
-/// Custom error prefiix
-pub static ERROR_PREFIX: Lazy<[u8; 32]> = Lazy::new(|| keccak256("CheatCodeError"));
+/// Custom error prefix
+/// keccak(CheatCodeError) "0bc44503"
+pub static ERROR_PREFIX: [u8; 4] = [11, 196, 69, 3];
 
 /// An extension trait for `std::error::Error` that can abi-encode itself
 pub trait SolError: std::error::Error {

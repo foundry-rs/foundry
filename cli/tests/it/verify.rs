@@ -26,10 +26,9 @@ fn add_unique(prj: &TestProject) {
 pragma solidity >=0.4.0;
 
 contract Unique {{
-    uint public _timestamp = {};
+    uint public _timestamp = {timestamp};
 }}
-"#,
-                timestamp
+"#
             ),
         )
         .unwrap();
@@ -160,7 +159,7 @@ fn verify_flag_on_create_on_chain(
     // only execute if keys present
     if let Some(info) = info {
         for verifier in VERIFICATION_PROVIDERS {
-            println!("verifying with {}", verifier);
+            println!("verifying with {verifier}");
 
             add_unique(&prj);
             add_verify_target(&prj);
@@ -330,7 +329,15 @@ forgetest!(
 forgetest_async!(
     test_live_can_deploy_and_verify,
     |prj: TestProject, mut cmd: TestCommand| async move {
-        let info = EnvExternalities::goerli().expect("Goerli secrets not set.");
+        let info = EnvExternalities::goerli();
+
+        // ignore if etherscan var not set
+        if std::env::var("ETHERSCAN_API_KEY").is_err() {
+            eprintln!("Goerli secrets not set.");
+            return
+        }
+
+        let info = info.unwrap();
 
         add_unique(&prj);
 
@@ -358,6 +365,7 @@ forgetest_async!(
             &info.pk,
             "--broadcast",
             "-vvvv",
+            "--slow",
             "--optimize",
             "--verify",
             "--optimizer-runs",
@@ -382,12 +390,13 @@ forgetest_async!(
         // ensure we're sending all 5 transactions
         assert!(stdout.contains("Sending transactions [0 - 4]"), "{}", err);
 
-        // ensure all transactions are successful
-        assert_eq!(5, stdout.matches('✅').count(), "{}", err);
-
-        // ensure verified all deployments
         // Note: the 5th tx creates contracts internally, which are little flaky at times because
         // the goerli etherscan indexer can take a long time to index these contracts
+
+        // ensure transactions are successful
+        assert!(stdout.matches('✅').count() >= 4, "{}", err);
+
+        // ensure verified all deployments
         assert!(stdout.matches("Contract successfully verified").count() >= 4, "{}", err);
     }
 );

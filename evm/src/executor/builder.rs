@@ -54,6 +54,13 @@ impl ExecutorBuilder {
         self
     }
 
+    /// Enables or disabled trace printer.
+    #[must_use]
+    pub fn set_trace_printer(mut self, enable: bool) -> Self {
+        self.inspector_config.trace_printer = enable;
+        self
+    }
+
     /// Enables the fuzzer for data collection and maybe call overriding
     #[must_use]
     pub fn with_fuzzer(
@@ -87,6 +94,13 @@ impl ExecutorBuilder {
         self.inspector_config.block = env.block.clone();
         self.inspector_config.gas_price = env.tx.gas_price;
         self.env = env;
+        self
+    }
+
+    /// Enable the chisel state inspector
+    #[must_use]
+    pub fn with_chisel_state(mut self, final_pc: usize) -> Self {
+        self.inspector_config.chisel_state = Some(final_pc);
         self
     }
 

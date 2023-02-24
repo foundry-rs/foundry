@@ -43,6 +43,11 @@ contract HelloWorld {
         p = 2 * (w + h);
     }
 
+    /// A long doc line comment that will be wrapped 
+    function docLineOverflow() external {}
+
+    function docLinePostfixOveflow() external {} /// A long doc line comment that will be wrapped 
+
     /**
      * @notice Here is my comment
      *       - item 1
@@ -69,6 +74,15 @@ function foo() public {
     }
     */
     function multilineMalformedIndent() external {}
+
+    /**
+    contract A {
+function withALongNameThatWillCauseCommentWrap() public {
+                // does nothing.
+      }
+    }
+    */
+    function malformedIndentOveflow() external {}
 }
 
 /**

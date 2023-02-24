@@ -13,6 +13,7 @@ vergen = { version = "7.0", default-features = false, features = ["build", "rust
 [dependencies]
 # foundry internal
 forge-fmt = { path = "../fmt" }
+forge-doc = { path = "../doc" }
 foundry-utils = { path = "../utils" }
 forge = { path = "../forge" }
 foundry-config = { path = "../config" }
@@ -21,8 +22,8 @@ cast = { path = "../cast" }
 ui = { path = "../ui" }
 
 # eth
-ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-solang-parser = "0.1.11"
+ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["rustls"] }
+solang-parser = "=0.2.2"
 
 # cli
 clap = { version = "4.0", features = ["derive", "env", "unicode", "wrap_help"] }
@@ -33,7 +34,7 @@ tracing-error = "0.2.0"
 tracing-subscriber = { version = "0.3", features = ["registry", "env-filter", "fmt"] }
 tracing = "0.1"
 console = "0.15.0"
-watchexec = "2.0.0"
+watchexec = "2.0"
 atty = "0.2.14"
 comfy-table = "6.0.0"
 reqwest = { version = "0.11.8", default-features = false, features = [
@@ -41,21 +42,21 @@ reqwest = { version = "0.11.8", default-features = false, features = [
     "rustls",
     "rustls-native-certs",
 ] }
-dotenv = "0.15.0"
+dotenvy = "0.15"
 dialoguer = { version = "0.10.2", default-features = false }
 
 # async / parallel
 tokio = { version = "1", features = ["macros"] }
 futures = "0.3.17"
-rayon = "1.5.1"
+rayon = "1.6.1"
 async-trait = "0.1.53"
 
 # disk / paths
 walkdir = "2.3.2"
 dunce = "1.0.2"
-glob = "0.3.0"
 globset = "0.4.8"
 path-slash = "0.2.0"
+tempfile = "3.3.0"
 
 # misc
 eyre = "0.6"
@@ -75,16 +76,17 @@ strsim = "0.10.0"
 bytes = "1.1.0"
 strum = { version = "0.24", features = ["derive"] }
 thiserror = "1.0.30"
-indicatif = "0.17.0-rc.11"
+indicatif = "0.17.1"
 which = "4.2.5"
+parking_lot = "0.12"
 
 [dev-dependencies]
 anvil = { path = "../anvil" }
 foundry-utils = { path = "./../utils", features = ["test"] }
 foundry-cli-test-utils = { path = "./test-utils" }
 pretty_assertions = "1.0.0"
-toml = "0.5"
-serial_test = "0.9.0"
+toml = "0.7.0"
+serial_test = "1.0.0"
 criterion = "0.4.0"
 svm = { package = "svm-rs", version = "0.2.16", default-features = false, features = ["rustls"] }
 

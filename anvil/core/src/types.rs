@@ -1,9 +1,8 @@
-use ethers_core::types::{H256, U256};
-use serde::{
-    de::{Error, Visitor},
-    Deserialize, Deserializer, Serialize, Serializer,
-};
-use std::fmt;
+use ethers_core::types::{H256, U256, U64};
+use revm::SpecId;
+
+#[cfg(feature = "serde")]
+use serde::{de::Error, Deserializer, Serializer};
 
 /// Represents the params to set forking which can take various forms
 ///  - untagged
@@ -14,23 +13,24 @@ pub struct Forking {
     pub block_number: Option<u64>,
 }
 
-impl<'de> Deserialize<'de> for Forking {
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Forking {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        #[derive(Deserialize)]
+        #[derive(serde::Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct ForkOpts {
             pub json_rpc_url: Option<String>,
             pub block_number: Option<u64>,
         }
 
-        #[derive(Deserialize)]
+        #[derive(serde::Deserialize)]
         struct Tagged {
             forking: ForkOpts,
         }
-        #[derive(Deserialize)]
+        #[derive(serde::Deserialize)]
         #[serde(untagged)]
         enum ForkingVariants {
             Tagged(Tagged),
@@ -50,16 +50,29 @@ impl<'de> Deserialize<'de> for Forking {
 }
 
 /// Additional `evm_mine` options
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-#[serde(untagged)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(untagged))]
 pub enum EvmMineOptions {
     Options {
+        #[cfg_attr(
+            feature = "serde",
+            serde(
+                deserialize_with = "ethers_core::types::serde_helpers::deserialize_stringified_u64_opt"
+            )
+        )]
         timestamp: Option<u64>,
         // If `blocks` is given, it will mine exactly blocks number of blocks, regardless of any
         // other blocks mined or reverted during it's operation
         blocks: Option<u64>,
     },
     /// The timestamp the block should be mined with
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            deserialize_with = "ethers_core::types::serde_helpers::deserialize_stringified_u64_opt"
+        )
+    )]
     Timestamp(Option<u64>),
 }
 
@@ -79,7 +92,8 @@ pub struct Work {
     pub number: Option<u64>,
 }
 
-impl Serialize for Work {
+#[cfg(feature = "serde")]
+impl serde::Serialize for Work {
     fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -102,14 +116,17 @@ impl From<Index> for usize {
     }
 }
 
-impl<'a> Deserialize<'a> for Index {
+#[cfg(feature = "serde")]
+impl<'a> serde::Deserialize<'a> for Index {
     fn deserialize<D>(deserializer: D) -> Result<Index, D::Error>
     where
-        D: Deserializer<'a>,
+        D: serde::Deserializer<'a>,
     {
+        use std::fmt;
+
         struct IndexVisitor;
 
-        impl<'a> Visitor<'a> for IndexVisitor {
+        impl<'a> serde::de::Visitor<'a> for IndexVisitor {
             type Value = Index;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -129,13 +146,13 @@ impl<'a> Deserialize<'a> for Index {
             {
                 if let Some(val) = value.strip_prefix("0x") {
                     usize::from_str_radix(val, 16).map(Index).map_err(|e| {
-                        Error::custom(format!("Failed to parse hex encoded index value: {}", e))
+                        Error::custom(format!("Failed to parse hex encoded index value: {e}"))
                     })
                 } else {
                     value
                         .parse::<usize>()
                         .map(Index)
-                        .map_err(|e| Error::custom(format!("Failed to parse numeric index: {}", e)))
+                        .map_err(|e| Error::custom(format!("Failed to parse numeric index: {e}")))
                 }
             }
 
@@ -149,4 +166,36 @@ impl<'a> Deserialize<'a> for Index {
 
         deserializer.deserialize_any(IndexVisitor)
     }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct NodeInfo {
+    pub current_block_number: U64,
+    pub current_block_timestamp: u64,
+    pub current_block_hash: H256,
+    pub hard_fork: SpecId,
+    pub transaction_order: String,
+    pub environment: NodeEnvironment,
+    pub fork_config: NodeForkConfig,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct NodeEnvironment {
+    pub base_fee: U256,
+    pub chain_id: U256,
+    pub gas_limit: U256,
+    pub gas_price: U256,
+}
+
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct NodeForkConfig {
+    pub fork_url: Option<String>,
+    pub fork_block_number: Option<u64>,
+    pub fork_retry_backoff: Option<u128>,
 }

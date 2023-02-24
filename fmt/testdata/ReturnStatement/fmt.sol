@@ -48,9 +48,8 @@ contract ReturnStatement {
 
         if (val == 1) {
             // return mul 3
-            return /* return mul 4 */ (
-                987654321, 1234567890, /* return mul 5 */ false
-            );
+            return /* return mul 4 */
+                (987654321, 1234567890, /* return mul 5 */ false);
         }
 
         if (val == 2) {

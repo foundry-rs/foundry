@@ -4,7 +4,7 @@
 
 ![Github Actions][gha-badge] [![Telegram Chat][tg-badge]][tg-url] [![Telegram Support][tg-support-badge]][tg-support-url]
 
-[gha-badge]: https://img.shields.io/github/workflow/status/foundry-rs/foundry/test?style=flat-square
+[gha-badge]: https://img.shields.io/github/actions/workflow/status/foundry-rs/foundry/test.yml?branch=master
 [tg-badge]: https://img.shields.io/endpoint?color=neon&logo=telegram&label=chat&style=flat-square&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Ffoundry_rs
 [tg-url]: https://t.me/foundry_rs
 [tg-support-badge]: https://img.shields.io/endpoint?color=neon&logo=telegram&label=support&style=flat-square&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Ffoundry_support
@@ -16,7 +16,8 @@ Foundry consists of:
 
 -   [**Forge**](./forge): Ethereum testing framework (like Truffle, Hardhat and DappTools).
 -   [**Cast**](./cast): Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   [**Anvil**](./anvil): local Ethereum node, akin to Ganache, Hardhat Network.
+-   [**Anvil**](./anvil): Local Ethereum node, akin to Ganache, Hardhat Network.
+-   [**Chisel**](./chisel): Fast, utilitarian, and verbose solidity REPL.
 
 **Need help getting started with Foundry? Read the [📖 Foundry Book][foundry-book] (WIP)!**
 
@@ -68,6 +69,8 @@ docker pull ghcr.io/foundry-rs/foundry:latest
 ```
 
 For examples and guides on using this image, see the [Docker section](https://book.getfoundry.sh/tutorials/foundry-docker.html) in the book.
+### Installing on Windows
+ If you encounter issues installing Foundry on your machine, we recommend trying to use Windows Subsystem for Linux (WSL) as an alternative. WSL allows you to run Linux applications directly on Windows, which can help avoid some common installation problems. You can follow the instructions provided by Microsoft to install WSL on your Windows machine [WSL](https://learn.microsoft.com/en-us/windows/wsl/install)<br/>
 
 ### Manual Download
 

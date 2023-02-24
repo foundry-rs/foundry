@@ -8,6 +8,7 @@ use ethers::{
     utils::keccak256,
 };
 use forge::revm::KECCAK_EMPTY;
+use foundry_common::errors::FsPathError;
 use foundry_evm::{
     executor::{
         backend::{snapshot::StateSnapshot, DatabaseError, DatabaseResult, MemDb},
@@ -21,7 +22,7 @@ use foundry_evm::{
 };
 use hash_db::HashDB;
 use serde::{Deserialize, Serialize};
-use std::fmt;
+use std::{collections::BTreeMap, fmt, path::Path};
 
 /// Type alias for the `HashDB` representation of the Database
 pub type AsHashDB = Box<dyn HashDB<KeccakHasher, Vec<u8>>>;
@@ -41,6 +42,9 @@ pub trait MaybeHashDatabase: DatabaseRef<Error = DatabaseError> {
     /// Clear the state and move it into a new `StateSnapshot`
     fn clear_into_snapshot(&mut self) -> StateSnapshot;
 
+    /// Clears the entire database
+    fn clear(&mut self);
+
     /// Reverses `clear_into_snapshot` by initializing the db's state with the snapshot
     fn init_from_snapshot(&mut self, snapshot: StateSnapshot);
 }
@@ -57,8 +61,10 @@ where
     }
 
     fn clear_into_snapshot(&mut self) -> StateSnapshot {
-        unimplemented!()
+        unreachable!("never called for DatabaseRef")
     }
+
+    fn clear(&mut self) {}
 
     fn init_from_snapshot(&mut self, _snapshot: StateSnapshot) {}
 }
@@ -192,6 +198,10 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeHashDatabase for CacheDB<T> {
         StateSnapshot { accounts, storage: account_storage, block_hashes }
     }
 
+    fn clear(&mut self) {
+        self.clear_into_snapshot();
+    }
+
     fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
         let StateSnapshot { accounts, mut storage, block_hashes } = snapshot;
 
@@ -255,6 +265,10 @@ impl MaybeHashDatabase for StateDb {
         self.0.clear_into_snapshot()
     }
 
+    fn clear(&mut self) {
+        self.0.clear()
+    }
+
     fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
         self.0.init_from_snapshot(snapshot)
     }
@@ -262,7 +276,26 @@ impl MaybeHashDatabase for StateDb {
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct SerializableState {
-    pub accounts: HashMap<Address, SerializableAccountRecord>,
+    pub accounts: BTreeMap<Address, SerializableAccountRecord>,
+}
+
+// === impl SerializableState ===
+
+impl SerializableState {
+    /// Loads the `Genesis` object from the given json file path
+    pub fn load(path: impl AsRef<Path>) -> Result<Self, FsPathError> {
+        let path = path.as_ref();
+        if path.is_dir() {
+            foundry_common::fs::read_json_file(&path.join("state.json"))
+        } else {
+            foundry_common::fs::read_json_file(path)
+        }
+    }
+
+    /// This is used as the clap `value_parser` implementation
+    pub(crate) fn parse(path: &str) -> Result<Self, String> {
+        Self::load(path).map_err(|err| err.to_string())
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -270,5 +303,5 @@ pub struct SerializableAccountRecord {
     pub nonce: u64,
     pub balance: U256,
     pub code: Bytes,
-    pub storage: HashMap<U256, U256>,
+    pub storage: BTreeMap<U256, U256>,
 }

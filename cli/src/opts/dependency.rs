@@ -7,7 +7,8 @@ use std::str::FromStr;
 static GH_REPO_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new("[A-Za-z\\d-]+/[A-Za-z\\d_.-]+").unwrap());
 
-static GH_REPO_PREFIX_REGEX: Lazy<Regex> = Lazy::new(|| {
+/// Git repo prefix regex
+pub static GH_REPO_PREFIX_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"((git@)|(git\+https://)|(https://)|(org-([A-Za-z0-9-])+@))?(?P<brand>[A-Za-z0-9-]+)\.(?P<tld>[A-Za-z0-9-]+)(/|:)")
         .unwrap()
 });
@@ -71,7 +72,7 @@ impl FromStr for Dependency {
             let brand = captures.name("brand").unwrap().as_str();
             let tld = captures.name("tld").unwrap().as_str();
             let project = GH_REPO_PREFIX_REGEX.replace(dependency, "");
-            Some(format!("https://{}.{}/{}", brand, tld, project.trim_end_matches(".git")))
+            Some(format!("https://{brand}.{tld}/{}", project.trim_end_matches(".git")))
         } else {
             // If we don't have a URL and we don't have a valid
             // GitHub repository name, then we assume this is the alias.

@@ -56,7 +56,7 @@ impl Tracer {
                 depth,
                 address,
                 kind,
-                data: RawOrDecodedCall::Raw(data),
+                data: RawOrDecodedCall::Raw(data.into()),
                 value,
                 status: Return::Continue,
                 caller,
@@ -73,7 +73,7 @@ impl Tracer {
         trace.status = status;
         trace.success = success;
         trace.gas_cost = cost;
-        trace.output = RawOrDecodedReturnData::Raw(output);
+        trace.output = RawOrDecodedReturnData::Raw(output.into());
 
         if let Some(address) = address {
             trace.address = address;
@@ -141,7 +141,7 @@ impl Tracer {
 
         // Error codes only
         if status as u8 > Return::OutOfGas as u8 {
-            step.error = Some(format!("{:?}", status));
+            step.error = Some(format!("{status:?}"));
         }
     }
 }

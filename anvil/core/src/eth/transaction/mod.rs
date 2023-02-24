@@ -4,25 +4,27 @@ use crate::eth::{
     receipt::Log,
     utils::{enveloped, to_access_list},
 };
-use bytes::Buf;
 use ethers_core::{
     types::{
         transaction::eip2930::{AccessList, AccessListItem},
-        Address, Bloom, Bytes, Signature, SignatureError, TxHash, H256, U256,
+        Address, Bloom, Bytes, Signature, SignatureError, TxHash, H256, U256, U64,
     },
     utils::{
         keccak256, rlp,
         rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream},
     },
 };
-use fastrlp::{length_of_length, Header, RlpDecodable, RlpEncodable};
 use foundry_evm::trace::CallTraceArena;
 use revm::{CreateScheme, Return, TransactTo, TxEnv};
-use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
+use std::ops::Deref;
 
 /// compatibility with `ethers-rs` types
 mod ethers_compat;
+
+/// The signature used to bypass signing via the `eth_sendUnsignedTransaction` cheat RPC
+#[cfg(feature = "impersonated-tx")]
+pub const IMPERSONATED_SIGNATURE: Signature =
+    Signature { r: U256([0, 0, 0, 0]), s: U256([0, 0, 0, 0]), v: 0 };
 
 /// Container type for various Ethereum transaction requests
 ///
@@ -38,22 +40,23 @@ pub enum TypedTransactionRequest {
 }
 
 /// Represents _all_ transaction requests received from RPC
-#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct EthTransactionRequest {
     /// from address
     pub from: Option<Address>,
     /// to address
     pub to: Option<Address>,
     /// legacy, gas Price
-    #[serde(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub gas_price: Option<U256>,
     /// max base fee per gas sender is willing to pay
-    #[serde(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub max_fee_per_gas: Option<U256>,
     /// miner tip
-    #[serde(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub max_priority_fee_per_gas: Option<U256>,
     /// gas
     pub gas: Option<U256>,
@@ -63,11 +66,14 @@ pub struct EthTransactionRequest {
     pub data: Option<Bytes>,
     /// Transaction nonce
     pub nonce: Option<U256>,
+    /// chain id
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub chain_id: Option<U64>,
     /// warm storage access pre-payment
-    #[serde(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub access_list: Option<Vec<AccessListItem>>,
     /// EIP-2718 type
-    #[serde(rename = "type")]
+    #[cfg_attr(feature = "serde", serde(rename = "type"))]
     pub transaction_type: Option<U256>,
 }
 
@@ -86,8 +92,10 @@ impl EthTransactionRequest {
             data,
             nonce,
             mut access_list,
+            chain_id,
             ..
         } = self;
+        let chain_id = chain_id.map(|id| id.as_u64());
         match (gas_price, max_fee_per_gas, access_list.take()) {
             // legacy transaction
             (Some(_), None, None) => {
@@ -101,7 +109,7 @@ impl EthTransactionRequest {
                         Some(to) => TransactionKind::Call(to),
                         None => TransactionKind::Create,
                     },
-                    chain_id: None,
+                    chain_id,
                 }))
             }
             // EIP2930
@@ -116,7 +124,7 @@ impl EthTransactionRequest {
                         Some(to) => TransactionKind::Call(to),
                         None => TransactionKind::Create,
                     },
-                    chain_id: 0,
+                    chain_id: chain_id.unwrap_or_default(),
                     access_list,
                 }))
             }
@@ -134,7 +142,7 @@ impl EthTransactionRequest {
                         Some(to) => TransactionKind::Call(to),
                         None => TransactionKind::Create,
                     },
-                    chain_id: 0,
+                    chain_id: chain_id.unwrap_or_default(),
                     access_list: access_list.unwrap_or_default(),
                 }))
             }
@@ -143,7 +151,8 @@ impl EthTransactionRequest {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TransactionKind {
     Call(Address),
     Create,
@@ -186,14 +195,15 @@ impl Decodable for TransactionKind {
     }
 }
 
-impl fastrlp::Encodable for TransactionKind {
+#[cfg(feature = "fastrlp")]
+impl open_fastrlp::Encodable for TransactionKind {
     fn length(&self) -> usize {
         match self {
             TransactionKind::Call(to) => to.length(),
             TransactionKind::Create => ([]).length(),
         }
     }
-    fn encode(&self, out: &mut dyn fastrlp::BufMut) {
+    fn encode(&self, out: &mut dyn open_fastrlp::BufMut) {
         match self {
             TransactionKind::Call(to) => to.encode(out),
             TransactionKind::Create => ([]).encode(out),
@@ -201,23 +211,27 @@ impl fastrlp::Encodable for TransactionKind {
     }
 }
 
-impl fastrlp::Decodable for TransactionKind {
-    fn decode(buf: &mut &[u8]) -> Result<Self, fastrlp::DecodeError> {
+#[cfg(feature = "fastrlp")]
+impl open_fastrlp::Decodable for TransactionKind {
+    fn decode(buf: &mut &[u8]) -> Result<Self, open_fastrlp::DecodeError> {
+        use bytes::Buf;
+
         if let Some(&first) = buf.first() {
             if first == 0x80 {
                 buf.advance(1);
                 Ok(TransactionKind::Create)
             } else {
-                let addr = <Address as fastrlp::Decodable>::decode(buf)?;
+                let addr = <Address as open_fastrlp::Decodable>::decode(buf)?;
                 Ok(TransactionKind::Call(addr))
             }
         } else {
-            Err(fastrlp::DecodeError::InputTooShort)
+            Err(open_fastrlp::DecodeError::InputTooShort)
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, RlpEncodable, RlpDecodable)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "fastrlp", derive(open_fastrlp::RlpEncodable, open_fastrlp::RlpDecodable))]
 pub struct EIP2930TransactionRequest {
     pub chain_id: u64,
     pub nonce: U256,
@@ -327,7 +341,8 @@ impl Encodable for LegacyTransactionRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, RlpEncodable, RlpDecodable)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "fastrlp", derive(open_fastrlp::RlpEncodable, open_fastrlp::RlpDecodable))]
 pub struct EIP1559TransactionRequest {
     pub chain_id: u64,
     pub nonce: U256,
@@ -383,7 +398,117 @@ impl Encodable for EIP1559TransactionRequest {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// A wrapper for `TypedTransaction` that allows impersonating accounts.
+///
+/// This is a helper that carries the `impersonated` sender so that the right hash
+/// [TypedTransaction::impersonated_hash] can be created.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct MaybeImpersonatedTransaction {
+    #[cfg_attr(feature = "serde", serde(flatten))]
+    pub transaction: TypedTransaction,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub impersonated_sender: Option<Address>,
+}
+
+// === impl MaybeImpersonatedTransaction ===
+
+impl MaybeImpersonatedTransaction {
+    /// Creates a new wrapper for the given transaction
+    pub fn new(transaction: TypedTransaction) -> Self {
+        Self { transaction, impersonated_sender: None }
+    }
+
+    /// Creates a new impersonated transaction wrapper using the given sender
+    pub fn impersonated(transaction: TypedTransaction, impersonated_sender: Address) -> Self {
+        Self { transaction, impersonated_sender: Some(impersonated_sender) }
+    }
+
+    /// Recovers the Ethereum address which was used to sign the transaction.
+    ///
+    /// Note: this is feature gated so it does not conflict with the `Deref`ed
+    /// [TypedTransaction::recover] function by default.
+    #[cfg(feature = "impersonated-tx")]
+    pub fn recover(&self) -> Result<Address, SignatureError> {
+        if let Some(sender) = self.impersonated_sender {
+            return Ok(sender)
+        }
+        self.transaction.recover()
+    }
+
+    /// Returns the hash of the transaction
+    ///
+    /// Note: this is feature gated so it does not conflict with the `Deref`ed
+    /// [TypedTransaction::hash] function by default.
+    #[cfg(feature = "impersonated-tx")]
+    pub fn hash(&self) -> H256 {
+        if self.transaction.is_impersonated() {
+            if let Some(sender) = self.impersonated_sender {
+                return self.transaction.impersonated_hash(sender)
+            }
+        }
+        self.transaction.hash()
+    }
+}
+
+impl Encodable for MaybeImpersonatedTransaction {
+    fn rlp_append(&self, s: &mut RlpStream) {
+        self.transaction.rlp_append(s)
+    }
+}
+
+impl From<MaybeImpersonatedTransaction> for TypedTransaction {
+    fn from(value: MaybeImpersonatedTransaction) -> Self {
+        value.transaction
+    }
+}
+
+impl From<TypedTransaction> for MaybeImpersonatedTransaction {
+    fn from(value: TypedTransaction) -> Self {
+        MaybeImpersonatedTransaction::new(value)
+    }
+}
+
+impl Decodable for MaybeImpersonatedTransaction {
+    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+        let transaction = TypedTransaction::decode(rlp)?;
+        Ok(Self { transaction, impersonated_sender: None })
+    }
+}
+
+#[cfg(feature = "fastrlp")]
+impl open_fastrlp::Encodable for MaybeImpersonatedTransaction {
+    fn encode(&self, out: &mut dyn open_fastrlp::BufMut) {
+        self.transaction.encode(out)
+    }
+    fn length(&self) -> usize {
+        self.transaction.length()
+    }
+}
+
+#[cfg(feature = "fastrlp")]
+impl open_fastrlp::Decodable for MaybeImpersonatedTransaction {
+    fn decode(buf: &mut &[u8]) -> Result<Self, open_fastrlp::DecodeError> {
+        Ok(Self { transaction: open_fastrlp::Decodable::decode(buf)?, impersonated_sender: None })
+    }
+}
+
+impl AsRef<TypedTransaction> for MaybeImpersonatedTransaction {
+    fn as_ref(&self) -> &TypedTransaction {
+        &self.transaction
+    }
+}
+
+impl Deref for MaybeImpersonatedTransaction {
+    type Target = TypedTransaction;
+
+    fn deref(&self) -> &Self::Target {
+        &self.transaction
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TypedTransaction {
     /// Legacy transaction type
     Legacy(LegacyTransaction),
@@ -508,12 +633,32 @@ impl TypedTransaction {
         matches!(self, TypedTransaction::EIP1559(_))
     }
 
+    /// Returns the hash of the transaction.
+    ///
+    /// Note: If this transaction has the Impersonated signature then this returns a modified unique
+    /// hash. This allows us to treat impersonated transactions as unique.
     pub fn hash(&self) -> H256 {
         match self {
             TypedTransaction::Legacy(t) => t.hash(),
             TypedTransaction::EIP2930(t) => t.hash(),
             TypedTransaction::EIP1559(t) => t.hash(),
         }
+    }
+
+    /// Returns true if the transaction was impersonated (using the impersonate Signature)
+    #[cfg(feature = "impersonated-tx")]
+    pub fn is_impersonated(&self) -> bool {
+        self.signature() == IMPERSONATED_SIGNATURE
+    }
+
+    /// Returns the hash if the transaction is impersonated (using a fake signature)
+    ///
+    /// This appends the `address` before hashing it
+    #[cfg(feature = "impersonated-tx")]
+    pub fn impersonated_hash(&self, sender: Address) -> H256 {
+        let mut bytes = rlp::encode(self);
+        bytes.extend_from_slice(sender.as_ref());
+        H256::from_slice(keccak256(&bytes).as_slice())
     }
 
     /// Recovers the Ethereum address which was used to sign the transaction.
@@ -587,22 +732,9 @@ impl Decodable for TypedTransaction {
     }
 }
 
-impl fastrlp::Encodable for TypedTransaction {
-    fn length(&self) -> usize {
-        match self {
-            TypedTransaction::Legacy(tx) => tx.length(),
-            tx => {
-                let payload_len = match tx {
-                    TypedTransaction::EIP2930(tx) => tx.length() + 1,
-                    TypedTransaction::EIP1559(tx) => tx.length() + 1,
-                    _ => unreachable!("legacy tx length already matched"),
-                };
-                // we include a string header for signed types txs, so include the length here
-                payload_len + length_of_length(payload_len)
-            }
-        }
-    }
-    fn encode(&self, out: &mut dyn fastrlp::BufMut) {
+#[cfg(feature = "fastrlp")]
+impl open_fastrlp::Encodable for TypedTransaction {
+    fn encode(&self, out: &mut dyn open_fastrlp::BufMut) {
         match self {
             TypedTransaction::Legacy(tx) => tx.encode(out),
             tx => {
@@ -614,14 +746,16 @@ impl fastrlp::Encodable for TypedTransaction {
 
                 match tx {
                     TypedTransaction::EIP2930(tx) => {
-                        let tx_string_header = Header { list: false, payload_length: payload_len };
+                        let tx_string_header =
+                            open_fastrlp::Header { list: false, payload_length: payload_len };
 
                         tx_string_header.encode(out);
                         out.put_u8(0x01);
                         tx.encode(out);
                     }
                     TypedTransaction::EIP1559(tx) => {
-                        let tx_string_header = Header { list: false, payload_length: payload_len };
+                        let tx_string_header =
+                            open_fastrlp::Header { list: false, payload_length: payload_len };
 
                         tx_string_header.encode(out);
                         out.put_u8(0x02);
@@ -632,16 +766,34 @@ impl fastrlp::Encodable for TypedTransaction {
             }
         }
     }
+    fn length(&self) -> usize {
+        match self {
+            TypedTransaction::Legacy(tx) => tx.length(),
+            tx => {
+                let payload_len = match tx {
+                    TypedTransaction::EIP2930(tx) => tx.length() + 1,
+                    TypedTransaction::EIP1559(tx) => tx.length() + 1,
+                    _ => unreachable!("legacy tx length already matched"),
+                };
+                // we include a string header for signed types txs, so include the length here
+                payload_len + open_fastrlp::length_of_length(payload_len)
+            }
+        }
+    }
 }
 
-impl fastrlp::Decodable for TypedTransaction {
-    fn decode(buf: &mut &[u8]) -> Result<Self, fastrlp::DecodeError> {
-        let first = *buf.first().ok_or(fastrlp::DecodeError::Custom("empty slice"))?;
+#[cfg(feature = "fastrlp")]
+impl open_fastrlp::Decodable for TypedTransaction {
+    fn decode(buf: &mut &[u8]) -> Result<Self, open_fastrlp::DecodeError> {
+        use bytes::Buf;
+        use std::cmp::Ordering;
+
+        let first = *buf.first().ok_or(open_fastrlp::DecodeError::Custom("empty slice"))?;
 
         // a signed transaction is either encoded as a string (non legacy) or a list (legacy).
         // We should not consume the buffer if we are decoding a legacy transaction, so let's
         // check if the first byte is between 0x80 and 0xbf.
-        match first.cmp(&fastrlp::EMPTY_LIST_CODE) {
+        match first.cmp(&open_fastrlp::EMPTY_LIST_CODE) {
             Ordering::Less => {
                 // strip out the string header
                 // NOTE: typed transaction encodings either contain a "rlp header" which contains
@@ -654,33 +806,34 @@ impl fastrlp::Decodable for TypedTransaction {
                 // If the encoding includes a header, the header will be properly decoded and
                 // consumed.
                 // Otherwise, header decoding will succeed but nothing is consumed.
-                let _header = Header::decode(buf)?;
-                let tx_type = *buf.first().ok_or(fastrlp::DecodeError::Custom(
+                let _header = open_fastrlp::Header::decode(buf)?;
+                let tx_type = *buf.first().ok_or(open_fastrlp::DecodeError::Custom(
                     "typed tx cannot be decoded from an empty slice",
                 ))?;
                 if tx_type == 0x01 {
                     buf.advance(1);
-                    <EIP2930Transaction as fastrlp::Decodable>::decode(buf)
+                    <EIP2930Transaction as open_fastrlp::Decodable>::decode(buf)
                         .map(TypedTransaction::EIP2930)
                 } else if tx_type == 0x02 {
                     buf.advance(1);
-                    <EIP1559Transaction as fastrlp::Decodable>::decode(buf)
+                    <EIP1559Transaction as open_fastrlp::Decodable>::decode(buf)
                         .map(TypedTransaction::EIP1559)
                 } else {
-                    Err(fastrlp::DecodeError::Custom("invalid tx type"))
+                    Err(open_fastrlp::DecodeError::Custom("invalid tx type"))
                 }
             }
-            Ordering::Equal => Err(fastrlp::DecodeError::Custom(
+            Ordering::Equal => Err(open_fastrlp::DecodeError::Custom(
                 "an empty list is not a valid transaction encoding",
             )),
-            Ordering::Greater => {
-                <LegacyTransaction as fastrlp::Decodable>::decode(buf).map(TypedTransaction::Legacy)
-            }
+            Ordering::Greater => <LegacyTransaction as open_fastrlp::Decodable>::decode(buf)
+                .map(TypedTransaction::Legacy),
         }
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash, RlpEncodable, RlpDecodable)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "fastrlp", derive(open_fastrlp::RlpEncodable, open_fastrlp::RlpDecodable))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LegacyTransaction {
     pub nonce: U256,
     pub gas_price: U256,
@@ -761,7 +914,9 @@ impl Decodable for LegacyTransaction {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash, RlpEncodable, RlpDecodable)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "fastrlp", derive(open_fastrlp::RlpEncodable, open_fastrlp::RlpDecodable))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EIP2930Transaction {
     pub chain_id: u64,
     pub nonce: U256,
@@ -847,7 +1002,9 @@ impl Decodable for EIP2930Transaction {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash, RlpEncodable, RlpDecodable)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "fastrlp", derive(open_fastrlp::RlpEncodable, open_fastrlp::RlpDecodable))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EIP1559Transaction {
     pub chain_id: u64,
     pub nonce: U256,
@@ -954,7 +1111,7 @@ pub struct TransactionEssentials {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingTransaction {
     /// The actual transaction
-    pub transaction: TypedTransaction,
+    pub transaction: MaybeImpersonatedTransaction,
     /// the recovered sender of this transaction
     sender: Address,
     /// hash of `transaction`, so it can easily be reused with encoding and hashing agan
@@ -967,12 +1124,20 @@ impl PendingTransaction {
     /// Creates a new pending transaction and tries to verify transaction and recover sender.
     pub fn new(transaction: TypedTransaction) -> Result<Self, SignatureError> {
         let sender = transaction.recover()?;
-        Ok(Self::with_sender(transaction, sender))
+        Ok(Self { hash: transaction.hash(), transaction: transaction.into(), sender })
     }
 
-    /// Creates a new transaction with the given sender
-    pub fn with_sender(transaction: TypedTransaction, sender: Address) -> Self {
-        Self { hash: transaction.hash(), transaction, sender }
+    /// Creates a new transaction with the given sender.
+    ///
+    /// In order to prevent collisions from multiple different impersonated accounts, we update the
+    /// transaction's hash with the address to make it unique.
+    ///
+    /// See: <https://github.com/foundry-rs/foundry/issues/3759>
+    #[cfg(feature = "impersonated-tx")]
+    pub fn with_impersonated(transaction: TypedTransaction, sender: Address) -> Self {
+        let hash = transaction.impersonated_hash(sender);
+        let transaction = MaybeImpersonatedTransaction::impersonated(transaction, sender);
+        Self { hash, transaction, sender }
     }
 
     pub fn nonce(&self) -> &U256 {
@@ -998,7 +1163,7 @@ impl PendingTransaction {
         }
 
         let caller = *self.sender();
-        match &self.transaction {
+        match &self.transaction.transaction {
             TypedTransaction::Legacy(tx) => {
                 let chain_id = tx.chain_id();
                 let LegacyTransaction { nonce, gas_price, gas_limit, value, kind, input, .. } = tx;
@@ -1071,7 +1236,7 @@ impl PendingTransaction {
 }
 
 /// Represents all relevant information of an executed transaction
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct TransactionInfo {
     pub transaction_hash: H256,
     pub transaction_index: u32,
@@ -1122,12 +1287,8 @@ impl TransactionInfo {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
     use super::*;
-    use bytes::BytesMut;
     use ethers_core::utils::hex;
-    use fastrlp::{Decodable, Encodable};
 
     #[test]
     fn can_recover_sender() {
@@ -1155,8 +1316,13 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "fastrlp")]
     fn test_decode_fastrlp_create() {
+        use bytes::BytesMut;
+        use open_fastrlp::Encodable;
+
         // tests that a contract creation tx encodes and decodes properly
+
         let tx = TypedTransaction::EIP2930(EIP2930Transaction {
             chain_id: 1u64,
             nonce: U256::from(0),
@@ -1174,21 +1340,28 @@ mod tests {
         let mut encoded = BytesMut::new();
         tx.encode(&mut encoded);
 
-        let decoded = TypedTransaction::decode(&mut &*encoded).unwrap();
+        let decoded =
+            <TypedTransaction as open_fastrlp::Decodable>::decode(&mut &*encoded).unwrap();
         assert_eq!(decoded, tx);
     }
 
     #[test]
+    #[cfg(feature = "fastrlp")]
     fn test_decode_fastrlp_create_goerli() {
         // test that an example create tx from goerli decodes properly
         let tx_bytes =
               hex::decode("02f901ee05228459682f008459682f11830209bf8080b90195608060405234801561001057600080fd5b50610175806100206000396000f3fe608060405234801561001057600080fd5b506004361061002b5760003560e01c80630c49c36c14610030575b600080fd5b61003861004e565b604051610045919061011d565b60405180910390f35b60606020600052600f6020527f68656c6c6f2073746174656d696e64000000000000000000000000000000000060405260406000f35b600081519050919050565b600082825260208201905092915050565b60005b838110156100be5780820151818401526020810190506100a3565b838111156100cd576000848401525b50505050565b6000601f19601f8301169050919050565b60006100ef82610084565b6100f9818561008f565b93506101098185602086016100a0565b610112816100d3565b840191505092915050565b6000602082019050818103600083015261013781846100e4565b90509291505056fea264697066735822122051449585839a4ea5ac23cae4552ef8a96b64ff59d0668f76bfac3796b2bdbb3664736f6c63430008090033c080a0136ebffaa8fc8b9fda9124de9ccb0b1f64e90fbd44251b4c4ac2501e60b104f9a07eb2999eec6d185ef57e91ed099afb0a926c5b536f0155dd67e537c7476e1471")
                   .unwrap();
-        let _decoded = TypedTransaction::decode(&mut &tx_bytes[..]).unwrap();
+        let _decoded =
+            <TypedTransaction as open_fastrlp::Decodable>::decode(&mut &tx_bytes[..]).unwrap();
     }
 
     #[test]
+    #[cfg(feature = "fastrlp")]
     fn test_decode_fastrlp_call() {
+        use bytes::BytesMut;
+        use open_fastrlp::Encodable;
+
         let tx = TypedTransaction::EIP2930(EIP2930Transaction {
             chain_id: 1u64,
             nonce: U256::from(0),
@@ -1206,14 +1379,17 @@ mod tests {
         let mut encoded = BytesMut::new();
         tx.encode(&mut encoded);
 
-        let decoded = TypedTransaction::decode(&mut &*encoded).unwrap();
+        let decoded =
+            <TypedTransaction as open_fastrlp::Decodable>::decode(&mut &*encoded).unwrap();
         assert_eq!(decoded, tx);
     }
 
     #[test]
+    #[cfg(feature = "fastrlp")]
     fn decode_transaction_consumes_buffer() {
         let bytes = &mut &hex::decode("b87502f872041a8459682f008459682f0d8252089461815774383099e24810ab832a5b2a5425c154d58829a2241af62c000080c001a059e6b67f48fb32e7e570dfb11e042b5ad2e55e3ce3ce9cd989c7e06e07feeafda0016b83f4f980694ed2eee4d10667242b1f40dc406901b34125b008d334d47469").unwrap()[..];
-        let _transaction_res = TypedTransaction::decode(bytes).unwrap();
+        let _transaction_res =
+            <TypedTransaction as open_fastrlp::Decodable>::decode(bytes).unwrap();
         assert_eq!(
             bytes.len(),
             0,
@@ -1223,7 +1399,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "fastrlp")]
     fn decode_multiple_network_txs() {
+        use std::str::FromStr;
+
         let bytes_first = &mut &hex::decode("f86b02843b9aca00830186a094d3e8763675e4c425df46cc3b5c0f6cbdac39604687038d7ea4c68000802ba00eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5aea03a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca18").unwrap()[..];
         let expected = TypedTransaction::Legacy(LegacyTransaction {
             nonce: 2u64.into(),
@@ -1246,7 +1425,10 @@ mod tests {
                 .unwrap(),
             },
         });
-        assert_eq!(expected, TypedTransaction::decode(bytes_first).unwrap());
+        assert_eq!(
+            expected,
+            <TypedTransaction as open_fastrlp::Decodable>::decode(bytes_first).unwrap()
+        );
 
         let bytes_second = &mut &hex::decode("f86b01843b9aca00830186a094d3e8763675e4c425df46cc3b5c0f6cbdac3960468702769bb01b2a00802ba0e24d8bd32ad906d6f8b8d7741e08d1959df021698b19ee232feba15361587d0aa05406ad177223213df262cb66ccbb2f46bfdccfdfbbb5ffdda9e2c02d977631da").unwrap()[..];
         let expected = TypedTransaction::Legacy(LegacyTransaction {
@@ -1270,7 +1452,10 @@ mod tests {
                 .unwrap(),
             },
         });
-        assert_eq!(expected, TypedTransaction::decode(bytes_second).unwrap());
+        assert_eq!(
+            expected,
+            <TypedTransaction as open_fastrlp::Decodable>::decode(bytes_second).unwrap()
+        );
 
         let bytes_third = &mut &hex::decode("f86b0384773594008398968094d3e8763675e4c425df46cc3b5c0f6cbdac39604687038d7ea4c68000802ba0ce6834447c0a4193c40382e6c57ae33b241379c5418caac9cdc18d786fd12071a03ca3ae86580e94550d7c071e3a02eadb5a77830947c9225165cf9100901bee88").unwrap()[..];
         let expected = TypedTransaction::Legacy(LegacyTransaction {
@@ -1294,7 +1479,10 @@ mod tests {
                 .unwrap(),
             },
         });
-        assert_eq!(expected, TypedTransaction::decode(bytes_third).unwrap());
+        assert_eq!(
+            expected,
+            <TypedTransaction as open_fastrlp::Decodable>::decode(bytes_third).unwrap()
+        );
 
         let bytes_fourth = &mut &hex::decode("b87502f872041a8459682f008459682f0d8252089461815774383099e24810ab832a5b2a5425c154d58829a2241af62c000080c001a059e6b67f48fb32e7e570dfb11e042b5ad2e55e3ce3ce9cd989c7e06e07feeafda0016b83f4f980694ed2eee4d10667242b1f40dc406901b34125b008d334d47469").unwrap()[..];
         let expected = TypedTransaction::EIP1559(EIP1559Transaction {
@@ -1315,7 +1503,10 @@ mod tests {
             s: H256::from_str("016b83f4f980694ed2eee4d10667242b1f40dc406901b34125b008d334d47469")
                 .unwrap(),
         });
-        assert_eq!(expected, TypedTransaction::decode(bytes_fourth).unwrap());
+        assert_eq!(
+            expected,
+            <TypedTransaction as open_fastrlp::Decodable>::decode(bytes_fourth).unwrap()
+        );
 
         let bytes_fifth = &mut &hex::decode("f8650f84832156008287fb94cf7f9e66af820a19257a2108375b180b0ec491678204d2802ca035b7bfeb9ad9ece2cbafaaf8e202e706b4cfaeb233f46198f00b44d4a566a981a0612638fb29427ca33b9a3be2a0a561beecfe0269655be160d35e72d366a6a860").unwrap()[..];
         let expected = TypedTransaction::Legacy(LegacyTransaction {
@@ -1339,7 +1530,10 @@ mod tests {
                 .unwrap(),
             },
         });
-        assert_eq!(expected, TypedTransaction::decode(bytes_fifth).unwrap());
+        assert_eq!(
+            expected,
+            <TypedTransaction as open_fastrlp::Decodable>::decode(bytes_fifth).unwrap()
+        );
     }
 
     // <https://github.com/gakonst/ethers-rs/issues/1732>

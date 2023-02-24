@@ -11,7 +11,7 @@ use svm::{self, Platform};
 ///     2. svm updated with all build info
 ///     3. svm bumped in ethers-rs
 ///     4. ethers bumped in foundry + update the `LATEST_SOLC`
-const LATEST_SOLC: Version = Version::new(0, 8, 17);
+const LATEST_SOLC: Version = Version::new(0, 8, 18);
 
 macro_rules! ensure_svm_releases {
     ($($test:ident => $platform:ident),*) => {
@@ -27,12 +27,10 @@ macro_rules! ensure_svm_releases {
 async fn ensure_latest_release(platform: Platform) {
     let releases = svm::all_releases(platform)
         .await
-        .unwrap_or_else(|err| panic!("Could not fetch releases for {}: {:?}", platform, err));
+        .unwrap_or_else(|err| panic!("Could not fetch releases for {platform}: {err:?}"));
     assert!(
         releases.releases.contains_key(&LATEST_SOLC),
-        "platform {:?} is missing solc info {}",
-        platform,
-        LATEST_SOLC
+        "platform {platform:?} is missing solc info {LATEST_SOLC}"
     );
 }
 

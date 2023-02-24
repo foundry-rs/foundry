@@ -5,7 +5,7 @@ use clap::{Parser, ValueHint};
 use foundry_config::impl_figment_convert_basic;
 use std::path::PathBuf;
 
-/// Command to list remappings
+/// CLI arguments for `forge remappings`.
 #[derive(Debug, Clone, Parser)]
 pub struct RemappingArgs {
     #[clap(

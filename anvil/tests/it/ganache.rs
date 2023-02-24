@@ -3,7 +3,7 @@
 use crate::init_tracing;
 use ethers::{
     abi::Address,
-    contract::{Contract, ContractFactory},
+    contract::{Contract, ContractFactory, ContractInstance},
     core::k256::SecretKey,
     prelude::{abigen, Middleware, Signer, SignerMiddleware, TransactionRequest, Ws},
     providers::{Http, Provider},
@@ -108,7 +108,7 @@ contract Contract {
     .unwrap();
 
     let mut compiled = prj.compile().unwrap();
-    println!("{}", compiled);
+    println!("{compiled}");
     assert!(!compiled.has_compiler_errors());
 
     let contract = compiled.remove_first("Contract").unwrap();
@@ -159,7 +159,7 @@ contract Contract {
         Provider::<Http>::try_from("http://127.0.0.1:8545").unwrap(),
         ganache_wallet2(),
     );
-    let contract = Contract::new(contract.address(), abi.unwrap(), provider);
+    let contract = ContractInstance::new(contract.address(), abi.unwrap(), provider);
     let resp = contract.method::<_, U256>("getSecret", ()).unwrap().legacy().call().await;
     resp.unwrap_err();
 

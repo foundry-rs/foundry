@@ -6,12 +6,12 @@ use ethers_core::{
     types::{Filter, Log, TxHash},
     utils::hex,
 };
-use serde::{de::Error, Deserialize, Deserializer, Serialize};
 use std::fmt;
 
 /// Result of a subscription
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(untagged)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(untagged))]
 pub enum SubscriptionResult {
     /// New block header
     Header(Box<Header>),
@@ -24,8 +24,9 @@ pub enum SubscriptionResult {
 }
 
 /// Sync status
-#[derive(Debug, Serialize, Eq, PartialEq, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Eq, PartialEq, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct SyncStatus {
     pub syncing: bool,
 }
@@ -37,26 +38,30 @@ pub struct SubscriptionParams {
     pub filter: Option<Filter>,
 }
 
-impl<'a> Deserialize<'a> for SubscriptionParams {
+#[cfg(feature = "serde")]
+impl<'a> serde::Deserialize<'a> for SubscriptionParams {
     fn deserialize<D>(deserializer: D) -> Result<SubscriptionParams, D::Error>
     where
-        D: Deserializer<'a>,
+        D: serde::Deserializer<'a>,
     {
+        use serde::de::Error;
+
         let val = serde_json::Value::deserialize(deserializer)?;
         if val.is_null() {
             return Ok(SubscriptionParams::default())
         }
 
         let filter: Filter = serde_json::from_value(val)
-            .map_err(|e| D::Error::custom(format!("Invalid Subscription parameters: {}", e)))?;
+            .map_err(|e| D::Error::custom(format!("Invalid Subscription parameters: {e}")))?;
         Ok(SubscriptionParams { filter: Some(filter) })
     }
 }
 
 /// Subscription kind
-#[derive(Debug, Deserialize, PartialEq, Eq, Hash, Clone)]
-#[serde(deny_unknown_fields)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub enum SubscriptionKind {
     /// subscribe to new heads
     NewHeads,
@@ -69,8 +74,9 @@ pub enum SubscriptionKind {
 }
 
 /// Unique subscription id
-#[derive(Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
-#[serde(untagged)]
+#[derive(Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(untagged))]
 pub enum SubscriptionId {
     /// numerical sub id
     Number(u64),
@@ -119,7 +125,7 @@ impl HexIdProvider {
         let id: String =
             (&mut thread_rng()).sample_iter(Alphanumeric).map(char::from).take(self.len).collect();
         let out = hex::encode(id);
-        format!("0x{}", out)
+        format!("0x{out}")
     }
 }
 

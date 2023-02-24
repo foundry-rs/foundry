@@ -1,6 +1,6 @@
 use anvil::{spawn, NodeConfig};
 use ethers::{
-    contract::{Contract, ContractFactory},
+    contract::{ContractFactory, ContractInstance},
     middleware::SignerMiddleware,
     types::U256,
     utils::WEI_IN_ETHER,
@@ -82,7 +82,7 @@ contract Contract {
     let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
     let contract = factory.deploy(()).unwrap().send().await.unwrap();
 
-    let contract = Contract::new(
+    let contract = ContractInstance::new(
         contract.address(),
         abi.unwrap(),
         SignerMiddleware::new(handle.http_provider(), wallets[1].clone()),
@@ -139,7 +139,7 @@ async fn test_solc_revert_example() {
     let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
     let contract = factory.deploy(()).unwrap().send().await.unwrap();
 
-    let contract = Contract::new(
+    let contract = ContractInstance::new(
         contract.address(),
         abi.unwrap(),
         SignerMiddleware::new(handle.http_provider(), wallets[1].clone()),
@@ -193,7 +193,7 @@ contract Contract {
     let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
     let contract = factory.deploy(()).unwrap().send().await.unwrap();
 
-    let contract = Contract::new(
+    let contract = ContractInstance::new(
         contract.address(),
         abi.unwrap(),
         SignerMiddleware::new(handle.http_provider(), wallets[1].clone()),

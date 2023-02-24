@@ -3,6 +3,7 @@ auto_detect_solc = true
 block_base_fee_per_gas = 0
 block_coinbase = '0x0000000000000000000000000000000000000000'
 block_difficulty = 0
+block_prevrandao = '0x0000000000000000000000000000000000000000000000000000000000000000'
 block_number = 0
 block_timestamp = 0
 bytecode_hash = 'ipfs'
@@ -19,16 +20,18 @@ gas_limit = 9223372036854775807
 gas_price = 0
 gas_reports = ['*']
 ignored_error_codes = [1878]
+deny_warnings = false
 initial_balance = '0xffffffffffffffffffffffff'
 libraries = []
 libs = ['lib']
 names = false
 no_storage_caching = false
+no_rpc_rate_limit = false
 offline = false
 optimizer = true
 optimizer_runs = 200
 out = 'out'
-remappings = ['ds-test/=lib/ds-test/src/', 'forge-std/=lib/forge-std/src/']
+remappings = ['ds-test/=lib/ds-test/src/']
 sender = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
 sizes = false
 sparse_mode = false
@@ -37,6 +40,8 @@ test = 'test'
 tx_origin = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
 verbosity = 0
 via_ir = false
+fs_permissions = [{ access = "read-write", path = "./" }]
+
 
 [profile.default.rpc_storage_caching]
 chains = 'all'

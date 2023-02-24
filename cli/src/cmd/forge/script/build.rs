@@ -16,23 +16,24 @@ use eyre::{Context, ContextCompat};
 use foundry_common::compile;
 use foundry_utils::PostLinkInput;
 use std::{collections::BTreeMap, fs, str::FromStr};
-use tracing::warn;
+use tracing::{trace, warn};
 
 impl ScriptArgs {
     /// Compiles the file or project and the verify metadata.
-    pub fn compile(&mut self, script_config: &ScriptConfig) -> eyre::Result<BuildOutput> {
+    pub fn compile(&mut self, script_config: &mut ScriptConfig) -> eyre::Result<BuildOutput> {
+        trace!(target: "script", "compiling script");
+
         self.build(script_config)
     }
 
     /// Compiles the file with auto-detection and compiler params.
-    pub fn build(&mut self, script_config: &ScriptConfig) -> eyre::Result<BuildOutput> {
+    pub fn build(&mut self, script_config: &mut ScriptConfig) -> eyre::Result<BuildOutput> {
         let (project, output) = self.get_project_and_output(script_config)?;
 
         let mut sources: BTreeMap<u32, String> = BTreeMap::new();
 
         let contracts = output
             .into_artifacts()
-            .into_iter()
             .map(|(id, artifact)| -> eyre::Result<_> {
                 // Sources are only required for the debugger, but it *might* mean that there's
                 // something wrong with the build and/or artifacts.
@@ -58,7 +59,10 @@ impl ScriptArgs {
             script_config.evm_opts.sender,
             script_config.sender_nonce,
         )?;
+
         output.sources = sources;
+        script_config.target_contract = Some(output.target.clone());
+
         Ok(output)
     }
 
@@ -113,7 +117,7 @@ impl ScriptArgs {
             sender,
             nonce,
             &mut extra_info,
-            |file, key| (format!("{}.json:{}", key, key), file, key),
+            |file, key| (format!("{key}.json:{key}"), file, key),
             |post_link_input| {
                 let PostLinkInput {
                     contract,
@@ -185,19 +189,23 @@ impl ScriptArgs {
     ) -> eyre::Result<(Project, ProjectCompileOutput)> {
         let project = script_config.config.project()?;
 
-        if !project.paths.has_input_files() {
-            eyre::bail!("No input files detected.")
-        }
-
-        // We received a file path.
+        let filters = self.opts.skip.clone().unwrap_or_default();
+        // We received a valid file path.
+        // If this file does not exist, `dunce::canonicalize` will
+        // result in an error and it will be handled below.
         if let Ok(target_contract) = dunce::canonicalize(&self.path) {
-            let output = compile::compile_target(
+            let output = compile::compile_target_with_filter(
                 &target_contract,
                 &project,
                 self.opts.args.silent,
                 self.verify,
+                filters,
             )?;
             return Ok((project, output))
+        }
+
+        if !project.paths.has_input_files() {
+            eyre::bail!("The project doesn't have any input files. Make sure the `script` directory is configured properly in foundry.toml. Otherwise, provide the path to the file.")
         }
 
         let contract = ContractInfo::from_str(&self.path)?;
@@ -206,9 +214,14 @@ impl ScriptArgs {
         // We received `contract_path:contract_name`
         if let Some(path) = contract.path {
             let path =
-                dunce::canonicalize(&path).wrap_err("Could not canonicalize the target path")?;
-            let output =
-                compile::compile_target(&path, &project, self.opts.args.silent, self.verify)?;
+                dunce::canonicalize(path).wrap_err("Could not canonicalize the target path")?;
+            let output = compile::compile_target_with_filter(
+                &path,
+                &project,
+                self.opts.args.silent,
+                self.verify,
+                filters,
+            )?;
             self.path = path.to_string_lossy().to_string();
             return Ok((project, output))
         }
@@ -272,12 +285,12 @@ pub fn filter_sources_and_artifacts(
             }
 
             if !is_standalone {
-                target_tree.get(&resolved).map(|source| (id, source.content.clone()))
+                target_tree.get(&resolved).map(|source| (id, source.content.as_str().to_string()))
             } else {
                 Some((
                     id,
                     fs::read_to_string(&resolved).unwrap_or_else(|_| {
-                        panic!("Something went wrong reading the source file: {:?}", path)
+                        panic!("Something went wrong reading the source file: {path:?}")
                     }),
                 ))
             }

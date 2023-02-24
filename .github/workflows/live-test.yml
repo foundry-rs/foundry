@@ -18,16 +18,17 @@ jobs:
             TEST_PRIVATE_KEY: ${{ secrets.TEST_PRIVATE_KEY }}
         steps:
             - name: Checkout sources
-              uses: actions/checkout@v2
+              uses: actions/checkout@v3
             - name: Install toolchain
               uses: actions-rs/toolchain@v1
               with:
                   toolchain: stable
                   profile: minimal
                   override: true
+            - name: Install nextest
+              uses: taiki-e/install-action@nextest
             - uses: Swatinem/rust-cache@v1
               with:
                   cache-on-failure: true
-
-            - name: cargo test
-              run: cargo test --package foundry-cli --test it -- verify::test_live_can_deploy_and_verify --exact --nocapture
+            - name: cargo nextest
+              run: cargo nextest run -p foundry-cli -E "!test(~fork) & test(~live)"

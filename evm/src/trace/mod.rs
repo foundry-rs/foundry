@@ -1,3 +1,23 @@
+use crate::{
+    abi::CHEATCODE_ADDRESS, debug::Instruction, trace::identifier::LocalTraceIdentifier, CallKind,
+};
+pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
+use ethers::{
+    abi::{ethereum_types::BigEndianHash, Address, RawLog},
+    core::utils::to_checksum,
+    types::{Bytes, DefaultFrame, GethDebugTracingOptions, StructLog, H256, U256},
+};
+use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
+use hashbrown::HashMap;
+use node::CallTraceNode;
+use revm::{opcode, CallContext, Memory, Return, Stack};
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::{BTreeMap, HashSet},
+    fmt::{self, Write},
+};
+use yansi::{Color, Paint};
+
 /// Call trace address identifiers.
 ///
 /// Identifiers figure out what ABIs and labels belong to all the addresses of the trace.
@@ -7,28 +27,10 @@ mod decoder;
 pub mod node;
 mod utils;
 
-use crate::{
-    abi::CHEATCODE_ADDRESS, debug::Instruction, trace::identifier::LocalTraceIdentifier, CallKind,
-};
-pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
-use ethers::{
-    abi::{ethereum_types::BigEndianHash, Address, RawLog},
-    core::utils::to_checksum,
-    types::{GethDebugTracingOptions, GethTrace, StructLog, H256, U256},
-};
-use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
-use hashbrown::HashMap;
-use node::CallTraceNode;
-use revm::{CallContext, Memory, Return, Stack};
-use serde::{Deserialize, Serialize};
-use std::{
-    collections::{BTreeMap, HashSet},
-    fmt::{self, Write},
-};
-use yansi::{Color, Paint};
+pub type Traces = Vec<(TraceKind, CallTraceArena)>;
 
 /// An arena of [CallTraceNode]s
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CallTraceArena {
     /// The arena of nodes
     pub arena: Vec<CallTraceNode>,
@@ -74,13 +76,13 @@ impl CallTraceArena {
         }
     }
 
-    pub fn addresses(&self) -> HashSet<(&Address, Option<&Vec<u8>>)> {
+    pub fn addresses(&self) -> HashSet<(&Address, Option<&[u8]>)> {
         self.arena
             .iter()
             .map(|node| {
                 if node.trace.created() {
-                    if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
-                        return (&node.trace.address, Some(bytes))
+                    if let RawOrDecodedReturnData::Raw(ref bytes) = node.trace.output {
+                        return (&node.trace.address, Some(bytes.as_ref()))
                     }
                 }
 
@@ -89,40 +91,90 @@ impl CallTraceArena {
             .collect()
     }
 
-    pub fn geth_trace(&self, receipt_gas_used: U256, opts: GethDebugTracingOptions) -> GethTrace {
-        let mut storage = HashMap::<Address, BTreeMap<H256, H256>>::new();
-        let mut trace = self.arena.iter().fold(GethTrace::default(), |mut acc, trace| {
-            acc.failed |= !trace.trace.success;
+    // Recursively fill in the geth trace by going through the traces
+    fn add_to_geth_trace(
+        &self,
+        storage: &mut HashMap<Address, BTreeMap<H256, H256>>,
+        trace_node: &CallTraceNode,
+        struct_logs: &mut Vec<StructLog>,
+        opts: &GethDebugTracingOptions,
+    ) {
+        let mut child_id = 0;
+        // Iterate over the steps inside the given trace
+        for step in trace_node.trace.steps.iter() {
+            let mut log: StructLog = step.into();
 
-            acc.struct_logs.extend(trace.trace.steps.iter().map(|step| {
-                let mut log: StructLog = step.into();
+            // Fill in memory and storage depending on the options
+            if !opts.disable_storage.unwrap_or_default() {
+                let contract_storage = storage.entry(step.contract).or_default();
+                if let Some((key, value)) = step.state_diff {
+                    contract_storage.insert(H256::from_uint(&key), H256::from_uint(&value));
+                    log.storage = Some(contract_storage.clone());
+                }
+            }
+            if opts.disable_stack.unwrap_or_default() {
+                log.stack = None;
+            }
+            if !opts.enable_memory.unwrap_or_default() {
+                log.memory = None;
+            }
 
-                if !opts.disable_storage.unwrap_or_default() {
-                    let contract_storage = storage.entry(step.contract).or_default();
-                    if let Some((key, value)) = step.state_diff {
-                        contract_storage.insert(H256::from_uint(&key), H256::from_uint(&value));
-                        log.storage = Some(contract_storage.clone());
+            // Add step to geth trace
+            struct_logs.push(log);
+
+            // Check if the step was a call
+            match step.op {
+                Instruction::OpCode(opc) => {
+                    match opc {
+                        // If yes, descend into a child trace
+                        opcode::CREATE |
+                        opcode::CREATE2 |
+                        opcode::DELEGATECALL |
+                        opcode::CALL |
+                        opcode::STATICCALL |
+                        opcode::CALLCODE => {
+                            self.add_to_geth_trace(
+                                storage,
+                                &self.arena[trace_node.children[child_id]],
+                                struct_logs,
+                                opts,
+                            );
+                            child_id += 1;
+                        }
+                        _ => {}
                     }
                 }
-                if opts.disable_stack.unwrap_or_default() {
-                    log.stack = None;
-                }
-                if !opts.enable_memory.unwrap_or_default() {
-                    log.memory = None;
-                }
+                Instruction::Cheatcode(_) => {}
+            }
+        }
+    }
 
-                log
-            }));
-
-            acc
-        });
-
-        trace.gas = receipt_gas_used.as_u64();
-        if let Some(last_trace) = self.arena.first() {
-            trace.return_value = last_trace.trace.output.to_raw().into();
+    /// Generate a geth-style trace e.g. for debug_traceTransaction
+    pub fn geth_trace(
+        &self,
+        receipt_gas_used: U256,
+        opts: GethDebugTracingOptions,
+    ) -> DefaultFrame {
+        if self.arena.is_empty() {
+            return Default::default()
         }
 
-        trace
+        let mut storage = HashMap::new();
+        // Fetch top-level trace
+        let main_trace_node = &self.arena[0];
+        let main_trace = &main_trace_node.trace;
+        // Start geth trace
+        let mut acc = DefaultFrame {
+            // If the top-level trace succeeded, then it was a success
+            failed: !main_trace.success,
+            gas: receipt_gas_used,
+            return_value: main_trace.output.to_bytes(),
+            ..Default::default()
+        };
+
+        self.add_to_geth_trace(&mut storage, main_trace_node, &mut acc.struct_logs, &opts);
+
+        acc
     }
 }
 
@@ -146,9 +198,9 @@ impl fmt::Display for CallTraceArena {
 
             // Display trace header
             if !verbose {
-                writeln!(writer, "{}{}", left, node.trace)?;
+                writeln!(writer, "{left}{}", node.trace)?;
             } else {
-                writeln!(writer, "{}{:#}", left, node.trace)?;
+                writeln!(writer, "{left}{:#}", node.trace)?;
             }
 
             // Display logs and subcalls
@@ -185,7 +237,7 @@ impl fmt::Display for CallTraceArena {
 
             // Display trace return data
             let color = trace_color(&node.trace);
-            write!(writer, "{}{}", child, EDGE)?;
+            write!(writer, "{child}{EDGE}")?;
             write!(writer, "{}", color.paint(RETURN))?;
             if node.trace.created() {
                 if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
@@ -205,7 +257,7 @@ impl fmt::Display for CallTraceArena {
 }
 
 /// A raw or decoded log.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RawOrDecodedLog {
     /// A raw log
     Raw(RawLog),
@@ -242,7 +294,7 @@ impl fmt::Display for RawOrDecodedLog {
                     .collect::<Vec<String>>()
                     .join(", ");
 
-                write!(f, "emit {}({})", Paint::cyan(name.clone()), params)
+                write!(f, "emit {}({params})", Paint::cyan(name.clone()))
             }
         }
     }
@@ -258,12 +310,11 @@ pub enum LogCallOrder {
     Call(usize),
 }
 
-// TODO: Maybe unify with output
 /// Raw or decoded calldata.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum RawOrDecodedCall {
     /// Raw calldata
-    Raw(Vec<u8>),
+    Raw(Bytes),
     /// Decoded calldata.
     ///
     /// The first element in the tuple is the function name, second is the function signature and
@@ -274,7 +325,7 @@ pub enum RawOrDecodedCall {
 impl RawOrDecodedCall {
     pub fn to_raw(&self) -> Vec<u8> {
         match self {
-            RawOrDecodedCall::Raw(raw) => raw.clone(),
+            RawOrDecodedCall::Raw(raw) => raw.to_vec(),
             RawOrDecodedCall::Decoded(_, _, _) => {
                 vec![]
             }
@@ -284,7 +335,7 @@ impl RawOrDecodedCall {
 
 impl Default for RawOrDecodedCall {
     fn default() -> Self {
-        RawOrDecodedCall::Raw(Vec::new())
+        RawOrDecodedCall::Raw(Default::default())
     }
 }
 
@@ -292,23 +343,28 @@ impl Default for RawOrDecodedCall {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum RawOrDecodedReturnData {
     /// Raw return data
-    Raw(Vec<u8>),
+    Raw(Bytes),
     /// Decoded return data
     Decoded(String),
 }
 
 impl RawOrDecodedReturnData {
-    pub fn to_raw(&self) -> Vec<u8> {
+    /// Returns the data as [`Bytes`]
+    pub fn to_bytes(&self) -> Bytes {
         match self {
             RawOrDecodedReturnData::Raw(raw) => raw.clone(),
-            RawOrDecodedReturnData::Decoded(val) => val.as_bytes().to_vec(),
+            RawOrDecodedReturnData::Decoded(val) => val.as_bytes().to_vec().into(),
         }
+    }
+
+    pub fn to_raw(&self) -> Vec<u8> {
+        self.to_bytes().to_vec()
     }
 }
 
 impl Default for RawOrDecodedReturnData {
     fn default() -> Self {
-        RawOrDecodedReturnData::Raw(Vec::new())
+        RawOrDecodedReturnData::Raw(Default::default())
     }
 }
 
@@ -352,7 +408,7 @@ pub struct CallTraceStep {
     pub gas_cost: u64,
     /// Change of the contract state after step execution (effect of the SLOAD/SSTORE instructions)
     pub state_diff: Option<(U256, U256)>,
-    /// Error (if any) after after step execution
+    /// Error (if any) after step execution
     pub error: Option<String>,
 }
 
@@ -523,7 +579,7 @@ fn trace_color(trace: &CallTrace) -> Color {
 
 /// Given a list of traces and artifacts, it returns a map connecting address to abi
 pub fn load_contracts(
-    traces: Vec<(TraceKind, CallTraceArena)>,
+    traces: Traces,
     known_contracts: Option<&ContractsByArtifact>,
 ) -> ContractsByAddress {
     if let Some(contracts) = known_contracts {

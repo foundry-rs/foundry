@@ -12,6 +12,7 @@ use foundry_config::{cache, Chain as FoundryConfigChain, Config};
 use std::{ffi::OsStr, str::FromStr};
 use strum::VariantNames;
 
+/// CLI arguments for `forge cache`.
 #[derive(Debug, Parser)]
 pub struct CacheArgs {
     #[clap(subcommand)]
@@ -22,10 +23,12 @@ pub struct CacheArgs {
 pub enum CacheSubcommands {
     #[clap(about = "Cleans cached data from ~/.foundry.")]
     Clean(CleanArgs),
+
     #[clap(about = "Shows cached data from ~/.foundry.")]
     Ls(LsArgs),
 }
 
+/// CLI arguments for `forge clean`.
 #[derive(Debug, Parser)]
 #[clap(group = clap::ArgGroup::new("etherscan-blocks").multiple(false))]
 pub struct CleanArgs {
@@ -100,7 +103,7 @@ impl Cmd for LsArgs {
                 ChainOrAll::All => cache = Config::list_foundry_cache()?,
             }
         }
-        print!("{}", cache);
+        print!("{cache}");
         Ok(())
     }
 }

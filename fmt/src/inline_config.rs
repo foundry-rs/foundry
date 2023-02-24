@@ -9,6 +9,8 @@ use std::{fmt, str::FromStr};
 pub enum InlineConfigItem {
     /// Disables the next code item regardless of newlines
     DisableNextItem,
+    /// Disables formatting on the current line
+    DisableLine,
     /// Disables formatting between the next newline and the newline after
     DisableNextLine,
     /// Disables formatting for any code that follows this and before the next "disable-end"
@@ -22,6 +24,7 @@ impl FromStr for InlineConfigItem {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s {
             "disable-next-item" => InlineConfigItem::DisableNextItem,
+            "disable-line" => InlineConfigItem::DisableLine,
             "disable-next-line" => InlineConfigItem::DisableNextLine,
             "disable-start" => InlineConfigItem::DisableStart,
             "disable-end" => InlineConfigItem::DisableEnd,
@@ -60,7 +63,7 @@ impl DisabledRange {
 /// This is a list of Inline Config items for locations in a source file. This is
 /// usually acquired by parsing the comments for an `forgefmt:` items. See
 /// [`Comments::parse_inline_config_items`] for details.
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub struct InlineConfig {
     disabled_ranges: Vec<DisabledRange>,
 }
@@ -91,6 +94,19 @@ impl InlineConfig {
                             .unwrap_or(src.len());
                         disabled_ranges.push(DisabledRange { start, end, loose: true });
                     }
+                }
+                InlineConfigItem::DisableLine => {
+                    let mut prev_newline =
+                        src[..loc.start()].char_indices().rev().skip_while(|(_, ch)| *ch != '\n');
+                    let start = prev_newline.next().map(|(idx, _)| idx).unwrap_or_default();
+
+                    let end_offset = loc.end();
+                    let mut next_newline =
+                        src[end_offset..].char_indices().skip_while(|(_, ch)| *ch != '\n');
+                    let end =
+                        end_offset + next_newline.next().map(|(idx, _)| idx).unwrap_or_default();
+
+                    disabled_ranges.push(DisabledRange { start, end, loose: false });
                 }
                 InlineConfigItem::DisableNextLine => {
                     let offset = loc.end();

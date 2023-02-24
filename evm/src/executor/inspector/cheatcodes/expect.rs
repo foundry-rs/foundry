@@ -11,6 +11,7 @@ use ethers::{
 };
 use revm::{return_ok, Bytecode, EVMData, Return};
 use std::cmp::Ordering;
+use tracing::{instrument, trace};
 
 /// For some cheatcodes we may internally change the status of the call, i.e. in `expectRevert`.
 /// Solidity will see a successful call and attempt to decode the return data. Therefore, we need
@@ -48,21 +49,24 @@ fn expect_revert(
     }
 }
 
+#[instrument(skip_all, fields(expected_revert, status, retdata= hex::encode(&retdata)))]
 pub fn handle_expect_revert(
     is_create: bool,
     expected_revert: Option<&Bytes>,
     status: Return,
     retdata: Bytes,
 ) -> Result<(Option<Address>, Bytes), Bytes> {
+    trace!("handle expect revert");
+
     if matches!(status, return_ok!()) {
         return Err("Call did not revert as expected".to_string().encode().into())
     }
-
     macro_rules! success_return {
         () => {
             Ok(if is_create {
                 (Some(DUMMY_CREATE_ADDRESS), Bytes::new())
             } else {
+                trace!("successfully handled expected revert");
                 (None, DUMMY_CALL_OUTPUT.to_vec().into())
             })
         };
@@ -78,7 +82,7 @@ pub fn handle_expect_revert(
         return Err("Call reverted as expected, but without data".to_string().encode().into())
     }
 
-    let string_data = match retdata {
+    let maybe_prefixed_error_string = match retdata {
         _ if retdata.len() >= REVERT_PREFIX.len() &&
             retdata[..REVERT_PREFIX.len()] == REVERT_PREFIX =>
         {
@@ -99,8 +103,8 @@ pub fn handle_expect_revert(
             .unwrap_or_else(|| format!("0x{}", hex::encode(data)))
     };
 
-    let (err, actual_revert): (_, Bytes) = if let Some(data) = string_data {
-        // It's a revert string, so we do some conversion to perform the check
+    let (err_message, actual_revert): (_, Bytes) = if let Some(data) = maybe_prefixed_error_string {
+        // It's a prefixed revert string, so we do some conversion to perform the check
         let decoded_data = ethers::prelude::Bytes::decode(data)
             .expect("String error code, but data can't be decoded as bytes");
 
@@ -130,7 +134,7 @@ pub fn handle_expect_revert(
     if actual_revert == expected_revert {
         success_return!()
     } else {
-        Err(err)
+        Err(err_message)
     }
 }
 
@@ -202,6 +206,10 @@ pub struct ExpectedCallData {
     pub calldata: Bytes,
     /// The expected value sent in the call
     pub value: Option<U256>,
+    /// The expected gas supplied to the call
+    pub gas: Option<u64>,
+    /// The expected *minimum* gas supplied to the call
+    pub min_gas: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -260,19 +268,51 @@ pub fn apply<DB: DatabaseExt>(
             Ok(Bytes::new())
         }
         HEVMCalls::ExpectCall0(inner) => {
-            state
-                .expected_calls
-                .entry(inner.0)
-                .or_default()
-                .push(ExpectedCallData { calldata: inner.1.to_vec().into(), value: None });
+            state.expected_calls.entry(inner.0).or_default().push(ExpectedCallData {
+                calldata: inner.1.to_vec().into(),
+                value: None,
+                gas: None,
+                min_gas: None,
+            });
             Ok(Bytes::new())
         }
         HEVMCalls::ExpectCall1(inner) => {
-            state
-                .expected_calls
-                .entry(inner.0)
-                .or_default()
-                .push(ExpectedCallData { calldata: inner.2.to_vec().into(), value: Some(inner.1) });
+            state.expected_calls.entry(inner.0).or_default().push(ExpectedCallData {
+                calldata: inner.2.to_vec().into(),
+                value: Some(inner.1),
+                gas: None,
+                min_gas: None,
+            });
+            Ok(Bytes::new())
+        }
+        HEVMCalls::ExpectCall2(inner) => {
+            let value = inner.1;
+
+            // If the value of the transaction is non-zero, the EVM adds a call stipend of 2300 gas
+            // to ensure that the basic fallback function can be called.
+            let positive_value_cost_stipend = if value > U256::zero() { 2300 } else { 0 };
+
+            state.expected_calls.entry(inner.0).or_default().push(ExpectedCallData {
+                calldata: inner.3.to_vec().into(),
+                value: Some(value),
+                gas: Some(inner.2 + positive_value_cost_stipend),
+                min_gas: None,
+            });
+            Ok(Bytes::new())
+        }
+        HEVMCalls::ExpectCallMinGas(inner) => {
+            let value = inner.1;
+
+            // If the value of the transaction is non-zero, the EVM adds a call stipend of 2300 gas
+            // to ensure that the basic fallback function can be called.
+            let positive_value_cost_stipend = if value > U256::zero() { 2300 } else { 0 };
+
+            state.expected_calls.entry(inner.0).or_default().push(ExpectedCallData {
+                calldata: inner.3.to_vec().into(),
+                value: Some(value),
+                gas: None,
+                min_gas: Some(inner.2 + positive_value_cost_stipend),
+            });
             Ok(Bytes::new())
         }
         HEVMCalls::MockCall0(inner) => {

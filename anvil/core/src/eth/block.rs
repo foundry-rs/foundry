@@ -1,8 +1,4 @@
-use crate::eth::{
-    receipt::TypedReceipt,
-    transaction::{TransactionInfo, TypedTransaction},
-    trie,
-};
+use crate::eth::{receipt::TypedReceipt, transaction::TransactionInfo, trie};
 use ethers_core::{
     types::{Address, Bloom, Bytes, H256, H64, U256},
     utils::{
@@ -10,11 +6,6 @@ use ethers_core::{
         rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream},
     },
 };
-use fastrlp::{
-    length_of_length, Decodable as FastDecodable, Encodable as FastEncodable, RlpDecodable,
-    RlpEncodable,
-};
-use serde::{Deserialize, Serialize};
 
 /// Container type that gathers all block data
 #[derive(Debug, Clone)]
@@ -24,22 +15,39 @@ pub struct BlockInfo {
     pub receipts: Vec<TypedReceipt>,
 }
 
-/// ethereum block
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, RlpEncodable, RlpDecodable)]
+// Type alias to optionally support impersonated transactions
+#[cfg(not(feature = "impersonated-tx"))]
+type Transaction = crate::eth::transaction::TypedTransaction;
+#[cfg(feature = "impersonated-tx")]
+type Transaction = crate::eth::transaction::MaybeImpersonatedTransaction;
+
+/// An Ethereum block
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "fastrlp", derive(open_fastrlp::RlpEncodable, open_fastrlp::RlpDecodable))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Block {
     pub header: Header,
-    pub transactions: Vec<TypedTransaction>,
+    /// Note: this supports impersonated transactions
+    pub transactions: Vec<Transaction>,
     pub ommers: Vec<Header>,
 }
 
 // == impl Block ==
 
 impl Block {
-    pub fn new(
+    /// Creates a new block
+    ///
+    /// Note: if the `impersonate-tx` feature is enabled this  will also accept
+    /// [MaybeImpersonatedTransaction]
+    pub fn new<T>(
         partial_header: PartialHeader,
-        transactions: Vec<TypedTransaction>,
+        transactions: impl IntoIterator<Item = T>,
         ommers: Vec<Header>,
-    ) -> Self {
+    ) -> Self
+    where
+        T: Into<Transaction>,
+    {
+        let transactions: Vec<_> = transactions.into_iter().map(Into::into).collect();
         let ommers_hash = H256::from_slice(keccak256(&rlp::encode_list(&ommers)[..]).as_slice());
         let transactions_root =
             trie::ordered_trie_root(transactions.iter().map(|r| rlp::encode(r).freeze()));
@@ -68,8 +76,9 @@ impl Decodable for Block {
 }
 
 /// ethereum block header
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct Header {
     pub parent_hash: H256,
     pub ommers_hash: H256,
@@ -121,7 +130,10 @@ impl Header {
     /// Returns the rlp length of the Header body, _not including_ trailing EIP155 fields or the
     /// rlp list header
     /// To get the length including the rlp list header, refer to the Encodable implementation.
+    #[cfg(feature = "fastrlp")]
     pub(crate) fn header_payload_length(&self) -> usize {
+        use open_fastrlp::Encodable;
+
         let mut length = 0;
         length += self.parent_hash.length();
         length += self.ommers_hash.length();
@@ -199,19 +211,20 @@ impl rlp::Decodable for Header {
     }
 }
 
-impl fastrlp::Encodable for Header {
+#[cfg(feature = "fastrlp")]
+impl open_fastrlp::Encodable for Header {
     fn length(&self) -> usize {
         // add each of the fields' rlp encoded lengths
         let mut length = 0;
         length += self.header_payload_length();
-        length += length_of_length(length);
+        length += open_fastrlp::length_of_length(length);
 
         length
     }
 
-    fn encode(&self, out: &mut dyn fastrlp::BufMut) {
+    fn encode(&self, out: &mut dyn open_fastrlp::BufMut) {
         let list_header =
-            fastrlp::Header { list: true, payload_length: self.header_payload_length() };
+            open_fastrlp::Header { list: true, payload_length: self.header_payload_length() };
         list_header.encode(out);
         self.parent_hash.encode(out);
         self.ommers_hash.encode(out);
@@ -234,31 +247,32 @@ impl fastrlp::Encodable for Header {
     }
 }
 
-impl fastrlp::Decodable for Header {
-    fn decode(buf: &mut &[u8]) -> Result<Self, fastrlp::DecodeError> {
+#[cfg(feature = "fastrlp")]
+impl open_fastrlp::Decodable for Header {
+    fn decode(buf: &mut &[u8]) -> Result<Self, open_fastrlp::DecodeError> {
         // slice out the rlp list header
-        let header = fastrlp::Header::decode(buf)?;
+        let header = open_fastrlp::Header::decode(buf)?;
         let start_len = buf.len();
 
         Ok(Header {
-            parent_hash: <H256 as FastDecodable>::decode(buf)?,
-            ommers_hash: <H256 as FastDecodable>::decode(buf)?,
-            beneficiary: <Address as FastDecodable>::decode(buf)?,
-            state_root: <H256 as FastDecodable>::decode(buf)?,
-            transactions_root: <H256 as FastDecodable>::decode(buf)?,
-            receipts_root: <H256 as FastDecodable>::decode(buf)?,
-            logs_bloom: <Bloom as FastDecodable>::decode(buf)?,
-            difficulty: <U256 as FastDecodable>::decode(buf)?,
-            number: <U256 as FastDecodable>::decode(buf)?,
-            gas_limit: <U256 as FastDecodable>::decode(buf)?,
-            gas_used: <U256 as FastDecodable>::decode(buf)?,
-            timestamp: <u64 as FastDecodable>::decode(buf)?,
-            extra_data: <Bytes as FastDecodable>::decode(buf)?,
-            mix_hash: <H256 as FastDecodable>::decode(buf)?,
-            nonce: <H64 as FastDecodable>::decode(buf)?,
+            parent_hash: <H256 as open_fastrlp::Decodable>::decode(buf)?,
+            ommers_hash: <H256 as open_fastrlp::Decodable>::decode(buf)?,
+            beneficiary: <Address as open_fastrlp::Decodable>::decode(buf)?,
+            state_root: <H256 as open_fastrlp::Decodable>::decode(buf)?,
+            transactions_root: <H256 as open_fastrlp::Decodable>::decode(buf)?,
+            receipts_root: <H256 as open_fastrlp::Decodable>::decode(buf)?,
+            logs_bloom: <Bloom as open_fastrlp::Decodable>::decode(buf)?,
+            difficulty: <U256 as open_fastrlp::Decodable>::decode(buf)?,
+            number: <U256 as open_fastrlp::Decodable>::decode(buf)?,
+            gas_limit: <U256 as open_fastrlp::Decodable>::decode(buf)?,
+            gas_used: <U256 as open_fastrlp::Decodable>::decode(buf)?,
+            timestamp: <u64 as open_fastrlp::Decodable>::decode(buf)?,
+            extra_data: <Bytes as open_fastrlp::Decodable>::decode(buf)?,
+            mix_hash: <H256 as open_fastrlp::Decodable>::decode(buf)?,
+            nonce: <H64 as open_fastrlp::Decodable>::decode(buf)?,
             base_fee_per_gas: if start_len - header.payload_length < buf.len() {
                 // if there is leftover data in the payload, decode the base fee
-                Some(<U256 as FastDecodable>::decode(buf)?)
+                Some(<U256 as open_fastrlp::Decodable>::decode(buf)?)
             } else {
                 None
             },
@@ -350,6 +364,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "fastrlp")]
     fn header_fastrlp_roundtrip() {
         let mut header = Header {
             parent_hash: Default::default(),
@@ -371,23 +386,26 @@ mod tests {
         };
 
         let mut encoded = vec![];
-        <Header as fastrlp::Encodable>::encode(&header, &mut encoded);
+        <Header as open_fastrlp::Encodable>::encode(&header, &mut encoded);
         let decoded: Header =
-            <Header as fastrlp::Decodable>::decode(&mut encoded.as_slice()).unwrap();
+            <Header as open_fastrlp::Decodable>::decode(&mut encoded.as_slice()).unwrap();
         assert_eq!(header, decoded);
 
         header.base_fee_per_gas = Some(12345u64.into());
 
         encoded.clear();
-        <Header as fastrlp::Encodable>::encode(&header, &mut encoded);
+        <Header as open_fastrlp::Encodable>::encode(&header, &mut encoded);
         let decoded: Header =
-            <Header as fastrlp::Decodable>::decode(&mut encoded.as_slice()).unwrap();
+            <Header as open_fastrlp::Decodable>::decode(&mut encoded.as_slice()).unwrap();
         assert_eq!(header, decoded);
     }
 
     #[test]
+    #[cfg(feature = "fastrlp")]
     // Test vector from: https://eips.ethereum.org/EIPS/eip-2481
     fn test_encode_block_header() {
+        use open_fastrlp::Encodable;
+
         let expected = hex::decode("f901f9a00000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000940000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000b90100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008208ae820d0582115c8215b3821a0a827788a00000000000000000000000000000000000000000000000000000000000000000880000000000000000").unwrap();
         let mut data = vec![];
         let header = Header {
@@ -441,6 +459,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "fastrlp")]
     // Test vector from: https://eips.ethereum.org/EIPS/eip-2481
     fn test_decode_block_header() {
         let data = hex::decode("f901f9a00000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000940000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000b90100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008208ae820d0582115c8215b3821a0a827788a00000000000000000000000000000000000000000000000000000000000000000880000000000000000").unwrap();
@@ -462,16 +481,19 @@ mod tests {
             nonce: H64::from_low_u64_be(0x0),
             base_fee_per_gas: None,
         };
-        let header = <Header as fastrlp::Decodable>::decode(&mut data.as_slice()).unwrap();
+        let header = <Header as open_fastrlp::Decodable>::decode(&mut data.as_slice()).unwrap();
         assert_eq!(header, expected);
     }
 
     #[test]
+    #[cfg(feature = "fastrlp")]
     // Test vector from network
     fn block_network_fastrlp_roundtrip() {
+        use open_fastrlp::Encodable;
+
         let data = hex::decode("f9034df90348a0fbdbd8d2d0ac5f14bd5fa90e547fe6f1d15019c724f8e7b60972d381cd5d9cf8a01dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d4934794c9577e7945db22e38fc060909f2278c7746b0f9ba05017cfa3b0247e35197215ae8d610265ffebc8edca8ea66d6567eb0adecda867a056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421a056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421b9010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000018355bb7b871fffffffffffff808462bd0e1ab9014bf90148a00000000000000000000000000000000000000000000000000000000000000000f85494319fa8f1bc4e53410e92d10d918659b16540e60a945a573efb304d04c1224cd012313e827eca5dce5d94a9c831c5a268031176ebf5f3de5051e8cba0dbfe94c9577e7945db22e38fc060909f2278c7746b0f9b808400000000f8c9b841a6946f2d16f68338cbcbd8b117374ab421128ce422467088456bceba9d70c34106128e6d4564659cf6776c08a4186063c0a05f7cffd695c10cf26a6f301b67f800b8412b782100c18c35102dc0a37ece1a152544f04ad7dc1868d18a9570f744ace60870f822f53d35e89a2ea9709ccbf1f4a25ee5003944faa845d02dde0a41d5704601b841d53caebd6c8a82456e85c2806a9e08381f959a31fb94a77e58f00e38ad97b2e0355b8519ab2122662cbe022f2a4ef7ff16adc0b2d5dcd123181ec79705116db300a063746963616c2062797a616e74696e65206661756c7420746f6c6572616e6365880000000000000000c0c0").unwrap();
 
-        let block = <Block as fastrlp::Decodable>::decode(&mut data.as_slice()).unwrap();
+        let block = <Block as open_fastrlp::Decodable>::decode(&mut data.as_slice()).unwrap();
 
         // encode and check that it matches the original data
         let mut encoded = Vec::new();

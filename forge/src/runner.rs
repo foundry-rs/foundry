@@ -12,7 +12,8 @@ use foundry_common::{
     TestFunctionExt,
 };
 use foundry_evm::{
-    executor::{CallResult, DeployResult, EvmError, Executor},
+    decode::decode_console_logs,
+    executor::{CallResult, DeployResult, EvmError, ExecutionErr, Executor},
     fuzz::{
         invariant::{
             InvariantContract, InvariantExecutor, InvariantFuzzError, InvariantFuzzTestResult,
@@ -93,7 +94,8 @@ impl<'a> ContractRunner<'a> {
                         traces.push((TraceKind::Deployment, tmp_traces));
                     }
                 }
-                Err(EvmError::Execution { reason, traces, logs, labels, .. }) => {
+                Err(EvmError::Execution(err)) => {
+                    let ExecutionErr { reason, traces, logs, labels, .. } = *err;
                     // If we failed to call the constructor, force the tracekind to be setup so
                     // a trace is shown.
                     let traces =
@@ -118,7 +120,8 @@ impl<'a> ContractRunner<'a> {
             .deploy(self.sender, self.code.0.clone(), 0u32.into(), self.errors)
         {
             Ok(d) => d,
-            Err(EvmError::Execution { reason, traces, logs, labels, .. }) => {
+            Err(EvmError::Execution(err)) => {
+                let ExecutionErr { reason, traces, logs, labels, .. } = *err;
                 let traces =
                     traces.map(|traces| vec![(TraceKind::Setup, traces)]).unwrap_or_default();
 
@@ -153,7 +156,8 @@ impl<'a> ContractRunner<'a> {
                         trace!(contract=?address, "successfully setUp test");
                         (false, logs, traces, labels, None)
                     }
-                    Err(EvmError::Execution { traces, labels, logs, reason, .. }) => {
+                    Err(EvmError::Execution(err)) => {
+                        let ExecutionErr { traces, labels, logs, reason, .. } = *err;
                         error!(reason=?reason, contract= ?address, "setUp failed");
                         (true, logs, traces, labels, Some(format!("Setup failed: {reason}")))
                     }
@@ -216,6 +220,7 @@ impl<'a> ContractRunner<'a> {
                         reason: Some("Multiple setUp functions".to_string()),
                         counterexample: None,
                         logs: vec![],
+                        decoded_logs: vec![],
                         kind: TestKind::Standard(0),
                         traces: vec![],
                         coverage: None,
@@ -227,8 +232,7 @@ impl<'a> ContractRunner<'a> {
             ))
         }
 
-        let has_invariants =
-            self.contract.functions().into_iter().any(|func| func.name.is_invariant_test());
+        let has_invariants = self.contract.functions().any(|func| func.name.is_invariant_test());
 
         // Invariant testing requires tracing to figure out what contracts were created.
         let original_tracing = self.executor.inspector_config().tracing;
@@ -249,6 +253,7 @@ impl<'a> ContractRunner<'a> {
                         success: false,
                         reason: setup.reason,
                         counterexample: None,
+                        decoded_logs: decode_console_logs(&setup.logs),
                         logs: setup.logs,
                         kind: TestKind::Standard(0),
                         traces: setup.traces,
@@ -265,7 +270,6 @@ impl<'a> ContractRunner<'a> {
         let tests: Vec<_> = self
             .contract
             .functions()
-            .into_iter()
             .filter(|func| func.is_test() && filter.matches_test(func.signature()))
             .map(|func| (func, func.is_test_fail()))
             .collect();
@@ -297,7 +301,6 @@ impl<'a> ContractRunner<'a> {
             let functions: Vec<&Function> = self
                 .contract
                 .functions()
-                .into_iter()
                 .filter(|func| {
                     func.name.is_invariant_test() && filter.matches_test(func.signature())
                 })
@@ -377,17 +380,18 @@ impl<'a> ContractRunner<'a> {
                     logs.extend(execution_logs);
                     (reverted, None, gas, stipend, execution_trace, coverage, state_changeset)
                 }
-                Err(EvmError::Execution {
-                    reverted,
-                    reason,
-                    gas_used: gas,
-                    stipend,
-                    logs: execution_logs,
-                    traces: execution_trace,
-                    labels: new_labels,
-                    state_changeset,
-                    ..
-                }) => {
+                Err(EvmError::Execution(err)) => {
+                    let ExecutionErr {
+                        reverted,
+                        reason,
+                        gas_used: gas,
+                        stipend,
+                        logs: execution_logs,
+                        traces: execution_trace,
+                        labels: new_labels,
+                        state_changeset,
+                        ..
+                    } = *err;
                     labeled_addresses.extend(new_labels);
                     logs.extend(execution_logs);
                     (reverted, Some(reason), gas, stipend, execution_trace, None, state_changeset)
@@ -417,6 +421,7 @@ impl<'a> ContractRunner<'a> {
             success,
             reason,
             counterexample: None,
+            decoded_logs: decode_console_logs(&logs),
             logs,
             kind: TestKind::Standard(gas.overflowing_sub(stipend).0),
             traces,
@@ -504,6 +509,7 @@ impl<'a> ContractRunner<'a> {
                         success,
                         reason,
                         counterexample,
+                        decoded_logs: decode_console_logs(&logs),
                         logs,
                         kind: TestKind::Invariant(cases.clone(), reverts),
                         coverage: None, // todo?
@@ -552,6 +558,7 @@ impl<'a> ContractRunner<'a> {
             success: result.success,
             reason: result.reason,
             counterexample: result.counterexample,
+            decoded_logs: decode_console_logs(&logs),
             logs,
             kind: TestKind::Fuzz(result.cases),
             traces,

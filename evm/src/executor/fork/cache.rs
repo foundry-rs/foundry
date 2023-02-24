@@ -33,12 +33,34 @@ impl BlockchainDb {
     ///   - the file contains malformed data, or if it couldn't be read
     ///   - the provided `meta` differs from [BlockchainDbMeta] that's stored on disk
     pub fn new(meta: BlockchainDbMeta, cache_path: Option<PathBuf>) -> Self {
-        trace!(target = "cache", cache=?cache_path, "initialising blockchain db");
+        Self::new_db(meta, cache_path, false)
+    }
+
+    /// Creates a new instance of the [BlockchainDb] and skips check when comparing meta
+    /// This is useful for offline-start mode when we don't want to fetch metadata of `block`.
+    ///
+    /// if a `cache_path` is provided it attempts to load a previously stored [JsonBlockCacheData]
+    /// and will try to use the cached entries it holds.
+    ///
+    /// This will return a new and empty [MemDb] if
+    ///   - `cache_path` is `None`
+    ///   - the file the `cache_path` points to, does not exist
+    ///   - the file contains malformed data, or if it couldn't be read
+    ///   - the provided `meta` differs from [BlockchainDbMeta] that's stored on disk
+    pub fn new_skip_check(meta: BlockchainDbMeta, cache_path: Option<PathBuf>) -> Self {
+        Self::new_db(meta, cache_path, true)
+    }
+
+    fn new_db(meta: BlockchainDbMeta, cache_path: Option<PathBuf>, skip_check: bool) -> Self {
+        trace!(target : "forge::cache", cache=?cache_path, "initialising blockchain db");
         // read cache and check if metadata matches
         let cache = cache_path
             .as_ref()
             .and_then(|p| {
                 JsonBlockCacheDB::load(p).ok().filter(|cache| {
+                    if skip_check {
+                        return true
+                    }
                     let mut existing = cache.meta().write();
                     existing.hosts.extend(meta.hosts.clone());
                     if meta != *existing {
@@ -123,10 +145,48 @@ impl<'de> Deserialize<'de> for BlockchainDbMeta {
     where
         D: Deserializer<'de>,
     {
+        /// A backwards compatible representation of [revm::CfgEnv]
+        ///
+        /// This prevents deserialization errors of cache files caused by breaking changes to the
+        /// default [revm::CfgEnv], for example enabling an optional feature.
+        /// By hand rolling deserialize impl we can prevent cache file issues
+        struct CfgEnvBackwardsCompat {
+            inner: revm::CfgEnv,
+        }
+
+        impl<'de> Deserialize<'de> for CfgEnvBackwardsCompat {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let mut value = serde_json::Value::deserialize(deserializer)?;
+
+                // we check for breaking changes here
+                if let Some(obj) = value.as_object_mut() {
+                    // additional field `disable_eip3607` enabled by the `optional_eip3607` feature
+                    let key = "disable_eip3607";
+                    if !obj.contains_key(key) {
+                        obj.insert(key.to_string(), true.into());
+                    }
+                    // additional field `disable_block_gas_limit` enabled by the
+                    // `optional_block_gas_limit` feature
+                    let key = "disable_block_gas_limit";
+                    if !obj.contains_key(key) {
+                        // keep default value
+                        obj.insert(key.to_string(), false.into());
+                    }
+                }
+
+                let cfg_env: revm::CfgEnv =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(Self { inner: cfg_env })
+            }
+        }
+
         // custom deserialize impl to not break existing cache files
         #[derive(Deserialize)]
         struct Meta {
-            cfg_env: revm::CfgEnv,
+            cfg_env: CfgEnvBackwardsCompat,
             block_env: revm::BlockEnv,
             /// all the hosts used to connect to
             #[serde(alias = "host")]
@@ -142,7 +202,7 @@ impl<'de> Deserialize<'de> for BlockchainDbMeta {
 
         let Meta { cfg_env, block_env, hosts } = Meta::deserialize(deserializer)?;
         Ok(Self {
-            cfg_env,
+            cfg_env: cfg_env.inner,
             block_env,
             hosts: match hosts {
                 Hosts::Multi(hosts) => hosts,
@@ -218,8 +278,8 @@ impl MemDb {
 impl Clone for MemDb {
     fn clone(&self) -> Self {
         Self {
-            accounts: RwLock::new(self.accounts.read().clone()),
             storage: RwLock::new(self.storage.read().clone()),
+            accounts: RwLock::new(self.accounts.read().clone()),
             block_hashes: RwLock::new(self.block_hashes.read().clone()),
         }
     }

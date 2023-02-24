@@ -3,7 +3,7 @@ use ethers::types::BlockNumber;
 use foundry_evm::revm::SpecId;
 use std::str::FromStr;
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
 pub enum Hardfork {
     Frontier,
     Homestead,
@@ -19,6 +19,7 @@ pub enum Hardfork {
     London,
     ArrowGlacier,
     GrayGlacier,
+    #[default]
     Latest,
 }
 
@@ -108,15 +109,9 @@ impl FromStr for Hardfork {
             "arrowglacier" | "13" => Hardfork::ArrowGlacier,
             "grayglacier" => Hardfork::GrayGlacier,
             "latest" | "14" => Hardfork::Latest,
-            _ => return Err(format!("Unknown hardfork {}", s)),
+            _ => return Err(format!("Unknown hardfork {s}")),
         };
         Ok(hardfork)
-    }
-}
-
-impl Default for Hardfork {
-    fn default() -> Self {
-        Hardfork::Latest
     }
 }
 
@@ -144,9 +139,9 @@ impl From<Hardfork> for SpecId {
 impl<T: Into<BlockNumber>> From<T> for Hardfork {
     fn from(block: T) -> Hardfork {
         let num = match block.into() {
-            BlockNumber::Pending | BlockNumber::Latest => u64::MAX,
             BlockNumber::Earliest => 0,
             BlockNumber::Number(num) => num.as_u64(),
+            _ => u64::MAX,
         };
 
         match num {

@@ -24,8 +24,9 @@ impl AttrSortKey for FunctionAttribute {
             FunctionAttribute::Mutability(..) => 1,
             FunctionAttribute::Virtual(..) => 2,
             FunctionAttribute::Immutable(..) => 3,
-            FunctionAttribute::Override(..) | FunctionAttribute::NameValue(..) => 4,
+            FunctionAttribute::Override(..) => 4,
             FunctionAttribute::BaseOrModifier(..) => 5,
+            FunctionAttribute::Error(..) => 6, // supposed to be omitted even if sorted
         }
     }
 }

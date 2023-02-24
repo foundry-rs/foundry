@@ -46,6 +46,11 @@ impl CallTraceDecoderBuilder {
         self
     }
 
+    pub fn with_verbosity(mut self, level: u8) -> Self {
+        self.decoder.verbosity = level;
+        self
+    }
+
     /// Build the decoder.
     pub fn build(self) -> CallTraceDecoder {
         self.decoder
@@ -69,7 +74,9 @@ pub struct CallTraceDecoder {
     pub contracts: HashMap<Address, String>,
     /// Address labels
     pub labels: HashMap<Address, String>,
-    /// A mapping of addresses to their known functions
+    /// Information whether the contract address has a receive function
+    pub receive_contracts: HashMap<Address, bool>,
+    /// A mapping of signatures to their known functions
     pub functions: BTreeMap<[u8; 4], Vec<Function>>,
     /// All known events
     pub events: BTreeMap<(H256, usize), Vec<Event>>,
@@ -77,6 +84,8 @@ pub struct CallTraceDecoder {
     pub errors: Abi,
     /// A signature identifier for events and functions.
     pub signature_identifier: Option<SingleSignaturesIdentifier>,
+    /// Verbosity level
+    pub verbosity: u8,
 }
 
 impl CallTraceDecoder {
@@ -178,6 +187,8 @@ impl CallTraceDecoder {
                 .collect::<BTreeMap<(H256, usize), Vec<Event>>>(),
             errors: Abi::default(),
             signature_identifier: None,
+            receive_contracts: Default::default(),
+            verbosity: u8::default(),
         }
     }
 
@@ -230,6 +241,8 @@ impl CallTraceDecoder {
                         .or_insert_with(Default::default);
                     entry.push(error.clone());
                 });
+
+                self.receive_contracts.entry(address).or_insert(abi.receive);
             }
         });
     }
@@ -252,7 +265,7 @@ impl CallTraceDecoder {
             } else if let RawOrDecodedCall::Raw(ref bytes) = node.trace.data {
                 if bytes.len() >= 4 {
                     if let Some(funcs) = self.functions.get(&bytes[..SELECTOR_LEN]) {
-                        node.decode_function(funcs, &self.labels, &self.errors);
+                        node.decode_function(funcs, &self.labels, &self.errors, self.verbosity);
                     } else if node.trace.address == DEFAULT_CREATE2_DEPLOYER {
                         node.trace.data =
                             RawOrDecodedCall::Decoded("create2".to_string(), String::new(), vec![]);
@@ -260,15 +273,25 @@ impl CallTraceDecoder {
                         if let Some(function) =
                             identifier.write().await.identify_function(&bytes[..SELECTOR_LEN]).await
                         {
-                            node.decode_function(&[function], &self.labels, &self.errors);
+                            node.decode_function(
+                                &[function],
+                                &self.labels,
+                                &self.errors,
+                                self.verbosity,
+                            );
                         }
                     }
                 } else {
-                    node.trace.data = RawOrDecodedCall::Decoded(
-                        "fallback".to_string(),
-                        String::new(),
-                        Vec::new(),
-                    );
+                    let has_receive = self
+                        .receive_contracts
+                        .get(&node.trace.address)
+                        .copied()
+                        .unwrap_or_default();
+                    let func_name =
+                        if bytes.is_empty() && has_receive { "receive" } else { "fallback" };
+
+                    node.trace.data =
+                        RawOrDecodedCall::Decoded(func_name.to_string(), String::new(), Vec::new());
 
                     if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
                         if !node.trace.success {
@@ -278,8 +301,7 @@ impl CallTraceDecoder {
                                 Some(node.trace.status),
                             ) {
                                 node.trace.output = RawOrDecodedReturnData::Decoded(format!(
-                                    r#""{}""#,
-                                    decoded_error
+                                    r#""{decoded_error}""#
                                 ));
                             }
                         }
@@ -355,7 +377,7 @@ fn patch_nameless_params(event: &mut Event) -> HashSet<String> {
     if event.inputs.iter().filter(|input| input.name.is_empty()).count() > 1 {
         for (idx, param) in event.inputs.iter_mut().enumerate() {
             // this is an illegal arg name, which ensures patched identifiers are unique
-            param.name = format!("<patched {}>", idx);
+            param.name = format!("<patched {idx}>");
             patches.insert(param.name.clone());
         }
     }

@@ -11,17 +11,24 @@ use crate::{
     },
     utils,
 };
+use cast::executor::inspector::cheatcodes::util::BroadcastableTransactions;
 use ethers::{
     solc::artifacts::CompactContractBytecode,
     types::{transaction::eip2718::TypedTransaction, Address, U256},
 };
 use forge::{
     executor::{inspector::CheatsConfig, Backend, ExecutorBuilder},
-    trace::CallTraceDecoder,
+    trace::{CallTraceDecoder, Traces},
     CallKind,
 };
-use std::collections::VecDeque;
+use foundry_common::{shell, RpcUrl};
+use futures::future::join_all;
+use parking_lot::RwLock;
+use std::{collections::VecDeque, sync::Arc};
 use tracing::trace;
+
+/// Helper alias type for the processed result of a runner onchain simulation.
+type RunnerResult = (Option<TransactionWithMetadata>, Traces);
 
 impl ScriptArgs {
     /// Locally deploys and executes the contract method that will collect all broadcastable
@@ -33,7 +40,8 @@ impl ScriptArgs {
         sender: Address,
         predeploy_libraries: &[ethers::types::Bytes],
     ) -> eyre::Result<ScriptResult> {
-        trace!("start executing script");
+        trace!(target: "script", "start executing script");
+
         let CompactContractBytecode { abi, bytecode, .. } = contract;
 
         let abi = abi.expect("no ABI for contract");
@@ -81,18 +89,24 @@ impl ScriptArgs {
         Ok(result)
     }
 
-    /// Executes a list of transactions locally and persists their state. Returns the transactions
-    /// and any CREATE2 contract addresses created.
-    pub async fn execute_transactions(
+    /// Simulates onchain state by executing a list of transactions locally and persisting their
+    /// state. Returns the transactions and any CREATE2 contract address created.
+    pub async fn onchain_simulation(
         &self,
-        transactions: VecDeque<TypedTransaction>,
+        transactions: BroadcastableTransactions,
         script_config: &mut ScriptConfig,
         decoder: &mut CallTraceDecoder,
         contracts: &ContractsByArtifact,
     ) -> eyre::Result<VecDeque<TransactionWithMetadata>> {
-        let mut runner = self
-            .prepare_runner(script_config, script_config.evm_opts.sender, SimulationStage::OnChain)
-            .await;
+        trace!(target: "script", "executing onchain simulation");
+
+        let runners = Arc::new(
+            self.build_runners(script_config)
+                .await
+                .into_iter()
+                .map(|(rpc, runner)| (rpc, Arc::new(RwLock::new(runner))))
+                .collect::<HashMap<_, _>>(),
+        );
 
         if script_config.evm_opts.verbosity > 3 {
             println!("==========================");
@@ -120,10 +134,18 @@ impl ScriptArgs {
             .collect();
 
         let mut final_txs = VecDeque::new();
-        for tx in transactions {
-            match tx {
-                TypedTransaction::Legacy(mut tx) => {
-                    let mut result = runner
+
+        // Executes all transactions from the different forks concurrently.
+        let futs = transactions
+            .into_iter()
+            .map(|transaction| async {
+                let mut runner = runners
+                    .get(transaction.rpc.as_ref().expect("to have been filled already."))
+                    .expect("to have been built.")
+                    .write();
+
+                if let TypedTransaction::Legacy(mut tx) = transaction.transaction {
+                    let result = runner
                         .simulate(
                             tx.from.expect(
                                 "Transaction doesn't have a `from` address at execution time",
@@ -134,22 +156,8 @@ impl ScriptArgs {
                         )
                         .expect("Internal EVM error");
 
-                    // Identify all contracts created during the call.
-                    if result.traces.is_empty() {
-                        eyre::bail!(
-                            "Forge script requires tracing enabled to collect created contracts."
-                        )
-                    }
-
-                    if !result.success || script_config.evm_opts.verbosity > 3 {
-                        for (_kind, trace) in &mut result.traces {
-                            decoder.decode(trace).await;
-                            println!("{}", trace);
-                        }
-                    }
-
-                    if !result.success {
-                        eyre::bail!("Simulated execution failed");
+                    if !result.success || result.traces.is_empty() {
+                        return Ok((None, result.traces))
                     }
 
                     let created_contracts = result
@@ -177,19 +185,84 @@ impl ScriptArgs {
                     // We inflate the gas used by the user specified percentage
                     tx.gas = Some(U256::from(result.gas_used * self.gas_estimate_multiplier / 100));
 
-                    final_txs.push_back(TransactionWithMetadata::new(
+                    let tx = TransactionWithMetadata::new(
                         tx.into(),
+                        transaction.rpc,
                         &result,
                         &address_to_abi,
                         decoder,
                         created_contracts,
-                    )?);
+                    )?;
+
+                    Ok((Some(tx), result.traces))
+                } else {
+                    unreachable!()
                 }
-                _ => unreachable!(),
+            })
+            .collect::<Vec<_>>();
+
+        let mut abort = false;
+        for res in join_all(futs).await {
+            // type hint
+            let res: eyre::Result<RunnerResult> = res;
+
+            let (tx, mut traces) = res?;
+
+            // Transaction will be `None`, if execution didn't pass.
+            if tx.is_none() || script_config.evm_opts.verbosity > 3 {
+                // Identify all contracts created during the call.
+                if traces.is_empty() {
+                    eyre::bail!(
+                        "Forge script requires tracing enabled to collect created contracts."
+                    )
+                }
+
+                for (_kind, trace) in &mut traces {
+                    decoder.decode(trace).await;
+                    println!("{trace}");
+                }
+            }
+
+            if let Some(tx) = tx {
+                final_txs.push_back(tx);
+            } else {
+                abort = true;
             }
         }
 
+        if abort {
+            eyre::bail!("Simulated execution failed.")
+        }
+
         Ok(final_txs)
+    }
+
+    /// Build the multiple runners from different forks.
+    async fn build_runners(
+        &self,
+        script_config: &mut ScriptConfig,
+    ) -> HashMap<RpcUrl, ScriptRunner> {
+        let sender = script_config.evm_opts.sender;
+
+        if !shell::verbosity().is_silent() {
+            eprintln!("\n## Setting up ({}) EVMs.", script_config.total_rpcs.len());
+        }
+
+        let futs = script_config
+            .total_rpcs
+            .iter()
+            .map(|rpc| async {
+                let mut script_config = script_config.clone();
+                script_config.evm_opts.fork_url = Some(rpc.clone());
+
+                (
+                    rpc.clone(),
+                    self.prepare_runner(&mut script_config, sender, SimulationStage::OnChain).await,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        join_all(futs).await.into_iter().collect()
     }
 
     /// Creates the Runner that drives script execution
@@ -203,12 +276,24 @@ impl ScriptArgs {
         let env = script_config.evm_opts.evm_env().await;
 
         // The db backend that serves all the data.
-        let db = script_config.backend.clone().unwrap_or_else(|| {
-            let backend =
-                Backend::spawn(script_config.evm_opts.get_fork(&script_config.config, env.clone()));
-            script_config.backend = Some(backend.clone());
-            backend
-        });
+        let db = match &script_config.evm_opts.fork_url {
+            Some(url) => match script_config.backends.get(url) {
+                Some(db) => db.clone(),
+                None => {
+                    let backend = Backend::spawn(
+                        script_config.evm_opts.get_fork(&script_config.config, env.clone()),
+                    );
+                    script_config.backends.insert(url.clone(), backend);
+                    script_config.backends.get(url).unwrap().clone()
+                }
+            },
+            None => {
+                // It's only really `None`, when we don't pass any `--fork-url`. And if so, there is
+                // no need to cache it, since there won't be any onchain simulation that we'd need
+                // to cache the backend for.
+                Backend::spawn(script_config.evm_opts.get_fork(&script_config.config, env.clone()))
+            }
+        };
 
         let mut builder = ExecutorBuilder::default()
             .with_config(env)

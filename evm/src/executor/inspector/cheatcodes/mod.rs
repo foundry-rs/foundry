@@ -1,7 +1,7 @@
 use self::{
     env::Broadcast,
     expect::{handle_expect_emit, handle_expect_revert},
-    util::process_create,
+    util::{process_create, BroadcastableTransactions},
 };
 use crate::{
     abi::HEVMCalls,
@@ -20,21 +20,24 @@ use ethers::{
         U256,
     },
 };
+use itertools::Itertools;
 use revm::{
     opcode, BlockEnv, CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return,
     TransactTo,
 };
+use serde_json::Value;
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{BTreeMap, HashMap},
     fs::File,
     io::BufReader,
     path::PathBuf,
     sync::Arc,
 };
+use tracing::trace;
 
 /// Cheatcodes related to the execution environment.
 mod env;
-pub use env::{Prank, RecordAccess};
+pub use env::{Log, Prank, RecordAccess};
 /// Assertion helpers (such as `expectEmit`)
 mod expect;
 pub use expect::{ExpectedCallData, ExpectedEmit, ExpectedRevert, MockCallDataContext};
@@ -49,11 +52,13 @@ mod fuzz;
 mod snapshot;
 /// Utility cheatcodes (`sign` etc.)
 pub mod util;
-pub use util::DEFAULT_CREATE2_DEPLOYER;
+pub use util::{BroadcastableTransaction, DEFAULT_CREATE2_DEPLOYER};
 
 mod config;
 use crate::executor::{backend::RevertDiagnostic, inspector::utils::get_create_address};
 pub use config::CheatsConfig;
+
+mod error;
 
 /// An inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
@@ -120,11 +125,12 @@ pub struct Cheatcodes {
     /// Current broadcasting information
     pub broadcast: Option<Broadcast>,
 
-    /// Used to correct the nonce of --sender after the initiating call
+    /// Used to correct the nonce of --sender after the initiating call. For more, check
+    /// `docs/scripting`.
     pub corrected_nonce: bool,
 
     /// Scripting based transactions
-    pub broadcastable_transactions: VecDeque<TypedTransaction>,
+    pub broadcastable_transactions: BroadcastableTransactions,
 
     /// Additional, user configurable context this Inspector has access to when inspecting a call
     pub config: Arc<CheatsConfig>,
@@ -135,6 +141,24 @@ pub struct Cheatcodes {
     // Commit FS changes such as file creations, writes and deletes.
     // Used to prevent duplicate changes file executing non-committing calls.
     pub fs_commit: bool,
+
+    pub serialized_jsons: HashMap<String, HashMap<String, Value>>,
+
+    /// Records all eth deals
+    pub eth_deals: Vec<DealRecord>,
+
+    /// Holds the stored gas info for when we pause gas metering. It is an `Option<Option<..>>`
+    /// because the `call` callback in an `Inspector` doesn't get access to
+    /// the `revm::Interpreter` which holds the `revm::Gas` struct that
+    /// we need to copy. So we convert it to a `Some(None)` in `apply_cheatcode`, and once we have
+    /// the interpreter, we copy the gas struct. Then each time there is an execution of an
+    /// operation, we reset the gas.
+    pub gas_metering: Option<Option<revm::Gas>>,
+
+    /// Holds stored gas info for when we pause gas metering, and we're entering/inside
+    /// CREATE / CREATE2 frames. This is needed to make gas meter pausing work correctly when
+    /// paused and creating new contracts.
+    pub gas_metering_create: Option<Option<revm::Gas>>,
 }
 
 impl Cheatcodes {
@@ -201,6 +225,33 @@ impl Cheatcodes {
 
         data.db.allow_cheatcode_access(created_address);
     }
+
+    /// Called when there was a revert.
+    ///
+    /// Cleanup any previously applied cheatcodes that altered the state in such a way that revm's
+    /// revert would run into issues.
+    pub fn on_revert<DB: DatabaseExt>(&mut self, data: &mut EVMData<'_, DB>) {
+        trace!(deals=?self.eth_deals.len(), "Rolling back deals");
+
+        // Delay revert clean up until expected revert is handled, if set.
+        if self.expected_revert.is_some() {
+            return
+        }
+
+        // we only want to apply cleanup top level
+        if data.journaled_state.depth() > 0 {
+            return
+        }
+
+        // Roll back all previously applied deals
+        // This will prevent overflow issues in revm's [`JournaledState::journal_revert`] routine
+        // which rolls back any transfers.
+        while let Some(record) = self.eth_deals.pop() {
+            if let Some(acc) = data.journaled_state.state.get_mut(&record.address) {
+                acc.info.balance = record.old_balance;
+            }
+        }
+    }
 }
 
 impl<DB> Inspector<DB> for Cheatcodes
@@ -226,6 +277,63 @@ where
     }
 
     fn step(&mut self, interpreter: &mut Interpreter, _: &mut EVMData<'_, DB>, _: bool) -> Return {
+        // reset gas if gas metering is turned off
+        match self.gas_metering {
+            Some(None) => {
+                // need to store gas metering
+                self.gas_metering = Some(Some(interpreter.gas));
+            }
+            Some(Some(gas)) => {
+                match interpreter.contract.bytecode.bytecode()[interpreter.program_counter()] {
+                    opcode::CREATE | opcode::CREATE2 => {
+                        // set we're about to enter CREATE frame to meter its gas on first opcode
+                        // inside it
+                        self.gas_metering_create = Some(None)
+                    }
+                    opcode::STOP | opcode::RETURN | opcode::SELFDESTRUCT | opcode::REVERT => {
+                        // If we are ending current execution frame, we want to just fully reset gas
+                        // otherwise weird things with returning gas from a call happen
+                        // ref: https://github.com/bluealloy/revm/blob/2cb991091d32330cfe085320891737186947ce5a/crates/revm/src/evm_impl.rs#L190
+                        //
+                        // It would be nice if we had access to the interpreter in `call_end`, as we
+                        // could just do this there instead.
+                        match self.gas_metering_create {
+                            None | Some(None) => {
+                                interpreter.gas = revm::Gas::new(0);
+                            }
+                            Some(Some(gas)) => {
+                                // If this was CREATE frame, set correct gas limit. This is needed
+                                // because CREATE opcodes deduct additional gas for code storage,
+                                // and deducted amount is compared to gas limit. If we set this to
+                                // 0, the CREATE would fail with out of gas.
+                                //
+                                // If we however set gas limit to the limit of outer frame, it would
+                                // cause a panic after erasing gas cost post-create. Reason for this
+                                // is pre-create REVM records `gas_limit - (gas_limit / 64)` as gas
+                                // used, and erases costs by `remaining` gas post-create.
+                                // gas used ref: https://github.com/bluealloy/revm/blob/2cb991091d32330cfe085320891737186947ce5a/crates/revm/src/instructions/host.rs#L254-L258
+                                // post-create erase ref: https://github.com/bluealloy/revm/blob/2cb991091d32330cfe085320891737186947ce5a/crates/revm/src/instructions/host.rs#L279
+                                interpreter.gas = revm::Gas::new(gas.limit());
+
+                                // reset CREATE gas metering because we're about to exit its frame
+                                self.gas_metering_create = None
+                            }
+                        }
+                    }
+                    _ => {
+                        // if just starting with CREATE opcodes, record its inner frame gas
+                        if let Some(None) = self.gas_metering_create {
+                            self.gas_metering_create = Some(Some(interpreter.gas))
+                        }
+
+                        // dont monitor gas changes, keep it constant
+                        interpreter.gas = gas;
+                    }
+                }
+            }
+            _ => {}
+        }
+
         // Record writes and reads if `record` has been called
         if let Some(storage_accesses) = &mut self.accesses {
             match interpreter.contract.bytecode.bytecode()[interpreter.program_counter()] {
@@ -271,9 +379,10 @@ where
 
         // Stores this log if `recordLogs` has been called
         if let Some(storage_recorded_logs) = &mut self.recorded_logs {
-            storage_recorded_logs
-                .entries
-                .push(RawLog { topics: topics.to_vec(), data: data.to_vec() });
+            storage_recorded_logs.entries.push(Log {
+                emitter: *address,
+                inner: RawLog { topics: topics.to_vec(), data: data.to_vec() },
+            });
         }
     }
 
@@ -294,7 +403,9 @@ where
                 if let Some(found_match) = expecteds.iter().position(|expected| {
                     expected.calldata.len() <= call.input.len() &&
                         expected.calldata == call.input[..expected.calldata.len()] &&
-                        expected.value.map(|value| value == call.transfer.value).unwrap_or(true)
+                        expected.value.map_or(true, |value| value == call.transfer.value) &&
+                        expected.gas.map_or(true, |gas| gas == call.gas_limit) &&
+                        expected.min_gas.map_or(true, |min_gas| min_gas <= call.gas_limit)
                 }) {
                     expecteds.remove(found_match);
                 }
@@ -347,32 +458,35 @@ where
                     // At the target depth we set `msg.sender` & tx.origin.
                     // We are simulating the caller as being an EOA, so *both* must be set to the
                     // broadcast.origin.
-                    call.context.caller = broadcast.origin;
-                    call.transfer.source = broadcast.origin;
+                    data.env.tx.caller = broadcast.new_origin;
+
+                    call.context.caller = broadcast.new_origin;
+                    call.transfer.source = broadcast.new_origin;
                     // Add a `legacy` transaction to the VecDeque. We use a legacy transaction here
                     // because we only need the from, to, value, and data. We can later change this
                     // into 1559, in the cli package, relatively easily once we
                     // know the target chain supports EIP-1559.
                     if !is_static {
                         if let Err(err) =
-                            data.journaled_state.load_account(broadcast.origin, data.db)
+                            data.journaled_state.load_account(broadcast.new_origin, data.db)
                         {
                             return (Return::Revert, Gas::new(call.gas_limit), err.encode_string())
                         }
 
                         let account =
-                            data.journaled_state.state().get_mut(&broadcast.origin).unwrap();
+                            data.journaled_state.state().get_mut(&broadcast.new_origin).unwrap();
 
-                        self.broadcastable_transactions.push_back(TypedTransaction::Legacy(
-                            TransactionRequest {
-                                from: Some(broadcast.origin),
+                        self.broadcastable_transactions.push_back(BroadcastableTransaction {
+                            rpc: data.db.active_fork_url(),
+                            transaction: TypedTransaction::Legacy(TransactionRequest {
+                                from: Some(broadcast.new_origin),
                                 to: Some(NameOrAddress::Address(call.contract)),
                                 value: Some(call.transfer.value),
                                 data: Some(call.input.clone().into()),
                                 nonce: Some(account.info.nonce.into()),
                                 ..Default::default()
-                            },
-                        ));
+                            }),
+                        });
 
                         // call_inner does not increase nonces, so we have to do it ourselves
                         account.info.nonce += 1;
@@ -420,6 +534,8 @@ where
 
         // Clean up broadcast
         if let Some(broadcast) = &self.broadcast {
+            data.env.tx.caller = broadcast.original_origin;
+
             if broadcast.single_call {
                 std::mem::take(&mut self.broadcast);
             }
@@ -435,7 +551,10 @@ where
                     status,
                     retdata,
                 ) {
-                    Err(retdata) => (Return::Revert, remaining_gas, retdata),
+                    Err(retdata) => {
+                        trace!(expected=?expected_revert, actual=%hex::encode(&retdata), ?status, "Expected revert mismatch");
+                        (Return::Revert, remaining_gas, retdata)
+                    }
                     Ok((_, retdata)) => (Return::Return, remaining_gas, retdata),
                 }
             }
@@ -464,17 +583,23 @@ where
             if let Some((address, expecteds)) =
                 self.expected_calls.iter().find(|(_, expecteds)| !expecteds.is_empty())
             {
+                let ExpectedCallData { calldata, gas, min_gas, value } = &expecteds[0];
+                let calldata = ethers::types::Bytes::from(calldata.clone());
+                let expected_values = [
+                    Some(format!("data {calldata}")),
+                    value.map(|v| format!("value {v}")),
+                    gas.map(|g| format!("gas {g}")),
+                    min_gas.map(|g| format!("minimum gas {g}")),
+                ]
+                .into_iter()
+                .flatten()
+                .join(" and ");
                 return (
                     Return::Revert,
                     remaining_gas,
-                    format!(
-                        "Expected a call to {:?} with data {}{}, but got none",
-                        address,
-                        ethers::types::Bytes::from(expecteds[0].calldata.clone()),
-                        expecteds[0].value.map(|v| format!(" and value {}", v)).unwrap_or_default()
-                    )
-                    .encode()
-                    .into(),
+                    format!("Expected a call to {address:?} with {expected_values}, but got none")
+                        .encode()
+                        .into(),
                 )
             }
 
@@ -546,33 +671,35 @@ where
             if data.journaled_state.depth() == broadcast.depth &&
                 call.caller == broadcast.original_caller
             {
-                if let Err(err) = data.journaled_state.load_account(broadcast.origin, data.db) {
+                if let Err(err) = data.journaled_state.load_account(broadcast.new_origin, data.db) {
                     return (Return::Revert, None, Gas::new(call.gas_limit), err.encode_string())
                 }
 
-                let (bytecode, to, nonce) =
-                    match process_create(broadcast.origin, call.init_code.clone(), data, call) {
-                        Ok(val) => val,
-                        Err(err) => {
-                            return (
-                                Return::Revert,
-                                None,
-                                Gas::new(call.gas_limit),
-                                err.encode_string(),
-                            )
-                        }
-                    };
+                data.env.tx.caller = broadcast.new_origin;
 
-                self.broadcastable_transactions.push_back(TypedTransaction::Legacy(
-                    TransactionRequest {
-                        from: Some(broadcast.origin),
+                let (bytecode, to, nonce) = match process_create(
+                    broadcast.new_origin,
+                    call.init_code.clone(),
+                    data,
+                    call,
+                ) {
+                    Ok(val) => val,
+                    Err(err) => {
+                        return (Return::Revert, None, Gas::new(call.gas_limit), err.encode_string())
+                    }
+                };
+
+                self.broadcastable_transactions.push_back(BroadcastableTransaction {
+                    rpc: data.db.active_fork_url(),
+                    transaction: TypedTransaction::Legacy(TransactionRequest {
+                        from: Some(broadcast.new_origin),
                         to,
                         value: Some(call.value),
                         data: Some(bytecode.into()),
                         nonce: Some(nonce.into()),
                         ..Default::default()
-                    },
-                ));
+                    }),
+                });
             }
         }
 
@@ -600,6 +727,8 @@ where
 
         // Clean up broadcasts
         if let Some(broadcast) = &self.broadcast {
+            data.env.tx.caller = broadcast.original_origin;
+
             if broadcast.single_call {
                 std::mem::take(&mut self.broadcast);
             }
@@ -637,4 +766,15 @@ impl Clone for Context {
     fn clone(&self) -> Self {
         Default::default()
     }
+}
+
+/// Records `deal` cheatcodes
+#[derive(Debug, Clone)]
+pub struct DealRecord {
+    /// Target of the deal.
+    pub address: Address,
+    /// The balance of the address before deal was applied
+    pub old_balance: U256,
+    /// Balance after deal was applied
+    pub new_balance: U256,
 }

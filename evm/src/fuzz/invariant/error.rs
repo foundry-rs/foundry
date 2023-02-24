@@ -3,7 +3,7 @@ use crate::{
     decode::decode_revert,
     executor::{Executor, RawCallResult},
     fuzz::{invariant::set_up_inner_replay, *},
-    trace::{load_contracts, TraceKind},
+    trace::{load_contracts, TraceKind, Traces},
     CALLER,
 };
 use ethers::{abi::Function, types::Address};
@@ -87,7 +87,7 @@ impl InvariantFuzzError {
         known_contracts: Option<&ContractsByArtifact>,
         mut ided_contracts: ContractsByAddress,
         logs: &mut Vec<Log>,
-        traces: &mut Vec<(TraceKind, CallTraceArena)>,
+        traces: &mut Traces,
     ) -> Result<Option<CounterExample>> {
         let mut counterexample_sequence = vec![];
         let calls = match self.test_error {

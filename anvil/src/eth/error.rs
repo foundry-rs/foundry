@@ -72,6 +72,10 @@ pub enum BlockchainError {
     TimestampError(String),
     #[error(transparent)]
     DatabaseError(#[from] DatabaseError),
+    #[error("EIP-1559 style fee params (maxFeePerGas or maxPriorityFeePerGas) received but they are not supported by the current hardfork.\n\nYou can use them by running anvil with '--hardfork london' or later.")]
+    EIP1559TransactionUnsupportedAtHardfork,
+    #[error("Access list received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork berlin' or later.")]
+    EIP2930TransactionUnsupportedAtHardfork,
 }
 
 impl From<RpcError> for BlockchainError {
@@ -133,12 +137,17 @@ pub enum InvalidTransactionError {
     /// But transaction is still valid.
     #[error("Insufficient funds for gas * price + value")]
     ExhaustsGasResources,
-    #[error("Out of gas: required gas exceeds allowance: {0:?}")]
+    #[error("Out of gas: gas required exceeds allowance: {0:?}")]
     OutOfGas(U256),
 
     /// Thrown post London if the transaction's fee is less than the base fee of the block
     #[error("max fee per gas less than block base fee")]
     FeeTooLow,
+
+    /// Thrown to ensure no one is able to specify a transaction with a tip higher than the total
+    /// fee cap.
+    #[error("max priority fee per gas higher than max fee per gas")]
+    TipAboveFeeCap,
 
     /// Thrown when a tx was signed with a different chain_id
     #[error("invalid chain id for signer")]
@@ -152,7 +161,7 @@ pub enum InvalidTransactionError {
 /// Returns the revert reason from the `revm::TransactOut` data, if it's an abi encoded String.
 ///
 /// **Note:** it's assumed the `out` buffer starts with the call's signature
-fn decode_revert_reason(out: impl AsRef<[u8]>) -> Option<String> {
+pub(crate) fn decode_revert_reason(out: impl AsRef<[u8]>) -> Option<String> {
     let out = out.as_ref();
     if out.len() < SELECTOR_LEN {
         return None
@@ -206,13 +215,21 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                         // this mimics geth revert error
                         let mut msg = "execution reverted".to_string();
                         if let Some(reason) = data.as_ref().and_then(decode_revert_reason) {
-                            msg = format!("{}: {}", msg, reason);
+                            msg = format!("{msg}: {reason}");
                         }
                         RpcError {
                             // geth returns this error code on reverts, See <https://github.com/ethereum/wiki/wiki/JSON-RPC-Error-Codes-Improvement-Proposal>
                             code: ErrorCode::ExecutionError,
                             message: msg.into(),
                             data: serde_json::to_value(data).ok(),
+                        }
+                    }
+                    InvalidTransactionError::GasTooLow | InvalidTransactionError::GasTooHigh => {
+                        // <https://eips.ethereum.org/EIPS/eip-1898>
+                        RpcError {
+                            code: ErrorCode::ServerError(-32000),
+                            message: err.to_string().into(),
+                            data: None,
                         }
                     }
                     _ => RpcError::transaction_rejected(err.to_string()),
@@ -241,7 +258,7 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 ),
                 BlockchainError::ForkProvider(err) => {
                     error!("fork provider error: {:?}", err);
-                    RpcError::internal_error_with(format!("Fork Error: {:?}", err))
+                    RpcError::internal_error_with(format!("Fork Error: {err:?}"))
                 }
                 err @ BlockchainError::EvmError(_) => {
                     RpcError::internal_error_with(err.to_string())
@@ -272,6 +289,12 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 }
                 BlockchainError::DatabaseError(err) => {
                     RpcError::internal_error_with(err.to_string())
+                }
+                err @ BlockchainError::EIP1559TransactionUnsupportedAtHardfork => {
+                    RpcError::invalid_params(err.to_string())
+                }
+                err @ BlockchainError::EIP2930TransactionUnsupportedAtHardfork => {
+                    RpcError::invalid_params(err.to_string())
                 }
             }
             .into(),

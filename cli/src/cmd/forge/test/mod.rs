@@ -32,7 +32,8 @@ use tracing::trace;
 use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
 mod filter;
-pub use filter::Filter;
+use crate::cmd::forge::test::filter::ProjectPathsAwareFilter;
+pub use filter::FilterArgs;
 use foundry_common::shell;
 use foundry_config::figment::{
     value::{Dict, Map},
@@ -42,10 +43,12 @@ use foundry_config::figment::{
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
 
+/// CLI arguments for `forge test`.
 #[derive(Debug, Clone, Parser)]
+#[clap(next_help_heading = "Test options")]
 pub struct TestArgs {
     #[clap(flatten)]
-    filter: Filter,
+    filter: FilterArgs,
 
     /// Run a test in the debugger.
     ///
@@ -74,10 +77,10 @@ pub struct TestArgs {
     allow_failure: bool,
 
     /// Output test results in JSON format.
-    #[clap(long, short, help_heading = "DISPLAY OPTIONS")]
+    #[clap(long, short, help_heading = "Display options")]
     json: bool,
 
-    #[clap(flatten, next_help_heading = "EVM OPTIONS")]
+    #[clap(flatten)]
     evm_opts: EvmArgs,
 
     #[clap(
@@ -88,14 +91,14 @@ pub struct TestArgs {
     )]
     etherscan_api_key: Option<String>,
 
-    #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
+    #[clap(flatten)]
     opts: CoreBuildArgs,
 
-    #[clap(flatten, next_help_heading = "WATCH OPTIONS")]
+    #[clap(flatten)]
     pub watch: WatchArgs,
 
     /// List tests instead of running them
-    #[clap(long, short, help_heading = "DISPLAY OPTIONS")]
+    #[clap(long, short, help_heading = "Display options")]
     list: bool,
 
     #[clap(
@@ -170,7 +173,7 @@ impl TestArgs {
             .build(project.paths.root, output, env, evm_opts)?;
 
         if self.debug.is_some() {
-            filter.test_pattern = self.debug;
+            filter.args_mut().test_pattern = self.debug;
 
             match runner.count_filtered_tests(&filter) {
                 1 => {
@@ -234,9 +237,9 @@ impl TestArgs {
         }
     }
 
-    /// Returns the flattened [`Filter`] arguments merged with [`Config`]
-    pub fn filter(&self, config: &Config) -> Filter {
-        self.filter.with_merged_config(config)
+    /// Returns the flattened [`FilterArgs`] arguments merged with [`Config`]
+    pub fn filter(&self, config: &Config) -> ProjectPathsAwareFilter {
+        self.filter.merge_with_config(config)
     }
 
     /// Returns whether `BuildArgs` was configured with `--watch`
@@ -373,7 +376,7 @@ impl TestOutcome {
             }
 
             let term = if failures > 1 { "tests" } else { "test" };
-            println!("Encountered {} failing {} in {}", failures, term, suite_name);
+            println!("Encountered {failures} failing {term} in {suite_name}");
             for (name, result) in suite.failures() {
                 short_test_result(name, result);
             }
@@ -437,20 +440,24 @@ fn short_test_result(name: &str, result: &TestResult) {
         Paint::red(format!("[FAIL. {reason}{counterexample}"))
     };
 
-    println!("{} {} {}", status, name, result.kind.report());
+    println!("{status} {name} {}", result.kind.report());
 }
 
 /// Lists all matching tests
-fn list(runner: MultiContractRunner, filter: Filter, json: bool) -> eyre::Result<TestOutcome> {
+fn list(
+    runner: MultiContractRunner,
+    filter: ProjectPathsAwareFilter,
+    json: bool,
+) -> eyre::Result<TestOutcome> {
     let results = runner.list(&filter);
 
     if json {
         println!("{}", serde_json::to_string(&results)?);
     } else {
         for (file, contracts) in results.iter() {
-            println!("{}", file);
+            println!("{file}");
             for (contract, tests) in contracts.iter() {
-                println!("  {}", contract);
+                println!("  {contract}");
                 println!("    {}\n", tests.join("\n    "));
             }
         }
@@ -464,7 +471,7 @@ fn test(
     config: Config,
     mut runner: MultiContractRunner,
     verbosity: u8,
-    filter: Filter,
+    filter: ProjectPathsAwareFilter,
     json: bool,
     allow_failure: bool,
     test_options: TestOptions,
@@ -479,13 +486,13 @@ fn test(
             );
         } else {
             println!("\nNo tests match the provided pattern:");
-            println!("{}", filter_str);
+            println!("{filter_str}");
             // Try to suggest a test when there's no match
-            if let Some(ref test_pattern) = filter.test_pattern {
+            if let Some(ref test_pattern) = filter.args().test_pattern {
                 let test_name = test_pattern.as_str();
                 let candidates = runner.get_tests(&filter);
-                if let Some(suggestion) = suggestions::did_you_mean(test_name, &candidates).pop() {
-                    println!("\nDid you mean `{}`?", suggestion);
+                if let Some(suggestion) = suggestions::did_you_mean(test_name, candidates).pop() {
+                    println!("\nDid you mean `{suggestion}`?");
                 }
             }
         }
@@ -517,11 +524,11 @@ fn test(
             let mut tests = suite_result.test_results.clone();
             println!();
             for warning in suite_result.warnings.iter() {
-                eprintln!("{} {}", Paint::yellow("Warning:").bold(), warning);
+                eprintln!("{} {warning}", Paint::yellow("Warning:").bold());
             }
             if !tests.is_empty() {
                 let term = if tests.len() > 1 { "tests" } else { "test" };
-                println!("Running {} {} for {}", tests.len(), term, contract_name);
+                println!("Running {} {term} for {contract_name}", tests.len());
             }
             for (name, result) in &mut tests {
                 short_test_result(name, result);
@@ -544,6 +551,7 @@ fn test(
                     let mut decoder = CallTraceDecoderBuilder::new()
                         .with_labels(result.labeled_addresses.clone())
                         .with_events(local_identifier.events())
+                        .with_verbosity(verbosity)
                         .build();
 
                     // Signatures are of no value for gas reports

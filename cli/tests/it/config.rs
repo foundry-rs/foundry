@@ -3,7 +3,7 @@ use crate::forge_utils;
 use ethers::{
     prelude::artifacts::YulDetails,
     solc::artifacts::RevertStrings,
-    types::{Address, U256},
+    types::{Address, H256, U256},
 };
 use forge::executor::opts::EvmOpts;
 use foundry_cli_test_utils::{
@@ -79,6 +79,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         block_coinbase: Address::random(),
         block_timestamp: 10,
         block_difficulty: 10,
+        block_prevrandao: H256::random(),
         block_gas_limit: Some(100u64.into()),
         memory_limit: 2u64.pow(25),
         eth_rpc_url: Some("localhost".to_string()),
@@ -90,13 +91,16 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
             "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6".to_string()
         ],
         ignored_error_codes: vec![],
+        deny_warnings: false,
         via_ir: true,
         rpc_storage_caching: StorageCachingConfig {
             chains: CachedChains::None,
             endpoints: CachedEndpoints::Remote,
         },
         no_storage_caching: true,
+        no_rpc_rate_limit: true,
         bytecode_hash: Default::default(),
+        cbor_metadata: true,
         revert_strings: Some(RevertStrings::Strip),
         sparse_mode: true,
         allow_paths: vec![],
@@ -105,13 +109,14 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         build_info: false,
         build_info_path: None,
         fmt: Default::default(),
+        doc: Default::default(),
         fs_permissions: Default::default(),
         __non_exhaustive: (),
         __warnings: vec![],
     };
     prj.write_config(input.clone());
     let config = cmd.config();
-    assert_eq!(input, config);
+    pretty_assertions::assert_eq!(input, config);
 });
 
 // tests config gets printed to std out

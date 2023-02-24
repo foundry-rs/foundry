@@ -105,6 +105,7 @@ etherscan_api_key = "YOURETHERSCANAPIKEY"
 # known error codes are: ["unreachable", "unused-return", "unused-param", "unused-var", "code-size", "shadowing", "func-mutability", "license", "pragma-solidity", "virtual-interfaces", "same-varname"]
 # additional warnings can be added using their numeric error code: ["license", 1337]
 ignored_error_codes = ["license", "code-size"]
+deny_warnings = false
 match_test = "Foo"
 no_match_test = "Bar"
 match_contract = "Foo"
@@ -119,12 +120,14 @@ block_number = 0
 fork_block_number = 0
 chain_id = 1
 # NOTE due to a toml-rs limitation, this value needs to be a string if the desired gas limit exceeds `i64::MAX` (9223372036854775807)
+# `gas_limit = "Max"` is equivalent to `gas_limit = "18446744073709551615"`
 gas_limit = 9223372036854775807
 gas_price = 0
 block_base_fee_per_gas = 0
 block_coinbase = '0x0000000000000000000000000000000000000000'
 block_timestamp = 0
 block_difficulty = 0
+block_prevrandao = '0x0000000000000000000000000000000000000000'
 block_gas_limit = 30000000
 memory_limit = 33554432
 extra_output = ["metadata"]
@@ -142,6 +145,8 @@ no_storage_caching = false
 # use ipfs method to generate the metadata hash, solc's default.
 # To not include the metadata hash, to allow for deterministic code: https://docs.soliditylang.org/en/latest/metadata.html, use "none"
 bytecode_hash = "ipfs"
+# Whether to append the metadata hash to the bytecode
+cbor_metadata = true
 # How to treat revert (and require) reason strings.
 # Possible values are: "default", "strip", "debug" and "verboseDebug".
 #  "default" does not inject compiler-generated revert strings and keeps user-supplied ones.

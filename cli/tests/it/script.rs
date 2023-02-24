@@ -1,4 +1,5 @@
 //! Contains various tests related to forge script
+use crate::constants::TEMPLATE_CONTRACT;
 use anvil::{spawn, NodeConfig};
 use cast::SimpleCast;
 use ethers::abi::Address;
@@ -7,6 +8,7 @@ use foundry_cli_test_utils::{
     util::{OutputExt, TestCommand, TestProject},
     ScriptOutcome, ScriptTester,
 };
+use foundry_config::Config;
 use foundry_utils::rpc;
 use regex::Regex;
 use serde_json::Value;
@@ -354,6 +356,22 @@ forgetest_async!(
 
 forgetest_async!(
     #[serial_test::serial]
+    can_deploy_unlocked,
+    |prj: TestProject, cmd: TestCommand| async move {
+        let (_api, handle) = spawn(NodeConfig::test()).await;
+        let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+
+        tester
+            .sender("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".parse().unwrap())
+            .unlocked()
+            .add_sig("BroadcastTest", "deployOther()")
+            .simulate(ScriptOutcome::OkSimulation)
+            .broadcast(ScriptOutcome::OkBroadcast);
+    }
+);
+
+forgetest_async!(
+    #[serial_test::serial]
     can_deploy_script_remember_key,
     |prj: TestProject, cmd: TestCommand| async move {
         let (_api, handle) = spawn(NodeConfig::test()).await;
@@ -397,10 +415,10 @@ forgetest_async!(
             .run(ScriptOutcome::OkBroadcast)
             .assert_nonce_increment_addresses(vec![(
                 Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
-                2,
+                1,
             )])
             .await
-            .assert_nonce_increment(vec![(0, 1)])
+            .assert_nonce_increment(vec![(0, 2)])
             .await;
     }
 );
@@ -489,7 +507,7 @@ forgetest_async!(can_deploy_with_create2, |prj: TestProject, cmd: TestCommand| a
 
 forgetest_async!(
     #[serial_test::serial]
-    can_deploy_and_simulate_50_txes_concurrently,
+    can_deploy_and_simulate_25_txes_concurrently,
     |prj: TestProject, cmd: TestCommand| async move {
         let (_api, handle) = spawn(NodeConfig::test()).await;
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
@@ -500,7 +518,7 @@ forgetest_async!(
             .add_sig("BroadcastTestNoLinking", "deployMany()")
             .simulate(ScriptOutcome::OkSimulation)
             .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment(vec![(0, 50)])
+            .assert_nonce_increment(vec![(0, 25)])
             .await;
     }
 );
@@ -677,6 +695,8 @@ contract Script0 is Script {
         cmd.arg("script").arg(script).args([
             "--tc",
             "Script0",
+            "--sender",
+            "0x00a329c0648769A73afAc7F9381E08FB43dBEA72",
             "--rpc-url",
             handle.http_endpoint().as_str(),
         ]);
@@ -766,6 +786,8 @@ contract Script0 is Script {
         cmd.arg("script").arg(script).args([
             "--tc",
             "Script0",
+            "--sender",
+            "0x00a329c0648769A73afAc7F9381E08FB43dBEA72",
             "--rpc-url",
             handle.http_endpoint().as_str(),
         ]);
@@ -796,3 +818,48 @@ contract Script0 is Script {
         );
     }
 );
+
+// checks that skipping build
+forgetest_init!(can_execute_script_and_skip_contracts, |prj: TestProject, mut cmd: TestCommand| {
+    // explicitly set to run with 0.8.17 for consistent output
+    let config = Config { solc: Some("0.8.17".into()), ..Default::default() };
+    prj.write_config(config);
+
+    let script = prj
+        .inner()
+        .add_source(
+            "Foo",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.17;
+contract Demo {
+    event log_string(string);
+    function run() external returns (uint256 result, uint8) {
+        emit log_string("script ran");
+        return (255, 3);
+    }
+}"#,
+        )
+        .unwrap();
+    cmd.arg("script").arg(script).args(["--skip", "tests", "--skip", TEMPLATE_CONTRACT]);
+
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_execute_script_and_skip_contracts.stdout"),
+    );
+});
+
+forgetest_async!(
+    can_run_script_with_empty_setup,
+    |prj: TestProject, cmd: TestCommand| async move {
+        let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
+
+        tester.add_sig("BroadcastEmptySetUp", "run()").simulate(ScriptOutcome::OkNoEndpoint);
+    }
+);
+
+forgetest_async!(does_script_override_correctly, |prj: TestProject, cmd: TestCommand| async move {
+    let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
+
+    tester.add_sig("CheckOverrides", "run()").simulate(ScriptOutcome::OkNoEndpoint);
+});

@@ -7,7 +7,7 @@ use ethers::{
     utils::format_units,
 };
 use forge::executor::SpecId;
-use foundry_config::Config;
+use foundry_config::{Chain, Config};
 use std::{
     future::Future,
     ops::Mul,
@@ -172,7 +172,7 @@ pub(crate) use p_println;
 /// to not be able to configure the colors. It would also mess up the JSON output.
 pub fn load_dotenv() {
     let load = |p: &Path| {
-        dotenv::from_path(p.join(".env")).ok();
+        dotenvy::from_path(p.join(".env")).ok();
     };
 
     // we only want the .env file of the cwd and project root
@@ -200,7 +200,7 @@ pub fn enable_paint() {
 }
 
 /// Prints parts of the receipt to stdout
-pub fn print_receipt(receipt: &TransactionReceipt) {
+pub fn print_receipt(chain: Chain, receipt: &TransactionReceipt) {
     let contract_address = receipt
         .contract_address
         .map(|addr| format!("\nContract Address: 0x{}", hex::encode(addr.as_bytes())))
@@ -228,7 +228,8 @@ pub fn print_receipt(receipt: &TransactionReceipt) {
     };
 
     println!(
-        "\n#####\n{}Hash: 0x{}{}\nBlock: {}\n{}\n",
+        "\n##### {}\n{}Hash: 0x{}{}\nBlock: {}\n{}\n",
+        chain,
         check,
         hex::encode(receipt.transaction_hash.as_bytes()),
         contract_address,
@@ -250,7 +251,7 @@ impl CommandUtils for Command {
     #[track_caller]
     fn exec(&mut self) -> eyre::Result<Output> {
         let output = self.output()?;
-        if !&output.status.success() {
+        if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             eyre::bail!("{}", stderr.trim())
         }

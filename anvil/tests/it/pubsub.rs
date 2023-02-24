@@ -7,7 +7,7 @@ use ethers::{
     prelude::{Middleware, Ws},
     providers::{JsonRpcClient, PubsubClient},
     signers::Signer,
-    types::{Block, Filter, TxHash, ValueOrArray, U256},
+    types::{Address, Block, Filter, TransactionRequest, TxHash, ValueOrArray, U256},
 };
 use futures::StreamExt;
 use std::sync::Arc;
@@ -102,6 +102,47 @@ async fn test_sub_logs() {
     // get the emitted event
     let log = logs_sub.next().await.unwrap();
 
+    // ensure the log in the receipt is the same as received via subscription stream
+    assert_eq!(receipt.logs[0], log);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_sub_logs_impersonated() {
+    abigen!(EmitLogs, "test-data/emit_logs.json");
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.ws_provider().await;
+
+    // impersonate account
+    let impersonate = Address::random();
+    let funding = U256::from(1e18 as u64);
+    api.anvil_set_balance(impersonate, funding).await.unwrap();
+    api.anvil_impersonate_account(impersonate).await.unwrap();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let msg = "First Message".to_string();
+    let contract =
+        EmitLogs::deploy(Arc::clone(&client), msg.clone()).unwrap().send().await.unwrap();
+
+    let _val = contract.get_value().call().await.unwrap();
+
+    // subscribe to events from the impersonated account
+    let filter = Filter::new().address(ValueOrArray::Value(contract.address()));
+    let mut logs_sub = client.subscribe_logs(&filter).await.unwrap();
+
+    // send a tx triggering an event
+    let data = contract.set_value("Next Message".to_string()).tx.data().cloned().unwrap();
+
+    let tx = TransactionRequest::new().from(impersonate).to(contract.address()).data(data);
+
+    let provider = handle.http_provider();
+
+    let receipt = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+
+    // get the emitted event
+    let log = logs_sub.next().await.unwrap();
     // ensure the log in the receipt is the same as received via subscription stream
     assert_eq!(receipt.logs[0], log);
 }
@@ -206,4 +247,28 @@ async fn test_subscriptions() {
     }
 
     assert_eq!(blocks, vec![1, 2, 3])
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_sub_new_heads_fast() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    let provider = handle.ws_provider().await;
+
+    let blocks = provider.subscribe_blocks().await.unwrap();
+
+    let num = 1_000u64;
+    let mine_api = api.clone();
+    tokio::task::spawn(async move {
+        for _ in 0..num {
+            mine_api.mine_one().await;
+        }
+    });
+
+    // collect all the blocks
+    let blocks = blocks.take(num as usize).collect::<Vec<_>>().await;
+    let block_numbers = blocks.into_iter().map(|b| b.number.unwrap().as_u64()).collect::<Vec<_>>();
+
+    let numbers = (1..=num).collect::<Vec<_>>();
+    assert_eq!(block_numbers, numbers);
 }

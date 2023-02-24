@@ -22,11 +22,15 @@ pub trait Visitor {
         Ok(())
     }
 
+    fn visit_annotation(&mut self, annotation: &mut Annotation) -> Result<(), Self::Error> {
+        self.visit_source(annotation.loc)
+    }
+
     fn visit_pragma(
         &mut self,
         loc: Loc,
-        _ident: &mut Identifier,
-        _str: &mut StringLiteral,
+        _ident: &mut Option<Identifier>,
+        _str: &mut Option<StringLiteral>,
     ) -> Result<(), Self::Error> {
         self.visit_source(loc)
     }
@@ -383,6 +387,10 @@ pub trait Visitor {
     fn visit_yul_typed_ident(&mut self, ident: &mut YulTypedIdentifier) -> Result<(), Self::Error> {
         self.visit_source(ident.loc)
     }
+
+    fn visit_parser_error(&mut self, loc: Loc) -> Result<(), Self::Error> {
+        self.visit_source(loc)
+    }
 }
 
 /// All `solang::pt::*` types, such as [Statement](solang::pt::Statement) should implement the
@@ -470,6 +478,7 @@ impl Visitable for SourceUnitPart {
             SourceUnitPart::TypeDefinition(def) => v.visit_type_definition(def),
             SourceUnitPart::StraySemicolon(_) => v.visit_stray_semicolon(),
             SourceUnitPart::Using(using) => v.visit_using(using),
+            SourceUnitPart::Annotation(annotation) => v.visit_annotation(annotation),
         }
     }
 }
@@ -504,6 +513,7 @@ impl Visitable for ContractPart {
             ContractPart::TypeDefinition(def) => v.visit_type_definition(def),
             ContractPart::StraySemicolon(_) => v.visit_stray_semicolon(),
             ContractPart::Using(using) => v.visit_using(using),
+            ContractPart::Annotation(annotation) => v.visit_annotation(annotation),
         }
     }
 }
@@ -547,6 +557,7 @@ impl Visitable for Statement {
             Statement::Try(loc, expr, returns, clauses) => {
                 v.visit_try(*loc, expr, returns, clauses)
             }
+            Statement::Error(loc) => v.visit_parser_error(*loc),
         }
     }
 }
@@ -619,6 +630,7 @@ impl Visitable for YulStatement {
             YulStatement::VariableDeclaration(loc, idents, expr) => {
                 v.visit_yul_var_declaration(*loc, idents, expr)
             }
+            YulStatement::Error(loc) => v.visit_parser_error(*loc),
         }
     }
 }

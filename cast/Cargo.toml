@@ -28,12 +28,17 @@ serde_json = "1.0.67"
 chrono = "0.4.22"
 hex = "0.4.3"
 
+# aws
+rusoto_core = { version = "0.48.0", default-features = false, optional = true }
+rusoto_kms = { version = "0.48.0", default-features = false, optional = true }
+
 [dev-dependencies]
 async-trait = "0.1.53"
 tokio = "1"
 thiserror = "1.0.30"
 
 [features]
-default = ["ledger", "trezor"]
+default = ["ledger", "trezor", "aws"]
 ledger = ["ethers-signers/ledger"]
 trezor = ["ethers-signers/trezor"]
+aws = ["ethers-signers/aws", "rusoto_core/rustls", "rusoto_kms/rustls"]

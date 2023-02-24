@@ -94,6 +94,36 @@ contract ForkTest is DSTest {
         assertEq(block.number, mainBlock + 1);
     }
 
+    // test that we can "roll" blocks until a transaction
+    function testCanRollForkUntilTransaction() public {
+        // block to run transactions from
+        uint256 block = 16261704;
+
+        // fork until previous block
+        uint256 fork = cheats.createSelectFork("rpcAlias", block - 1);
+
+        // block transactions in order: https://beaconcha.in/block/16261704#transactions
+        // run transactions from current block until tx
+        bytes32 tx = 0x67cbad73764049e228495a3f90144aab4a37cb4b5fd697dffc234aa5ed811ace;
+
+        // account that sends ether in 2 transaction before tx
+        address account = 0xAe45a8240147E6179ec7c9f92c5A18F9a97B3fCA;
+
+        assertEq(account.balance, 275780074926400862972);
+
+        // transfer: 0.00275 ether (0.00095 + 0.0018)
+        // transaction 1: https://etherscan.io/tx/0xc51739580cf4cd2155cb171afa56ce314168eee3b5d59faefc3ceb9cacee46da
+        // transaction 2: https://etherscan.io/tx/0x3777bf87e91bcbb0f976f1df47a7678cea6d6e29996894293a6d1fad80233c28
+        uint256 transferAmount = 950391156965212 + 1822824618180000;
+        uint256 newBalance = account.balance - transferAmount;
+
+        // execute transactions in block until tx
+        cheats.rollFork(tx);
+
+        // balance must be less than newBalance due to gas spent
+        assert(account.balance < newBalance);
+    }
+
     /// checks that marking as persistent works
     function testMarkPersistent() public {
         assert(cheats.isPersistent(address(this)));

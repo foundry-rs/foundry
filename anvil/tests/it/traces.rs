@@ -1,9 +1,12 @@
 use crate::fork::fork_config;
 use anvil::{spawn, NodeConfig};
 use ethers::{
-    contract::Contract,
-    prelude::{Action, ContractFactory, Middleware, Signer, SignerMiddleware, TransactionRequest},
-    types::{ActionType, Address, Trace},
+    contract::ContractInstance,
+    prelude::{
+        Action, ContractFactory, GethTrace, GethTraceFrame, Middleware, Signer, SignerMiddleware,
+        TransactionRequest,
+    },
+    types::{ActionType, Address, GethDebugTracingCallOptions, Trace},
     utils::hex,
 };
 use ethers_solc::{project_util::TempProject, Artifact};
@@ -77,7 +80,7 @@ contract Contract {
     let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
     let contract = factory.deploy(()).unwrap().send().await.unwrap();
 
-    let contract = Contract::new(
+    let contract = ContractInstance::new(
         contract.address(),
         abi.unwrap(),
         SignerMiddleware::new(handle.http_provider(), wallets[1].clone()),
@@ -88,6 +91,67 @@ contract Contract {
     let traces = handle.http_provider().trace_transaction(tx.transaction_hash).await.unwrap();
     assert!(!traces.is_empty());
     assert_eq!(traces[0].action_type, ActionType::Suicide);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_transfer_debug_trace_call() {
+    let prj = TempProject::dapptools().unwrap();
+    prj.add_source(
+        "Contract",
+        r#"
+pragma solidity 0.8.13;
+contract Contract {
+    address payable private owner;
+    constructor() public {
+        owner = payable(msg.sender);
+    }
+    function goodbye() public {
+        selfdestruct(owner);
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let mut compiled = prj.compile().unwrap();
+    assert!(!compiled.has_compiler_errors());
+    let contract = compiled.remove_first("Contract").unwrap();
+    let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.ws_provider().await;
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
+
+    // deploy successfully
+    let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
+    let contract = factory.deploy(()).unwrap().send().await.unwrap();
+
+    let contract = ContractInstance::new(
+        contract.address(),
+        abi.unwrap(),
+        SignerMiddleware::new(handle.http_provider(), wallets[1].clone()),
+    );
+    let call = contract.method::<_, ()>("goodbye", ()).unwrap();
+
+    let traces = handle
+        .http_provider()
+        .debug_trace_call(call.tx, None, GethDebugTracingCallOptions::default())
+        .await
+        .unwrap();
+    match traces {
+        GethTrace::Known(traces) => match traces {
+            GethTraceFrame::Default(traces) => {
+                assert!(!traces.failed);
+            }
+            _ => {
+                unreachable!()
+            }
+        },
+        GethTrace::Unknown(_) => {
+            unreachable!()
+        }
+    }
 }
 
 // <https://github.com/foundry-rs/foundry/issues/2656>

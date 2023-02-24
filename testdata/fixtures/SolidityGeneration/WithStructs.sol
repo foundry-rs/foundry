@@ -14,6 +14,7 @@ interface test {
     event FastLaneFeeSet(uint256 amount);
     event MinimumAutoshipThresholdSet(uint128 amount);
     event MinimumBidIncrementSet(uint256 amount);
+    event NFTokenAdded(NFToken token);
     event OpportunityAddressDisabled(address indexed opportunity, uint128 indexed auction_number);
     event OpportunityAddressEnabled(address indexed opportunity, uint128 indexed auction_number);
     event OpsSet(address ops);
@@ -41,6 +42,11 @@ interface test {
         address searcherContractAddress;
         address searcherPayableAddress;
         uint256 bidAmount;
+    }
+
+    struct NFToken {
+        address implem;
+        uint256 id;
     }
 
     struct Status {
@@ -123,8 +129,10 @@ interface test {
     function setStarter(address _starter) external;
     function setValidatorPreferences(uint128 _minAutoshipAmount, address _validatorPayableAddress) external;
     function startAuction() external;
+    function storeNFToken(NFToken memory nft) external;
     function submitBid(Bid memory bid) external;
     function transferOwnership(address newOwner) external;
+    function viewNFToken() external returns (NFToken memory nft);
     function withdrawStuckERC20(address _tokenAddress) external;
     function withdrawStuckNativeToken(uint256 amount) external;
 }

@@ -4,7 +4,10 @@ use super::Cheatcodes;
 use crate::{
     abi::HEVMCalls,
     error::SolError,
-    executor::{backend::DatabaseExt, inspector::cheatcodes::util::with_journaled_account},
+    executor::{
+        backend::DatabaseExt,
+        inspector::cheatcodes::{util::with_journaled_account, DealRecord},
+    },
 };
 use bytes::Bytes;
 use ethers::{
@@ -17,15 +20,18 @@ use ethers::{
     signers::{LocalWallet, Signer},
     types::{Address, U256},
 };
+use foundry_config::Config;
 use revm::{Bytecode, Database, EVMData};
 use tracing::trace;
 
 #[derive(Clone, Debug, Default)]
 pub struct Broadcast {
     /// Address of the transaction origin
-    pub origin: Address,
+    pub new_origin: Address,
     /// Original caller
     pub original_caller: Address,
+    /// Original `tx.origin`
+    pub original_origin: Address,
     /// Depth of the broadcast
     pub depth: u64,
     /// Whether the prank stops by itself after the next call
@@ -51,12 +57,13 @@ pub struct Prank {
 /// Sets up broadcasting from a script using `origin` as the sender
 fn broadcast(
     state: &mut Cheatcodes,
-    origin: Address,
+    new_origin: Address,
     original_caller: Address,
+    original_origin: Address,
     depth: u64,
     single_call: bool,
 ) -> Result<Bytes, Bytes> {
-    let broadcast = Broadcast { origin, original_caller, depth, single_call };
+    let broadcast = Broadcast { new_origin, original_origin, original_caller, depth, single_call };
 
     if state.prank.is_some() {
         return Err("You have an active prank. Broadcasting and pranks are not compatible. Disable one or the other".to_string().encode().into());
@@ -76,6 +83,7 @@ fn broadcast_key(
     state: &mut Cheatcodes,
     private_key: U256,
     original_caller: Address,
+    original_origin: Address,
     chain_id: U256,
     depth: u64,
     single_call: bool,
@@ -94,11 +102,11 @@ fn broadcast_key(
     let key = SigningKey::from_bytes(&bytes).map_err(|err| err.to_string().encode())?;
     let wallet = LocalWallet::from(key).with_chain_id(chain_id.as_u64());
 
-    let origin = wallet.address();
+    let new_origin = wallet.address();
 
     state.script_wallets.push(wallet);
 
-    broadcast(state, origin, original_caller, depth, single_call)
+    broadcast(state, new_origin, original_caller, original_origin, depth, single_call)
 }
 
 fn prank(
@@ -148,7 +156,13 @@ fn accesses(state: &mut Cheatcodes, address: Address) -> Bytes {
 
 #[derive(Clone, Debug, Default)]
 pub struct RecordedLogs {
-    pub entries: Vec<RawLog>,
+    pub entries: Vec<Log>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Log {
+    pub emitter: Address,
+    pub inner: RawLog,
 }
 
 fn start_record_logs(state: &mut Cheatcodes) {
@@ -163,8 +177,9 @@ fn get_recorded_logs(state: &mut Cheatcodes) -> Bytes {
                 .iter()
                 .map(|entry| {
                     Token::Tuple(vec![
-                        entry.topics.clone().into_token(),
-                        Token::Bytes(entry.data.clone()),
+                        entry.inner.topics.clone().into_token(),
+                        Token::Bytes(entry.inner.data.clone()),
+                        entry.emitter.into_token(),
                     ])
                 })
                 .collect::<Vec<Token>>()
@@ -240,8 +255,15 @@ pub fn apply<DB: DatabaseExt>(
             let who = inner.0;
             let value = inner.1;
             trace!(?who, ?value, "deal cheatcode");
-
             with_journaled_account(&mut data.journaled_state, data.db, who, |account| {
+                // record the deal
+                let record = DealRecord {
+                    address: who,
+                    old_balance: account.info.balance,
+                    new_balance: value,
+                };
+                state.eth_deals.push(record);
+
                 account.info.balance = value;
             })
             .map_err(|err| err.encode_string())?;
@@ -342,7 +364,14 @@ pub fn apply<DB: DatabaseExt>(
                 state,
             )
             .map_err(|err| err.encode_string())?;
-            broadcast(state, data.env.tx.caller, caller, data.journaled_state.depth(), true)?
+            broadcast(
+                state,
+                data.env.tx.caller,
+                caller,
+                data.env.tx.caller,
+                data.journaled_state.depth(),
+                true,
+            )?
         }
         HEVMCalls::Broadcast1(inner) => {
             correct_sender_nonce(
@@ -352,7 +381,14 @@ pub fn apply<DB: DatabaseExt>(
                 state,
             )
             .map_err(|err| err.encode_string())?;
-            broadcast(state, inner.0, caller, data.journaled_state.depth(), true)?
+            broadcast(
+                state,
+                inner.0,
+                caller,
+                data.env.tx.caller,
+                data.journaled_state.depth(),
+                true,
+            )?
         }
         HEVMCalls::Broadcast2(inner) => {
             correct_sender_nonce(
@@ -366,6 +402,7 @@ pub fn apply<DB: DatabaseExt>(
                 state,
                 inner.0,
                 caller,
+                data.env.tx.caller,
                 data.env.cfg.chain_id,
                 data.journaled_state.depth(),
                 true,
@@ -379,7 +416,14 @@ pub fn apply<DB: DatabaseExt>(
                 state,
             )
             .map_err(|err| err.encode_string())?;
-            broadcast(state, data.env.tx.caller, caller, data.journaled_state.depth(), false)?
+            broadcast(
+                state,
+                data.env.tx.caller,
+                caller,
+                data.env.tx.caller,
+                data.journaled_state.depth(),
+                false,
+            )?
         }
         HEVMCalls::StartBroadcast1(inner) => {
             correct_sender_nonce(
@@ -389,7 +433,14 @@ pub fn apply<DB: DatabaseExt>(
                 state,
             )
             .map_err(|err| err.encode_string())?;
-            broadcast(state, inner.0, caller, data.journaled_state.depth(), false)?
+            broadcast(
+                state,
+                inner.0,
+                caller,
+                data.env.tx.caller,
+                data.journaled_state.depth(),
+                false,
+            )?
         }
         HEVMCalls::StartBroadcast2(inner) => {
             correct_sender_nonce(
@@ -403,13 +454,27 @@ pub fn apply<DB: DatabaseExt>(
                 state,
                 inner.0,
                 caller,
+                data.env.tx.caller,
                 data.env.cfg.chain_id,
                 data.journaled_state.depth(),
                 false,
             )?
         }
         HEVMCalls::StopBroadcast(_) => {
+            if state.broadcast.is_none() {
+                return Err("No broadcast in progress to stop".to_string().encode().into())
+            }
             state.broadcast = None;
+            Bytes::new()
+        }
+        HEVMCalls::PauseGasMetering(_) => {
+            if state.gas_metering.is_none() {
+                state.gas_metering = Some(None);
+            }
+            Bytes::new()
+        }
+        HEVMCalls::ResumeGasMetering(_) => {
+            state.gas_metering = None;
             Bytes::new()
         }
         _ => return Ok(None),
@@ -427,7 +492,7 @@ fn correct_sender_nonce<DB: Database>(
     db: &mut DB,
     state: &mut Cheatcodes,
 ) -> Result<(), DB::Error> {
-    if !state.corrected_nonce {
+    if !state.corrected_nonce && sender != Config::DEFAULT_SENDER {
         with_journaled_account(journaled_state, db, sender, |account| {
             account.info.nonce = account.info.nonce.saturating_sub(1);
             state.corrected_nonce = true;

@@ -1,15 +1,16 @@
 use crate::utils::FoundryPathExt;
 use clap::Parser;
-use ethers::solc::FileFilter;
+use ethers::solc::{FileFilter, ProjectPathsConfig};
 use forge::TestFilter;
 use foundry_config::Config;
 use std::{fmt, path::Path, str::FromStr};
 
-/// The filter to use during testing
+/// The filter to use during testing.
 ///
-/// See also `FileFilter`
+/// See also `FileFilter`.
 #[derive(Clone, Parser)]
-pub struct Filter {
+#[clap(next_help_heading = "Test filtering")]
+pub struct FilterArgs {
     /// Only run test functions matching the specified regex pattern.
     ///
     /// Deprecated: See --match-test
@@ -72,9 +73,9 @@ pub struct Filter {
     pub path_pattern_inverse: Option<GlobMatcher>,
 }
 
-impl Filter {
+impl FilterArgs {
     /// Merges the set filter globs with the config's values
-    pub fn with_merged_config(&self, config: &Config) -> Self {
+    pub fn merge_with_config(&self, config: &Config) -> ProjectPathsAwareFilter {
         let mut filter = self.clone();
         if filter.test_pattern.is_none() {
             filter.test_pattern = config.test_pattern.clone().map(|p| p.into());
@@ -95,13 +96,13 @@ impl Filter {
         if filter.path_pattern_inverse.is_none() {
             filter.path_pattern_inverse = config.path_pattern_inverse.clone().map(Into::into);
         }
-        filter
+        ProjectPathsAwareFilter { args_filter: filter, paths: config.project_paths() }
     }
 }
 
-impl fmt::Debug for Filter {
+impl fmt::Debug for FilterArgs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Filter")
+        f.debug_struct("FilterArgs")
             .field("match", &self.pattern.as_ref().map(|r| r.as_str()))
             .field("match-test", &self.test_pattern.as_ref().map(|r| r.as_str()))
             .field("no-match-test", &self.test_pattern_inverse.as_ref().map(|r| r.as_str()))
@@ -113,7 +114,7 @@ impl fmt::Debug for Filter {
     }
 }
 
-impl FileFilter for Filter {
+impl FileFilter for FilterArgs {
     /// Returns true if the file regex pattern match the `file`
     ///
     /// If no file regex is set this returns true if the file ends with `.t.sol`, see
@@ -131,7 +132,7 @@ impl FileFilter for Filter {
     }
 }
 
-impl TestFilter for Filter {
+impl TestFilter for FilterArgs {
     fn matches_test(&self, test_name: impl AsRef<str>) -> bool {
         let mut ok = true;
         let test_name = test_name.as_ref();
@@ -173,7 +174,7 @@ impl TestFilter for Filter {
     }
 }
 
-impl fmt::Display for Filter {
+impl fmt::Display for FilterArgs {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut patterns = Vec::new();
         if let Some(ref p) = self.pattern {
@@ -201,6 +202,59 @@ impl fmt::Display for Filter {
     }
 }
 
+/// A filter that combines all command line arguments and the paths of the current projects
+#[derive(Debug, Clone)]
+pub struct ProjectPathsAwareFilter {
+    args_filter: FilterArgs,
+    paths: ProjectPathsConfig,
+}
+
+// === impl ProjectPathsAwareFilter ===
+
+impl ProjectPathsAwareFilter {
+    /// Returns the CLI arguments
+    pub fn args(&self) -> &FilterArgs {
+        &self.args_filter
+    }
+
+    /// Returns the CLI arguments mutably
+    pub fn args_mut(&mut self) -> &mut FilterArgs {
+        &mut self.args_filter
+    }
+}
+
+impl FileFilter for ProjectPathsAwareFilter {
+    /// Returns true if the file regex pattern match the `file`
+    ///
+    /// If no file regex is set this returns true if the file ends with `.t.sol`, see
+    /// [FoundryPathExr::is_sol_test()]
+    fn is_match(&self, file: &Path) -> bool {
+        self.args_filter.is_match(file)
+    }
+}
+
+impl TestFilter for ProjectPathsAwareFilter {
+    fn matches_test(&self, test_name: impl AsRef<str>) -> bool {
+        self.args_filter.matches_test(test_name)
+    }
+
+    fn matches_contract(&self, contract_name: impl AsRef<str>) -> bool {
+        self.args_filter.matches_contract(contract_name)
+    }
+
+    fn matches_path(&self, path: impl AsRef<str>) -> bool {
+        let path = path.as_ref();
+        // we don't want to test files that belong to a library
+        self.args_filter.matches_path(path) && !self.paths.has_library_ancestor(Path::new(path))
+    }
+}
+
+impl fmt::Display for ProjectPathsAwareFilter {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.args_filter.fmt(f)
+    }
+}
+
 /// A `globset::Glob` that creates its `globset::GlobMatcher` when its created, so it doesn't need
 /// to be compiled when the filter functions `TestFilter` functions are called.
 #[derive(Debug, Clone)]
@@ -221,7 +275,7 @@ impl GlobMatcher {
     pub fn is_match(&self, path: &str) -> bool {
         let mut matches = self.matcher.is_match(path);
         if !matches && !path.starts_with("./") && self.as_str().starts_with("./") {
-            matches = self.matcher.is_match(format!("./{}", path));
+            matches = self.matcher.is_match(format!("./{path}"));
         }
         matches
     }

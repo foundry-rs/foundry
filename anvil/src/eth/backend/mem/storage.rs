@@ -9,11 +9,11 @@ use crate::eth::{
 use anvil_core::eth::{
     block::{Block, PartialHeader},
     receipt::TypedReceipt,
-    transaction::TransactionInfo,
+    transaction::{MaybeImpersonatedTransaction, TransactionInfo},
 };
 use ethers::{
-    prelude::{BlockId, BlockNumber, GethTrace, Trace, H256, H256 as TxHash, U64},
-    types::{ActionType, GethDebugTracingOptions, U256},
+    prelude::{BlockId, BlockNumber, DefaultFrame, Trace, H256, H256 as TxHash, U64},
+    types::{ActionType, Bytes, GethDebugTracingOptions, TransactionReceipt, U256},
 };
 use forge::revm::{Env, Return};
 use parking_lot::RwLock;
@@ -21,7 +21,15 @@ use std::{
     collections::{HashMap, VecDeque},
     fmt,
     sync::Arc,
+    time::Duration,
 };
+
+// === various limits in number of blocks ===
+
+const DEFAULT_HISTORY_LIMIT: usize = 500;
+const MIN_HISTORY_LIMIT: usize = 10;
+// 1hr of up-time at lowest 1s interval
+const MAX_ON_DISK_HISTORY_LIMIT: usize = 3_600;
 
 // === impl DiskStateCache ===
 
@@ -32,10 +40,16 @@ pub struct InMemoryBlockStates {
     /// states which data is moved to disk
     on_disk_states: HashMap<H256, StateDb>,
     /// How many states to store at most
-    limit: usize,
+    in_memory_limit: usize,
     /// minimum amount of states we keep in memory
-    min_limit: usize,
-    /// all states present, used to enforce `limit`
+    min_in_memory_limit: usize,
+    /// maximum amount of states we keep on disk
+    ///
+    /// Limiting the states will prevent disk blow up, especially in interval mining mode
+    max_on_disk_limit: usize,
+    /// the oldest states written to disk
+    oldest_on_disk: VecDeque<H256>,
+    /// all states present, used to enforce `in_memory_limit`
     present: VecDeque<H256>,
     /// Stores old states on disk
     disk_cache: DiskStateCache,
@@ -49,11 +63,39 @@ impl InMemoryBlockStates {
         Self {
             states: Default::default(),
             on_disk_states: Default::default(),
-            limit,
-            min_limit: limit.min(10),
+            in_memory_limit: limit,
+            min_in_memory_limit: limit.min(MIN_HISTORY_LIMIT),
+            max_on_disk_limit: MAX_ON_DISK_HISTORY_LIMIT,
+            oldest_on_disk: Default::default(),
             present: Default::default(),
             disk_cache: Default::default(),
         }
+    }
+
+    /// Configures no disk caching
+    pub fn memory_only(mut self) -> Self {
+        self.max_on_disk_limit = 0;
+        self
+    }
+
+    /// This modifies the `limit` what to keep stored in memory.
+    ///
+    /// This will ensure the new limit adjusts based on the block time.
+    /// The lowest blocktime is 1s which should increase the limit slightly
+    pub fn update_interval_mine_block_time(&mut self, block_time: Duration) {
+        let block_time = block_time.as_secs();
+        // for block times lower than 2s we increase the mem limit since we're mining _small_ blocks
+        // very fast
+        // this will gradually be decreased once the max limit was reached
+        if block_time <= 2 {
+            self.in_memory_limit = DEFAULT_HISTORY_LIMIT * 3;
+            self.enforce_limits();
+        }
+    }
+
+    /// Returns true if only memory caching is supported.
+    fn is_memory_only(&self) -> bool {
+        self.max_on_disk_limit == 0
     }
 
     /// Inserts a new (hash -> state) pair
@@ -67,26 +109,46 @@ impl InMemoryBlockStates {
     ///
     /// When a state that was previously written to disk is requested, it is simply read from disk.
     pub fn insert(&mut self, hash: H256, state: StateDb) {
-        if self.present.len() >= self.limit {
-            // once we hit the max limit we decrease it
-            self.limit = self.limit.saturating_sub(1).max(self.min_limit);
+        if !self.is_memory_only() && self.present.len() >= self.in_memory_limit {
+            // once we hit the max limit we gradually decrease it
+            self.in_memory_limit =
+                self.in_memory_limit.saturating_sub(1).max(self.min_in_memory_limit);
         }
 
-        while self.present.len() >= self.limit {
+        self.enforce_limits();
+
+        self.states.insert(hash, state);
+        self.present.push_back(hash);
+    }
+
+    /// Enforces configured limits
+    fn enforce_limits(&mut self) {
+        // enforce memory limits
+        while self.present.len() >= self.in_memory_limit {
             // evict the oldest block
             if let Some((hash, mut state)) = self
                 .present
                 .pop_front()
                 .and_then(|hash| self.states.remove(&hash).map(|state| (hash, state)))
             {
-                let snapshot = state.0.clear_into_snapshot();
-                self.disk_cache.write(hash, snapshot);
-                self.on_disk_states.insert(hash, state);
+                // only write to disk if supported
+                if !self.is_memory_only() {
+                    let snapshot = state.0.clear_into_snapshot();
+                    self.disk_cache.write(hash, snapshot);
+                    self.on_disk_states.insert(hash, state);
+                    self.oldest_on_disk.push_back(hash);
+                }
             }
         }
 
-        self.states.insert(hash, state);
-        self.present.push_back(hash);
+        // enforce on disk limit and purge the oldest state cached on disk
+        while !self.is_memory_only() && self.oldest_on_disk.len() >= self.max_on_disk_limit {
+            // evict the oldest block
+            if let Some(hash) = self.oldest_on_disk.pop_front() {
+                self.on_disk_states.remove(&hash);
+                self.disk_cache.remove(hash);
+            }
+        }
     }
 
     /// Returns the state for the given `hash` if present
@@ -104,7 +166,7 @@ impl InMemoryBlockStates {
 
     /// Sets the maximum number of stats we keep in memory
     pub fn set_cache_limit(&mut self, limit: usize) {
-        self.limit = limit;
+        self.in_memory_limit = limit;
     }
 
     /// Clears all entries
@@ -112,13 +174,19 @@ impl InMemoryBlockStates {
         self.states.clear();
         self.on_disk_states.clear();
         self.present.clear();
+        for on_disk in std::mem::take(&mut self.oldest_on_disk) {
+            self.disk_cache.remove(on_disk)
+        }
     }
 }
 
 impl fmt::Debug for InMemoryBlockStates {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("InMemoryBlockStates")
-            .field("limit", &self.limit)
+            .field("in_memory_limit", &self.in_memory_limit)
+            .field("min_in_memory_limit", &self.min_in_memory_limit)
+            .field("max_on_disk_limit", &self.max_on_disk_limit)
+            .field("oldest_on_disk", &self.oldest_on_disk)
             .field("present", &self.present)
             .finish_non_exhaustive()
     }
@@ -126,8 +194,8 @@ impl fmt::Debug for InMemoryBlockStates {
 
 impl Default for InMemoryBlockStates {
     fn default() -> Self {
-        // enough in memory to store 250 blocks in memory
-        Self::new(250)
+        // enough in memory to store `DEFAULT_HISTORY_LIMIT` blocks in memory
+        Self::new(DEFAULT_HISTORY_LIMIT)
     }
 }
 
@@ -163,7 +231,7 @@ impl BlockchainStorage {
             difficulty: env.block.difficulty,
             ..Default::default()
         };
-        let block = Block::new(partial_header, vec![], vec![]);
+        let block = Block::new::<MaybeImpersonatedTransaction>(partial_header, vec![], vec![]);
         let genesis_hash = block.header.hash();
         let best_hash = genesis_hash;
         let best_number: U64 = 0u64.into();
@@ -210,11 +278,26 @@ impl BlockchainStorage {
 impl BlockchainStorage {
     /// Returns the hash for [BlockNumber]
     pub fn hash(&self, number: BlockNumber) -> Option<H256> {
+        let slots_in_an_epoch = U64::from(32u64);
         match number {
             BlockNumber::Latest => Some(self.best_hash),
             BlockNumber::Earliest => Some(self.genesis_hash),
             BlockNumber::Pending => None,
             BlockNumber::Number(num) => self.hashes.get(&num).copied(),
+            BlockNumber::Safe => {
+                if self.best_number > (slots_in_an_epoch) {
+                    self.hashes.get(&(self.best_number - (slots_in_an_epoch))).copied()
+                } else {
+                    Some(self.genesis_hash) // treat the genesis block as safe "by definition"
+                }
+            }
+            BlockNumber::Finalized => {
+                if self.best_number > (slots_in_an_epoch * 2) {
+                    self.hashes.get(&(self.best_number - (slots_in_an_epoch * 2))).copied()
+                } else {
+                    Some(self.genesis_hash)
+                }
+            }
         }
     }
 }
@@ -313,9 +396,18 @@ impl MinedTransaction {
         traces
     }
 
-    pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> GethTrace {
+    pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> DefaultFrame {
         self.info.traces.geth_trace(self.receipt.gas_used(), opts)
     }
+}
+
+/// Intermediary Anvil representation of a receipt
+#[derive(Debug, Clone)]
+pub struct MinedTransactionReceipt {
+    /// The actual json rpc receipt object
+    pub inner: TransactionReceipt,
+    /// Output data fo the transaction
+    pub out: Option<Bytes>,
 }
 
 #[cfg(test)]
@@ -325,6 +417,13 @@ mod tests {
     use ethers::{abi::ethereum_types::BigEndianHash, types::Address};
     use forge::revm::{db::DatabaseRef, AccountInfo};
     use foundry_evm::executor::backend::MemDb;
+
+    #[test]
+    fn test_interval_update() {
+        let mut storage = InMemoryBlockStates::default();
+        storage.update_interval_mine_block_time(Duration::from_secs(1));
+        assert_eq!(storage.in_memory_limit, DEFAULT_HISTORY_LIMIT * 3);
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn can_read_write_cached_state() {
@@ -353,7 +452,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn can_decrease_state_cache_size() {
-        let limit = 20;
+        let limit = 15;
         let mut storage = InMemoryBlockStates::new(limit);
 
         let num_states = 30;
@@ -370,8 +469,8 @@ mod tests {
         // wait for files to be flushed
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-        assert_eq!(storage.on_disk_states.len(), num_states - storage.min_limit);
-        assert_eq!(storage.present.len(), storage.min_limit);
+        assert_eq!(storage.on_disk_states.len(), num_states - storage.min_in_memory_limit);
+        assert_eq!(storage.present.len(), storage.min_in_memory_limit);
 
         for idx in 0..num_states {
             let hash = H256::from_uint(&U256::from(idx));

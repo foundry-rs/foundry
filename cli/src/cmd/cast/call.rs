@@ -1,9 +1,6 @@
 // cast estimate subcommands
 use crate::{
-    opts::{
-        cast::{parse_block_id, parse_name_or_address},
-        EthereumOpts, TransactionOpts,
-    },
+    opts::{EthereumOpts, TransactionOpts},
     utils::parse_ether_value,
 };
 use cast::{Cast, TxBuilder};
@@ -12,24 +9,49 @@ use ethers::{
     providers::Middleware,
     types::{BlockId, NameOrAddress, U256},
 };
+use eyre::WrapErr;
 use foundry_common::try_get_http_provider;
 use foundry_config::{Chain, Config};
+use std::str::FromStr;
 
 #[derive(Debug, Parser)]
 pub struct CallArgs {
-    #[clap(help = "The destination of the transaction.", value_parser = parse_name_or_address, value_name = "TO")]
+    #[clap(
+        help = "The destination of the transaction.", 
+        value_name = "TO",
+        value_parser = NameOrAddress::from_str
+    )]
     to: Option<NameOrAddress>,
+
     #[clap(help = "The signature of the function to call.", value_name = "SIG")]
     sig: Option<String>,
+
     #[clap(help = "The arguments of the function to call.", value_name = "ARGS")]
     args: Vec<String>,
-    #[clap(flatten, next_help_heading = "TRANSACTION OPTIONS")]
-    tx: TransactionOpts,
+
+    #[clap(
+        long,
+        help = "Data for the transaction.",
+        value_name = "DATA",
+        value_parser = foundry_common::clap_helpers::strip_0x_prefix,
+        conflicts_with_all = &["sig", "args"]
+    )]
+    data: Option<String>,
+
     #[clap(flatten)]
-    // TODO: We only need RPC URL and Etherscan API key here.
+    tx: TransactionOpts,
+
+    #[clap(flatten)]
     eth: EthereumOpts,
-    #[clap(long, short, help = "the block you want to query, can also be earliest/latest/pending", value_parser = parse_block_id, value_name = "BLOCK")]
+
+    #[clap(
+        long,
+        short,
+        help = "the block you want to query, can also be earliest/latest/pending",
+        value_name = "BLOCK"
+    )]
     block: Option<BlockId>,
+
     #[clap(subcommand)]
     command: Option<CallSubcommands>,
 }
@@ -58,15 +80,15 @@ Examples: 1ether, 10gwei, 0.01ether"#,
 }
 impl CallArgs {
     pub async fn run(self) -> eyre::Result<()> {
-        let CallArgs { to, sig, args, tx, eth, command, block } = self;
+        let CallArgs { to, sig, args, data, tx, eth, command, block } = self;
         let config = Config::from(&eth);
         let provider = try_get_http_provider(config.get_rpc_url_or_localhost_http()?)?;
 
         let chain: Chain =
             if let Some(chain) = eth.chain { chain } else { provider.get_chainid().await?.into() };
 
-        let from = eth.sender().await;
-        let mut builder = TxBuilder::new(&provider, from, to, chain, tx.legacy).await?;
+        let sender = eth.sender().await;
+        let mut builder = TxBuilder::new(&provider, sender, to, chain, tx.legacy).await?;
         builder
             .gas(tx.gas_limit)
             .etherscan_api_key(config.get_etherscan_api_key(Some(chain)))
@@ -87,12 +109,54 @@ impl CallArgs {
                 builder.set_data(data);
             }
             _ => {
-                builder.value(tx.value).set_args(sig.unwrap().as_str(), args).await?;
+                builder.value(tx.value);
+
+                if let Some(sig) = sig {
+                    builder.set_args(sig.as_str(), args).await?;
+                }
+                if let Some(data) = data {
+                    // Note: `sig+args` and `data` are mutually exclusive
+                    builder.set_data(
+                        hex::decode(data).wrap_err("Expected hex encoded function data")?,
+                    );
+                }
             }
         };
 
         let builder_output = builder.build();
         println!("{}", Cast::new(provider).call(builder_output, block).await?);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethers::types::Address;
+
+    #[test]
+    fn can_parse_call_data() {
+        let data = hex::encode("hello");
+        let args: CallArgs =
+            CallArgs::parse_from(["foundry-cli", "--data", format!("0x{data}").as_str()]);
+        assert_eq!(args.data, Some(data.clone()));
+
+        let args: CallArgs = CallArgs::parse_from(["foundry-cli", "--data", data.as_str()]);
+        assert_eq!(args.data, Some(data));
+    }
+
+    #[test]
+    fn call_sig_and_data_exclusive() {
+        let data = hex::encode("hello");
+        let to = Address::zero();
+        let args = CallArgs::try_parse_from([
+            "foundry-cli",
+            format!("{to:?}").as_str(),
+            "signature",
+            "--data",
+            format!("0x{data}").as_str(),
+        ]);
+
+        assert!(args.is_err());
     }
 }

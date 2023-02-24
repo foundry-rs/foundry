@@ -398,7 +398,7 @@ mod tests {
             "{}\n{}{}",
             content,
             indent,
-            multiline_content.lines().collect::<Vec<_>>().join(&format!("\n{}", indent))
+            multiline_content.lines().collect::<Vec<_>>().join(&format!("\n{indent}"))
         );
         assert_eq!(buf.w, expected_content);
 

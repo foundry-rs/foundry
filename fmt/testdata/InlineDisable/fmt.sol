@@ -466,6 +466,14 @@ function testWhile() {
     // forgefmt: disable-end
 }
 
+function testLine() {}
+
+function   /* forgefmt: disable-line */ testLine(   ) { }
+
+function testLine() {}
+
+function   testLine(   ) { }  // forgefmt: disable-line
+
 // forgefmt: disable-start
 
     type Hello is uint256;

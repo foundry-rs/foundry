@@ -21,7 +21,7 @@ fn fmt_token(f: &mut fmt::Formatter, item: &Token) -> fmt::Result {
         Token::Bytes(inner) => write!(f, "0x{}", hex::encode(inner)),
         Token::FixedBytes(inner) => write!(f, "0x{}", hex::encode(inner)),
         // print as decimal
-        Token::Uint(inner) => write!(f, "{}", inner),
+        Token::Uint(inner) => write!(f, "{inner}"),
         Token::Int(inner) => write!(f, "{}", I256::from_raw(*inner)),
         Token::Array(tokens) | Token::FixedArray(tokens) => {
             f.write_char('[')?;

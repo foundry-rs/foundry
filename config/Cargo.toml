@@ -31,7 +31,7 @@ globset = "0.4.8"
 walkdir = "2.3.2"
 
 # encoding
-fastrlp = "0.1.3"
+open-fastrlp = "0.1.2"
 
 # misc
 eyre = "0.6.5"
@@ -40,6 +40,7 @@ semver = { version = "1.0.5", features = ["serde"] }
 tracing = "0.1"
 once_cell = "1.13"
 thiserror = "1.0"
+reqwest = { version = "0.11", default-features = false}
 
 [target.'cfg(target_os = "windows")'.dependencies]
 path-slash = "0.2.0"

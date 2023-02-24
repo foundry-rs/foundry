@@ -16,6 +16,7 @@ use std::time::Instant;
 /// Type alias for the result of [generate_wallet].
 pub type GeneratedWallet = (SigningKey, H160);
 
+/// CLI arguments for `cast wallet vanity`.
 #[derive(Debug, Clone, Parser)]
 pub struct VanityArgs {
     #[clap(
@@ -50,7 +51,7 @@ impl Cmd for VanityArgs {
             if let Ok(decoded) = hex::decode(prefix.as_bytes()) {
                 left_exact_hex = Some(decoded)
             } else {
-                left_regex = Some(Regex::new(&format!(r"^{}", prefix))?);
+                left_regex = Some(Regex::new(&format!(r"^{prefix}"))?);
             }
         }
 
@@ -58,7 +59,7 @@ impl Cmd for VanityArgs {
             if let Ok(decoded) = hex::decode(suffix.as_bytes()) {
                 right_exact_hex = Some(decoded)
             } else {
-                right_regex = Some(Regex::new(&format!(r"{}$", suffix))?);
+                right_regex = Some(Regex::new(&format!(r"{suffix}$"))?);
             }
         }
 

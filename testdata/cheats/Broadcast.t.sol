@@ -155,6 +155,10 @@ contract BroadcastTest is DSTest {
         Test test2 = new Test();
         cheats.stopBroadcast();
     }
+
+    function testFailNoBroadcast() public {
+        cheats.stopBroadcast();
+    }
 }
 
 contract NoLink is DSTest {
@@ -201,7 +205,7 @@ contract BroadcastTestNoLinking is DSTest {
 
         cheats.startBroadcast();
 
-        for (uint256 i; i < 50; i++) {
+        for (uint256 i; i < 25; i++) {
             NoLink test9 = new NoLink();
         }
 
@@ -348,11 +352,163 @@ contract TestInitialBalance is DSTest {
 
     function runDefaultSender() public {
         // Make sure we're testing with the default caller.
-        assert(msg.sender == address(0x00a329c0648769A73afAc7F9381E08FB43dBEA72));
+        assert(msg.sender == address(0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38));
 
         assert(msg.sender.balance == type(uint256).max);
 
         cheats.broadcast();
         new NoLink();
+    }
+}
+
+contract MultiChainBroadcastNoLink is DSTest {
+    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+
+    // ganache-cli -d 1st
+    address public ACCOUNT_A = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
+
+    // ganache-cli -d 2nd
+    address public ACCOUNT_B = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
+
+    function deploy(string memory sforkA, string memory sforkB) public {
+        uint256 forkA = cheats.createFork(sforkA);
+        uint256 forkB = cheats.createFork(sforkB);
+
+        cheats.selectFork(forkA);
+        cheats.broadcast(address(ACCOUNT_A));
+        new NoLink();
+        cheats.broadcast(address(ACCOUNT_B));
+        new NoLink();
+        cheats.selectFork(forkB);
+        cheats.startBroadcast(address(ACCOUNT_B));
+        new NoLink();
+        new NoLink();
+        new NoLink();
+        cheats.stopBroadcast();
+        cheats.startBroadcast(address(ACCOUNT_A));
+        new NoLink();
+        new NoLink();
+    }
+
+    function deployError(string memory sforkA, string memory sforkB) public {
+        uint256 forkA = cheats.createFork(sforkA);
+        uint256 forkB = cheats.createFork(sforkB);
+
+        cheats.selectFork(forkA);
+        cheats.broadcast(address(ACCOUNT_A));
+        new NoLink();
+        cheats.startBroadcast(address(ACCOUNT_B));
+        new NoLink();
+
+        cheats.selectFork(forkB);
+        cheats.broadcast(address(ACCOUNT_B));
+        new NoLink();
+    }
+}
+
+contract MultiChainBroadcastLink is DSTest {
+    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+
+    // ganache-cli -d 1st
+    address public ACCOUNT_A = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
+
+    // ganache-cli -d 2nd
+    address public ACCOUNT_B = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
+
+    function deploy(string memory sforkA, string memory sforkB) public {
+        uint256 forkA = cheats.createFork(sforkA);
+        uint256 forkB = cheats.createFork(sforkB);
+
+        cheats.selectFork(forkA);
+        cheats.broadcast(address(ACCOUNT_B));
+        new Test();
+
+        cheats.selectFork(forkB);
+        cheats.broadcast(address(ACCOUNT_B));
+        new Test();
+    }
+}
+
+contract BroadcastEmptySetUp is DSTest {
+    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+
+    function setUp() public {}
+
+    function run() public {
+        cheats.broadcast();
+        new Test();
+    }
+}
+
+contract ContractA {
+    uint256 var1;
+
+    constructor(address script_caller) {
+        require(msg.sender == script_caller);
+        require(tx.origin == script_caller);
+    }
+
+    function method(address script_caller) public {
+        require(msg.sender == script_caller);
+        require(tx.origin == script_caller);
+    }
+}
+
+contract ContractB {
+    uint256 var2;
+
+    constructor(address script_caller) {
+        require(address(0x1337) != script_caller);
+        require(msg.sender == address(0x1337));
+        require(tx.origin == address(0x1337));
+    }
+
+    function method(address script_caller) public {
+        require(address(0x1337) != script_caller);
+        require(msg.sender == address(0x1337));
+        require(tx.origin == address(0x1337));
+    }
+}
+
+contract CheckOverrides is DSTest {
+    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+
+    function run() external {
+        // `script_caller` can be set by `--private-key ...` or `--sender ...`
+        // Otherwise it will take the default value of 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38
+        address script_caller = msg.sender;
+        require(script_caller == 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38);
+        require(tx.origin == script_caller);
+
+        // startBroadcast(script_caller)
+        cheats.startBroadcast();
+        require(tx.origin == script_caller);
+        require(msg.sender == script_caller);
+
+        ContractA a = new ContractA(script_caller);
+        require(tx.origin == script_caller);
+        require(msg.sender == script_caller);
+
+        a.method(script_caller);
+        require(tx.origin == script_caller);
+        require(msg.sender == script_caller);
+
+        cheats.stopBroadcast();
+
+        // startBroadcast(msg.sender)
+        cheats.startBroadcast(address(0x1337));
+        require(tx.origin == script_caller);
+        require(msg.sender == script_caller);
+        require(msg.sender != address(0x1337));
+
+        ContractB b = new ContractB(script_caller);
+        require(tx.origin == script_caller);
+        require(msg.sender == script_caller);
+
+        b.method(script_caller);
+        require(tx.origin == script_caller);
+        require(msg.sender == script_caller);
+
+        cheats.stopBroadcast();
     }
 }

@@ -26,7 +26,8 @@ pub enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let app = App::parse();
+    let mut app = App::parse();
+    app.node.evm_opts.resolve_rpc_alias();
 
     if let Some(ref cmd) = app.cmd {
         match cmd {

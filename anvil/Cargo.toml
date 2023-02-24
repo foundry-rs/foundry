@@ -18,7 +18,7 @@ vergen = { version = "7.0", default-features = false, features = ["build", "rust
 [dependencies]
 # foundry internal
 foundry-evm = { path = "../evm" }
-anvil-core = { path = "core" }
+anvil-core = { path = "core", features = ["fastrlp", "serde", "impersonated-tx"] }
 anvil-rpc = { path = "rpc" }
 anvil-server = { path = "server" }
 foundry-utils = { path = "../utils" }
@@ -64,13 +64,13 @@ auto_impl = "0.5.0"
 ctrlc = { version = "3", optional = true }
 fdlimit = { version = "0.2.1", optional = true }
 clap_complete_fig = "4.0"
-ethereum-forkid = "0.10.0"
+ethereum-forkid = "0.11"
 
 # ethers
 [target.'cfg(not(windows))'.dependencies]
-ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["ws", "ipc"] }
+ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["rustls", "ws", "ipc"] }
 [target.'cfg(windows)'.dependencies]
-ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["ws"] }
+ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["rustls", "ws"] }
 
 [dev-dependencies]
 ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["abigen"] }

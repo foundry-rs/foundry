@@ -6,6 +6,8 @@ use ethers_core::{
 };
 use serde::Deserialize;
 
+use crate::TransactionReceiptWithRevertReason;
+
 /// length of the name column for pretty formatting `{:>20}{value}`
 const NAME_COLUMN_LEN: usize = 20usize;
 
@@ -28,7 +30,6 @@ impl UIfmt for String {
         self.to_string()
     }
 }
-
 impl UIfmt for bool {
     fn pretty(&self) -> String {
         self.to_string()
@@ -54,23 +55,23 @@ impl UIfmt for Address {
 
 impl UIfmt for H64 {
     fn pretty(&self) -> String {
-        format!("{:#x}", self)
+        format!("{self:#x}")
     }
 }
 
 impl UIfmt for H256 {
     fn pretty(&self) -> String {
-        format!("{:#x}", self)
+        format!("{self:#x}")
     }
 }
 
 impl UIfmt for Bytes {
     fn pretty(&self) -> String {
-        format!("{:#x}", self)
+        format!("{self:#x}")
     }
 }
 
-impl UIfmt for [u8; 32] {
+impl<const N: usize> UIfmt for [u8; N] {
     fn pretty(&self) -> String {
         format!("0x{}", hex::encode(&self[..]))
     }
@@ -84,7 +85,7 @@ impl UIfmt for U64 {
 
 impl UIfmt for Bloom {
     fn pretty(&self) -> String {
-        format!("{:#x}", self)
+        format!("{self:#x}")
     }
 }
 
@@ -142,6 +143,21 @@ type                    {}",
             self.transaction_index.pretty(),
             self.transaction_type.pretty()
         )
+    }
+}
+
+impl UIfmt for TransactionReceiptWithRevertReason {
+    fn pretty(&self) -> String {
+        if let Some(ref revert_reason) = self.revert_reason {
+            format!(
+                "{}
+revertReason            {}",
+                self.receipt.pretty(),
+                revert_reason
+            )
+        } else {
+            self.receipt.pretty()
+        }
     }
 }
 
@@ -326,7 +342,7 @@ value                {}{}",
 }
 
 fn tab_paragraph(paragraph: String) -> String {
-    paragraph.lines().into_iter().fold("".to_string(), |acc, x| acc + "\t" + x + "\n")
+    paragraph.lines().fold("".to_string(), |acc, x| acc + "\t" + x + "\n")
 }
 
 /// Convert a U256 to bytes
@@ -395,21 +411,31 @@ pub fn get_pretty_block_attr<TX>(block: &Block<TX>, attr: &str) -> Option<String
 }
 
 /// Returns the ``UiFmt::pretty()` formatted attribute of the transaction receipt
-pub fn get_pretty_tx_receipt_attr(receipt: &TransactionReceipt, attr: &str) -> Option<String> {
+pub fn get_pretty_tx_receipt_attr(
+    receipt: &TransactionReceiptWithRevertReason,
+    attr: &str,
+) -> Option<String> {
     match attr {
-        "blockHash" | "block_hash" => Some(receipt.block_hash.pretty()),
-        "blockNumber" | "block_number" => Some(receipt.block_number.pretty()),
-        "contractAddress" | "contract_address" => Some(receipt.contract_address.pretty()),
-        "cumulativeGasUsed" | "cumulative_gas_used" => Some(receipt.cumulative_gas_used.pretty()),
-        "effectiveGasPrice" | "effective_gas_price" => Some(receipt.effective_gas_price.pretty()),
-        "gasUsed" | "gas_used" => Some(receipt.gas_used.pretty()),
-        "logs" => Some(receipt.logs.pretty()),
-        "logsBloom" | "logs_bloom" => Some(receipt.logs_bloom.pretty()),
-        "root" => Some(receipt.root.pretty()),
-        "status" => Some(receipt.status.pretty()),
-        "transactionHash" | "transaction_hash" => Some(receipt.transaction_hash.pretty()),
-        "transactionIndex" | "transaction_index" => Some(receipt.transaction_index.pretty()),
-        "type" | "transaction_type" => Some(receipt.transaction_type.pretty()),
+        "blockHash" | "block_hash" => Some(receipt.receipt.block_hash.pretty()),
+        "blockNumber" | "block_number" => Some(receipt.receipt.block_number.pretty()),
+        "contractAddress" | "contract_address" => Some(receipt.receipt.contract_address.pretty()),
+        "cumulativeGasUsed" | "cumulative_gas_used" => {
+            Some(receipt.receipt.cumulative_gas_used.pretty())
+        }
+        "effectiveGasPrice" | "effective_gas_price" => {
+            Some(receipt.receipt.effective_gas_price.pretty())
+        }
+        "gasUsed" | "gas_used" => Some(receipt.receipt.gas_used.pretty()),
+        "logs" => Some(receipt.receipt.logs.pretty()),
+        "logsBloom" | "logs_bloom" => Some(receipt.receipt.logs_bloom.pretty()),
+        "root" => Some(receipt.receipt.root.pretty()),
+        "status" => Some(receipt.receipt.status.pretty()),
+        "transactionHash" | "transaction_hash" => Some(receipt.receipt.transaction_hash.pretty()),
+        "transactionIndex" | "transaction_index" => {
+            Some(receipt.receipt.transaction_index.pretty())
+        }
+        "type" | "transaction_type" => Some(receipt.receipt.transaction_type.pretty()),
+        "revertReason" | "revert_reason" => Some(receipt.revert_reason.pretty()),
         _ => None,
     }
 }

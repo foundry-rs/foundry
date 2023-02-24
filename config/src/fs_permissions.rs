@@ -135,9 +135,10 @@ impl fmt::Display for FsAccessKind {
 }
 
 /// Determines the status of file system access
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 pub enum FsAccessPermission {
     /// FS access is _not_ allowed
+    #[default]
     None,
     /// FS access is allowed, this includes `read` + `write`
     ReadWrite,
@@ -162,12 +163,6 @@ impl FsAccessPermission {
     }
 }
 
-impl Default for FsAccessPermission {
-    fn default() -> Self {
-        FsAccessPermission::None
-    }
-}
-
 impl FromStr for FsAccessPermission {
     type Err = String;
 
@@ -177,7 +172,7 @@ impl FromStr for FsAccessPermission {
             "false" | "none" => Ok(FsAccessPermission::None),
             "read" => Ok(FsAccessPermission::Read),
             "write" => Ok(FsAccessPermission::Write),
-            _ => Err(format!("Unknown variant {}", s)),
+            _ => Err(format!("Unknown variant {s}")),
         }
     }
 }

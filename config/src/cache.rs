@@ -31,9 +31,10 @@ impl StorageCachingConfig {
 }
 
 /// What chains to cache
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum CachedChains {
     /// Cache all chains
+    #[default]
     All,
     /// Don't cache anything
     None,
@@ -87,16 +88,11 @@ impl<'de> Deserialize<'de> for CachedChains {
     }
 }
 
-impl Default for CachedChains {
-    fn default() -> Self {
-        CachedChains::All
-    }
-}
-
 /// What endpoints to enable caching for
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum CachedEndpoints {
     /// Cache all endpoints
+    #[default]
     All,
     /// Only cache non-local host endpoints
     Remote,
@@ -121,9 +117,7 @@ impl CachedEndpoints {
 impl PartialEq for CachedEndpoints {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (&CachedEndpoints::Pattern(ref a), &CachedEndpoints::Pattern(ref b)) => {
-                a.as_str() == b.as_str()
-            }
+            (CachedEndpoints::Pattern(a), CachedEndpoints::Pattern(b)) => a.as_str() == b.as_str(),
             (&CachedEndpoints::All, &CachedEndpoints::All) => true,
             (&CachedEndpoints::Remote, &CachedEndpoints::Remote) => true,
             _ => false,
@@ -132,12 +126,6 @@ impl PartialEq for CachedEndpoints {
 }
 
 impl Eq for CachedEndpoints {}
-
-impl Default for CachedEndpoints {
-    fn default() -> Self {
-        CachedEndpoints::All
-    }
-}
 
 impl fmt::Display for CachedEndpoints {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -197,27 +185,27 @@ impl fmt::Display for Cache {
                 chain.block_explorer as f32 + chain.blocks.iter().map(|x| x.1).sum::<u64>() as f32,
             ) {
                 NumberPrefix::Standalone(size) => {
-                    writeln!(f, "-️ {} ({:.1} B)", chain.name, size)?;
+                    writeln!(f, "-️ {} ({size:.1} B)", chain.name)?;
                 }
                 NumberPrefix::Prefixed(prefix, size) => {
-                    writeln!(f, "-️ {} ({:.1} {}B)", chain.name, size, prefix)?;
+                    writeln!(f, "-️ {} ({size:.1} {prefix}B)", chain.name)?;
                 }
             }
             match NumberPrefix::decimal(chain.block_explorer as f32) {
                 NumberPrefix::Standalone(size) => {
-                    writeln!(f, "\t-️ Block Explorer ({:.1} B)\n", size)?;
+                    writeln!(f, "\t-️ Block Explorer ({size:.1} B)\n")?;
                 }
                 NumberPrefix::Prefixed(prefix, size) => {
-                    writeln!(f, "\t-️ Block Explorer ({:.1} {}B)\n", size, prefix)?;
+                    writeln!(f, "\t-️ Block Explorer ({size:.1} {prefix}B)\n")?;
                 }
             }
             for block in &chain.blocks {
                 match NumberPrefix::decimal(block.1 as f32) {
                     NumberPrefix::Standalone(size) => {
-                        writeln!(f, "\t-️ Block {} ({:.1} B)", block.0, size)?;
+                        writeln!(f, "\t-️ Block {} ({size:.1} B)", block.0)?;
                     }
                     NumberPrefix::Prefixed(prefix, size) => {
-                        writeln!(f, "\t-️ Block {} ({:.1} {}B)", block.0, size, prefix)?;
+                        writeln!(f, "\t-️ Block {} ({size:.1} {prefix}B)", block.0)?;
                     }
                 }
             }

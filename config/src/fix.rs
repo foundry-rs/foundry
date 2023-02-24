@@ -72,7 +72,7 @@ impl TomlFile {
     ) -> Result<(), InsertProfileError> {
         if !value.is_table_like() {
             return Err(InsertProfileError {
-                message: format!("Expected [{}] to be a Table", profile_str),
+                message: format!("Expected [{profile_str}] to be a Table"),
                 value,
             })
         }

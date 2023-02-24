@@ -3,6 +3,7 @@ use crate::{cmd::Cmd, utils::CommandUtils};
 use clap::{Parser, ValueHint};
 use std::{path::PathBuf, process::Command};
 
+/// CLI arguments for `forge update`.
 #[derive(Debug, Clone, Parser)]
 pub struct UpdateArgs {
     #[clap(

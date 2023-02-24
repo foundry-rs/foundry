@@ -8,7 +8,19 @@ use std::{fmt, str::FromStr};
 /// An abstraction for various verification providers such as etherscan, sourcify, blockscout
 #[async_trait]
 pub trait VerificationProvider {
-    async fn verify(&self, args: VerifyArgs) -> eyre::Result<()>;
+    /// This should ensure the verify request can be prepared successfully.
+    ///
+    /// Caution: Implementers must ensure that this _never_ sends the actual verify request
+    /// `[VerificationProvider::verify]`, instead this is supposed to evaluate whether the given
+    /// [`VerifyArgs`] are valid to begin with. This should prevent situations where there's a
+    /// contract deployment that's executed before the verify request and the subsequent verify task
+    /// fails due to misconfiguration.
+    async fn preflight_check(&mut self, args: VerifyArgs) -> eyre::Result<()>;
+
+    /// Sends the actual verify request for the targeted contract.
+    async fn verify(&mut self, args: VerifyArgs) -> eyre::Result<()>;
+
+    /// Checks whether the contract is verified.
     async fn check(&self, args: VerifyCheckArgs) -> eyre::Result<()>;
 }
 
@@ -51,20 +63,19 @@ pub enum VerificationProviderType {
 
 impl VerificationProviderType {
     /// Returns the corresponding `VerificationProvider` for the key
-    #[allow(clippy::box_default)]
     pub fn client(&self, key: &Option<String>) -> eyre::Result<Box<dyn VerificationProvider>> {
         match self {
             VerificationProviderType::Etherscan => {
                 if key.as_ref().map_or(true, |key| key.is_empty()) {
                     eyre::bail!("ETHERSCAN_API_KEY must be set")
                 }
-                Ok(Box::new(EtherscanVerificationProvider::default()))
+                Ok(Box::<EtherscanVerificationProvider>::default())
             }
             VerificationProviderType::Sourcify => {
-                Ok(Box::new(SourcifyVerificationProvider::default()))
+                Ok(Box::<SourcifyVerificationProvider>::default())
             }
             VerificationProviderType::Blockscout => {
-                Ok(Box::new(EtherscanVerificationProvider::default()))
+                Ok(Box::<EtherscanVerificationProvider>::default())
             }
         }
     }

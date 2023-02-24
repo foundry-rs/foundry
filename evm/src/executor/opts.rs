@@ -2,10 +2,10 @@ use crate::executor::fork::CreateFork;
 use ethers::{
     providers::{Middleware, Provider},
     solc::utils::RuntimeOrHandle,
-    types::{Address, Chain, U256},
+    types::{Address, Chain, H256, U256},
 };
 use eyre::WrapErr;
-use foundry_common::{self, try_get_http_provider};
+use foundry_common::{self, ProviderBuilder, RpcUrl, ALCHEMY_FREE_TIER_CUPS};
 use foundry_config::Config;
 use revm::{BlockEnv, CfgEnv, SpecId, TxEnv};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -19,13 +19,19 @@ pub struct EvmOpts {
 
     /// Fetch state over a remote instead of starting from empty state
     #[serde(rename = "eth_rpc_url")]
-    pub fork_url: Option<String>,
+    pub fork_url: Option<RpcUrl>,
 
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
 
     /// initial retry backoff
     pub fork_retry_backoff: Option<u64>,
+
+    /// The available compute units per second
+    pub compute_units_per_second: Option<u64>,
+
+    /// Disables rate limiting entirely.
+    pub no_rpc_rate_limit: bool,
 
     /// Disables storage caching entirely.
     pub no_storage_caching: bool,
@@ -75,7 +81,9 @@ impl EvmOpts {
     /// Returns the `revm::Env` configured with settings retrieved from the endpoints
     pub async fn fork_evm_env(&self, fork_url: impl AsRef<str>) -> eyre::Result<revm::Env> {
         let fork_url = fork_url.as_ref();
-        let provider = try_get_http_provider(fork_url)?;
+        let provider = ProviderBuilder::new(fork_url)
+            .compute_units_per_second(self.get_compute_units_per_second())
+            .build()?;
         environment(
             &provider,
             self.memory_limit,
@@ -86,7 +94,7 @@ impl EvmOpts {
         )
         .await
         .wrap_err_with(|| {
-            format!("Could not instantiate forked environment with fork url: {}", fork_url)
+            format!("Could not instantiate forked environment with fork url: {fork_url}")
         })
     }
 
@@ -98,15 +106,19 @@ impl EvmOpts {
                 coinbase: self.env.block_coinbase,
                 timestamp: self.env.block_timestamp.into(),
                 difficulty: self.env.block_difficulty.into(),
+                prevrandao: Some(self.env.block_prevrandao),
                 basefee: self.env.block_base_fee_per_gas.into(),
                 gas_limit: self.gas_limit(),
             },
             cfg: CfgEnv {
                 chain_id: self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID).into(),
-                spec_id: SpecId::LONDON,
-                perf_all_precompiles_have_balance: false,
+                spec_id: SpecId::MERGE,
                 limit_contract_code_size: self.env.code_size_limit.or(Some(usize::MAX)),
                 memory_limit: self.memory_limit,
+                // EIP-3607 rejects transactions from senders with deployed code.
+                // If EIP-3607 is enabled it can cause issues during fuzz/invariant tests if the
+                // caller is a contract. So we disable the check by default.
+                disable_eip3607: true,
                 ..Default::default()
             },
             tx: TxEnv {
@@ -152,6 +164,20 @@ impl EvmOpts {
             return id
         }
         self.get_remote_chain_id().map_or(Chain::Mainnet as u64, |id| id as u64)
+    }
+
+    /// Returns the available compute units per second, which will be
+    /// - u64::MAX, if `no_rpc_rate_limit` if set (as rate limiting is disabled)
+    /// - the assigned compute units, if `compute_units_per_second` is set
+    /// - ALCHEMY_FREE_TIER_CUPS (330) otherwise
+    pub fn get_compute_units_per_second(&self) -> u64 {
+        if self.no_rpc_rate_limit {
+            u64::MAX
+        } else if let Some(cups) = self.compute_units_per_second {
+            return cups
+        } else {
+            ALCHEMY_FREE_TIER_CUPS
+        }
     }
 
     /// Returns the chain ID from the RPC, if any.
@@ -207,6 +233,9 @@ pub struct Env {
 
     /// the block.difficulty value during EVM execution
     pub block_difficulty: u64,
+
+    /// Previous block beacon chain random value. Before merge this field is used for mix_hash
+    pub block_prevrandao: H256,
 
     /// the block.gaslimit value during EVM execution
     #[serde(

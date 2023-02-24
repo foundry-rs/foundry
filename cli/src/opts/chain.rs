@@ -8,7 +8,7 @@ use strum::VariantNames;
 
 // Helper for exposing enum values for `Chain`
 // TODO: Is this a duplicate of config/src/chain.rs?
-#[derive(Debug, Clone, Parser)]
+#[derive(Debug, Clone, Parser, Copy)]
 pub struct ClapChain {
     #[clap(
         short = 'c',

@@ -54,46 +54,48 @@ pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
     params: I,
     lenient: bool,
 ) -> Result<Vec<Token>> {
-    params
-        .into_iter()
-        .map(|(param, value)| {
-            let mut token = if lenient {
-                LenientTokenizer::tokenize(param, value)
-            } else {
-                StrictTokenizer::tokenize(param, value)
-            };
-            if token.is_err() && value.starts_with("0x") {
-                match param {
-                    ParamType::FixedBytes(32) => {
-                        if value.len() < 66 {
-                            let padded_value = [value, &"0".repeat(66 - value.len())].concat();
-                            token = if lenient {
-                                LenientTokenizer::tokenize(param, &padded_value)
-                            } else {
-                                StrictTokenizer::tokenize(param, &padded_value)
-                            };
-                        }
-                    }
-                    ParamType::Uint(_) => {
-                        // try again if value is hex
-                        if let Ok(value) = U256::from_str(value).map(|v| v.to_string()) {
-                            token = if lenient {
-                                LenientTokenizer::tokenize(param, &value)
-                            } else {
-                                StrictTokenizer::tokenize(param, &value)
-                            };
-                        }
-                    }
-                    // TODO: Not sure what to do here. Put the no effect in for now, but that is not
-                    // ideal. We could attempt massage for every value type?
-                    _ => {}
-                }
-            }
+    let mut tokens = Vec::new();
 
-            token.map(sanitize_token)
-        })
-        .collect::<Result<_, _>>()
-        .wrap_err("Failed to parse tokens")
+    for (param, value) in params.into_iter() {
+        let mut token = if lenient {
+            LenientTokenizer::tokenize(param, value)
+        } else {
+            StrictTokenizer::tokenize(param, value)
+        };
+        if token.is_err() && value.starts_with("0x") {
+            match param {
+                ParamType::FixedBytes(32) => {
+                    if value.len() < 66 {
+                        let padded_value = [value, &"0".repeat(66 - value.len())].concat();
+                        token = if lenient {
+                            LenientTokenizer::tokenize(param, &padded_value)
+                        } else {
+                            StrictTokenizer::tokenize(param, &padded_value)
+                        };
+                    }
+                }
+                ParamType::Uint(_) => {
+                    // try again if value is hex
+                    if let Ok(value) = U256::from_str(value).map(|v| v.to_string()) {
+                        token = if lenient {
+                            LenientTokenizer::tokenize(param, &value)
+                        } else {
+                            StrictTokenizer::tokenize(param, &value)
+                        };
+                    }
+                }
+                // TODO: Not sure what to do here. Put the no effect in for now, but that is not
+                // ideal. We could attempt massage for every value type?
+                _ => {}
+            }
+        }
+
+        let token = token.map(sanitize_token).wrap_err_with(|| {
+            format!("Failed to parse `{value}`, expected value of type: {param}")
+        })?;
+        tokens.push(token);
+    }
+    Ok(tokens)
 }
 
 /// Cleans up potential shortcomings of the ethabi Tokenizer.
@@ -294,8 +296,7 @@ pub fn find_source(
         } else {
             let implementation = metadata.implementation.unwrap();
             println!(
-                "Contract at {} is a proxy, trying to fetch source at {:?}...",
-                address, implementation
+                "Contract at {address} is a proxy, trying to fetch source at {implementation:?}..."
             );
             match find_source(client, implementation).await {
                 impl_source @ Ok(_) => impl_source,
@@ -356,7 +357,7 @@ mod tests {
         assert_eq!(tokens, vec![Token::Uint(100u64.into())]);
 
         let val: U256 = 100u64.into();
-        let hex_val = format!("0x{:x}", val);
+        let hex_val = format!("0x{val:x}");
         let tokens = parse_tokens(std::iter::once((&param, hex_val.as_str())), true).unwrap();
         assert_eq!(tokens, vec![Token::Uint(100u64.into())]);
     }

@@ -16,6 +16,7 @@ use foundry_config::{Chain, Config};
 use semver::Version;
 
 /// Data struct to help `ScriptSequence` verify contracts on `etherscan`.
+#[derive(Clone)]
 pub struct VerifyBundle {
     pub num_of_optimizations: Option<usize>,
     pub known_contracts: ContractsByArtifact,
@@ -63,7 +64,12 @@ impl VerifyBundle {
 
     /// Configures the chain and sets the etherscan key, if available
     pub fn set_chain(&mut self, config: &Config, chain: Chain) {
-        self.etherscan_key = config.get_etherscan_api_key(Some(chain));
+        // If dealing with multiple chains, we need to be able to change inbetween the config
+        // chain_id.
+        let mut config = config.clone();
+        config.chain_id = Some(chain);
+        self.etherscan_key =
+            config.get_etherscan_api_key(Some(chain)).or_else(|| config.etherscan_api_key.clone());
         self.chain = chain;
     }
 
@@ -102,7 +108,7 @@ impl VerifyBundle {
                     address: contract_address,
                     contract,
                     compiler_version: Some(version.to_string()),
-                    constructor_args: Some(hex::encode(&constructor_args)),
+                    constructor_args: Some(hex::encode(constructor_args)),
                     constructor_args_path: None,
                     num_of_optimizations: self.num_of_optimizations,
                     chain: self.chain,
@@ -110,10 +116,11 @@ impl VerifyBundle {
                     flatten: false,
                     force: false,
                     watch: true,
-                    retry: self.retry.clone(),
+                    retry: self.retry,
                     libraries: libraries.to_vec(),
                     root: None,
                     verifier: self.verifier.clone(),
+                    show_standard_json_input: false,
                 };
 
                 return Some(verify)

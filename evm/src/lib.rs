@@ -50,19 +50,15 @@ pub const TEST_CONTRACT_ADDRESS: Address = H160([
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
+#[derive(Default)]
 pub enum CallKind {
+    #[default]
     Call,
     StaticCall,
     CallCode,
     DelegateCall,
     Create,
     Create2,
-}
-
-impl Default for CallKind {
-    fn default() -> Self {
-        CallKind::Call
-    }
 }
 
 impl From<CallScheme> for CallKind {

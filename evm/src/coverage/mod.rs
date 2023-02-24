@@ -60,7 +60,7 @@ impl CoverageReport {
                             .get(&(version.clone(), item.loc.source_id))
                             .cloned()
                             .unwrap_or_else(|| {
-                                format!("Unknown (ID: {}, solc: {})", item.loc.source_id, version)
+                                format!("Unknown (ID: {}, solc: {version})", item.loc.source_id)
                             }),
                     )
                     .or_default();
@@ -83,7 +83,7 @@ impl CoverageReport {
                             .get(&(version.clone(), item.loc.source_id))
                             .cloned()
                             .unwrap_or_else(|| {
-                                format!("Unknown (ID: {}, solc: {})", item.loc.source_id, version)
+                                format!("Unknown (ID: {}, solc: {version})", item.loc.source_id)
                             }),
                     )
                     .or_default()

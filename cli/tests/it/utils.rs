@@ -8,7 +8,7 @@ use ethers::prelude::Chain;
 pub fn millis_since_epoch() -> u128 {
     let now = std::time::SystemTime::now();
     now.duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .unwrap_or_else(|err| panic!("Current time {:?} is invalid: {:?}", now, err))
+        .unwrap_or_else(|err| panic!("Current time {now:?} is invalid: {err:?}"))
         .as_millis()
 }
 
@@ -23,13 +23,13 @@ pub fn etherscan_key(chain: Chain) -> Option<String> {
 }
 
 pub fn network_rpc_key(chain: &str) -> Option<String> {
-    let key = format!("{}_RPC_URL", chain.to_uppercase().replace("-", "_"));
-    std::env::var(&key).ok()
+    let key = format!("{}_RPC_URL", chain.to_uppercase().replace('-', "_"));
+    std::env::var(key).ok()
 }
 
 pub fn network_private_key(chain: &str) -> Option<String> {
-    let key = format!("{}_PRIVATE_KEY", chain.to_uppercase().replace("-", "_"));
-    std::env::var(&key).or_else(|_| std::env::var("TEST_PRIVATE_KEY")).ok()
+    let key = format!("{}_PRIVATE_KEY", chain.to_uppercase().replace('-', "_"));
+    std::env::var(key).or_else(|_| std::env::var("TEST_PRIVATE_KEY")).ok()
 }
 
 /// Represents external input required for executing verification requests

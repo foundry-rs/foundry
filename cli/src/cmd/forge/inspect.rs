@@ -1,12 +1,9 @@
 use crate::{
-    cmd::{
-        forge::build::{self, CoreBuildArgs},
-        Cmd,
-    },
+    cmd::{forge::build::CoreBuildArgs, Cmd},
     opts::forge::CompilerArgs,
 };
 use clap::Parser;
-use comfy_table::Table;
+use comfy_table::{presets::ASCII_MARKDOWN, Table};
 use ethers::{
     prelude::{
         artifacts::output_selection::{
@@ -15,12 +12,17 @@ use ethers::{
         },
         info::ContractInfo,
     },
-    solc::{artifacts::LosslessAbi, utils::canonicalize},
+    solc::{
+        artifacts::{LosslessAbi, StorageLayout},
+        utils::canonicalize,
+    },
 };
 use foundry_common::compile;
 use serde_json::{to_value, Value};
 use std::{fmt, str::FromStr};
+use tracing::trace;
 
+/// CLI arguments for `forge inspect`.
 #[derive(Debug, Clone, Parser)]
 pub struct InspectArgs {
     #[clap(
@@ -45,13 +47,15 @@ possible_values = ["abi", "b/bytes/bytecode", "deployedBytecode/deployed_bytecod
 
     /// All build arguments are supported
     #[clap(flatten)]
-    build: build::CoreBuildArgs,
+    build: CoreBuildArgs,
 }
 
 impl Cmd for InspectArgs {
     type Output = ();
     fn run(self) -> eyre::Result<Self::Output> {
         let InspectArgs { mut contract, field, build, pretty } = self;
+
+        trace!(target : "forge", ?field, ?contract, "running forge inspect");
 
         // Map field to ContractOutputSelection
         let mut cos = build.compiler.extra_output;
@@ -84,6 +88,8 @@ impl Cmd for InspectArgs {
 
         // Find the artifact
         let found_artifact = outcome.find_contract(&contract);
+
+        trace!(target : "forge", artifact=?found_artifact, input=?contract, "Found contract");
 
         // Unwrap the inner artifact
         let artifact = found_artifact.ok_or_else(|| {
@@ -131,34 +137,7 @@ impl Cmd for InspectArgs {
                 println!("{}", serde_json::to_string_pretty(&to_value(&artifact.gas_estimates)?)?);
             }
             ContractArtifactFields::StorageLayout => {
-                if pretty {
-                    if let Some(storage_layout) = &artifact.storage_layout {
-                        let mut table = Table::new();
-                        table.set_header(vec![
-                            "Name", "Type", "Slot", "Offset", "Bytes", "Contract",
-                        ]);
-
-                        for slot in &storage_layout.storage {
-                            let storage_type = storage_layout.types.get(&slot.storage_type);
-                            table.add_row(vec![
-                                slot.label.clone(),
-                                storage_type.as_ref().map_or("?".to_string(), |t| t.label.clone()),
-                                slot.slot.clone(),
-                                slot.offset.to_string(),
-                                storage_type
-                                    .as_ref()
-                                    .map_or("?".to_string(), |t| t.number_of_bytes.clone()),
-                                slot.contract.clone(),
-                            ]);
-                        }
-                        println!("{table}");
-                    }
-                } else {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&to_value(&artifact.storage_layout)?)?
-                    );
-                }
+                print_storage_layout(&artifact.storage_layout, pretty)?;
             }
             ContractArtifactFields::DevDoc => {
                 println!("{}", serde_json::to_string_pretty(&to_value(&artifact.devdoc)?)?);
@@ -213,6 +192,42 @@ impl Cmd for InspectArgs {
 
         Ok(())
     }
+}
+
+pub fn print_storage_layout(
+    storage_layout: &Option<StorageLayout>,
+    pretty: bool,
+) -> eyre::Result<()> {
+    if storage_layout.is_none() {
+        eyre::bail!("Could not get storage layout")
+    }
+
+    let storage_layout = storage_layout.as_ref().unwrap();
+
+    if !pretty {
+        println!("{}", serde_json::to_string_pretty(&to_value(storage_layout)?)?);
+        return Ok(())
+    }
+
+    let mut table = Table::new();
+    table.load_preset(ASCII_MARKDOWN);
+    table.set_header(vec!["Name", "Type", "Slot", "Offset", "Bytes", "Contract"]);
+
+    for slot in &storage_layout.storage {
+        let storage_type = storage_layout.types.get(&slot.storage_type);
+        table.add_row(vec![
+            slot.label.clone(),
+            storage_type.as_ref().map_or("?".to_string(), |t| t.label.clone()),
+            slot.slot.clone(),
+            slot.offset.to_string(),
+            storage_type.as_ref().map_or("?".to_string(), |t| t.number_of_bytes.clone()),
+            slot.contract.clone(),
+        ]);
+    }
+
+    println!("{table}");
+
+    Ok(())
 }
 
 /// Contract level output selection

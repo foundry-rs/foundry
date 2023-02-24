@@ -6,14 +6,13 @@ use ethers::{
     prelude::{NameOrAddress, H256 as TxHash},
     types::transaction::eip2718::TypedTransaction,
 };
-use foundry_common::{abi::format_token, SELECTOR_LEN};
-
+use eyre::{ContextCompat, WrapErr};
+use foundry_common::{abi::format_token, RpcUrl, SELECTOR_LEN};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-
 use tracing::error;
 
-#[derive(Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AdditionalContract {
     #[serde(rename = "transactionType")]
@@ -24,7 +23,7 @@ pub struct AdditionalContract {
     pub init_code: Vec<u8>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct TransactionWithMetadata {
     pub hash: Option<TxHash>,
@@ -38,6 +37,7 @@ pub struct TransactionWithMetadata {
     pub function: Option<String>,
     #[serde(default = "default_vec_of_strings")]
     pub arguments: Option<Vec<String>>,
+    pub rpc: Option<RpcUrl>,
     pub transaction: TypedTransaction,
     pub additional_contracts: Vec<AdditionalContract>,
 }
@@ -61,12 +61,13 @@ impl TransactionWithMetadata {
 
     pub fn new(
         transaction: TypedTransaction,
+        rpc: Option<RpcUrl>,
         result: &ScriptResult,
         local_contracts: &BTreeMap<Address, ArtifactInfo>,
         decoder: &CallTraceDecoder,
         additional_contracts: Vec<AdditionalContract>,
     ) -> eyre::Result<Self> {
-        let mut metadata = Self { transaction, ..Default::default() };
+        let mut metadata = Self { transaction, rpc, ..Default::default() };
 
         // Specify if any contract was directly created with this transaction
         if let Some(NameOrAddress::Address(to)) = metadata.transaction.to().cloned() {
@@ -78,12 +79,14 @@ impl TransactionWithMetadata {
                     decoder,
                 )?;
             } else {
-                metadata.set_call(to, local_contracts, decoder)?;
+                metadata
+                    .set_call(to, local_contracts, decoder)
+                    .wrap_err("Could not decode transaction type.")?;
             }
         } else if metadata.transaction.to().is_none() {
             metadata.set_create(
                 false,
-                result.address.expect("There should be a contract address."),
+                result.address.wrap_err("There should be a contract address from CREATE.")?,
                 local_contracts,
                 decoder,
             )?;
@@ -160,7 +163,7 @@ impl TransactionWithMetadata {
                                     .map(|p| p.kind.to_string())
                                     .collect::<Vec<_>>()
                                     .join(",");
-                                let signature = format!("constructor({})", inputs);
+                                let signature = format!("constructor({inputs})");
                                 let bytecode = hex::encode(&data.0);
                                 (signature, bytecode)
                             };

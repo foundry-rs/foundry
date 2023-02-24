@@ -1,5 +1,5 @@
 use crate::{cmd::Cmd, opts::ClapChain};
-use cast::{InterfacePath, SimpleCast};
+use cast::{AbiPath, SimpleCast};
 use clap::Parser;
 use ethers::types::Address;
 use eyre::WrapErr;
@@ -8,6 +8,7 @@ use foundry_config::Config;
 use futures::future::BoxFuture;
 use std::path::{Path, PathBuf};
 
+/// CLI arguments for `cast interface`.
 #[derive(Debug, Clone, Parser)]
 pub struct InterfaceArgs {
     #[clap(
@@ -54,7 +55,7 @@ impl Cmd for InterfaceArgs {
                 chain,
             } = self;
             let interfaces = if Path::new(&path_or_address).exists() {
-                SimpleCast::generate_interface(InterfacePath::Local { path: path_or_address, name })
+                SimpleCast::generate_interface(AbiPath::Local { path: path_or_address, name })
                     .await?
             } else {
                 let api_key = etherscan_api_key.or_else(|| {
@@ -62,7 +63,7 @@ impl Cmd for InterfaceArgs {
                     config.get_etherscan_api_key(Some(chain.inner))
                 }).ok_or_else(|| eyre::eyre!("No Etherscan API Key is set. Consider using the ETHERSCAN_API_KEY env var, or setting the -e CLI argument or etherscan-api-key in foundry.toml"))?;
 
-                SimpleCast::generate_interface(InterfacePath::Etherscan {
+                SimpleCast::generate_interface(AbiPath::Etherscan {
                     chain: chain.inner,
                     api_key,
                     address: path_or_address

@@ -61,9 +61,7 @@ impl<P: Provider> WarningsProvider<P> {
                 .data()
                 .unwrap_or_default()
                 .iter()
-                .flat_map(|(profile, dict)| {
-                    dict.keys().map(move |key| format!("{}.{}", profile, key))
-                })
+                .flat_map(|(profile, dict)| dict.keys().map(move |key| format!("{profile}.{key}")))
                 .filter(|k| DEPRECATIONS.contains_key(k))
                 .map(|deprecated_key| Warning::DeprecatedKey {
                     old: deprecated_key.clone(),

@@ -4,6 +4,14 @@ contract Contract {
     bytes32
         private
         constant
+        override(Base1) BYTES;
+    bytes32
+        private
+        constant
+        override(Base1, Base2) BYTES;
+    bytes32
+        private
+        constant
         immutable
         override BYTES;
     bytes32
@@ -15,7 +23,7 @@ contract Contract {
     bytes32
         private
         constant
-        override (
+        override(
             Base1,
             Base2,
             SomeLongBaseContract,

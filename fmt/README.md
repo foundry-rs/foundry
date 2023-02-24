@@ -105,7 +105,7 @@ event Greet(string indexed name);
 
 ### Configuration
 
-Formatter supports multiple configuration options defined in `FormatterConfig`.
+The formatter supports multiple configuration options defined in `FormatterConfig`.
 
 | Option                           | Default  | Description                                                                                    |
 | -------------------------------- | -------- | ---------------------------------------------------------------------------------------------- |
@@ -119,11 +119,26 @@ Formatter supports multiple configuration options defined in `FormatterConfig`.
 
 TODO: update ^
 
+### Disable Line
+
+The formatter can be disabled on specific lines by adding a comment `// forgefmt: disable-line`, like this:
+
+```solidity
+// forgefmt: disable-line
+uint x = 100;
+```
+
+The comment can also be placed at the end of the line:
+
+```solidity
+uint x = 100; // forgefmt: disable-line
+```
+
 ### Testing
 
-Tests reside under `fmt/testdata` folder and specify the malformated & expected Solidity code. The source code file is named `original.sol` and expected file(s) are named in a format `({prefix}.)?fmt.sol`. Multiple expected files are needed for tests covering available configuration options.
+Tests reside under the `fmt/testdata` folder and specify the malformatted & expected Solidity code. The source code file is named `original.sol` and expected file(s) are named in a format `({prefix}.)?fmt.sol`. Multiple expected files are needed for tests covering available configuration options.
 
-The default configuration values can be overriden from within the expected file by adding a comment in the format `// config: {config_entry} = {config_value}`. For example:
+The default configuration values can be overridden from within the expected file by adding a comment in the format `// config: {config_entry} = {config_value}`. For example:
 
 ```solidity
 // config: line_length = 160
@@ -134,8 +149,8 @@ The `test_directory` macro is used to specify a new folder with source files for
 1. Preparse comments with config values
 2. Parse and compare the AST for source & expected files.
     - The `AstEq` trait defines the comparison rules for the AST nodes
-3. Format the source file and assert the equality of the output with expected file.
-4. Format the expected files and assert the idempotancy of the formatting operation.
+3. Format the source file and assert the equality of the output with the expected file.
+4. Format the expected files and assert the idempotency of the formatting operation.
 
 ## Contributing
 

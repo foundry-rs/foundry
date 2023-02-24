@@ -10,5 +10,5 @@ contract ModifierDefinitions {
         uint256 c,
         uint256 d
     ) {}
-    modifier overridden() override (Base1, Base2) {}
+    modifier overridden() override(Base1, Base2) {}
 }

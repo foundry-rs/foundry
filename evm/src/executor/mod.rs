@@ -1,8 +1,10 @@
-use self::inspector::{Cheatcodes, InspectorData, InspectorStackConfig};
+use self::inspector::{
+    cheatcodes::util::BroadcastableTransactions, Cheatcodes, InspectorData, InspectorStackConfig,
+};
 use crate::{debug::DebugArena, decode, trace::CallTraceArena, CALLER};
 pub use abi::{
-    format_hardhat_call, patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS,
-    CONSOLE_ABI, HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
+    patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS, CONSOLE_ABI,
+    HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
 };
 use backend::FuzzBackendWrapper;
 use bytes::Bytes;
@@ -10,7 +12,7 @@ use ethers::{
     abi::{Abi, Contract, Detokenize, Function, Tokenize},
     prelude::{decode_function_data, encode_function_data, Address, U256},
     signers::LocalWallet,
-    types::{transaction::eip2718::TypedTransaction, Log},
+    types::Log,
 };
 use foundry_common::abi::IntoFunction;
 use hashbrown::HashMap;
@@ -20,7 +22,7 @@ use revm::{
 };
 /// Reexport commonly used revm types
 pub use revm::{db::DatabaseRef, Env, SpecId};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use tracing::trace;
 
 /// ABIs used internally in the executor
@@ -100,7 +102,7 @@ impl Executor {
     }
 
     /// Returns a reference to the Env
-    pub fn env(&mut self) -> &Env {
+    pub fn env(&self) -> &Env {
         &self.env
     }
 
@@ -130,11 +132,11 @@ impl Executor {
 
     /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
     pub fn deploy_create2_deployer(&mut self) -> eyre::Result<()> {
-        trace!("deploying create2 deployer");
+        trace!("deploying local create2 deployer");
         let create2_deployer_account = self
             .backend_mut()
             .basic(DEFAULT_CREATE2_DEPLOYER)?
-            .ok_or_else(|| DatabaseError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
+            .ok_or(DatabaseError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
 
         if create2_deployer_account.code.is_none() ||
             create2_deployer_account.code.as_ref().unwrap().is_empty()
@@ -151,7 +153,7 @@ impl Executor {
                 U256::zero(),
                 None
             )?;
-            trace!(create2=?res.address, "deployed create2 deployer");
+            trace!(create2=?res.address, "deployed local create2 deployer");
 
             self.set_balance(creator, initial_balance)?;
         }
@@ -192,6 +194,11 @@ impl Executor {
         self
     }
 
+    pub fn set_trace_printer(&mut self, trace_printer: bool) -> &mut Self {
+        self.inspector_config.trace_printer = trace_printer;
+        self
+    }
+
     pub fn set_gas_limit(&mut self, gas_limit: U256) -> &mut Self {
         self.gas_limit = gas_limit;
         self
@@ -227,7 +234,7 @@ impl Executor {
                 if success {
                     Ok(res)
                 } else {
-                    Err(EvmError::Execution {
+                    Err(EvmError::Execution(Box::new(ExecutionErr {
                         reverted: res.reverted,
                         reason: "execution error".to_owned(),
                         traces: res.traces,
@@ -240,7 +247,7 @@ impl Executor {
                         state_changeset: None,
                         transactions: None,
                         script_wallets: res.script_wallets,
-                    })
+                    })))
                 }
             }
             None => Ok(res),
@@ -366,11 +373,11 @@ impl Executor {
         // Persist cheatcode state
         let mut cheatcodes = result.cheatcodes.take();
         if let Some(cheats) = cheatcodes.as_mut() {
-            if !cheats.broadcastable_transactions.is_empty() {
-                // Clear broadcast state from cheatcode state
-                cheats.broadcastable_transactions.clear();
-                cheats.corrected_nonce = false;
-            }
+            // Clear broadcastable transactions
+            cheats.broadcastable_transactions.clear();
+
+            // corrected_nonce value is needed outside of this context (setUp), so we don't
+            // reset it.
         }
         self.inspector_config.cheatcodes = cheatcodes;
     }
@@ -415,7 +422,7 @@ impl Executor {
                 if let TransactOut::Create(_, Some(addr)) = out {
                     addr
                 } else {
-                    return Err(EvmError::Execution {
+                    return Err(EvmError::Execution(Box::new(ExecutionErr {
                         reverted: true,
                         reason: "Deployment succeeded, but no address was returned. This is a bug, please report it".to_string(),
                         traces,
@@ -428,13 +435,13 @@ impl Executor {
                         state_changeset: None,
                         transactions: None,
                         script_wallets
-                    });
+                    })));
                 }
             }
             _ => {
                 let reason = decode::decode_revert(result.as_ref(), abi, Some(exit_reason))
-                    .unwrap_or_else(|_| format!("{:?}", exit_reason));
-                return Err(EvmError::Execution {
+                    .unwrap_or_else(|_| format!("{exit_reason:?}"));
+                return Err(EvmError::Execution(Box::new(ExecutionErr {
                     reverted: true,
                     reason,
                     traces,
@@ -447,7 +454,7 @@ impl Executor {
                     state_changeset: None,
                     transactions: None,
                     script_wallets,
-                })
+                })))
             }
         };
 
@@ -579,25 +586,30 @@ impl Executor {
     }
 }
 
+/// Represents the context after an execution error occurred.
+#[derive(thiserror::Error, Debug)]
+#[error("Execution reverted: {reason} (gas: {gas_used})")]
+pub struct ExecutionErr {
+    pub reverted: bool,
+    pub reason: String,
+    pub gas_used: u64,
+    pub gas_refunded: u64,
+    pub stipend: u64,
+    pub logs: Vec<Log>,
+    pub traces: Option<CallTraceArena>,
+    pub debug: Option<DebugArena>,
+    pub labels: BTreeMap<Address, String>,
+    pub transactions: Option<BroadcastableTransactions>,
+    pub state_changeset: Option<StateChangeset>,
+    pub script_wallets: Vec<LocalWallet>,
+}
+
 #[derive(thiserror::Error, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum EvmError {
     /// Error which occurred during execution of a transaction
-    #[error("Execution reverted: {reason} (gas: {gas_used})")]
-    Execution {
-        reverted: bool,
-        reason: String,
-        gas_used: u64,
-        gas_refunded: u64,
-        stipend: u64,
-        logs: Vec<Log>,
-        traces: Option<CallTraceArena>,
-        debug: Option<DebugArena>,
-        labels: BTreeMap<Address, String>,
-        transactions: Option<VecDeque<TypedTransaction>>,
-        state_changeset: Option<StateChangeset>,
-        script_wallets: Vec<LocalWallet>,
-    },
+    #[error(transparent)]
+    Execution(Box<ExecutionErr>),
     /// Error which occurred during ABI encoding/decoding
     #[error(transparent)]
     AbiError(#[from] ethers::contract::AbiError),
@@ -649,7 +661,7 @@ pub struct CallResult<D: Detokenize> {
     /// The debug nodes of the call
     pub debug: Option<DebugArena>,
     /// Scripted transactions generated from this call
-    pub transactions: Option<VecDeque<TypedTransaction>>,
+    pub transactions: Option<BroadcastableTransactions>,
     /// The changeset of the state.
     ///
     /// This is only present if the changed state was not committed to the database (i.e. if you
@@ -687,7 +699,7 @@ pub struct RawCallResult {
     /// The debug nodes of the call
     pub debug: Option<DebugArena>,
     /// Scripted transactions generated from this call
-    pub transactions: Option<VecDeque<TypedTransaction>>,
+    pub transactions: Option<BroadcastableTransactions>,
     /// The changeset of the state.
     ///
     /// This is only present if the changed state was not committed to the database (i.e. if you
@@ -701,6 +713,8 @@ pub struct RawCallResult {
     pub cheatcodes: Option<Cheatcodes>,
     /// The raw output of the execution
     pub out: TransactOut,
+    /// The chisel state
+    pub chisel_state: Option<(revm::Stack, revm::Memory, revm::Return)>,
 }
 
 impl Default for RawCallResult {
@@ -723,6 +737,7 @@ impl Default for RawCallResult {
             env: Default::default(),
             cheatcodes: Default::default(),
             out: TransactOut::None,
+            chisel_state: None,
         }
     }
 }
@@ -749,8 +764,16 @@ fn convert_executed_result(
         _ => Bytes::default(),
     };
 
-    let InspectorData { logs, labels, traces, coverage, debug, cheatcodes, script_wallets } =
-        inspector.collect_inspector_states();
+    let InspectorData {
+        logs,
+        labels,
+        traces,
+        coverage,
+        debug,
+        cheatcodes,
+        script_wallets,
+        chisel_state,
+    } = inspector.collect_inspector_states();
 
     let transactions = match cheatcodes.as_ref() {
         Some(cheats) if !cheats.broadcastable_transactions.is_empty() => {
@@ -777,6 +800,7 @@ fn convert_executed_result(
         env,
         cheatcodes,
         out,
+        chisel_state,
     })
 }
 
@@ -826,8 +850,8 @@ fn convert_call_result<D: Detokenize>(
         }
         _ => {
             let reason = decode::decode_revert(result.as_ref(), abi, Some(status))
-                .unwrap_or_else(|_| format!("{:?}", status));
-            Err(EvmError::Execution {
+                .unwrap_or_else(|_| format!("{status:?}"));
+            Err(EvmError::Execution(Box::new(ExecutionErr {
                 reverted,
                 reason,
                 gas_used,
@@ -840,7 +864,7 @@ fn convert_call_result<D: Detokenize>(
                 transactions,
                 state_changeset,
                 script_wallets,
-            })
+            })))
         }
     }
 }

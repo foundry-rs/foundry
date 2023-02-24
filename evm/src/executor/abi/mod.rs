@@ -16,6 +16,8 @@ ethers::contract::abigen!(
     HEVM,
     r#"[
             struct Log {bytes32[] topics; bytes data;}
+            struct Rpc {string name; string url;}
+            struct FsMetadata {bool isDir; bool isSymlink; uint256 length; bool readOnly; uint256 modified; uint256 accessed; uint256 created;}
             roll(uint256)
             warp(uint256)
             difficulty(uint256)
@@ -39,6 +41,20 @@ ethers::contract::abigen!(
             envBytes32(string,string)(bytes32[])
             envString(string,string)(string[])
             envBytes(string,string)(bytes[])
+            envOr(string,bool)(bool)
+            envOr(string,uint256)(uint256)
+            envOr(string,int256)(int256)
+            envOr(string,address)(address)
+            envOr(string,bytes32)(bytes32)
+            envOr(string,string)(string)
+            envOr(string,bytes)(bytes)
+            envOr(string,string,bool[])(bool[])
+            envOr(string,string,uint256[])(uint256[])
+            envOr(string,string,int256[])(int256[])
+            envOr(string,string,address[])(address[])
+            envOr(string,string,bytes32[])(bytes32[])
+            envOr(string,string,string[])(string[])
+            envOr(string,string,bytes[])(bytes[])
             addr(uint256)(address)
             sign(uint256,bytes32)(uint8,bytes32,bytes32)
             deriveKey(string,uint32)(uint256)
@@ -65,6 +81,8 @@ ethers::contract::abigen!(
             clearMockedCalls()
             expectCall(address,bytes)
             expectCall(address,uint256,bytes)
+            expectCall(address,uint256,uint64,bytes)
+            expectCallMinGas(address,uint256,uint64,bytes)
             getCode(string)
             getDeployedCode(string)
             label(address,string)
@@ -89,6 +107,7 @@ ethers::contract::abigen!(
             writeLine(string,string)
             closeFile(string)
             removeFile(string)
+            fsMetadata(string)(FsMetadata)
             toString(bytes)
             toString(address)
             toString(uint256)
@@ -126,9 +145,42 @@ ethers::contract::abigen!(
             rollFork(uint256,bytes32)
             rpcUrl(string)(string)
             rpcUrls()(string[2][])
-            parseJson(string, string)(bytes)
+            rpcUrlStructs()(Rpc[])
             parseJson(string)(bytes)
+            parseJson(string, string)(bytes)
+            parseJsonUint(string, string)(uint256)
+            parseJsonUintArray(string, string)(uint256[])
+            parseJsonInt(string, string)(int256)
+            parseJsonIntArray(string, string)(int256[])
+            parseJsonString(string, string)(string)
+            parseJsonStringArray(string, string)(string[])
+            parseJsonAddress(string, string)(address)
+            parseJsonAddressArray(string, string)(address[])
+            parseJsonBool(string, string)(bool)
+            parseJsonBoolArray(string, string)(bool[])
+            parseJsonBytes(string, string)(bytes)
+            parseJsonBytesArray(string, string)(bytes[])
+            parseJsonBytes32(string, string)(bytes32)
+            parseJsonBytes32Array(string, string)(bytes32[])
             allowCheatcodes(address)
+            serializeBool(string,string,bool)(string)
+            serializeBool(string,string,bool[])(string)
+            serializeUint(string,string,uint256)(string)
+            serializeUint(string,string,uint256[])(string)
+            serializeInt(string,string,int256)(string)
+            serializeInt(string,string,int256[])(string)
+            serializeAddress(string,string,address)(string)
+            serializeAddress(string,string,address[])(string)
+            serializeBytes32(string,string,bytes32)(string)
+            serializeBytes32(string,string,bytes32[])(string)
+            serializeString(string,string,string)(string)
+            serializeString(string,string,string[])(string)
+            serializeBytes(string,string,bytes)(string)
+            serializeBytes(string,string,bytes[])(string)
+            writeJson(string, string)
+            writeJson(string, string, string)
+            pauseGasMetering()
+            resumeGasMetering()
     ]"#,
 );
 pub use hevm::{HEVMCalls, HEVM_ABI};
@@ -168,16 +220,13 @@ ethers::contract::abigen!(
             event log_named_array        (string key, uint256[] val)
             event log_named_array        (string key, int256[] val)
             event log_named_array        (string key, address[] val)
-    ]"#
+    ]"#,
 );
 pub use console::{ConsoleEvents, CONSOLE_ABI};
 
 // Bindings for Hardhat console
-ethers::contract::abigen!(HardhatConsole, "./abi/console.json",);
+ethers::contract::abigen!(HardhatConsole, "./abi/console.json", event_derives (foundry_macros::ConsoleFmt););
 pub use hardhat_console::HARDHATCONSOLE_ABI as HARDHAT_CONSOLE_ABI;
-
-mod fmt;
-pub use fmt::format_hardhat_call;
 
 /// If the input starts with a known `hardhat/console.log` `uint` selector, then this will replace
 /// it with the selector `abigen!` bindings expect.

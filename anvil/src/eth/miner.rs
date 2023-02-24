@@ -54,7 +54,7 @@ impl Miner {
 
     /// Sets the mining mode to operate in
     pub fn set_mining_mode(&self, mode: MiningMode) {
-        let new_mode = format!("{:?}", mode);
+        let new_mode = format!("{mode:?}");
         let mode = std::mem::replace(&mut *self.mode_write(), mode);
         trace!(target: "miner", "updated mining mode from {:?} to {}", mode, new_mode);
         self.inner.wake();

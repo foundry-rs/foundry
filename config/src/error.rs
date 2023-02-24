@@ -33,9 +33,9 @@ impl fmt::Display for ExtractConfigError {
                 unique_errors.push(err);
             }
         }
-        writeln!(f, "{}", FAILED_TO_EXTRACT_CONFIG_PANIC_MSG)?;
+        writeln!(f, "{FAILED_TO_EXTRACT_CONFIG_PANIC_MSG}")?;
         for err in unique_errors {
-            writeln!(f, "{}", err)?;
+            writeln!(f, "{err}")?;
         }
         Ok(())
     }
@@ -59,7 +59,7 @@ pub enum FoundryConfigError {
 impl fmt::Display for FoundryConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let fmt_err = |err: &figment::Error, f: &mut fmt::Formatter<'_>| {
-            write!(f, "{}", err)?;
+            write!(f, "{err}")?;
             if !err.path.is_empty() {
                 // the path will contain the setting value like `["etherscan_api_key"]`
                 write!(f, " for setting `{}`", err.path.join("."))?;
@@ -200,7 +200,7 @@ impl FromStr for SolidityErrorCode {
             "virtual-interfaces" => SolidityErrorCode::InterfacesExplicitlyVirtual,
             "missing-receive-ether" => SolidityErrorCode::PayableNoReceiveEther,
             "same-varname" => SolidityErrorCode::DeclarationSameNameAsAnother,
-            _ => return Err(format!("Unknown variant {}", s)),
+            _ => return Err(format!("Unknown variant {s}")),
         };
 
         Ok(code)

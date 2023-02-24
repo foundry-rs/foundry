@@ -656,8 +656,7 @@ impl Tui {
                             }
                         }
                         Err(e) => text_output.extend(Text::from(format!(
-                            "Error in source map parsing: '{}', please open an issue",
-                            e
+                            "Error in source map parsing: '{e}', please open an issue"
                         ))),
                     }
                 } else {
@@ -743,10 +742,10 @@ impl Tui {
             // Format line number
             let line_number_format = if line_number == current_step {
                 let step: &DebugStep = &debug_steps[line_number];
-                format!("{:0>max_pc_len$x}|▶", step.pc, max_pc_len = max_pc_len)
+                format!("{:0>max_pc_len$x}|▶", step.pc)
             } else if line_number < debug_steps.len() {
                 let step: &DebugStep = &debug_steps[line_number];
-                format!("{:0>max_pc_len$x}| ", step.pc, max_pc_len = max_pc_len)
+                format!("{:0>max_pc_len$x}| ", step.pc)
             } else {
                 "END CALL".to_string()
             };
@@ -804,12 +803,11 @@ impl Tui {
                     indices_affected.iter().find(|(affected_index, _name)| *affected_index == i);
 
                 let mut words: Vec<Span> = (0..32)
-                    .into_iter()
                     .rev()
                     .map(|i| stack_item.byte(i))
                     .map(|byte| {
                         Span::styled(
-                            format!("{:02x} ", byte),
+                            format!("{byte:02x} "),
                             if affected.is_some() {
                                 Style::default().fg(Color::Cyan)
                             } else if byte == 0 {
@@ -832,7 +830,7 @@ impl Tui {
                 }
 
                 let mut spans = vec![Span::styled(
-                    format!("{:0min_len$}| ", i, min_len = min_len),
+                    format!("{i:0min_len$}| "),
                     Style::default().fg(Color::White),
                 )];
                 spans.extend(words);
@@ -897,16 +895,20 @@ impl Tui {
             }
         }
 
+        let height = area.height as usize;
+        let end_line = draw_mem.current_mem_startline + height;
+
         let text: Vec<Spans> = memory
             .chunks(32)
             .enumerate()
             .skip(draw_mem.current_mem_startline)
+            .take_while(|(i, _)| i < &end_line)
             .map(|(i, mem_word)| {
                 let words: Vec<Span> = mem_word
                     .iter()
                     .map(|byte| {
                         Span::styled(
-                            format!("{:02x} ", byte),
+                            format!("{byte:02x} "),
                             if let (Some(w), Some(color)) = (word, color) {
                                 if i == w {
                                     Style::default().fg(color)
@@ -925,7 +927,7 @@ impl Tui {
                     .collect();
 
                 let mut spans = vec![Span::styled(
-                    format!("{:0min_len$x}| ", i * 32, min_len = min_len),
+                    format!("{:0min_len$x}| ", i * 32),
                     Style::default().fg(Color::White),
                 )];
                 spans.extend(words);

@@ -1,19 +1,20 @@
 // cast send subcommands
-use crate::opts::{cast::parse_name_or_address, EthereumOpts, TransactionOpts, WalletType};
+use crate::opts::{EthereumOpts, TransactionOpts, WalletType};
 use cast::{Cast, TxBuilder};
 use clap::Parser;
 use ethers::{providers::Middleware, types::NameOrAddress};
 use foundry_common::try_get_http_provider;
 use foundry_config::{Chain, Config};
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 
+/// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
 pub struct SendTxArgs {
     #[clap(
-            help = "The destination of the transaction. If not provided, you must use cast send --create.",
-             value_parser = parse_name_or_address,
-            value_name = "TO"
-        )]
+        help = "The destination of the transaction. If not provided, you must use cast send --create.",
+        value_parser = NameOrAddress::from_str,
+        value_name = "TO",
+    )]
     to: Option<NameOrAddress>,
     #[clap(help = "The signature of the function to call.", value_name = "SIG")]
     sig: Option<String>,
@@ -27,9 +28,9 @@ pub struct SendTxArgs {
         help = "Only print the transaction hash and exit immediately."
     )]
     cast_async: bool,
-    #[clap(flatten, next_help_heading = "TRANSACTION OPTIONS")]
+    #[clap(flatten)]
     tx: TransactionOpts,
-    #[clap(flatten, next_help_heading = "ETHEREUM OPTIONS")]
+    #[clap(flatten)]
     eth: EthereumOpts,
     #[clap(
         short,
@@ -39,7 +40,7 @@ pub struct SendTxArgs {
         value_name = "CONFIRMATIONS"
     )]
     confirmations: usize,
-    #[clap(long = "json", short = 'j', help_heading = "DISPLAY OPTIONS")]
+    #[clap(long = "json", short = 'j', help_heading = "Display options")]
     to_json: bool,
     #[clap(
         long = "resend",
@@ -90,6 +91,7 @@ impl SendTxArgs {
                 WalletType::Ledger(leger) => leger.address(),
                 WalletType::Local(local) => local.address(),
                 WalletType::Trezor(trezor) => trezor.address(),
+                WalletType::Aws(aws) => aws.address(),
             };
 
             // prevent misconfigured hwlib from sending a transaction that defies
@@ -151,6 +153,22 @@ impl SendTxArgs {
                     .await?;
                 }
                 WalletType::Trezor(signer) => {
+                    cast_send(
+                        &signer,
+                        from,
+                        to,
+                        code,
+                        (sig, args),
+                        tx,
+                        chain,
+                        config.etherscan_api_key,
+                        cast_async,
+                        confirmations,
+                        to_json,
+                    )
+                    .await?;
+                }
+                WalletType::Aws(signer) => {
                     cast_send(
                         &signer,
                         from,
@@ -255,9 +273,9 @@ where
     let tx_hash = *pending_tx;
 
     if cast_async {
-        println!("{:#x}", tx_hash);
+        println!("{tx_hash:#x}");
     } else {
-        let receipt = cast.receipt(format!("{:#x}", tx_hash), None, confs, false, to_json).await?;
+        let receipt = cast.receipt(format!("{tx_hash:#x}"), None, confs, false, to_json).await?;
         println!("{receipt}");
     }
 

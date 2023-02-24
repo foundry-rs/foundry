@@ -199,7 +199,7 @@ impl<'a> ContractVisitor<'a> {
                 // is virtually impossible to correctly map instructions back to branches that
                 // include more complex logic like conditional logic.
                 self.push_branches(
-                    &ethers::solc::artifacts::ast::SourceLocation {
+                    &ethers::solc::artifacts::ast::LowFidelitySourceLocation {
                         start: node.src.start,
                         length: true_body
                             .src
@@ -374,7 +374,7 @@ impl<'a> ContractVisitor<'a> {
         self.items.push(item);
     }
 
-    fn source_location_for(&self, loc: &ast::SourceLocation) -> SourceLocation {
+    fn source_location_for(&self, loc: &ast::LowFidelitySourceLocation) -> SourceLocation {
         SourceLocation {
             source_id: self.source_id,
             contract_name: self.contract_name.clone(),
@@ -384,7 +384,7 @@ impl<'a> ContractVisitor<'a> {
         }
     }
 
-    fn push_branches(&mut self, loc: &ast::SourceLocation, branch_id: usize) {
+    fn push_branches(&mut self, loc: &ast::LowFidelitySourceLocation, branch_id: usize) {
         self.push_item(CoverageItem {
             kind: CoverageItemKind::Branch { branch_id, path_id: 0 },
             loc: self.source_location_for(loc),
@@ -520,7 +520,7 @@ impl SourceAnalyzer {
                     self.contracts
                         .get(contract_id)
                         .unwrap_or_else(|| {
-                            panic!("We should have the AST of contract: {:?}", contract_id)
+                            panic!("We should have the AST of contract: {contract_id:?}")
                         })
                         .clone(),
                 )?;

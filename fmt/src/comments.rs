@@ -161,35 +161,58 @@ impl CommentWithMetadata {
 
         Self::new(comment, position, has_newline_before, indent_len)
     }
+
     pub fn is_line(&self) -> bool {
         matches!(self.ty, CommentType::Line | CommentType::DocLine)
     }
-    pub fn is_doc_block(&self) -> bool {
-        matches!(self.ty, CommentType::DocBlock)
-    }
+
     pub fn is_prefix(&self) -> bool {
         matches!(self.position, CommentPosition::Prefix)
     }
+
     pub fn is_before(&self, byte: usize) -> bool {
         self.loc.start() < byte
     }
+
     pub fn contents(&self) -> &str {
+        self.comment
+            .strip_prefix(self.start_token())
+            .map(|c| self.end_token().and_then(|end| c.strip_suffix(end)).unwrap_or(c))
+            .unwrap_or(&self.comment)
+    }
+
+    /// The start token of the comment
+    pub fn start_token(&self) -> &str {
         match self.ty {
-            CommentType::Line => self.comment.strip_prefix("//"),
-            CommentType::Block => {
-                self.comment.strip_prefix("/*").and_then(|comment| comment.strip_suffix("*/"))
-            }
-            CommentType::DocLine => self.comment.strip_prefix("///"),
-            CommentType::DocBlock => {
-                self.comment.strip_prefix("/**").and_then(|comment| comment.strip_suffix("*/"))
-            }
+            CommentType::Line => "//",
+            CommentType::Block => "/*",
+            CommentType::DocLine => "///",
+            CommentType::DocBlock => "/**",
         }
-        .unwrap_or(&self.comment)
+    }
+
+    /// The token that gets written on the newline when the
+    /// comment is wrapped
+    pub fn wrap_token(&self) -> &str {
+        match self.ty {
+            CommentType::Line => "// ",
+            CommentType::DocLine => "/// ",
+            CommentType::Block => "",
+            CommentType::DocBlock => " * ",
+        }
+    }
+
+    /// The end token of the comment
+    pub fn end_token(&self) -> Option<&str> {
+        match self.ty {
+            CommentType::Line | CommentType::DocLine => None,
+            CommentType::Block | CommentType::DocBlock => Some("*/"),
+        }
     }
 }
 
 /// A list of comments
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct Comments {
     prefixes: VecDeque<CommentWithMetadata>,
     postfixes: VecDeque<CommentWithMetadata>,
@@ -280,9 +303,10 @@ impl Comments {
 }
 
 /// The state of a character in a string with possible comments
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
 pub enum CommentState {
     /// character not in a comment
+    #[default]
     None,
     /// First `/` in line comment start `"//"`
     LineStart1,
@@ -300,12 +324,6 @@ pub enum CommentState {
     BlockEnd1,
     /// `/` in block comment end `"*/"`
     BlockEnd2,
-}
-
-impl Default for CommentState {
-    fn default() -> Self {
-        CommentState::None
-    }
 }
 
 /// An Iterator over characters and indices in a string slice with information about the state of

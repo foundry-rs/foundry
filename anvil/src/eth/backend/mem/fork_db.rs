@@ -1,10 +1,12 @@
 use crate::{
-    eth::backend::db::{Db, MaybeHashDatabase, SerializableState, StateDb},
+    eth::backend::db::{
+        Db, MaybeHashDatabase, SerializableAccountRecord, SerializableState, StateDb,
+    },
     revm::AccountInfo,
     Address, U256,
 };
 use ethers::prelude::H256;
-use forge::revm::Database;
+use forge::revm::{Bytecode, Database, KECCAK_EMPTY};
 pub use foundry_evm::executor::fork::database::ForkedDatabase;
 use foundry_evm::executor::{
     backend::{snapshot::StateSnapshot, DatabaseResult},
@@ -28,11 +30,61 @@ impl Db for ForkedDatabase {
     }
 
     fn dump_state(&self) -> DatabaseResult<Option<SerializableState>> {
-        Ok(None)
+        let mut db = self.database().clone();
+        let accounts = self
+            .database()
+            .accounts
+            .clone()
+            .into_iter()
+            .map(|(k, v)| -> DatabaseResult<_> {
+                let code = if let Some(code) = v.info.code {
+                    code
+                } else {
+                    db.code_by_hash(v.info.code_hash)?
+                }
+                .to_checked();
+                Ok((
+                    k,
+                    SerializableAccountRecord {
+                        nonce: v.info.nonce,
+                        balance: v.info.balance,
+                        code: code.bytes()[..code.len()].to_vec().into(),
+                        storage: v.storage.into_iter().collect(),
+                    },
+                ))
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Some(SerializableState { accounts }))
     }
 
-    fn load_state(&mut self, _buf: SerializableState) -> DatabaseResult<bool> {
-        Ok(false)
+    fn load_state(&mut self, state: SerializableState) -> DatabaseResult<bool> {
+        for (addr, account) in state.accounts.into_iter() {
+            let old_account_nonce =
+                self.database_mut().accounts.get(&addr).map(|a| a.info.nonce).unwrap_or_default();
+            // use max nonce in case account is imported multiple times with difference
+            // nonces to prevent collisions
+            let nonce = std::cmp::max(old_account_nonce, account.nonce);
+
+            self.insert_account(
+                addr,
+                AccountInfo {
+                    balance: account.balance,
+                    code_hash: KECCAK_EMPTY, // will be set automatically
+                    code: if account.code.0.is_empty() {
+                        None
+                    } else {
+                        Some(Bytecode::new_raw(account.code.0).to_checked())
+                    },
+                    nonce,
+                },
+            );
+
+            for (k, v) in account.storage.into_iter() {
+                self.set_storage_at(addr, k, v)?;
+            }
+        }
+
+        Ok(true)
     }
 
     fn snapshot(&mut self) -> U256 {
@@ -57,6 +109,11 @@ impl MaybeHashDatabase for ForkedDatabase {
         StateSnapshot { accounts, storage, block_hashes }
     }
 
+    fn clear(&mut self) {
+        self.flush_cache();
+        self.clear_into_snapshot();
+    }
+
     fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
         let db = self.inner().db();
         let StateSnapshot { accounts, storage, block_hashes } = snapshot;
@@ -68,6 +125,11 @@ impl MaybeHashDatabase for ForkedDatabase {
 impl MaybeHashDatabase for ForkDbSnapshot {
     fn clear_into_snapshot(&mut self) -> StateSnapshot {
         std::mem::take(&mut self.snapshot)
+    }
+
+    fn clear(&mut self) {
+        std::mem::take(&mut self.snapshot);
+        self.local.clear()
     }
 
     fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {

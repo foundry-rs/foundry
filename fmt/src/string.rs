@@ -4,9 +4,10 @@
 /// This is a simplified version of the
 /// [actual parser](https://docs.soliditylang.org/en/v0.8.15/grammar.html#a4.SolidityLexer.EscapeSequence)
 /// as we don't care about hex or other character meanings
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
 pub enum QuoteState {
     /// Not currently in quoted string
+    #[default]
     None,
     /// The opening character of a quoted string
     Opening(char),
@@ -18,12 +19,6 @@ pub enum QuoteState {
     Escaped(char),
     /// The closing character
     Closing(char),
-}
-
-impl Default for QuoteState {
-    fn default() -> Self {
-        QuoteState::None
-    }
 }
 
 /// An iterator over characters and indices in a string slice with information about quoted string

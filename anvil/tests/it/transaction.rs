@@ -1,5 +1,5 @@
 use crate::abi::*;
-use anvil::{spawn, NodeConfig};
+use anvil::{spawn, Hardfork, NodeConfig};
 use ethers::{
     abi::ethereum_types::BigEndianHash,
     prelude::{
@@ -635,6 +635,58 @@ async fn can_get_pending_transaction() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_first_noce_is_zero() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+    let from = handle.dev_wallets().next().unwrap().address();
+
+    let nonce = provider
+        .get_transaction_count(from, Some(BlockId::Number(BlockNumber::Pending)))
+        .await
+        .unwrap();
+
+    assert_eq!(nonce, U256::zero());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_handle_different_sender_nonce_calculation() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let from_first = accounts[0].address();
+    let from_second = accounts[1].address();
+
+    let tx_count = 10u64;
+
+    // send a bunch of tx to the mempool and check nonce is returned correctly
+    for idx in 1..=tx_count {
+        let tx_from_first =
+            TransactionRequest::new().from(from_first).value(1337u64).to(Address::random());
+        let _tx = provider.send_transaction(tx_from_first, None).await.unwrap();
+        let nonce_from_first = provider
+            .get_transaction_count(from_first, Some(BlockId::Number(BlockNumber::Pending)))
+            .await
+            .unwrap();
+        assert_eq!(nonce_from_first, idx.into());
+
+        let tx_from_second =
+            TransactionRequest::new().from(from_second).value(1337u64).to(Address::random());
+        let _tx = provider.send_transaction(tx_from_second, None).await.unwrap();
+        let nonce_from_second = provider
+            .get_transaction_count(from_second, Some(BlockId::Number(BlockNumber::Pending)))
+            .await
+            .unwrap();
+        assert_eq!(nonce_from_second, idx.into());
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn includes_pending_tx_for_transaction_count() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
@@ -792,7 +844,7 @@ async fn test_tx_access_list() {
             })
             .collect::<Vec<_>>();
 
-        format!("{:?}", a)
+        format!("{a:?}")
     }
 
     /// asserts that the two access lists are equal, by comparing their sorted
@@ -892,4 +944,75 @@ async fn estimates_gas_on_pending_by_default() {
     let tx =
         TransactionRequest::new().from(recipient).to(sender).value(1e10 as u64).data(vec![0x42]);
     api.estimate_gas(tx.into(), None).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reject_gas_too_low() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let account = handle.dev_accounts().next().unwrap();
+
+    let gas = 21_000u64 - 1;
+    let tx = TransactionRequest::new()
+        .to(Address::random())
+        .value(U256::from(1337u64))
+        .from(account)
+        .gas(gas);
+
+    let resp = provider.send_transaction(tx, None).await;
+
+    let err = resp.unwrap_err().to_string();
+    assert!(err.contains("intrinsic gas too low"));
+}
+
+// <https://github.com/foundry-rs/foundry/issues/3783>
+#[tokio::test(flavor = "multi_thread")]
+async fn can_call_with_high_gas_limit() {
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_gas_limit(Some(U256::from(100_000_000)))).await;
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
+        .unwrap()
+        .send()
+        .await
+        .unwrap();
+
+    let greeting = greeter_contract.greet().gas(60_000_000u64).call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reject_eip1559_pre_london() {
+    let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(Hardfork::Berlin))).await;
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let gas_limit = api.gas_limit();
+    let gas_price = api.gas_price().unwrap();
+    let unsupported = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
+        .unwrap()
+        .gas(gas_limit)
+        .gas_price(gas_price)
+        .send()
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(unsupported.contains("not supported by the current hardfork"), "{unsupported}");
+
+    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
+        .unwrap()
+        .legacy()
+        .send()
+        .await
+        .unwrap();
+
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
 }

@@ -7,18 +7,22 @@ use foundry_config::fix::fix_tomls;
 
 foundry_config::impl_figment_convert!(ConfigArgs, opts, evm_opts);
 
-/// Command to list currently set config values
+/// CLI arguments for `forge config`.
 #[derive(Debug, Clone, Parser)]
 pub struct ConfigArgs {
-    #[clap(help = "prints currently set config values as json", long)]
-    json: bool,
-    #[clap(help = "prints basic set of currently set config values", long)]
+    #[clap(help = "Print only a basic set of the currently set config values.", long)]
     basic: bool,
-    #[clap(help = "attempts to fix any configuration warnings", long)]
+
+    #[clap(help = "Print currently set config values as JSON.", long)]
+    json: bool,
+
+    #[clap(help = "Attempt to fix any configuration warnings.", long)]
     fix: bool,
+
     // support nested build arguments
     #[clap(flatten)]
     opts: BuildArgs,
+
     #[clap(flatten)]
     evm_opts: EvmArgs,
 }

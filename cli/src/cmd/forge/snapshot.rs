@@ -19,7 +19,6 @@ use regex::Regex;
 use std::{
     cmp::Ordering,
     collections::HashMap,
-    fmt::Write,
     fs,
     io::{self, BufRead},
     path::{Path, PathBuf},
@@ -34,10 +33,11 @@ pub static RE_BASIC_SNAPSHOT_ENTRY: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?P<file>(.*?)):(?P<sig>(\w+)\s*\((.*?)\))\s*\(((gas:)?\s*(?P<gas>\d+)|(runs:\s*(?P<runs>\d+),\s*μ:\s*(?P<avg>\d+),\s*~:\s*(?P<med>\d+))|(runs:\s*(?P<invruns>\d+),\s*calls:\s*(?P<calls>\d+),\s*reverts:\s*(?P<reverts>\d+)))\)").unwrap()
 });
 
+/// CLI arguments for `forge snapshot`.
 #[derive(Debug, Clone, Parser)]
 pub struct SnapshotArgs {
     /// All test arguments are supported
-    #[clap(flatten, next_help_heading = "TEST OPTIONS")]
+    #[clap(flatten)]
     pub(crate) test: test::TestArgs,
 
     /// Additional configs for test results
@@ -287,17 +287,24 @@ fn read_snapshot(path: impl AsRef<Path>) -> eyre::Result<Vec<SnapshotEntry>> {
     Ok(entries)
 }
 
-/// Writes a series of tests to a snapshot file
+/// Writes a series of tests to a snapshot file after sorting them
 fn write_to_snapshot_file(
     tests: &[Test],
     path: impl AsRef<Path>,
     _format: Option<Format>,
 ) -> eyre::Result<()> {
-    let mut out = String::new();
-    for test in tests {
-        writeln!(out, "{}:{} {}", test.contract_name(), test.signature, test.result.kind.report())?;
-    }
-    Ok(fs::write(path, out)?)
+    let mut reports = tests
+        .iter()
+        .map(|test| {
+            format!("{}:{} {}", test.contract_name(), test.signature, test.result.kind.report())
+        })
+        .collect::<Vec<_>>();
+
+    // sort all reports
+    reports.sort();
+
+    let content = reports.join("\n");
+    Ok(fs::write(path, content)?)
 }
 
 /// A Snapshot entry diff
@@ -378,7 +385,7 @@ fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> eyre::Result<()> {
         }
     }
     let mut overall_gas_change = 0i128;
-    let mut overall_gas_diff = 0f64;
+    let mut overall_gas_used = 0i128;
 
     diffs.sort_by(|a, b| {
         a.gas_diff().abs().partial_cmp(&b.gas_diff().abs()).unwrap_or(Ordering::Equal)
@@ -387,8 +394,8 @@ fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> eyre::Result<()> {
     for diff in diffs {
         let gas_change = diff.gas_change();
         overall_gas_change += gas_change;
+        overall_gas_used += diff.target_gas_used.gas() as i128;
         let gas_diff = diff.gas_diff();
-        overall_gas_diff += gas_diff;
         println!(
             "{} (gas: {} ({})) ",
             diff.signature,
@@ -397,6 +404,7 @@ fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> eyre::Result<()> {
         );
     }
 
+    let overall_gas_diff = overall_gas_change as f64 / overall_gas_used as f64;
     println!(
         "Overall gas change: {} ({})",
         fmt_change(overall_gas_change),
@@ -408,11 +416,11 @@ fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> eyre::Result<()> {
 fn fmt_pct_change(change: f64) -> String {
     let change_pct = change * 100.0;
     match change.partial_cmp(&0.0).unwrap_or(Ordering::Equal) {
-        Ordering::Less => Paint::green(format!("{:.3}%", change_pct)).to_string(),
+        Ordering::Less => Paint::green(format!("{change_pct:.3}%")).to_string(),
         Ordering::Equal => {
-            format!("{:.3}%", change_pct)
+            format!("{change_pct:.3}%")
         }
-        Ordering::Greater => Paint::red(format!("{:.3}%", change_pct)).to_string(),
+        Ordering::Greater => Paint::red(format!("{change_pct:.3}%")).to_string(),
     }
 }
 

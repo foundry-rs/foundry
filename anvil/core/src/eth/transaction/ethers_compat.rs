@@ -3,14 +3,14 @@
 use super::EthTransactionRequest;
 use crate::eth::transaction::{
     EIP1559TransactionRequest, EIP2930TransactionRequest, LegacyTransactionRequest,
-    TypedTransaction, TypedTransactionRequest,
+    MaybeImpersonatedTransaction, TypedTransaction, TypedTransactionRequest,
 };
 use ethers_core::types::{
     transaction::eip2718::TypedTransaction as EthersTypedTransactionRequest, Address,
     Eip1559TransactionRequest as EthersEip1559TransactionRequest,
     Eip2930TransactionRequest as EthersEip2930TransactionRequest, NameOrAddress,
     Transaction as EthersTransaction, TransactionRequest as EthersLegacyTransactionRequest,
-    TransactionRequest, U256, U64,
+    TransactionRequest, H256, U256, U64,
 };
 
 impl From<TypedTransactionRequest> for EthersTypedTransactionRequest {
@@ -91,83 +91,100 @@ impl From<TypedTransactionRequest> for EthersTypedTransactionRequest {
     }
 }
 
+fn to_ethers_transaction_with_hash_and_sender(
+    transaction: TypedTransaction,
+    hash: H256,
+    from: Address,
+) -> EthersTransaction {
+    match transaction {
+        TypedTransaction::Legacy(t) => EthersTransaction {
+            hash,
+            nonce: t.nonce,
+            block_hash: None,
+            block_number: None,
+            transaction_index: None,
+            from,
+            to: None,
+            value: t.value,
+            gas_price: Some(t.gas_price),
+            max_fee_per_gas: Some(t.gas_price),
+            max_priority_fee_per_gas: Some(t.gas_price),
+            gas: t.gas_limit,
+            input: t.input.clone(),
+            chain_id: t.chain_id().map(Into::into),
+            v: t.signature.v.into(),
+            r: t.signature.r,
+            s: t.signature.s,
+            access_list: None,
+            transaction_type: Some(0u64.into()),
+            other: Default::default(),
+        },
+        TypedTransaction::EIP2930(t) => EthersTransaction {
+            hash,
+            nonce: t.nonce,
+            block_hash: None,
+            block_number: None,
+            transaction_index: None,
+            from,
+            to: None,
+            value: t.value,
+            gas_price: Some(t.gas_price),
+            max_fee_per_gas: Some(t.gas_price),
+            max_priority_fee_per_gas: Some(t.gas_price),
+            gas: t.gas_limit,
+            input: t.input.clone(),
+            chain_id: Some(t.chain_id.into()),
+            v: U64::from(t.odd_y_parity as u8),
+            r: U256::from(t.r.as_bytes()),
+            s: U256::from(t.s.as_bytes()),
+            access_list: Some(t.access_list),
+            transaction_type: Some(1u64.into()),
+            other: Default::default(),
+        },
+        TypedTransaction::EIP1559(t) => EthersTransaction {
+            hash,
+            nonce: t.nonce,
+            block_hash: None,
+            block_number: None,
+            transaction_index: None,
+            from,
+            to: None,
+            value: t.value,
+            gas_price: None,
+            max_fee_per_gas: Some(t.max_fee_per_gas),
+            max_priority_fee_per_gas: Some(t.max_priority_fee_per_gas),
+            gas: t.gas_limit,
+            input: t.input.clone(),
+            chain_id: Some(t.chain_id.into()),
+            v: U64::from(t.odd_y_parity as u8),
+            r: U256::from(t.r.as_bytes()),
+            s: U256::from(t.s.as_bytes()),
+            access_list: Some(t.access_list),
+            transaction_type: Some(2u64.into()),
+            other: Default::default(),
+        },
+    }
+}
+
 impl From<TypedTransaction> for EthersTransaction {
     fn from(transaction: TypedTransaction) -> Self {
         let hash = transaction.hash();
-        match transaction {
-            TypedTransaction::Legacy(t) => EthersTransaction {
-                hash,
-                nonce: t.nonce,
-                block_hash: None,
-                block_number: None,
-                transaction_index: None,
-                from: Address::default(),
-                to: None,
-                value: t.value,
-                gas_price: Some(t.gas_price),
-                max_fee_per_gas: Some(t.gas_price),
-                max_priority_fee_per_gas: Some(t.gas_price),
-                gas: t.gas_limit,
-                input: t.input.clone(),
-                chain_id: t.chain_id().map(Into::into),
-                v: t.signature.v.into(),
-                r: t.signature.r,
-                s: t.signature.s,
-                access_list: None,
-                transaction_type: Some(0u64.into()),
-                other: Default::default(),
-            },
-            TypedTransaction::EIP2930(t) => EthersTransaction {
-                hash,
-                nonce: t.nonce,
-                block_hash: None,
-                block_number: None,
-                transaction_index: None,
-                from: Address::default(),
-                to: None,
-                value: t.value,
-                gas_price: Some(t.gas_price),
-                max_fee_per_gas: Some(t.gas_price),
-                max_priority_fee_per_gas: Some(t.gas_price),
-                gas: t.gas_limit,
-                input: t.input.clone(),
-                chain_id: Some(t.chain_id.into()),
-                v: U64::from(t.odd_y_parity as u8),
-                r: U256::from(t.r.as_bytes()),
-                s: U256::from(t.s.as_bytes()),
-                access_list: Some(t.access_list),
-                transaction_type: Some(1u64.into()),
-                other: Default::default(),
-            },
-            TypedTransaction::EIP1559(t) => EthersTransaction {
-                hash,
-                nonce: t.nonce,
-                block_hash: None,
-                block_number: None,
-                transaction_index: None,
-                from: Address::default(),
-                to: None,
-                value: t.value,
-                gas_price: None,
-                max_fee_per_gas: Some(t.max_fee_per_gas),
-                max_priority_fee_per_gas: Some(t.max_priority_fee_per_gas),
-                gas: t.gas_limit,
-                input: t.input.clone(),
-                chain_id: Some(t.chain_id.into()),
-                v: U64::from(t.odd_y_parity as u8),
-                r: U256::from(t.r.as_bytes()),
-                s: U256::from(t.s.as_bytes()),
-                access_list: Some(t.access_list),
-                transaction_type: Some(2u64.into()),
-                other: Default::default(),
-            },
-        }
+        let sender = transaction.recover().unwrap_or_default();
+        to_ethers_transaction_with_hash_and_sender(transaction, hash, sender)
+    }
+}
+
+impl From<MaybeImpersonatedTransaction> for EthersTransaction {
+    fn from(transaction: MaybeImpersonatedTransaction) -> Self {
+        let hash = transaction.hash();
+        let sender = transaction.recover().unwrap_or_default();
+        to_ethers_transaction_with_hash_and_sender(transaction.into(), hash, sender)
     }
 }
 
 impl From<TransactionRequest> for EthTransactionRequest {
     fn from(req: TransactionRequest) -> Self {
-        let TransactionRequest { from, to, gas, gas_price, value, data, nonce, .. } = req;
+        let TransactionRequest { from, to, gas, gas_price, value, data, nonce, chain_id, .. } = req;
         EthTransactionRequest {
             from,
             to: to.and_then(|to| match to {
@@ -181,6 +198,7 @@ impl From<TransactionRequest> for EthTransactionRequest {
             value,
             data,
             nonce,
+            chain_id,
             access_list: None,
             transaction_type: None,
         }
