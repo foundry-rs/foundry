@@ -17,6 +17,7 @@ use std::{
     iter::repeat,
     sync::Arc,
 };
+use tracing::trace;
 
 macro_rules! get_wallets {
     ($id:ident, [ $($wallets:expr),+ ], $call:expr) => {
@@ -442,6 +443,7 @@ impl MultiWallet {
             None => LedgerHDPath::LedgerLive(mnemonic_index.unwrap_or(0)),
         };
 
+        trace!(?chain_id, "Creating new ledger signer");
         Ok(Some(Ledger::new(derivation, chain_id).await.wrap_err("Ledger device not available.")?))
     }
 }
