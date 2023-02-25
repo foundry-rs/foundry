@@ -121,14 +121,14 @@ TODO: update ^
 
 ### Disable Line
 
-The formatter can be disabled on specific lines by adding a comment `// forgefmt: disable-line`, like this:
+The formatter can be disabled on specific lines by adding a comment `// forgefmt: disable-next-line`, like this:
 
 ```solidity
-// forgefmt: disable-line
+// forgefmt: disable-next-line
 uint x = 100;
 ```
 
-The comment can also be placed at the end of the line:
+Alternatively, the comment can also be placed at the end of the line. In this case, you'd have to use `disable-line` instead:
 
 ```solidity
 uint x = 100; // forgefmt: disable-line
