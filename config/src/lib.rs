@@ -938,11 +938,10 @@ impl Config {
 
     /// Returns the `Optimizer` based on the configured settings
     pub fn optimizer(&self) -> Optimizer {
-        Optimizer {
-            enabled: Some(self.optimizer),
-            runs: Some(self.optimizer_runs),
-            details: self.optimizer_details.clone(),
-        }
+        // only configure optimizer settings if optimizer is enabled
+        let details = if self.optimizer { self.optimizer_details.clone() } else { None };
+
+        Optimizer { enabled: Some(self.optimizer), runs: Some(self.optimizer_runs), details }
     }
 
     /// returns the [`ethers_solc::ConfigurableArtifacts`] for this config, that includes the
