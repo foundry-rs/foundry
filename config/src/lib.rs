@@ -4217,4 +4217,22 @@ mod tests {
             Ok(())
         });
     }
+
+    #[test]
+    fn test_parse_optimizer_settings() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+               [profile.default.optimizer_details]
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(config.optimizer_details, Some(OptimizerDetails::default()));
+
+            Ok(())
+        });
+    }
 }
