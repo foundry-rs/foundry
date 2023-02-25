@@ -171,9 +171,6 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
     // spawn the server on a new task
     let serve = tokio::task::spawn(server.map_err(NodeError::from));
 
-    // select over both tasks
-    let inner = futures::future::select(node_service, serve);
-
     let tokio_handle = Handle::current();
     let (signal, on_shutdown) = shutdown::signal();
     let task_manager = TaskManager::new(tokio_handle, on_shutdown);
@@ -182,10 +179,8 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
 
     let handle = NodeHandle {
         config,
-        inner: Box::pin(async move {
-            // wait for the first task to finish
-            inner.await.into_inner().0
-        }),
+        node_service: node_service,
+        server: serve,
         ipc_task,
         address: addr,
         _signal: Some(signal),
@@ -197,8 +192,6 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
     (api, handle)
 }
 
-type NodeFuture = Pin<Box<dyn Future<Output = Result<NodeResult<()>, JoinError>>>>;
-
 type IpcTask = JoinHandle<io::Result<()>>;
 
 /// A handle to the spawned node and server tasks
@@ -208,8 +201,10 @@ pub struct NodeHandle {
     config: NodeConfig,
     /// The address of the running rpc server
     address: SocketAddr,
-    /// The future that joins the rpc service and the node service
-    inner: NodeFuture,
+    /// Join handle for the Node Service
+    pub node_service: JoinHandle<Result<(), NodeError>>,
+    /// Join handle for the Anvil server
+    pub server: JoinHandle<Result<(), NodeError>>,
     // The future that joins the ipc server, if any
     ipc_task: Option<IpcTask>,
     /// A signal that fires the shutdown, fired on drop.
@@ -345,14 +340,18 @@ impl Future for NodeHandle {
         // poll the ipc task
         if let Some(mut ipc) = pin.ipc_task.take() {
             if let Poll::Ready(res) = ipc.poll_unpin(cx) {
-                return Poll::Ready(res.map(|res| res.map_err(NodeError::from)))
+                return Poll::Ready(res.map(|res| res.map_err(NodeError::from)));
             } else {
                 pin.ipc_task = Some(ipc);
             }
         }
 
-        // poll the http/ws server task
-        pin.inner.poll_unpin(cx)
+        // poll the node service task
+        if let Poll::Ready(res) = pin.node_service.poll_unpin(cx) {
+            return Poll::Ready(res);
+        }
+
+        pin.server.poll_unpin(cx)
     }
 }
 
