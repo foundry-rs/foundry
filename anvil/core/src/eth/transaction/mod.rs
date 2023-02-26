@@ -553,6 +553,15 @@ impl TypedTransaction {
         }
     }
 
+    /// Returns the transaction type
+    pub fn r#type(&self) -> Option<u8> {
+        match self {
+            TypedTransaction::Legacy(_) => None,
+            TypedTransaction::EIP2930(_) => Some(1),
+            TypedTransaction::EIP1559(_) => Some(2),
+        }
+    }
+
     /// Max cost of the transaction
     pub fn max_cost(&self) -> U256 {
         self.gas_limit().saturating_mul(self.gas_price())
