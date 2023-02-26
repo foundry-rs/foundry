@@ -2276,12 +2276,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
     fn visit_emit(&mut self, loc: Loc, event: &mut Expression) -> Result<()> {
         return_source_if_disabled!(self, loc);
-        self.grouped(|fmt| {
-            write_chunk!(fmt, loc.start(), "emit")?;
-            event.visit(fmt)?;
-            fmt.write_semicolon()?;
-            Ok(())
-        })?;
+        write_chunk!(self, loc.start(), "emit")?;
+        event.visit(self)?;
+        self.write_semicolon()?;
         Ok(())
     }
 
@@ -3674,4 +3671,5 @@ mod tests {
     test_directory! { PragmaDirective }
     test_directory! { Annotation }
     test_directory! { MappingType }
+    test_directory! { EmitStatement }
 }
