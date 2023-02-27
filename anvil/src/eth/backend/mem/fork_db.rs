@@ -6,7 +6,7 @@ use crate::{
     Address, U256,
 };
 use ethers::prelude::H256;
-use forge::revm::{Bytecode, Database, KECCAK_EMPTY};
+use forge::revm::Database;
 pub use foundry_evm::executor::fork::database::ForkedDatabase;
 use foundry_evm::executor::{
     backend::{snapshot::StateSnapshot, DatabaseResult},
@@ -55,36 +55,6 @@ impl Db for ForkedDatabase {
             })
             .collect::<Result<_, _>>()?;
         Ok(Some(SerializableState { accounts }))
-    }
-
-    fn load_state(&mut self, state: SerializableState) -> DatabaseResult<bool> {
-        for (addr, account) in state.accounts.into_iter() {
-            let old_account_nonce =
-                self.database_mut().accounts.get(&addr).map(|a| a.info.nonce).unwrap_or_default();
-            // use max nonce in case account is imported multiple times with difference
-            // nonces to prevent collisions
-            let nonce = std::cmp::max(old_account_nonce, account.nonce);
-
-            self.insert_account(
-                addr,
-                AccountInfo {
-                    balance: account.balance,
-                    code_hash: KECCAK_EMPTY, // will be set automatically
-                    code: if account.code.0.is_empty() {
-                        None
-                    } else {
-                        Some(Bytecode::new_raw(account.code.0).to_checked())
-                    },
-                    nonce,
-                },
-            );
-
-            for (k, v) in account.storage.into_iter() {
-                self.set_storage_at(addr, k, v)?;
-            }
-        }
-
-        Ok(true)
     }
 
     fn snapshot(&mut self) -> U256 {
