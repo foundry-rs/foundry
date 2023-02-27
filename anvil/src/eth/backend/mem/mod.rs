@@ -1698,6 +1698,8 @@ impl Backend {
 
         let transaction = block.transactions[index].clone();
 
+        let transaction_type = transaction.transaction.r#type();
+
         let effective_gas_price = match transaction.transaction {
             TypedTransaction::Legacy(t) => t.gas_price,
             TypedTransaction::EIP2930(t) => t.gas_price,
@@ -1748,7 +1750,7 @@ impl Backend {
             status: Some(status_code.into()),
             root: None,
             logs_bloom,
-            transaction_type: None,
+            transaction_type: transaction_type.map(Into::into),
             effective_gas_price: Some(effective_gas_price),
         };
 
