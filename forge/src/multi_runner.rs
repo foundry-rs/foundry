@@ -282,8 +282,7 @@ impl MultiContractRunnerBuilder {
                 let abi = contract.abi.expect("We should have an abi by now");
                 // if it's a test, add it to deployable contracts
                 if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
-                    abi.functions()
-                        .any(|func| func.name.is_test())
+                    abi.functions().any(|func| func.name.is_test())
                 {
                     deployable_contracts.insert(
                         id.clone(),
