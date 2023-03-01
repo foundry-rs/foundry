@@ -59,7 +59,7 @@ impl<'a> TestFunctionExt for &'a str {
     }
 
     fn is_test(&self) -> bool {
-        self.starts_with("test")
+        self.starts_with("test") || self.is_invariant_test()
     }
 
     fn is_test_fail(&self) -> bool {
