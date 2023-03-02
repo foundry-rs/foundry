@@ -376,9 +376,7 @@ pub static STANDALONE_FALLBACK_SECTIONS: Lazy<HashMap<&'static str, &'static str
     Lazy::new(|| HashMap::from([("invariant", "fuzz")]));
 
 /// Deprecated keys.
-pub static DEPRECATIONS: Lazy<HashMap<String, String>> = Lazy::new(|| {
-    HashMap::from([("fuzz.max_global_rejects".into(), "fuzz.max_test_rejects".into())])
-});
+pub static DEPRECATIONS: Lazy<HashMap<String, String>> = Lazy::new(|| HashMap::from([]));
 
 impl Config {
     /// The default profile: "default"
