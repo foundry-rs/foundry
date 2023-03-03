@@ -2099,9 +2099,9 @@ impl EthApi {
             mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
         }
 
-        trace!(target : "node", "Estimated Gas for call {:?}", gas);
+        trace!(target : "node", "Estimated Gas for call {:?}", highest_gas_limit);
 
-        Ok(gas)
+        Ok(highest_gas_limit)
     }
 
     /// Updates the `TransactionOrder`
