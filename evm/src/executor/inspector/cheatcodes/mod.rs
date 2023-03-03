@@ -534,7 +534,9 @@ where
 
         // Clean up broadcast
         if let Some(broadcast) = &self.broadcast {
-            data.env.tx.caller = broadcast.original_origin;
+            if data.journaled_state.depth() == broadcast.depth {
+                data.env.tx.caller = broadcast.original_origin;
+            }
 
             if broadcast.single_call {
                 std::mem::take(&mut self.broadcast);
@@ -727,7 +729,9 @@ where
 
         // Clean up broadcasts
         if let Some(broadcast) = &self.broadcast {
-            data.env.tx.caller = broadcast.original_origin;
+            if data.journaled_state.depth() == broadcast.depth {
+                data.env.tx.caller = broadcast.original_origin;
+            }
 
             if broadcast.single_call {
                 std::mem::take(&mut self.broadcast);
