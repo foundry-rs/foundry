@@ -10,11 +10,10 @@ use ethers::{
     signers::LocalWallet,
     types::{Address, Log, H256},
 };
-use revm::{
-    return_revert, CallInputs, CreateInputs, EVMData, Gas, GasInspector, Inspector, Interpreter,
-    Return,
-};
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
+use revm::{EVMData, Inspector};
+use revm::inspectors::GasInspector;
+use revm::interpreter::{CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Memory, Stack};
 
 /// Helper macro to call the same method on multiple inspectors without resorting to dynamic
 /// dispatch
@@ -37,12 +36,12 @@ pub struct InspectorData {
     pub coverage: Option<HitMaps>,
     pub cheatcodes: Option<Cheatcodes>,
     pub script_wallets: Vec<LocalWallet>,
-    pub chisel_state: Option<(revm::Stack, revm::Memory, revm::Return)>,
+    pub chisel_state: Option<(Stack, Memory, InstructionResult)>,
 }
 
 /// An inspector that calls multiple inspectors in sequence.
 ///
-/// If a call to an inspector returns a value other than [Return::Continue] (or equivalent) the
+/// If a call to an inspector returns a value other than [InstructionResult::Continue] (or equivalent) the
 /// remaining inspectors are not called.
 #[derive(Default)]
 pub struct InspectorStack {
@@ -84,10 +83,10 @@ impl InspectorStack {
         data: &mut EVMData<'_, DB>,
         call: &CallInputs,
         remaining_gas: Gas,
-        status: Return,
+        status: InstructionResult,
         retdata: Bytes,
         is_static: bool,
-    ) -> (Return, Gas, Bytes) {
+    ) -> (InstructionResult, Gas, Bytes) {
         call_inspectors!(
             inspector,
             [
@@ -112,7 +111,7 @@ impl InspectorStack {
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
-                if new_status != status || (new_status == Return::Revert && new_retdata != retdata)
+                if new_status != status || (new_status == InstructionResult::Revert && new_retdata != retdata)
                 {
                     return (new_status, new_gas, new_retdata)
                 }
@@ -132,7 +131,7 @@ where
         interpreter: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
         is_static: bool,
-    ) -> Return {
+    ) -> InstructionResult {
         call_inspectors!(
             inspector,
             [
@@ -148,13 +147,13 @@ where
                 let status = inspector.initialize_interp(interpreter, data, is_static);
 
                 // Allow inspectors to exit early
-                if status != Return::Continue {
+                if status != InstructionResult::Continue {
                     return status
                 }
             }
         );
 
-        Return::Continue
+        InstructionResult::Continue
     }
 
     fn step(
@@ -162,7 +161,7 @@ where
         interpreter: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
         is_static: bool,
-    ) -> Return {
+    ) -> InstructionResult {
         call_inspectors!(
             inspector,
             [
@@ -179,13 +178,13 @@ where
                 let status = inspector.step(interpreter, data, is_static);
 
                 // Allow inspectors to exit early
-                if status != Return::Continue {
+                if status != InstructionResult::Continue {
                     return status
                 }
             }
         );
 
-        Return::Continue
+        InstructionResult::Continue
     }
 
     fn log(
@@ -209,8 +208,8 @@ where
         interpreter: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
         is_static: bool,
-        status: Return,
-    ) -> Return {
+        status: InstructionResult,
+    ) -> InstructionResult {
         call_inspectors!(
             inspector,
             [
@@ -226,13 +225,13 @@ where
                 let status = inspector.step_end(interpreter, data, is_static, status);
 
                 // Allow inspectors to exit early
-                if status != Return::Continue {
+                if status != InstructionResult::Continue {
                     return status
                 }
             }
         );
 
-        Return::Continue
+        InstructionResult::Continue
     }
 
     fn call(
@@ -240,7 +239,7 @@ where
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
         is_static: bool,
-    ) -> (Return, Gas, Bytes) {
+    ) -> (InstructionResult, Gas, Bytes) {
         call_inspectors!(
             inspector,
             [
@@ -257,13 +256,13 @@ where
                 let (status, gas, retdata) = inspector.call(data, call, is_static);
 
                 // Allow inspectors to exit early
-                if status != Return::Continue {
+                if status != InstructionResult::Continue {
                     return (status, gas, retdata)
                 }
             }
         );
 
-        (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
+        (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
     }
 
     fn call_end(
@@ -271,10 +270,10 @@ where
         data: &mut EVMData<'_, DB>,
         call: &CallInputs,
         remaining_gas: Gas,
-        status: Return,
+        status: InstructionResult,
         retdata: Bytes,
         is_static: bool,
-    ) -> (Return, Gas, Bytes) {
+    ) -> (InstructionResult, Gas, Bytes) {
         let res = self.do_call_end(data, call, remaining_gas, status, retdata, is_static);
 
         if matches!(res.0, return_revert!()) {
@@ -293,7 +292,7 @@ where
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &mut CreateInputs,
-    ) -> (Return, Option<Address>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
         call_inspectors!(
             inspector,
             [
@@ -309,24 +308,24 @@ where
                 let (status, addr, gas, retdata) = inspector.create(data, call);
 
                 // Allow inspectors to exit early
-                if status != Return::Continue {
+                if status != InstructionResult::Continue {
                     return (status, addr, gas, retdata)
                 }
             }
         );
 
-        (Return::Continue, None, Gas::new(call.gas_limit), Bytes::new())
+        (InstructionResult::Continue, None, Gas::new(call.gas_limit), Bytes::new())
     }
 
     fn create_end(
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &CreateInputs,
-        status: Return,
+        status: InstructionResult,
         address: Option<Address>,
         remaining_gas: Gas,
         retdata: Bytes,
-    ) -> (Return, Option<Address>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
         call_inspectors!(
             inspector,
             [

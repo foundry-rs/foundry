@@ -372,7 +372,7 @@ impl MinedTransaction {
             let action = node.parity_action();
             let result = node.parity_result();
 
-            let action_type = if node.status() == Return::SelfDestruct {
+            let action_type = if node.status() == InstructionResult::SelfDestruct {
                 ActionType::Suicide
             } else {
                 node.kind().into()

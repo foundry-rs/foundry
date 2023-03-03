@@ -2015,7 +2015,7 @@ impl EthApi {
             return_ok!() => {
                 // succeeded
             }
-            Return::OutOfGas | Return::LackOfFundForGasLimit | Return::OutOfFund => {
+            InstructionResult::OutOfGas | InstructionResult::LackOfFundForGasLimit | InstructionResult::OutOfFund => {
                 return Err(InvalidTransactionError::OutOfGas(gas_limit).into())
             }
             // need to check if the revert was due to lack of gas or unrelated reason
@@ -2084,10 +2084,10 @@ impl EthApi {
                     }
                     last_highest_gas_limit = highest_gas_limit;
                 }
-                Return::Revert |
-                Return::OutOfGas |
-                Return::LackOfFundForGasLimit |
-                Return::OutOfFund => {
+                InstructionResult::Revert |
+                InstructionResult::OutOfGas |
+                InstructionResult::LackOfFundForGasLimit |
+                InstructionResult::OutOfFund => {
                     lowest_gas_limit = mid_gas_limit;
                 }
                 reason => {

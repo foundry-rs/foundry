@@ -17,12 +17,13 @@ use ethers::{
 use foundry_common::abi::IntoFunction;
 use hashbrown::HashMap;
 use revm::{
-    db::DatabaseCommit, return_ok, Account, BlockEnv, Bytecode, CreateScheme, ExecutionResult,
-    Return, TransactOut, TransactTo, TxEnv,
+    db::DatabaseCommit
 };
 /// Reexport commonly used revm types
-pub use revm::{db::DatabaseRef, Env, SpecId};
+pub use revm::{db::DatabaseRef};
 use std::collections::BTreeMap;
+use revm::interpreter::{CreateScheme, InstructionResult, Memory, return_ok, Stack};
+use revm::primitives::{Account, BlockEnv, Bytecode, Env, ExecutionResult, SpecId, TransactTo, TxEnv};
 use tracing::trace;
 
 /// ABIs used internally in the executor
@@ -282,7 +283,7 @@ impl Executor {
         calldata: Bytes,
         value: U256,
     ) -> eyre::Result<RawCallResult> {
-        let env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
+        let env = self.build_test_env(from, TransactTo::Call(to.into()), calldata, value);
         let mut result = self.call_raw_with_env(env)?;
         self.commit(&mut result);
         Ok(result)
@@ -302,7 +303,7 @@ impl Executor {
         let calldata = Bytes::from(encode_function_data(&func, args)?.to_vec());
 
         // execute the call
-        let env = self.build_test_env(from, TransactTo::Call(test_contract), calldata, value);
+        let env = self.build_test_env(from, TransactTo::Call(test_contract.into()), calldata, value);
         let call_result = self.call_raw_with_env(env)?;
 
         convert_call_result(abi, &func, call_result)
@@ -339,7 +340,7 @@ impl Executor {
         // execute the call
         let mut inspector = self.inspector_config.stack();
         // Build VM
-        let mut env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
+        let mut env = self.build_test_env(from, TransactTo::Call(to.into()), calldata, value);
         let mut db = FuzzBackendWrapper::new(self.backend());
         let result = db.inspect_ref(&mut env, &mut inspector);
 
@@ -568,14 +569,14 @@ impl Executor {
             // the cheatcode handler if it is enabled
             block: BlockEnv {
                 basefee: 0.into(),
-                gas_limit: self.gas_limit,
+                gas_limit: self.gas_limit.into(),
                 ..self.env.block.clone()
             },
             tx: TxEnv {
-                caller,
+                caller: caller.into(),
                 transact_to,
                 data,
-                value,
+                value: value.into(),
                 // As above, we set the gas price to 0.
                 gas_price: 0.into(),
                 gas_priority_fee: None,
@@ -677,7 +678,7 @@ pub struct CallResult<D: Detokenize> {
 #[derive(Debug)]
 pub struct RawCallResult {
     /// The status of the call
-    pub exit_reason: Return,
+    pub exit_reason: InstructionResult,
     /// Whether the call reverted or not
     pub reverted: bool,
     /// The raw result of the call
@@ -714,13 +715,13 @@ pub struct RawCallResult {
     /// The raw output of the execution
     pub out: TransactOut,
     /// The chisel state
-    pub chisel_state: Option<(revm::Stack, revm::Memory, revm::Return)>,
+    pub chisel_state: Option<(Stack, Memory, InstructionResult)>,
 }
 
 impl Default for RawCallResult {
     fn default() -> Self {
         Self {
-            exit_reason: Return::Continue,
+            exit_reason: InstructionResult::Continue,
             reverted: false,
             result: Bytes::new(),
             gas_used: 0,

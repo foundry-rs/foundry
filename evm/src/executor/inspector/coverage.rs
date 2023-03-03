@@ -1,6 +1,7 @@
 use crate::coverage::{HitMap, HitMaps};
 use bytes::Bytes;
-use revm::{Database, EVMData, Inspector, Interpreter, Return};
+use revm::{Database, EVMData, Inspector};
+use revm::interpreter::{InstructionResult, Interpreter};
 
 #[derive(Default, Debug)]
 pub struct CoverageCollector {
@@ -17,14 +18,14 @@ where
         interpreter: &mut Interpreter,
         _: &mut EVMData<'_, DB>,
         _: bool,
-    ) -> Return {
-        self.maps.entry(interpreter.contract.bytecode.hash()).or_insert_with(|| {
+    ) -> InstructionResult {
+        self.maps.entry(interpreter.contract.bytecode.hash().into()).or_insert_with(|| {
             HitMap::new(Bytes::copy_from_slice(
                 interpreter.contract.bytecode.original_bytecode_slice(),
             ))
         });
 
-        Return::Continue
+        InstructionResult::Continue
     }
 
     fn step(
@@ -32,11 +33,11 @@ where
         interpreter: &mut Interpreter,
         _: &mut EVMData<'_, DB>,
         _is_static: bool,
-    ) -> Return {
+    ) -> InstructionResult {
         self.maps
-            .entry(interpreter.contract.bytecode.hash())
+            .entry(interpreter.contract.bytecode.hash().into())
             .and_modify(|map| map.hit(interpreter.program_counter()));
 
-        Return::Continue
+        InstructionResult::Continue
     }
 }

@@ -47,7 +47,7 @@ serde = "1.0.145"
 serde_json = { version = "1.0.85", features = ["raw_value"] }
 semver = "1.0.14"
 bytes = "1.2.1"
-revm = "2.1.0"
+revm = "3.0"
 eyre = "0.6.8"
 dirs = "4.0.0"
 time = { version = "0.3.15", features = ["formatting"] }

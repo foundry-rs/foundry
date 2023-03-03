@@ -1,8 +1,8 @@
 use crate::{abi::HEVM_ABI, CallKind};
 use ethers::types::{Address, U256};
-use revm::{Memory, OpCode};
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
+use revm::interpreter::{Memory, OpCode};
 
 /// An arena of [DebugNode]s
 #[derive(Default, Debug, Clone)]

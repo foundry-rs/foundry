@@ -5,9 +5,9 @@ use ethers::{
     types::{Address, Chain, H256, U256},
 };
 use eyre::WrapErr;
+use revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv};
 use foundry_common::{self, ProviderBuilder, RpcUrl, ALCHEMY_FREE_TIER_CUPS};
 use foundry_config::Config;
-use revm::{BlockEnv, CfgEnv, SpecId, TxEnv};
 use serde::{Deserialize, Deserializer, Serialize};
 
 use super::fork::environment;
@@ -99,16 +99,16 @@ impl EvmOpts {
     }
 
     /// Returns the `revm::Env` configured with only local settings
-    pub fn local_evm_env(&self) -> revm::Env {
+    pub fn local_evm_env(&self) -> Env {
         revm::Env {
             block: BlockEnv {
                 number: self.env.block_number.into(),
-                coinbase: self.env.block_coinbase,
+                coinbase: self.env.block_coinbase.into(),
                 timestamp: self.env.block_timestamp.into(),
                 difficulty: self.env.block_difficulty.into(),
-                prevrandao: Some(self.env.block_prevrandao),
+                prevrandao: Some(self.env.block_prevrandao.into()),
                 basefee: self.env.block_base_fee_per_gas.into(),
-                gas_limit: self.gas_limit(),
+                gas_limit: self.gas_limit().into(),
             },
             cfg: CfgEnv {
                 chain_id: self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID).into(),
@@ -124,7 +124,7 @@ impl EvmOpts {
             tx: TxEnv {
                 gas_price: self.env.gas_price.unwrap_or_default().into(),
                 gas_limit: self.gas_limit().as_u64(),
-                caller: self.sender,
+                caller: self.sender.into(),
                 ..Default::default()
             },
         }

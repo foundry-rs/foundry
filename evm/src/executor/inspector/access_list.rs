@@ -6,7 +6,8 @@ use ethers::{
     },
 };
 use hashbrown::{HashMap, HashSet};
-use revm::{opcode, Database, EVMData, Inspector, Interpreter, Return};
+use revm::{Database, EVMData, Inspector};
+use revm::interpreter::{InstructionResult, Interpreter, opcode};
 
 /// An inspector that collects touched accounts and storage slots.
 #[derive(Default, Debug)]
@@ -54,7 +55,7 @@ where
         interpreter: &mut Interpreter,
         _data: &mut EVMData<'_, DB>,
         _is_static: bool,
-    ) -> Return {
+    ) -> InstructionResult {
         let pc = interpreter.program_counter();
         let op = interpreter.contract.bytecode.bytecode()[pc];
 
@@ -62,8 +63,9 @@ where
             opcode::SLOAD | opcode::SSTORE => {
                 if let Ok(slot) = interpreter.stack().peek(0) {
                     let cur_contract = interpreter.contract.address;
+                    let slot = slot.into();
                     self.access_list
-                        .entry(cur_contract)
+                        .entry(cur_contract.into())
                         .or_default()
                         .insert(H256::from_uint(&slot));
                 }
@@ -74,6 +76,7 @@ where
             opcode::BALANCE |
             opcode::SELFDESTRUCT => {
                 if let Ok(slot) = interpreter.stack().peek(0) {
+                    let slot = slot.into();
                     let addr: Address = H256::from_uint(&slot).into();
                     if !self.excluded.contains(&addr) {
                         self.access_list.entry(addr).or_default();
@@ -82,6 +85,7 @@ where
             }
             opcode::DELEGATECALL | opcode::CALL | opcode::STATICCALL | opcode::CALLCODE => {
                 if let Ok(slot) = interpreter.stack().peek(1) {
+                    let slot = slot.into();
                     let addr: Address = H256::from_uint(&slot).into();
                     if !self.excluded.contains(&addr) {
                         self.access_list.entry(addr).or_default();
@@ -91,6 +95,6 @@ where
             _ => (),
         }
 
-        Return::Continue
+        InstructionResult::Continue
     }
 }

@@ -7,7 +7,9 @@ use ethers::{
     types::{Address, Log, H256},
 };
 use foundry_macros::ConsoleFmt;
-use revm::{db::Database, CallInputs, EVMData, Gas, Inspector, Return};
+use revm::{Database, EVMData, Inspector};
+use revm::inspectors::GasInspector;
+use revm::interpreter::{CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Memory, opcode, spec_opcode_gas};
 
 /// An inspector that collects logs during execution.
 ///
@@ -18,14 +20,14 @@ pub struct LogCollector {
 }
 
 impl LogCollector {
-    fn hardhat_log(&mut self, input: Vec<u8>) -> (Return, Bytes) {
+    fn hardhat_log(&mut self, input: Vec<u8>) -> (InstructionResult, Bytes) {
         // Patch the Hardhat-style selectors
         let input = patch_hardhat_console_selector(input.to_vec());
         let decoded = match HardhatConsoleCalls::decode(input) {
             Ok(inner) => inner,
             Err(err) => {
                 return (
-                    Return::Revert,
+                    InstructionResult::Revert,
                     ethers::abi::encode(&[Token::String(err.to_string())]).into(),
                 )
             }
@@ -34,7 +36,7 @@ impl LogCollector {
         // Convert it to a DS-style `emit log(string)` event
         self.logs.push(convert_hh_log_to_event(decoded));
 
-        (Return::Continue, Bytes::new())
+        (InstructionResult::Continue, Bytes::new())
     }
 }
 
@@ -56,12 +58,12 @@ where
         _: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
         _: bool,
-    ) -> (Return, Gas, Bytes) {
-        if call.contract == HARDHAT_CONSOLE_ADDRESS {
+    ) -> (InstructionResult, Gas, Bytes) {
+        if call.contract == HARDHAT_CONSOLE_ADDRESS.into() {
             let (status, reason) = self.hardhat_log(call.input.to_vec());
             (status, Gas::new(call.gas_limit), reason)
         } else {
-            (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
+            (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
         }
     }
 }

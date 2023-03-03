@@ -3,7 +3,9 @@ use crate::{
     utils,
 };
 use bytes::Bytes;
-use revm::{db::Database, CallInputs, CallScheme, EVMData, Gas, Inspector, Interpreter, Return};
+use revm::{Database, EVMData, Inspector};
+use revm::inspectors::GasInspector;
+use revm::interpreter::{CallInputs, CallScheme, CreateInputs, Gas, InstructionResult, Interpreter, Memory, opcode, spec_opcode_gas};
 
 /// An inspector that can fuzz and collect data for that effect.
 #[derive(Clone, Debug)]
@@ -25,7 +27,7 @@ where
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
         _: bool,
-    ) -> (Return, Gas, Bytes) {
+    ) -> (InstructionResult, Gas, Bytes) {
         // We don't want to override the very first call made to the test contract.
         if self.call_generator.is_some() && data.env.tx.caller != call.context.caller {
             self.override_call(call);
@@ -35,7 +37,7 @@ where
         // this will be turned off on the next `step`
         self.collect = true;
 
-        (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
+        (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
     }
 
     fn step(
@@ -43,13 +45,13 @@ where
         interpreter: &mut Interpreter,
         _: &mut EVMData<'_, DB>,
         _is_static: bool,
-    ) -> Return {
+    ) -> InstructionResult {
         // We only collect `stack` and `memory` data before and after calls.
         if self.collect {
             self.collect_data(interpreter);
             self.collect = false;
         }
-        Return::Continue
+        InstructionResult::Continue
     }
 
     fn call_end(
@@ -57,10 +59,10 @@ where
         _: &mut EVMData<'_, DB>,
         _: &CallInputs,
         remaining_gas: Gas,
-        status: Return,
+        status: InstructionResult,
         retdata: Bytes,
         _: bool,
-    ) -> (Return, Gas, Bytes) {
+    ) -> (InstructionResult, Gas, Bytes) {
         if let Some(ref mut call_generator) = self.call_generator {
             call_generator.used = false;
         }
@@ -79,7 +81,8 @@ impl Fuzzer {
         let mut state = self.fuzz_state.write();
 
         for slot in interpreter.stack().data() {
-            state.insert(utils::u256_to_h256_be(*slot).into());
+            let slot =(*slot).into();
+            state.insert(utils::u256_to_h256_be(slot).into());
         }
 
         // TODO: disabled for now since it's flooding the dictionary
@@ -95,21 +98,21 @@ impl Fuzzer {
     fn override_call(&mut self, call: &mut CallInputs) {
         if let Some(ref mut call_generator) = self.call_generator {
             // We only override external calls which are not coming from the test contract.
-            if call.context.caller != call_generator.test_address &&
+            if call.context.caller != call_generator.test_address.into() &&
                 call.context.scheme == CallScheme::Call &&
                 !call_generator.used
             {
                 // There's only a 30% chance that an override happens.
                 if let Some((sender, (contract, input))) =
-                    call_generator.next(call.context.caller, call.contract)
+                    call_generator.next(call.context.caller.into(), call.contract.into())
                 {
                     call.input = input.0;
-                    call.context.caller = sender;
-                    call.contract = contract;
+                    call.context.caller = sender.into();
+                    call.contract = contract.into();
 
                     // TODO: in what scenarios can the following be problematic
-                    call.context.code_address = contract;
-                    call.context.address = contract;
+                    call.context.code_address = contract.into();
+                    call.context.address = contract.into();
 
                     call_generator.used = true;
                 }

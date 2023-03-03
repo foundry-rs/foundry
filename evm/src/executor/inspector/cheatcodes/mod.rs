@@ -21,10 +21,6 @@ use ethers::{
     },
 };
 use itertools::Itertools;
-use revm::{
-    opcode, BlockEnv, CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return,
-    TransactTo,
-};
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -34,6 +30,10 @@ use std::{
     sync::Arc,
 };
 use tracing::trace;
+use revm::{EVMData, Inspector};
+use revm::inspectors::GasInspector;
+use revm::interpreter::{CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Memory, opcode, Stack};
+use revm::primitives::BlockEnv;
 
 /// Cheatcodes related to the execution environment.
 mod env;
@@ -217,7 +217,7 @@ impl Cheatcodes {
             .unwrap_or_default();
         let created_address = get_create_address(inputs, old_nonce);
 
-        if data.journaled_state.depth > 1 && !data.db.has_cheatcode_access(inputs.caller) {
+        if data.journaled_state.depth > 1 && !data.db.has_cheatcode_access(inputs.caller.into()) {
             // we only grant cheat code access for new contracts if the caller also has
             // cheatcode access and the new contract is created in top most call
             return
@@ -248,7 +248,7 @@ impl Cheatcodes {
         // which rolls back any transfers.
         while let Some(record) = self.eth_deals.pop() {
             if let Some(acc) = data.journaled_state.state.get_mut(&record.address) {
-                acc.info.balance = record.old_balance;
+                acc.info.balance = record.old_balance.into();
             }
         }
     }
@@ -263,20 +263,20 @@ where
         _: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
         _: bool,
-    ) -> Return {
+    ) -> InstructionResult {
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
         // so we apply our actual block data with the correct fees and all.
         if let Some(block) = self.block.take() {
             data.env.block = block;
         }
         if let Some(gas_price) = self.gas_price.take() {
-            data.env.tx.gas_price = gas_price;
+            data.env.tx.gas_price = gas_price.into();
         }
 
-        Return::Continue
+        InstructionResult::Continue
     }
 
-    fn step(&mut self, interpreter: &mut Interpreter, _: &mut EVMData<'_, DB>, _: bool) -> Return {
+    fn step(&mut self, interpreter: &mut Interpreter, _: &mut EVMData<'_, DB>, _: bool) -> InstructionResult {
         // reset gas if gas metering is turned off
         match self.gas_metering {
             Some(None) => {
@@ -341,9 +341,9 @@ where
                     let key = try_or_continue!(interpreter.stack().peek(0));
                     storage_accesses
                         .reads
-                        .entry(interpreter.contract().address)
+                        .entry(interpreter.contract().address.into())
                         .or_insert_with(Vec::new)
-                        .push(key);
+                        .push(key.into());
                 }
                 opcode::SSTORE => {
                     let key = try_or_continue!(interpreter.stack().peek(0));
@@ -351,20 +351,20 @@ where
                     // An SSTORE does an SLOAD internally
                     storage_accesses
                         .reads
-                        .entry(interpreter.contract().address)
+                        .entry(interpreter.contract().address.into())
                         .or_insert_with(Vec::new)
                         .push(key);
                     storage_accesses
                         .writes
-                        .entry(interpreter.contract().address)
+                        .entry(interpreter.contract().address.into())
                         .or_insert_with(Vec::new)
-                        .push(key);
+                        .push(key.into());
                 }
                 _ => (),
             }
         }
 
-        Return::Continue
+        InstructionResult::Continue
     }
 
     fn log(&mut self, _: &mut EVMData<'_, DB>, address: &Address, topics: &[H256], data: &Bytes) {
@@ -391,15 +391,15 @@ where
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
         is_static: bool,
-    ) -> (Return, Gas, Bytes) {
-        if call.contract == CHEATCODE_ADDRESS {
-            match self.apply_cheatcode(data, call.context.caller, call) {
-                Ok(retdata) => (Return::Return, Gas::new(call.gas_limit), retdata),
-                Err(err) => (Return::Revert, Gas::new(call.gas_limit), err),
+    ) -> (InstructionResult, Gas, Bytes) {
+        if call.contract == CHEATCODE_ADDRESS.into() {
+            match self.apply_cheatcode(data, call.context.caller.into(), call) {
+                Ok(retdata) => (InstructionResult::Return, Gas::new(call.gas_limit), retdata),
+                Err(err) => (InstructionResult::Revert, Gas::new(call.gas_limit), err),
             }
-        } else if call.contract != HARDHAT_CONSOLE_ADDRESS {
+        } else if call.contract != HARDHAT_CONSOLE_ADDRESS.into() {
             // Handle expected calls
-            if let Some(expecteds) = self.expected_calls.get_mut(&call.contract) {
+            if let Some(expecteds) = self.expected_calls.get_mut(&(call.contract.into())) {
                 if let Some(found_match) = expecteds.iter().position(|expected| {
                     expected.calldata.len() <= call.input.len() &&
                         expected.calldata == call.input[..expected.calldata.len()] &&
@@ -418,13 +418,13 @@ where
                     value: Some(call.transfer.value),
                 };
                 if let Some(mock_retdata) = mocks.get(&ctx) {
-                    return (Return::Return, Gas::new(call.gas_limit), mock_retdata.clone())
+                    return (InstructionResult::Return, Gas::new(call.gas_limit), mock_retdata.clone())
                 } else if let Some((_, mock_retdata)) = mocks.iter().find(|(mock, _)| {
                     mock.calldata.len() <= call.input.len() &&
                         *mock.calldata == call.input[..mock.calldata.len()] &&
                         mock.value.map(|value| value == call.transfer.value).unwrap_or(true)
                 }) {
-                    return (Return::Return, Gas::new(call.gas_limit), mock_retdata.clone())
+                    return (InstructionResult::Return, Gas::new(call.gas_limit), mock_retdata.clone())
                 }
             }
 
@@ -470,7 +470,7 @@ where
                         if let Err(err) =
                             data.journaled_state.load_account(broadcast.new_origin, data.db)
                         {
-                            return (Return::Revert, Gas::new(call.gas_limit), err.encode_string())
+                            return (InstructionResult::Revert, Gas::new(call.gas_limit), err.encode_string())
                         }
 
                         let account =
@@ -492,7 +492,7 @@ where
                         account.info.nonce += 1;
                     } else if broadcast.single_call {
                         return (
-                            Return::Revert,
+                            InstructionResult::Revert,
                             Gas::new(0),
                             "Staticcalls are not allowed after vm.broadcast. Either remove it, or use vm.startBroadcast instead."
                             .to_string()
@@ -503,9 +503,9 @@ where
                 }
             }
 
-            (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
+            (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
         } else {
-            (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
+            (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
         }
     }
 
@@ -514,10 +514,10 @@ where
         data: &mut EVMData<'_, DB>,
         call: &CallInputs,
         remaining_gas: Gas,
-        status: Return,
+        status: InstructionResult,
         retdata: Bytes,
         _: bool,
-    ) -> (Return, Gas, Bytes) {
+    ) -> (InstructionResult, Gas, Bytes) {
         if call.contract == CHEATCODE_ADDRESS || call.contract == HARDHAT_CONSOLE_ADDRESS {
             return (status, remaining_gas, retdata)
         }
@@ -555,9 +555,9 @@ where
                 ) {
                     Err(retdata) => {
                         trace!(expected=?expected_revert, actual=%hex::encode(&retdata), ?status, "Expected revert mismatch");
-                        (Return::Revert, remaining_gas, retdata)
+                        (InstructionResult::Revert, remaining_gas, retdata)
                     }
-                    Ok((_, retdata)) => (Return::Return, remaining_gas, retdata),
+                    Ok((_, retdata)) => (InstructionResult::Return, remaining_gas, retdata),
                 }
             }
         }
@@ -570,7 +570,7 @@ where
             .all(|expected| expected.found)
         {
             return (
-                Return::Revert,
+                InstructionResult::Revert,
                 remaining_gas,
                 "Log != expected log".to_string().encode().into(),
             )
@@ -597,7 +597,7 @@ where
                 .flatten()
                 .join(" and ");
                 return (
-                    Return::Revert,
+                    InstructionResult::Revert,
                     remaining_gas,
                     format!("Expected a call to {address:?} with {expected_values}, but got none")
                         .encode()
@@ -608,7 +608,7 @@ where
             // Check if we have any leftover expected emits
             if !self.expected_emits.is_empty() {
                 return (
-                    Return::Revert,
+                    InstructionResult::Revert,
                     remaining_gas,
                     "Expected an emit, but no logs were emitted afterward"
                         .to_string()
@@ -620,7 +620,7 @@ where
 
         // if there's a revert and a previous call was diagnosed as fork related revert then we can
         // return a better error here
-        if status == Return::Revert {
+        if status == InstructionResult::Revert {
             if let Some(err) = self.fork_revert_diagnostic.take() {
                 return (status, remaining_gas, err.to_error_msg(self).encode().into())
             }
@@ -635,7 +635,7 @@ where
         if let TransactTo::Call(test_contract) = data.env.tx.transact_to {
             // if a call to a different contract than the original test contract returned with
             // `Stop` we check if the contract actually exists on the active fork
-            if data.db.is_forked_mode() && status == Return::Stop && call.contract != test_contract
+            if data.db.is_forked_mode() && status == InstructionResult::Stop && call.contract != test_contract
             {
                 self.fork_revert_diagnostic =
                     data.db.diagnose_revert(call.contract, &data.journaled_state);
@@ -649,7 +649,7 @@ where
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &mut CreateInputs,
-    ) -> (Return, Option<Address>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
         // allow cheatcodes from the address of the new contract
         self.allow_cheatcodes_on_create(data, call);
 
@@ -674,7 +674,7 @@ where
                 call.caller == broadcast.original_caller
             {
                 if let Err(err) = data.journaled_state.load_account(broadcast.new_origin, data.db) {
-                    return (Return::Revert, None, Gas::new(call.gas_limit), err.encode_string())
+                    return (InstructionResult::Revert, None, Gas::new(call.gas_limit), err.encode_string())
                 }
 
                 data.env.tx.caller = broadcast.new_origin;
@@ -687,7 +687,7 @@ where
                 ) {
                     Ok(val) => val,
                     Err(err) => {
-                        return (Return::Revert, None, Gas::new(call.gas_limit), err.encode_string())
+                        return (InstructionResult::Revert, None, Gas::new(call.gas_limit), err.encode_string())
                     }
                 };
 
@@ -705,18 +705,18 @@ where
             }
         }
 
-        (Return::Continue, None, Gas::new(call.gas_limit), Bytes::new())
+        (InstructionResult::Continue, None, Gas::new(call.gas_limit), Bytes::new())
     }
 
     fn create_end(
         &mut self,
         data: &mut EVMData<'_, DB>,
         _: &CreateInputs,
-        status: Return,
+        status: InstructionResult,
         address: Option<Address>,
         remaining_gas: Gas,
         retdata: Bytes,
-    ) -> (Return, Option<Address>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
         // Clean up pranks
         if let Some(prank) = &self.prank {
             if data.journaled_state.depth() == prank.depth {
@@ -748,8 +748,8 @@ where
                     status,
                     retdata,
                 ) {
-                    Err(retdata) => (Return::Revert, None, remaining_gas, retdata),
-                    Ok((address, retdata)) => (Return::Return, address, remaining_gas, retdata),
+                    Err(retdata) => (InstructionResult::Revert, None, remaining_gas, retdata),
+                    Ok((address, retdata)) => (InstructionResult::Return, address, remaining_gas, retdata),
                 }
             }
         }

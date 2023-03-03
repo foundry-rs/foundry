@@ -12,10 +12,9 @@ use ethers::{
     abi::RawLog,
     types::{Address, H256, U256},
 };
-use revm::{
-    opcode, return_ok, CallInputs, CallScheme, CreateInputs, Database, EVMData, Gas, GasInspector,
-    Inspector, Interpreter, JournalEntry, Return,
-};
+use revm::{Database, EVMData, Inspector, JournalEntry};
+use revm::inspectors::GasInspector;
+use revm::interpreter::{CallInputs, CallScheme, CreateInputs, Gas, InstructionResult, Interpreter, Memory, opcode, Stack};
 use std::{cell::RefCell, rc::Rc};
 
 /// An inspector that collects call traces.
@@ -58,14 +57,14 @@ impl Tracer {
                 kind,
                 data: RawOrDecodedCall::Raw(data.into()),
                 value,
-                status: Return::Continue,
+                status: InstructionResult::Continue,
                 caller,
                 ..Default::default()
             },
         ));
     }
 
-    fn fill_trace(&mut self, status: Return, cost: u64, output: Vec<u8>, address: Option<Address>) {
+    fn fill_trace(&mut self, status: InstructionResult, cost: u64, output: Vec<u8>, address: Option<Address>) {
         let success = matches!(status, return_ok!());
         let trace = &mut self.traces.arena
             [self.trace_stack.pop().expect("more traces were filled than started")]
@@ -93,7 +92,7 @@ impl Tracer {
             depth: data.journaled_state.depth(),
             pc,
             op: OpCode(interp.contract.bytecode.bytecode()[pc]),
-            contract: interp.contract.address,
+            contract: interp.contract.address.into(),
             stack: interp.stack.clone(),
             memory: interp.memory.clone(),
             gas: self.gas_inspector.borrow().gas_remaining(),
@@ -108,7 +107,7 @@ impl Tracer {
         &mut self,
         interp: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
-        status: Return,
+        status: InstructionResult,
     ) {
         let (trace_idx, step_idx) =
             self.step_stack.pop().expect("can't fill step without starting a step first");
@@ -131,7 +130,8 @@ impl Tracer {
                     Some(JournalEntry::StorageChage { address, key, .. }),
                 ) => {
                     let value = data.journaled_state.state[address].storage[key].present_value();
-                    Some((*key, value))
+                    let key = (*key).into();
+                    Some((key, value.into()))
                 }
                 _ => None,
             };
@@ -140,7 +140,7 @@ impl Tracer {
         }
 
         // Error codes only
-        if status as u8 > Return::OutOfGas as u8 {
+        if status as u8 > InstructionResult::OutOfGas as u8 {
             step.error = Some(format!("{status:?}"));
         }
     }
@@ -155,14 +155,14 @@ where
         interp: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
         _is_static: bool,
-    ) -> Return {
+    ) -> InstructionResult {
         if !self.record_steps {
-            return Return::Continue
+            return InstructionResult::Continue
         }
 
         self.start_step(interp, data);
 
-        Return::Continue
+        InstructionResult::Continue
     }
 
     fn log(&mut self, _: &mut EVMData<'_, DB>, _: &Address, topics: &[H256], data: &Bytes) {
@@ -177,10 +177,10 @@ where
         interp: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
         _is_static: bool,
-        status: Return,
-    ) -> Return {
+        status: InstructionResult,
+    ) -> InstructionResult {
         if !self.record_steps {
-            return Return::Continue
+            return InstructionResult::Continue
         }
 
         self.fill_step(interp, data, status);
@@ -193,7 +193,7 @@ where
         data: &mut EVMData<'_, DB>,
         inputs: &mut CallInputs,
         _is_static: bool,
-    ) -> (Return, Gas, Bytes) {
+    ) -> (InstructionResult, Gas, Bytes) {
         let (from, to) = match inputs.context.scheme {
             CallScheme::DelegateCall | CallScheme::CallCode => {
                 (inputs.context.address, inputs.context.code_address)
@@ -203,14 +203,14 @@ where
 
         self.start_trace(
             data.journaled_state.depth() as usize,
-            to,
+            to.into(),
             inputs.input.to_vec(),
-            inputs.transfer.value,
+            inputs.transfer.value.into(),
             inputs.context.scheme.into(),
-            from,
+            from.into(),
         );
 
-        (Return::Continue, Gas::new(inputs.gas_limit), Bytes::new())
+        (InstructionResult::Continue, Gas::new(inputs.gas_limit), Bytes::new())
     }
 
     fn call_end(
@@ -218,10 +218,10 @@ where
         data: &mut EVMData<'_, DB>,
         _inputs: &CallInputs,
         gas: Gas,
-        status: Return,
+        status: InstructionResult,
         retdata: Bytes,
         _is_static: bool,
-    ) -> (Return, Gas, Bytes) {
+    ) -> (InstructionResult, Gas, Bytes) {
         self.fill_trace(
             status,
             gas_used(data.env.cfg.spec_id, gas.spend(), gas.refunded() as u64),
@@ -236,7 +236,7 @@ where
         &mut self,
         data: &mut EVMData<'_, DB>,
         inputs: &mut CreateInputs,
-    ) -> (Return, Option<Address>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
         // TODO: Does this increase gas cost?
         let _ = data.journaled_state.load_account(inputs.caller, data.db);
         let nonce = data.journaled_state.account(inputs.caller).info.nonce;
@@ -244,27 +244,27 @@ where
             data.journaled_state.depth() as usize,
             get_create_address(inputs, nonce),
             inputs.init_code.to_vec(),
-            inputs.value,
+            inputs.value.into(),
             inputs.scheme.into(),
-            inputs.caller,
+            inputs.caller.into(),
         );
 
-        (Return::Continue, None, Gas::new(inputs.gas_limit), Bytes::new())
+        (InstructionResult::Continue, None, Gas::new(inputs.gas_limit), Bytes::new())
     }
 
     fn create_end(
         &mut self,
         data: &mut EVMData<'_, DB>,
         _inputs: &CreateInputs,
-        status: Return,
+        status: InstructionResult,
         address: Option<Address>,
         gas: Gas,
         retdata: Bytes,
-    ) -> (Return, Option<Address>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
         let code = match address {
             Some(address) => data
                 .journaled_state
-                .account(address)
+                .account(address.into())
                 .info
                 .code
                 .as_ref()

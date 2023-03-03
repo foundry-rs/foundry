@@ -48,7 +48,7 @@ impl ExecutedTransaction {
         let logs = self.logs.clone();
 
         // successful return see [Return]
-        let status_code = u8::from(self.exit_reason as u8 <= Return::SelfDestruct as u8);
+        let status_code = u8::from(self.exit_reason as u8 <= InstructionResult::SelfDestruct as u8);
         match &self.transaction.pending_transaction.transaction.transaction {
             TypedTransaction::Legacy(_) => TypedReceipt::Legacy(EIP658Receipt {
                 status_code,
@@ -262,7 +262,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
             evm.inspect_commit(&mut inspector);
         inspector.print_logs();
 
-        if exit_reason == Return::OutOfGas {
+        if exit_reason == InstructionResult::OutOfGas {
             // this currently useful for debugging estimations
             warn!(target: "backend", "[{:?}] executed with out of gas", transaction.hash())
         }

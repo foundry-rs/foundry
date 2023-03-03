@@ -4,8 +4,9 @@ use ethers::{
     types::{BigEndianHash, Block, Chain},
 };
 use eyre::ContextCompat;
-use revm::{opcode, spec_opcode_gas, SpecId};
+use revm::interpreter::{opcode, spec_opcode_gas};
 use std::collections::BTreeMap;
+use revm::primitives::SpecId;
 
 /// Small helper function to convert [U256] into [H256].
 pub fn u256_to_h256_le(u: U256) -> H256 {

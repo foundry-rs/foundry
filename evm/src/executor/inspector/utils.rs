@@ -2,9 +2,10 @@ use ethers::{
     types::Address,
     utils::{get_contract_address, get_create2_address},
 };
-use revm::{CreateInputs, CreateScheme, SpecId};
+use revm::interpreter::CreateInputs;
+use revm::primitives::{CreateScheme, SpecId};
 
-/// Returns [Return::Continue] on an error, discarding the error.
+/// Returns [InstructionResult::Continue] on an error, discarding the error.
 ///
 /// Useful for inspectors that read state that might be invalid, but do not want to emit
 /// appropriate errors themselves, instead opting to continue.
@@ -12,7 +13,7 @@ macro_rules! try_or_continue {
     ($e:expr) => {
         match $e {
             Ok(v) => v,
-            Err(_) => return Return::Continue,
+            Err(_) => return InstructionResult::Continue,
         }
     };
 }

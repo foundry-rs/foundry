@@ -53,7 +53,7 @@ fn expect_revert(
 pub fn handle_expect_revert(
     is_create: bool,
     expected_revert: Option<&Bytes>,
-    status: Return,
+    status: InstructionResult,
     retdata: Bytes,
 ) -> Result<(Option<Address>, Bytes), Bytes> {
     trace!("handle expect revert");

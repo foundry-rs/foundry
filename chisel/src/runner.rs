@@ -142,10 +142,10 @@ impl ChiselRunner {
                 self.executor.env_mut().tx.gas_limit = mid_gas_limit;
                 let res = self.executor.call_raw(from, to, calldata.0.clone(), value)?;
                 match res.exit_reason {
-                    Return::Revert |
-                    Return::OutOfGas |
-                    Return::LackOfFundForGasLimit |
-                    Return::OutOfFund => {
+                    InstructionResult::Revert |
+                    InstructionResult::OutOfGas |
+                    InstructionResult::LackOfFundForGasLimit |
+                    InstructionResult::OutOfFund => {
                         lowest_gas_limit = mid_gas_limit;
                     }
                     _ => {

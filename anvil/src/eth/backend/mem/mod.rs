@@ -772,13 +772,13 @@ impl Backend {
                     node_info!("    Gas used: {}", receipt.gas_used());
                     match info.exit {
                         return_ok!() => (),
-                        Return::OutOfFund => {
+                        InstructionResult::OutOfFund => {
                             node_info!("    Error: reverted due to running out of funds");
                         }
-                        Return::CallTooDeep => {
+                        InstructionResult::CallTooDeep => {
                             node_info!("    Error: reverted with call too deep");
                         }
-                        Return::Revert => {
+                        InstructionResult::Revert => {
                             if let Some(ref r) = info.out {
                                 if let Ok(reason) = decode_revert(r.as_ref(), None, None) {
                                     node_info!("    Error: reverted with '{}'", reason);
@@ -792,7 +792,7 @@ impl Backend {
                                 node_info!("    Error: reverted without a reason");
                             }
                         }
-                        Return::OutOfGas => {
+                        InstructionResult::OutOfGas => {
                             node_info!("    Error: ran out of gas");
                         }
                         reason => {

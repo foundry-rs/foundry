@@ -10,11 +10,10 @@ use crate::{
 };
 use bytes::Bytes;
 use ethers::types::Address;
-use revm::{
-    opcode, spec_opcode_gas, CallInputs, CreateInputs, EVMData, Gas, GasInspector, Inspector,
-    Interpreter, Memory, Return,
-};
 use std::{cell::RefCell, rc::Rc};
+use revm::{EVMData, Inspector};
+use revm::inspectors::GasInspector;
+use revm::interpreter::{CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Memory, opcode, spec_opcode_gas};
 
 /// An inspector that collects debug nodes on every step of the interpreter.
 #[derive(Debug)]
@@ -65,7 +64,7 @@ where
         interpreter: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
         _is_static: bool,
-    ) -> Return {
+    ) -> InstructionResult {
         let pc = interpreter.program_counter();
         let op = interpreter.contract.bytecode.bytecode()[pc];
 
@@ -92,14 +91,14 @@ where
 
         self.arena.arena[self.head].steps.push(DebugStep {
             pc,
-            stack: interpreter.stack().data().clone(),
+            stack: interpreter.stack().data().iter().copied().map(|d|d.into()).collect(),
             memory: interpreter.memory.clone(),
             instruction: Instruction::OpCode(op),
             push_bytes,
             total_gas_used,
         });
 
-        Return::Continue
+        InstructionResult::Continue
     }
 
     fn call(
@@ -107,13 +106,13 @@ where
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
         _: bool,
-    ) -> (Return, Gas, Bytes) {
+    ) -> (InstructionResult, Gas, Bytes) {
         self.enter(
             data.journaled_state.depth() as usize,
-            call.context.code_address,
+            call.context.code_address.into(),
             call.context.scheme.into(),
         );
-        if call.contract == CHEATCODE_ADDRESS {
+        if CHEATCODE_ADDRESS  == call.contract.into(){
             self.arena.arena[self.head].steps.push(DebugStep {
                 memory: Memory::new(),
                 instruction: Instruction::Cheatcode(
@@ -123,7 +122,7 @@ where
             });
         }
 
-        (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
+        (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
     }
 
     fn call_end(
@@ -131,10 +130,10 @@ where
         _: &mut EVMData<'_, DB>,
         _: &CallInputs,
         gas: Gas,
-        status: Return,
+        status: InstructionResult,
         retdata: Bytes,
         _: bool,
-    ) -> (Return, Gas, Bytes) {
+    ) -> (InstructionResult, Gas, Bytes) {
         self.exit();
 
         (status, gas, retdata)
@@ -144,10 +143,10 @@ where
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &mut CreateInputs,
-    ) -> (Return, Option<Address>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
         // TODO: Does this increase gas cost?
         if let Err(err) = data.journaled_state.load_account(call.caller, data.db) {
-            return (Return::Revert, None, Gas::new(call.gas_limit), err.encode_string())
+            return (InstructionResult::Revert, None, Gas::new(call.gas_limit), err.encode_string())
         }
 
         let nonce = data.journaled_state.account(call.caller).info.nonce;
@@ -157,18 +156,18 @@ where
             CallKind::Create,
         );
 
-        (Return::Continue, None, Gas::new(call.gas_limit), Bytes::new())
+        (InstructionResult::Continue, None, Gas::new(call.gas_limit), Bytes::new())
     }
 
     fn create_end(
         &mut self,
         _: &mut EVMData<'_, DB>,
         _: &CreateInputs,
-        status: Return,
+        status: InstructionResult,
         address: Option<Address>,
         gas: Gas,
         retdata: Bytes,
-    ) -> (Return, Option<Address>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
         self.exit();
 
         (status, address, gas, retdata)

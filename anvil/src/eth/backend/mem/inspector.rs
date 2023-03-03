@@ -66,7 +66,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
             [&mut self.gas.as_deref().map(|gas| gas.borrow_mut()), &mut self.tracer],
             { inspector.initialize_interp(interp, data, is_static) }
         );
-        Return::Continue
+        InstructionResult::Continue
     }
 
     fn step(
@@ -82,7 +82,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
                 inspector.step(interp, data, is_static);
             }
         );
-        Return::Continue
+        InstructionResult::Continue
     }
 
     fn log(
@@ -140,7 +140,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
             }
         );
 
-        (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
+        (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
     }
 
     fn call_end(
@@ -175,7 +175,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
             }
         );
 
-        (Return::Continue, None, Gas::new(call.gas_limit), Bytes::new())
+        (InstructionResult::Continue, None, Gas::new(call.gas_limit), Bytes::new())
     }
 
     fn create_end(
