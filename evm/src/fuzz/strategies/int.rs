@@ -30,7 +30,7 @@ impl IntValueTree {
 
     fn reposition(&mut self) -> bool {
         let interval = self.hi - self.lo;
-        let new_mid = self.lo + interval / 2.into();
+        let new_mid = self.lo + interval / <i32 as Into<I256>>::into(2);
 
         if new_mid == self.curr {
             false
@@ -69,7 +69,8 @@ impl ValueTree for IntValueTree {
             return false
         }
 
-        self.lo = self.curr + if self.hi < 0.into() { (-1).into() } else { 1.into() };
+        self.lo =
+            self.curr + if self.hi < 0.into() { <i32 as Into<I256>>::into(-1) } else { 1.into() };
 
         self.reposition()
     }
@@ -119,7 +120,7 @@ impl IntStrategy {
         let kind = rng.gen_range(0..4);
         let start = match kind {
             0 => I256::overflowing_from_sign_and_abs(Sign::Negative, umax + 1).0 + offset,
-            1 => -offset - 1.into(),
+            1 => -offset - <i32 as Into<I256>>::into(1),
             2 => offset,
             3 => I256::overflowing_from_sign_and_abs(Sign::Positive, umax).0 - offset,
             _ => unreachable!(),

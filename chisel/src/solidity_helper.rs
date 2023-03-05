@@ -244,23 +244,16 @@ impl<'a> TokenStyle for Token<'a> {
             HexNumber(_) |
             True |
             False |
-            Seconds |
-            Minutes |
-            Hours |
-            Days |
-            Weeks |
-            Gwei |
-            Wei |
-            Ether |
             This => Color::Yellow.style(),
             Memory | Storage | Calldata | Public | Private | Internal | External | Constant |
             Pure | View | Payable | Anonymous | Indexed | Abstract | Virtual | Override |
             Modifier | Immutable | Unchecked => Color::Cyan.style(),
             Contract | Library | Interface | Function | Pragma | Import | Struct | Event |
-            Error | Enum | Type | Constructor | As | Is | Using | New | Delete | Do |
-            Continue | Break | Throw | Emit | Return | Returns | Revert | For | While | If |
-            Else | Try | Catch | Assembly | Let | Leave | Switch | Case | Default | YulArrow |
-            Arrow => Color::Magenta.style(),
+            Enum | Type | Constructor | As | Is | Using | New | Delete | Do | Continue |
+            Break | Throw | Emit | Return | Returns | Revert | For | While | If | Else | Try |
+            Catch | Assembly | Let | Leave | Switch | Case | Default | YulArrow | Arrow => {
+                Color::Magenta.style()
+            }
             Uint(_) | Int(_) | Bytes(_) | Byte | DynamicBytes | Bool | Address | String |
             Mapping => Color::Blue.style(),
             Identifier(_) => Style::default(),

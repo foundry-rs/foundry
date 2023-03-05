@@ -46,8 +46,8 @@ use ethers::{
     prelude::{BlockNumber, GethTraceFrame, TxHash, H256, U256, U64},
     types::{
         transaction::eip2930::AccessList, Address, Block as EthersBlock, BlockId, Bytes,
-        DefaultFrame, Filter, FilteredParams, GethDebugTracingOptions, GethTrace, Log, Trace,
-        Transaction, TransactionReceipt,
+        DefaultFrame, Filter, FilteredParams, GethDebugTracingOptions, GethTrace, Log, OtherFields,
+        Trace, Transaction, TransactionReceipt,
     },
     utils::{get_contract_address, hex, keccak256, rlp},
 };
@@ -1752,6 +1752,7 @@ impl Backend {
             logs_bloom,
             transaction_type: transaction_type.map(Into::into),
             effective_gas_price: Some(effective_gas_price),
+            other: OtherFields::default(),
         };
 
         Some(MinedTransactionReceipt { inner, out: info.out })

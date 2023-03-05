@@ -1,4 +1,3 @@
-mod as_str;
 #[cfg(test)]
 mod ast_eq;
 mod attr_sort_key;
@@ -7,7 +6,6 @@ mod loc;
 mod operator;
 mod safe_unwrap;
 
-pub use as_str::*;
 #[cfg(test)]
 pub use ast_eq::*;
 pub use attr_sort_key::*;
