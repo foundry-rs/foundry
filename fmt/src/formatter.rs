@@ -3683,4 +3683,5 @@ mod tests {
     test_directory! { Annotation }
     test_directory! { MappingType }
     test_directory! { EmitStatement }
+    test_directory! { Repros }
 }
