@@ -67,8 +67,8 @@ impl ConsoleFmt for U256 {
         match spec {
             FormatSpec::String | FormatSpec::Object
                 | FormatSpec::Number | FormatSpec::Integer => self.pretty(),
-            FormatSpec::Hexadecimal => format!("{:x}", *self),
-            FormatSpec::Exponential => format!("{:x}", *self)
+            FormatSpec::Hexadecimal => format!("0x{:x}", *self),
+            FormatSpec::Exponential => format!("0x{:x}", *self)
         }
     }
 }
@@ -78,8 +78,8 @@ impl ConsoleFmt for I256 {
         match spec {
             FormatSpec::String | FormatSpec::Object
                 | FormatSpec::Number | FormatSpec::Integer => self.pretty(),
-            FormatSpec::Hexadecimal => format!("{:x}", *self),
-            FormatSpec::Exponential => format!("{:x}", *self)
+            FormatSpec::Hexadecimal => format!("0x{:x}", *self),
+            FormatSpec::Exponential => format!("0x{:x}", *self)
         }
     }
 }
@@ -306,15 +306,15 @@ mod tests {
         assert_eq!("100", console_log_format_1("%s", &U256::from(100)));
         assert_eq!("100", console_log_format_1("%d", &U256::from(100)));
         assert_eq!("100", console_log_format_1("%i", &U256::from(100)));
-        assert_eq!("64", console_log_format_1("%e", &U256::from(100)));
-        assert_eq!("64", console_log_format_1("%x", &U256::from(100)));
+        assert_eq!("0x64", console_log_format_1("%e", &U256::from(100)));
+        assert_eq!("0x64", console_log_format_1("%x", &U256::from(100)));
         assert_eq!("100", console_log_format_1("%o", &U256::from(100)));
 
         assert_eq!("100", console_log_format_1("%s", &I256::from(100)));
         assert_eq!("100", console_log_format_1("%d", &I256::from(100)));
         assert_eq!("100", console_log_format_1("%i", &I256::from(100)));
-        assert_eq!("64", console_log_format_1("%e", &I256::from(100)));
-        assert_eq!("64", console_log_format_1("%x", &I256::from(100)));
+        assert_eq!("0x64", console_log_format_1("%e", &I256::from(100)));
+        assert_eq!("0x64", console_log_format_1("%x", &I256::from(100)));
         assert_eq!("100", console_log_format_1("%o", &I256::from(100)));
     }
 
