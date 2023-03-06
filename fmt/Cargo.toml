@@ -16,7 +16,7 @@ foundry-config = { path = "../config" }
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 
 # parser
-solang-parser = "=0.2.2"
+solang-parser = "=0.2.3"
 
 # misc
 semver = "1.0.4"

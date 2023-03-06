@@ -1935,7 +1935,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#c679d402cb9491c5e118fb91f8861e73b5c689f9"
+source = "git+https://github.com/gakonst/ethers-rs#72428503cfb0855579d47f691b48b2d65ad8195b"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1950,7 +1950,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#c679d402cb9491c5e118fb91f8861e73b5c689f9"
+source = "git+https://github.com/gakonst/ethers-rs#72428503cfb0855579d47f691b48b2d65ad8195b"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1961,7 +1961,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#c679d402cb9491c5e118fb91f8861e73b5c689f9"
+source = "git+https://github.com/gakonst/ethers-rs#72428503cfb0855579d47f691b48b2d65ad8195b"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1979,7 +1979,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#c679d402cb9491c5e118fb91f8861e73b5c689f9"
+source = "git+https://github.com/gakonst/ethers-rs#72428503cfb0855579d47f691b48b2d65ad8195b"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -2006,7 +2006,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#c679d402cb9491c5e118fb91f8861e73b5c689f9"
+source = "git+https://github.com/gakonst/ethers-rs#72428503cfb0855579d47f691b48b2d65ad8195b"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -2021,7 +2021,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#c679d402cb9491c5e118fb91f8861e73b5c689f9"
+source = "git+https://github.com/gakonst/ethers-rs#72428503cfb0855579d47f691b48b2d65ad8195b"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -2054,7 +2054,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#c679d402cb9491c5e118fb91f8861e73b5c689f9"
+source = "git+https://github.com/gakonst/ethers-rs#72428503cfb0855579d47f691b48b2d65ad8195b"
 dependencies = [
  "ethers-core",
  "ethers-solc",
@@ -2071,10 +2071,10 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#c679d402cb9491c5e118fb91f8861e73b5c689f9"
+source = "git+https://github.com/gakonst/ethers-rs#72428503cfb0855579d47f691b48b2d65ad8195b"
 dependencies = [
  "async-trait",
- "auto_impl 0.5.0",
+ "auto_impl 1.0.1",
  "ethers-contract",
  "ethers-core",
  "ethers-etherscan",
@@ -2096,7 +2096,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#c679d402cb9491c5e118fb91f8861e73b5c689f9"
+source = "git+https://github.com/gakonst/ethers-rs#72428503cfb0855579d47f691b48b2d65ad8195b"
 dependencies = [
  "async-trait",
  "auto_impl 1.0.1",
@@ -2135,7 +2135,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#c679d402cb9491c5e118fb91f8861e73b5c689f9"
+source = "git+https://github.com/gakonst/ethers-rs#72428503cfb0855579d47f691b48b2d65ad8195b"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -2162,7 +2162,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "1.0.2"
-source = "git+https://github.com/gakonst/ethers-rs#c679d402cb9491c5e118fb91f8861e73b5c689f9"
+source = "git+https://github.com/gakonst/ethers-rs#72428503cfb0855579d47f691b48b2d65ad8195b"
 dependencies = [
  "cfg-if 1.0.0",
  "dunce",
@@ -4300,18 +4300,18 @@ dependencies = [
 
 [[package]]
 name = "num_enum"
-version = "0.5.10"
+version = "0.5.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e0072973714303aa6e3631c7e8e777970cf4bdd25dc4932e41031027b8bcc4e"
+checksum = "1f646caf906c20226733ed5b1374287eb97e3c2a5c227ce668c1f2ce20ae57c9"
 dependencies = [
  "num_enum_derive",
 ]
 
 [[package]]
 name = "num_enum_derive"
-version = "0.5.10"
+version = "0.5.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0629cbd6b897944899b1f10496d9c4a7ac5878d45fd61bc22e9e79bfbbc29597"
+checksum = "dcbff9bc912032c62bf65ef1d5aea88983b420f4f839db1e9b0c281a25c9c799"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -5255,15 +5255,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "456c603be3e8d448b072f410900c09faf164fbce2d480456f50eea6e25f9c848"
 
 [[package]]
-name = "remove_dir_all"
-version = "0.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3acd125665422973a33ac9d3dd2df85edad0f4ae9b00dafb1a05e43a9f5ef8e7"
-dependencies = [
- "winapi",
-]
-
-[[package]]
 name = "reqwest"
 version = "0.11.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6109,9 +6100,9 @@ dependencies = [
 
 [[package]]
 name = "solang-parser"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58feb14d4002859db0b744b0915840bae403b8a5675efded3e8adddb6beb85b2"
+checksum = "ff87dae6cdccacdbf3b19e99b271083556e808de0f59c74a01482f64fdbc61fc"
 dependencies = [
  "itertools",
  "lalrpop",
@@ -6267,9 +6258,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "1.0.107"
+version = "1.0.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f4064b5b16e03ae50984a5a8ed5d4f8803e6bc1fd170a3cda91a1be4b18e3f5"
+checksum = "72b64191b275b66ffe2469e8af2c1cfe3bafa67b529ead792a6d0160888b4237"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6302,16 +6293,15 @@ checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
 name = "tempfile"
-version = "3.3.0"
+version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5cdb1ef4eaeeaddc8fbd371e5017057064af0911902ef36b39801f67cc6d79e4"
+checksum = "af18f7ae1acd354b992402e9ec5864359d693cd8a79dcbef59f76891701c1e95"
 dependencies = [
  "cfg-if 1.0.0",
  "fastrand",
- "libc",
  "redox_syscall",
- "remove_dir_all",
- "winapi",
+ "rustix",
+ "windows-sys",
 ]
 
 [[package]]

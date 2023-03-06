@@ -1280,12 +1280,15 @@ impl<'a, W: Write> Formatter<'a, W> {
         value: &str,
         fractional: Option<&str>,
         exponent: &str,
+        unit: &mut Option<Identifier>,
     ) -> Result<()> {
         let config = self.config.number_underscore;
 
         // get source if we preserve underscores
         let (value, fractional, exponent) = if matches!(config, NumberUnderscore::Preserve) {
             let source = &self.source[loc.start()..loc.end()];
+            // Strip unit
+            let (source, _) = source.split_once(' ').unwrap_or((source, ""));
             let (val, exp) = source.split_once(['e', 'E']).unwrap_or((source, ""));
             let (val, fract) =
                 val.split_once('.').map(|(val, fract)| (val, Some(fract))).unwrap_or((val, None));
@@ -1351,7 +1354,16 @@ impl<'a, W: Write> Formatter<'a, W> {
             out.push_str(&add_underscores(exp, false));
         }
 
-        write_chunk!(self, loc.start(), loc.end(), "{out}")
+        write_chunk!(self, loc.start(), loc.end(), "{out}")?;
+        self.write_unit(unit)
+    }
+
+    /// Write built-in unit.
+    fn write_unit(&mut self, unit: &mut Option<Identifier>) -> Result<()> {
+        if let Some(unit) = unit {
+            write_chunk!(self, unit.loc.start(), unit.loc.end(), "{}", unit.name)?;
+        }
+        Ok(())
     }
 
     /// Write the function header
@@ -1985,10 +1997,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Expression::BoolLiteral(loc, val) => {
                 write_chunk!(self, loc.start(), loc.end(), "{val}")?;
             }
-            Expression::NumberLiteral(loc, val, exp) => {
-                self.write_num_literal(*loc, val, None, exp)?;
+            Expression::NumberLiteral(loc, val, exp, unit) => {
+                self.write_num_literal(*loc, val, None, exp, unit)?;
             }
-            Expression::HexNumberLiteral(loc, val) => {
+            Expression::HexNumberLiteral(loc, val, unit) => {
                 // ref: https://docs.soliditylang.org/en/latest/types.html?highlight=address%20literal#address-literals
                 let val = if val.len() == 42 {
                     to_checksum(&H160::from_str(val).expect(""), None)
@@ -1996,9 +2008,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     val.to_owned()
                 };
                 write_chunk!(self, loc.start(), loc.end(), "{val}")?;
+                self.write_unit(unit)?;
             }
-            Expression::RationalNumberLiteral(loc, val, fraction, exp) => {
-                self.write_num_literal(*loc, val, Some(fraction), exp)?;
+            Expression::RationalNumberLiteral(loc, val, fraction, exp, unit) => {
+                self.write_num_literal(*loc, val, Some(fraction), exp, unit)?;
             }
             Expression::StringLiteral(vals) => {
                 for StringLiteral { loc, string, unicode } in vals {
@@ -2014,11 +2027,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Expression::AddressLiteral(loc, val) => {
                 // support of solana/substrate address literals
                 self.write_quoted_str(*loc, Some("address"), val)?;
-            }
-            Expression::Unit(_, expr, unit) => {
-                expr.visit(self)?;
-                let unit_loc = unit.loc();
-                write_chunk!(self, unit_loc.start(), unit_loc.end(), "{}", unit.as_str())?;
             }
             Expression::This(loc) => {
                 write_chunk!(self, loc.start(), loc.end(), "this")?;
@@ -2099,7 +2107,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Expression::Complement(..) |
             Expression::UnaryPlus(..) |
             Expression::Add(..) |
-            Expression::UnaryMinus(..) |
+            Expression::Negate(..) |
             Expression::Subtract(..) |
             Expression::Power(..) |
             Expression::Multiply(..) |
@@ -2650,7 +2658,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 while let Some(func) = funcs.next() {
                     let next_byte_end = funcs.peek().map(|func| func.loc.start());
                     chunks.push(self.chunked(func.loc.start(), next_byte_end, |fmt| {
-                        fmt.visit_ident_path(func)?;
+                        fmt.visit_ident_path(&mut func.path)?;
+                        if let Some(op) = func.oper {
+                            write!(fmt.buf(), " as {op}")?;
+                        }
                         Ok(())
                     })?);
                 }
@@ -3672,4 +3683,5 @@ mod tests {
     test_directory! { Annotation }
     test_directory! { MappingType }
     test_directory! { EmitStatement }
+    test_directory! { Repros }
 }
