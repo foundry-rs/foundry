@@ -2660,7 +2660,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     chunks.push(self.chunked(func.loc.start(), next_byte_end, |fmt| {
                         fmt.visit_ident_path(&mut func.path)?;
                         if let Some(op) = func.oper {
-                            write!(fmt.buf(), " as {}", op.to_string())?;
+                            write!(fmt.buf(), " as {op}")?;
                         }
                         Ok(())
                     })?);
