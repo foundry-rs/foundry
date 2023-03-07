@@ -380,10 +380,20 @@ where
         if let Some(ranges) = self.allowed_mem_writes.get(&data.journaled_state.depth()) {
             // Helper that expands memory, stores a revert string, and sets the return range to
             // the revert string's range in memory.
-            fn set_output_buffer(dest_offset: u64, size: u64, interpreter: &mut Interpreter) {
+            fn set_output_buffer(
+                dest_offset: u64,
+                size: u64,
+                interpreter: &mut Interpreter,
+                ranges: &[Range<u64>],
+            ) {
                 let revert_string: Bytes = format!(
-                    "Memory write at offset 0x{:02X} of size 0x{:02X} not allowed",
-                    dest_offset, size
+                    "Memory write at offset 0x{:02X} of size 0x{:02X} not allowed. Safe range: {}",
+                    dest_offset,
+                    size,
+                    ranges
+                        .iter()
+                        .map(|r| format!("(0x{:02X}, 0x{:02X}]", r.start, r.end))
+                        .join(" ∪ ")
                 )
                 .encode()
                 .into();
@@ -411,7 +421,7 @@ where
                                 .iter()
                                     .any(|range| range.contains(&offset) && range.contains(&(offset + 31)))
                                     {
-                                        set_output_buffer(offset, 32, interpreter);
+                                        set_output_buffer(offset, 32, interpreter, ranges);
                                         return Return::Revert
                                     }
                         }
@@ -422,7 +432,7 @@ where
                             // If none of the allowed ranges contain the offset, memory has been
                             // unexpectedly mutated.
                             if !ranges.iter().any(|range| range.contains(&offset)) {
-                                set_output_buffer(offset, 1, interpreter);
+                                set_output_buffer(offset, 1, interpreter, ranges);
                                 return Return::Revert
                             }
                         }
@@ -439,7 +449,7 @@ where
                                 range.contains(&dest_offset) &&
                                     range.contains(&(dest_offset + size.saturating_sub(1)))
                             }) {
-                                set_output_buffer(dest_offset, size, interpreter);
+                                set_output_buffer(dest_offset, size, interpreter, ranges);
                                 return Return::Revert
                             }
                         })*
