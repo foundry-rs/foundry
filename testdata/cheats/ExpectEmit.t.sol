@@ -200,7 +200,6 @@ contract ExpectEmitTest is DSTest {
         emitter.emitEvent(1, 2, 3, 4);
     }
 
-
     function testExpectEmitAddressWithArgs() public {
         cheats.expectEmit(true, true, true, true, address(emitter));
         emit Something(1, 2, 3, 4);
