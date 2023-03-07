@@ -49,7 +49,7 @@ impl RpcOpts {
         Ok(url)
     }
 
-    fn dict(&self) -> Dict {
+    pub fn dict(&self) -> Dict {
         let mut dict = Dict::new();
         if let Ok(Some(url)) = self.url(None) {
             dict.insert("eth_rpc_url".into(), url.into_owned().into());
@@ -98,7 +98,7 @@ impl EtherscanOpts {
         }
     }
 
-    fn dict(&self) -> Dict {
+    pub fn dict(&self) -> Dict {
         Value::serialize(self).unwrap().into_dict().unwrap()
     }
 }

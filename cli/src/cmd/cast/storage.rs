@@ -16,7 +16,10 @@ use foundry_common::{
     compile::{compile, etherscan_project, suppress_compile},
     RetryProvider,
 };
-use foundry_config::{figment::Figment, Config};
+use foundry_config::{
+    figment::{self, value::Dict, Metadata, Profile},
+    impl_figment_convert_cast, Config,
+};
 use futures::future::join_all;
 use semver::Version;
 use std::str::FromStr;
@@ -53,12 +56,27 @@ pub struct StorageArgs {
     build: build::CoreBuildArgs,
 }
 
+impl_figment_convert_cast!(StorageArgs);
+
+impl figment::Provider for StorageArgs {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("StorageArgs")
+    }
+
+    fn data(&self) -> Result<figment::value::Map<Profile, Dict>, figment::Error> {
+        let mut map = self.build.data()?;
+        let dict = map.get_mut(&Config::selected_profile()).unwrap();
+        dict.extend(self.rpc.dict());
+        dict.extend(self.etherscan.dict());
+        Ok(map)
+    }
+}
+
 impl StorageArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { address, slot, block, rpc, etherscan, build } = self;
+        let config = Config::from(&self);
 
-        let figment = Figment::from(Config::figment()).merge(etherscan).merge(rpc);
-        let config = Config::from_provider(figment);
+        let Self { address, slot, block, build, .. } = self;
 
         let provider = utils::get_provider(&config)?;
         let address = match address {
