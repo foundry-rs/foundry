@@ -321,6 +321,9 @@ interface Hevm {
     function expectCall(address, uint256, uint64, bytes calldata) external;
     // Expect a call to an address with the specified msg.value and calldata, and a *minimum* amount of gas.
     function expectCallMinGas(address, uint256, uint64, bytes calldata) external;
+    // Only allows memory writes to offsets [0x00, 0x60) ∪ [_min, _max). If any other memory is written to,
+    // the test will fail.
+    function allowMemoryWrites(uint64 _min, uint64 _max) external;
     // Fetches the contract bytecode from its artifact file
     function getCode(string calldata) external returns (bytes memory);
     // Label an address in test traces

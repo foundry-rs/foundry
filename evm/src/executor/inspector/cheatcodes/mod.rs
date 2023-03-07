@@ -30,6 +30,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     fs::File,
     io::BufReader,
+    ops::Range,
     path::PathBuf,
     sync::Arc,
 };
@@ -121,6 +122,9 @@ pub struct Cheatcodes {
 
     /// Expected emits
     pub expected_emits: Vec<ExpectedEmit>,
+
+    /// Map of context depths to memory offset ranges that may be written to within the call depth.
+    pub allowed_mem_writes: HashMap<u64, Vec<Range<u64>>>,
 
     /// Current broadcasting information
     pub broadcast: Option<Broadcast>,
@@ -276,7 +280,12 @@ where
         Return::Continue
     }
 
-    fn step(&mut self, interpreter: &mut Interpreter, _: &mut EVMData<'_, DB>, _: bool) -> Return {
+    fn step(
+        &mut self,
+        interpreter: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        _: bool,
+    ) -> Return {
         // reset gas if gas metering is turned off
         match self.gas_metering {
             Some(None) => {
@@ -359,6 +368,40 @@ where
                         .entry(interpreter.contract().address)
                         .or_insert_with(Vec::new)
                         .push(key);
+                }
+                _ => (),
+            }
+        }
+
+        // If the allowed memory writes cheatcode is active at this context depth, check to see
+        // if the current opcode is either an `MSTORE` or `MSTORE8`. If the opcode at the current
+        // program counter is a match, check if the offset passed to the opcode lies within the
+        // allowed ranges. If not, revert and fail the test.
+        if let Some(ranges) = self.allowed_mem_writes.get(&data.journaled_state.depth()) {
+            match interpreter.contract.bytecode.bytecode()[interpreter.program_counter()] {
+                opcode::MSTORE => {
+                    // The offset of the mstore operation is at the top of the stack.
+                    let offset = try_or_continue!(interpreter.stack().peek(0)).as_u64();
+
+                    // If none of the allowed ranges contain [offset, offset + 32), memory has been
+                    // unexpectedly mutated.
+                    if !ranges.iter().fold(false, |vw, range| {
+                        vw || (range.contains(&offset) && range.contains(&(offset + 31)))
+                    }) {
+                        // TODO: Revert message
+                        return Return::Revert
+                    }
+                }
+                opcode::MSTORE8 => {
+                    // The offset of the mstore operation is at the top of the stack.
+                    let offset = try_or_continue!(interpreter.stack().peek(0)).as_u64();
+
+                    // If none of the allowed ranges contain the offset, memory has been
+                    // unexpectedly mutated.
+                    if !ranges.iter().fold(false, |vw, range| vw || range.contains(&offset)) {
+                        // TODO: Revert message
+                        return Return::Revert
+                    }
                 }
                 _ => (),
             }

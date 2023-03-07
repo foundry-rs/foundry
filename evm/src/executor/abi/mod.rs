@@ -85,6 +85,7 @@ ethers::contract::abigen!(
             expectCall(address,uint256,bytes)
             expectCall(address,uint256,uint64,bytes)
             expectCallMinGas(address,uint256,uint64,bytes)
+            allowMemoryWrites(uint64,uint64)
             getCode(string)
             getDeployedCode(string)
             label(address,string)

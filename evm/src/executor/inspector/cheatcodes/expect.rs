@@ -369,6 +369,22 @@ pub fn apply<DB: DatabaseExt>(
             state.mocked_calls = Default::default();
             Ok(Bytes::new())
         }
+        HEVMCalls::AllowMemoryWrites(inner) => {
+            if inner.0 >= inner.1 {
+                return Some(Err(format!("Invalid memory range: [{}, {})", inner.0, inner.1)
+                    .encode()
+                    .into()))
+            }
+
+            // Write the new range to the map at the specified call depth
+            let offsets = state
+                .allowed_mem_writes
+                .entry(data.journaled_state.depth())
+                .or_insert(vec![(0..0x60)]);
+            offsets.push(inner.0..inner.1);
+
+            Ok(Bytes::new())
+        }
         _ => return None,
     })
 }
