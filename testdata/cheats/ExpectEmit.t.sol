@@ -172,6 +172,17 @@ contract ExpectEmitTest is DSTest {
     }
 
     function testExpectEmitMultiple() public {
+        cheats.expectEmit();
+        emit Something(1, 2, 3, 4);
+        cheats.expectEmit();
+        emit Something(5, 6, 7, 8);
+
+        emitter.emitMultiple(
+            [uint256(1), uint256(5)], [uint256(2), uint256(6)], [uint256(3), uint256(7)], [uint256(4), uint256(8)]
+        );
+    }
+
+    function testExpectEmitMultipleWithArgs() public {
         cheats.expectEmit(true, true, true, true);
         emit Something(1, 2, 3, 4);
         cheats.expectEmit(true, true, true, true);
@@ -183,6 +194,14 @@ contract ExpectEmitTest is DSTest {
     }
 
     function testExpectEmitAddress() public {
+        cheats.expectEmit(address(emitter));
+        emit Something(1, 2, 3, 4);
+
+        emitter.emitEvent(1, 2, 3, 4);
+    }
+
+
+    function testExpectEmitAddressWithArgs() public {
         cheats.expectEmit(true, true, true, true, address(emitter));
         emit Something(1, 2, 3, 4);
 
@@ -190,6 +209,13 @@ contract ExpectEmitTest is DSTest {
     }
 
     function testFailExpectEmitAddress() public {
+        cheats.expectEmit(address(0));
+        emit Something(1, 2, 3, 4);
+
+        emitter.emitEvent(1, 2, 3, 4);
+    }
+
+    function testFailExpectEmitAddressWithArgs() public {
         cheats.expectEmit(true, true, true, true, address(0));
         emit Something(1, 2, 3, 4);
 
