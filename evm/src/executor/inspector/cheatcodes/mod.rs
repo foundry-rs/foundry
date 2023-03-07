@@ -378,6 +378,26 @@ where
         // program counter is a match, check if the offset passed to the opcode lies within the
         // allowed ranges. If not, revert and fail the test.
         if let Some(ranges) = self.allowed_mem_writes.get(&data.journaled_state.depth()) {
+            // Helper that expands memory, stores a revert string, and sets the return range to
+            // the revert string's range in memory.
+            fn set_output_buffer(dest_offset: u64, size: u64, interpreter: &mut Interpreter) {
+                let revert_string: Bytes = format!(
+                    "Memory write at offset 0x{:02X} of size 0x{:02X} not allowed",
+                    dest_offset, size
+                )
+                .encode()
+                .into();
+                let starting_offset = interpreter.memory.len();
+                interpreter.memory.resize(starting_offset + revert_string.len());
+                interpreter.memory.set_data(
+                    starting_offset,
+                    0,
+                    revert_string.len(),
+                    &revert_string,
+                );
+                interpreter.return_range = starting_offset..interpreter.memory.len();
+            }
+
             macro_rules! mem_opcode_match {
                 ([$(($opcode:ident, $offset_depth:expr, $size_depth:expr)),*]) => {
                     match interpreter.contract.bytecode.bytecode()[interpreter.program_counter()] {
@@ -391,7 +411,7 @@ where
                                 .iter()
                                     .any(|range| range.contains(&offset) && range.contains(&(offset + 31)))
                                     {
-                                        // TODO: Revert message
+                                        set_output_buffer(offset, 32, interpreter);
                                         return Return::Revert
                                     }
                         }
@@ -402,7 +422,7 @@ where
                             // If none of the allowed ranges contain the offset, memory has been
                             // unexpectedly mutated.
                             if !ranges.iter().any(|range| range.contains(&offset)) {
-                                // TODO: Revert message
+                                set_output_buffer(offset, 1, interpreter);
                                 return Return::Revert
                             }
                         }
@@ -419,6 +439,7 @@ where
                                 range.contains(&dest_offset) &&
                                     range.contains(&(dest_offset + size.saturating_sub(1)))
                             }) {
+                                set_output_buffer(dest_offset, size, interpreter);
                                 return Return::Revert
                             }
                         })*
