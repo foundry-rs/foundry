@@ -37,9 +37,12 @@ impl SessionSource {
             compiled.compiler_output.contracts_into_iter().find(|(name, _)| name == "REPL")
         {
             // These *should* never panic after a successful compilation.
-            let bytecode = contract.get_bytecode_bytes().expect("No bytecode for contract.");
-            let deployed_bytecode =
-                contract.get_deployed_bytecode_bytes().expect("No deployed bytecode for contract.");
+            let bytecode = contract
+                .get_bytecode_bytes()
+                .ok_or_else(|| eyre::eyre!("No bytecode found for `REPL` contract"))?;
+            let deployed_bytecode = contract
+                .get_deployed_bytecode_bytes()
+                .ok_or_else(|| eyre::eyre!("No deployed bytecode found for `REPL` contract"))?;
 
             // Fetch the run function's body statement
             let run_func_statements = compiled.intermediate.run_func_body()?;
