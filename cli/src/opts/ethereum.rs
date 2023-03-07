@@ -71,7 +71,7 @@ pub struct EtherscanOpts {
         long,
         alias = "chain-id",
         env = "CHAIN",
-        value_parser = ChainValueParser::new(),
+        value_parser = ChainValueParser::default(),
     )]
     #[serde(rename = "chain_id", skip_serializing_if = "Option::is_none")]
     pub chain: Option<Chain>,

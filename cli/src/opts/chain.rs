@@ -12,8 +12,8 @@ pub struct ChainValueParser {
     pub inner: PossibleValuesParser,
 }
 
-impl ChainValueParser {
-    pub fn new() -> Self {
+impl Default for ChainValueParser {
+    fn default() -> Self {
         Self { inner: PossibleValuesParser::from(NamedChain::VARIANTS) }
     }
 }
