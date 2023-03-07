@@ -53,7 +53,6 @@ where
     /// ```
     /// use cast::Cast;
     /// use ethers_providers::{Provider, Http};
-    /// use std::convert::TryFrom;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -306,7 +305,6 @@ where
     /// ```no_run
     /// use cast::Cast;
     /// use ethers_providers::{Provider, Http};
-    /// use std::convert::TryFrom;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -613,7 +611,6 @@ where
     /// ```no_run
     /// use cast::Cast;
     /// use ethers_providers::{Provider, Http};
-    /// use std::convert::TryFrom;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -653,7 +650,6 @@ where
     /// ```no_run
     /// use cast::Cast;
     /// use ethers_providers::{Provider, Http};
-    /// use std::convert::TryFrom;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -716,7 +712,6 @@ where
     /// ```no_run
     /// use cast::Cast;
     /// use ethers_providers::{Provider, Http};
-    /// use std::convert::TryFrom;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;

@@ -1,10 +1,9 @@
-use crate::{cmd::Cmd, init_progress, update_progress, utils::try_consume_config_rpc_url};
+use crate::{init_progress, update_progress, utils::try_consume_config_rpc_url};
 use cast::trace::{identifier::SignaturesIdentifier, CallTraceDecoder, Traces};
 use clap::Parser;
 use ethers::{
     abi::Address,
     prelude::{artifacts::ContractBytecodeSome, ArtifactId, Middleware},
-    solc::utils::RuntimeOrHandle,
     types::H256,
 };
 use eyre::WrapErr;
@@ -50,20 +49,13 @@ pub struct RunArgs {
     label: Vec<String>,
 }
 
-impl Cmd for RunArgs {
-    type Output = ();
+impl RunArgs {
     /// Executes the transaction by replaying it
     ///
     /// This replays the entire block the transaction was mined in unless `quick` is set to true
     ///
     /// Note: This executes the transaction(s) as is: Cheatcodes are disabled
-    fn run(self) -> eyre::Result<Self::Output> {
-        RuntimeOrHandle::new().block_on(self.run_tx())
-    }
-}
-
-impl RunArgs {
-    async fn run_tx(self) -> eyre::Result<()> {
+    pub async fn run(self) -> eyre::Result<()> {
         let figment = Config::figment_with_root(find_project_root_path().unwrap());
         let mut evm_opts = figment.extract::<EvmOpts>()?;
         let config = Config::from_provider(figment).sanitized();

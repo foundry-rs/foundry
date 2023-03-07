@@ -10,30 +10,27 @@ use itertools::Itertools;
 pub struct RpcArgs {
     #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
     rpc_url: Option<String>,
+
+    /// Send raw JSON parameters
     #[clap(
         short = 'w',
         long,
-        help = r#"Pass the "params" as is"#,
-        long_help = r#"Pass the "params" as is
+        long_help = r#"The first param will be interpreted as a raw JSON array of params.
+If no params are given, stdin will be used. For example:
 
-If --raw is passed the first PARAM will be taken as the value of "params". If no params are given, stdin will be used. For example:
-
-rpc eth_getBlockByNumber '["0x123", false]' --raw
+cast rpc eth_getBlockByNumber '["0x123", false]' --raw
     => {"method": "eth_getBlockByNumber", "params": ["0x123", false] ... }"#
     )]
     raw: bool,
-    #[clap(value_name = "METHOD", help = "RPC method name")]
+
+    /// RPC method name
     method: String,
-    #[clap(
-        value_name = "PARAMS",
-        help = "RPC parameters",
-        long_help = r#"RPC parameters
 
-Parameters are interpreted as JSON and then fall back to string. For example:
+    /// RPC parameters
+    #[clap(long_help = r#"RPC parameters interpreted as JSON:
 
-rpc eth_getBlockByNumber 0x123 false
-    => {"method": "eth_getBlockByNumber", "params": ["0x123", false] ... }"#
-    )]
+cast rpc eth_getBlockByNumber 0x123 false
+    => {"method": "eth_getBlockByNumber", "params": ["0x123", false] ... }"#)]
     params: Vec<String>,
 }
 
@@ -51,15 +48,16 @@ impl RpcArgs {
                     .transpose()?
                     .ok_or_else(|| eyre::format_err!("Empty JSON parameters"))?
             } else {
-                Self::to_json_or_string(params.into_iter().join(" "))
+                value_or_string(params.into_iter().join(" "))
             }
         } else {
-            serde_json::Value::Array(params.into_iter().map(Self::to_json_or_string).collect())
+            serde_json::Value::Array(params.into_iter().map(value_or_string).collect())
         };
         println!("{}", Cast::new(provider).rpc(&method, params).await?);
         Ok(())
     }
-    fn to_json_or_string(value: String) -> serde_json::Value {
-        serde_json::from_str(&value).unwrap_or(serde_json::Value::String(value))
-    }
+}
+
+fn value_or_string(value: String) -> serde_json::Value {
+    serde_json::from_str(&value).unwrap_or(serde_json::Value::String(value))
 }
