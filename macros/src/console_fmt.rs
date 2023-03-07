@@ -73,8 +73,9 @@ impl ConsoleFmt for U256 {
                 let exp10 = U256::exp10(log);
                 let amount = *self;
                 let integer = amount / exp10;
-                let decimal = amount % exp10;
-                format!("{integer}.{decimal}e{log}")
+                let decimal = (amount % exp10).to_string();
+                let decimal = format!("{decimal:0>log$}").trim_end_matches('0').to_string();
+                if decimal != "" {format!("{integer}.{decimal}e{log}")} else {format!("{integer}e{log}")}
             }
         }
     }
@@ -87,12 +88,14 @@ impl ConsoleFmt for I256 {
                 | FormatSpec::Number | FormatSpec::Integer => self.pretty(),
             FormatSpec::Hexadecimal => format!("0x{:x}", *self),
             FormatSpec::Exponential => {
-                let log = self.pretty().len() - 1;
-                let exp10 = I256::exp10(log);
                 let amount = *self;
-                let integer = amount / exp10.into();
-                let decimal = amount % exp10.into();
-                format!("{integer}.{decimal}e{log}")
+                let sign = if amount.is_negative() { "-" } else { "" };
+                let log = if amount.is_negative() { self.pretty().len() - 2 } else { self.pretty().len() - 1 };
+                let exp10 = I256::exp10(log);
+                let integer = (amount / exp10).twos_complement();
+                let decimal = (amount % exp10).twos_complement().to_string();
+                let decimal = format!("{decimal:0>log$}").trim_end_matches('0').to_string();
+                if decimal != "" {format!("{sign}{integer}.{decimal}e{log}")} else {format!("{integer}e{log}")}
             }
         }
     }
@@ -320,14 +323,20 @@ mod tests {
         assert_eq!("100", console_log_format_1("%s", &U256::from(100)));
         assert_eq!("100", console_log_format_1("%d", &U256::from(100)));
         assert_eq!("100", console_log_format_1("%i", &U256::from(100)));
-        assert_eq!("1.0e2", console_log_format_1("%e", &U256::from(100)));
+        assert_eq!("1e2", console_log_format_1("%e", &U256::from(100)));
+        assert_eq!("1.0023e6", console_log_format_1("%e", &U256::from(1002300)));
+        assert_eq!("1.23e5", console_log_format_1("%e", &U256::from(123000)));
         assert_eq!("0x64", console_log_format_1("%x", &U256::from(100)));
         assert_eq!("100", console_log_format_1("%o", &U256::from(100)));
 
         assert_eq!("100", console_log_format_1("%s", &I256::from(100)));
         assert_eq!("100", console_log_format_1("%d", &I256::from(100)));
         assert_eq!("100", console_log_format_1("%i", &I256::from(100)));
-        assert_eq!("1.0e2", console_log_format_1("%e", &I256::from(100)));
+        assert_eq!("1e2", console_log_format_1("%e", &I256::from(100)));
+        assert_eq!("-1.0023e6", console_log_format_1("%e", &I256::from(-1002300)));
+        assert_eq!("-1.23e5", console_log_format_1("%e", &I256::from(-123000)));
+        assert_eq!("1.0023e6", console_log_format_1("%e", &I256::from(1002300)));
+        assert_eq!("1.23e5", console_log_format_1("%e", &I256::from(123000)));
         assert_eq!("0x64", console_log_format_1("%x", &I256::from(100)));
         assert_eq!("100", console_log_format_1("%o", &I256::from(100)));
     }
