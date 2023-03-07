@@ -37,7 +37,7 @@ pub struct ProjectPathsArgs {
     #[serde(rename = "src", skip_serializing_if = "Option::is_none")]
     pub contracts: Option<PathBuf>,
 
-    #[clap(help = "The project's remappings.", long, short, value_name = "REMAPPINGS")]
+    #[clap(help = "The project's remappings.", long, short = 'R', value_name = "REMAPPINGS")]
     #[serde(skip)]
     pub remappings: Vec<Remapping>,
 
