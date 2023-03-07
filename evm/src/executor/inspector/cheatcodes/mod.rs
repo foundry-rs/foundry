@@ -378,101 +378,67 @@ where
         // program counter is a match, check if the offset passed to the opcode lies within the
         // allowed ranges. If not, revert and fail the test.
         if let Some(ranges) = self.allowed_mem_writes.get(&data.journaled_state.depth()) {
-            match interpreter.contract.bytecode.bytecode()[interpreter.program_counter()] {
-                opcode::MSTORE => {
-                    // The offset of the mstore operation is at the top of the stack.
-                    let offset = try_or_continue!(interpreter.stack().peek(0)).as_u64();
+            macro_rules! mem_opcode_match {
+                ([$(($opcode:ident, $offset_depth:expr, $size_depth:expr)),*]) => {
+                    match interpreter.contract.bytecode.bytecode()[interpreter.program_counter()] {
+                        opcode::MSTORE => {
+                            // The offset of the mstore operation is at the top of the stack.
+                            let offset = try_or_continue!(interpreter.stack().peek(0)).as_u64();
 
-                    // If none of the allowed ranges contain [offset, offset + 32), memory has been
-                    // unexpectedly mutated.
-                    if !ranges
-                        .iter()
-                        .any(|range| range.contains(&offset) && range.contains(&(offset + 31)))
-                    {
-                        // TODO: Revert message
-                        return Return::Revert
+                            // If none of the allowed ranges contain [offset, offset + 32), memory has been
+                            // unexpectedly mutated.
+                            if !ranges
+                                .iter()
+                                    .any(|range| range.contains(&offset) && range.contains(&(offset + 31)))
+                                    {
+                                        // TODO: Revert message
+                                        return Return::Revert
+                                    }
+                        }
+                        opcode::MSTORE8 => {
+                            // The offset of the mstore8 operation is at the top of the stack.
+                            let offset = try_or_continue!(interpreter.stack().peek(0)).as_u64();
+
+                            // If none of the allowed ranges contain the offset, memory has been
+                            // unexpectedly mutated.
+                            if !ranges.iter().any(|range| range.contains(&offset)) {
+                                // TODO: Revert message
+                                return Return::Revert
+                            }
+                        }
+                        $(opcode::$opcode => {
+                            // The destination offset of the operation is at the top of the stack.
+                            let dest_offset = try_or_continue!(interpreter.stack().peek($offset_depth)).as_u64();
+
+                            // The size of the data that will be copied is the third item on the stack.
+                            let size = try_or_continue!(interpreter.stack().peek($size_depth)).as_u64();
+
+                            // If none of the allowed ranges contain [dest_offset, dest_offset + size),
+                            // memory has been unexpectedly mutated.
+                            if !ranges.iter().any(|range| {
+                                range.contains(&dest_offset) &&
+                                    range.contains(&(dest_offset + size.saturating_sub(1)))
+                            }) {
+                                return Return::Revert
+                            }
+                        })*
+                        _ => ()
                     }
                 }
-                opcode::MSTORE8 => {
-                    // The offset of the mstore8 operation is at the top of the stack.
-                    let offset = try_or_continue!(interpreter.stack().peek(0)).as_u64();
-
-                    // If none of the allowed ranges contain the offset, memory has been
-                    // unexpectedly mutated.
-                    if !ranges.iter().any(|range| range.contains(&offset)) {
-                        // TODO: Revert message
-                        return Return::Revert
-                    }
-                }
-                opcode::CALLDATACOPY | opcode::CODECOPY | opcode::RETURNDATACOPY => {
-                    // The destination offset of the operation is at the top of the stack.
-                    let dest_offset = try_or_continue!(interpreter.stack().peek(0)).as_u64();
-
-                    // The size of the data that will be copied is the third item on the stack.
-                    let size = try_or_continue!(interpreter.stack().peek(2)).as_u64();
-
-                    // If none of the allowed ranges contain [dest_offset, dest_offset + size),
-                    // memory has been unexpectedly mutated.
-                    if !ranges.iter().any(|range| {
-                        range.contains(&dest_offset) &&
-                            range.contains(&(dest_offset + size.saturating_sub(1)))
-                    }) {
-                        return Return::Revert
-                    }
-                }
-                opcode::EXTCODECOPY => {
-                    // The destination offset of the extcodecopy operation is the second item
-                    // on the stack
-                    let dest_offset = try_or_continue!(interpreter.stack().peek(1)).as_u64();
-
-                    // The size of the data that will be copied is the fourth item on the stack.
-                    let size = try_or_continue!(interpreter.stack().peek(3)).as_u64();
-
-                    // If none of the allowed ranges contain [dest_offset, dest_offset + size),
-                    // memory has been unexpectedly mutated.
-                    if !ranges.iter().any(|range| {
-                        range.contains(&dest_offset) &&
-                            range.contains(&(dest_offset + size.saturating_sub(1)))
-                    }) {
-                        return Return::Revert
-                    }
-                }
-                opcode::CALL | opcode::CALLCODE => {
-                    // The destination offset of the call's returndata is the sixth item on the
-                    // stack
-                    let dest_offset = try_or_continue!(interpreter.stack().peek(5)).as_u64();
-
-                    // The size of the data that will be copied is the seventh item on the stack.
-                    let size = try_or_continue!(interpreter.stack().peek(6)).as_u64();
-
-                    // If none of the allowed ranges contain [dest_offset, dest_offset + size),
-                    // memory has been unexpectedly mutated.
-                    if !ranges.iter().any(|range| {
-                        range.contains(&dest_offset) &&
-                            range.contains(&(dest_offset + size.saturating_sub(1)))
-                    }) {
-                        return Return::Revert
-                    }
-                }
-                opcode::STATICCALL | opcode::DELEGATECALL => {
-                    // The destination offset of the call's returndata is the fifth item on the
-                    // stack
-                    let dest_offset = try_or_continue!(interpreter.stack().peek(4)).as_u64();
-
-                    // The size of the data that will be copied is the sixth item on the stack.
-                    let size = try_or_continue!(interpreter.stack().peek(5)).as_u64();
-
-                    // If none of the allowed ranges contain [dest_offset, dest_offset + size),
-                    // memory has been unexpectedly mutated.
-                    if !ranges.iter().any(|range| {
-                        range.contains(&dest_offset) &&
-                            range.contains(&(dest_offset + size.saturating_sub(1)))
-                    }) {
-                        return Return::Revert
-                    }
-                }
-                _ => (),
             }
+
+            // Check if the current opcode can write to memory, and if so, check if the memory
+            // being written to is registered as safe to modify.
+            mem_opcode_match!([
+                (CALLDATACOPY, 0, 2),
+                (CODECOPY, 0, 2),
+                (RETURNDATACOPY, 0, 2),
+                (EXTCODECOPY, 1, 3),
+                (CALL, 5, 6),
+                (CALLCODE, 5, 6),
+                (STATICCALL, 4, 5),
+                (DELEGATECALL, 4, 5)
+            ])
         }
 
         Return::Continue
