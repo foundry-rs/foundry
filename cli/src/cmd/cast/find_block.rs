@@ -1,11 +1,11 @@
 //! cast find-block subcommand
 
-use crate::utils::try_consume_config_rpc_url;
+use crate::{opts::RpcOpts, utils};
 use cast::Cast;
 use clap::Parser;
 use ethers::prelude::*;
 use eyre::Result;
-use foundry_common::try_get_http_provider;
+use foundry_config::Config;
 use futures::join;
 
 /// CLI arguments for `cast find-block`.
@@ -13,18 +13,19 @@ use futures::join;
 pub struct FindBlockArgs {
     #[clap(help = "The UNIX timestamp to search for (in seconds)", value_name = "TIMESTAMP")]
     timestamp: u64,
-    #[clap(long, env = "ETH_RPC_URL", value_name = "URL")]
-    rpc_url: Option<String>,
+
+    #[clap(flatten)]
+    rpc: RpcOpts,
 }
 
 impl FindBlockArgs {
     pub async fn run(self) -> Result<()> {
-        let FindBlockArgs { timestamp, rpc_url } = self;
+        let FindBlockArgs { timestamp, rpc } = self;
 
         let ts_target = U256::from(timestamp);
-        let rpc_url = try_consume_config_rpc_url(rpc_url)?;
+        let config = Config::from(&rpc);
+        let provider = utils::get_provider(&config)?;
 
-        let provider = try_get_http_provider(rpc_url)?;
         let last_block_num = provider.get_block_number().await?;
         let cast_provider = Cast::new(provider);
 

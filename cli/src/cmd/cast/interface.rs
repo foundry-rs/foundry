@@ -1,8 +1,6 @@
-use crate::opts::ClapChain;
+use crate::opts::EtherscanOpts;
 use cast::{AbiPath, SimpleCast};
 use clap::Parser;
-use ethers::types::Address;
-use eyre::WrapErr;
 use foundry_common::fs;
 use foundry_config::Config;
 use std::path::{Path, PathBuf};
@@ -18,8 +16,10 @@ If an address is specified, then the ABI is fetched from Etherscan."#,
         value_name = "PATH_OR_ADDRESS"
     )]
     path_or_address: String,
+
     #[clap(long, short, help = "The name to use for the generated interface", value_name = "NAME")]
     name: Option<String>,
+
     #[clap(
         long,
         short,
@@ -28,6 +28,7 @@ If an address is specified, then the ABI is fetched from Etherscan."#,
         value_name = "VERSION"
     )]
     pragma: String,
+
     #[clap(
         short,
         help = "The path to the output file.",
@@ -35,39 +36,24 @@ If an address is specified, then the ABI is fetched from Etherscan."#,
         value_name = "PATH"
     )]
     output_location: Option<PathBuf>,
-    #[clap(long, short, env = "ETHERSCAN_API_KEY", help = "etherscan API key", value_name = "KEY")]
-    etherscan_api_key: Option<String>,
+
     #[clap(flatten)]
-    chain: ClapChain,
+    etherscan: EtherscanOpts,
 }
 
 impl InterfaceArgs {
     pub async fn run(self) -> eyre::Result<()> {
-        let InterfaceArgs {
-            path_or_address,
-            name,
-            pragma,
-            output_location,
-            etherscan_api_key,
-            chain,
-        } = self;
-        let interfaces = if Path::new(&path_or_address).exists() {
-            SimpleCast::generate_interface(AbiPath::Local { path: path_or_address, name }).await?
+        let InterfaceArgs { path_or_address, name, pragma, output_location, etherscan } = self;
+        let config = Config::from(&etherscan);
+        let chain = config.chain_id.unwrap_or_default();
+        let source = if Path::new(&path_or_address).exists() {
+            AbiPath::Local { path: path_or_address, name }
         } else {
-            let api_key = etherscan_api_key.or_else(|| {
-                    let config = Config::load();
-                    config.get_etherscan_api_key(Some(chain.inner))
-                }).ok_or_else(|| eyre::eyre!("No Etherscan API Key is set. Consider using the ETHERSCAN_API_KEY env var, or setting the -e CLI argument or etherscan-api-key in foundry.toml"))?;
-
-            SimpleCast::generate_interface(AbiPath::Etherscan {
-                chain: chain.inner,
-                api_key,
-                address: path_or_address
-                    .parse::<Address>()
-                    .wrap_err("Invalid address provided. Did you make a typo?")?,
-            })
-            .await?
+            let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
+            let chain = chain.named()?;
+            AbiPath::Etherscan { chain, api_key, address: path_or_address.parse()? }
         };
+        let interfaces = SimpleCast::generate_interface(source).await?;
 
         // put it all together
         let pragma = format!("pragma solidity {pragma};");

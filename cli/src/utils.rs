@@ -99,17 +99,10 @@ pub fn parse_u256(s: &str) -> Result<U256> {
     Ok(if s.starts_with("0x") { U256::from_str(s)? } else { U256::from_dec_str(s)? })
 }
 
-/// Returns `rpc-url` cli argument if given, or consume `eth-rpc-url` from foundry.toml. Default to
-/// `localhost:8545`
+/// Returns a [RetryProvider](foundry_common::RetryProvider) instantiated using [Config]'s RPC URL
+/// and chain.
 ///
-/// This also supports rpc aliases and try to load the current foundry.toml file if it exists
-pub fn try_consume_config_rpc_url(rpc_url: Option<String>) -> Result<String> {
-    let mut config = Config::load();
-    config.eth_rpc_url = rpc_url;
-    let url = config.get_rpc_url_or_localhost_http()?;
-    Ok(url.into_owned())
-}
-
+/// Defaults to `http://localhost:8545` and `Mainnet`.
 pub fn get_provider(config: &Config) -> Result<foundry_common::RetryProvider> {
     let url = config.get_rpc_url_or_localhost_http()?;
     let chain = config.chain_id.unwrap_or_default();

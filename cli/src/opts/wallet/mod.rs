@@ -43,119 +43,99 @@ The wallet options can either be:
 )]
 #[clap(next_help_heading = "Wallet options")]
 pub struct Wallet {
+    /// The sender account
     #[clap(
-        long,
         short,
+        long,
         help_heading = "Wallet options - raw",
-        help = "Open an interactive prompt to enter your private key."
+        value_name = "ADDRESS",
+        env = "ETH_FROM"
     )]
+    pub from: Option<Address>,
+
+    /// Open an interactive prompt to enter your private key
+    #[clap(long, short, help_heading = "Wallet options - raw")]
     pub interactive: bool,
 
+    /// Use the provided private key
     #[clap(
-        long = "private-key",
+        long,
         help_heading = "Wallet options - raw",
-        help = "Use the provided private key.",
         value_name = "RAW_PRIVATE_KEY",
         value_parser = foundry_common::clap_helpers::strip_0x_prefix
     )]
     pub private_key: Option<String>,
 
-    #[clap(
-        long = "mnemonic",
-        alias = "mnemonic-path",
-        help_heading = "Wallet options - raw",
-        help = "Use the mnemonic phrase of mnemonic file at the specified path.",
-        value_name = "PATH"
-    )]
+    /// Use the mnemonic phrase of mnemonic file at the specified path
+    #[clap(long, alias = "mnemonic-path", help_heading = "Wallet options - raw")]
     pub mnemonic: Option<String>,
 
+    /// Use a BIP39 passphrase for the mnemonic
     #[clap(
         long = "mnemonic-passphrase",
         help_heading = "Wallet options - raw",
-        help = "Use a BIP39 passphrase for the mnemonic.",
         value_name = "PASSPHRASE"
     )]
     pub mnemonic_passphrase: Option<String>,
 
+    /// The wallet derivation path. Works with both --mnemonic-path and hardware wallets
     #[clap(
         long = "mnemonic-derivation-path",
         alias = "hd-path",
         help_heading = "Wallet options - raw",
-        help = "The wallet derivation path. Works with both --mnemonic-path and hardware wallets.",
         value_name = "PATH"
     )]
     pub hd_path: Option<String>,
 
+    /// Use the private key from the given mnemonic index. Used with --mnemonic-path.
     #[clap(
         long = "mnemonic-index",
         conflicts_with = "hd_path",
         help_heading = "Wallet options - raw",
-        help = "Use the private key from the given mnemonic index. Used with --mnemonic-path.",
-        default_value = "0",
+        default_value_t = 0,
         value_name = "INDEX"
     )]
     pub mnemonic_index: u32,
 
+    /// Use the keystore in the given folder or file
     #[clap(
-        env = "ETH_KEYSTORE",
         long = "keystore",
         help_heading = "Wallet options - keystore",
-        help = "Use the keystore in the given folder or file.",
-        value_name = "PATH"
+        value_name = "PATH",
+        env = "ETH_KEYSTORE"
     )]
     pub keystore_path: Option<String>,
 
+    /// The keystore password. Used with --keystore
     #[clap(
         long = "password",
         help_heading = "Wallet options - keystore",
-        help = "The keystore password. Used with --keystore.",
         requires = "keystore_path",
         value_name = "PASSWORD"
     )]
     pub keystore_password: Option<String>,
 
+    /// The keystore password file path. Used with --keystore.
     #[clap(
-        env = "ETH_PASSWORD",
         long = "password-file",
         help_heading = "Wallet options - keystore",
-        help = "The keystore password file path. Used with --keystore.",
         requires = "keystore_path",
-        value_name = "PASSWORD_FILE"
+        value_name = "PASSWORD_FILE",
+        env = "ETH_PASSWORD"
     )]
     pub keystore_password_file: Option<String>,
 
-    #[clap(
-        short,
-        long = "ledger",
-        help_heading = "Wallet options - hardware wallet",
-        help = "Use a Ledger hardware wallet."
-    )]
+    /// Use a Ledger hardware wallet
+    #[clap(short, long, help_heading = "Wallet options - hardware wallet")]
     pub ledger: bool,
 
-    #[clap(
-        short,
-        long = "trezor",
-        help_heading = "Wallet options - hardware wallet",
-        help = "Use a Trezor hardware wallet."
-    )]
+    /// Use a Trezor hardware wallet
+    #[clap(short, long = "trezor", help_heading = "Wallet options - hardware wallet")]
     pub trezor: bool,
 
-    #[clap(
-        long = "aws",
-        help_heading = "WALLET OPTIONS - KEYSTORE",
-        help = "Use AWS Key Management Service"
-    )]
+    /// Use AWS Key Management Service
+    #[clap(long = "aws", help_heading = "Wallet options - remote")]
     pub aws: bool,
-
-    #[clap(
-        env = "ETH_FROM",
-        short,
-        long = "from",
-        help_heading = "Wallet options - remote",
-        help = "The sender account.",
-        value_name = "ADDRESS"
-    )]
-    pub from: Option<Address>,
 }
 
 impl Wallet {

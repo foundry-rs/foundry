@@ -87,6 +87,7 @@ impl SendTxArgs {
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
         let chain = utils::get_chain(config.chain_id, &provider).await?;
+        let api_key = config.get_etherscan_api_key(Some(chain));
         let mut sig = sig.unwrap_or_default();
 
         if let Ok(signer) = eth.wallet.signer(chain.id()).await {
@@ -133,7 +134,7 @@ impl SendTxArgs {
                 (sig, args),
                 tx,
                 chain,
-                config.etherscan_api_key,
+                api_key,
                 cast_async,
                 confirmations,
                 to_json,
@@ -167,7 +168,7 @@ impl SendTxArgs {
                 (sig, args),
                 tx,
                 chain,
-                config.etherscan_api_key,
+                api_key,
                 cast_async,
                 confirmations,
                 to_json,

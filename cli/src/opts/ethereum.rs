@@ -1,9 +1,5 @@
-use super::{Wallet, WalletSigner};
-use clap::{
-    builder::{PossibleValuesParser, TypedValueParser},
-    Parser,
-};
-use ethers::types::Chain as NamedChain;
+use super::{ChainValueParser, Wallet, WalletSigner};
+use clap::Parser;
 use eyre::Result;
 use foundry_config::{
     figment::{
@@ -15,15 +11,8 @@ use foundry_config::{
 };
 use serde::Serialize;
 use std::borrow::Cow;
-use strum::VariantNames;
 
 const FLASHBOTS_URL: &str = "https://rpc.flashbots.net";
-
-#[allow(dead_code)]
-static E: &str = "\
-No Etherscan API Key is set. Consider using the ETHERSCAN_API_KEY environment variable,\n\
-setting the -e CLI argument or etherscan-api-key in foundry.toml\
-";
 
 #[derive(Clone, Debug, Default, Parser)]
 pub struct RpcOpts {
@@ -32,7 +21,7 @@ pub struct RpcOpts {
     pub url: Option<String>,
 
     /// Use the Flashbots RPC URL (https://rpc.flashbots.net)
-    #[clap(long, conflicts_with = "rpc_url")]
+    #[clap(long)]
     pub flashbots: bool,
 }
 
@@ -72,7 +61,7 @@ impl RpcOpts {
 #[derive(Clone, Debug, Default, Parser, Serialize)]
 pub struct EtherscanOpts {
     /// The Etherscan (or equivalent) API key
-    #[clap(short = 'e', long = "etherscan-api-key", env = "ETHERSCAN_API_KEY")]
+    #[clap(short = 'e', long = "etherscan-api-key", alias = "api-key", env = "ETHERSCAN_API_KEY")]
     #[serde(rename = "etherscan_api_key", skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
 
@@ -80,8 +69,9 @@ pub struct EtherscanOpts {
     #[clap(
         short,
         long,
+        alias = "chain-id",
         env = "CHAIN",
-        value_parser = ChainValueParser::default(),
+        value_parser = ChainValueParser::new(),
     )]
     #[serde(rename = "chain_id", skip_serializing_if = "Option::is_none")]
     pub chain: Option<Chain>,
@@ -149,35 +139,5 @@ impl figment::Provider for EthereumOpts {
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
-    }
-}
-
-/// The value parser for `Chain`s
-#[derive(Clone, Debug)]
-pub struct ChainValueParser {
-    pub inner: PossibleValuesParser,
-}
-
-impl Default for ChainValueParser {
-    fn default() -> Self {
-        ChainValueParser { inner: NamedChain::VARIANTS.into() }
-    }
-}
-
-impl TypedValueParser for ChainValueParser {
-    type Value = Chain;
-
-    fn parse_ref(
-        &self,
-        cmd: &clap::Command,
-        arg: Option<&clap::Arg>,
-        value: &std::ffi::OsStr,
-    ) -> Result<Self::Value, clap::Error> {
-        self.inner.parse_ref(cmd, arg, value)?.parse::<Chain>().map_err(|_| {
-            clap::Error::raw(
-                clap::error::ErrorKind::InvalidValue,
-                "chain argument did not match any possible chain variant",
-            )
-        })
     }
 }

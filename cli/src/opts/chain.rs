@@ -1,35 +1,20 @@
-use clap::{
-    builder::{PossibleValuesParser, TypedValueParser},
-    Parser,
-};
-use ethers::types::Chain;
+use clap::builder::{PossibleValuesParser, TypedValueParser};
+use ethers::types::Chain as NamedChain;
+use foundry_config::Chain;
 use std::ffi::OsStr;
 use strum::VariantNames;
 
-// Helper for exposing enum values for `Chain`
-// TODO: Is this a duplicate of config/src/chain.rs?
-#[derive(Debug, Clone, Parser, Copy)]
-pub struct ClapChain {
-    #[clap(
-        short = 'c',
-        long = "chain",
-        env = "CHAIN",
-        default_value = "mainnet",
-        value_parser = ChainValueParser::default(),
-        value_name = "CHAIN"
-    )]
-    pub inner: Chain,
-}
-
-/// The value parser for `Chain`s
+/// Custom Clap value parser for [`Chain`]s.
+///
+/// Displays all possible chains when an invalid chain is provided.
 #[derive(Clone, Debug)]
 pub struct ChainValueParser {
     pub inner: PossibleValuesParser,
 }
 
-impl Default for ChainValueParser {
-    fn default() -> Self {
-        ChainValueParser { inner: Chain::VARIANTS.into() }
+impl ChainValueParser {
+    pub fn new() -> Self {
+        Self { inner: PossibleValuesParser::from(NamedChain::VARIANTS) }
     }
 }
 
@@ -42,22 +27,12 @@ impl TypedValueParser for ChainValueParser {
         arg: Option<&clap::Arg>,
         value: &OsStr,
     ) -> Result<Self::Value, clap::Error> {
-        self.inner.parse_ref(cmd, arg, value)?.parse::<Chain>().map_err(|_| {
-            clap::Error::raw(
-                clap::error::ErrorKind::InvalidValue,
-                "chain argument did not match any possible chain variant",
-            )
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn can_parse_clap_chain() {
-        let args: ClapChain = ClapChain::parse_from(["foundry-cli", "--chain", "mainnet"]);
-        assert_eq!(args.inner, Chain::Mainnet);
+        if let Some(id) = value.to_str().and_then(|value| value.parse::<u64>().ok()) {
+            Ok(Chain::Id(id))
+        } else {
+            let string = self.inner.parse_ref(cmd, arg, value)?;
+            let named = string.parse::<NamedChain>().expect("Already validated");
+            Ok(Chain::Named(named))
+        }
     }
 }

@@ -167,6 +167,7 @@ pub struct ScriptArgs {
     )]
     pub slow: bool,
 
+    /// The Etherscan (or equivalent) API key
     #[clap(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
     pub etherscan_api_key: Option<String>,
 

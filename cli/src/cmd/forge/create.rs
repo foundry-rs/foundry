@@ -5,7 +5,7 @@ use crate::{
         forge::build::CoreBuildArgs, read_constructor_args_file, remove_contract, retry::RetryArgs,
         LoadConfig,
     },
-    opts::{EthereumOpts, TransactionOpts},
+    opts::{EthereumOpts, EtherscanOpts, TransactionOpts},
     utils,
 };
 use cast::SimpleCast;
@@ -168,8 +168,10 @@ impl CreateArgs {
             constructor_args,
             constructor_args_path: None,
             num_of_optimizations: None,
-            chain: chain.into(),
-            etherscan_key: self.eth.etherscan.key.clone(),
+            etherscan: EtherscanOpts {
+                key: self.eth.etherscan.key.clone(),
+                chain: Some(chain.into()),
+            },
             flatten: false,
             force: false,
             watch: true,
@@ -313,8 +315,7 @@ impl CreateArgs {
             constructor_args,
             constructor_args_path: None,
             num_of_optimizations,
-            chain: chain.into(),
-            etherscan_key: self.eth.etherscan.key.clone(),
+            etherscan: EtherscanOpts { key: self.eth.etherscan.key, chain: Some(chain.into()) },
             flatten: false,
             force: false,
             watch: true,

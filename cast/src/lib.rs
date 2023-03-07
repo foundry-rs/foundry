@@ -773,6 +773,7 @@ pub enum AbiPath {
 }
 
 pub struct SimpleCast;
+
 impl SimpleCast {
     /// Returns the maximum value of the given integer type
     ///

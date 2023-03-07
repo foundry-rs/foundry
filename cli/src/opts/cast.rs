@@ -1,4 +1,4 @@
-use super::{ClapChain, EthereumOpts};
+use super::{EtherscanOpts, RpcOpts};
 use crate::{
     cmd::cast::{
         bind::BindArgs, call::CallArgs, create2::Create2Args, estimate::EstimateArgs,
@@ -110,6 +110,7 @@ The input can be:
     FromFixedPoint {
         #[clap(value_name = "DECIMALS")]
         decimals: Option<String>,
+
         #[clap(allow_hyphen_values = true, value_name = "VALUE")]
         // negative values not yet supported internally
         value: Option<String>,
@@ -127,6 +128,7 @@ The input can be:
     ToFixedPoint {
         #[clap(value_name = "DECIMALS")]
         decimals: Option<String>,
+
         #[clap(allow_hyphen_values = true, value_name = "VALUE")]
         value: Option<String>,
     },
@@ -149,10 +151,13 @@ The input can be:
     LeftShift {
         #[clap(value_name = "VALUE")]
         value: String,
+
         #[clap(value_name = "BITS")]
         bits: String,
+
         #[clap(long = "base-in", help = "The input base")]
         base_in: Option<String>,
+
         #[clap(long = "base-out", help = "The output base", default_value = "16")]
         base_out: String,
     },
@@ -161,10 +166,13 @@ The input can be:
     RightShift {
         #[clap(value_name = "VALUE")]
         value: String,
+
         #[clap(value_name = "BITS")]
         bits: String,
+
         #[clap(long = "base-in", help = "The input base")]
         base_in: Option<String>,
+
         #[clap(long = "base-out", help = "The output base", default_value = "16")]
         base_out: String,
     },
@@ -185,6 +193,7 @@ Examples:
         #[clap(value_name = "VALUE")]
         // negative values not yet supported internally
         value: Option<String>,
+
         #[clap(
             help = "The unit to convert to (ether, gwei, wei).",
             default_value = "wei",
@@ -199,6 +208,7 @@ Examples:
         #[clap(allow_hyphen_values = true, value_name = "VALUE")]
         // negative values not yet supported internally
         value: Option<String>,
+
         #[clap(value_name = "UNIT", default_value = "eth")]
         unit: String,
     },
@@ -209,6 +219,7 @@ Examples:
         #[clap(allow_hyphen_values = true, value_name = "VALUE")]
         // negative values not yet supported internally
         value: Option<String>,
+
         #[clap(value_name = "UNIT", default_value = "eth")]
         unit: String,
     },
@@ -232,6 +243,7 @@ Examples:
     ToBase {
         #[clap(flatten)]
         base: ToBaseArgs,
+
         #[clap(value_name = "BASE", help = "The output base")]
         base_out: Option<String>,
     },
@@ -245,10 +257,13 @@ Examples:
             value_name = "ADDRESS"
         )]
         address: NameOrAddress,
+
         #[clap(help = "The signature of the function to call.", value_name = "SIG")]
         sig: String,
+
         #[clap(help = "The arguments of the function to call.", value_name = "ARGS")]
         args: Vec<String>,
+
         #[clap(
             long,
             short = 'B',
@@ -257,11 +272,12 @@ Examples:
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
-        #[clap(flatten)]
-        // TODO: We only need RPC URL + etherscan stuff from this struct
-        eth: EthereumOpts,
+
         #[clap(long = "json", short = 'j', help_heading = "Display options")]
         to_json: bool,
+
+        #[clap(flatten)]
+        rpc: RpcOpts,
     },
     #[clap(name = "block")]
     #[clap(visible_alias = "bl")]
@@ -273,24 +289,28 @@ Examples:
             value_name = "BLOCK"
         )]
         block: BlockId,
+
         #[clap(
             help = "If specified, only get the given field of the block.",
             value_name = "FIELD"
         )]
         field: Option<String>,
+
         #[clap(long, env = "CAST_FULL_BLOCK")]
         full: bool,
+
         #[clap(long = "json", short = 'j', help_heading = "Display options")]
         to_json: bool,
-        #[clap(long, env = "ETH_RPC_URL", value_name = "URL")]
-        rpc_url: Option<String>,
+
+        #[clap(flatten)]
+        rpc: RpcOpts,
     },
     #[clap(name = "block-number")]
     #[clap(visible_alias = "bn")]
     #[clap(about = "Get the latest block number.")]
     BlockNumber {
-        #[clap(long, env = "ETH_RPC_URL", value_name = "URL")]
-        rpc_url: Option<String>,
+        #[clap(flatten)]
+        rpc: RpcOpts,
     },
     #[clap(name = "call")]
     #[clap(visible_alias = "c")]
@@ -306,28 +326,29 @@ Examples:
             value_name = "SIG"
         )]
         sig: String,
+
         #[clap(allow_hyphen_values = true, value_name = "ARGS")]
         args: Vec<String>,
     },
     #[clap(name = "chain")]
     #[clap(about = "Get the symbolic name of the current chain.")]
     Chain {
-        #[clap(long, env = "ETH_RPC_URL", value_name = "URL")]
-        rpc_url: Option<String>,
+        #[clap(flatten)]
+        rpc: RpcOpts,
     },
     #[clap(name = "chain-id")]
     #[clap(visible_aliases = &["ci", "cid"])]
     #[clap(about = "Get the Ethereum chain ID.")]
     ChainId {
-        #[clap(long, env = "ETH_RPC_URL", value_name = "URL")]
-        rpc_url: Option<String>,
+        #[clap(flatten)]
+        rpc: RpcOpts,
     },
     #[clap(name = "client")]
     #[clap(visible_alias = "cl")]
     #[clap(about = "Get the current client version.")]
     Client {
-        #[clap(long, env = "ETH_RPC_URL", value_name = "URL")]
-        rpc_url: Option<String>,
+        #[clap(flatten)]
+        rpc: RpcOpts,
     },
     #[clap(name = "compute-address")]
     #[clap(visible_alias = "ca")]
@@ -335,10 +356,12 @@ Examples:
     ComputeAddress {
         #[clap(help = "The deployer address.", value_name = "ADDRESS")]
         address: Option<String>,
+
         #[clap(long, help = "The nonce of the deployer address.", value_parser = parse_u256, value_name = "NONCE")]
         nonce: Option<U256>,
-        #[clap(long, env = "ETH_RPC_URL", value_name = "URL")]
-        rpc_url: Option<String>,
+
+        #[clap(flatten)]
+        rpc: RpcOpts,
     },
     #[clap(name = "namehash")]
     #[clap(visible_aliases = &["na", "nh"])]
@@ -353,12 +376,15 @@ Examples:
     Tx {
         #[clap(value_name = "TX_HASH")]
         tx_hash: String,
+
         #[clap(value_name = "FIELD")]
         field: Option<String>,
+
         #[clap(long = "json", short = 'j', help_heading = "Display options")]
         to_json: bool,
-        #[clap(long, env = "ETH_RPC_URL", value_name = "URL")]
-        rpc_url: Option<String>,
+
+        #[clap(flatten)]
+        rpc: RpcOpts,
     },
     #[clap(name = "receipt")]
     #[clap(visible_alias = "re")]
@@ -366,8 +392,10 @@ Examples:
     Receipt {
         #[clap(value_name = "TX_HASH")]
         tx_hash: String,
+
         #[clap(value_name = "FIELD")]
         field: Option<String>,
+
         #[clap(
             short,
             long,
@@ -376,6 +404,7 @@ Examples:
             value_name = "CONFIRMATIONS"
         )]
         confirmations: usize,
+
         #[clap(
             long = "async",
             env = "CAST_ASYNC",
@@ -384,10 +413,12 @@ Examples:
             help = "Exit immediately if the transaction was not found."
         )]
         cast_async: bool,
+
         #[clap(long = "json", short = 'j', help_heading = "Display options")]
         to_json: bool,
-        #[clap(long, env = "ETH_RPC_URL", value_name = "URL")]
-        rpc_url: Option<String>,
+
+        #[clap(flatten)]
+        rpc: RpcOpts,
     },
     #[clap(name = "send")]
     #[clap(visible_alias = "s")]
@@ -399,6 +430,7 @@ Examples:
     PublishTx {
         #[clap(help = "The raw transaction", value_name = "RAW_TX")]
         raw_tx: String,
+
         #[clap(
             long = "async",
             env = "CAST_ASYNC",
@@ -407,9 +439,9 @@ Examples:
             help = "Only print the transaction hash and exit immediately."
         )]
         cast_async: bool,
-        // FIXME: We only need the RPC URL and `--flashbots` options from this.
+
         #[clap(flatten)]
-        eth: EthereumOpts,
+        rpc: RpcOpts,
     },
     #[clap(name = "estimate")]
     #[clap(visible_alias = "e")]
@@ -424,6 +456,7 @@ Examples:
             value_name = "SIG"
         )]
         sig: String,
+
         #[clap(help = "The ABI-encoded calldata.", value_name = "CALLDATA")]
         calldata: String,
     },
@@ -441,8 +474,10 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
             value_name = "SIG"
         )]
         sig: String,
+
         #[clap(help = "The ABI-encoded calldata.", value_name = "CALLDATA")]
         calldata: String,
+
         #[clap(long, short, help = "Decode input data.")]
         input: bool,
     },
@@ -452,6 +487,7 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
     AbiEncode {
         #[clap(help = "The function signature.", value_name = "SIG")]
         sig: String,
+
         #[clap(help = "The arguments of the function.", value_name = "ARGS")]
         #[clap(allow_hyphen_values = true)]
         args: Vec<String>,
@@ -462,8 +498,10 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
     Index {
         #[clap(help = "The mapping key type.", value_name = "KEY_TYPE")]
         key_type: String,
+
         #[clap(help = "The mapping key.", value_name = "KEY")]
         key: String,
+
         #[clap(help = "The storage slot of the mapping.", value_name = "SLOT_NUMBER")]
         slot_number: String,
     },
@@ -479,10 +517,12 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
+
         #[clap(help = "The address you want to get the nonce for.", value_parser = NameOrAddress::from_str, value_name = "WHO")]
         who: NameOrAddress,
-        #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
-        rpc_url: Option<String>,
+
+        #[clap(flatten)]
+        rpc: RpcOpts,
     },
     #[clap(name = "admin")]
     #[clap(visible_alias = "adm")]
@@ -496,10 +536,12 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
+
         #[clap(help = "The address you want to get the nonce for.", value_parser = NameOrAddress::from_str, value_name = "WHO")]
         who: NameOrAddress,
-        #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
-        rpc_url: Option<String>,
+
+        #[clap(flatten)]
+        rpc: RpcOpts,
     },
     #[clap(name = "4byte")]
     #[clap(visible_aliases = &["4", "4b"])]
@@ -570,8 +612,9 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
-        #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
-        rpc_url: Option<String>,
+
+        #[clap(flatten)]
+        rpc: RpcOpts,
     },
     #[clap(name = "balance")]
     #[clap(visible_alias = "b")]
@@ -585,16 +628,19 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
+
         #[clap(
             help = "The account you want to query",
             value_parser = NameOrAddress::from_str,
             value_name = "WHO"
         )]
         who: NameOrAddress,
-        #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
-        rpc_url: Option<String>,
+
         #[clap(long = "ether", short = 'e', help_heading = "format to ether")]
         to_ether: bool,
+
+        #[clap(flatten)]
+        rpc: RpcOpts,
     },
     #[clap(name = "basefee")]
     #[clap(visible_aliases = &["ba", "fee"])]
@@ -608,8 +654,9 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
-        #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
-        rpc_url: Option<String>,
+
+        #[clap(flatten)]
+        rpc: RpcOpts,
     },
     #[clap(name = "code")]
     #[clap(visible_alias = "co")]
@@ -623,17 +670,19 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
+
         #[clap(help = "The contract address.", value_parser = NameOrAddress::from_str, value_name = "WHO")]
         who: NameOrAddress,
-        #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
-        rpc_url: Option<String>,
+
+        #[clap(flatten)]
+        rpc: RpcOpts,
     },
     #[clap(name = "gas-price")]
     #[clap(visible_alias = "g")]
     #[clap(about = "Get the current gas price.")]
     GasPrice {
-        #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
-        rpc_url: Option<String>,
+        #[clap(flatten)]
+        rpc: RpcOpts,
     },
     #[clap(name = "sig-event")]
     #[clap(visible_alias = "se")]
@@ -655,10 +704,12 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
     ResolveName {
         #[clap(help = "The name to lookup.", value_name = "WHO")]
         who: Option<String>,
-        #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
-        rpc_url: Option<String>,
+
         #[clap(long, short, help = "Perform a reverse lookup to verify that the name is correct.")]
         verify: bool,
+
+        #[clap(flatten)]
+        rpc: RpcOpts,
     },
     #[clap(name = "lookup-address")]
     #[clap(visible_alias = "l")]
@@ -666,14 +717,16 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
     LookupAddress {
         #[clap(help = "The account to perform the lookup for.", value_name = "WHO")]
         who: Option<Address>,
-        #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
-        rpc_url: Option<String>,
+
         #[clap(
             long,
             short,
             help = "Perform a normal lookup to verify that the address is correct."
         )]
         verify: bool,
+
+        #[clap(flatten)]
+        rpc: RpcOpts,
     },
     #[clap(
         name = "storage",
@@ -689,10 +742,10 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
     Proof {
         #[clap(help = "The contract address.", value_parser = NameOrAddress::from_str, value_name = "ADDRESS")]
         address: NameOrAddress,
+
         #[clap(help = "The storage slot numbers (hex or decimal).",  value_parser = parse_slot, value_name = "SLOTS")]
         slots: Vec<H256>,
-        #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
-        rpc_url: Option<String>,
+
         #[clap(
             long,
             short = 'B',
@@ -701,6 +754,9 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
+
+        #[clap(flatten)]
+        rpc: RpcOpts,
     },
     #[clap(name = "nonce")]
     #[clap(visible_alias = "n")]
@@ -714,23 +770,25 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
             value_name = "BLOCK"
         )]
         block: Option<BlockId>,
+
         #[clap(help = "The address you want to get the nonce for.", value_parser = NameOrAddress::from_str, value_name = "WHO")]
         who: NameOrAddress,
-        #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
-        rpc_url: Option<String>,
+
+        #[clap(flatten)]
+        rpc: RpcOpts,
     },
     #[clap(name = "etherscan-source")]
     #[clap(visible_aliases = &["et", "src"])]
     #[clap(about = "Get the source code of a contract from Etherscan.")]
     EtherscanSource {
-        #[clap(flatten)]
-        chain: ClapChain,
         #[clap(help = "The contract's address.", value_name = "ADDRESS")]
         address: String,
+
         #[clap(short, help = "The output directory to expand source tree into.", value_hint = ValueHint::DirPath, value_name = "DIRECTORY")]
         directory: Option<PathBuf>,
-        #[clap(long, short, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
-        etherscan_api_key: Option<String>,
+
+        #[clap(flatten)]
+        etherscan: EtherscanOpts,
     },
     #[clap(name = "wallet", visible_alias = "w", about = "Wallet management utilities.")]
     Wallet {
@@ -808,6 +866,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
 pub struct ToBaseArgs {
     #[clap(allow_hyphen_values = true, value_name = "VALUE")]
     pub value: Option<String>,
+
     #[clap(long = "base-in", short = 'i', help = "The input base")]
     pub base_in: Option<String>,
 }
