@@ -646,7 +646,7 @@ pub struct NestedValue {
     pub value: String,
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone, Debug, Default)]
 pub struct ScriptConfig {
     pub config: Config,
     pub evm_opts: EvmOpts,
