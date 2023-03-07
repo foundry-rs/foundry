@@ -8,27 +8,26 @@ use itertools::Itertools;
 /// CLI arguments for `cast rpc`.
 #[derive(Debug, Clone, Parser)]
 pub struct RpcArgs {
-    /// Send raw JSON parameters
-    #[clap(
-        short = 'w',
-        long,
-        long_help = r#"The first param will be interpreted as a raw JSON array of params.
-If no params are given, stdin will be used. For example:
-
-cast rpc eth_getBlockByNumber '["0x123", false]' --raw
-    => {"method": "eth_getBlockByNumber", "params": ["0x123", false] ... }"#
-    )]
-    raw: bool,
-
     /// RPC method name
     method: String,
 
     /// RPC parameters
-    #[clap(long_help = r#"RPC parameters interpreted as JSON:
-
-cast rpc eth_getBlockByNumber 0x123 false
-    => {"method": "eth_getBlockByNumber", "params": ["0x123", false] ... }"#)]
+    ///
+    /// Interpreted as JSON:
+    ///
+    /// cast rpc eth_getBlockByNumber 0x123 false
+    /// => {"method": "eth_getBlockByNumber", "params": ["0x123", false] ... }
     params: Vec<String>,
+
+    /// Send raw JSON parameters
+    ///
+    /// The first param will be interpreted as a raw JSON array of params.
+    /// If no params are given, stdin will be used. For example:
+    ///
+    /// cast rpc eth_getBlockByNumber '["0x123", false]' --raw
+    ///     => {"method": "eth_getBlockByNumber", "params": ["0x123", false] ... }
+    #[clap(short = 'w', long)]
+    raw: bool,
 
     #[clap(flatten)]
     rpc: RpcOpts,
