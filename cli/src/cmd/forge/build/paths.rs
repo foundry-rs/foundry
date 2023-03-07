@@ -30,7 +30,7 @@ pub struct ProjectPathsArgs {
         env = "DAPP_SRC",
         help = "The contracts source directory.",
         long,
-        short,
+        short = 'C',
         value_hint = ValueHint::DirPath,
         value_name = "PATH"
     )]
