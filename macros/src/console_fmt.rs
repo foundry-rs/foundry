@@ -215,7 +215,7 @@ fn format_spec<'a>(
         // no more values
         if current_value.is_none() {
             result.push_str(&s[i..].replace("%%", "%"));
-            break;
+            break
         }
 
         if expect_fmt {
