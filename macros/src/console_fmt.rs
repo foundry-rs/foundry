@@ -44,8 +44,10 @@ impl ConsoleFmt for String {
         match spec {
             FormatSpec::String => self.clone(),
             FormatSpec::Object => format!("'{}'", self.clone()),
-            FormatSpec::Number | FormatSpec::Integer | 
-                FormatSpec::Exponential | FormatSpec::Hexadecimal => String::from("NaN"),
+            FormatSpec::Number
+            | FormatSpec::Integer
+            | FormatSpec::Exponential
+            | FormatSpec::Hexadecimal => String::from("NaN"),
         }
     }
 }
@@ -56,8 +58,9 @@ impl ConsoleFmt for bool {
             FormatSpec::String => self.pretty(),
             FormatSpec::Object => format!("'{}'", self.pretty()),
             FormatSpec::Number => (*self as i32).to_string(),
-            FormatSpec::Integer | 
-                FormatSpec::Exponential | FormatSpec::Hexadecimal => String::from("NaN"),
+            FormatSpec::Integer | FormatSpec::Exponential | FormatSpec::Hexadecimal => {
+                String::from("NaN")
+            }
         }
     }
 }
@@ -65,8 +68,9 @@ impl ConsoleFmt for bool {
 impl ConsoleFmt for U256 {
     fn fmt(&self, spec: FormatSpec) -> String {
         match spec {
-            FormatSpec::String | FormatSpec::Object
-                | FormatSpec::Number | FormatSpec::Integer => self.pretty(),
+            FormatSpec::String | FormatSpec::Object | FormatSpec::Number | FormatSpec::Integer => {
+                self.pretty()
+            }
             FormatSpec::Hexadecimal => format!("0x{:x}", *self),
             FormatSpec::Exponential => {
                 let log = self.pretty().len() - 1;
@@ -75,7 +79,11 @@ impl ConsoleFmt for U256 {
                 let integer = amount / exp10;
                 let decimal = (amount % exp10).to_string();
                 let decimal = format!("{decimal:0>log$}").trim_end_matches('0').to_string();
-                if decimal != "" {format!("{integer}.{decimal}e{log}")} else {format!("{integer}e{log}")}
+                if !decimal.is_empty() {
+                    format!("{integer}.{decimal}e{log}")
+                } else {
+                    format!("{integer}e{log}")
+                }
             }
         }
     }
@@ -84,18 +92,27 @@ impl ConsoleFmt for U256 {
 impl ConsoleFmt for I256 {
     fn fmt(&self, spec: FormatSpec) -> String {
         match spec {
-            FormatSpec::String | FormatSpec::Object
-                | FormatSpec::Number | FormatSpec::Integer => self.pretty(),
+            FormatSpec::String | FormatSpec::Object | FormatSpec::Number | FormatSpec::Integer => {
+                self.pretty()
+            }
             FormatSpec::Hexadecimal => format!("0x{:x}", *self),
             FormatSpec::Exponential => {
                 let amount = *self;
                 let sign = if amount.is_negative() { "-" } else { "" };
-                let log = if amount.is_negative() { self.pretty().len() - 2 } else { self.pretty().len() - 1 };
+                let log = if amount.is_negative() {
+                    self.pretty().len() - 2
+                } else {
+                    self.pretty().len() - 1
+                };
                 let exp10 = I256::exp10(log);
                 let integer = (amount / exp10).twos_complement();
                 let decimal = (amount % exp10).twos_complement().to_string();
                 let decimal = format!("{decimal:0>log$}").trim_end_matches('0').to_string();
-                if decimal != "" {format!("{sign}{integer}.{decimal}e{log}")} else {format!("{integer}e{log}")}
+                if !decimal.is_empty() {
+                    format!("{sign}{integer}.{decimal}e{log}")
+                } else {
+                    format!("{integer}e{log}")
+                }
             }
         }
     }
@@ -106,8 +123,10 @@ impl ConsoleFmt for Address {
         match spec {
             FormatSpec::String => self.pretty(),
             FormatSpec::Object => format!("'{}'", self.pretty()),
-            FormatSpec::Number | FormatSpec::Integer | 
-                FormatSpec::Exponential | FormatSpec::Hexadecimal => String::from("NaN"),
+            FormatSpec::Number
+            | FormatSpec::Integer
+            | FormatSpec::Exponential
+            | FormatSpec::Hexadecimal => String::from("NaN"),
         }
     }
 }
@@ -117,8 +136,10 @@ impl ConsoleFmt for Bytes {
         match spec {
             FormatSpec::String => self.pretty(),
             FormatSpec::Object => format!("'{}'", self.pretty()),
-            FormatSpec::Number | FormatSpec::Integer | 
-                FormatSpec::Exponential | FormatSpec::Hexadecimal => String::from("NaN"),
+            FormatSpec::Number
+            | FormatSpec::Integer
+            | FormatSpec::Exponential
+            | FormatSpec::Hexadecimal => String::from("NaN"),
         }
     }
 }
@@ -194,7 +215,7 @@ fn format_spec<'a>(
         // no more values
         if current_value.is_none() {
             result.push_str(&s[i..].replace("%%", "%"));
-            break
+            break;
         }
 
         if expect_fmt {
