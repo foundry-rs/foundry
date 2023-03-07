@@ -37,7 +37,6 @@ pub struct SendTxArgs {
     #[clap(flatten)]
     eth: EthereumOpts,
     #[clap(
-        short,
         long,
         help = "The number of confirmations until the receipt is fetched.",
         default_value = "1",

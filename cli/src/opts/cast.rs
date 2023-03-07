@@ -397,7 +397,6 @@ Examples:
         field: Option<String>,
 
         #[clap(
-            short,
             long,
             help = "The number of confirmations until the receipt is fetched",
             default_value = "1",
