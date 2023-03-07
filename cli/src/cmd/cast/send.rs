@@ -1,11 +1,15 @@
 // cast send subcommands
-use crate::opts::{EthereumOpts, TransactionOpts, WalletType};
+use crate::{
+    opts::{EthereumOpts, TransactionOpts},
+    utils,
+};
 use cast::{Cast, TxBuilder};
 use clap::Parser;
-use ethers::{providers::Middleware, types::NameOrAddress};
-use foundry_common::try_get_http_provider;
+use ethers::{
+    prelude::MiddlewareBuilder, providers::Middleware, signers::Signer, types::NameOrAddress,
+};
 use foundry_config::{Chain, Config};
-use std::{str::FromStr, sync::Arc};
+use std::str::FromStr;
 
 /// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
@@ -81,24 +85,24 @@ impl SendTxArgs {
             command,
         } = self;
         let config = Config::from(&eth);
-        let provider = Arc::new(try_get_http_provider(config.get_rpc_url_or_localhost_http()?)?);
-        let chain: Chain =
-            if let Some(chain) = eth.chain { chain } else { provider.get_chainid().await?.into() };
+        let provider = utils::get_provider(&config)?;
+        let chain = utils::get_chain(config.chain_id, &provider).await?;
         let mut sig = sig.unwrap_or_default();
 
-        if let Ok(Some(signer)) = eth.signer_with(chain.into(), provider.clone()).await {
-            let from = match &signer {
-                WalletType::Ledger(leger) => leger.address(),
-                WalletType::Local(local) => local.address(),
-                WalletType::Trezor(trezor) => trezor.address(),
-                WalletType::Aws(aws) => aws.address(),
-            };
+        if let Ok(signer) = eth.wallet.signer(chain.id()).await {
+            let from = signer.address();
 
             // prevent misconfigured hwlib from sending a transaction that defies
             // user-specified --from
             if let Some(specified_from) = eth.wallet.from {
                 if specified_from != from {
-                    eyre::bail!("The specified sender via CLI/env vars does not match the sender configured via the hardware wallet's HD Path. Please use the `--hd-path <PATH>` parameter to specify the BIP32 Path which corresponds to the sender. This will be automatically detected in the future: https://github.com/foundry-rs/foundry/issues/2289")
+                    eyre::bail!("\
+                        The specified sender via CLI/env vars does not match the sender configured via\n\
+                        the hardware wallet's HD Path.\n\
+                        Please use the `--hd-path <PATH>` parameter to specify the BIP32 Path which\n\
+                        corresponds to the sender.\n\
+                        This will be automatically detected in the future: https://github.com/foundry-rs/foundry/issues/2289\
+                    ")
                 }
             }
 
@@ -119,74 +123,25 @@ impl SendTxArgs {
                 None
             };
 
-            match signer {
-                WalletType::Ledger(signer) => {
-                    cast_send(
-                        &signer,
-                        from,
-                        to,
-                        code,
-                        (sig, args),
-                        tx,
-                        chain,
-                        config.etherscan_api_key,
-                        cast_async,
-                        confirmations,
-                        to_json,
-                    )
-                    .await?;
-                }
-                WalletType::Local(signer) => {
-                    cast_send(
-                        &signer,
-                        from,
-                        to,
-                        code,
-                        (sig, args),
-                        tx,
-                        chain,
-                        config.etherscan_api_key,
-                        cast_async,
-                        confirmations,
-                        to_json,
-                    )
-                    .await?;
-                }
-                WalletType::Trezor(signer) => {
-                    cast_send(
-                        &signer,
-                        from,
-                        to,
-                        code,
-                        (sig, args),
-                        tx,
-                        chain,
-                        config.etherscan_api_key,
-                        cast_async,
-                        confirmations,
-                        to_json,
-                    )
-                    .await?;
-                }
-                WalletType::Aws(signer) => {
-                    cast_send(
-                        &signer,
-                        from,
-                        to,
-                        code,
-                        (sig, args),
-                        tx,
-                        chain,
-                        config.etherscan_api_key,
-                        cast_async,
-                        confirmations,
-                        to_json,
-                    )
-                    .await?;
-                }
-            } // Checking if signer isn't the default value
-              // 00a329c0648769A73afAc7F9381E08FB43dBEA72.
+            let provider = provider.with_signer(signer);
+
+            cast_send(
+                provider,
+                from,
+                to,
+                code,
+                (sig, args),
+                tx,
+                chain,
+                config.etherscan_api_key,
+                cast_async,
+                confirmations,
+                to_json,
+            )
+            .await
         } else if config.sender != Config::DEFAULT_SENDER {
+            // Checking if signer isn't the default value
+            // 00a329c0648769A73afAc7F9381E08FB43dBEA72.
             if resend {
                 tx.nonce = Some(provider.get_transaction_count(config.sender, None).await?);
             }
@@ -217,11 +172,15 @@ impl SendTxArgs {
                 confirmations,
                 to_json,
             )
-            .await?;
+            .await
         } else {
-            eyre::bail!("No wallet or sender address provided. Consider passing it via the --from flag or setting the ETH_FROM env variable or setting in the foundry.toml file");
+            Err(eyre::eyre!(
+                "\
+                    No wallet or sender address provided. Consider passing it via the --from flag or\n\
+                    setting the ETH_FROM env variable or setting in foundry.toml\
+                "
+            ))
         }
-        Ok(())
     }
 }
 

@@ -1,13 +1,13 @@
 // cast estimate subcommands
-use crate::{opts::EthereumOpts, utils::parse_ether_value};
+use crate::{
+    opts::EthereumOpts,
+    utils::{self, parse_ether_value},
+};
 use cast::{Cast, TxBuilder};
 use clap::Parser;
-use ethers::{
-    providers::Middleware,
-    types::{NameOrAddress, U256},
-};
+use ethers::types::{NameOrAddress, U256};
 use foundry_common::try_get_http_provider;
-use foundry_config::{Chain, Config};
+use foundry_config::Config;
 use std::str::FromStr;
 
 /// CLI arguments for `cast estimate`.
@@ -68,10 +68,8 @@ impl EstimateArgs {
         let config = Config::from(&eth);
         let provider = try_get_http_provider(config.get_rpc_url_or_localhost_http()?)?;
 
-        let chain: Chain =
-            if let Some(chain) = eth.chain { chain } else { provider.get_chainid().await?.into() };
-
-        let sender = eth.sender().await;
+        let chain = utils::get_chain(config.chain_id, &provider).await?;
+        let sender = eth.wallet.sender().await;
         let mut builder = TxBuilder::new(&provider, sender, to, chain, false).await?;
         builder.etherscan_api_key(config.get_etherscan_api_key(Some(chain)));
         match command {

@@ -24,7 +24,7 @@ use foundry_common::{
     },
     try_get_http_provider,
 };
-use foundry_config::{Chain, Config};
+use foundry_config::Config;
 use rustc_hex::ToHex;
 
 #[tokio::main]
@@ -194,12 +194,7 @@ async fn main() -> eyre::Result<()> {
             let config = Config::from(&eth);
             let provider = try_get_http_provider(config.get_rpc_url_or_localhost_http()?)?;
 
-            let chain: Chain = if let Some(chain) = eth.chain {
-                chain
-            } else {
-                provider.get_chainid().await?.into()
-            };
-
+            let chain = utils::get_chain(config.chain_id, &provider).await?;
             let mut builder =
                 TxBuilder::new(&provider, config.sender, Some(address), chain, false).await?;
             builder.set_args(&sig, args).await?;

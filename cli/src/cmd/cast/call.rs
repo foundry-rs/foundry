@@ -1,17 +1,14 @@
 // cast estimate subcommands
 use crate::{
     opts::{EthereumOpts, TransactionOpts},
-    utils::parse_ether_value,
+    utils::{self, parse_ether_value},
 };
 use cast::{Cast, TxBuilder};
 use clap::Parser;
-use ethers::{
-    providers::Middleware,
-    types::{BlockId, NameOrAddress, U256},
-};
+use ethers::types::{BlockId, NameOrAddress, U256};
 use eyre::WrapErr;
 use foundry_common::try_get_http_provider;
-use foundry_config::{Chain, Config};
+use foundry_config::Config;
 use std::str::FromStr;
 
 #[derive(Debug, Parser)]
@@ -84,10 +81,8 @@ impl CallArgs {
         let config = Config::from(&eth);
         let provider = try_get_http_provider(config.get_rpc_url_or_localhost_http()?)?;
 
-        let chain: Chain =
-            if let Some(chain) = eth.chain { chain } else { provider.get_chainid().await?.into() };
-
-        let sender = eth.sender().await;
+        let chain = utils::get_chain(config.chain_id, &provider).await?;
+        let sender = eth.wallet.sender().await;
         let mut builder = TxBuilder::new(&provider, sender, to, chain, tx.legacy).await?;
         builder
             .gas(tx.gas_limit)
