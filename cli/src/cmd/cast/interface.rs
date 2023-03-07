@@ -1,11 +1,10 @@
-use crate::{cmd::Cmd, opts::ClapChain};
+use crate::opts::ClapChain;
 use cast::{AbiPath, SimpleCast};
 use clap::Parser;
 use ethers::types::Address;
 use eyre::WrapErr;
 use foundry_common::fs;
 use foundry_config::Config;
-use futures::future::BoxFuture;
 use std::path::{Path, PathBuf};
 
 /// CLI arguments for `cast interface`.
@@ -42,57 +41,48 @@ If an address is specified, then the ABI is fetched from Etherscan."#,
     chain: ClapChain,
 }
 
-impl Cmd for InterfaceArgs {
-    type Output = BoxFuture<'static, eyre::Result<()>>;
-    fn run(self) -> eyre::Result<Self::Output> {
-        let cmd = Box::pin(async move {
-            let InterfaceArgs {
-                path_or_address,
-                name,
-                pragma,
-                output_location,
-                etherscan_api_key,
-                chain,
-            } = self;
-            let interfaces = if Path::new(&path_or_address).exists() {
-                SimpleCast::generate_interface(AbiPath::Local { path: path_or_address, name })
-                    .await?
-            } else {
-                let api_key = etherscan_api_key.or_else(|| {
+impl InterfaceArgs {
+    pub async fn run(self) -> eyre::Result<()> {
+        let InterfaceArgs {
+            path_or_address,
+            name,
+            pragma,
+            output_location,
+            etherscan_api_key,
+            chain,
+        } = self;
+        let interfaces = if Path::new(&path_or_address).exists() {
+            SimpleCast::generate_interface(AbiPath::Local { path: path_or_address, name }).await?
+        } else {
+            let api_key = etherscan_api_key.or_else(|| {
                     let config = Config::load();
                     config.get_etherscan_api_key(Some(chain.inner))
                 }).ok_or_else(|| eyre::eyre!("No Etherscan API Key is set. Consider using the ETHERSCAN_API_KEY env var, or setting the -e CLI argument or etherscan-api-key in foundry.toml"))?;
 
-                SimpleCast::generate_interface(AbiPath::Etherscan {
-                    chain: chain.inner,
-                    api_key,
-                    address: path_or_address
-                        .parse::<Address>()
-                        .wrap_err("Invalid address provided. Did you make a typo?")?,
-                })
-                .await?
-            };
+            SimpleCast::generate_interface(AbiPath::Etherscan {
+                chain: chain.inner,
+                api_key,
+                address: path_or_address
+                    .parse::<Address>()
+                    .wrap_err("Invalid address provided. Did you make a typo?")?,
+            })
+            .await?
+        };
 
-            // put it all together
-            let pragma = format!("pragma solidity {pragma};");
-            let interfaces = interfaces
-                .iter()
-                .map(|iface| iface.source.to_string())
-                .collect::<Vec<_>>()
-                .join("\n");
-            let res = format!("{pragma}\n\n{interfaces}");
+        // put it all together
+        let pragma = format!("pragma solidity {pragma};");
+        let interfaces =
+            interfaces.iter().map(|iface| iface.source.to_string()).collect::<Vec<_>>().join("\n");
+        let res = format!("{pragma}\n\n{interfaces}");
 
-            // print or write to file
-            if let Some(loc) = output_location {
-                fs::create_dir_all(loc.parent().unwrap())?;
-                fs::write(&loc, res)?;
-                println!("Saved interface at {}", loc.display());
-            } else {
-                println!("{res}");
-            }
-            Ok(())
-        });
-
-        Ok(cmd)
+        // print or write to file
+        if let Some(loc) = output_location {
+            fs::create_dir_all(loc.parent().unwrap())?;
+            fs::write(&loc, res)?;
+            println!("Saved interface at {}", loc.display());
+        } else {
+            println!("{res}");
+        }
+        Ok(())
     }
 }

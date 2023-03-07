@@ -1,9 +1,8 @@
-use crate::{cmd::Cmd, utils::try_consume_config_rpc_url};
+use crate::utils::try_consume_config_rpc_url;
 use cast::Cast;
 use clap::Parser;
 use eyre::Result;
 use foundry_common::try_get_http_provider;
-use futures::future::BoxFuture;
 use itertools::Itertools;
 
 /// CLI arguments for `cast rpc`.
@@ -38,21 +37,10 @@ rpc eth_getBlockByNumber 0x123 false
     params: Vec<String>,
 }
 
-impl Cmd for RpcArgs {
-    type Output = BoxFuture<'static, Result<()>>;
-    fn run(self) -> eyre::Result<Self::Output> {
-        let RpcArgs { rpc_url, raw, method, params } = self;
-        Ok(Box::pin(Self::do_rpc(rpc_url, raw, method, params)))
-    }
-}
-
 impl RpcArgs {
-    async fn do_rpc(
-        rpc_url: Option<String>,
-        raw: bool,
-        method: String,
-        params: Vec<String>,
-    ) -> Result<()> {
+    pub async fn run(self) -> Result<()> {
+        let RpcArgs { rpc_url, raw, method, params } = self;
+
         let rpc_url = try_consume_config_rpc_url(rpc_url)?;
         let provider = try_get_http_provider(rpc_url)?;
         let params = if raw {

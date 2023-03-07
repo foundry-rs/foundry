@@ -1,12 +1,12 @@
 //! cast find-block subcommand
 
-use crate::{cmd::Cmd, utils::try_consume_config_rpc_url};
+use crate::utils::try_consume_config_rpc_url;
 use cast::Cast;
 use clap::Parser;
 use ethers::prelude::*;
 use eyre::Result;
 use foundry_common::try_get_http_provider;
-use futures::{future::BoxFuture, join};
+use futures::join;
 
 /// CLI arguments for `cast find-block`.
 #[derive(Debug, Clone, Parser)]
@@ -17,17 +17,10 @@ pub struct FindBlockArgs {
     rpc_url: Option<String>,
 }
 
-impl Cmd for FindBlockArgs {
-    type Output = BoxFuture<'static, Result<()>>;
-
-    fn run(self) -> Result<Self::Output> {
-        let FindBlockArgs { timestamp, rpc_url } = self;
-        Ok(Box::pin(Self::query_block(timestamp, rpc_url)))
-    }
-}
-
 impl FindBlockArgs {
-    async fn query_block(timestamp: u64, rpc_url: Option<String>) -> Result<()> {
+    pub async fn run(self) -> Result<()> {
+        let FindBlockArgs { timestamp, rpc_url } = self;
+
         let ts_target = U256::from(timestamp);
         let rpc_url = try_consume_config_rpc_url(rpc_url)?;
 

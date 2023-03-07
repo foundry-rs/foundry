@@ -83,6 +83,7 @@ pub struct BuildArgs {
 
 impl Cmd for BuildArgs {
     type Output = ProjectCompileOutput;
+
     fn run(self) -> eyre::Result<Self::Output> {
         let mut config = self.try_load_config_emit_warnings()?;
         let mut project = config.project()?;

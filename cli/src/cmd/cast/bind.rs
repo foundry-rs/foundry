@@ -1,10 +1,9 @@
-use crate::{cmd::Cmd, opts::ClapChain};
+use crate::opts::ClapChain;
 use cast::AbiPath;
 use clap::{Parser, ValueHint};
 use ethers::prelude::{errors::EtherscanError, Abigen, Client, MultiAbigen};
 use forge::Address;
 use foundry_common::fs::json_files;
-use futures::future::BoxFuture;
 use std::path::{Path, PathBuf};
 
 static DEFAULT_CRATE_NAME: &str = "foundry-contracts";
@@ -55,29 +54,20 @@ If an address is specified, then the ABI is fetched from Etherscan."#,
     chain: ClapChain,
 }
 
-impl Cmd for BindArgs {
-    type Output = BoxFuture<'static, eyre::Result<()>>;
-
-    fn run(self) -> eyre::Result<Self::Output> {
-        let cmd = Box::pin(async move {
-            let bind_args = self.clone();
-            if Path::new(&self.path_or_address).exists() {
-                self.generate_bindings(AbiPath::Local {
-                    path: bind_args.path_or_address,
-                    name: None,
-                })
+impl BindArgs {
+    pub async fn run(self) -> eyre::Result<()> {
+        let bind_args = self.clone();
+        if Path::new(&self.path_or_address).exists() {
+            self.generate_bindings(AbiPath::Local { path: bind_args.path_or_address, name: None })
                 .await
-            } else {
-                self.generate_bindings(AbiPath::Etherscan {
-                    address: bind_args.path_or_address.parse::<Address>().unwrap(),
-                    chain: bind_args.chain.inner,
-                    api_key: bind_args.etherscan_api_key.unwrap(),
-                })
-                .await
-            }
-        });
-
-        Ok(cmd)
+        } else {
+            self.generate_bindings(AbiPath::Etherscan {
+                address: bind_args.path_or_address.parse::<Address>().unwrap(),
+                chain: bind_args.chain.inner,
+                api_key: bind_args.etherscan_api_key.unwrap(),
+            })
+            .await
+        }
     }
 }
 

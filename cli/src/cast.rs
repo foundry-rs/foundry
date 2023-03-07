@@ -177,8 +177,8 @@ async fn main() -> eyre::Result<()> {
         Subcommands::CalldataEncode { sig, args } => {
             println!("{}", SimpleCast::calldata_encode(sig, &args)?);
         }
-        Subcommands::Interface(cmd) => cmd.run()?.await?,
-        Subcommands::Bind(cmd) => cmd.run()?.await?,
+        Subcommands::Interface(cmd) => cmd.run().await?,
+        Subcommands::Bind(cmd) => cmd.run().await?,
         Subcommands::PrettyCalldata { calldata, offline } => {
             let calldata = stdin::unwrap_line(calldata)?;
             println!("{}", pretty_calldata(&calldata, offline).await?);
@@ -271,7 +271,7 @@ async fn main() -> eyre::Result<()> {
             let computed = Cast::new(&provider).compute_address(address, nonce).await?;
             println!("Computed Address: {}", SimpleCast::to_checksum_address(&computed));
         }
-        Subcommands::FindBlock(cmd) => cmd.run()?.await?,
+        Subcommands::FindBlock(cmd) => cmd.run().await?,
         Subcommands::GasPrice { rpc_url } => {
             let rpc_url = try_consume_config_rpc_url(rpc_url)?;
             let provider = try_get_http_provider(rpc_url)?;
@@ -302,7 +302,7 @@ async fn main() -> eyre::Result<()> {
             let value = provider.get_proof(address, slots, block).await?;
             println!("{}", serde_json::to_string(&value)?);
         }
-        Subcommands::Rpc(cmd) => cmd.run()?.await?,
+        Subcommands::Rpc(cmd) => cmd.run().await?,
         Subcommands::Storage(cmd) => cmd.run().await?,
 
         // Calls & transactions
