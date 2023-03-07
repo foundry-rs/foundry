@@ -32,7 +32,7 @@ impl ScriptTester {
 
         cmd.args([
             "script",
-            "-r",
+            "-R",
             "ds-test/=lib/",
             target_contract,
             "--root",
