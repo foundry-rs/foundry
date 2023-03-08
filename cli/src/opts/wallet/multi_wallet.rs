@@ -1,8 +1,7 @@
-use super::{WalletTrait, WalletType};
+use super::{WalletSigner, WalletTrait};
 use cast::{AwsChainProvider, AwsClient, AwsHttpClient, AwsRegion, KmsClient};
 use clap::{ArgAction, Parser};
 use ethers::{
-    middleware::SignerMiddleware,
     prelude::{Middleware, Signer},
     signers::{AwsSigner, HDPath as LedgerHDPath, Ledger, LocalWallet, Trezor, TrezorHDPath},
     types::Address,
@@ -26,23 +25,6 @@ macro_rules! get_wallets {
                 $call;
             }
         )+
-    };
-}
-
-macro_rules! collect_addresses {
-    ($local:expr, $unused:expr, $addresses:expr, $addr:expr, $wallet:expr) => {
-        if $addresses.contains(&$addr) {
-            $addresses.remove(&$addr);
-
-            $local.insert($addr, $wallet);
-
-            if $addresses.is_empty() {
-                return Ok($local)
-            }
-        } else {
-            // Just to show on error.
-            $unused.push($addr);
-        }
     };
 }
 
@@ -242,19 +224,12 @@ impl MultiWallet {
         provider: Arc<RetryProvider>,
         mut addresses: HashSet<Address>,
         script_wallets: &[LocalWallet],
-    ) -> Result<HashMap<Address, WalletType>> {
+    ) -> Result<HashMap<Address, WalletSigner>> {
         println!("\n###\nFinding wallets for all the necessary addresses...");
         let chain = provider.get_chainid().await?.as_u64();
 
         let mut local_wallets = HashMap::new();
         let mut unused_wallets = vec![];
-
-        let script_wallets_fn = || -> Result<Option<Vec<LocalWallet>>> {
-            if !script_wallets.is_empty() {
-                return Ok(Some(script_wallets.to_vec()))
-            }
-            Ok(None)
-        };
 
         get_wallets!(
             wallets,
@@ -266,14 +241,23 @@ impl MultiWallet {
                 self.mnemonics()?,
                 self.keystores()?,
                 self.aws_signers(chain).await?,
-                script_wallets_fn()?
+                (!script_wallets.is_empty()).then(|| script_wallets.to_vec())
             ],
             for wallet in wallets.into_iter() {
                 let address = wallet.address();
-                let wallet = wallet.with_chain_id(chain);
-                let wallet: WalletType = SignerMiddleware::new(provider.clone(), wallet).into();
+                if addresses.contains(&address) {
+                    addresses.remove(&address);
 
-                collect_addresses!(local_wallets, unused_wallets, addresses, address, wallet);
+                    let signer = WalletSigner::from(wallet.with_chain_id(chain));
+                    local_wallets.insert(address, signer);
+
+                    if addresses.is_empty() {
+                        return Ok(local_wallets)
+                    }
+                } else {
+                    // Just to show on error.
+                    unused_wallets.push(address);
+                }
             }
         );
 

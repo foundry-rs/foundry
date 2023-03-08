@@ -30,14 +30,14 @@ pub struct ProjectPathsArgs {
         env = "DAPP_SRC",
         help = "The contracts source directory.",
         long,
-        short,
+        short = 'C',
         value_hint = ValueHint::DirPath,
         value_name = "PATH"
     )]
     #[serde(rename = "src", skip_serializing_if = "Option::is_none")]
     pub contracts: Option<PathBuf>,
 
-    #[clap(help = "The project's remappings.", long, short, value_name = "REMAPPINGS")]
+    #[clap(help = "The project's remappings.", long, short = 'R', value_name = "REMAPPINGS")]
     #[serde(skip)]
     pub remappings: Vec<Remapping>,
 

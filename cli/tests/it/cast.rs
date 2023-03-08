@@ -63,7 +63,7 @@ casttest!(new_wallet_keystore_with_password, |_: TestProject, mut cmd: TestComma
     cmd.args(["wallet", "new", ".", "--unsafe-password", "test"]);
     let out = cmd.stdout_lossy();
     assert!(out.contains("Created new encrypted keystore file"));
-    assert!(out.contains("Public Address of the key"));
+    assert!(out.contains("Address"));
 });
 
 // tests that `cast estimate` is working correctly.

@@ -117,9 +117,8 @@ impl VerificationProvider for EtherscanVerificationProvider {
             if args.watch {
                 let check_args = VerifyCheckArgs {
                     id: resp.result,
-                    chain: args.chain,
+                    etherscan: args.etherscan,
                     retry: RETRY_CHECK_ON_VERIFY,
-                    etherscan_key: args.etherscan_key,
                     verifier: args.verifier,
                 };
                 // return check_args.run().await
@@ -136,9 +135,9 @@ impl VerificationProvider for EtherscanVerificationProvider {
     async fn check(&self, args: VerifyCheckArgs) -> eyre::Result<()> {
         let config = args.try_load_config_emit_warnings()?;
         let etherscan = self.client(
-            args.chain,
+            args.etherscan.chain.unwrap_or_default(),
             args.verifier.verifier_url.as_deref(),
-            args.etherscan_key.as_deref(),
+            args.etherscan.key.as_deref(),
             &config,
         )?;
         let retry: Retry = args.retry.into();
@@ -222,9 +221,9 @@ impl EtherscanVerificationProvider {
     ) -> eyre::Result<(Client, VerifyContract)> {
         let config = args.try_load_config_emit_warnings()?;
         let etherscan = self.client(
-            args.chain,
+            args.etherscan.chain.unwrap_or_default(),
             args.verifier.verifier_url.as_deref(),
-            args.etherscan_key.as_deref(),
+            args.etherscan.key.as_deref(),
             &config,
         )?;
         let verify_args = self.create_verify_request(args, Some(config)).await?;
@@ -469,9 +468,9 @@ mod tests {
         let etherscan = EtherscanVerificationProvider::default();
         let client = etherscan
             .client(
-                args.chain,
+                args.etherscan.chain.unwrap_or_default(),
                 args.verifier.verifier_url.as_deref(),
-                args.etherscan_key.as_deref(),
+                args.etherscan.key.as_deref(),
                 &config,
             )
             .unwrap();
@@ -496,9 +495,9 @@ mod tests {
         let etherscan = EtherscanVerificationProvider::default();
         let client = etherscan
             .client(
-                args.chain,
+                args.etherscan.chain.unwrap_or_default(),
                 args.verifier.verifier_url.as_deref(),
-                args.etherscan_key.as_deref(),
+                args.etherscan.key.as_deref(),
                 &config,
             )
             .unwrap();

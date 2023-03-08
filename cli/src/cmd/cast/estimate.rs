@@ -1,79 +1,94 @@
 // cast estimate subcommands
-use crate::{opts::EthereumOpts, utils::parse_ether_value};
+use crate::{
+    opts::{EtherscanOpts, RpcOpts},
+    utils::{self, parse_ether_value},
+};
 use cast::{Cast, TxBuilder};
 use clap::Parser;
-use ethers::{
-    providers::Middleware,
-    types::{NameOrAddress, U256},
-};
-use foundry_common::try_get_http_provider;
-use foundry_config::{Chain, Config};
+use ethers::types::{NameOrAddress, U256};
+use eyre::Result;
+use foundry_config::{figment::Figment, Config};
 use std::str::FromStr;
 
 /// CLI arguments for `cast estimate`.
 #[derive(Debug, Parser)]
 pub struct EstimateArgs {
-    #[clap(
-        help = "The destination of the transaction.",
-        value_parser = NameOrAddress::from_str,
-        value_name = "TO",
-    )]
+    /// The destination of the transaction
+    #[clap(value_parser = NameOrAddress::from_str)]
     to: Option<NameOrAddress>,
-    #[clap(help = "The signature of the function to call.", value_name = "SIG")]
-    sig: Option<String>,
-    #[clap(help = "The arguments of the function to call.", value_name = "ARGS")]
-    args: Vec<String>,
-    #[clap(
-        long,
-        help = "Ether to send in the transaction.",
-        long_help = r#"Ether to send in the transaction, either specified in wei, or as a string with a unit type.
 
-Examples: 1ether, 10gwei, 0.01ether"#,
-        value_parser = parse_ether_value,
-        value_name = "VALUE"
+    /// The signature of the function to call
+    sig: Option<String>,
+
+    /// The arguments of the function to call
+    args: Vec<String>,
+
+    /// The sender account
+    #[clap(
+        short,
+        long,
+        value_parser = NameOrAddress::from_str,
+        default_value = "0x0000000000000000000000000000000000000000",
+        env = "ETH_FROM",
     )]
+    from: NameOrAddress,
+
+    /// Ether to send in the transaction
+    ///
+    /// Either specified in wei, or as a string with a unit type:
+    ///
+    /// Examples: 1ether, 10gwei, 0.01ether
+    #[clap(long, value_parser = parse_ether_value)]
     value: Option<U256>,
+
     #[clap(flatten)]
-    // TODO: We only need RPC URL and Etherscan API key here.
-    eth: EthereumOpts,
+    rpc: RpcOpts,
+
+    #[clap(flatten)]
+    etherscan: EtherscanOpts,
+
     #[clap(subcommand)]
     command: Option<EstimateSubcommands>,
 }
 
 #[derive(Debug, Parser)]
 pub enum EstimateSubcommands {
-    #[clap(name = "--create", about = "Estimate gas cost to deploy a smart contract")]
+    /// Estimate gas cost to deploy a smart contract
+    #[clap(name = "--create")]
     Create {
-        #[clap(help = "Bytecode of contract.", value_name = "CODE")]
+        /// The bytecode of contract
         code: String,
-        #[clap(help = "The signature of the constructor.", value_name = "SIG")]
-        sig: Option<String>,
-        #[clap(help = "Constructor arguments", value_name = "ARGS")]
-        args: Vec<String>,
-        #[clap(
-            long,
-            help = "Ether to send in the transaction.",
-            long_help = r#"Ether to send in the transaction, either specified in wei, or as a string with a unit type.
 
-Examples: 1ether, 10gwei, 0.01ether"#,
-            value_parser = parse_ether_value,
-            value_name = "VALUE"
-        )]
+        /// The signature of the constructor
+        sig: Option<String>,
+
+        /// Constructor arguments
+        args: Vec<String>,
+
+        /// Ether to send in the transaction
+        ///
+        /// Either specified in wei, or as a string with a unit type:
+        ///
+        /// Examples: 1ether, 10gwei, 0.01ether
+        #[clap(long, value_parser = parse_ether_value)]
         value: Option<U256>,
     },
 }
+
 impl EstimateArgs {
-    pub async fn run(self) -> eyre::Result<()> {
-        let EstimateArgs { to, sig, args, value, eth, command } = self;
-        let config = Config::from(&eth);
-        let provider = try_get_http_provider(config.get_rpc_url_or_localhost_http()?)?;
+    pub async fn run(self) -> Result<()> {
+        let EstimateArgs { from, to, sig, args, value, rpc, etherscan, command } = self;
 
-        let chain: Chain =
-            if let Some(chain) = eth.chain { chain } else { provider.get_chainid().await?.into() };
+        let figment = Figment::from(Config::figment()).merge(etherscan).merge(rpc);
+        let config = Config::from_provider(figment);
 
-        let sender = eth.sender().await;
-        let mut builder = TxBuilder::new(&provider, sender, to, chain, false).await?;
-        builder.etherscan_api_key(config.get_etherscan_api_key(Some(chain)));
+        let provider = utils::get_provider(&config)?;
+        let chain = utils::get_chain(config.chain_id, &provider).await?;
+        let api_key = config.get_etherscan_api_key(Some(chain));
+
+        let mut builder = TxBuilder::new(&provider, from, to, chain, false).await?;
+        builder.etherscan_api_key(api_key);
+
         match command {
             Some(EstimateSubcommands::Create { code, sig, args, value }) => {
                 builder.value(value);

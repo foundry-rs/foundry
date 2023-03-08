@@ -53,7 +53,6 @@ where
     /// ```
     /// use cast::Cast;
     /// use ethers_providers::{Provider, Http};
-    /// use std::convert::TryFrom;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -306,7 +305,6 @@ where
     /// ```no_run
     /// use cast::Cast;
     /// use ethers_providers::{Provider, Http};
-    /// use std::convert::TryFrom;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -613,7 +611,6 @@ where
     /// ```no_run
     /// use cast::Cast;
     /// use ethers_providers::{Provider, Http};
-    /// use std::convert::TryFrom;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -653,7 +650,6 @@ where
     /// ```no_run
     /// use cast::Cast;
     /// use ethers_providers::{Provider, Http};
-    /// use std::convert::TryFrom;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -716,7 +712,6 @@ where
     /// ```no_run
     /// use cast::Cast;
     /// use ethers_providers::{Provider, Http};
-    /// use std::convert::TryFrom;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -778,6 +773,7 @@ pub enum AbiPath {
 }
 
 pub struct SimpleCast;
+
 impl SimpleCast {
     /// Returns the maximum value of the given integer type
     ///
@@ -1150,11 +1146,10 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn from_rlp(value: impl AsRef<str>) -> Result<String> {
-        let value = value.as_ref();
-        let striped_value = strip_0x(value);
-        let bytes = hex::decode(striped_value).expect("Could not decode hex");
-        let item = rlp::decode::<Item>(&bytes).expect("Could not decode rlp");
-        Ok(format!("{item}"))
+        let data = strip_0x(value.as_ref());
+        let bytes = hex::decode(data).wrap_err("Could not decode hex")?;
+        let item = rlp::decode::<Item>(&bytes).wrap_err("Could not decode rlp")?;
+        Ok(item.to_string())
     }
 
     /// Encodes hex data or list of hex data to hexadecimal rlp
@@ -1173,7 +1168,8 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn to_rlp(value: &str) -> Result<String> {
-        let val = serde_json::from_str(value).unwrap_or(serde_json::Value::String(value.parse()?));
+        let val = serde_json::from_str(value)
+            .unwrap_or_else(|_| serde_json::Value::String(value.to_string()));
         let item = Item::value_to_item(&val)?;
         Ok(format!("0x{}", hex::encode(rlp::encode(&item))))
     }
