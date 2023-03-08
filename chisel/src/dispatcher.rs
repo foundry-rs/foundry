@@ -123,9 +123,10 @@ impl ChiselDispatcher {
         ChiselSession::new(config).map(|session| Self { errored: false, session })
     }
 
-    /// Returns the prompt given the last input's error status
+    /// Returns the prompt based on the current status of the Dispatcher
     pub fn get_prompt(&self) -> Cow<'static, str> {
         match self.session.id.as_deref() {
+            // `(ID: {id}) ➜ `
             Some(id) => {
                 let mut prompt = String::with_capacity(DEFAULT_PROMPT.len() + id.len() + 7);
                 prompt.push_str("(ID: ");
@@ -134,6 +135,7 @@ impl ChiselDispatcher {
                 prompt.push_str(DEFAULT_PROMPT);
                 Cow::Owned(prompt)
             }
+            // `➜ `
             None => Cow::Borrowed(DEFAULT_PROMPT),
         }
     }
