@@ -21,19 +21,13 @@ use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use solang_parser::diagnostics::Diagnostic;
-use std::{
-    error::Error, fmt::Write as _, io::Write, path::PathBuf, process::Command, str::FromStr,
-};
+use std::{borrow::Cow, error::Error, io::Write, path::PathBuf, process::Command, str::FromStr};
 use strum::IntoEnumIterator;
 use yansi::Paint;
 
-// See: https://github.com/foundry-rs/foundry/issues/4503
 /// Prompt arrow character
-#[cfg(windows)]
-pub static PROMPT_ARROW: char = '>';
-/// Prompt arrow character
-#[cfg(not(windows))]
 pub static PROMPT_ARROW: char = '➜';
+static DEFAULT_PROMPT: &str = "➜ ";
 
 /// Command leader character
 pub static COMMAND_LEADER: char = '!';
@@ -130,20 +124,18 @@ impl ChiselDispatcher {
     }
 
     /// Returns the prompt given the last input's error status
-    pub fn get_prompt(&self) -> String {
-        let mut prompt = String::with_capacity(32);
-
-        if let Some(id) = self.session.id.as_ref() {
-            write!(prompt, "({}: {}) ", Paint::cyan("ID"), Paint::yellow(id)).unwrap();
+    pub fn get_prompt(&self) -> Cow<'static, str> {
+        match self.session.id.as_deref() {
+            Some(id) => {
+                let mut prompt = String::with_capacity(DEFAULT_PROMPT.len() + id.len() + 7);
+                prompt.push_str("(ID: ");
+                prompt.push_str(id);
+                prompt.push_str(") ");
+                prompt.push_str(DEFAULT_PROMPT);
+                Cow::Owned(prompt)
+            }
+            None => Cow::Borrowed(DEFAULT_PROMPT),
         }
-
-        let arrow =
-            if self.errored { Paint::red(PROMPT_ARROW) } else { Paint::green(PROMPT_ARROW) };
-        write!(prompt, "{arrow}").unwrap();
-
-        prompt.push(' ');
-
-        prompt
     }
 
     /// Dispatches a [ChiselCommand]
