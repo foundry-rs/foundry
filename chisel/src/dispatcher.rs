@@ -21,7 +21,7 @@ use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use solang_parser::diagnostics::Diagnostic;
-use std::{error::Error, io::Write, path::PathBuf, process::Command, str::FromStr};
+use std::{error::Error, fmt::Write as _, io::Write, path::PathBuf, process::Command, str::FromStr};
 use strum::IntoEnumIterator;
 use yansi::Paint;
 
@@ -123,15 +123,24 @@ impl ChiselDispatcher {
 
     /// Returns the prompt given the last input's error status
     pub fn get_prompt(&self) -> String {
-        format!(
-            "{}{} ",
-            self.session
-                .id
-                .as_ref()
-                .map(|id| format!("({}: {}) ", Paint::cyan("ID"), Paint::yellow(id)))
-                .unwrap_or_default(),
-            if self.errored { Paint::red(PROMPT_ARROW) } else { Paint::green(PROMPT_ARROW) }
-        )
+        let mut prompt = String::new();
+        
+        if let Some(id) = self.session.id.as_ref() {
+            write!(prompt, "({}: {}) ", Paint::cyan("ID"), Paint::yellow(id)).unwrap();
+        }
+
+        #[cfg(windows)]
+        prompt.push(PROMPT_ARROW);
+
+        #[cfg(not(windows))]
+        {
+            let arrow = if self.errored { Paint::red(PROMPT_ARROW) } else { Paint::green(PROMPT_ARROW) };
+            prompt.push_str(&arrow);
+        }
+
+        prompt.push(' ');
+
+        prompt
     }
 
     /// Dispatches a [ChiselCommand]
