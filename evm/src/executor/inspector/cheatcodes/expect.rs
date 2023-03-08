@@ -250,7 +250,24 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::ExpectRevert2(inner) => {
             expect_revert(state, Some(inner.0.to_vec().into()), data.journaled_state.depth())
         }
-        HEVMCalls::ExpectEmit0(inner) => {
+        HEVMCalls::ExpectEmit0(_) => {
+            state.expected_emits.push(ExpectedEmit {
+                depth: data.journaled_state.depth() - 1,
+                checks: [true, true, true, true],
+                ..Default::default()
+            });
+            Ok(Bytes::new())
+        }
+        HEVMCalls::ExpectEmit1(inner) => {
+            state.expected_emits.push(ExpectedEmit {
+                depth: data.journaled_state.depth() - 1,
+                checks: [true, true, true, true],
+                address: Some(inner.0),
+                ..Default::default()
+            });
+            Ok(Bytes::new())
+        }
+        HEVMCalls::ExpectEmit2(inner) => {
             state.expected_emits.push(ExpectedEmit {
                 depth: data.journaled_state.depth() - 1,
                 checks: [inner.0, inner.1, inner.2, inner.3],
@@ -258,7 +275,7 @@ pub fn apply<DB: DatabaseExt>(
             });
             Ok(Bytes::new())
         }
-        HEVMCalls::ExpectEmit1(inner) => {
+        HEVMCalls::ExpectEmit3(inner) => {
             state.expected_emits.push(ExpectedEmit {
                 depth: data.journaled_state.depth() - 1,
                 checks: [inner.0, inner.1, inner.2, inner.3],
