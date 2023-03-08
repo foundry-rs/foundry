@@ -21,12 +21,20 @@ use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use solang_parser::diagnostics::Diagnostic;
-use std::{error::Error, fmt::Write as _, io::Write, path::PathBuf, process::Command, str::FromStr};
+use std::{
+    error::Error, fmt::Write as _, io::Write, path::PathBuf, process::Command, str::FromStr,
+};
 use strum::IntoEnumIterator;
 use yansi::Paint;
 
-/// Prompt arrow slice
+// See: https://github.com/foundry-rs/foundry/issues/4503
+/// Prompt arrow character
+#[cfg(windows)]
+pub static PROMPT_ARROW: char = '>';
+/// Prompt arrow character
+#[cfg(not(windows))]
 pub static PROMPT_ARROW: char = '➜';
+
 /// Command leader character
 pub static COMMAND_LEADER: char = '!';
 /// Chisel character
@@ -123,20 +131,15 @@ impl ChiselDispatcher {
 
     /// Returns the prompt given the last input's error status
     pub fn get_prompt(&self) -> String {
-        let mut prompt = String::new();
-        
+        let mut prompt = String::with_capacity(32);
+
         if let Some(id) = self.session.id.as_ref() {
             write!(prompt, "({}: {}) ", Paint::cyan("ID"), Paint::yellow(id)).unwrap();
         }
 
-        #[cfg(windows)]
-        prompt.push(PROMPT_ARROW);
-
-        #[cfg(not(windows))]
-        {
-            let arrow = if self.errored { Paint::red(PROMPT_ARROW) } else { Paint::green(PROMPT_ARROW) };
-            prompt.push_str(&arrow);
-        }
+        let arrow =
+            if self.errored { Paint::red(PROMPT_ARROW) } else { Paint::green(PROMPT_ARROW) };
+        write!(prompt, "{arrow}").unwrap();
 
         prompt.push(' ');
 

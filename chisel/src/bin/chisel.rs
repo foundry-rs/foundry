@@ -59,6 +59,11 @@ pub enum ChiselParserSub {
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
+    #[cfg(windows)]
+    if !Paint::enable_windows_ascii() {
+        Paint::disable()
+    }
+
     // Parse command args
     let args = ChiselParser::parse();
 
