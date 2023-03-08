@@ -1,7 +1,7 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use foundry_cli::cmd::cast::wallet::vanity::*;
 use rayon::prelude::*;
-use std::time::Duration;
+use std::{hint::black_box, time::Duration};
 
 /// Benches `cast wallet vanity`
 ///
@@ -19,11 +19,11 @@ fn vanity(c: &mut Criterion) {
 
     // 1
 
-    g.sample_size(150);
+    g.sample_size(100);
     g.noise_threshold(0.02);
 
     g.bench_function("match 1", |b| {
-        let m = LeftHexMatcher { left: v(0, 1) };
+        let m = LeftHexMatcher { left: vec![0] };
         let matcher = create_matcher(m);
         b.iter(|| wallet_generator().find_any(|x| black_box(matcher(x))))
     });
@@ -35,25 +35,13 @@ fn vanity(c: &mut Criterion) {
     g.measurement_time(Duration::from_secs(60));
 
     g.bench_function("match 2", |b| {
-        let m = LeftHexMatcher { left: v(0, 2) };
+        let m = LeftHexMatcher { left: vec![0, 0] };
         let matcher = create_matcher(m);
         b.iter(|| wallet_generator().find_any(|x| black_box(matcher(x))))
     });
 
     g.finish();
 }
-
-fn v(byte: u8, times: usize) -> Vec<u8> {
-    let mut v = Vec::with_capacity(times);
-    for _ in 0..times {
-        v.push(byte)
-    }
-    v
-}
-
-// fn r(byte: u8, times: usize) -> Regex {
-//     Regex::new(format!("{}{{{}}}", byte, times).as_str()).unwrap()
-// }
 
 criterion_group!(vanity_benches, vanity);
 criterion_main!(vanity_benches);
