@@ -627,6 +627,12 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
         who: NameOrAddress,
         #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
         rpc_url: Option<String>,
+        #[clap(
+            long = "disassemble",
+            short = 'd',
+            help_heading = "disassemble bytecodes into individual opcodes"
+        )]
+        disassemble: bool,
     },
     #[clap(name = "gas-price")]
     #[clap(visible_alias = "g")]

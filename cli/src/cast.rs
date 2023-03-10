@@ -258,10 +258,10 @@ async fn main() -> eyre::Result<()> {
             let provider = try_get_http_provider(rpc_url)?;
             println!("{}", provider.client_version().await?);
         }
-        Subcommands::Code { block, who, rpc_url } => {
+        Subcommands::Code { block, who, rpc_url, disassemble } => {
             let rpc_url = try_consume_config_rpc_url(rpc_url)?;
             let provider = try_get_http_provider(rpc_url)?;
-            println!("{}", Cast::new(provider).code(who, block).await?);
+            println!("{}", Cast::new(provider).code(who, block, disassemble).await?);
         }
         Subcommands::ComputeAddress { address, nonce, rpc_url } => {
             let rpc_url = try_consume_config_rpc_url(rpc_url)?;

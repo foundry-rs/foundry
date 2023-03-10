@@ -725,6 +725,7 @@ dependencies = [
  "ethers-etherscan",
  "ethers-providers",
  "ethers-signers",
+ "evm-disassembler",
  "eyre",
  "foundry-common",
  "foundry-config",
@@ -2201,6 +2202,16 @@ name = "event-listener"
 version = "2.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0206175f82b8d6bf6652ff7d71a1e27fd2e4efde587fd368662814d6ec1d9ce0"
+
+[[package]]
+name = "evm-disassembler"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f6b08282fd9e1790d311f83335549a07bed98b5e2df0414c4d3ff04b0058800c"
+dependencies = [
+ "eyre",
+ "hex",
+]
 
 [[package]]
 name = "eyre"

@@ -18,6 +18,7 @@ use ethers_core::{
 };
 use ethers_etherscan::{errors::EtherscanError, Client};
 use ethers_providers::{Middleware, PendingTransaction};
+use evm_disassembler::{disassemble_bytes, format_operations};
 use eyre::{Context, Result};
 use foundry_common::{abi::encode_args, fmt::*, TransactionReceiptWithRevertReason};
 pub use foundry_evm::*;
@@ -595,7 +596,7 @@ where
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")?;
-    /// let code = cast.code(addr, None).await?;
+    /// let code = cast.code(addr, None, false).await?;
     /// println!("{}", code);
     /// # Ok(())
     /// # }
@@ -604,8 +605,14 @@ where
         &self,
         who: T,
         block: Option<BlockId>,
+        disassemble: bool,
     ) -> Result<String> {
-        Ok(format!("{}", self.provider.get_code(who, block).await?))
+        if disassemble {
+            let code = self.provider.get_code(who, block).await?.to_vec();
+            Ok(format_operations(disassemble_bytes(code)?))
+        } else {
+            Ok(format!("{}", self.provider.get_code(who, block).await?))
+        }
     }
 
     /// # Example
