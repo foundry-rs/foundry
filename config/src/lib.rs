@@ -442,6 +442,7 @@ impl Config {
     ///
     /// let config = Config::from_provider(figment);
     /// ```
+    #[track_caller]
     pub fn from_provider<T: Provider>(provider: T) -> Self {
         trace!("load config with provider: {:?}", provider.metadata());
         Self::try_from(provider).unwrap_or_else(|err| panic!("{}", err))
@@ -857,15 +858,14 @@ impl Config {
     ) -> Option<Result<ResolvedEtherscanConfig, EtherscanConfigError>> {
         let maybe_alias = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref())?;
         if self.etherscan.contains_key(maybe_alias) {
-            // etherscan points to an alias in the `etherscan` table, so we try to resolve
-            // that
+            // etherscan points to an alias in the `etherscan` table, so we try to resolve that
             let mut resolved = self.etherscan.clone().resolved();
             return resolved.remove(maybe_alias)
         }
+
         // we treat the `etherscan_api_key` as actual API key
         // if no chain provided, we assume mainnet
-        let chain = self.chain_id.unwrap_or_else(|| Mainnet.into());
-
+        let chain = self.chain_id.unwrap_or(Chain::Named(Mainnet));
         let api_key = self.etherscan_api_key.as_ref()?;
         ResolvedEtherscanConfig::create(api_key, chain).map(Ok)
     }
@@ -1133,8 +1133,8 @@ impl Config {
         if !file_path.exists() {
             return Ok(())
         }
-        let cargo_toml_content = fs::read_to_string(&file_path)?;
-        let mut doc = cargo_toml_content.parse::<toml_edit::Document>()?;
+        let contents = fs::read_to_string(&file_path)?;
+        let mut doc = contents.parse::<toml_edit::Document>()?;
         if f(&mut doc) {
             fs::write(file_path, doc.to_string())?;
         }

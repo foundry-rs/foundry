@@ -83,12 +83,8 @@ pub struct TestArgs {
     #[clap(flatten)]
     evm_opts: EvmArgs,
 
-    #[clap(
-        long,
-        env = "ETHERSCAN_API_KEY",
-        help = "Set etherscan api key to better decode traces",
-        value_name = "ETHERSCAN_KEY"
-    )]
+    /// The Etherscan (or equivalent) API key
+    #[clap(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
     etherscan_api_key: Option<String>,
 
     #[clap(flatten)]

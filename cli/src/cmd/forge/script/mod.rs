@@ -167,6 +167,7 @@ pub struct ScriptArgs {
     )]
     pub slow: bool,
 
+    /// The Etherscan (or equivalent) API key
     #[clap(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
     pub etherscan_api_key: Option<String>,
 
@@ -645,7 +646,7 @@ pub struct NestedValue {
     pub value: String,
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone, Debug, Default)]
 pub struct ScriptConfig {
     pub config: Config,
     pub evm_opts: EvmOpts,
