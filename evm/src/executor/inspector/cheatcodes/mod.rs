@@ -374,8 +374,8 @@ where
         }
 
         // If the allowed memory writes cheatcode is active at this context depth, check to see
-        // if the current opcode is either an `MSTORE` or `MSTORE8`. If the opcode at the current
-        // program counter is a match, check if the offset passed to the opcode lies within the
+        // if the current opcode can either mutate directly or expand memory. If the opcode at
+        // the current program counter is a match, check if the modified memory lies within the
         // allowed ranges. If not, revert and fail the test.
         if let Some(ranges) = self.allowed_mem_writes.get(&data.journaled_state.depth()) {
             // Helper that expands memory, stores a revert string, and sets the return range to
@@ -483,8 +483,8 @@ where
                                     })
                                 );
 
-                            // If none of the allowed ranges contain [dest_offset, dest_offset + size),
-                            // memory has been unexpectedly mutated.
+                            // If the failure condition is met, set the output buffer to a revert string
+                            // that gives information about the allowed ranges and revert.
                             if fail_cond {
                                 set_output_buffer(dest_offset, size, interpreter, ranges);
                                 return Return::Revert
