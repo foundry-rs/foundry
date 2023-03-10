@@ -882,19 +882,20 @@ impl Config {
         let chain = chain.map(Into::into);
         if let Some(maybe_alias) = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref()) {
             if self.etherscan.contains_key(maybe_alias) {
-                let mut resolved = self.etherscan.clone().resolved();
-                return resolved.remove(maybe_alias).transpose()
+                return self.etherscan.clone().resolved().remove(maybe_alias).transpose()
             }
         }
 
-        // try to find by comparing chain ids
-        if let Some(config) = chain.and_then(|chain| self.etherscan.find_chain(chain).cloned()) {
-            return Ok(config.resolve().ok())
+        // try to find by comparing chain IDs after resolving
+        if let Some(res) =
+            chain.and_then(|chain| self.etherscan.clone().resolved().find_chain(chain))
+        {
+            return res.map(Some)
         }
 
         // fallback `etherscan_api_key` as actual key
         if let Some(key) = self.etherscan_api_key.as_ref() {
-            let chain = chain.or(self.chain_id).unwrap_or_else(|| Mainnet.into());
+            let chain = chain.or(self.chain_id).unwrap_or_default();
             return Ok(ResolvedEtherscanConfig::create(key, chain))
         }
 

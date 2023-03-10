@@ -4,6 +4,7 @@ use crate::{
     cmd::{
         forge::verify::{etherscan::EtherscanVerificationProvider, provider::VerificationProvider},
         retry::RetryArgs,
+        LoadConfig,
     },
     opts::EtherscanOpts,
 };
@@ -149,7 +150,7 @@ impl figment::Provider for VerifyArgs {
     fn data(
         &self,
     ) -> Result<figment::value::Map<figment::Profile, figment::value::Dict>, figment::Error> {
-        let mut dict = figment::value::Dict::new();
+        let mut dict = self.etherscan.dict();
         if let Some(root) = self.root.as_ref() {
             dict.insert("root".to_string(), figment::value::Value::serialize(root)?);
         }
@@ -167,7 +168,7 @@ impl figment::Provider for VerifyArgs {
 impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(mut self) -> eyre::Result<()> {
-        let config = Config::from(&self.etherscan);
+        let config = self.load_config_emit_warnings();
         let chain = config.chain_id.unwrap_or_default();
         self.etherscan.chain = Some(chain);
         self.etherscan.key = config.get_etherscan_api_key(Some(chain));
