@@ -465,7 +465,7 @@ impl Config {
     /// ```
     pub fn try_from<T: Provider>(provider: T) -> Result<Self, ExtractConfigError> {
         let figment = Figment::from(provider);
-        let mut config = figment.extract::<Self>().map_err(|error| ExtractConfigError { error })?;
+        let mut config = figment.extract::<Self>().map_err(ExtractConfigError::new)?;
         config.profile = figment.profile().clone();
         Ok(config)
     }
