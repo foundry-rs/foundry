@@ -2324,7 +2324,16 @@ impl<P: Provider> Provider for OptionalStrictProfileProvider<P> {
                 profile.clone(),
             ));
         }
-        figment.data()
+        figment.data().map_err(|err| {
+            // figment does tag metadata and tries to map metadata to an error, since we use a new
+            // figment in this provider this new figment does not know about the metadata of the
+            // provider and can't map the metadata to the error. Therefor we return the root error
+            // if this error originated in the provider's data.
+            if let Err(root_err) = self.provider.data() {
+                return root_err
+            }
+            err
+        })
     }
     fn profile(&self) -> Option<Profile> {
         self.profiles.last().cloned()
@@ -2339,6 +2348,7 @@ trait ProviderExt: Provider {
     ) -> RenameProfileProvider<&Self> {
         RenameProfileProvider::new(self, from, to)
     }
+
     fn wrap(
         &self,
         wrapping_key: impl Into<Profile>,
@@ -2346,12 +2356,14 @@ trait ProviderExt: Provider {
     ) -> WrapProfileProvider<&Self> {
         WrapProfileProvider::new(self, wrapping_key, profile)
     }
+
     fn strict_select(
         &self,
         profiles: impl IntoIterator<Item = impl Into<Profile>>,
     ) -> OptionalStrictProfileProvider<&Self> {
         OptionalStrictProfileProvider::new(self, profiles)
     }
+
     fn fallback(
         &self,
         profile: impl Into<Profile>,

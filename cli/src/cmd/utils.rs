@@ -238,6 +238,7 @@ where
 
     fn load_config_and_evm_opts(self) -> eyre::Result<(Config, EvmOpts)> {
         let figment: Figment = self.into();
+
         let mut evm_opts = figment.extract::<EvmOpts>().map_err(ExtractConfigError::new)?;
         let config = Config::try_from(figment)?.sanitized();
 
