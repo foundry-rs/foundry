@@ -409,8 +409,12 @@ where
             }
 
             macro_rules! mem_opcode_match {
-                ([$(($opcode:ident, $offset_depth:expr, $size_depth:expr)),*]) => {
+                ([$(($opcode:ident, $offset_depth:expr, $size_depth:expr, $writes:expr)),*]) => {
                     match interpreter.contract.bytecode.bytecode()[interpreter.program_counter()] {
+                        ////////////////////////////////////////////////////////////////
+                        //    OPERATIONS THAT CAN EXPAND/MUTATE MEMORY BY WRITING     //
+                        ////////////////////////////////////////////////////////////////
+
                         opcode::MSTORE => {
                             // The offset of the mstore operation is at the top of the stack.
                             let offset = try_or_continue!(interpreter.stack().peek(0)).as_u64();
@@ -436,6 +440,30 @@ where
                                 return Return::Revert
                             }
                         }
+
+                        ////////////////////////////////////////////////////////////////
+                        //        OPERATIONS THAT CAN EXPAND MEMORY BY READING        //
+                        ////////////////////////////////////////////////////////////////
+
+                        opcode::MLOAD => {
+                            // The offset of the mload operation is at the top of the stack
+                            let offset = try_or_continue!(interpreter.stack().peek(0)).as_u64();
+
+                            // If the offset being loaded is >= than the memory size, the
+                            // memory is being expanded. If none of the allowed ranges contain
+                            // [offset, offset + 32), memory has been unexpectedly mutated.
+                            if offset >= interpreter.memory.len() as u64 && !ranges.iter().any(|range| {
+                                range.contains(&offset) && range.contains(&(offset + 31))
+                            }) {
+                                set_output_buffer(offset, 32, interpreter, ranges);
+                                return Return::Revert
+                            }
+                        }
+
+                        ////////////////////////////////////////////////////////////////
+                        //          OPERATIONS WITH OFFSET AND SIZE ON STACK          //
+                        ////////////////////////////////////////////////////////////////
+
                         $(opcode::$opcode => {
                             // The destination offset of the operation is at the top of the stack.
                             let dest_offset = try_or_continue!(interpreter.stack().peek($offset_depth)).as_u64();
@@ -444,11 +472,20 @@ where
                             let size = try_or_continue!(interpreter.stack().peek($size_depth)).as_u64();
 
                             // If none of the allowed ranges contain [dest_offset, dest_offset + size),
+                            // memory outside of the expected ranges has been touched. If the opcode
+                            // only reads from memory, this is okay as long as the memory is not expanded.
+                            let fail_cond = !ranges.iter().any(|range| {
+                                    range.contains(&dest_offset) &&
+                                        range.contains(&(dest_offset + size.saturating_sub(1)))
+                                }) && ($writes ||
+                                    [dest_offset, (dest_offset + size).saturating_sub(1)].into_iter().any(|offset| {
+                                        offset >= interpreter.memory.len() as u64
+                                    })
+                                );
+
+                            // If none of the allowed ranges contain [dest_offset, dest_offset + size),
                             // memory has been unexpectedly mutated.
-                            if !ranges.iter().any(|range| {
-                                range.contains(&dest_offset) &&
-                                    range.contains(&(dest_offset + size.saturating_sub(1)))
-                            }) {
+                            if fail_cond {
                                 set_output_buffer(dest_offset, size, interpreter, ranges);
                                 return Return::Revert
                             }
@@ -461,14 +498,24 @@ where
             // Check if the current opcode can write to memory, and if so, check if the memory
             // being written to is registered as safe to modify.
             mem_opcode_match!([
-                (CALLDATACOPY, 0, 2),
-                (CODECOPY, 0, 2),
-                (RETURNDATACOPY, 0, 2),
-                (EXTCODECOPY, 1, 3),
-                (CALL, 5, 6),
-                (CALLCODE, 5, 6),
-                (STATICCALL, 4, 5),
-                (DELEGATECALL, 4, 5)
+                (CALLDATACOPY, 0, 2, true),
+                (CODECOPY, 0, 2, true),
+                (RETURNDATACOPY, 0, 2, true),
+                (EXTCODECOPY, 1, 3, true),
+                (CALL, 5, 6, true),
+                (CALLCODE, 5, 6, true),
+                (STATICCALL, 4, 5, true),
+                (DELEGATECALL, 4, 5, true),
+                (SHA3, 0, 1, false),
+                (LOG0, 0, 1, false),
+                (LOG1, 0, 1, false),
+                (LOG2, 0, 1, false),
+                (LOG3, 0, 1, false),
+                (LOG4, 0, 1, false),
+                (CREATE, 1, 2, false),
+                (CREATE2, 1, 2, false),
+                (RETURN, 0, 1, false),
+                (REVERT, 0, 1, false)
             ])
         }
 

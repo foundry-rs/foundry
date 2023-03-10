@@ -394,6 +394,213 @@ contract MemSafetyTest is DSTest {
     }
 
     ////////////////////////////////////////////////////////////////
+    //                   MLOAD (Read Expansion)                   //
+    ////////////////////////////////////////////////////////////////
+
+    /// @dev Tests that expanding memory within the range given to `expectSafeMemory`
+    ///      will not cause the test to fail while using the `MLOAD` opcode.
+    function testExpectSafeMemory_MLOAD() public {
+        vm.expectSafeMemory(0x80, 0x120);
+
+        // This should not revert. Ugly hack to make sure the mload isn't optimized
+        // out.
+        uint256 a;
+        assembly {
+            a := mload(0x100)
+        }
+        uint256 b = a + 1;
+    }
+
+    /// @dev Tests that expanding memory outside of the range given to `expectSafeMemory`
+    ///      will cause the test to fail while using the `MLOAD` opcode.
+    function testFailExpectSafeMemory_MLOAD() public {
+        vm.expectSafeMemory(0x80, 0x100);
+
+        // This should revert. Ugly hack to make sure the mload isn't optimized
+        // out.
+        uint256 a;
+        assembly {
+            a := mload(0x100)
+        }
+        uint256 b = a + 1;
+    }
+
+    ////////////////////////////////////////////////////////////////
+    //                   SHA3 (Read Expansion)                    //
+    ////////////////////////////////////////////////////////////////
+
+    /// @dev Tests that expanding memory within the range given to `expectSafeMemory`
+    ///      will not cause the test to fail while using the `SHA3` opcode.
+    function testExpectSafeMemory_SHA3() public {
+        vm.expectSafeMemory(0x80, 0x120);
+
+        // This should not revert. Ugly hack to make sure the sha3 isn't optimized
+        // out.
+        uint256 a;
+        assembly {
+            a := keccak256(0x100, 0x20)
+        }
+        uint256 b = a + 1;
+    }
+
+    /// @dev Tests that expanding memory outside of the range given to `expectSafeMemory`
+    ///      will cause the test to fail while using the `SHA3` opcode.
+    function testFailExpectSafeMemory_SHA3() public {
+        vm.expectSafeMemory(0x80, 0x100);
+
+        // This should revert. Ugly hack to make sure the sha3 isn't optimized
+        // out.
+        uint256 a;
+        assembly {
+            a := keccak256(0x100, 0x20)
+        }
+        uint256 b = a + 1;
+    }
+
+    ////////////////////////////////////////////////////////////////
+    //                 LOG(0-4) (Read Expansion)                  //
+    ////////////////////////////////////////////////////////////////
+
+    // Note: We only test LOG0 here because the other LOG opcodes have the offset
+    //       and size arguments in the same position on the stack as LOG0.
+
+    /// @dev Tests that expanding memory within the range given to `expectSafeMemory`
+    ///      will not cause the test to fail while using the `LOG0` opcode.
+    function testExpectSafeMemory_LOG0() public {
+        vm.expectSafeMemory(0x80, 0x120);
+
+        // This should not revert.
+        assembly {
+            log0(0x100, 0x20)
+        }
+    }
+
+    /// @dev Tests that expanding memory outside of the range given to `expectSafeMemory`
+    ///      will cause the test to fail while using the `LOG0` opcode.
+    function testFailExpectSafeMemory_LOG0() public {
+        vm.expectSafeMemory(0x80, 0x100);
+
+        // This should revert.
+        assembly {
+            log0(0x100, 0x20)
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////
+    //              CREATE/CREATE2 (Read Expansion)               //
+    ////////////////////////////////////////////////////////////////
+
+    /// @dev Tests that expanding memory within the range given to `expectSafeMemory`
+    ///      will not cause the test to fail while using the `CREATE` opcode.
+    function testExpectSafeMemory_CREATE() public {
+        vm.expectSafeMemory(0x80, 0x120);
+
+        // This should not revert.
+        assembly {
+            pop(create(0, 0x100, 0x20))
+        }
+    }
+
+    /// @dev Tests that expanding memory outside of the range given to `expectSafeMemory`
+    ///      will cause the test to fail while using the `CREATE` opcode.
+    function testFailExpectSafeMemory_CREATE() public {
+        vm.expectSafeMemory(0x80, 0x100);
+
+        // This should revert.
+        assembly {
+            pop(create(0, 0x100, 0x20))
+        }
+    }
+
+    /// @dev Tests that expanding memory within the range given to `expectSafeMemory`
+    ///      will not cause the test to fail while using the `CREATE2` opcode.
+    function testExpectSafeMemory_CREATE2() public {
+        vm.expectSafeMemory(0x80, 0x120);
+
+        // This should not revert.
+        assembly {
+            pop(create2(0, 0x100, 0x20, 0x00))
+        }
+    }
+
+    /// @dev Tests that expanding memory outside of the range given to `expectSafeMemory`
+    ///      will cause the test to fail while using the `CREATE2` opcode.
+    function testFailExpectSafeMemory_CREATE2() public {
+        vm.expectSafeMemory(0x80, 0x100);
+
+        // This should revert.
+        assembly {
+            pop(create2(0, 0x100, 0x20, 0x00))
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////
+    //               RETURN/REVERT (Read Expansion)               //
+    ////////////////////////////////////////////////////////////////
+
+    /// @dev Tests that expanding memory within the range given to `expectSafeMemory`
+    ///      will not cause the test to fail while using the `RETURN` opcode.
+    function testExpectSafeMemory_RETURN() public {
+        vm.expectSafeMemory(0x80, 0x120);
+
+        // This should not revert.
+        assembly {
+            return(0x100, 0x20)
+        }
+    }
+
+    /// @dev Tests that expanding memory outside of the range given to `expectSafeMemory`
+    ///      will cause the test to fail while using the `RETURN` opcode.
+    function testFailExpectSafeMemory_RETURN() public {
+        vm.expectSafeMemory(0x80, 0x100);
+
+        // This should revert.
+        assembly {
+            return(0x100, 0x20)
+        }
+    }
+
+    /// @dev Tests that expanding memory within the range given to `expectSafeMemory`
+    ///      will not cause the test to fail while using the `REVERT` opcode.
+    function testExpectSafeMemory_REVERT() public {
+        // Create a new SubContext contract
+        SubContext sc = new SubContext();
+
+        // Create a payload to call `doRevert` on the SubContext contract
+        bytes memory payload = abi.encodeWithSelector(SubContext.doRevert.selector, 0x100, 0x20);
+
+        // Expect memory in the range of [0x00, 0x120] to be safe in the next subcontext
+        vm.expectSafeMemoryCall(0x00, 0x120);
+
+        // Call `doRevert` on the SubContext contract and ensure it did revert with zero
+        // data.
+        _doCallReturnData(address(sc), payload, 0x200, 0x20);
+        assembly {
+            if iszero(eq(keccak256(0x60, 0x20), keccak256(0x200, returndatasize()))) { revert(0x00, 0x00) }
+        }
+    }
+
+    /// @dev Tests that expanding memory outside of the range given to `expectSafeMemory`
+    ///      will cause the test to fail while using the `REVERT` opcode.
+    function testFailExpectSafeMemory_REVERT() public {
+        // Create a new SubContext contract
+        SubContext sc = new SubContext();
+
+        // Create a payload to call `doRevert` on the SubContext contract
+        bytes memory payload = abi.encodeWithSelector(SubContext.doRevert.selector, 0x120, 0x20);
+
+        // Expect memory in the range of [0x00, 0x120] to be safe in the next subcontext
+        vm.expectSafeMemoryCall(0x00, 0x120);
+
+        // Call `doRevert` on the SubContext contract and ensure it did not revert with
+        // zero data.
+        _doCallReturnData(address(sc), payload, 0x200, 0x20);
+        assembly {
+            if iszero(eq(keccak256(0x60, 0x20), keccak256(0x200, returndatasize()))) { revert(0x00, 0x00) }
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////
     //                    Context Depth Tests                     //
     ////////////////////////////////////////////////////////////////
 
@@ -536,5 +743,11 @@ contract SubContext {
 
     function giveReturndata() external view returns (bytes memory _returndata) {
         return hex"7dc4acc68d77c9c85b5cb0f53ab9ceea175f7964390758e4409013ce80643f84";
+    }
+
+    function doRevert(uint256 offset, uint256 size) external {
+        assembly {
+            revert(offset, size)
+        }
     }
 }
