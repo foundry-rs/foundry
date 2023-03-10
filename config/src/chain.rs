@@ -38,18 +38,12 @@ impl Chain {
     /// Helper function for checking if a chainid corresponds to a legacy chainid
     /// without eip1559
     pub fn is_legacy(&self) -> bool {
-        match self {
-            Chain::Named(c) => c.is_legacy(),
-            Chain::Id(_) => false,
-        }
+        self.named().map_or(false, |c| c.is_legacy())
     }
 
     /// Returns the corresponding etherscan URLs
     pub fn etherscan_urls(&self) -> Option<(&'static str, &'static str)> {
-        match self {
-            Chain::Named(c) => c.etherscan_urls(),
-            Chain::Id(_) => None,
-        }
+        self.named().ok().and_then(|c| c.etherscan_urls())
     }
 }
 
