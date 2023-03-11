@@ -785,8 +785,7 @@ impl NodeConfig {
                     .compute_units_per_second(self.compute_units_per_second)
                     .max_retry(10)
                     .initial_backoff(1000)
-                    .connect()
-                    .await
+                    .build()
                     .expect("Failed to establish provider to fork url"),
             );
 
