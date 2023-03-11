@@ -36,7 +36,7 @@ impl TaskManager {
 
     /// Spawns the given task.
     pub fn spawn(&self, task: impl Future<Output = ()> + Send + 'static) -> JoinHandle<()> {
-        self.tokio_handle.spawn(async move { task.await })
+        self.tokio_handle.spawn(task)
     }
 
     /// Spawns the blocking task.
