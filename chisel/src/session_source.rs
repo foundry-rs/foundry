@@ -118,6 +118,7 @@ impl SessionSource {
     /// ### Returns
     ///
     /// A new instance of [SessionSource]
+    #[track_caller]
     pub fn new(solc: Solc, config: SessionSourceConfig) -> Self {
         debug_assert!(solc.version().is_ok(), "{:?}", solc.version());
 

@@ -1208,7 +1208,7 @@ impl<'a> Iterator for InstructionIter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethers_solc::Solc;
+    use ethers_solc::{error::SolcError, Solc};
     use once_cell::sync::Lazy;
     use std::sync::Mutex;
 
@@ -1476,18 +1476,32 @@ mod tests {
         generic_type_test(&mut source(), global_variables);
     }
 
+    #[track_caller]
     fn source() -> SessionSource {
         // synchronize solc install
         static PRE_INSTALL_SOLC_LOCK: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
-        let mut is_preinstalled = PRE_INSTALL_SOLC_LOCK.lock().unwrap();
-        if !*is_preinstalled {
-            let solc = Solc::find_or_install_svm_version("0.8.17").and_then(|solc| solc.version());
-            if solc.is_err() {
-                // try reinstalling
-                let solc = Solc::blocking_install(&"0.8.17".parse().unwrap());
-                *is_preinstalled = solc.is_ok();
+
+        // on some CI targets installing results in weird malformed solc files, we try installing it
+        // multiple times
+        for _ in 0..3 {
+            let mut is_preinstalled = PRE_INSTALL_SOLC_LOCK.lock().unwrap();
+            if !*is_preinstalled {
+                let solc =
+                    Solc::find_or_install_svm_version("0.8.17").and_then(|solc| solc.version());
+                if solc.is_err() {
+                    // try reinstalling
+                    let solc = Solc::blocking_install(&"0.8.17".parse().unwrap());
+                    if solc.map_err(SolcError::from).and_then(|solc| solc.version()).is_ok() {
+                        *is_preinstalled = true;
+                        break
+                    }
+                } else {
+                    // successfully installed
+                    break
+                }
             }
         }
+
         let solc = Solc::find_or_install_svm_version("0.8.17").expect("could not install solc");
         SessionSource::new(solc, Default::default())
     }
