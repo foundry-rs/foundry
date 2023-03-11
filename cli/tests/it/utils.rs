@@ -92,6 +92,16 @@ impl EnvExternalities {
         })
     }
 
+    pub fn sepolia() -> Option<Self> {
+        Some(Self {
+            chain: Chain::Sepolia,
+            rpc: network_rpc_key("sepolia")?,
+            pk: network_private_key("sepolia")?,
+            etherscan: etherscan_key(Chain::Sepolia)?,
+            verifier: "etherscan".to_string(),
+        })
+    }
+
     /// Returns the arguments required to deploy the contract
     pub fn create_args(&self) -> Vec<String> {
         vec![
