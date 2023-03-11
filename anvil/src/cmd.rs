@@ -554,8 +554,7 @@ impl Future for PeriodicStateDumper {
             if this.interval.poll_tick(cx).is_ready() {
                 let api = this.api.clone();
                 let path = this.dump_state.clone().expect("exists; see above");
-                this.in_progress_dump =
-                    Some(Box::pin(async move { PeriodicStateDumper::dump_state(api, path).await }));
+                this.in_progress_dump = Some(Box::pin(PeriodicStateDumper::dump_state(api, path)));
             } else {
                 break
             }
