@@ -1,6 +1,6 @@
 //! Various helper functions
 
-use ethers::prelude::Chain;
+use ethers::prelude::{Address, Chain, LocalWallet, Signer};
 
 /// Returns the current millis since unix epoch.
 ///
@@ -42,6 +42,11 @@ pub struct EnvExternalities {
 }
 
 impl EnvExternalities {
+    pub fn address(&self) -> Option<Address> {
+        let pk: LocalWallet = self.pk.parse().ok()?;
+        Some(pk.address())
+    }
+
     pub fn goerli() -> Option<Self> {
         Some(Self {
             chain: Chain::Goerli,
