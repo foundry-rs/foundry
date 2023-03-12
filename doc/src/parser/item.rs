@@ -117,7 +117,8 @@ impl ParseItem {
     pub fn filename(&self) -> String {
         let prefix = match self.source {
             ParseSource::Contract(ref c) => match c.ty {
-                ContractTy::Contract(_) | ContractTy::Abstract(_) => "contract",
+                ContractTy::Contract(_) => "contract",
+                ContractTy::Abstract(_) => "abstract",
                 ContractTy::Interface(_) => "interface",
                 ContractTy::Library(_) => "library",
             },
