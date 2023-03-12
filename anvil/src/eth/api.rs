@@ -1200,10 +1200,12 @@ impl EthApi {
     /// Introduced in EIP-1159, a Geth-specific and simplified priority fee oracle.
     /// Leverages the already existing fee history cache.
     ///
+    /// Returns a suggestion for a gas tip cap for dynamic fee transactions.
+    ///
     /// Handler for ETH RPC call: `eth_maxPriorityFeePerGas`
     pub fn max_priority_fee_per_gas(&self) -> Result<U256> {
         node_info!("eth_maxPriorityFeePerGas");
-        Err(BlockchainError::RpcUnimplemented)
+        Ok(self.backend.max_priority_fee_per_gas())
     }
 
     /// Creates a filter object, based on filter options, to notify when the state changes (logs).
