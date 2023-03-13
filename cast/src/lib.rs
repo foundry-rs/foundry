@@ -1650,12 +1650,9 @@ impl SimpleCast {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn disassemble(
-        bytecode: &str,
-    ) -> Result<String> {
+    pub fn disassemble(bytecode: &str) -> Result<String> {
         format_operations(disassemble_str(bytecode)?)
     }
-
 }
 
 fn strip_0x(s: &str) -> &str {
