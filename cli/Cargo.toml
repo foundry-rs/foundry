@@ -23,7 +23,7 @@ ui = { path = "../ui" }
 
 # eth
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["rustls"] }
-solang-parser = "=0.2.1"
+solang-parser = "=0.2.3"
 
 # cli
 clap = { version = "4.0", features = ["derive", "env", "unicode", "wrap_help"] }
@@ -85,10 +85,10 @@ anvil = { path = "../anvil" }
 foundry-utils = { path = "./../utils", features = ["test"] }
 foundry-cli-test-utils = { path = "./test-utils" }
 pretty_assertions = "1.0.0"
-toml = "0.5"
-serial_test = "0.9.0"
+toml = "0.7.0"
+serial_test = "1.0.0"
 criterion = "0.4.0"
-svm = { package = "svm-rs", version = "0.2.16", default-features = false, features = ["rustls"] }
+svm = { package = "svm-rs", version = "0.2", default-features = false, features = ["rustls"] }
 
 [features]
 default = ["rustls"]

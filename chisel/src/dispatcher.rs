@@ -7,7 +7,7 @@ use crate::prelude::{
     ChiselCommand, ChiselResult, ChiselSession, CmdCategory, CmdDescriptor, SessionSourceConfig,
     SolidityHelper,
 };
-use ethers::{abi::ParamType, contract::Lazy, utils::hex};
+use ethers::{abi::ParamType, contract::Lazy, types::H160, utils::hex};
 use forge::{
     decode::decode_console_logs,
     trace::{
@@ -21,7 +21,7 @@ use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use solang_parser::diagnostics::Diagnostic;
-use std::{error::Error, io::Write, path::PathBuf, process::Command};
+use std::{error::Error, io::Write, path::PathBuf, process::Command, str::FromStr};
 use strum::IntoEnumIterator;
 use yansi::Paint;
 
@@ -35,6 +35,9 @@ pub static CHISEL_CHAR: &str = "⚒️";
 /// Matches Solidity comments
 static COMMENT_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^\s*(?://.*\s*$)|(/*[\s\S]*?\*/\s*$)").unwrap());
+
+/// Matches Ethereum addresses
+static ADDRESS_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"0x[a-fA-F0-9]{40}").unwrap());
 
 /// Chisel input dispatcher
 #[derive(Debug)]
@@ -521,7 +524,7 @@ impl ChiselDispatcher {
                                             .inputs
                                             .iter()
                                             .map(|input| {
-                                                let mut formatted = format_param!(input);
+                                                let mut formatted = format!("{}", input.kind);
                                                 if input.indexed {
                                                     formatted.push_str(" indexed");
                                                 }
@@ -753,7 +756,7 @@ impl ChiselDispatcher {
     }
 
     /// Dispatches an input as a command via [Self::dispatch_command] or as a Solidity snippet.
-    pub async fn dispatch(&mut self, input: &str) -> DispatchResult {
+    pub async fn dispatch(&mut self, mut input: &str) -> DispatchResult {
         // Check if the input is a builtin command.
         // Commands are denoted with a `!` leading character.
         if input.starts_with(COMMAND_LEADER) {
@@ -791,6 +794,20 @@ impl ChiselDispatcher {
             source.with_run_code(input);
             return DispatchResult::Success(None)
         }
+
+        // If there is an address (or multiple addresses) in the input, ensure that they are
+        // encoded with a valid checksum per EIP-55.
+        let mut heap_input = input.to_string();
+        ADDRESS_RE.find_iter(input).for_each(|m| {
+            // Convert the match to a string slice
+            let match_str = m.as_str();
+            // We can always safely unwrap here due to the regex matching.
+            let addr = H160::from_str(match_str).unwrap();
+            // Replace all occurances of the address with a checksummed version
+            heap_input = heap_input.replace(match_str, &ethers::utils::to_checksum(&addr, None));
+        });
+        // Replace the old input with the formatted input.
+        input = &heap_input;
 
         // Create new source with exact input appended and parse
         let (mut new_source, do_execute) = match source.clone_with_new_line(input.to_string()) {

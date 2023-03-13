@@ -1,7 +1,7 @@
 //! Coverage command
 use crate::{
     cmd::{
-        forge::{build::CoreBuildArgs, install, test::Filter},
+        forge::{build::CoreBuildArgs, install, test::FilterArgs},
         Cmd, LoadConfig,
     },
     utils::{self, p_println, STATIC_FUZZ_SEED},
@@ -49,7 +49,7 @@ pub struct CoverageArgs {
     report: Vec<CoverageReportKind>,
 
     #[clap(flatten)]
-    filter: Filter,
+    filter: FilterArgs,
 
     #[clap(flatten)]
     evm_opts: EvmArgs,

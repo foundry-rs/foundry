@@ -71,7 +71,7 @@ contract ParseJson is DSTest {
     }
 
     function test_nestedObject() public {
-        bytes memory data = cheats.parseJson(json, "nestedObject");
+        bytes memory data = cheats.parseJson(json, ".nestedObject");
         Nested memory nested = abi.decode(data, (Nested));
         assertEq(nested.number, 115792089237316195423570985008687907853269984665640564039457584007913129639935);
         assertEq(nested.str, "NEST");
@@ -99,17 +99,17 @@ contract ParseJson is DSTest {
 
     function test_coercionRevert() public {
         cheats.expectRevert(
-            "You can only coerce values or arrays, not JSON objects. The key '$.nestedObject' returns an object"
+            "You can only coerce values or arrays, not JSON objects. The key '.nestedObject' returns an object"
         );
-        uint256 number = cheats.parseJsonUint(json, "nestedObject");
+        uint256 number = cheats.parseJsonUint(json, ".nestedObject");
     }
 
     function test_coercionUint() public {
-        uint256 number = cheats.parseJsonUint(json, "hexUint");
+        uint256 number = cheats.parseJsonUint(json, ".hexUint");
         assertEq(number, 1231232);
-        number = cheats.parseJsonUint(json, "stringUint");
+        number = cheats.parseJsonUint(json, ".stringUint");
         assertEq(number, 115792089237316195423570985008687907853269984665640564039457584007913129639935);
-        number = cheats.parseJsonUint(json, "numberUint");
+        number = cheats.parseJsonUint(json, ".numberUint");
         assertEq(number, 115792089237316195423570985008687907853269984665640564039457584007913129639935);
         uint256[] memory numbers = cheats.parseJsonUintArray(json, ".arrayUint");
         assertEq(numbers[0], 1231232);
@@ -120,16 +120,29 @@ contract ParseJson is DSTest {
     function test_coercionInt() public {
         int256 number = cheats.parseJsonInt(json, ".hexInt");
         assertEq(number, -12);
-        number = cheats.parseJsonInt(json, "stringInt");
+        number = cheats.parseJsonInt(json, ".stringInt");
         assertEq(number, -12);
     }
 
-    function test_coercion_bool() public {
+    function test_coercionBool() public {
         bool boolean = cheats.parseJsonBool(json, ".booleanString");
         assertEq(boolean, true);
         bool[] memory booleans = cheats.parseJsonBoolArray(json, ".booleanArray");
         assert(booleans[0]);
         assert(!booleans[1]);
+    }
+
+    function test_advancedJsonPath() public {
+        bytes memory data = cheats.parseJson(json, ".advancedJsonPath[*].id");
+        uint256[] memory numbers = abi.decode(data, (uint256[]));
+        assertEq(numbers[0], 1);
+        assertEq(numbers[1], 2);
+    }
+
+    function test_canonicalizePath() public {
+        bytes memory data = cheats.parseJson(json, "$.str");
+        string memory decodedData = abi.decode(data, (string));
+        assertEq("hai", decodedData);
     }
 }
 
@@ -168,13 +181,7 @@ contract WriteJson is DSTest {
         bytes[] memory data3 = new bytes[](3);
         data3[0] = bytes("123");
         data3[2] = bytes("fpovhpgjaiosfjhapiufpsdf");
-        vm.serializeBytes(json1, "array3", data3);
-
-        uint256[] memory data4 = new uint256[](0);
-        vm.serializeUint(json1, "array4", data4);
-
-        address[] memory data5 = new address[](0);
-        string memory finalJson = vm.serializeAddress(json1, "array5", data5);
+        string memory finalJson = vm.serializeBytes(json1, "array3", data3);
 
         string memory path = "../testdata/fixtures/Json/write_test_array.json";
         vm.writeJson(finalJson, path);
@@ -200,15 +207,6 @@ contract WriteJson is DSTest {
         assertEq(parsedData3[0], data3[0]);
         assertEq(parsedData3[1], data3[1]);
         assertEq(parsedData3[2], data3[2]);
-
-        rawData = vm.parseJson(json, ".array4");
-        uint256[] memory parsedData4 = new uint256[](0);
-        parsedData4 = abi.decode(rawData, (uint256[]));
-
-        rawData = vm.parseJson(json, ".array5");
-        address[] memory parsedData5 = new address[](0);
-        parsedData5 = abi.decode(rawData, (address[]));
-
         vm.removeFile(path);
     }
 

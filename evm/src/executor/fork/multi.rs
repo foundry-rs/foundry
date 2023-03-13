@@ -278,7 +278,7 @@ impl MultiForkHandler {
             let retries = self.retries;
             let backoff = self.backoff;
             // need to create a new fork
-            let task = Box::pin(async move { create_fork(fork, retries, backoff).await });
+            let task = Box::pin(create_fork(fork, retries, backoff));
             self.pending_tasks.push(ForkTask::Create(task, fork_id, sender, Vec::new()));
         }
     }

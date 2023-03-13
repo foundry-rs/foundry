@@ -37,7 +37,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 futures-util = "0.3.4"
 
 # misc
-solang-parser = "=0.2.1"
+solang-parser = "=0.2.3"
 eyre = "0.6"
 thiserror = "1.0.30"
 rayon = "1.5.1"

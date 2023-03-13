@@ -17,7 +17,12 @@ use foundry_cli_test_utils::{
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
 use semver::Version;
-use std::{env, fs, path::PathBuf, process::Command, str::FromStr};
+use std::{
+    env, fs,
+    path::PathBuf,
+    process::{Command, Stdio},
+    str::FromStr,
+};
 
 // tests `--help` is printed to std out
 forgetest!(print_help, |_: TestProject, mut cmd: TestCommand| {
@@ -234,11 +239,17 @@ forgetest!(can_init_repo_with_config, |prj: TestProject, mut cmd: TestCommand| {
 
 // Checks that a forge project fails to initialise if dir is already git repo and dirty
 forgetest!(can_detect_dirty_git_status_on_init, |prj: TestProject, mut cmd: TestCommand| {
-    use std::process::Command;
     prj.wipe();
 
-    // initialise new git
-    Command::new("git").arg("init").current_dir(prj.root()).output().unwrap();
+    // initialize new git repo
+    let status = Command::new("git")
+        .arg("init")
+        .current_dir(prj.root())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("could not run git init");
+    assert!(status.success());
 
     std::fs::write(prj.root().join("untracked.text"), "untracked").unwrap();
 
@@ -287,7 +298,7 @@ forgetest!(can_init_with_dir, |prj: TestProject, mut cmd: TestCommand| {
     assert!(prj.root().join("foobar").exists());
 });
 
-// `forge init` does only work on non-empty dirs
+// `forge init --force` works on non-empty dirs
 forgetest!(can_init_non_empty, |prj: TestProject, mut cmd: TestCommand| {
     prj.create_file("README.md", "non-empty dir");
     cmd.arg("init").arg(prj.root());
@@ -297,6 +308,60 @@ forgetest!(can_init_non_empty, |prj: TestProject, mut cmd: TestCommand| {
     cmd.assert_non_empty_stdout();
     assert!(prj.root().join(".git").exists());
     assert!(prj.root().join("lib/forge-std").exists());
+});
+
+// `forge init --force` works on already initialized git repository
+forgetest!(can_init_in_empty_repo, |prj: TestProject, mut cmd: TestCommand| {
+    let root = prj.root();
+
+    // initialize new git repo
+    let status = Command::new("git")
+        .arg("init")
+        .current_dir(root)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("could not run git init");
+    assert!(status.success());
+    assert!(root.join(".git").exists());
+
+    cmd.arg("init").arg(root);
+    cmd.assert_err();
+
+    cmd.arg("--force");
+    cmd.assert_non_empty_stdout();
+    assert!(root.join("lib/forge-std").exists());
+});
+
+// `forge init --force` works on already initialized git repository
+forgetest!(can_init_in_non_empty_repo, |prj: TestProject, mut cmd: TestCommand| {
+    let root = prj.root();
+
+    // initialize new git repo
+    let status = Command::new("git")
+        .arg("init")
+        .current_dir(root)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("could not run git init");
+    assert!(status.success());
+    assert!(root.join(".git").exists());
+
+    prj.create_file("README.md", "non-empty dir");
+    prj.create_file(".gitignore", "not foundry .gitignore");
+
+    cmd.arg("init").arg(root);
+    cmd.assert_err();
+
+    cmd.arg("--force");
+    cmd.assert_non_empty_stdout();
+    assert!(root.join("lib/forge-std").exists());
+
+    // not overwritten
+    let gitignore = root.join(".gitignore");
+    let gitignore = fs::read_to_string(gitignore).unwrap();
+    assert_eq!(gitignore, "not foundry .gitignore");
 });
 
 // Checks that remappings.txt and .vscode/settings.json is generated

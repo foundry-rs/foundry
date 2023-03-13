@@ -9,7 +9,7 @@ use ethers::{
     types::{H160, U256},
     utils::{get_contract_address, secret_key_to_address},
 };
-use rayon::prelude::*;
+use rayon::iter::{self, ParallelIterator};
 use regex::Regex;
 use std::time::Instant;
 
@@ -170,8 +170,8 @@ pub fn create_nonce_matcher<T: VanityMatcher>(
 
 /// Returns an infinite parallel iterator which yields a [GeneratedWallet].
 #[inline]
-pub fn wallet_generator() -> impl ParallelIterator<Item = GeneratedWallet> {
-    std::iter::repeat(()).par_bridge().map(|_| generate_wallet())
+pub fn wallet_generator() -> iter::Map<iter::Repeat<()>, fn(()) -> GeneratedWallet> {
+    iter::repeat(()).map(|_| generate_wallet())
 }
 
 /// Generates a random K-256 signing key and derives its Ethereum address.

@@ -90,6 +90,15 @@ impl DiskStateCache {
         })
         .flatten()
     }
+
+    /// Removes the cache file for the given hash, if it exists
+    pub fn remove(&mut self, hash: H256) {
+        self.with_cache_file(hash, |file| {
+            foundry_common::fs::remove_file(file).map_err(|err| {
+                error!(target: "backend", ?err, ?hash, "Failed to remove state snapshot");
+            })
+        });
+    }
 }
 
 impl Default for DiskStateCache {

@@ -1,5 +1,5 @@
 use crate::abi::*;
-use anvil::{spawn, NodeConfig};
+use anvil::{spawn, Hardfork, NodeConfig};
 use ethers::{
     abi::ethereum_types::BigEndianHash,
     prelude::{
@@ -964,4 +964,55 @@ async fn test_reject_gas_too_low() {
 
     let err = resp.unwrap_err().to_string();
     assert!(err.contains("intrinsic gas too low"));
+}
+
+// <https://github.com/foundry-rs/foundry/issues/3783>
+#[tokio::test(flavor = "multi_thread")]
+async fn can_call_with_high_gas_limit() {
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_gas_limit(Some(U256::from(100_000_000)))).await;
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
+        .unwrap()
+        .send()
+        .await
+        .unwrap();
+
+    let greeting = greeter_contract.greet().gas(60_000_000u64).call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reject_eip1559_pre_london() {
+    let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(Hardfork::Berlin))).await;
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let gas_limit = api.gas_limit();
+    let gas_price = api.gas_price().unwrap();
+    let unsupported = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
+        .unwrap()
+        .gas(gas_limit)
+        .gas_price(gas_price)
+        .send()
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(unsupported.contains("not supported by the current hardfork"), "{unsupported}");
+
+    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
+        .unwrap()
+        .legacy()
+        .send()
+        .await
+        .unwrap();
+
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
 }

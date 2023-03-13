@@ -13,6 +13,13 @@ pub struct ExtractConfigError {
     pub(crate) error: figment::Error,
 }
 
+impl ExtractConfigError {
+    /// Wraps the figment error
+    pub fn new(error: figment::Error) -> Self {
+        Self { error }
+    }
+}
+
 impl fmt::Display for ExtractConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut unique_errors = Vec::with_capacity(self.error.count());

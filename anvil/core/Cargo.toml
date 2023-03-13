@@ -32,6 +32,7 @@ serde = { version = "1.0", features = ["derive"] }
 
 [features]
 default = []
+impersonated-tx = []
 fastrlp = ["dep:open-fastrlp"]
 serde = ["dep:serde"]
 

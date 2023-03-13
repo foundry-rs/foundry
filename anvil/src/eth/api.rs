@@ -6,7 +6,8 @@ use crate::{
             validate::TransactionValidator,
         },
         error::{
-            BlockchainError, FeeHistoryError, InvalidTransactionError, Result, ToRpcResponseResult,
+            decode_revert_reason, BlockchainError, FeeHistoryError, InvalidTransactionError,
+            Result, ToRpcResponseResult,
         },
         fees::{FeeDetails, FeeHistoryCache},
         macros::node_info,
@@ -41,7 +42,7 @@ use anvil_core::{
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use ethers::{
     abi::ethereum_types::H64,
-    prelude::{GethTrace, TxpoolInspect},
+    prelude::{DefaultFrame, TxpoolInspect},
     providers::ProviderError,
     types::{
         transaction::{
@@ -49,7 +50,7 @@ use ethers::{
             eip712::TypedData,
         },
         Address, Block, BlockId, BlockNumber, Bytes, FeeHistory, Filter, FilteredParams,
-        GethDebugTracingOptions, Log, Trace, Transaction, TransactionReceipt, TxHash,
+        GethDebugTracingOptions, GethTrace, Log, Trace, Transaction, TransactionReceipt, TxHash,
         TxpoolContent, TxpoolInspectSummary, TxpoolStatus, H256, U256, U64,
     },
     utils::rlp,
@@ -327,6 +328,9 @@ impl EthApi {
             }
             EthRequest::EvmMine(mine) => {
                 self.evm_mine(mine.and_then(|p| p.params)).await.to_rpc_result()
+            }
+            EthRequest::EvmMineDetailed(mine) => {
+                self.evm_mine_detailed(mine.and_then(|p| p.params)).await.to_rpc_result()
             }
             EthRequest::SetRpcUrl(url) => self.anvil_set_rpc_url(url).to_rpc_result(),
             EthRequest::EthSendUnsignedTransaction(tx) => {
@@ -750,10 +754,12 @@ impl EthApi {
         let pending_transaction = if self.is_impersonated(from) {
             let bypass_signature = self.backend.cheats().bypass_signature();
             let transaction = sign::build_typed_transaction(request, bypass_signature)?;
+            self.ensure_typed_transaction_supported(&transaction)?;
             trace!(target : "node", ?from, "eth_sendTransaction: impersonating");
-            PendingTransaction::with_sender(transaction, from)
+            PendingTransaction::with_impersonated(transaction, from)
         } else {
             let transaction = self.sign_request(&from, request)?;
+            self.ensure_typed_transaction_supported(&transaction)?;
             PendingTransaction::new(transaction)?
         };
 
@@ -788,10 +794,14 @@ impl EthApi {
             // valid rlp and then rlp decode impl of `TypedTransaction` will remove and check the
             // version byte
             let extend = rlp::encode(&data);
-            match rlp::decode::<TypedTransaction>(&extend[..]) {
+            let tx = match rlp::decode::<TypedTransaction>(&extend[..]) {
                 Ok(transaction) => transaction,
                 Err(_) => return Err(BlockchainError::FailedToDecodeSignedTransaction),
-            }
+            };
+
+            self.ensure_typed_transaction_supported(&tx)?;
+
+            tx
         };
 
         let pending_transaction = PendingTransaction::new(transaction)?;
@@ -939,6 +949,7 @@ impl EthApi {
         let mut tx = self.pool.get_transaction(hash).map(|pending| {
             let from = *pending.sender();
             let mut tx = transaction_build(
+                Some(*pending.hash()),
                 pending.transaction,
                 None,
                 None,
@@ -1189,10 +1200,12 @@ impl EthApi {
     /// Introduced in EIP-1159, a Geth-specific and simplified priority fee oracle.
     /// Leverages the already existing fee history cache.
     ///
+    /// Returns a suggestion for a gas tip cap for dynamic fee transactions.
+    ///
     /// Handler for ETH RPC call: `eth_maxPriorityFeePerGas`
     pub fn max_priority_fee_per_gas(&self) -> Result<U256> {
         node_info!("eth_maxPriorityFeePerGas");
-        Err(BlockchainError::RpcUnimplemented)
+        Ok(self.backend.max_priority_fee_per_gas())
     }
 
     /// Creates a filter object, based on filter options, to notify when the state changes (logs).
@@ -1284,7 +1297,7 @@ impl EthApi {
         request: EthTransactionRequest,
         block_number: Option<BlockId>,
         opts: GethDebugTracingOptions,
-    ) -> Result<GethTrace> {
+    ) -> Result<DefaultFrame> {
         node_info!("debug_traceCall");
         if opts.tracer.is_some() {
             return Err(RpcError::invalid_params("non-default tracer not supported yet").into())
@@ -1396,7 +1409,12 @@ impl EthApi {
         let mining_mode = if secs == 0 {
             MiningMode::None
         } else {
-            MiningMode::FixedBlockTime(FixedBlockTimeMiner::new(Duration::from_secs(secs)))
+            let block_time = Duration::from_secs(secs);
+
+            // This ensures that memory limits are stricter in interval-mine mode
+            self.backend.update_interval_mine_block_time(block_time);
+
+            MiningMode::FixedBlockTime(FixedBlockTimeMiner::new(block_time))
         };
         self.miner.set_mining_mode(mining_mode);
         Ok(())
@@ -1494,6 +1512,12 @@ impl EthApi {
     /// Handler for RPC call: `anvil_setNextBlockBaseFeePerGas`
     pub async fn anvil_set_next_block_base_fee_per_gas(&self, basefee: U256) -> Result<()> {
         node_info!("anvil_setNextBlockBaseFeePerGas");
+        if !self.backend.is_eip1559() {
+            return Err(RpcError::invalid_params(
+                "anvil_setNextBlockBaseFeePerGas is only supported when EIP-1559 is active",
+            )
+            .into())
+        }
         self.backend.set_base_fee(basefee);
         Ok(())
     }
@@ -1650,30 +1674,61 @@ impl EthApi {
     /// **Note**: ganache returns `0x0` here as placeholder for additional meta-data in the future.
     pub async fn evm_mine(&self, opts: Option<EvmMineOptions>) -> Result<String> {
         node_info!("evm_mine");
-        let mut blocks_to_mine = 1u64;
 
-        if let Some(opts) = opts {
-            let timestamp = match opts {
-                EvmMineOptions::Timestamp(timestamp) => timestamp,
-                EvmMineOptions::Options { timestamp, blocks } => {
-                    if let Some(blocks) = blocks {
-                        blocks_to_mine = blocks;
+        self.do_evm_mine(opts).await?;
+
+        Ok("0x0".to_string())
+    }
+
+    /// Mine blocks, instantly and return the mined blocks.
+    ///
+    /// Handler for RPC call: `evm_mine_detailed`
+    ///
+    /// This will mine the blocks regardless of the configured mining mode.
+    ///
+    /// **Note**: This behaves exactly as [Self::evm_mine] but returns different output, for
+    /// compatibility reasons, this is a separate call since `evm_mine` is not an anvil original.
+    /// and `ganache` may change the `0x0` placeholder.
+    pub async fn evm_mine_detailed(
+        &self,
+        opts: Option<EvmMineOptions>,
+    ) -> Result<Vec<Block<Transaction>>> {
+        node_info!("evm_mine_detailed");
+
+        let mined_blocks = self.do_evm_mine(opts).await?;
+
+        let mut blocks = Vec::with_capacity(mined_blocks as usize);
+
+        let latest = self.backend.best_number().as_u64();
+        for offset in (0..mined_blocks).rev() {
+            let block_num = latest - offset;
+            if let Some(mut block) =
+                self.backend.block_by_number_full(BlockNumber::Number(block_num.into())).await?
+            {
+                for tx in block.transactions.iter_mut() {
+                    if let Some(receipt) = self.backend.mined_transaction_receipt(tx.hash) {
+                        if let Some(output) = receipt.out {
+                            // insert revert reason if failure
+                            if receipt.inner.status.unwrap_or_default().as_u64() == 0 {
+                                if let Some(reason) = decode_revert_reason(&output) {
+                                    tx.other.insert(
+                                        "revertReason".to_string(),
+                                        serde_json::to_value(reason).expect("Infallible"),
+                                    );
+                                }
+                            }
+                            tx.other.insert(
+                                "output".to_string(),
+                                serde_json::to_value(output).expect("Infallible"),
+                            );
+                        }
                     }
-                    timestamp
                 }
-            };
-            if let Some(timestamp) = timestamp {
-                // timestamp was explicitly provided to be the next timestamp
-                self.evm_set_next_block_timestamp(timestamp)?;
+                blocks.push(block);
             }
         }
 
-        // mine all the blocks
-        for _ in 0..blocks_to_mine {
-            self.mine_one().await;
-        }
-
-        Ok("0x0".to_string())
+        Ok(blocks)
     }
 
     /// Sets the reported block number
@@ -1737,7 +1792,9 @@ impl EthApi {
         let bypass_signature = self.backend.cheats().bypass_signature();
         let transaction = sign::build_typed_transaction(request, bypass_signature)?;
 
-        let pending_transaction = PendingTransaction::with_sender(transaction, from);
+        self.ensure_typed_transaction_supported(&transaction)?;
+
+        let pending_transaction = PendingTransaction::with_impersonated(transaction, from);
 
         // pre-validate
         self.backend.validate_pool_transaction(&pending_transaction).await?;
@@ -1808,6 +1865,7 @@ impl EthApi {
         fn convert(tx: Arc<PoolTransaction>) -> Transaction {
             let from = *tx.pending_transaction.sender();
             let mut tx = transaction_build(
+                Some(*tx.hash()),
                 tx.pending_transaction.transaction.clone(),
                 None,
                 None,
@@ -1839,6 +1897,34 @@ impl EthApi {
 // === impl EthApi utility functions ===
 
 impl EthApi {
+    /// Executes the `evm_mine` and returns the number of blocks mined
+    async fn do_evm_mine(&self, opts: Option<EvmMineOptions>) -> Result<u64> {
+        let mut blocks_to_mine = 1u64;
+
+        if let Some(opts) = opts {
+            let timestamp = match opts {
+                EvmMineOptions::Timestamp(timestamp) => timestamp,
+                EvmMineOptions::Options { timestamp, blocks } => {
+                    if let Some(blocks) = blocks {
+                        blocks_to_mine = blocks;
+                    }
+                    timestamp
+                }
+            };
+            if let Some(timestamp) = timestamp {
+                // timestamp was explicitly provided to be the next timestamp
+                self.evm_set_next_block_timestamp(timestamp)?;
+            }
+        }
+
+        // mine all the blocks
+        for _ in 0..blocks_to_mine {
+            self.mine_one().await;
+        }
+
+        Ok(blocks_to_mine)
+    }
+
     async fn do_estimate_gas(
         &self,
         request: EthTransactionRequest,
@@ -2015,9 +2101,9 @@ impl EthApi {
             mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
         }
 
-        trace!(target : "node", "Estimated Gas for call {:?}", gas);
+        trace!(target : "node", "Estimated Gas for call {:?}", highest_gas_limit);
 
-        Ok(gas)
+        Ok(highest_gas_limit)
     }
 
     /// Updates the `TransactionOrder`
@@ -2095,7 +2181,14 @@ impl EthApi {
         for info in transactions {
             let tx = block.transactions.get(info.transaction_index as usize)?.clone();
 
-            let tx = transaction_build(tx, Some(&block), Some(info), true, Some(base_fee));
+            let tx = transaction_build(
+                Some(info.transaction_hash),
+                tx,
+                Some(&block),
+                Some(info),
+                true,
+                Some(base_fee),
+            );
             block_transactions.push(tx);
         }
 
@@ -2107,7 +2200,7 @@ impl EthApi {
         request: EthTransactionRequest,
         nonce: U256,
     ) -> Result<TypedTransactionRequest> {
-        let chain_id = self.chain_id();
+        let chain_id = request.chain_id.map(|c| c.as_u64()).unwrap_or_else(|| self.chain_id());
         let max_fee_per_gas = request.max_fee_per_gas;
         let gas_price = request.gas_price;
 
@@ -2210,6 +2303,15 @@ impl EthApi {
     /// Returns the current state root
     pub async fn state_root(&self) -> Option<H256> {
         self.backend.get_db().read().await.maybe_state_root()
+    }
+
+    /// additional validation against hardfork
+    fn ensure_typed_transaction_supported(&self, tx: &TypedTransaction) -> Result<()> {
+        match &tx {
+            TypedTransaction::EIP2930(_) => self.backend.ensure_eip2930_active(),
+            TypedTransaction::EIP1559(_) => self.backend.ensure_eip1559_active(),
+            TypedTransaction::Legacy(_) => Ok(()),
+        }
     }
 }
 

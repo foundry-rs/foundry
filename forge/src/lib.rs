@@ -42,18 +42,11 @@ impl TestOptions {
     }
 
     pub fn fuzzer_with_cases(&self, cases: u32) -> TestRunner {
-        let max_global_rejects = if self.fuzz.max_test_rejects !=
-            foundry_config::FuzzConfig::default().max_test_rejects
-        {
-            self.fuzz.max_test_rejects
-        } else {
-            self.fuzz.max_global_rejects
-        };
         // TODO: Add Options to modify the persistence
         let cfg = proptest::test_runner::Config {
             failure_persistence: None,
             cases,
-            max_global_rejects,
+            max_global_rejects: self.fuzz.max_test_rejects,
             ..Default::default()
         };
 

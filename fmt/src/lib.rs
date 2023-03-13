@@ -15,6 +15,6 @@ pub use foundry_config::fmt::*;
 
 pub use comments::Comments;
 pub use formatter::{Formatter, FormatterError};
-pub use helpers::{fmt, format, offset_to_line_column, parse, Parsed};
+pub use helpers::{fmt, format, offset_to_line_column, parse, print_diagnostics_report, Parsed};
 pub use inline_config::InlineConfig;
 pub use visit::{Visitable, Visitor};

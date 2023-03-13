@@ -235,7 +235,8 @@ impl FeeHistoryService {
                 .enumerate()
                 .map(|(i, receipt)| {
                     let gas_used = receipt.gas_used().as_u64();
-                    let effective_reward = match block.transactions.get(i) {
+                    let effective_reward = match block.transactions.get(i).map(|tx| &tx.transaction)
+                    {
                         Some(TypedTransaction::Legacy(t)) => {
                             t.gas_price.saturating_sub(base_fee).as_u64()
                         }

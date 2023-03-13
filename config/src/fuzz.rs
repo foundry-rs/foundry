@@ -14,8 +14,6 @@ pub struct FuzzConfig {
     /// `max_local_rejects` option isn't exposed here since we're not using
     /// `prop_filter`.
     pub max_test_rejects: u32,
-    /// Being deprecated in favor of `max_test_rejects`. Will be removed in future versions.
-    pub max_global_rejects: u32,
     /// Optional seed for the fuzzing RNG algorithm
     #[serde(
         deserialize_with = "ethers_core::types::serde_helpers::deserialize_stringified_numeric_opt"
@@ -35,7 +33,6 @@ impl Default for FuzzConfig {
         FuzzConfig {
             runs: 256,
             max_test_rejects: 65536,
-            max_global_rejects: 65536,
             seed: None,
             dictionary_weight: 40,
             include_storage: true,

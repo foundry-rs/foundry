@@ -118,8 +118,9 @@ impl SessionSource {
     /// ### Returns
     ///
     /// A new instance of [SessionSource]
+    #[track_caller]
     pub fn new(solc: Solc, config: SessionSourceConfig) -> Self {
-        assert!(solc.version().is_ok());
+        debug_assert!(solc.version().is_ok(), "{:?}", solc.version());
 
         Self {
             file_name: PathBuf::from("ReplContract.sol".to_string()),
@@ -245,8 +246,8 @@ impl SessionSource {
     /// source.
     pub fn compiler_input(&self) -> CompilerInput {
         let mut sources = Sources::new();
-        sources.insert(PathBuf::from("forge-std/Vm.sol"), Source { content: VM_SOURCE.to_owned() });
-        sources.insert(self.file_name.clone(), Source { content: self.to_repl_source() });
+        sources.insert(PathBuf::from("forge-std/Vm.sol"), Source::new(VM_SOURCE.to_owned()));
+        sources.insert(self.file_name.clone(), Source::new(self.to_repl_source()));
         CompilerInput::with_sources(sources).pop().unwrap()
     }
 

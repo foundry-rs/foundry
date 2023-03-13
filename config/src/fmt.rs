@@ -27,6 +27,8 @@ pub struct FormatterConfig {
     pub wrap_comments: bool,
     /// Globs to ignore
     pub ignore: Vec<String>,
+    /// Add new line at start and end of contract declarations
+    pub contract_new_lines: bool,
 }
 
 /// Style of uint/int256 types
@@ -116,6 +118,7 @@ impl Default for FormatterConfig {
             override_spacing: false,
             wrap_comments: false,
             ignore: vec![],
+            contract_new_lines: false,
         }
     }
 }

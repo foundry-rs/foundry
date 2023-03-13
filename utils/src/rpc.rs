@@ -7,8 +7,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 // List of general purpose infura keys to rotate through
 static INFURA_KEYS: Lazy<Vec<&'static str>> = Lazy::new(|| {
     let mut keys = vec![
-        "6770454bc6ea42c58aac12978531b93f",
-        "631fd9a6539644088297dc605d35fff3",
         "16a8be88795540b9b3903d8de0f7baa5",
         "f4a0bdad42674adab5fc0ac077ffab2b",
         "5c812e02193c4ba793f8c214317582bd",
@@ -31,6 +29,21 @@ static ALCHEMY_MAINNET_KEYS: Lazy<Vec<&'static str>> = Lazy::new(|| {
         "pwc5rmJhrdoaSEfimoKEmsvOjKSmPDrP",
         "A5sZ85MIr4SzCMkT0zXh2eeamGIq3vGL",
         "9VWGraLx0tMiSWx05WH-ywgSVmMxs66W",
+        "U4hsGWgl9lBM1j3jhSgJ4gbjHg2jRwKy",
+        "K-uNlqYoYCO9cdBHcifwCDAcEjDy1UHL",
+        "GWdgwabOE2XfBdLp_gIq-q6QHa7DSoag",
+        "Uz0cF5HCXFtpZlvd9NR7kHxfB_Wdpsx7",
+        "wWZMf1SOu9lT1GNIJHOX-5WL1MiYXycT",
+        "HACxy4wNUoD-oLlCq_v5LG0bclLc_DRL",
+        "_kCjfMjYo8x0rOm6YzmvSI0Qk-c8SO5I",
+        "kD-M-g5TKb957S3bbOXxXPeMUxm1uTuU",
+        "jQqqfTOQN_7A6gQEjzRYpVwXzxEBN9aj",
+        "jGiK5vwDfC3F4r0bqukm-W2GqgdrxdSr",
+        "Reoz-NZSjWczcAQOeVTz_Ejukb8mAton",
+        "-DQx9U-heCeTgYsAXwaTurmGytc-0mbR",
+        "sDNCLu_e99YZRkbWlVHiuM3BQ5uxYCZU",
+        "M6lfpxTBrywHOvKXOS4yb7cTTpa25ZQ9",
+        "UK8U_ogrbYB4lQFTGJHHDrbiS4UPnac6",
     ];
 
     keys.shuffle(&mut rand::thread_rng());

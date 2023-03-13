@@ -43,6 +43,8 @@ revm = { version = "2.3", default-features = false, features = [
   "k256",
   "with-serde",
   "memory_limit",
+  "optional_eip3607",
+  "optional_block_gas_limit"
 ] }
 
 # Fuzzer

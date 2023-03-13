@@ -1,8 +1,11 @@
 use crate::fork::fork_config;
 use anvil::{spawn, NodeConfig};
 use ethers::{
-    contract::Contract,
-    prelude::{Action, ContractFactory, Middleware, Signer, SignerMiddleware, TransactionRequest},
+    contract::ContractInstance,
+    prelude::{
+        Action, ContractFactory, GethTrace, GethTraceFrame, Middleware, Signer, SignerMiddleware,
+        TransactionRequest,
+    },
     types::{ActionType, Address, GethDebugTracingCallOptions, Trace},
     utils::hex,
 };
@@ -77,7 +80,7 @@ contract Contract {
     let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
     let contract = factory.deploy(()).unwrap().send().await.unwrap();
 
-    let contract = Contract::new(
+    let contract = ContractInstance::new(
         contract.address(),
         abi.unwrap(),
         SignerMiddleware::new(handle.http_provider(), wallets[1].clone()),
@@ -124,7 +127,7 @@ contract Contract {
     let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
     let contract = factory.deploy(()).unwrap().send().await.unwrap();
 
-    let contract = Contract::new(
+    let contract = ContractInstance::new(
         contract.address(),
         abi.unwrap(),
         SignerMiddleware::new(handle.http_provider(), wallets[1].clone()),
@@ -136,7 +139,19 @@ contract Contract {
         .debug_trace_call(call.tx, None, GethDebugTracingCallOptions::default())
         .await
         .unwrap();
-    assert!(!traces.failed);
+    match traces {
+        GethTrace::Known(traces) => match traces {
+            GethTraceFrame::Default(traces) => {
+                assert!(!traces.failed);
+            }
+            _ => {
+                unreachable!()
+            }
+        },
+        GethTrace::Unknown(_) => {
+            unreachable!()
+        }
+    }
 }
 
 // <https://github.com/foundry-rs/foundry/issues/2656>

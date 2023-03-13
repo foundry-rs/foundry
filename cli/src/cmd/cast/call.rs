@@ -1,24 +1,22 @@
 // cast estimate subcommands
 use crate::{
-    opts::{
-        cast::{parse_block_id, parse_name_or_address},
-        EthereumOpts, TransactionOpts,
-    },
-    utils::parse_ether_value,
+    opts::{EthereumOpts, TransactionOpts},
+    utils::{self, parse_ether_value},
 };
 use cast::{Cast, TxBuilder};
 use clap::Parser;
-use ethers::{
-    providers::Middleware,
-    types::{Address, BlockId, NameOrAddress, U256},
-};
+use ethers::types::{BlockId, NameOrAddress, U256};
 use eyre::WrapErr;
-use foundry_common::try_get_http_provider;
-use foundry_config::{Chain, Config};
+use foundry_config::Config;
+use std::str::FromStr;
 
 #[derive(Debug, Parser)]
 pub struct CallArgs {
-    #[clap(help = "The destination of the transaction.", value_parser = parse_name_or_address, value_name = "TO")]
+    #[clap(
+        help = "The destination of the transaction.", 
+        value_name = "TO",
+        value_parser = NameOrAddress::from_str
+    )]
     to: Option<NameOrAddress>,
 
     #[clap(help = "The signature of the function to call.", value_name = "SIG")]
@@ -39,11 +37,15 @@ pub struct CallArgs {
     #[clap(flatten)]
     tx: TransactionOpts,
 
-    // TODO: We only need RPC URL and Etherscan API key from here.
     #[clap(flatten)]
     eth: EthereumOpts,
 
-    #[clap(long, short, help = "the block you want to query, can also be earliest/latest/pending", value_parser = parse_block_id, value_name = "BLOCK")]
+    #[clap(
+        long,
+        short,
+        help = "the block you want to query, can also be earliest/latest/pending",
+        value_name = "BLOCK"
+    )]
     block: Option<BlockId>,
 
     #[clap(subcommand)]
@@ -75,14 +77,13 @@ Examples: 1ether, 10gwei, 0.01ether"#,
 impl CallArgs {
     pub async fn run(self) -> eyre::Result<()> {
         let CallArgs { to, sig, args, data, tx, eth, command, block } = self;
+
         let config = Config::from(&eth);
-        let provider = try_get_http_provider(config.get_rpc_url_or_localhost_http()?)?;
+        let provider = utils::get_provider(&config)?;
+        let chain = utils::get_chain(config.chain_id, &provider).await?;
+        let sender = eth.wallet.sender().await;
 
-        let chain: Chain =
-            if let Some(chain) = eth.chain { chain } else { provider.get_chainid().await?.into() };
-
-        let from = eth.wallet.from.unwrap_or(Address::zero());
-        let mut builder = TxBuilder::new(&provider, from, to, chain, tx.legacy).await?;
+        let mut builder = TxBuilder::new(&provider, sender, to, chain, tx.legacy).await?;
         builder
             .gas(tx.gas_limit)
             .etherscan_api_key(config.get_etherscan_api_key(Some(chain)))

@@ -1,17 +1,23 @@
+use async_trait::async_trait;
+use cast::{AwsChainProvider, AwsClient, AwsHttpClient, AwsRegion, KmsClient};
 use clap::Parser;
 use ethers::{
-    middleware::SignerMiddleware,
-    prelude::Signer,
-    signers::{coins_bip39::English, AwsSigner, Ledger, LocalWallet, MnemonicBuilder, Trezor},
-    types::Address,
+    signers::{
+        coins_bip39::English, AwsSigner, AwsSignerError, HDPath as LedgerHDPath, Ledger,
+        LedgerError, LocalWallet, MnemonicBuilder, Signer, Trezor, TrezorError, TrezorHDPath,
+        WalletError,
+    },
+    types::{
+        transaction::{eip2718::TypedTransaction, eip712::Eip712},
+        Address, Signature,
+    },
 };
 use eyre::{bail, eyre, Result, WrapErr};
-use foundry_common::{fs, RetryProvider};
+use foundry_common::fs;
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
     str::FromStr,
-    sync::Arc,
 };
 
 pub mod multi_wallet;
@@ -19,8 +25,6 @@ use crate::opts::error::PrivateKeyError;
 pub use multi_wallet::*;
 
 pub mod error;
-
-type SignerClient<T> = SignerMiddleware<Arc<RetryProvider>, T>;
 
 #[derive(Parser, Debug, Default, Clone, Serialize)]
 #[cfg_attr(not(doc), allow(missing_docs))]
@@ -39,119 +43,99 @@ The wallet options can either be:
 )]
 #[clap(next_help_heading = "Wallet options")]
 pub struct Wallet {
+    /// The sender account
     #[clap(
-        long,
         short,
+        long,
         help_heading = "Wallet options - raw",
-        help = "Open an interactive prompt to enter your private key."
+        value_name = "ADDRESS",
+        env = "ETH_FROM"
     )]
+    pub from: Option<Address>,
+
+    /// Open an interactive prompt to enter your private key
+    #[clap(long, short, help_heading = "Wallet options - raw")]
     pub interactive: bool,
 
+    /// Use the provided private key
     #[clap(
-        long = "private-key",
+        long,
         help_heading = "Wallet options - raw",
-        help = "Use the provided private key.",
         value_name = "RAW_PRIVATE_KEY",
         value_parser = foundry_common::clap_helpers::strip_0x_prefix
     )]
     pub private_key: Option<String>,
 
-    #[clap(
-        long = "mnemonic",
-        alias = "mnemonic-path",
-        help_heading = "Wallet options - raw",
-        help = "Use the mnemonic phrase of mnemonic file at the specified path.",
-        value_name = "PATH"
-    )]
+    /// Use the mnemonic phrase of mnemonic file at the specified path
+    #[clap(long, alias = "mnemonic-path", help_heading = "Wallet options - raw")]
     pub mnemonic: Option<String>,
 
+    /// Use a BIP39 passphrase for the mnemonic
     #[clap(
         long = "mnemonic-passphrase",
         help_heading = "Wallet options - raw",
-        help = "Use a BIP39 passphrase for the mnemonic.",
         value_name = "PASSPHRASE"
     )]
     pub mnemonic_passphrase: Option<String>,
 
+    /// The wallet derivation path. Works with both --mnemonic-path and hardware wallets
     #[clap(
         long = "mnemonic-derivation-path",
         alias = "hd-path",
         help_heading = "Wallet options - raw",
-        help = "The wallet derivation path. Works with both --mnemonic-path and hardware wallets.",
         value_name = "PATH"
     )]
     pub hd_path: Option<String>,
 
+    /// Use the private key from the given mnemonic index. Used with --mnemonic-path.
     #[clap(
         long = "mnemonic-index",
         conflicts_with = "hd_path",
         help_heading = "Wallet options - raw",
-        help = "Use the private key from the given mnemonic index. Used with --mnemonic-path.",
-        default_value = "0",
+        default_value_t = 0,
         value_name = "INDEX"
     )]
     pub mnemonic_index: u32,
 
+    /// Use the keystore in the given folder or file
     #[clap(
-        env = "ETH_KEYSTORE",
         long = "keystore",
         help_heading = "Wallet options - keystore",
-        help = "Use the keystore in the given folder or file.",
-        value_name = "PATH"
+        value_name = "PATH",
+        env = "ETH_KEYSTORE"
     )]
     pub keystore_path: Option<String>,
 
+    /// The keystore password. Used with --keystore
     #[clap(
         long = "password",
         help_heading = "Wallet options - keystore",
-        help = "The keystore password. Used with --keystore.",
         requires = "keystore_path",
         value_name = "PASSWORD"
     )]
     pub keystore_password: Option<String>,
 
+    /// The keystore password file path. Used with --keystore.
     #[clap(
-        env = "ETH_PASSWORD",
         long = "password-file",
         help_heading = "Wallet options - keystore",
-        help = "The keystore password file path. Used with --keystore.",
         requires = "keystore_path",
-        value_name = "PASSWORD_FILE"
+        value_name = "PASSWORD_FILE",
+        env = "ETH_PASSWORD"
     )]
     pub keystore_password_file: Option<String>,
 
-    #[clap(
-        short,
-        long = "ledger",
-        help_heading = "Wallet options - hardware wallet",
-        help = "Use a Ledger hardware wallet."
-    )]
+    /// Use a Ledger hardware wallet
+    #[clap(short, long, help_heading = "Wallet options - hardware wallet")]
     pub ledger: bool,
 
-    #[clap(
-        short,
-        long = "trezor",
-        help_heading = "Wallet options - hardware wallet",
-        help = "Use a Trezor hardware wallet."
-    )]
+    /// Use a Trezor hardware wallet
+    #[clap(short, long = "trezor", help_heading = "Wallet options - hardware wallet")]
     pub trezor: bool,
 
-    #[clap(
-        long = "aws",
-        help_heading = "WALLET OPTIONS - KEYSTORE",
-        help = "Use AWS Key Management Service"
-    )]
+    /// Use AWS Key Management Service
+    #[clap(long = "aws", help_heading = "Wallet options - remote")]
     pub aws: bool,
-
-    #[clap(
-        env = "ETH_FROM",
-        short,
-        long = "from",
-        help_heading = "Wallet options - remote",
-        help = "The sender account.",
-        value_name = "ADDRESS"
-    )]
-    pub from: Option<Address>,
 }
 
 impl Wallet {
@@ -187,6 +171,68 @@ impl Wallet {
             None
         })
     }
+
+    /// Returns the sender address of the signer or `from`.
+    pub async fn sender(&self) -> Address {
+        if let Ok(signer) = self.signer(0).await {
+            signer.address()
+        } else {
+            self.from.unwrap_or_else(Address::zero)
+        }
+    }
+
+    /// Returns a [Signer] corresponding to the provided private key, mnemonic or hardware signer.
+    pub async fn signer(&self, chain_id: u64) -> eyre::Result<WalletSigner> {
+        if self.ledger {
+            let derivation = match self.hd_path.as_ref() {
+                Some(hd_path) => LedgerHDPath::Other(hd_path.clone()),
+                None => LedgerHDPath::LedgerLive(self.mnemonic_index as usize),
+            };
+            let ledger = Ledger::new(derivation, chain_id).await?;
+
+            Ok(WalletSigner::Ledger(ledger))
+        } else if self.trezor {
+            let derivation = match self.hd_path.as_ref() {
+                Some(hd_path) => TrezorHDPath::Other(hd_path.clone()),
+                None => TrezorHDPath::TrezorLive(self.mnemonic_index as usize),
+            };
+
+            // cached to ~/.ethers-rs/trezor/cache/trezor.session
+            let trezor = Trezor::new(derivation, chain_id, None).await?;
+
+            Ok(WalletSigner::Trezor(trezor))
+        } else if self.aws {
+            let client =
+                AwsClient::new_with(AwsChainProvider::default(), AwsHttpClient::new().unwrap());
+
+            let kms = KmsClient::new_with_client(client, AwsRegion::default());
+
+            let key_id = std::env::var("AWS_KMS_KEY_ID")?;
+
+            let aws_signer = AwsSigner::new(kms, key_id, chain_id).await?;
+
+            Ok(WalletSigner::Aws(aws_signer))
+        } else {
+            let maybe_local = self
+                .private_key()
+                .or_else(|_| self.interactive())
+                .or_else(|_| self.mnemonic())
+                .or_else(|_| self.keystore())?;
+            let local = maybe_local
+                .ok_or_else(|| eyre::eyre!("\
+                    Error accessing local wallet. Did you set a private key, mnemonic or keystore?\n\
+                    Run `cast send --help` or `forge create --help` and use the corresponding CLI\n\
+                    flag to set your key via:\n\
+                    --private-key, --mnemonic-path, --aws, --interactive, --trezor or --ledger.\n\
+                    \n\
+                    Alternatively, if you're using a local node with unlocked accounts,\n\
+                    use the --unlocked flag and set the `ETH_FROM` environment variable to the address\n\
+                    of the unlocked account you want to use.\
+                "))?;
+
+            Ok(WalletSigner::Local(local.with_chain_id(chain_id)))
+        }
+    }
 }
 
 pub trait WalletTrait {
@@ -200,7 +246,6 @@ pub trait WalletTrait {
     }
 
     fn get_from_private_key(&self, private_key: &str) -> Result<LocalWallet> {
-        use ethers::signers::WalletError;
         let privk = private_key.trim().strip_prefix("0x").unwrap_or(private_key);
         LocalWallet::from_str(privk).map_err(|err| {
             // helper macro to check if pk was meant to be an env var, this usually happens if `$`
@@ -337,46 +382,134 @@ impl WalletTrait for Wallet {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum WalletSignerError {
+    #[error(transparent)]
+    Local(#[from] WalletError),
+    #[error(transparent)]
+    Ledger(#[from] LedgerError),
+    #[error(transparent)]
+    Trezor(#[from] TrezorError),
+    #[error(transparent)]
+    Aws(#[from] AwsSignerError),
+}
+
 #[derive(Debug)]
-pub enum WalletType {
-    Local(SignerClient<LocalWallet>),
-    Ledger(SignerClient<Ledger>),
-    Trezor(SignerClient<Trezor>),
-    Aws(SignerClient<AwsSigner>),
+pub enum WalletSigner {
+    Local(LocalWallet),
+    Ledger(Ledger),
+    Trezor(Trezor),
+    Aws(AwsSigner),
 }
 
-impl From<SignerClient<Ledger>> for WalletType {
-    fn from(hw: SignerClient<Ledger>) -> WalletType {
-        WalletType::Ledger(hw)
+impl From<LocalWallet> for WalletSigner {
+    fn from(wallet: LocalWallet) -> Self {
+        Self::Local(wallet)
     }
 }
 
-impl From<SignerClient<Trezor>> for WalletType {
-    fn from(hw: SignerClient<Trezor>) -> WalletType {
-        WalletType::Trezor(hw)
+impl From<Ledger> for WalletSigner {
+    fn from(hw: Ledger) -> Self {
+        Self::Ledger(hw)
     }
 }
 
-impl From<SignerClient<LocalWallet>> for WalletType {
-    fn from(wallet: SignerClient<LocalWallet>) -> WalletType {
-        WalletType::Local(wallet)
+impl From<Trezor> for WalletSigner {
+    fn from(hw: Trezor) -> Self {
+        Self::Trezor(hw)
     }
 }
 
-impl From<SignerClient<AwsSigner>> for WalletType {
-    fn from(wallet: SignerClient<AwsSigner>) -> WalletType {
-        WalletType::Aws(wallet)
+impl From<AwsSigner> for WalletSigner {
+    fn from(wallet: AwsSigner) -> Self {
+        Self::Aws(wallet)
     }
 }
 
-impl WalletType {
-    pub fn chain_id(&self) -> u64 {
-        match self {
-            WalletType::Local(inner) => inner.signer().chain_id(),
-            WalletType::Ledger(inner) => inner.signer().chain_id(),
-            WalletType::Trezor(inner) => inner.signer().chain_id(),
-            WalletType::Aws(inner) => inner.signer().chain_id(),
+macro_rules! delegate {
+    ($s:ident, $inner:ident => $e:expr) => {
+        match $s {
+            Self::Local($inner) => $e,
+            Self::Ledger($inner) => $e,
+            Self::Trezor($inner) => $e,
+            Self::Aws($inner) => $e,
         }
+    };
+}
+
+#[async_trait]
+impl Signer for WalletSigner {
+    type Error = WalletSignerError;
+
+    async fn sign_message<S: Send + Sync + AsRef<[u8]>>(
+        &self,
+        message: S,
+    ) -> Result<Signature, Self::Error> {
+        delegate!(self, inner => inner.sign_message(message).await.map_err(Into::into))
+    }
+
+    async fn sign_transaction(&self, message: &TypedTransaction) -> Result<Signature, Self::Error> {
+        delegate!(self, inner => inner.sign_transaction(message).await.map_err(Into::into))
+    }
+
+    async fn sign_typed_data<T: Eip712 + Send + Sync>(
+        &self,
+        payload: &T,
+    ) -> Result<Signature, Self::Error> {
+        delegate!(self, inner => inner.sign_typed_data(payload).await.map_err(Into::into))
+    }
+
+    fn address(&self) -> Address {
+        delegate!(self, inner => inner.address())
+    }
+
+    fn chain_id(&self) -> u64 {
+        delegate!(self, inner => inner.chain_id())
+    }
+
+    fn with_chain_id<T: Into<u64>>(self, chain_id: T) -> Self {
+        match self {
+            Self::Local(inner) => Self::Local(inner.with_chain_id(chain_id)),
+            Self::Ledger(inner) => Self::Ledger(inner.with_chain_id(chain_id)),
+            Self::Trezor(inner) => Self::Trezor(inner.with_chain_id(chain_id)),
+            Self::Aws(inner) => Self::Aws(inner.with_chain_id(chain_id)),
+        }
+    }
+}
+
+#[async_trait]
+impl Signer for &WalletSigner {
+    type Error = WalletSignerError;
+
+    async fn sign_message<S: Send + Sync + AsRef<[u8]>>(
+        &self,
+        message: S,
+    ) -> Result<Signature, Self::Error> {
+        (*self).sign_message(message).await
+    }
+
+    async fn sign_transaction(&self, message: &TypedTransaction) -> Result<Signature, Self::Error> {
+        (*self).sign_transaction(message).await
+    }
+
+    async fn sign_typed_data<T: Eip712 + Send + Sync>(
+        &self,
+        payload: &T,
+    ) -> Result<Signature, Self::Error> {
+        (*self).sign_typed_data(payload).await
+    }
+
+    fn address(&self) -> Address {
+        (*self).address()
+    }
+
+    fn chain_id(&self) -> u64 {
+        (*self).chain_id()
+    }
+
+    fn with_chain_id<T: Into<u64>>(self, chain_id: T) -> Self {
+        let _ = chain_id;
+        self
     }
 }
 

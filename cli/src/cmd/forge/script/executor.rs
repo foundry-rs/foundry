@@ -21,7 +21,7 @@ use forge::{
     trace::{CallTraceDecoder, Traces},
     CallKind,
 };
-use foundry_common::RpcUrl;
+use foundry_common::{shell, RpcUrl};
 use futures::future::join_all;
 use parking_lot::RwLock;
 use std::{collections::VecDeque, sync::Arc};
@@ -252,7 +252,9 @@ impl ScriptArgs {
     ) -> HashMap<RpcUrl, ScriptRunner> {
         let sender = script_config.evm_opts.sender;
 
-        eprintln!("\n## Setting up ({}) EVMs.", script_config.total_rpcs.len());
+        if !shell::verbosity().is_silent() {
+            eprintln!("\n## Setting up ({}) EVMs.", script_config.total_rpcs.len());
+        }
 
         let futs = script_config
             .total_rpcs

@@ -1,12 +1,16 @@
 //! Verify contract source
 
-use crate::cmd::{
-    forge::verify::{etherscan::EtherscanVerificationProvider, provider::VerificationProvider},
-    retry::RetryArgs,
+use crate::{
+    cmd::{
+        forge::verify::{etherscan::EtherscanVerificationProvider, provider::VerificationProvider},
+        retry::RetryArgs,
+        LoadConfig,
+    },
+    opts::EtherscanOpts,
 };
 use clap::{Parser, ValueHint};
 use ethers::{abi::Address, solc::info::ContractInfo};
-use foundry_config::{figment, impl_figment_convert, Chain, Config};
+use foundry_config::{figment, impl_figment_convert, impl_figment_convert_cast, Config};
 use provider::VerificationProviderType;
 use reqwest::Url;
 use std::path::PathBuf;
@@ -33,7 +37,7 @@ pub struct VerifierArgs {
         help = "The verifier URL, if using a custom provider",
         value_name = "VERIFIER_URL"
     )]
-    verifier_url: Option<String>,
+    pub verifier_url: Option<String>,
 }
 
 impl Default for VerifierArgs {
@@ -88,22 +92,8 @@ pub struct VerifyArgs {
     )]
     pub num_of_optimizations: Option<usize>,
 
-    #[clap(
-        long,
-        visible_alias = "chain-id",
-        env = "CHAIN",
-        help = "The chain ID the contract is deployed to.",
-        default_value = "mainnet",
-        value_name = "CHAIN"
-    )]
-    pub chain: Chain,
-
-    #[clap(
-        help = "Your Etherscan API key.",
-        env = "ETHERSCAN_API_KEY",
-        value_name = "ETHERSCAN_KEY"
-    )]
-    pub etherscan_key: Option<String>,
+    #[clap(flatten)]
+    pub etherscan: EtherscanOpts,
 
     #[clap(help = "Flatten the source code before verifying.", long = "flatten")]
     pub flatten: bool,
@@ -160,7 +150,7 @@ impl figment::Provider for VerifyArgs {
     fn data(
         &self,
     ) -> Result<figment::value::Map<figment::Profile, figment::value::Dict>, figment::Error> {
-        let mut dict = figment::value::Dict::new();
+        let mut dict = self.etherscan.dict();
         if let Some(root) = self.root.as_ref() {
             dict.insert("root".to_string(), figment::value::Value::serialize(root)?);
         }
@@ -177,7 +167,12 @@ impl figment::Provider for VerifyArgs {
 
 impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
-    pub async fn run(self) -> eyre::Result<()> {
+    pub async fn run(mut self) -> eyre::Result<()> {
+        let config = self.load_config_emit_warnings();
+        let chain = config.chain_id.unwrap_or_default();
+        self.etherscan.chain = Some(chain);
+        self.etherscan.key = config.get_etherscan_api_key(Some(chain));
+
         if self.show_standard_json_input {
             let args =
                 EtherscanVerificationProvider::default().create_verify_request(&self, None).await?;
@@ -186,17 +181,21 @@ impl VerifyArgs {
         }
 
         let verifier_url = self.verifier.verifier_url.clone();
-        println!("Start verifying contract `{:?}` deployed on {}", self.address, self.chain);
-        self.verifier.verifier.client(&self.etherscan_key)?.verify(self).await.map_err(|err| {
+        println!("Start verifying contract `{:?}` deployed on {chain}", self.address);
+        self.verifier.verifier.client(&self.etherscan.key)?.verify(self).await.map_err(|err| {
             if let Some(verifier_url) = verifier_url {
                  match Url::parse(&verifier_url) {
                     Ok(url) => {
                         if is_host_only(&url) {
-                            return  err.wrap_err(format!("Provided URL `{verifier_url}` is host only.\n Did you mean to use the API endpoint`{verifier_url}/api` ?"))
+                            return err.wrap_err(format!(
+                                "Provided URL `{verifier_url}` is host only.\n Did you mean to use the API endpoint`{verifier_url}/api` ?"
+                            ))
                         }
                     }
                     Err(url_err) => {
-                       return  err.wrap_err(format!("Invalid URL {verifier_url} provided: {url_err}"))
+                        return err.wrap_err(format!(
+                            "Invalid URL {verifier_url} provided: {url_err}"
+                        ))
                     }
                 }
             }
@@ -207,7 +206,7 @@ impl VerifyArgs {
 
     /// Returns the configured verification provider
     pub fn verification_provider(&self) -> eyre::Result<Box<dyn VerificationProvider>> {
-        self.verifier.verifier.client(&self.etherscan_key)
+        self.verifier.verifier.client(&self.etherscan.key)
     }
 }
 
@@ -220,36 +219,23 @@ pub struct VerifyCheckArgs {
     )]
     id: String,
 
-    #[clap(
-        long,
-        visible_alias = "chain-id",
-        env = "CHAIN",
-        help = "The chain ID the contract is deployed to.",
-        default_value = "mainnet",
-        value_name = "CHAIN"
-    )]
-    chain: Chain,
-
     #[clap(flatten, help = "Allows to use retry arguments for contract verification")]
     retry: RetryArgs,
 
-    #[clap(
-        long,
-        help = "Your Etherscan API key.",
-        env = "ETHERSCAN_API_KEY",
-        value_name = "ETHERSCAN_KEY"
-    )]
-    etherscan_key: Option<String>,
+    #[clap(flatten)]
+    etherscan: EtherscanOpts,
 
     #[clap(flatten)]
     verifier: VerifierArgs,
 }
 
+impl_figment_convert_cast!(VerifyCheckArgs);
+
 impl VerifyCheckArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(self) -> eyre::Result<()> {
-        println!("Checking verification status on {}", self.chain);
-        self.verifier.verifier.client(&self.etherscan_key)?.check(self).await
+        println!("Checking verification status on {}", self.etherscan.chain.unwrap_or_default());
+        self.verifier.verifier.client(&self.etherscan.key)?.check(self).await
     }
 }
 
@@ -257,22 +243,11 @@ impl figment::Provider for VerifyCheckArgs {
     fn metadata(&self) -> figment::Metadata {
         figment::Metadata::named("Verify Check Provider")
     }
+
     fn data(
         &self,
     ) -> Result<figment::value::Map<figment::Profile, figment::value::Dict>, figment::Error> {
-        Ok(figment::value::Map::from([(Config::selected_profile(), figment::value::Dict::new())]))
-    }
-}
-impl<'a> From<&'a VerifyCheckArgs> for figment::Figment {
-    fn from(args: &'a VerifyCheckArgs) -> Self {
-        Config::figment_with_root(foundry_config::find_project_root_path().unwrap()).merge(args)
-    }
-}
-
-impl<'a> From<&'a VerifyCheckArgs> for Config {
-    fn from(args: &'a VerifyCheckArgs) -> Self {
-        let figment: figment::Figment = args.into();
-        Config::from_provider(figment).sanitized()
+        self.etherscan.data()
     }
 }
 
