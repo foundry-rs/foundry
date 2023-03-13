@@ -422,6 +422,9 @@ where
             "0x7ca38a1916c42007829c55e69d3e9a73265554b586a499015373241b8a3fa48b" => {
                 "optimism-mainnet"
             }
+            "0xc1fc15cd51159b1f1e5cbc4b82e85c1447ddfa33c52cf1d98d14fba0d6354be1" => {
+                "optimism-goerli"
+            }
             "0x02adc9b449ff5f2467b8c674ece7ff9b21319d76c4ad62a67a70d552655927e5" => {
                 "optimism-kovan"
             }
