@@ -1645,14 +1645,17 @@ impl SimpleCast {
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let bytecode = "0x608060405260043610603f57600035";
-    /// let opcodes = Cast::disassemble(bytecode);
+    /// let opcodes = Cast::disassemble(bytecode)?;
     /// println!("{}", opcodes);
     /// # Ok(())
     /// # }
     /// ```
-    pub fn disassemble(bytecode: &str) -> Result<String> {
-        return format_operations(disassemble_str(bytecode)?)
+    pub fn disassemble(
+        bytecode: &str,
+    ) -> Result<String> {
+        format_operations(disassemble_str(bytecode)?)
     }
+
 }
 
 fn strip_0x(s: &str) -> &str {
