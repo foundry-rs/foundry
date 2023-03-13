@@ -339,6 +339,9 @@ pub fn check_if_fixed_gas_limit<DB: DatabaseExt>(
     // generating it in the compilation or evm simulation process)
     U256::from(data.env.tx.gas_limit) > data.env.block.gas_limit &&
         U256::from(call_gas_limit) <= data.env.block.gas_limit
+        // Transfers in forge scripts seem to be estimated at 2300 by revm leading to "Intrinsic
+        // gas too low" failure when simulated on chain
+        && call_gas_limit > 2300
 }
 
 #[cfg(test)]
