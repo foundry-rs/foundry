@@ -18,7 +18,7 @@ use ethers_core::{
 };
 use ethers_etherscan::{errors::EtherscanError, Client};
 use ethers_providers::{Middleware, PendingTransaction};
-use evm_disassembler::{disassemble_bytes, format_operations};
+use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
 use eyre::{Context, Result};
 use foundry_common::{abi::encode_args, fmt::*, TransactionReceiptWithRevertReason};
 pub use foundry_evm::*;
@@ -1634,6 +1634,24 @@ impl SimpleCast {
         let source_tree = meta.source_tree();
         source_tree.write_to(&output_directory)?;
         Ok(())
+    }
+
+    /// Disassembles hex encoded bytecode into individual / human readable opcodes
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let bytecode = "0x608060405260043610603f57600035";
+    /// let opcodes = Cast::disassemble(bytecode);
+    /// println!("{}", opcodes);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn disassemble(bytecode: &str) -> Result<String> {
+        return format_operations(disassemble_str(bytecode)?)
     }
 }
 

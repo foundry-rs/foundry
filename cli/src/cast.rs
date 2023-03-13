@@ -264,6 +264,9 @@ async fn main() -> eyre::Result<()> {
             let computed = Cast::new(&provider).compute_address(address, nonce).await?;
             println!("Computed Address: {}", SimpleCast::to_checksum_address(&computed));
         }
+        Subcommands::Disassemble { bytecode } => {
+            println!("{}", SimpleCast::disassemble(&bytecode)?);
+        }
         Subcommands::FindBlock(cmd) => cmd.run().await?,
         Subcommands::GasPrice { rpc } => {
             let config = Config::from(&rpc);
