@@ -607,7 +607,7 @@ where
     ) -> Result<String> {
         if disassemble {
             let code = self.provider.get_code(who, block).await?.to_vec();
-            Ok(format_operations(disassemble_bytes(code)?))
+            Ok(format_operations(disassemble_bytes(code)?)?)
         } else {
             Ok(format!("{}", self.provider.get_code(who, block).await?))
         }
