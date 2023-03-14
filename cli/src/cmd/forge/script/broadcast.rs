@@ -88,13 +88,15 @@ impl ScriptArgs {
             // Iterate through transactions, matching the `from` field with the associated
             // wallet. Then send the transaction. Panics if we find a unknown `from`
             let sequence = deployment_sequence
-                .typed_transactions()
-                .into_iter()
+                .transactions
+                .iter()
                 .skip(already_broadcasted)
-                .map(|(_, tx)| {
+                .map(|tx_with_metadata| {
+                    let tx = tx_with_metadata.typed_tx();
                     let from = *tx.from().expect("No sender for onchain transaction!");
 
                     let kind = send_kind.for_sender(&from)?;
+                    let is_fixed_gas_limit = tx_with_metadata.is_fixed_gas_limit;
 
                     let mut tx = tx.clone();
 
@@ -117,7 +119,7 @@ impl ScriptArgs {
                         }
                     }
 
-                    Ok((tx, kind))
+                    Ok((tx, kind, is_fixed_gas_limit))
                 })
                 .collect::<Result<Vec<_>>>()?;
 
@@ -137,13 +139,14 @@ impl ScriptArgs {
                     batch_number * batch_size,
                     batch_number * batch_size + min(batch_size, batch.len()) - 1
                 ))?;
-                for (tx, kind) in batch.into_iter() {
+                for (tx, kind, is_fixed_gas_limit) in batch.into_iter() {
                     let tx_hash = self.send_transaction(
                         provider.clone(),
                         tx,
                         kind,
                         sequential_broadcast,
                         fork_url,
+                        is_fixed_gas_limit,
                     );
 
                     if sequential_broadcast {
@@ -216,6 +219,7 @@ impl ScriptArgs {
         kind: SendTransactionKind<'_>,
         sequential_broadcast: bool,
         fork_url: &str,
+        is_fixed_gas_limit: bool,
     ) -> Result<TxHash> {
         let from = tx.from().expect("no sender");
 
@@ -237,8 +241,9 @@ impl ScriptArgs {
 
                 // Chains which use `eth_estimateGas` are being sent sequentially and require their
                 // gas to be re-estimated right before broadcasting.
-                if has_different_gas_calc(provider.get_chainid().await?.as_u64()) ||
-                    self.skip_simulation
+                if !is_fixed_gas_limit &&
+                    (has_different_gas_calc(provider.get_chainid().await?.as_u64()) ||
+                        self.skip_simulation)
                 {
                     self.estimate_gas(&mut tx, &provider).await?;
                 }
