@@ -1019,9 +1019,7 @@ impl AccountGenerator {
         Self {
             chain_id: CHAIN_ID,
             amount,
-            phrase: Mnemonic::<English>::new(&mut thread_rng())
-                .to_phrase()
-                .expect("Failed to create mnemonic phrase"),
+            phrase: Mnemonic::<English>::new(&mut thread_rng()).to_phrase(),
             derivation_path: None,
         }
     }
