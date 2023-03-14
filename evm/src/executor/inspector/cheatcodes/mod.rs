@@ -398,6 +398,7 @@ where
                 Err(err) => (Return::Revert, Gas::new(call.gas_limit), err),
             }
         } else if call.contract != HARDHAT_CONSOLE_ADDRESS {
+            dbg!("call start");
             // Handle expected calls
             if let Some(expecteds) = self.expected_calls.get_mut(&call.contract) {
                 if let Some(found_match) = expecteds.iter().position(|expected| {
@@ -430,11 +431,14 @@ where
 
             // Apply our prank
             if let Some(prank) = &self.prank {
+                dbg!("has prank");
                 if data.journaled_state.depth() >= prank.depth &&
                     call.context.caller == prank.prank_caller
                 {
+                    dbg!("apply prank");
                     // At the target depth we set `msg.sender`
                     if data.journaled_state.depth() == prank.depth {
+                        dbg!("same depth");
                         call.context.caller = prank.new_caller;
                         call.transfer.source = prank.new_caller;
                     }
@@ -444,6 +448,8 @@ where
                         data.env.tx.caller = new_origin;
                     }
                 }
+            } else {
+                dbg!("no prank");
             }
 
             // Apply our broadcast
@@ -525,6 +531,7 @@ where
         retdata: Bytes,
         _: bool,
     ) -> (Return, Gas, Bytes) {
+        dbg!(self.prank.is_some());
         if call.contract == CHEATCODE_ADDRESS || call.contract == HARDHAT_CONSOLE_ADDRESS {
             return (status, remaining_gas, retdata)
         }

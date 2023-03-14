@@ -68,8 +68,9 @@ impl TestConfig {
         }
         for (_, SuiteResult { test_results, .. }) in suite_result {
             for (test_name, result) in test_results {
-                if self.should_fail != !result.success {
                     let logs = decode_console_logs(&result.logs);
+                dbg!(&logs);
+                if self.should_fail != !result.success {
                     let outcome = if self.should_fail { "fail" } else { "pass" };
 
                     eyre::bail!(

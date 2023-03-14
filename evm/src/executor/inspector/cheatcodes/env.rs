@@ -119,7 +119,6 @@ fn prank(
     single_call: bool,
 ) -> Result<Bytes, Bytes> {
     let prank = Prank { prank_caller, prank_origin, new_caller, new_origin, depth, single_call };
-
     if state.prank.is_some() {
         return Err("You have an active prank already.".encode().into())
     }
@@ -129,6 +128,7 @@ fn prank(
     }
 
     state.prank = Some(prank);
+    dbg!(&state.prank);
     Ok(Bytes::new())
 }
 
@@ -287,15 +287,18 @@ pub fn apply<DB: DatabaseExt>(
             data.journaled_state.depth(),
             true,
         )?,
-        HEVMCalls::StartPrank0(inner) => prank(
-            state,
-            caller,
-            data.env.tx.caller,
-            inner.0,
-            None,
-            data.journaled_state.depth(),
-            false,
-        )?,
+        HEVMCalls::StartPrank0(inner) => {
+            dbg!("start prank0");
+            prank(
+                state,
+                caller,
+                data.env.tx.caller,
+                inner.0,
+                None,
+                data.journaled_state.depth(),
+                false,
+            )?
+        },
         HEVMCalls::StartPrank1(inner) => prank(
             state,
             caller,
@@ -306,6 +309,7 @@ pub fn apply<DB: DatabaseExt>(
             false,
         )?,
         HEVMCalls::StopPrank(_) => {
+            dbg!("stop prank");
             state.prank = None;
             Bytes::new()
         }
