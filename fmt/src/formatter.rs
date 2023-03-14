@@ -224,7 +224,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         self.config.line_length >=
             self.total_indent_len()
                 .saturating_add(self.current_line_len())
-                .saturating_add(text.len() + space)
+                .saturating_add(text.chars().count() + space)
     }
 
     /// Write empty brackets with respect to `config.bracket_spacing` setting:
@@ -470,15 +470,21 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         write!(self.buf(), "{}", comment.start_token())?;
 
-        let mut lines = comment.contents().lines().peekable();
+        let mut wrapped = false;
+        let contents = comment.contents();
+        let mut lines = contents.lines().peekable();
         while let Some(line) = lines.next() {
-            self.write_comment_line(comment, line)?;
+            wrapped |= self.write_comment_line(comment, line)?;
             if lines.peek().is_some() {
                 self.write_preserved_line()?;
             }
         }
 
         if let Some(end) = comment.end_token() {
+            // Check if the end token in the original comment was on the separate line
+            if !wrapped && comment.comment.lines().count() > contents.lines().count() {
+                self.write_preserved_line()?;
+            }
             write!(self.buf(), "{end}")?;
         }
         if self.find_next_line(comment.loc.end()).is_some() {
@@ -549,14 +555,14 @@ impl<'a, W: Write> Formatter<'a, W> {
     }
 
     /// Write a comment line that might potentially overflow the maximum line length
-    /// and, if configured, will be wrapped to the next line
-    fn write_comment_line(&mut self, comment: &CommentWithMetadata, line: &str) -> Result<()> {
+    /// and, if configured, will be wrapped to the next line.
+    fn write_comment_line(&mut self, comment: &CommentWithMetadata, line: &str) -> Result<bool> {
         if self.will_it_fit(line) || !self.config.wrap_comments {
             let start_with_ws =
                 line.chars().next().map(|ch| ch.is_whitespace()).unwrap_or_default();
             if !self.is_beginning_of_line() || !start_with_ws {
                 write!(self.buf(), "{line}")?;
-                return Ok(())
+                return Ok(false)
             }
 
             // if this is the beginning of the line,
@@ -568,7 +574,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                 .map(|(_, ch)| ch);
             let padded = format!("{}{}", " ".repeat(indent), chars.join(""));
             self.write_raw(padded)?;
-            return Ok(())
+            return Ok(false)
         }
 
         let mut words = line.split(' ').peekable();
@@ -587,13 +593,13 @@ impl<'a, W: Write> Formatter<'a, W> {
                     // write newline wrap token
                     write!(self.buf(), "{}", comment.wrap_token())?;
                     self.write_comment_line(comment, &words.join(" "))?;
-                    return Ok(())
+                    return Ok(true)
                 }
 
                 self.write_whitespace_separator(false)?;
             }
         }
-        Ok(())
+        Ok(false)
     }
 
     /// Write a raw comment. This is like [`write_comment`] but won't do any formatting or worry
