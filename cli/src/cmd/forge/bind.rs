@@ -221,7 +221,7 @@ impl Cmd for BindArgs {
             return self.check_existing_bindings(&artifacts)
         }
 
-        if self.overwrite {
+        if self.overwrite && self.bindings_exist(&artifacts) {
             fs::remove_dir_all(self.bindings_root(&artifacts))?;
         }
 
