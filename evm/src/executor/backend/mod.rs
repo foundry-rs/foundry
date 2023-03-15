@@ -1054,9 +1054,6 @@ impl DatabaseExt for Backend {
         // roll the fork to the transaction's block or latest if it's pending
         self.roll_fork(Some(id), fork_block.as_u64().into(), env, journaled_state)?;
 
-        // replay all transactions that came before
-        let mut env = env.clone();
-
         // update the block's env accordingly
         env.block.timestamp = block.timestamp;
         env.block.coinbase = block.author.unwrap_or_default();
@@ -1065,6 +1062,9 @@ impl DatabaseExt for Backend {
         env.block.basefee = block.base_fee_per_gas.unwrap_or_default();
         env.block.gas_limit = block.gas_limit;
         env.block.number = block.number.unwrap_or(fork_block).as_u64().into();
+
+        // replay all transactions that came before
+        let env = env.clone();
 
         self.replay_until(id, env, transaction, journaled_state)?;
 
