@@ -363,6 +363,13 @@ Examples:
         #[clap(flatten)]
         rpc: RpcOpts,
     },
+    #[clap(name = "disassemble")]
+    #[clap(visible_alias = "da")]
+    #[clap(about = "Disassembles hex encoded bytecode into individual / human readable opcodes")]
+    Disassemble {
+        #[clap(help = "The hex encoded bytecode", value_name = "BYTECODE")]
+        bytecode: String,
+    },
     #[clap(name = "namehash")]
     #[clap(visible_aliases = &["na", "nh"])]
     #[clap(about = "Calculate the ENS namehash of a name.")]
@@ -672,6 +679,13 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
 
         #[clap(help = "The contract address.", value_parser = NameOrAddress::from_str, value_name = "WHO")]
         who: NameOrAddress,
+
+        #[clap(
+            long = "disassemble",
+            short = 'd',
+            help_heading = "disassemble bytecodes into individual opcodes"
+        )]
+        disassemble: bool,
 
         #[clap(flatten)]
         rpc: RpcOpts,
