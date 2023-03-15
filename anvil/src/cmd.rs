@@ -78,7 +78,7 @@ pub struct NodeArgs {
     #[clap(flatten)]
     pub server_config: ServerConfig,
 
-    #[clap(long, help = "Don't print anything on startup.")]
+    #[clap(long, help = "Don't print anything on startup and don't print logs")]
     pub silent: bool,
 
     #[clap(long, help = "The EVM hardfork to use.", value_name = "HARDFORK", value_parser = Hardfork::from_str)]
