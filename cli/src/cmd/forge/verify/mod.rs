@@ -171,7 +171,7 @@ impl VerifyArgs {
         let config = self.load_config_emit_warnings();
         let chain = config.chain_id.unwrap_or_default();
         self.etherscan.chain = Some(chain);
-        self.etherscan.key = config.get_etherscan_api_key(Some(chain));
+        self.etherscan.key = config.get_etherscan_config_with_chain(Some(chain))?.map(|c| c.key);
 
         if self.show_standard_json_input {
             let args =
