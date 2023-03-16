@@ -418,7 +418,7 @@ fn format_event_definition(event_definition: &pt::EventDefinition) -> Result<Str
         "Type: {}\n├ Name: {}\n└ Signature: {:?}",
         Paint::red("event"),
         Paint::cyan(&event.name),
-        event.signature()
+        Paint::cyan(event.signature()),
     ))
 }
 
