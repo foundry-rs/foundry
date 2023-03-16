@@ -245,7 +245,7 @@ pub mod secret_key {
             if s.is_empty() {
                 return Ok(None)
             }
-            SecretKey::from_be_bytes(s.as_ref())
+            SecretKey::from_bytes(s.as_ref().into())
                 .map_err(de::Error::custom)
                 .map(Into::into)
                 .map(Some)

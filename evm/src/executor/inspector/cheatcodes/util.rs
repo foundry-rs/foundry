@@ -90,7 +90,7 @@ fn sign(private_key: U256, digest: H256, chain_id: U256) -> Result<Bytes, Bytes>
     let wallet = LocalWallet::from(key).with_chain_id(chain_id.as_u64());
 
     // The `ecrecover` precompile does not use EIP-155
-    let sig = wallet.sign_hash(digest);
+    let sig = wallet.sign_hash(digest).map_err(|err| err.to_string().encode())?;
     let recovered = sig.recover(digest).map_err(|err| err.to_string().encode())?;
 
     assert_eq!(recovered, wallet.address());
@@ -324,7 +324,7 @@ pub fn parse_private_key(private_key: U256) -> Result<SigningKey, Bytes> {
     let mut bytes: [u8; 32] = [0; 32];
     private_key.to_big_endian(&mut bytes);
 
-    SigningKey::from_bytes(&bytes).map_err(|err| err.to_string().encode().into())
+    SigningKey::from_bytes((&bytes).into()).map_err(|err| err.to_string().encode().into())
 }
 
 // Determines if the gas limit on a given call was manually set in the script and should therefore
