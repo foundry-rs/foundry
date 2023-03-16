@@ -417,7 +417,25 @@ fn format_event_definition(event_definition: &pt::EventDefinition) -> Result<Str
     Ok(format!(
         "Type: {}\n├ Name: {}\n└ Signature: {:?}",
         Paint::red("event"),
-        Paint::cyan(&event.name),
+        SolidityHelper::highlight(&format!(
+            "{}({})",
+            &event.name,
+            &event
+                .inputs
+                .iter()
+                .map(|param| format!(
+                    "{}{}{}",
+                    param.kind,
+                    if param.indexed { " indexed" } else { "" },
+                    if param.name.is_empty() {
+                        String::default()
+                    } else {
+                        format!(" {}", &param.name)
+                    },
+                ))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
         Paint::cyan(event.signature()),
     ))
 }
