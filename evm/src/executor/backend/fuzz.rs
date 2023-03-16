@@ -66,7 +66,7 @@ impl<'a> FuzzBackendWrapper<'a> {
     ///
     /// If this is the first time this is called, the backed is cloned and initialized.
     fn backend_mut(&mut self, env: &Env) -> &mut Backend {
-        if self.is_initialized {
+        if !self.is_initialized {
             let backend = self.backend.to_mut();
             backend.initialize(env);
             self.is_initialized = true;
