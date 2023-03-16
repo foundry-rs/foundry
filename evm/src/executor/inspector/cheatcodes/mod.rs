@@ -124,7 +124,7 @@ pub struct Cheatcodes {
     pub expected_emits: Vec<ExpectedEmit>,
 
     /// Map of context depths to memory offset ranges that may be written to within the call depth.
-    pub allowed_mem_writes: HashMap<u64, Vec<Range<u64>>>,
+    pub allowed_mem_writes: BTreeMap<u64, Vec<Range<u64>>>,
 
     /// Current broadcasting information
     pub broadcast: Option<Broadcast>,
@@ -378,36 +378,14 @@ where
         // the current program counter is a match, check if the modified memory lies within the
         // allowed ranges. If not, revert and fail the test.
         if let Some(ranges) = self.allowed_mem_writes.get(&data.journaled_state.depth()) {
-            // Helper that expands memory, stores a revert string, and sets the return range to
-            // the revert string's range in memory.
-            fn set_output_buffer(
-                dest_offset: u64,
-                size: u64,
-                interpreter: &mut Interpreter,
-                ranges: &[Range<u64>],
-            ) {
-                let revert_string: Bytes = format!(
-                    "Memory write at offset 0x{:02X} of size 0x{:02X} not allowed. Safe range: {}",
-                    dest_offset,
-                    size,
-                    ranges
-                        .iter()
-                        .map(|r| format!("(0x{:02X}, 0x{:02X}]", r.start, r.end))
-                        .join(" ∪ ")
-                )
-                .encode()
-                .into();
-                let starting_offset = interpreter.memory.len();
-                interpreter.memory.resize(starting_offset + revert_string.len());
-                interpreter.memory.set_data(
-                    starting_offset,
-                    0,
-                    revert_string.len(),
-                    &revert_string,
-                );
-                interpreter.return_range = starting_offset..interpreter.memory.len();
-            }
-
+            // The `mem_opcode_match` macro is used to match the current opcode against a list of
+            // opcodes that can mutate memory (either directly or expansion via reading). If the
+            // opcode is a match, the memory offsets that are being written to are checked to be
+            // within the allowed ranges. If not, the test is failed and the transaction is
+            // reverted. For all opcodes that can mutate memory aside from MSTORE,
+            // MSTORE8, and MLOAD, the size and destination offset are on the stack, and
+            // the macro expands all of these cases. For MSTORE, MSTORE8, and MLOAD, the
+            // size of the memory write is implicit, so these cases are hard-coded.
             macro_rules! mem_opcode_match {
                 ([$(($opcode:ident, $offset_depth:expr, $size_depth:expr, $writes:expr)),*]) => {
                     match interpreter.contract.bytecode.bytecode()[interpreter.program_counter()] {
@@ -421,13 +399,12 @@ where
 
                             // If none of the allowed ranges contain [offset, offset + 32), memory has been
                             // unexpectedly mutated.
-                            if !ranges
-                                .iter()
-                                    .any(|range| range.contains(&offset) && range.contains(&(offset + 31)))
-                                    {
-                                        set_output_buffer(offset, 32, interpreter, ranges);
-                                        return Return::Revert
-                                    }
+                            if !ranges.iter().any(|range| {
+                                range.contains(&offset) && range.contains(&(offset + 31))
+                            }) {
+                                revert_helper::disallowed_mem_write(offset, 32, interpreter, ranges);
+                                return Return::Revert
+                            }
                         }
                         opcode::MSTORE8 => {
                             // The offset of the mstore8 operation is at the top of the stack.
@@ -436,7 +413,7 @@ where
                             // If none of the allowed ranges contain the offset, memory has been
                             // unexpectedly mutated.
                             if !ranges.iter().any(|range| range.contains(&offset)) {
-                                set_output_buffer(offset, 1, interpreter, ranges);
+                                revert_helper::disallowed_mem_write(offset, 1, interpreter, ranges);
                                 return Return::Revert
                             }
                         }
@@ -455,7 +432,7 @@ where
                             if offset >= interpreter.memory.len() as u64 && !ranges.iter().any(|range| {
                                 range.contains(&offset) && range.contains(&(offset + 31))
                             }) {
-                                set_output_buffer(offset, 32, interpreter, ranges);
+                                revert_helper::disallowed_mem_write(offset, 32, interpreter, ranges);
                                 return Return::Revert
                             }
                         }
@@ -486,7 +463,7 @@ where
                             // If the failure condition is met, set the output buffer to a revert string
                             // that gives information about the allowed ranges and revert.
                             if fail_cond {
-                                set_output_buffer(dest_offset, size, interpreter, ranges);
+                                revert_helper::disallowed_mem_write(dest_offset, size, interpreter, ranges);
                                 return Return::Revert
                             }
                         })*
@@ -946,4 +923,37 @@ pub struct DealRecord {
     pub old_balance: U256,
     /// Balance after deal was applied
     pub new_balance: U256,
+}
+
+/// Helper module to store revert strings in memory
+mod revert_helper {
+    use super::*;
+
+    /// Helper that expands memory, stores a revert string pertaining to a disallowed memory write,
+    /// and sets the return range to the revert string's location in memory.
+    pub fn disallowed_mem_write(
+        dest_offset: u64,
+        size: u64,
+        interpreter: &mut Interpreter,
+        ranges: &[Range<u64>],
+    ) {
+        let revert_string: Bytes = format!(
+            "Memory write at offset 0x{:02X} of size 0x{:02X} not allowed. Safe range: {}",
+            dest_offset,
+            size,
+            ranges.iter().map(|r| format!("(0x{:02X}, 0x{:02X}]", r.start, r.end)).join(" ∪ ")
+        )
+        .encode()
+        .into();
+        mstore_revert_string(revert_string, interpreter);
+    }
+
+    /// Expands memory, stores a revert string, and sets the return range to the revert
+    /// string's location in memory.
+    fn mstore_revert_string(bytes: Bytes, interpreter: &mut Interpreter) {
+        let starting_offset = interpreter.memory.len();
+        interpreter.memory.resize(starting_offset + bytes.len());
+        interpreter.memory.set_data(starting_offset, 0, bytes.len(), &bytes);
+        interpreter.return_range = starting_offset..interpreter.memory.len();
+    }
 }
