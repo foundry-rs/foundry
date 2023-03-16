@@ -669,15 +669,10 @@ impl Backend {
         logs
     }
 
-    /// Executes the configured test call of the `env` without commiting state changes
-    pub fn inspect_ref<INSP>(
-        &mut self,
-        env: &mut Env,
-        mut inspector: INSP,
-    ) -> (ExecutionResult, Map<Address, Account>)
-    where
-        INSP: Inspector<Self>,
-    {
+    /// Initializes settings we need to keep track of.
+    ///
+    /// We need to track these mainly to prevent issues when switching between different evms
+    pub(crate) fn initialize(&mut self, env: &Env) {
         self.set_caller(env.tx.caller);
         self.set_spec_id(env.cfg.spec_id);
 
@@ -692,6 +687,18 @@ impl Backend {
             }
         };
         self.set_test_contract(test_contract);
+    }
+
+    /// Executes the configured test call of the `env` without commiting state changes
+    pub fn inspect_ref<INSP>(
+        &mut self,
+        env: &mut Env,
+        mut inspector: INSP,
+    ) -> (ExecutionResult, Map<Address, Account>)
+    where
+        INSP: Inspector<Self>,
+    {
+        self.initialize(env);
 
         revm::evm_inner::<Self, true>(env, self, &mut inspector).transact()
     }
