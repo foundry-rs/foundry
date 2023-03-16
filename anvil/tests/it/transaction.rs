@@ -104,7 +104,7 @@ async fn can_respect_nonces() {
 
     // ensure the listener for ready transactions times out
     let mut listener = api.new_ready_transactions();
-    let res = timeout(Duration::from_millis(1500), async move { listener.next().await }).await;
+    let res = timeout(Duration::from_millis(1500), listener.next()).await;
     res.unwrap_err();
 
     // send with the actual nonce which is mined immediately
