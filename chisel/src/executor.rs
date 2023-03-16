@@ -134,8 +134,8 @@ impl SessionSource {
 
         let mut source_without_inspector = self.clone();
 
-        // Events and tuples fails compilation due to it not being able to be encoded in `inspectoor`.
-        // If that happens, try executing without the inspector.
+        // Events and tuples fails compilation due to it not being able to be encoded in
+        // `inspectoor`. If that happens, try executing without the inspector.
         let (mut res, has_inspector) = match source.execute().await {
             Ok((_, res)) => (res, true),
             Err(e) => match source_without_inspector.execute().await {
@@ -144,7 +144,7 @@ impl SessionSource {
                     if self.config.foundry_config.verbosity >= 3 {
                         eprintln!("Could not inspect: {e}");
                     }
-                    return Ok((true, None));
+                    return Ok((true, None))
                 }
             },
         };
@@ -163,19 +163,11 @@ impl SessionSource {
                 .ok_or_else(|| eyre::eyre!("Could not find intermediate contract!"))?;
 
             if let Some(event_definition) = intermediate_contract.event_definitions.get(input) {
-                let formatted = match format_event_definition(event_definition) {
-                    Ok(v) => Some(v),
-                    Err(err) => {
-                        if self.config.foundry_config.verbosity >= 3 {
-                            eprintln!("{err}");
-                        }
-                        None
-                    }
-                };
-                return Ok((false, formatted));
+                let formatted = format_event_definition(event_definition)?;
+                return Ok((false, Some(formatted)))
             }
 
-            return Ok((false, None));
+            return Ok((false, None))
         }
 
         let Some((stack, memory, _)) = &res.state else {
@@ -403,55 +395,24 @@ fn format_token(token: Token) -> String {
 /// A formatted [pt::EventDefinition] for use in inspection output.
 ///
 /// TODO: Verbosity option
-fn format_event_definition(event_definition: &pt::EventDefinition) -> Result<String, String> {
-    let params: Result<Vec<_>, &str> = event_definition
+fn format_event_definition(event_definition: &pt::EventDefinition) -> Result<String> {
+    let event_name = event_definition.name.as_ref().expect("Event has a name").to_string();
+    let inputs = event_definition
         .fields
         .iter()
         .map(|param| {
-            //
-            let kind = match &param.ty {
-                pt::Expression::Type(_, t) => match t {
-                    pt::Type::Address | pt::Type::AddressPayable | pt::Type::Payable => {
-                        ethabi::ParamType::Address
-                    }
-                    pt::Type::Bool => ethabi::ParamType::Bool,
-                    pt::Type::String => ethabi::ParamType::String,
-                    pt::Type::Int(size) => ethabi::ParamType::Int(*size as usize),
-                    pt::Type::Uint(size) => ethabi::ParamType::Uint(*size as usize),
-                    pt::Type::Bytes(len) => ethabi::ParamType::FixedBytes(*len as usize),
-                    pt::Type::DynamicBytes => ethabi::ParamType::Bytes,
-                    _ => return Err("invalid type in event definition"),
-                },
-                _ => {
-                    return Err("invalid type in event definition");
-                }
-            };
-
-            Ok(ethabi::EventParam {
-                name: match param.name.as_ref() {
-                    Some(name) => name.to_string(),
-                    None => "<anonymous>".to_string(),
-                },
-                kind,
-                indexed: param.indexed,
-            })
+            let name = param
+                .name
+                .as_ref()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| "<anonymous>".to_string());
+            let kind = Type::from_expression(&param.ty)
+                .and_then(Type::into_builtin)
+                .ok_or_else(|| eyre::eyre!("Invalid type in event {event_name}"))?;
+            Ok(ethabi::EventParam { name, kind, indexed: param.indexed })
         })
-        .collect();
-
-    let params = if params.is_err() {
-        return Err(format!("Could not format event definition: {}", params.unwrap_err()));
-    } else {
-        params.unwrap()
-    };
-
-    let event = ethabi::Event {
-        name: match event_definition.name.as_ref() {
-            Some(name) => name.to_string(),
-            None => "<anonymous>".to_string(),
-        },
-        inputs: params,
-        anonymous: event_definition.anonymous,
-    };
+        .collect::<Result<Vec<_>>>()?;
+    let event = ethabi::Event { name: event_name, inputs, anonymous: event_definition.anonymous };
 
     Ok(format!(
         "Type: {}\n├ Name: {}\n└ Signature: {:?}",
