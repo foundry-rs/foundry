@@ -435,7 +435,7 @@ fn format_event_definition(event_definition: &pt::EventDefinition) -> Result<Str
                 ))
                 .collect::<Vec<_>>()
                 .join(", ")
-        ))
+        )),
         Paint::cyan(event.signature()),
     ))
 }
