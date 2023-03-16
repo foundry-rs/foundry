@@ -1,4 +1,4 @@
-use ethers_core::types::{Address, Bytes, I256, U256};
+use ethers_core::types::{Address, Bytes, H256, I256, U256};
 use foundry_common::fmt::UIfmt;
 
 /// A format specifier.
@@ -113,6 +113,18 @@ impl ConsoleFmt for I256 {
                 } else {
                     format!("{integer}e{log}")
                 }
+            }
+        }
+    }
+}
+
+impl ConsoleFmt for H256 {
+    fn fmt(&self, spec: FormatSpec) -> String {
+        match spec {
+            FormatSpec::Hexadecimal | FormatSpec::String => self.pretty(),
+            FormatSpec::Object => format!("'{}'", self.pretty()),
+            FormatSpec::Number | FormatSpec::Integer | FormatSpec::Exponential => {
+                String::from("NaN")
             }
         }
     }
@@ -321,6 +333,25 @@ mod tests {
         assert_eq!("NaN", console_log_format_1("%e", &true));
         assert_eq!("NaN", console_log_format_1("%x", &true));
         assert_eq!("'true'", console_log_format_1("%o", &true));
+
+        let b32 =
+            H256::from_str("0xdeadbeef00000000000000000000000000000000000000000000000000000000")
+                .unwrap();
+        assert_eq!(
+            "0xdeadbeef00000000000000000000000000000000000000000000000000000000",
+            console_log_format_1("%s", &b32)
+        );
+        assert_eq!(
+            "0xdeadbeef00000000000000000000000000000000000000000000000000000000",
+            console_log_format_1("%x", &b32)
+        );
+        assert_eq!("NaN", console_log_format_1("%d", &b32));
+        assert_eq!("NaN", console_log_format_1("%i", &b32));
+        assert_eq!("NaN", console_log_format_1("%e", &b32));
+        assert_eq!(
+            "'0xdeadbeef00000000000000000000000000000000000000000000000000000000'",
+            console_log_format_1("%o", &b32)
+        );
 
         let addr = Address::from_str("0xdEADBEeF00000000000000000000000000000000").unwrap();
         assert_eq!("0xdEADBEeF00000000000000000000000000000000", console_log_format_1("%s", &addr));
