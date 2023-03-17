@@ -33,7 +33,7 @@ use tracing::trace;
 /// don't make use of them. Alternatively each test case would require its own `Backend` clone,
 /// which would add significant overhead for large fuzz sets even if the Database is not big after
 /// setup.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FuzzBackendWrapper<'a> {
     /// The underlying immutable `Backend`
     ///
@@ -236,5 +236,15 @@ impl<'a> Database for FuzzBackendWrapper<'a> {
 
     fn block_hash(&mut self, number: U256) -> Result<H256, Self::Error> {
         DatabaseRef::block_hash(self, number)
+    }
+}
+
+impl<'a> Clone for FuzzBackendWrapper<'a> {
+    fn clone(&self) -> Self {
+        Self {
+            backend: self.backend.clone(),
+            // we assume the clone is for a different fuzz run, so we set initialize back to false
+            is_initialized: false,
+        }
     }
 }
