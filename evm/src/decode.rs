@@ -179,7 +179,7 @@ pub fn decode_revert(
                 }
             }
 
-            // optimistically try to decode as string, unkown selector or `CheatcodeError`
+            // optimistically try to decode as string, unknown selector or `CheatcodeError`
             String::decode(err)
                 .ok()
                 .or_else(|| {

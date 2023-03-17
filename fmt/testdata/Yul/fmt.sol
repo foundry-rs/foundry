@@ -32,14 +32,14 @@ contract Yul {
         bytes4 PAIR_SWAP_ID;
         address memUser;
         assembly {
-            // You can only access teh fallback function if you're authorized
+            // You can only access the fallback function if you're authorized
             if iszero(eq(caller(), memUser)) {
                 // Ohm (3, 3) makes your code more efficient
                 // WGMI
                 revert(3, 3)
             }
 
-            // Extract out teh variables
+            // Extract out the variables
             // We don't have function signatures sweet saving EVEN MORE GAS
 
             // bytes20

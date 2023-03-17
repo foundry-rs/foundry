@@ -189,7 +189,7 @@ pub fn has_batch_support(chain: u64) -> bool {
 
 /// Helpers for loading configuration.
 ///
-/// This is usually implicity implemented on a "&CmdArgs" struct via impl macros defined in
+/// This is usually implicitly implemented on a "&CmdArgs" struct via impl macros defined in
 /// `forge_config` (See [`forge_config::impl_figment_convert`] for more details) and the impl
 /// definition on `T: Into<Config> + Into<Figment>` below.
 ///

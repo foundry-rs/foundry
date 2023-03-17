@@ -335,7 +335,7 @@ pub fn check_if_fixed_gas_limit<DB: DatabaseExt>(
 ) -> bool {
     // If the gas limit was not set in the source code it is set to the estimated gas left at the
     // time of the call, which should be rather close to configured gas limit.
-    // TODO: Find a way to reliably make this determenation. (for example by
+    // TODO: Find a way to reliably make this determination. (for example by
     // generating it in the compilation or evm simulation process)
     U256::from(data.env.tx.gas_limit) > data.env.block.gas_limit &&
         U256::from(call_gas_limit) <= data.env.block.gas_limit

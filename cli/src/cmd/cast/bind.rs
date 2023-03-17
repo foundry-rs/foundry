@@ -47,9 +47,9 @@ pub struct BindArgs {
     )]
     crate_version: String,
 
-    /// Generate bindings as seperate files.
+    /// Generate bindings as separate files.
     #[clap(long)]
-    seperate_files: bool,
+    separate_files: bool,
 
     #[clap(flatten)]
     etherscan: EtherscanOpts,
@@ -71,7 +71,7 @@ impl BindArgs {
             .output_dir
             .clone()
             .unwrap_or_else(|| std::env::current_dir().unwrap().join("bindings"));
-        bindings.write_to_crate(self.crate_name, self.crate_version, out, !self.seperate_files)?;
+        bindings.write_to_crate(self.crate_name, self.crate_version, out, !self.separate_files)?;
         Ok(())
     }
 

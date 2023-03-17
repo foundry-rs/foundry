@@ -809,7 +809,7 @@ impl ChiselDispatcher {
             let match_str = m.as_str();
             // We can always safely unwrap here due to the regex matching.
             let addr = H160::from_str(match_str).unwrap();
-            // Replace all occurances of the address with a checksummed version
+            // Replace all occurrences of the address with a checksummed version
             heap_input = heap_input.replace(match_str, &ethers::utils::to_checksum(&addr, None));
         });
         // Replace the old input with the formatted input.

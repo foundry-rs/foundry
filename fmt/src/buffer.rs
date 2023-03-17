@@ -130,7 +130,7 @@ impl<W: Sized> FormatBuffer<W> {
         self.current_line_len
     }
 
-    /// Check if the buffer is at the beggining of a new line
+    /// Check if the buffer is at the beginning of a new line
     pub fn is_beginning_of_line(&self) -> bool {
         matches!(self.state, WriteState::LineStart(_))
     }
