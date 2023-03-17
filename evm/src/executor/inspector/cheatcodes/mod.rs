@@ -30,6 +30,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     fs::File,
     io::BufReader,
+    ops::Range,
     path::PathBuf,
     sync::Arc,
 };
@@ -121,6 +122,9 @@ pub struct Cheatcodes {
 
     /// Expected emits
     pub expected_emits: Vec<ExpectedEmit>,
+
+    /// Map of context depths to memory offset ranges that may be written to within the call depth.
+    pub allowed_mem_writes: BTreeMap<u64, Vec<Range<u64>>>,
 
     /// Current broadcasting information
     pub broadcast: Option<Broadcast>,
@@ -276,7 +280,12 @@ where
         Return::Continue
     }
 
-    fn step(&mut self, interpreter: &mut Interpreter, _: &mut EVMData<'_, DB>, _: bool) -> Return {
+    fn step(
+        &mut self,
+        interpreter: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        _: bool,
+    ) -> Return {
         // reset gas if gas metering is turned off
         match self.gas_metering {
             Some(None) => {
@@ -362,6 +371,129 @@ where
                 }
                 _ => (),
             }
+        }
+
+        // If the allowed memory writes cheatcode is active at this context depth, check to see
+        // if the current opcode can either mutate directly or expand memory. If the opcode at
+        // the current program counter is a match, check if the modified memory lies within the
+        // allowed ranges. If not, revert and fail the test.
+        if let Some(ranges) = self.allowed_mem_writes.get(&data.journaled_state.depth()) {
+            // The `mem_opcode_match` macro is used to match the current opcode against a list of
+            // opcodes that can mutate memory (either directly or expansion via reading). If the
+            // opcode is a match, the memory offsets that are being written to are checked to be
+            // within the allowed ranges. If not, the test is failed and the transaction is
+            // reverted. For all opcodes that can mutate memory aside from MSTORE,
+            // MSTORE8, and MLOAD, the size and destination offset are on the stack, and
+            // the macro expands all of these cases. For MSTORE, MSTORE8, and MLOAD, the
+            // size of the memory write is implicit, so these cases are hard-coded.
+            macro_rules! mem_opcode_match {
+                ([$(($opcode:ident, $offset_depth:expr, $size_depth:expr, $writes:expr)),*]) => {
+                    match interpreter.contract.bytecode.bytecode()[interpreter.program_counter()] {
+                        ////////////////////////////////////////////////////////////////
+                        //    OPERATIONS THAT CAN EXPAND/MUTATE MEMORY BY WRITING     //
+                        ////////////////////////////////////////////////////////////////
+
+                        opcode::MSTORE => {
+                            // The offset of the mstore operation is at the top of the stack.
+                            let offset = try_or_continue!(interpreter.stack().peek(0)).as_u64();
+
+                            // If none of the allowed ranges contain [offset, offset + 32), memory has been
+                            // unexpectedly mutated.
+                            if !ranges.iter().any(|range| {
+                                range.contains(&offset) && range.contains(&(offset + 31))
+                            }) {
+                                revert_helper::disallowed_mem_write(offset, 32, interpreter, ranges);
+                                return Return::Revert
+                            }
+                        }
+                        opcode::MSTORE8 => {
+                            // The offset of the mstore8 operation is at the top of the stack.
+                            let offset = try_or_continue!(interpreter.stack().peek(0)).as_u64();
+
+                            // If none of the allowed ranges contain the offset, memory has been
+                            // unexpectedly mutated.
+                            if !ranges.iter().any(|range| range.contains(&offset)) {
+                                revert_helper::disallowed_mem_write(offset, 1, interpreter, ranges);
+                                return Return::Revert
+                            }
+                        }
+
+                        ////////////////////////////////////////////////////////////////
+                        //        OPERATIONS THAT CAN EXPAND MEMORY BY READING        //
+                        ////////////////////////////////////////////////////////////////
+
+                        opcode::MLOAD => {
+                            // The offset of the mload operation is at the top of the stack
+                            let offset = try_or_continue!(interpreter.stack().peek(0)).as_u64();
+
+                            // If the offset being loaded is >= than the memory size, the
+                            // memory is being expanded. If none of the allowed ranges contain
+                            // [offset, offset + 32), memory has been unexpectedly mutated.
+                            if offset >= interpreter.memory.len() as u64 && !ranges.iter().any(|range| {
+                                range.contains(&offset) && range.contains(&(offset + 31))
+                            }) {
+                                revert_helper::disallowed_mem_write(offset, 32, interpreter, ranges);
+                                return Return::Revert
+                            }
+                        }
+
+                        ////////////////////////////////////////////////////////////////
+                        //          OPERATIONS WITH OFFSET AND SIZE ON STACK          //
+                        ////////////////////////////////////////////////////////////////
+
+                        $(opcode::$opcode => {
+                            // The destination offset of the operation is at the top of the stack.
+                            let dest_offset = try_or_continue!(interpreter.stack().peek($offset_depth)).as_u64();
+
+                            // The size of the data that will be copied is the third item on the stack.
+                            let size = try_or_continue!(interpreter.stack().peek($size_depth)).as_u64();
+
+                            // If none of the allowed ranges contain [dest_offset, dest_offset + size),
+                            // memory outside of the expected ranges has been touched. If the opcode
+                            // only reads from memory, this is okay as long as the memory is not expanded.
+                            let fail_cond = !ranges.iter().any(|range| {
+                                    range.contains(&dest_offset) &&
+                                        range.contains(&(dest_offset + size.saturating_sub(1)))
+                                }) && ($writes ||
+                                    [dest_offset, (dest_offset + size).saturating_sub(1)].into_iter().any(|offset| {
+                                        offset >= interpreter.memory.len() as u64
+                                    })
+                                );
+
+                            // If the failure condition is met, set the output buffer to a revert string
+                            // that gives information about the allowed ranges and revert.
+                            if fail_cond {
+                                revert_helper::disallowed_mem_write(dest_offset, size, interpreter, ranges);
+                                return Return::Revert
+                            }
+                        })*
+                        _ => ()
+                    }
+                }
+            }
+
+            // Check if the current opcode can write to memory, and if so, check if the memory
+            // being written to is registered as safe to modify.
+            mem_opcode_match!([
+                (CALLDATACOPY, 0, 2, true),
+                (CODECOPY, 0, 2, true),
+                (RETURNDATACOPY, 0, 2, true),
+                (EXTCODECOPY, 1, 3, true),
+                (CALL, 5, 6, true),
+                (CALLCODE, 5, 6, true),
+                (STATICCALL, 4, 5, true),
+                (DELEGATECALL, 4, 5, true),
+                (SHA3, 0, 1, false),
+                (LOG0, 0, 1, false),
+                (LOG1, 0, 1, false),
+                (LOG2, 0, 1, false),
+                (LOG3, 0, 1, false),
+                (LOG4, 0, 1, false),
+                (CREATE, 1, 2, false),
+                (CREATE2, 1, 2, false),
+                (RETURN, 0, 1, false),
+                (REVERT, 0, 1, false)
+            ])
         }
 
         Return::Continue
@@ -791,4 +923,37 @@ pub struct DealRecord {
     pub old_balance: U256,
     /// Balance after deal was applied
     pub new_balance: U256,
+}
+
+/// Helper module to store revert strings in memory
+mod revert_helper {
+    use super::*;
+
+    /// Helper that expands memory, stores a revert string pertaining to a disallowed memory write,
+    /// and sets the return range to the revert string's location in memory.
+    pub fn disallowed_mem_write(
+        dest_offset: u64,
+        size: u64,
+        interpreter: &mut Interpreter,
+        ranges: &[Range<u64>],
+    ) {
+        let revert_string: Bytes = format!(
+            "Memory write at offset 0x{:02X} of size 0x{:02X} not allowed. Safe range: {}",
+            dest_offset,
+            size,
+            ranges.iter().map(|r| format!("(0x{:02X}, 0x{:02X}]", r.start, r.end)).join(" ∪ ")
+        )
+        .encode()
+        .into();
+        mstore_revert_string(revert_string, interpreter);
+    }
+
+    /// Expands memory, stores a revert string, and sets the return range to the revert
+    /// string's location in memory.
+    fn mstore_revert_string(bytes: Bytes, interpreter: &mut Interpreter) {
+        let starting_offset = interpreter.memory.len();
+        interpreter.memory.resize(starting_offset + bytes.len());
+        interpreter.memory.set_data(starting_offset, 0, bytes.len(), &bytes);
+        interpreter.return_range = starting_offset..interpreter.memory.len();
+    }
 }

@@ -211,6 +211,14 @@ interface Cheats {
     // Expect a call to an address with the specified msg.value and calldata, and a *minimum* amount of gas.
     function expectCallMinGas(address, uint256, uint64, bytes calldata) external;
 
+    // Only allows memory writes to offsets [0x00, 0x60) ∪ [min, max) in the current subcontext. If any other
+    // memory is written to, the test will fail.
+    function expectSafeMemory(uint64, uint64) external;
+
+    // Only allows memory writes to offsets [0x00, 0x60) ∪ [min, max) in the next created subcontext.
+    // If any other memory is written to, the test will fail.
+    function expectSafeMemoryCall(uint64, uint64) external;
+
     // Gets the bytecode from an artifact file. Takes in the relative path to the json file
     function getCode(string calldata) external returns (bytes memory);
 
