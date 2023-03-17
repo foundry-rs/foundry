@@ -871,10 +871,11 @@ impl Config {
     }
 
     /// Same as [`Self::get_etherscan_config()`] but optionally updates the config with the given
-    /// `chain`
+    /// `chain`, and `etherscan_api_key`
     ///
     /// If not matching alias was found, then this will try to find the first entry in the table
-    /// with a matching chain id
+    /// with a matching chain id. If an etherscan_api_key is already set it will take precedence
+    /// over the chain's entry in the table.
     pub fn get_etherscan_config_with_chain(
         &self,
         chain: Option<impl Into<Chain>>,
@@ -890,10 +891,22 @@ impl Config {
         if let Some(res) =
             chain.and_then(|chain| self.etherscan.clone().resolved().find_chain(chain))
         {
-            return res.map(Some)
+            match (res, self.etherscan_api_key.as_ref()) {
+                (Ok(mut config), Some(key)) => {
+                    // we update the key, because if an etherscan_api_key is set, it should take
+                    // precedence over the entry, since this is usually set via env var or CLI args.
+                    config.key = key.clone();
+                    return Ok(Some(config))
+                }
+                (Ok(config), None) => return Ok(Some(config)),
+                (Err(err), None) => return Err(err),
+                (Err(_), Some(_)) => {
+                    // use the etherscan key as fallback
+                }
+            }
         }
 
-        // fallback `etherscan_api_key` as actual key
+        // etherscan fallback via API key
         if let Some(key) = self.etherscan_api_key.as_ref() {
             let chain = chain.or(self.chain_id).unwrap_or_default();
             return Ok(ResolvedEtherscanConfig::create(key, chain))
@@ -2840,6 +2853,59 @@ mod tests {
 
             let _config = Config::load();
 
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_resolve_etherscan_with_chain() {
+        figment::Jail::expect_with(|jail| {
+            let env_key = "__BSC_ETHERSCAN_API_KEY";
+            let env_value = "env value";
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+
+                [etherscan]
+                bsc = { key = "${__BSC_ETHERSCAN_API_KEY}", url = "https://api.bscscan.com/api" }
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert!(config.get_etherscan_config_with_chain(None::<u64>).unwrap().is_none());
+            assert!(config
+                .get_etherscan_config_with_chain(Some(ethers_core::types::Chain::BinanceSmartChain))
+                .is_err());
+
+            std::env::set_var(env_key, env_value);
+
+            assert_eq!(
+                config
+                    .get_etherscan_config_with_chain(Some(
+                        ethers_core::types::Chain::BinanceSmartChain
+                    ))
+                    .unwrap()
+                    .unwrap()
+                    .key,
+                env_value
+            );
+
+            let mut with_key = config.clone();
+            with_key.etherscan_api_key = Some("via etherscan_api_key".to_string());
+
+            assert_eq!(
+                with_key
+                    .get_etherscan_config_with_chain(Some(
+                        ethers_core::types::Chain::BinanceSmartChain
+                    ))
+                    .unwrap()
+                    .unwrap()
+                    .key,
+                "via etherscan_api_key"
+            );
+
+            std::env::remove_var(env_key);
             Ok(())
         });
     }
