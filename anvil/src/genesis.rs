@@ -85,8 +85,8 @@ impl Genesis {
         if let Some(chain_id) = self.chain_id() {
             env.cfg.chain_id = chain_id.into();
         }
-        if let Some(timestmap) = self.timestamp {
-            env.block.timestamp = timestmap.into();
+        if let Some(timestamp) = self.timestamp {
+            env.block.timestamp = timestamp.into();
         }
         if let Some(base_fee) = self.base_fee_per_gas {
             env.block.basefee = base_fee;

@@ -689,7 +689,7 @@ impl Backend {
         self.set_test_contract(test_contract);
     }
 
-    /// Executes the configured test call of the `env` without commiting state changes
+    /// Executes the configured test call of the `env` without committing state changes
     pub fn inspect_ref<INSP>(
         &mut self,
         env: &mut Env,
