@@ -291,6 +291,8 @@ Examples:
         block: Option<BlockId>,
 
         #[clap(
+            long,
+            short = 'f',
             help = "If specified, only get the given field of the block.",
             value_name = "FIELD"
         )]
