@@ -1304,7 +1304,7 @@ mod tests {
             ]
         };
 
-        let ref mut source = source();
+        let source = &mut source();
 
         let array_expressions: &[(&str, ParamType)] = &[
             ("[1, 2, 3]", fixed_array(ParamType::Uint(256), 3)),
@@ -1524,7 +1524,7 @@ mod tests {
         let input = input.trim_end().trim_end_matches(';').to_string() + ";";
         let (mut _s, _) = s.clone_with_new_line(input).unwrap();
         *s = _s.clone();
-        let ref mut s = _s;
+        let s = &mut _s;
 
         if let Err(e) = s.parse() {
             for err in e {
