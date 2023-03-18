@@ -3,7 +3,7 @@
 //! This module contains the execution logic for the [SessionSource].
 
 use crate::prelude::{
-    ChiselDispatcher, ChiselResult, ChiselRunner, IntermediateOutput, SessionSource,
+    ChiselDispatcher, ChiselResult, ChiselRunner, IntermediateOutput, SessionSource, SolidityHelper,
 };
 use core::fmt::Debug;
 use ethers::{
