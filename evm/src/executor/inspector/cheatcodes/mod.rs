@@ -146,7 +146,7 @@ pub struct Cheatcodes {
     // Used to prevent duplicate changes file executing non-committing calls.
     pub fs_commit: bool,
 
-    pub serialized_jsons: HashMap<String, HashMap<String, Value>>,
+    pub serialized_jsons: BTreeMap<String, BTreeMap<String, Value>>,
 
     /// Records all eth deals
     pub eth_deals: Vec<DealRecord>,
