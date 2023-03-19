@@ -19,7 +19,7 @@ use jsonpath_lib;
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     env,
     io::{BufRead, BufReader, Write},
     path::Path,
@@ -463,7 +463,7 @@ fn serialize_json(
         serialization.insert(value_key.to_string(), parsed_value);
         serialization.clone()
     } else {
-        let mut serialization = HashMap::new();
+        let mut serialization = BTreeMap::new();
         serialization.insert(value_key.to_string(), parsed_value);
         state.serialized_jsons.insert(object_key.to_string(), serialization.clone());
         serialization.clone()
