@@ -229,7 +229,12 @@ async fn main() -> eyre::Result<()> {
         Subcommands::Block { block, full, field, to_json, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(provider).block(block, full, field, to_json).await?);
+            println!(
+                "{}",
+                Cast::new(provider)
+                    .block(block.unwrap_or(BlockId::Number(Latest)), full, field, to_json)
+                    .await?
+            );
         }
         Subcommands::BlockNumber { rpc } => {
             let config = Config::from(&rpc);

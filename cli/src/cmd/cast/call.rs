@@ -43,7 +43,8 @@ pub struct CallArgs {
     #[clap(
         long,
         short,
-        help = "the block you want to query, can also be earliest/latest/pending",
+        help = "The block height you want to query at.",
+        long_help = "The block height you want to query at. Can also be the tags earliest, finalized, safe, latest, or pending.",
         value_name = "BLOCK"
     )]
     block: Option<BlockId>,

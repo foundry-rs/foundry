@@ -42,7 +42,7 @@ pub struct StorageArgs {
 
     /// The block height you want to query at
     ///
-    /// Can also be the tags earliest, latest, or pending
+    /// Can also be the tags earliest, finalized, safe, latest, or pending
     #[clap(long, short = 'B')]
     block: Option<BlockId>,
 
