@@ -459,6 +459,15 @@ fn serialize_json(
 ) -> Result<Bytes, Bytes> {
     let parsed_value =
         serde_json::from_str(value).unwrap_or_else(|_| Value::String(value.to_string()));
+    serialize_json_value(state, object_key, value_key, parsed_value)
+}
+
+fn serialize_json_value(
+    state: &mut Cheatcodes,
+    object_key: &str,
+    value_key: &str,
+    parsed_value: Value,
+) -> Result<Bytes, Bytes> {
     let json = if let Some(serialization) = state.serialized_jsons.get_mut(object_key) {
         serialization.insert(value_key.to_string(), parsed_value);
         serialization.clone()
@@ -472,8 +481,8 @@ fn serialize_json(
         .map_err(|err| error::encode_error(format!("Failed to stringify hashmap: {err}")))?;
     Ok(abi::encode(&[Token::String(stringified)]).into())
 }
-/// Converts an array to it's stringified version, adding the appropriate quotes around it's
-/// ellements. This is to signify that the elements of the array are string themselves.
+/// Converts an array to it's stringified version, adding the appropriate quotes around its
+/// elements. This is to signify that the elements of the array are string themselves.
 fn array_str_to_str<T: UIfmt>(array: &Vec<T>) -> String {
     format!(
         "[{}]",
@@ -722,7 +731,7 @@ pub fn apply(
             serialize_json(state, &inner.0, &inner.1, &array_str_to_str(&inner.2))
         }
         HEVMCalls::SerializeString0(inner) => {
-            serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
+            serialize_json_value(state, &inner.0, &inner.1, Value::String(inner.2.to_string()))
         }
         HEVMCalls::SerializeString1(inner) => {
             serialize_json(state, &inner.0, &inner.1, &array_str_to_str(&inner.2))
