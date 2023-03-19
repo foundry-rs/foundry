@@ -380,7 +380,10 @@ impl FuzzedCases {
     }
 
     fn gas_values(&self, with_stipend: bool) -> Vec<u64> {
-        self.cases.iter().map(|c| if with_stipend { c.gas } else { c.gas - c.stipend }).collect()
+        self.cases
+            .iter()
+            .map(|c| if with_stipend { c.gas } else { c.gas.saturating_sub(c.stipend) })
+            .collect()
     }
 
     /// Returns the case with the highest gas usage
