@@ -163,17 +163,30 @@ pub(crate) fn install(
             // Pin branch to submodule if branch is used
             if let Some(ref branch) = installed_tag {
                 if !branch.is_empty() {
-                    let libs = libs.strip_prefix(&root).unwrap_or(&libs);
-                    let mut cmd = Command::new("git");
-                    cmd.current_dir(&root).args([
-                        "submodule",
-                        "set-branch",
-                        "-b",
+                    // First, check if this tag has a branch
+                    let mut check_for_branch = Command::new("git");
+                    check_for_branch.current_dir(&root).args([
+                        "branch",
+                        "--list",
                         branch.as_str(),
                         libs.join(target_dir).to_str().unwrap(),
                     ]);
-                    trace!(?cmd, "submodule set branch");
-                    cmd.exec()?;
+                    trace!(?check_for_branch, "check if tag has branch");
+                    let output = check_for_branch.exec()?;
+                    let branch_found = String::from_utf8(output.stdout)?;
+                    if !branch_found.is_empty() {
+                        let libs = libs.strip_prefix(&root).unwrap_or(&libs);
+                        let mut cmd = Command::new("git");
+                        cmd.current_dir(&root).args([
+                            "submodule",
+                            "set-branch",
+                            "-b",
+                            branch.as_str(),
+                            libs.join(target_dir).to_str().unwrap(),
+                        ]);
+                        trace!(?cmd, "submodule set branch");
+                        cmd.exec()?;
+                    }
 
                     // this changed the .gitmodules files
                     trace!("git add .gitmodules");
