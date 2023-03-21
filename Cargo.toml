@@ -58,6 +58,18 @@ strip = true
 panic = "abort"
 codegen-units = 1
 
+# Lock ethers-rs to a rev to allow this crate be safely used as a dependency
+[workspace.dependencies]
+ethers = { git = "https://github.com/gakonst/ethers-rs", rev = "279280c6fdae215a9411cdcf5270f34b7cf3fb70" }
+ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", rev = "279280c6fdae215a9411cdcf5270f34b7cf3fb70" }
+ethers-core = { git = "https://github.com/gakonst/ethers-rs", rev = "279280c6fdae215a9411cdcf5270f34b7cf3fb70" }
+ethers-contract = { git = "https://github.com/gakonst/ethers-rs", rev = "279280c6fdae215a9411cdcf5270f34b7cf3fb70" }
+ethers-providers = { git = "https://github.com/gakonst/ethers-rs", rev = "279280c6fdae215a9411cdcf5270f34b7cf3fb70" }
+ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "279280c6fdae215a9411cdcf5270f34b7cf3fb70" }
+ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "279280c6fdae215a9411cdcf5270f34b7cf3fb70" }
+ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", rev = "279280c6fdae215a9411cdcf5270f34b7cf3fb70" }
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "279280c6fdae215a9411cdcf5270f34b7cf3fb70" }
+
 # # Patch ethers-rs with a local checkout then run `cargo update -p ethers`
 # [patch."https://github.com/gakonst/ethers-rs"]
 # ethers = { path = "../ethers-rs" }

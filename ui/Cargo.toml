@@ -12,6 +12,6 @@ crossterm = "0.22.1"
 tui = { version = "0.16.0", default-features = false, features = ["crossterm"] }
 eyre = "0.6.5"
 hex = "0.4.3"
-ethers = { git = "https://github.com/gakonst/ethers-rs" }
+ethers = { workspace = true }
 forge = { path = "../forge" }
 revm = { version = "2.3", features = ["std", "k256", "with-serde"] }
