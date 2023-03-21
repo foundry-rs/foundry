@@ -156,3 +156,143 @@ contract MockCallTest is DSTest {
         mock.noReturnValue();
     }
 }
+
+contract MockCallRevertTest is DSTest {
+    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+
+    error TestError(bytes msg);
+
+    bytes constant ERROR_MESSAGE = "ERROR_MESSAGE";
+
+    
+    function testMockGettersRevert() public {
+        Mock target = new Mock();
+
+        // pre-mock
+        assertEq(target.numberA(), 1);
+        assertEq(target.numberB(), 2);
+
+        cheats.mockCallRevert(address(target), abi.encodeWithSelector(target.numberB.selector), ERROR_MESSAGE);
+
+        // post-mock
+        assertEq(target.numberA(), 1);
+        cheats.expectRevert();
+        target.numberB();
+    }
+
+    function testMockRevertWithCustomError() public {
+        Mock target = new Mock();
+
+        assertEq(target.numberA(), 1);
+        assertEq(target.numberB(), 2);
+
+        bytes memory customError = abi.encodeWithSelector(TestError.selector, ERROR_MESSAGE);
+
+        cheats.mockCallRevert(address(target), abi.encodeWithSelector(target.numberB.selector), customError);
+
+        assertEq(target.numberA(), 1);
+        cheats.expectRevert(customError);
+        target.numberB();
+    }
+
+    function testMockNestedRevert() public {
+        Mock inner = new Mock();
+        NestedMock target = new NestedMock(inner);
+
+        assertEq(target.sum(), 3);
+
+        cheats.mockCallRevert(address(inner), abi.encodeWithSelector(inner.numberB.selector), ERROR_MESSAGE);
+
+        cheats.expectRevert(ERROR_MESSAGE);
+        target.sum();
+    }
+
+    function testMockCalldataRevert() public {
+        Mock target = new Mock();
+        assertEq(target.add(5, 5), 10);
+        assertEq(target.add(6, 4), 10);
+
+        cheats.mockCallRevert(address(target), abi.encodeWithSelector(target.add.selector, 5, 5), ERROR_MESSAGE);
+
+        assertEq(target.add(6, 4), 10);
+        
+        cheats.expectRevert(ERROR_MESSAGE);
+        target.add(5, 5);
+    }
+
+    function testClearMockRevertedCalls() public {
+        Mock target = new Mock();
+
+        cheats.mockCallRevert(address(target), abi.encodeWithSelector(target.numberB.selector), ERROR_MESSAGE);
+
+        cheats.clearMockedCalls();
+
+        assertEq(target.numberA(), 1);
+        assertEq(target.numberB(), 2);
+    }
+
+    function testMockCallRevertPartialMatch() public {
+        Mock mock = new Mock();
+
+        cheats.mockCallRevert(address(mock), abi.encodeWithSelector(mock.add.selector, 2), ERROR_MESSAGE);
+
+        assertEq(mock.add(1, 2), 3);
+
+        cheats.expectRevert(ERROR_MESSAGE);
+        mock.add(2, 3);
+    }
+
+    function testMockCallRevertWithValue() public {
+        Mock mock = new Mock();
+
+        cheats.mockCallRevert(address(mock), 10, abi.encodeWithSelector(mock.pay.selector), ERROR_MESSAGE);
+
+        assertEq(mock.pay(1), 1);
+        assertEq(mock.pay(2), 2);
+
+        cheats.expectRevert(ERROR_MESSAGE);
+        mock.pay{value: 10}(1);
+    }
+
+    function testMockCallResetsMockCallRevert() public {
+        Mock mock = new Mock();
+
+        cheats.mockCallRevert(address(mock), abi.encodeWithSelector(mock.add.selector), ERROR_MESSAGE);
+        
+        cheats.mockCall(address(mock), abi.encodeWithSelector(mock.add.selector), abi.encode(5));
+        assertEq(mock.add(2, 3), 5);
+    }
+
+    function testMockCallRevertResetsMockCall() public {
+        Mock mock = new Mock();
+
+        cheats.mockCall(address(mock), abi.encodeWithSelector(mock.add.selector), abi.encode(5));
+        assertEq(mock.add(2, 3), 5);
+
+        cheats.mockCallRevert(address(mock), abi.encodeWithSelector(mock.add.selector), ERROR_MESSAGE);
+
+        cheats.expectRevert(ERROR_MESSAGE);
+        mock.add(2, 3);
+    }
+
+    function testMockCallRevertWithCall() public {
+        Mock mock = new Mock();
+
+        bytes memory customError = abi.encodeWithSelector(TestError.selector, ERROR_MESSAGE);
+
+        cheats.mockCallRevert(address(mock), abi.encodeWithSelector(mock.add.selector), customError);
+
+        (bool success, bytes memory data) = address(mock).call(abi.encodeWithSelector(Mock.add.selector, 2, 3));
+        assertEq(success, false);
+        assertEq(data, customError);
+    }
+
+    function testMockCallEmptyAccount() public {
+        Mock mock = Mock(address(100));
+
+        cheats.mockCallRevert(address(mock), abi.encodeWithSelector(mock.add.selector), ERROR_MESSAGE);
+
+        cheats.expectRevert(ERROR_MESSAGE);
+        mock.add(1, 2);
+    }
+}

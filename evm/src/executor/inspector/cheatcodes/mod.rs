@@ -39,7 +39,7 @@ mod env;
 pub use env::{Log, Prank, RecordAccess};
 /// Assertion helpers (such as `expectEmit`)
 mod expect;
-pub use expect::{ExpectedCallData, ExpectedEmit, ExpectedRevert, MockCallDataContext};
+pub use expect::{ExpectedCallData, ExpectedEmit, ExpectedRevert, MockCallDataContext, MockCallReturnData};
 
 /// Cheatcodes that interact with the external environment (FFI etc.)
 mod ext;
@@ -113,7 +113,7 @@ pub struct Cheatcodes {
     pub recorded_logs: Option<RecordedLogs>,
 
     /// Mocked calls
-    pub mocked_calls: BTreeMap<Address, BTreeMap<MockCallDataContext, Bytes>>,
+    pub mocked_calls: BTreeMap<Address, BTreeMap<MockCallDataContext, MockCallReturnData>>,
 
     /// Expected calls
     pub expected_calls: BTreeMap<Address, Vec<ExpectedCallData>>,
@@ -379,13 +379,13 @@ where
                     value: Some(call.transfer.value),
                 };
                 if let Some(mock_retdata) = mocks.get(&ctx) {
-                    return (Return::Return, Gas::new(call.gas_limit), mock_retdata.clone())
+                    return (mock_retdata.ret_type, Gas::new(call.gas_limit), mock_retdata.data.clone())
                 } else if let Some((_, mock_retdata)) = mocks.iter().find(|(mock, _)| {
                     mock.calldata.len() <= call.input.len() &&
                         *mock.calldata == call.input[..mock.calldata.len()] &&
                         mock.value.map(|value| value == call.transfer.value).unwrap_or(true)
                 }) {
-                    return (Return::Return, Gas::new(call.gas_limit), mock_retdata.clone())
+                    return (mock_retdata.ret_type, Gas::new(call.gas_limit), mock_retdata.data.clone())
                 }
             }
 
