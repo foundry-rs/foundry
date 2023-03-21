@@ -16,8 +16,8 @@ foundry-config = { path = "../config" }
 foundry-utils = { path = "../utils" }
 
 # ethers
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["async"] }
-ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-solc = { workspace = true, default-features = false, features = ["async"] }
+ethers-core = { workspace = true, default-features = false }
 
 # cli
 clap = { version = "3.0.10", features = [

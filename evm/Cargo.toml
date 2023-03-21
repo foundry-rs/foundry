@@ -16,7 +16,7 @@ foundry-macros = { path = "../macros" }
 serde_json = "1.0.67"
 serde = "1.0.130"
 hex = "0.4.3"
-ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = [
+ethers = { workspace = true, default-features = false, features = [
   "solc-full",
   "abigen",
 ] }
