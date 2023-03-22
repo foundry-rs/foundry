@@ -262,3 +262,29 @@ pub fn collect_created_contracts(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethers::prelude::rand::RngCore;
+
+    #[test]
+    fn can_enforce_entries() {
+        let mut dictionary = FuzzDictionary::default();
+        let max_values = 10;
+        let max_address = 10;
+
+        for _ in 0..(max_values + 1) {
+            dictionary.cache.insert(Address::random());
+        }
+        for _ in 0..(max_address + 1) {
+            let mut val = [0u8; 32];
+            thread_rng().fill_bytes(&mut val[..]);
+            dictionary.inner.insert(val);
+        }
+
+        dictionary.enforce_limit(max_address, max_values);
+        assert_eq!(dictionary.cache.len(), max_address);
+        assert_eq!(dictionary.inner.len(), max_values);
+    }
+}
