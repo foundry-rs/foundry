@@ -220,7 +220,7 @@ impl Tui {
                 .split(app)[..]
             {
                 Tui::draw_choices_footer(f, footer);
-                Tui::draw_choices(f, choice_pane, current_step, all_tests);
+                Tui::draw_choices(f, choice_pane, current_step, all_tests, choice_pane);
             } else {
                 panic!("unable to create vertical panes")
             }
@@ -1026,6 +1026,7 @@ impl Tui {
         choice_pane: Rect,
         current_step: usize,
         all_tests: &[String],
+        area: Rect,
     ) {
         let create_block = |title| {
             Block::default()
@@ -1042,15 +1043,34 @@ impl Tui {
             })
         };
 
-        let text: Vec<Spans> =
-            all_tests.iter().enumerate().map(|(i, t)| create_span(t, i == current_step)).collect();
+        // sub for the top & bottom
+        if let Some(height) = area.height.checked_sub(2) {
+            let height = height as usize;
 
-        let paragraph = Paragraph::new(text.clone())
-            // .style(Style::default().bg(Color::White).fg(Color::Black))
-            .block(create_block("Test functions"))
-            .alignment(Alignment::Center);
+            let text: Vec<Spans> = all_tests
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| {
+                    if current_step >= height {
+                        i > &(current_step - height)
+                    } else {
+                        true
+                    }
+                    // } else {
+                    //     i < &(height - current_step)
+                    // }
+                })
+                .map(|(i, t)| create_span(t, i == current_step))
+                .collect();
 
-        f.render_widget(paragraph, choice_pane);
+            let paragraph = Paragraph::new(text.clone())
+                .block(create_block("Test functions"))
+                .alignment(Alignment::Center);
+
+            f.render_widget(paragraph, choice_pane);
+
+            // too far
+        }
     }
 }
 
@@ -1396,91 +1416,68 @@ impl Ui for Tui {
             match rx.recv()? {
                 // Key press
                 Interrupt::KeyPressed(event) => {
-                    if event.modifiers.contains(KeyModifiers::CONTROL) {
-                        if event.code == KeyCode::Char('w') {
-                            // add window change to buffer
-                            self.key_buffer.push_str("<C-w>");
+                    match event.code {
+                        // Exit or choose test
+                        KeyCode::Char('q') => {
+                            disable_raw_mode()?;
+                            execute!(
+                                self.terminal.backend_mut(),
+                                LeaveAlternateScreen,
+                                DisableMouseCapture
+                            )?;
+                            return Ok((TUIExitReason::CharExit, None))
                         }
-                    } else {
-                        match event.code {
-                            // Exit or choose test
-                            KeyCode::Char('q') => {
-                                disable_raw_mode()?;
-                                execute!(
-                                    self.terminal.backend_mut(),
-                                    LeaveAlternateScreen,
-                                    DisableMouseCapture
-                                )?;
-                                return Ok((TUIExitReason::CharExit, None))
+                        KeyCode::Enter => {
+                            disable_raw_mode()?;
+                            execute!(
+                                self.terminal.backend_mut(),
+                                LeaveAlternateScreen,
+                                DisableMouseCapture
+                            )?;
+                            return Ok((TUIExitReason::CharExit, Some(current_step)))
+                        }
+                        // Move up
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
+                                current_step = current_step.saturating_sub(1)
                             }
-                            KeyCode::Enter => {
-                                disable_raw_mode()?;
-                                execute!(
-                                    self.terminal.backend_mut(),
-                                    LeaveAlternateScreen,
-                                    DisableMouseCapture
-                                )?;
-                                return Ok((TUIExitReason::CharExit, Some(current_step)))
-                            }
-                            // Move up
-                            KeyCode::Char('k') | KeyCode::Up => {
-                                if self.key_buffer.ends_with("<C-w>") {
-                                    // change window
-                                } else {
-                                    current_step = current_step.saturating_sub(1);
-                                    for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
-                                        current_step = match current_step.checked_sub(1) {
-                                            Some(c_s) => c_s,
-                                            None => {
-                                                // is already at 0
-                                                self.key_buffer.clear();
-                                                // dont clutter cpu
-                                                break
-                                            }
-                                        }
-                                    }
-                                }
-                                self.key_buffer.clear();
-                            }
-                            // Move down
-                            KeyCode::Char('j') | KeyCode::Down => {
-                                if self.key_buffer.ends_with("<C-w>") {
-                                    // change window
-                                } else {
-                                    for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
-                                        if current_step < max_tests {
-                                            current_step += 1;
-                                        } else {
-                                            self.key_buffer.clear();
-                                            break
-                                        }
-                                    }
-                                }
 
-                                self.key_buffer.clear();
-                            }
-                            // Go to start
-                            KeyCode::Char('g') => {
-                                current_step = 0;
-                                self.key_buffer.clear();
-                            }
-                            // Go to end
-                            KeyCode::Char('G') => {
-                                current_step = max_tests;
-                                self.key_buffer.clear();
-                            }
-                            KeyCode::Char(other) => match other {
-                                '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' => {
-                                    self.key_buffer.push(other);
-                                }
-                                _ => {
-                                    // Invalid key, clear buffer
+                            self.key_buffer.clear();
+                        }
+                        // Move down
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
+                                if current_step < max_tests {
+                                    current_step += 1;
+                                } else {
                                     self.key_buffer.clear();
+                                    break
                                 }
-                            },
+                            }
+
+                            self.key_buffer.clear();
+                        }
+                        // Go to start
+                        KeyCode::Char('g') => {
+                            current_step = 0;
+                            self.key_buffer.clear();
+                        }
+                        // Go to end
+                        KeyCode::Char('G') => {
+                            current_step = max_tests;
+                            self.key_buffer.clear();
+                        }
+                        KeyCode::Char(other) => match other {
+                            '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' => {
+                                self.key_buffer.push(other);
+                            }
                             _ => {
+                                // Invalid key, clear buffer
                                 self.key_buffer.clear();
                             }
+                        },
+                        _ => {
+                            self.key_buffer.clear();
                         }
                     }
                 }

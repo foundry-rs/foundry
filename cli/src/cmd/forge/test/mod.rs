@@ -180,19 +180,37 @@ impl TestArgs {
             filter.test_pattern = self.debug.clone();
 
             let filtered_tests = runner.get_filtered_sig(&filter);
+            // filter any fuzzed test
+            let mut filtered_tests = filtered_tests
+                .into_iter()
+                .filter(|test| {
+                    let mut chars = test.chars();
+                    chars.position(|c| c == '(').unwrap();
+                    chars.next() == Some(')')
+                })
+                .collect::<Vec<_>>();
+
+            let old_len = filtered_tests.len();
+
+            filtered_tests.sort();
+            filtered_tests.dedup();
+
+            if old_len != filtered_tests.len() {
+                return Err(eyre::eyre!("There was some duplicate test function names."))
+            }
 
             let test_name = match filtered_tests.len() {
                 // or should we display them all ?
                 0 => return Err(eyre::eyre!("No test found")),
-                1 => filtered_tests,
+                1 => &filtered_tests[0],
                 _ => {
                     let choice = ChoiceArgs { all_tests: filtered_tests.clone() };
                     let test_index = utils::block_on(choice.open_debug_choice())?;
-                    vec![filtered_tests.get(test_index).expect("Test not found").clone()]
+                    filtered_tests.get(test_index).expect("Test not found")
                 }
             };
 
-            let new_filter = self.filter_from_name(test_name.get(0).expect("No test found"));
+            let new_filter = self.filter_from_name(test_name);
 
             // try with new filter
             let n = runner.count_filtered_tests(&new_filter);
@@ -204,7 +222,7 @@ impl TestArgs {
                         Use --match-contract and --match-path to further limit the search."));
             }
 
-            self.debug_single_test(runner, &filter, test_options)
+            self.debug_single_test(runner, new_filter, test_options)
         } else if self.list {
             list(runner, filter, self.json)
         } else {
@@ -224,14 +242,14 @@ impl TestArgs {
     fn debug_single_test(
         &self,
         mut runner: MultiContractRunner,
-        filter: &impl TestFilter,
+        filter: impl TestFilter,
         test_options: TestOptions,
     ) -> eyre::Result<TestOutcome> {
         // Run the test
-        let results = runner.test(filter, None, test_options)?;
+        let results = runner.test(&filter, None, test_options)?;
 
         // Get the result of the single test
-        let (id, sig, test_kind, counterexample) = results
+        let (id, sig, test_kind, _) = results
             .iter()
             .map(|(id, SuiteResult { test_results, .. })| {
                 let (sig, result) = test_results.iter().next().unwrap();
@@ -241,17 +259,9 @@ impl TestArgs {
             .next()
             .unwrap();
 
-        // Build debugger args if this is a fuzz test
-        let sig = match test_kind {
-            TestKind::Fuzz(cases) => {
-                if let Some(CounterExample::Single(counterexample)) = counterexample {
-                    counterexample.calldata.to_string()
-                } else {
-                    cases.cases().first().expect("no fuzz cases run").calldata.to_string()
-                }
-            }
-            _ => sig,
-        };
+        if let TestKind::Fuzz(_) = test_kind {
+            eyre::bail!("Cannot debug fuzzed function");
+        }
 
         // Run the debugger
         let mut opts = self.opts.clone();
@@ -273,14 +283,16 @@ impl TestArgs {
     /// Makes a Filter strictly matching a function name
     pub fn filter_from_name(&self, name: &str) -> Filter {
         // don't make capturing groups
-        let name = name.replace("(", "[(]");
-        let name = name.replace(")", "[)]");
+        let name = name.replace("(", r"");
+        let name = name.replace(")", r"");
+
+        println!("{}", &name);
 
         let reg = Regex::new(&name).unwrap();
 
         let mut filter = self.filter.clone();
         filter.test_pattern = Some(reg.clone());
-        filter.pattern = Some(reg);
+        filter.pattern = None;
         filter.test_pattern_inverse = None;
         filter
     }

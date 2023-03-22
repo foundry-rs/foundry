@@ -271,7 +271,6 @@ impl<'a> ContractRunner<'a> {
         let tests: Vec<_> = self
             .contract
             .functions()
-            .into_iter()
             .filter(|func| func.is_test() && filter.matches_test(func.signature()))
             .map(|func| (func, func.is_test_fail()))
             .collect();

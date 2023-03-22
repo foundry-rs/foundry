@@ -151,7 +151,6 @@ impl MultiContractRunner {
         test_options: TestOptions,
     ) -> Result<BTreeMap<String, SuiteResult>> {
         tracing::trace!("start all tests");
-
         let db = Backend::spawn(self.fork.take());
 
         let results =
@@ -230,6 +229,7 @@ impl MultiContractRunner {
             self.errors.as_ref(),
             libs,
         );
+
         runner.run_tests(filter, test_options, Some(&self.known_contracts))
     }
 }
