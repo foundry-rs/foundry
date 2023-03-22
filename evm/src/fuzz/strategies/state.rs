@@ -40,11 +40,14 @@ pub struct FuzzDictionary {
 impl FuzzDictionary {
     /// If the dictionary exceeds these limits it randomly evicts
     pub fn enforce_limit(&mut self, max_addresses: usize, max_values: usize) {
-        assert_ne!(max_addresses, 0);
-        assert_ne!(max_values, 0);
-
         if self.inner.len() < max_values && self.cache.len() < max_addresses {
             return
+        }
+        if max_addresses == 0 {
+            self.cache.clear();
+        }
+        if max_values == 0 {
+            self.inner.clear();
         }
         let mut rng = thread_rng();
         while self.inner.len() > max_values {
