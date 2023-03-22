@@ -7,6 +7,7 @@ use crate::{
 use bytes::Bytes;
 use ethers::{
     abi::Function,
+    prelude::rand::{seq::IteratorRandom, thread_rng},
     types::{Address, Log, H256, U256},
 };
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
@@ -34,6 +35,27 @@ pub struct FuzzDictionary {
     inner: BTreeSet<[u8; 32]>,
     /// Addresses that already had their PUSH bytes collected.
     cache: HashSet<Address>,
+}
+
+impl FuzzDictionary {
+    /// If the dictionary exceeds these limits it randomly evicts
+    pub fn enforce_limit(&mut self, max_addresses: usize, max_values: usize) {
+        assert_ne!(max_addresses, 0);
+        assert_ne!(max_values, 0);
+
+        if self.inner.len() < max_values && self.cache.len() < max_addresses {
+            return
+        }
+        let mut rng = thread_rng();
+        while self.inner.len() > max_values {
+            let evict = self.inner.iter().choose(&mut rng).copied().expect("not empty");
+            self.inner.remove(&evict);
+        }
+        while self.cache.len() > max_addresses {
+            let evict = self.cache.iter().choose(&mut rng).copied().expect("not empty");
+            self.cache.remove(&evict);
+        }
+    }
 }
 
 impl Deref for FuzzDictionary {
@@ -64,7 +86,6 @@ pub fn fuzz_calldata_from_state(
 
     strats
         .prop_map(move |tokens| {
-            tracing::trace!(input = ?tokens);
             func.encode_input(&tokens)
                 .unwrap_or_else(|_| {
                     panic!(
@@ -146,9 +167,7 @@ pub fn collect_state_from_call(
         if include_push_bytes {
             // Insert push bytes
             if let Some(code) = &account.info.code {
-                if !state.cache.contains(address) {
-                    state.cache.insert(*address);
-
+                if state.cache.insert(*address) {
                     for push_byte in collect_push_bytes(code.bytes().clone()) {
                         state.insert(push_byte);
                     }

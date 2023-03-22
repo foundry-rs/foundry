@@ -26,6 +26,14 @@ pub struct FuzzConfig {
     pub include_storage: bool,
     /// The flag indicating whether to include push bytes values
     pub include_push_bytes: bool,
+    /// How many addresses to record at most.
+    /// Once the fuzzer exceeds this limit, it will start evicting random entries
+    ///
+    /// This limit is put in place to prevent memory blowup.
+    pub max_fuzz_dictionary_addresses: usize,
+    /// How many values to record at most.
+    /// Once the fuzzer exceeds this limit, it will start evicting random entries
+    pub max_fuzz_dictionary_values: usize,
 }
 
 impl Default for FuzzConfig {
@@ -37,6 +45,10 @@ impl Default for FuzzConfig {
             dictionary_weight: 40,
             include_storage: true,
             include_push_bytes: true,
+            // limit this to 200MB
+            max_fuzz_dictionary_addresses: (200 * 1024 * 1024) / 20,
+            // limit this to 200MB
+            max_fuzz_dictionary_values: (200 * 1024 * 1024) / 32,
         }
     }
 }
