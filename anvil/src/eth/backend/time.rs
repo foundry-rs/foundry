@@ -9,7 +9,7 @@ use crate::eth::error::BlockchainError;
 
 /// Returns the `Utc` datetime for the given seconds since unix epoch
 pub fn utc_from_secs(secs: u64) -> DateTime<Utc> {
-    DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(secs as i64, 0), Utc)
+    DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp_opt(secs as i64, 0).unwrap(), Utc)
 }
 
 /// Manages block time

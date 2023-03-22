@@ -1,14 +1,23 @@
 //! Genesis settings
 
-use crate::{eth::backend::db::Db, genesis::Genesis};
+use crate::{
+    eth::backend::db::{Db, MaybeHashDatabase},
+    genesis::Genesis,
+};
 use ethers::{
     abi::ethereum_types::BigEndianHash,
-    types::{Address, U256},
+    types::{Address, H256, U256},
 };
 use forge::revm::KECCAK_EMPTY;
-use foundry_evm::{executor::backend::DatabaseResult, revm::AccountInfo};
+use foundry_evm::{
+    executor::{
+        backend::{snapshot::StateSnapshot, DatabaseError, DatabaseResult},
+        DatabaseRef,
+    },
+    revm::{AccountInfo, Bytecode},
+};
 use parking_lot::Mutex;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLockWriteGuard;
 
 /// Genesis settings
@@ -63,5 +72,75 @@ impl GenesisConfig {
             }
         }
         Ok(())
+    }
+
+    /// Returns a database wrapper that points to the genesis and is aware of all provided
+    /// [AccountInfo]
+    pub(crate) fn state_db_at_genesis<'a>(
+        &self,
+        db: Box<dyn MaybeHashDatabase + 'a>,
+    ) -> AtGenesisStateDb<'a> {
+        AtGenesisStateDb {
+            genesis: self.genesis_init.clone(),
+            accounts: self.account_infos().collect(),
+            db,
+        }
+    }
+}
+
+/// A Database implementation that is at the genesis state.
+///
+/// This is only used in forking mode where we either need to fetch the state from remote if the
+/// account was not provided via custom genesis, which would override anything available from remote
+/// starting at the genesis, Note: "genesis" in the context of the Backend means, the block the
+/// backend was created, which is `0` in normal mode and `fork block` in forking mode.
+pub(crate) struct AtGenesisStateDb<'a> {
+    genesis: Option<Genesis>,
+    accounts: HashMap<Address, AccountInfo>,
+    db: Box<dyn MaybeHashDatabase + 'a>,
+}
+
+impl<'a> DatabaseRef for AtGenesisStateDb<'a> {
+    type Error = DatabaseError;
+    fn basic(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
+        if let Some(acc) = self.accounts.get(&address).cloned() {
+            return Ok(Some(acc))
+        }
+        self.db.basic(address)
+    }
+
+    fn code_by_hash(&self, code_hash: H256) -> DatabaseResult<Bytecode> {
+        if let Some((_, acc)) = self.accounts.iter().find(|(_, acc)| acc.code_hash == code_hash) {
+            return Ok(acc.code.clone().unwrap_or_default())
+        }
+        self.db.code_by_hash(code_hash)
+    }
+
+    fn storage(&self, address: Address, index: U256) -> DatabaseResult<U256> {
+        if let Some(acc) =
+            self.genesis.as_ref().and_then(|genesis| genesis.alloc.accounts.get(&address))
+        {
+            let value = acc.storage.get(&H256::from_uint(&index)).copied().unwrap_or_default();
+            return Ok(value.into_uint())
+        }
+        self.db.storage(address, index)
+    }
+
+    fn block_hash(&self, number: U256) -> DatabaseResult<H256> {
+        self.db.block_hash(number)
+    }
+}
+
+impl<'a> MaybeHashDatabase for AtGenesisStateDb<'a> {
+    fn clear_into_snapshot(&mut self) -> StateSnapshot {
+        self.db.clear_into_snapshot()
+    }
+
+    fn clear(&mut self) {
+        self.db.clear()
+    }
+
+    fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
+        self.db.init_from_snapshot(snapshot)
     }
 }

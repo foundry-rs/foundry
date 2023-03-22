@@ -302,8 +302,8 @@ forgetest_init!(
         cmd.cmd().current_dir(forge_std_dir);
         cmd.args(["test", "--root", "."]);
         let stdout = cmd.stdout();
-        assert!(stdout.contains("[PASS]"), "No tests passed:\n{}", stdout);
-        assert!(!stdout.contains("[FAIL]"), "Tests failed :\n{}", stdout);
+        assert!(stdout.contains("[PASS]"), "No tests passed:\n{stdout}");
+        assert!(!stdout.contains("[FAIL]"), "Tests failed :\n{stdout}");
     }
 );
 

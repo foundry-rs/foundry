@@ -147,12 +147,17 @@ impl ProjectCompiler {
             for (name, artifact) in artifacts {
                 let size = deployed_contract_size(artifact).unwrap_or_default();
 
-                let dev_functions =
-                    artifact.abi.as_ref().unwrap().abi.functions().into_iter().filter(|func| {
+                let dev_functions = artifact
+                    .abi
+                    .as_ref()
+                    .map(|abi| abi.abi.functions())
+                    .into_iter()
+                    .flatten()
+                    .filter(|func| {
                         func.name.is_test() || func.name.eq("IS_TEST") || func.name.eq("IS_SCRIPT")
                     });
 
-                let is_dev_contract = dev_functions.into_iter().count() > 0;
+                let is_dev_contract = dev_functions.count() > 0;
                 size_report.contracts.insert(name, ContractInfo { size, is_dev_contract });
             }
 

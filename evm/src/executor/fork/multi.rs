@@ -11,6 +11,7 @@ use ethers::{
     providers::{Http, Provider, RetryClient},
     types::{BlockId, BlockNumber},
 };
+use foundry_common::ProviderBuilder;
 use foundry_config::Config;
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
@@ -277,7 +278,7 @@ impl MultiForkHandler {
             let retries = self.retries;
             let backoff = self.backoff;
             // need to create a new fork
-            let task = Box::pin(async move { create_fork(fork, retries, backoff).await });
+            let task = Box::pin(create_fork(fork, retries, backoff));
             self.pending_tasks.push(ForkTask::Create(task, fork_id, sender, Vec::new()));
         }
     }
@@ -477,8 +478,13 @@ async fn create_fork(
     retries: u32,
     backoff: u64,
 ) -> eyre::Result<(CreatedFork, Handler)> {
-    let provider =
-        Arc::new(Provider::<RetryClient<Http>>::new_client(fork.url.as_str(), retries, backoff)?);
+    let provider = Arc::new(
+        ProviderBuilder::new(fork.url.as_str())
+            .max_retry(retries)
+            .initial_backoff(backoff)
+            .compute_units_per_second(fork.evm_opts.get_compute_units_per_second())
+            .build()?,
+    );
 
     // initialise the fork environment
     fork.env = fork.evm_opts.fork_evm_env(&fork.url).await?;

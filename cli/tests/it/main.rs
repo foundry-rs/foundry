@@ -9,6 +9,8 @@ mod config;
 #[cfg(not(feature = "external-integration-tests"))]
 mod create;
 #[cfg(not(feature = "external-integration-tests"))]
+mod doc;
+#[cfg(not(feature = "external-integration-tests"))]
 mod multi_script;
 #[cfg(not(feature = "external-integration-tests"))]
 mod script;

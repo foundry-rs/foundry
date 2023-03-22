@@ -31,9 +31,10 @@ impl StorageCachingConfig {
 }
 
 /// What chains to cache
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum CachedChains {
     /// Cache all chains
+    #[default]
     All,
     /// Don't cache anything
     None,
@@ -87,16 +88,11 @@ impl<'de> Deserialize<'de> for CachedChains {
     }
 }
 
-impl Default for CachedChains {
-    fn default() -> Self {
-        CachedChains::All
-    }
-}
-
 /// What endpoints to enable caching for
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum CachedEndpoints {
     /// Cache all endpoints
+    #[default]
     All,
     /// Only cache non-local host endpoints
     Remote,
@@ -130,12 +126,6 @@ impl PartialEq for CachedEndpoints {
 }
 
 impl Eq for CachedEndpoints {}
-
-impl Default for CachedEndpoints {
-    fn default() -> Self {
-        CachedEndpoints::All
-    }
-}
 
 impl fmt::Display for CachedEndpoints {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

@@ -263,6 +263,14 @@ pub enum EthRequest {
         #[cfg_attr(feature = "serde", serde(default))] GethDebugTracingOptions,
     ),
 
+    /// geth's `debug_traceCall`  endpoint
+    #[cfg_attr(feature = "serde", serde(rename = "debug_traceCall"))]
+    DebugTraceCall(
+        EthTransactionRequest,
+        #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
+        #[cfg_attr(feature = "serde", serde(default))] GethDebugTracingOptions,
+    ),
+
     /// Trace transaction endpoint for parity's `trace_transaction`
     #[cfg_attr(feature = "serde", serde(rename = "trace_transaction", with = "sequence"))]
     TraceTransaction(H256),
@@ -367,7 +375,14 @@ pub enum EthRequest {
     SetCode(Address, Bytes),
 
     /// Sets the nonce of an address
-    #[cfg_attr(feature = "serde", serde(rename = "anvil_setNonce", alias = "hardhat_setNonce"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            rename = "anvil_setNonce",
+            alias = "hardhat_setNonce",
+            alias = "evm_setAccountNonce"
+        )
+    )]
     SetNonce(
         Address,
         #[cfg_attr(feature = "serde", serde(deserialize_with = "deserialize_number"))] U256,
@@ -425,6 +440,19 @@ pub enum EthRequest {
         )
     )]
     SetNextBlockBaseFeePerGas(U256),
+
+    /// Sets the specific timestamp
+    /// Accepts timestamp (Unix epoch) with millisecond precision and returns the number of seconds
+    /// between the given timestamp and the current time.
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            rename = "anvil_setTime",
+            alias = "evm_setTime",
+            deserialize_with = "deserialize_number_seq"
+        )
+    )]
+    EvmSetTime(U256),
 
     /// Serializes the current state (including contracts code, contract's storage, accounts
     /// properties, etc.) into a savable data blob
@@ -518,6 +546,18 @@ pub enum EthRequest {
     #[cfg_attr(feature = "serde", serde(rename = "evm_mine"))]
     EvmMine(#[cfg_attr(feature = "serde", serde(default))] Option<Params<Option<EvmMineOptions>>>),
 
+    /// Mine a single block and return detailed data
+    ///
+    /// This behaves exactly as `EvmMine` but returns different output, for compatibility reasons
+    /// this is a separate call since `evm_mine` is not an anvil original.
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "anvil_mine_detailed", alias = "evm_mine_detailed",)
+    )]
+    EvmMineDetailed(
+        #[cfg_attr(feature = "serde", serde(default))] Option<Params<Option<EvmMineOptions>>>,
+    ),
+
     /// Execute a transaction regardless of signature status
     #[cfg_attr(
         feature = "serde",
@@ -575,7 +615,7 @@ pub enum EthRpcCall {
     PubSub(EthPubSub),
 }
 
-#[cfg(all(test, serde))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -867,6 +907,12 @@ mod tests {
         let s = r#"{"method": "anvil_setNonce", "params": ["0xd84de507f3fada7df80908082d3239466db55a71", "0x0"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let s = r#"{"method": "hardhat_setNonce", "params": ["0xd84de507f3fada7df80908082d3239466db55a71", "0x0"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let s = r#"{"method": "evm_setAccountNonce", "params": ["0xd84de507f3fada7df80908082d3239466db55a71", "0x0"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
@@ -904,6 +950,17 @@ mod tests {
     #[test]
     fn test_serde_custom_next_block_base_fee() {
         let s = r#"{"method": "anvil_setNextBlockBaseFeePerGas", "params": ["0x0"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_set_time() {
+        let s = r#"{"method": "anvil_setTime", "params": ["0x0"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "anvil_increaseTime", "params": 1}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
@@ -1032,6 +1089,72 @@ mod tests {
     }
 
     #[test]
+    fn test_serde_custom_evm_mine_detailed() {
+        let s = r#"{"method": "anvil_mine_detailed", "params": [100]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let s = r#"{"method": "anvil_mine_detailed", "params": [{
+            "timestamp": 100,
+            "blocks": 100
+        }]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::EvmMineDetailed(params) => {
+                assert_eq!(
+                    params.unwrap().params.unwrap_or_default(),
+                    EvmMineOptions::Options { timestamp: Some(100), blocks: Some(100) }
+                )
+            }
+            _ => unreachable!(),
+        }
+
+        let s = r#"{"method": "evm_mine_detailed"}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        match req {
+            EthRequest::EvmMineDetailed(params) => {
+                assert!(params.is_none())
+            }
+            _ => unreachable!(),
+        }
+
+        let s = r#"{"method": "anvil_mine_detailed", "params": []}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_custom_evm_mine_hex() {
+        let s = r#"{"method": "evm_mine", "params": ["0x63b6ff08"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::EvmMine(params) => {
+                assert_eq!(
+                    params.unwrap().params.unwrap_or_default(),
+                    EvmMineOptions::Timestamp(Some(1672937224))
+                )
+            }
+            _ => unreachable!(),
+        }
+
+        let s = r#"{"method": "evm_mine", "params": [{"timestamp": "0x63b6ff08"}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::EvmMine(params) => {
+                assert_eq!(
+                    params.unwrap().params.unwrap_or_default(),
+                    EvmMineOptions::Options { timestamp: Some(1672937224), blocks: None }
+                )
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
     fn test_eth_uncle_count_by_block_hash() {
         let s = r#"{"jsonrpc":"2.0","method":"eth_getUncleCountByBlockHash","params":["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
@@ -1096,6 +1219,29 @@ mod tests {
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
 
         let s = r#"{"method": "debug_traceTransaction", "params": ["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff", {"disableStorage": true}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_debug_trace_call() {
+        let s = r#"{"method": "debug_traceCall", "params": [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "debug_traceCall", "params": [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockNumber": "latest" }]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "debug_traceCall", "params": [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockNumber": "0x0" }]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "debug_traceCall", "params": [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockHash": "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" }]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "debug_traceCall", "params": [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockNumber": "0x0" }, {"disableStorage": true}]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

@@ -64,6 +64,9 @@ pub use crate::fs_permissions::FsPermissions;
 pub mod error;
 pub use error::SolidityErrorCode;
 
+pub mod doc;
+pub use doc::DocConfig;
+
 mod warning;
 pub use warning::*;
 
@@ -302,6 +305,9 @@ pub struct Config {
     /// Disables storage caching entirely. This overrides any settings made in
     /// `rpc_storage_caching`
     pub no_storage_caching: bool,
+    /// Disables rate limiting entirely. This overrides any settings made in
+    /// `compute_units_per_second`
+    pub no_rpc_rate_limit: bool,
     /// Multiple rpc endpoints and their aliases
     #[serde(default, skip_serializing_if = "RpcEndpoints::is_empty")]
     pub rpc_endpoints: RpcEndpoints,
@@ -333,6 +339,8 @@ pub struct Config {
     pub build_info_path: Option<PathBuf>,
     /// Configuration for `forge fmt`
     pub fmt: FormatterConfig,
+    /// Configuration for `forge doc`
+    pub doc: DocConfig,
     /// Configures the permissions of cheat codes that touch the file system.
     ///
     /// This includes what operations can be executed (read, write)
@@ -368,9 +376,7 @@ pub static STANDALONE_FALLBACK_SECTIONS: Lazy<HashMap<&'static str, &'static str
     Lazy::new(|| HashMap::from([("invariant", "fuzz")]));
 
 /// Deprecated keys.
-pub static DEPRECATIONS: Lazy<HashMap<String, String>> = Lazy::new(|| {
-    HashMap::from([("fuzz.max_global_rejects".into(), "fuzz.max_test_rejects".into())])
-});
+pub static DEPRECATIONS: Lazy<HashMap<String, String>> = Lazy::new(|| HashMap::from([]));
 
 impl Config {
     /// The default profile: "default"
@@ -384,7 +390,7 @@ impl Config {
 
     /// Standalone sections in the config which get integrated into the selected profile
     pub const STANDALONE_SECTIONS: &'static [&'static str] =
-        &["rpc_endpoints", "etherscan", "fmt", "fuzz", "invariant"];
+        &["rpc_endpoints", "etherscan", "fmt", "doc", "fuzz", "invariant"];
 
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
@@ -436,6 +442,7 @@ impl Config {
     ///
     /// let config = Config::from_provider(figment);
     /// ```
+    #[track_caller]
     pub fn from_provider<T: Provider>(provider: T) -> Self {
         trace!("load config with provider: {:?}", provider.metadata());
         Self::try_from(provider).unwrap_or_else(|err| panic!("{}", err))
@@ -458,7 +465,7 @@ impl Config {
     /// ```
     pub fn try_from<T: Provider>(provider: T) -> Result<Self, ExtractConfigError> {
         let figment = Figment::from(provider);
-        let mut config = figment.extract::<Self>().map_err(|error| ExtractConfigError { error })?;
+        let mut config = figment.extract::<Self>().map_err(ExtractConfigError::new)?;
         config.profile = figment.profile().clone();
         Ok(config)
     }
@@ -758,12 +765,35 @@ impl Config {
     /// ```
     pub fn get_rpc_url(&self) -> Option<Result<Cow<str>, UnresolvedEnvVarError>> {
         let maybe_alias = self.eth_rpc_url.as_ref().or(self.etherscan_api_key.as_ref())?;
-        let mut endpoints = self.rpc_endpoints.clone().resolved();
-        if let Some(alias) = endpoints.remove(maybe_alias) {
-            Some(alias.map(Cow::Owned))
+        if let Some(alias) = self.get_rpc_url_with_alias(maybe_alias) {
+            Some(alias)
         } else {
             Some(Ok(Cow::Borrowed(self.eth_rpc_url.as_deref()?)))
         }
+    }
+
+    /// Resolves the given alias to a matching rpc url
+    ///
+    /// Returns:
+    ///    - the matching, resolved url of  `rpc_endpoints` if `maybe_alias` is an alias
+    ///    - None otherwise
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// 
+    /// use foundry_config::Config;
+    /// # fn t() {
+    ///     let config = Config::with_root("./");
+    ///     let rpc_url = config.get_rpc_url_with_alias("mainnet").unwrap().unwrap();
+    /// # }
+    /// ```
+    pub fn get_rpc_url_with_alias(
+        &self,
+        maybe_alias: &str,
+    ) -> Option<Result<Cow<str>, UnresolvedEnvVarError>> {
+        let mut endpoints = self.rpc_endpoints.clone().resolved();
+        Some(endpoints.remove(maybe_alias)?.map(Cow::Owned))
     }
 
     /// Returns the configured rpc, or the fallback url
@@ -828,24 +858,24 @@ impl Config {
     ) -> Option<Result<ResolvedEtherscanConfig, EtherscanConfigError>> {
         let maybe_alias = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref())?;
         if self.etherscan.contains_key(maybe_alias) {
-            // etherscan points to an alias in the `etherscan` table, so we try to resolve
-            // that
+            // etherscan points to an alias in the `etherscan` table, so we try to resolve that
             let mut resolved = self.etherscan.clone().resolved();
             return resolved.remove(maybe_alias)
         }
+
         // we treat the `etherscan_api_key` as actual API key
         // if no chain provided, we assume mainnet
-        let chain = self.chain_id.unwrap_or_else(|| Mainnet.into());
-
+        let chain = self.chain_id.unwrap_or(Chain::Named(Mainnet));
         let api_key = self.etherscan_api_key.as_ref()?;
         ResolvedEtherscanConfig::create(api_key, chain).map(Ok)
     }
 
     /// Same as [`Self::get_etherscan_config()`] but optionally updates the config with the given
-    /// `chain`
+    /// `chain`, and `etherscan_api_key`
     ///
     /// If not matching alias was found, then this will try to find the first entry in the table
-    /// with a matching chain id
+    /// with a matching chain id. If an etherscan_api_key is already set it will take precedence
+    /// over the chain's entry in the table.
     pub fn get_etherscan_config_with_chain(
         &self,
         chain: Option<impl Into<Chain>>,
@@ -853,19 +883,32 @@ impl Config {
         let chain = chain.map(Into::into);
         if let Some(maybe_alias) = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref()) {
             if self.etherscan.contains_key(maybe_alias) {
-                let mut resolved = self.etherscan.clone().resolved();
-                return resolved.remove(maybe_alias).transpose()
+                return self.etherscan.clone().resolved().remove(maybe_alias).transpose()
             }
         }
 
-        // try to find by comparing chain ids
-        if let Some(config) = chain.and_then(|chain| self.etherscan.find_chain(chain).cloned()) {
-            return Ok(config.resolve().ok())
+        // try to find by comparing chain IDs after resolving
+        if let Some(res) =
+            chain.and_then(|chain| self.etherscan.clone().resolved().find_chain(chain))
+        {
+            match (res, self.etherscan_api_key.as_ref()) {
+                (Ok(mut config), Some(key)) => {
+                    // we update the key, because if an etherscan_api_key is set, it should take
+                    // precedence over the entry, since this is usually set via env var or CLI args.
+                    config.key = key.clone();
+                    return Ok(Some(config))
+                }
+                (Ok(config), None) => return Ok(Some(config)),
+                (Err(err), None) => return Err(err),
+                (Err(_), Some(_)) => {
+                    // use the etherscan key as fallback
+                }
+            }
         }
 
-        // fallback `etherscan_api_key` as actual key
+        // etherscan fallback via API key
         if let Some(key) = self.etherscan_api_key.as_ref() {
-            let chain = chain.or(self.chain_id).unwrap_or_else(|| Mainnet.into());
+            let chain = chain.or(self.chain_id).unwrap_or_default();
             return Ok(ResolvedEtherscanConfig::create(key, chain))
         }
 
@@ -907,11 +950,10 @@ impl Config {
 
     /// Returns the `Optimizer` based on the configured settings
     pub fn optimizer(&self) -> Optimizer {
-        Optimizer {
-            enabled: Some(self.optimizer),
-            runs: Some(self.optimizer_runs),
-            details: self.optimizer_details.clone(),
-        }
+        // only configure optimizer settings if optimizer is enabled
+        let details = if self.optimizer { self.optimizer_details.clone() } else { None };
+
+        Optimizer { enabled: Some(self.optimizer), runs: Some(self.optimizer_runs), details }
     }
 
     /// returns the [`ethers_solc::ConfigurableArtifacts`] for this config, that includes the
@@ -1105,8 +1147,8 @@ impl Config {
         if !file_path.exists() {
             return Ok(())
         }
-        let cargo_toml_content = fs::read_to_string(&file_path)?;
-        let mut doc = cargo_toml_content.parse::<toml_edit::Document>()?;
+        let contents = fs::read_to_string(&file_path)?;
+        let mut doc = contents.parse::<toml_edit::Document>()?;
         if f(&mut doc) {
             fs::write(file_path, doc.to_string())?;
         }
@@ -1733,6 +1775,7 @@ impl Default for Config {
             rpc_endpoints: Default::default(),
             etherscan: Default::default(),
             no_storage_caching: false,
+            no_rpc_rate_limit: false,
             bytecode_hash: BytecodeHash::Ipfs,
             cbor_metadata: true,
             revert_strings: None,
@@ -1740,6 +1783,7 @@ impl Default for Config {
             build_info: false,
             build_info_path: None,
             fmt: Default::default(),
+            doc: Default::default(),
             __non_exhaustive: (),
             __warnings: vec![],
         }
@@ -2293,7 +2337,16 @@ impl<P: Provider> Provider for OptionalStrictProfileProvider<P> {
                 profile.clone(),
             ));
         }
-        figment.data()
+        figment.data().map_err(|err| {
+            // figment does tag metadata and tries to map metadata to an error, since we use a new
+            // figment in this provider this new figment does not know about the metadata of the
+            // provider and can't map the metadata to the error. Therefor we return the root error
+            // if this error originated in the provider's data.
+            if let Err(root_err) = self.provider.data() {
+                return root_err
+            }
+            err
+        })
     }
     fn profile(&self) -> Option<Profile> {
         self.profiles.last().cloned()
@@ -2308,6 +2361,7 @@ trait ProviderExt: Provider {
     ) -> RenameProfileProvider<&Self> {
         RenameProfileProvider::new(self, from, to)
     }
+
     fn wrap(
         &self,
         wrapping_key: impl Into<Profile>,
@@ -2315,12 +2369,14 @@ trait ProviderExt: Provider {
     ) -> WrapProfileProvider<&Self> {
         WrapProfileProvider::new(self, wrapping_key, profile)
     }
+
     fn strict_select(
         &self,
         profiles: impl IntoIterator<Item = impl Into<Profile>>,
     ) -> OptionalStrictProfileProvider<&Self> {
         OptionalStrictProfileProvider::new(self, profiles)
     }
+
     fn fallback(
         &self,
         profile: impl Into<Profile>,
@@ -2802,6 +2858,59 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_etherscan_with_chain() {
+        figment::Jail::expect_with(|jail| {
+            let env_key = "__BSC_ETHERSCAN_API_KEY";
+            let env_value = "env value";
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+
+                [etherscan]
+                bsc = { key = "${__BSC_ETHERSCAN_API_KEY}", url = "https://api.bscscan.com/api" }
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert!(config.get_etherscan_config_with_chain(None::<u64>).unwrap().is_none());
+            assert!(config
+                .get_etherscan_config_with_chain(Some(ethers_core::types::Chain::BinanceSmartChain))
+                .is_err());
+
+            std::env::set_var(env_key, env_value);
+
+            assert_eq!(
+                config
+                    .get_etherscan_config_with_chain(Some(
+                        ethers_core::types::Chain::BinanceSmartChain
+                    ))
+                    .unwrap()
+                    .unwrap()
+                    .key,
+                env_value
+            );
+
+            let mut with_key = config.clone();
+            with_key.etherscan_api_key = Some("via etherscan_api_key".to_string());
+
+            assert_eq!(
+                with_key
+                    .get_etherscan_config_with_chain(Some(
+                        ethers_core::types::Chain::BinanceSmartChain
+                    ))
+                    .unwrap()
+                    .unwrap()
+                    .key,
+                "via etherscan_api_key"
+            );
+
+            std::env::remove_var(env_key);
+            Ok(())
+        });
+    }
+
+    #[test]
     fn test_resolve_etherscan() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
@@ -3231,6 +3340,7 @@ mod tests {
                 memory_limit = 33554432
                 names = false
                 no_storage_caching = false
+                no_rpc_rate_limit = false
                 offline = false
                 optimizer = true
                 optimizer_runs = 200
@@ -3835,7 +3945,11 @@ mod tests {
                         ModelCheckerTarget::Assert,
                         ModelCheckerTarget::OutOfBounds
                     ]),
-                    timeout: Some(10000)
+                    timeout: Some(10000),
+                    invariants: None,
+                    show_unproved: None,
+                    div_mod_with_slacks: None,
+                    solvers: None,
                 })
             );
 
@@ -3891,7 +4005,11 @@ mod tests {
                         ModelCheckerTarget::Assert,
                         ModelCheckerTarget::OutOfBounds
                     ]),
-                    timeout: Some(10000)
+                    timeout: Some(10000),
+                    invariants: None,
+                    show_unproved: None,
+                    div_mod_with_slacks: None,
+                    solvers: None,
                 })
             );
 
@@ -4171,6 +4289,24 @@ mod tests {
                     SolidityErrorCode::Other(1337)
                 ]
             );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_parse_optimizer_settings() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+               [profile.default.optimizer_details]
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(config.optimizer_details, Some(OptimizerDetails::default()));
 
             Ok(())
         });

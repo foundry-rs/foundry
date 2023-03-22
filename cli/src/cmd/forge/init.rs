@@ -70,8 +70,9 @@ impl Cmd for InitArgs {
         }
         let root = dunce::canonicalize(root)?;
 
-        // if a template is provided, then this command is just an alias to `git clone <url>
-        // <path>`
+        // if a template is provided, then this command clones the template repo, removes the .git
+        // folder, and initializes a new git repo—-this ensures there is no history from the
+        // template and the template is not set as a remote.
         if let Some(template) = template {
             let template = if template.starts_with("https://") {
                 template
@@ -79,23 +80,43 @@ impl Cmd for InitArgs {
                 "https://github.com/".to_string() + &template
             };
             p_println!(!quiet => "Initializing {} from {}...", root.display(), template);
+
             Command::new("git")
                 .args(["clone", "--recursive", &template, &root.display().to_string()])
                 .exec()?;
-        } else {
-            // check if target is empty
-            if !force && root.read_dir().map(|mut i| i.next().is_some()).unwrap_or(false) {
-                eprintln!(
-                    r#"{}: `forge init` cannot be run on a non-empty directory.
 
-        run `forge init --force` to initialize regardless."#,
-                    Paint::red("error")
-                );
-                std::process::exit(1);
+            // Navigate to the newly cloned repo.
+            let initial_dir = std::env::current_dir()?;
+            std::env::set_current_dir(&root)?;
+
+            // Modify the git history.
+            let git_output =
+                Command::new("git").args(["rev-parse", "--short", "HEAD"]).output()?.stdout;
+            let commit_hash = String::from_utf8(git_output)?;
+            std::fs::remove_dir_all(".git")?;
+            Command::new("git").arg("init").exec()?;
+            Command::new("git").args(["add", "--all"]).exec()?;
+
+            let commit_msg = format!("chore: init from {template} at {commit_hash}");
+            Command::new("git").args(["commit", "-m", &commit_msg]).exec()?;
+
+            // Navigate back.
+            std::env::set_current_dir(initial_dir)?;
+        } else {
+            // if target is not empty
+            if root.read_dir().map(|mut i| i.next().is_some()).unwrap_or(false) {
+                if !force {
+                    eyre::bail!(
+                        "Cannot run `init` on a non-empty directory.\n\
+                        Run with the `--force` flag to initialize regardless."
+                    );
+                }
+
+                p_println!(!quiet => "Target directory is not empty, but `--force` was specified");
             }
 
             // ensure git status is clean before generating anything
-            if !no_git && !no_commit && is_git(&root)? {
+            if !no_git && !no_commit && !force && is_git(&root)? {
                 ensure_git_status_clean(&root)?;
             }
 
@@ -121,10 +142,10 @@ impl Cmd for InitArgs {
             let contract_path = script.join("Counter.s.sol");
             fs::write(contract_path, include_str!("../../../assets/CounterTemplate.s.sol"))?;
 
+            // write foundry.toml, if it doesn't exist already
             let dest = root.join(Config::FILE_NAME);
             let mut config = Config::load_with_root(&root);
             if !dest.exists() {
-                // write foundry.toml
                 fs::write(dest, config.clone().into_basic().to_string_pretty()?)?;
             }
 
@@ -133,18 +154,20 @@ impl Cmd for InitArgs {
                 init_git_repo(&root, no_commit)?;
             }
 
+            // install forge-std
             if !offline {
                 let opts = DependencyInstallOpts { no_git, no_commit, quiet };
 
                 if root.join("lib/forge-std").exists() {
-                    println!("\"lib/forge-std\" already exists, skipping install....");
+                    p_println!(!quiet => "\"lib/forge-std\" already exists, skipping install....");
                     install(&mut config, vec![], opts)?;
                 } else {
                     Dependency::from_str("https://github.com/foundry-rs/forge-std")
                         .and_then(|dependency| install(&mut config, vec![dependency], opts))?;
                 }
             }
-            // vscode init
+
+            // init vscode settings
             if vscode {
                 init_vscode(&root)?;
             }
@@ -162,8 +185,7 @@ fn is_git(root: &Path) -> eyre::Result<bool> {
         .current_dir(root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()?
-        .wait()?;
+        .status()?;
 
     Ok(is_git.success())
 }
@@ -176,38 +198,43 @@ pub fn get_commit_hash(root: &Path) -> Option<String> {
             .current_dir(root)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()
-            .ok()?
-            .wait_with_output()
+            .get_stdout_lossy()
             .ok()?;
-
-        return Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        Some(output)
+    } else {
+        None
     }
-    None
 }
 
-/// Initialises the `root` as git repository if it's not a git repository yet
+/// Initialises `root` as a git repository, if it isn't one already.
+///
+/// Creates `.gitignore` and `.github/workflows/test.yml`, if they don't exist already.
+///
+/// Commits everything in `root` if `no_commit` is false.
 fn init_git_repo(root: &Path, no_commit: bool) -> eyre::Result<()> {
+    // git init
     if !is_git(root)? {
-        let gitignore_path = root.join(".gitignore");
-        fs::write(gitignore_path, include_str!("../../../assets/.gitignoreTemplate"))?;
-
-        // git init
         Command::new("git").arg("init").current_dir(root).exec()?;
+    }
 
-        // create github workflow
-        let gh = root.join(".github").join("workflows");
+    // .gitignore
+    let gitignore = root.join(".gitignore");
+    if !gitignore.exists() {
+        fs::write(gitignore, include_str!("../../../assets/.gitignoreTemplate"))?;
+    }
+
+    // github workflow
+    let gh = root.join(".github").join("workflows");
+    if !gh.exists() {
         fs::create_dir_all(&gh)?;
         let workflow_path = gh.join("test.yml");
         fs::write(workflow_path, include_str!("../../../assets/workflowTemplate.yml"))?;
+    }
 
-        if !no_commit {
-            Command::new("git").args(["add", "."]).current_dir(root).exec()?;
-            Command::new("git")
-                .args(["commit", "-m", "chore: forge init"])
-                .current_dir(root)
-                .exec()?;
-        }
+    // commit everything
+    if !no_commit {
+        Command::new("git").args(["add", "."]).current_dir(root).exec()?;
+        Command::new("git").args(["commit", "-m", "chore: forge init"]).current_dir(root).exec()?;
     }
 
     Ok(())

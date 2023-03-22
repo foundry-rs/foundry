@@ -3,7 +3,7 @@ use ethers::types::BlockNumber;
 use foundry_evm::revm::SpecId;
 use std::str::FromStr;
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
 pub enum Hardfork {
     Frontier,
     Homestead,
@@ -19,6 +19,7 @@ pub enum Hardfork {
     London,
     ArrowGlacier,
     GrayGlacier,
+    #[default]
     Latest,
 }
 
@@ -111,12 +112,6 @@ impl FromStr for Hardfork {
             _ => return Err(format!("Unknown hardfork {s}")),
         };
         Ok(hardfork)
-    }
-}
-
-impl Default for Hardfork {
-    fn default() -> Self {
-        Hardfork::Latest
     }
 }
 

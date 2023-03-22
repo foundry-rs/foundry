@@ -1,3 +1,4 @@
+use crate::utils::apply_chain_and_block_specific_env_changes;
 use ethers::{
     providers::Middleware,
     types::{Address, U256},
@@ -48,11 +49,15 @@ where
         eyre::bail!("Failed to get block for block number: {}", block_number)
     };
 
-    Ok(Env {
+    let mut env = Env {
         cfg: CfgEnv {
             chain_id: override_chain_id.unwrap_or(rpc_chain_id.as_u64()).into(),
             memory_limit,
             limit_contract_code_size: Some(usize::MAX),
+            // EIP-3607 rejects transactions from senders with deployed code.
+            // If EIP-3607 is enabled it can cause issues during fuzz/invariant tests if the caller
+            // is a contract. So we disable the check by default.
+            disable_eip3607: true,
             ..Default::default()
         },
         block: BlockEnv {
@@ -71,5 +76,9 @@ where
             gas_limit: block.gas_limit.as_u64(),
             ..Default::default()
         },
-    })
+    };
+
+    apply_chain_and_block_specific_env_changes(&mut env, &block);
+
+    Ok(env)
 }

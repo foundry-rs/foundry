@@ -8,15 +8,15 @@ repository = "https://github.com/foundry-rs/foundry"
 keywords = ["ethereum", "web3", "evm"]
 
 [dependencies]
-foundry-utils = { path = "./../utils" }
-foundry-common = { path = "./../common" }
-foundry-config = { path = "./../config" }
+foundry-common = { path = "../common" }
+foundry-config = { path = "../config" }
+foundry-macros = { path = "../macros" }
 
 # Encoding/decoding
 serde_json = "1.0.67"
 serde = "1.0.130"
 hex = "0.4.3"
-ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = [
+ethers = { workspace = true, default-features = false, features = [
   "solc-full",
   "abigen",
 ] }
@@ -28,7 +28,6 @@ thiserror = "1.0.29"
 
 # Logging
 tracing = "0.1"
-tracing-subscriber = "0.3"
 
 # Threading/futures
 tokio = { version = "1", features = ["time", "macros"] }
@@ -44,6 +43,8 @@ revm = { version = "2.3", default-features = false, features = [
   "k256",
   "with-serde",
   "memory_limit",
+  "optional_eip3607",
+  "optional_block_gas_limit"
 ] }
 
 # Fuzzer
@@ -62,4 +63,5 @@ ordered-float = "3.3.0"
 semver = "1.0.5"
 
 [dev-dependencies]
+foundry-utils = { path = "../utils" }
 tempfile = "3.3.0"

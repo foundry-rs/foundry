@@ -74,7 +74,7 @@ impl EtherscanFlattenedSource {
 
         let input = CompilerInput {
             language: "Solidity".to_string(),
-            sources: BTreeMap::from([("contract.sol".into(), Source { content: content.into() })]),
+            sources: BTreeMap::from([("contract.sol".into(), Source::new(content))]),
             settings: Default::default(),
         };
 

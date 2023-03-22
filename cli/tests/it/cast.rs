@@ -35,7 +35,7 @@ casttest!(latest_block, |_: TestProject, mut cmd: TestCommand| {
     assert!(output.contains("gasUsed"));
 
     // <https://etherscan.io/block/15007840>
-    cmd.cast_fuse().args(["block", "15007840", "hash", "--rpc-url", eth_rpc_url.as_str()]);
+    cmd.cast_fuse().args(["block", "15007840", "-f", "hash", "--rpc-url", eth_rpc_url.as_str()]);
     let output = cmd.stdout_lossy();
     assert_eq!(output.trim(), "0x950091817a57e22b6c1f3b951a15f52d41ac89b299cc8f9c89bb6d185f80c415")
 });
@@ -63,7 +63,7 @@ casttest!(new_wallet_keystore_with_password, |_: TestProject, mut cmd: TestComma
     cmd.args(["wallet", "new", ".", "--unsafe-password", "test"]);
     let out = cmd.stdout_lossy();
     assert!(out.contains("Created new encrypted keystore file"));
-    assert!(out.contains("Public Address of the key"));
+    assert!(out.contains("Address"));
 });
 
 // tests that `cast estimate` is working correctly.

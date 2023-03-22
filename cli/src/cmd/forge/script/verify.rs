@@ -1,11 +1,14 @@
 //! Verify support
 
-use crate::cmd::{
-    forge::{
-        build::ProjectPathsArgs,
-        verify::{VerifierArgs, VerifyArgs},
+use crate::{
+    cmd::{
+        forge::{
+            build::ProjectPathsArgs,
+            verify::{VerifierArgs, VerifyArgs},
+        },
+        retry::RetryArgs,
     },
-    retry::RetryArgs,
+    opts::EtherscanOpts,
 };
 use ethers::{
     abi::Address,
@@ -20,9 +23,8 @@ use semver::Version;
 pub struct VerifyBundle {
     pub num_of_optimizations: Option<usize>,
     pub known_contracts: ContractsByArtifact,
-    pub etherscan_key: Option<String>,
-    pub chain: Chain,
     pub project_paths: ProjectPathsArgs,
+    pub etherscan: EtherscanOpts,
     pub retry: RetryArgs,
     pub verifier: VerifierArgs,
 }
@@ -54,8 +56,7 @@ impl VerifyBundle {
         VerifyBundle {
             num_of_optimizations,
             known_contracts,
-            etherscan_key: None,
-            chain: Default::default(),
+            etherscan: Default::default(),
             project_paths,
             retry,
             verifier,
@@ -66,10 +67,8 @@ impl VerifyBundle {
     pub fn set_chain(&mut self, config: &Config, chain: Chain) {
         // If dealing with multiple chains, we need to be able to change inbetween the config
         // chain_id.
-        let mut config = config.clone();
-        config.chain_id = Some(chain);
-        self.etherscan_key = config.get_etherscan_api_key(Some(chain));
-        self.chain = chain;
+        self.etherscan.key = config.get_etherscan_api_key(Some(chain));
+        self.etherscan.chain = Some(chain);
     }
 
     /// Given a `VerifyBundle` and contract details, it tries to generate a valid `VerifyArgs` to
@@ -110,8 +109,7 @@ impl VerifyBundle {
                     constructor_args: Some(hex::encode(constructor_args)),
                     constructor_args_path: None,
                     num_of_optimizations: self.num_of_optimizations,
-                    chain: self.chain,
-                    etherscan_key: self.etherscan_key.clone(),
+                    etherscan: self.etherscan.clone(),
                     flatten: false,
                     force: false,
                     watch: true,

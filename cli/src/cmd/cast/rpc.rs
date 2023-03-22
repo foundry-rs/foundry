@@ -1,60 +1,45 @@
-use crate::{cmd::Cmd, utils::try_consume_config_rpc_url};
+use crate::{opts::RpcOpts, utils};
 use cast::Cast;
 use clap::Parser;
 use eyre::Result;
-use foundry_common::try_get_http_provider;
-use futures::future::BoxFuture;
+use foundry_config::Config;
 use itertools::Itertools;
 
 /// CLI arguments for `cast rpc`.
 #[derive(Debug, Clone, Parser)]
 pub struct RpcArgs {
-    #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
-    rpc_url: Option<String>,
-    #[clap(
-        short = 'w',
-        long,
-        help = r#"Pass the "params" as is"#,
-        long_help = r#"Pass the "params" as is
-
-If --raw is passed the first PARAM will be taken as the value of "params". If no params are given, stdin will be used. For example:
-
-rpc eth_getBlockByNumber '["0x123", false]' --raw
-    => {"method": "eth_getBlockByNumber", "params": ["0x123", false] ... }"#
-    )]
-    raw: bool,
-    #[clap(value_name = "METHOD", help = "RPC method name")]
+    /// RPC method name
     method: String,
-    #[clap(
-        value_name = "PARAMS",
-        help = "RPC parameters",
-        long_help = r#"RPC parameters
 
-Parameters are interpreted as JSON and then fall back to string. For example:
-
-rpc eth_getBlockByNumber 0x123 false
-    => {"method": "eth_getBlockByNumber", "params": ["0x123", false] ... }"#
-    )]
+    /// RPC parameters
+    ///
+    /// Interpreted as JSON:
+    ///
+    /// cast rpc eth_getBlockByNumber 0x123 false
+    /// => {"method": "eth_getBlockByNumber", "params": ["0x123", false] ... }
     params: Vec<String>,
-}
 
-impl Cmd for RpcArgs {
-    type Output = BoxFuture<'static, Result<()>>;
-    fn run(self) -> eyre::Result<Self::Output> {
-        let RpcArgs { rpc_url, raw, method, params } = self;
-        Ok(Box::pin(Self::do_rpc(rpc_url, raw, method, params)))
-    }
+    /// Send raw JSON parameters
+    ///
+    /// The first param will be interpreted as a raw JSON array of params.
+    /// If no params are given, stdin will be used. For example:
+    ///
+    /// cast rpc eth_getBlockByNumber '["0x123", false]' --raw
+    ///     => {"method": "eth_getBlockByNumber", "params": ["0x123", false] ... }
+    #[clap(short = 'w', long)]
+    raw: bool,
+
+    #[clap(flatten)]
+    rpc: RpcOpts,
 }
 
 impl RpcArgs {
-    async fn do_rpc(
-        rpc_url: Option<String>,
-        raw: bool,
-        method: String,
-        params: Vec<String>,
-    ) -> Result<()> {
-        let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-        let provider = try_get_http_provider(rpc_url)?;
+    pub async fn run(self) -> Result<()> {
+        let RpcArgs { raw, method, params, rpc } = self;
+
+        let config = Config::from(&rpc);
+        let provider = utils::get_provider(&config)?;
+
         let params = if raw {
             if params.is_empty() {
                 serde_json::Deserializer::from_reader(std::io::stdin())
@@ -63,15 +48,16 @@ impl RpcArgs {
                     .transpose()?
                     .ok_or_else(|| eyre::format_err!("Empty JSON parameters"))?
             } else {
-                Self::to_json_or_string(params.into_iter().join(" "))
+                value_or_string(params.into_iter().join(" "))
             }
         } else {
-            serde_json::Value::Array(params.into_iter().map(Self::to_json_or_string).collect())
+            serde_json::Value::Array(params.into_iter().map(value_or_string).collect())
         };
         println!("{}", Cast::new(provider).rpc(&method, params).await?);
         Ok(())
     }
-    fn to_json_or_string(value: String) -> serde_json::Value {
-        serde_json::from_str(&value).unwrap_or(serde_json::Value::String(value))
-    }
+}
+
+fn value_or_string(value: String) -> serde_json::Value {
+    serde_json::from_str(&value).unwrap_or(serde_json::Value::String(value))
 }

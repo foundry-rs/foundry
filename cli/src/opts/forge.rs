@@ -5,6 +5,7 @@ use crate::cmd::forge::{
     config, coverage,
     create::CreateArgs,
     debug::DebugArgs,
+    doc::DocArgs,
     flatten,
     fmt::FmtArgs,
     fourbyte::UploadSelectorsArgs,
@@ -53,7 +54,7 @@ pub enum Subcommands {
     #[clap(alias = "bi", about = "Generate Rust bindings for smart contracts.")]
     Bind(BindArgs),
 
-    #[clap(visible_alias = "b", about = "Build the project's smart contracts.")]
+    #[clap(visible_aliases = ["b", "compile"], about = "Build the project's smart contracts.")]
     Build(BuildArgs),
 
     #[clap(visible_alias = "d", about = "Debugs a single smart contract as a script.")]
@@ -149,6 +150,9 @@ pub enum Subcommands {
         about = "Detects usage of unsafe cheat codes in a foundry project and its dependencies."
     )]
     Geiger(geiger::GeigerArgs),
+
+    #[clap(about = "Generate documentation for the project.")]
+    Doc(DocArgs),
 }
 
 // A set of solc compiler settings that can be set via command line arguments, which are intended

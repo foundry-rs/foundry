@@ -3,8 +3,8 @@ use self::inspector::{
 };
 use crate::{debug::DebugArena, decode, trace::CallTraceArena, CALLER};
 pub use abi::{
-    format_hardhat_call, patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS,
-    CONSOLE_ABI, HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
+    patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS, CONSOLE_ABI,
+    HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
 };
 use backend::FuzzBackendWrapper;
 use bytes::Bytes;

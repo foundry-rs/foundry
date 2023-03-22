@@ -1,11 +1,14 @@
 use crate::{
     abi::HEVMCalls,
     error,
-    executor::inspector::{cheatcodes::util, Cheatcodes},
+    executor::inspector::{
+        cheatcodes::{util, util::parse},
+        Cheatcodes,
+    },
 };
 use bytes::Bytes;
 use ethers::{
-    abi::{self, AbiEncode, ParamType, Token},
+    abi::{self, AbiEncode, JsonAbi, ParamType, Token},
     prelude::artifacts::CompactContractBytecode,
     types::*,
 };
@@ -16,7 +19,7 @@ use jsonpath_lib;
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     env,
     io::{BufRead, BufReader, Write},
     path::Path,
@@ -67,7 +70,9 @@ fn ffi(state: &Cheatcodes, args: &[String]) -> Result<Bytes, Bytes> {
 #[allow(clippy::large_enum_variant)]
 enum ArtifactBytecode {
     Hardhat(HardhatArtifact),
+    Solc(JsonAbi),
     Forge(CompactContractBytecode),
+    Huff(HuffArtifact),
 }
 
 impl ArtifactBytecode {
@@ -77,6 +82,8 @@ impl ArtifactBytecode {
             ArtifactBytecode::Forge(inner) => {
                 inner.bytecode.and_then(|bytecode| bytecode.object.into_bytes())
             }
+            ArtifactBytecode::Solc(inner) => inner.bytecode(),
+            ArtifactBytecode::Huff(inner) => Some(inner.bytecode),
         }
     }
 
@@ -86,6 +93,8 @@ impl ArtifactBytecode {
             ArtifactBytecode::Forge(inner) => inner.deployed_bytecode.and_then(|bytecode| {
                 bytecode.bytecode.and_then(|bytecode| bytecode.object.into_bytes())
             }),
+            ArtifactBytecode::Solc(inner) => inner.deployed_bytecode(),
+            ArtifactBytecode::Huff(inner) => Some(inner.runtime),
         }
     }
 }
@@ -100,13 +109,22 @@ struct HardhatArtifact {
     deployed_bytecode: ethers::types::Bytes,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HuffArtifact {
+    #[serde(deserialize_with = "ethers::solc::artifacts::deserialize_bytes")]
+    bytecode: ethers::types::Bytes,
+    #[serde(deserialize_with = "ethers::solc::artifacts::deserialize_bytes")]
+    runtime: ethers::types::Bytes,
+}
+
 /// Returns the _deployed_ bytecode (`bytecode`) of the matching artifact
 fn get_code(state: &Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
     let bytecode = read_bytecode(state, path)?;
     if let Some(bin) = bytecode.into_bytecode() {
         Ok(abi::encode(&[Token::Bytes(bin.to_vec())]).into())
     } else {
-        Err("No bytecode for contract. Is it abstract or unlinked?".to_string().encode().into())
+        Err(error::encode_error("No bytecode for contract. Is it abstract or unlinked?"))
     }
 }
 
@@ -116,7 +134,7 @@ fn get_deployed_code(state: &Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
     if let Some(bin) = bytecode.into_deployed_bytecode() {
         Ok(abi::encode(&[Token::Bytes(bin.to_vec())]).into())
     } else {
-        Err("No bytecode for contract. Is it abstract or unlinked?".to_string().encode().into())
+        Err(error::encode_error("No bytecode for contract. Is it abstract or unlinked?"))
     }
 }
 
@@ -134,19 +152,13 @@ fn set_env(key: &str, val: &str) -> Result<Bytes, Bytes> {
     // `std::env::set_var` may panic in the following situations
     // ref: https://doc.rust-lang.org/std/env/fn.set_var.html
     if key.is_empty() {
-        Err("Environment variable key can't be empty".to_string().encode().into())
+        Err(error::encode_error("Environment variable key can't be empty"))
     } else if key.contains('=') {
-        Err("Environment variable key can't contain equal sign `=`".to_string().encode().into())
+        Err(error::encode_error("Environment variable key can't contain equal sign `=`"))
     } else if key.contains('\0') {
-        Err("Environment variable key can't contain NUL character `\\0`"
-            .to_string()
-            .encode()
-            .into())
+        Err(error::encode_error("Environment variable key can't contain NUL character `\\0`"))
     } else if val.contains('\0') {
-        Err("Environment variable value can't contain NUL character `\\0`"
-            .to_string()
-            .encode()
-            .into())
+        Err(error::encode_error("Environment variable value can't contain NUL character `\\0`"))
     } else {
         env::set_var(key, val);
         Ok(Bytes::new())
@@ -163,7 +175,7 @@ fn get_env(
     let val = if let Some(value) = default {
         env::var(key).unwrap_or(value)
     } else {
-        env::var(key).map_err::<Bytes, _>(|e| format!("{msg}: {e}").encode().into())?
+        env::var(key).map_err::<Bytes, _>(|e| error::encode_error(format!("{msg}: {e}")))?
     };
     let val = if let Some(d) = delim {
         val.split(d).map(|v| v.trim().to_string()).collect()
@@ -171,7 +183,8 @@ fn get_env(
         vec![val]
     };
     let is_array: bool = delim.is_some();
-    util::value_to_abi(val, r#type, is_array).map_err(|e| format!("{msg}: {e}").encode().into())
+    util::value_to_abi(val, r#type, is_array)
+        .map_err(|e| error::encode_error(format!("{msg}: {e}")))
 }
 
 fn project_root(state: &Cheatcodes) -> Result<Bytes, Bytes> {
@@ -357,10 +370,10 @@ fn value_to_token(value: &Value) -> eyre::Result<Token> {
         } else {
             Ok(Token::String(string.to_owned()))
         }
-    } else if let Some(number) = value.as_u64() {
-        Ok(Token::Uint(number.into()))
-    } else if let Some(number) = value.as_i64() {
-        Ok(Token::Int(number.into()))
+    } else if let Ok(number) = U256::from_dec_str(&value.to_string()) {
+        Ok(Token::Uint(number))
+    } else if let Ok(number) = I256::from_dec_str(&value.to_string()) {
+        Ok(Token::Int(number.into_raw()))
     } else if let Some(array) = value.as_array() {
         Ok(Token::Array(array.iter().map(value_to_token).collect::<eyre::Result<Vec<_>>>()?))
     } else if value.as_object().is_some() {
@@ -375,16 +388,47 @@ fn value_to_token(value: &Value) -> eyre::Result<Token> {
         eyre::bail!("Unexpected json value: {}", value)
     }
 }
+
+/// Canonicalize a json path key to always start from the root of the document.
+/// Read more about json path syntax: https://goessner.net/articles/JsonPath/
+fn canonicalize_json_key(key: &str) -> String {
+    if !key.starts_with('$') {
+        format!("${key}")
+    } else {
+        key.to_owned()
+    }
+}
+
 /// Parses a JSON and returns a single value, an array or an entire JSON object encoded as tuple.
 /// As the JSON object is parsed serially, with the keys ordered alphabetically, they must be
 /// deserialized in the same order. That means that the solidity `struct` should order it's fields
 /// alphabetically and not by efficient packing or some other taxonomy.
-fn parse_json(_state: &mut Cheatcodes, json_str: &str, key: &str) -> Result<Bytes, Bytes> {
+fn parse_json(
+    _state: &mut Cheatcodes,
+    json_str: &str,
+    key: &str,
+    coerce: Option<ParamType>,
+) -> Result<Bytes, Bytes> {
     let json = serde_json::from_str(json_str).map_err(error::encode_error)?;
-    let values: Vec<&Value> = jsonpath_lib::select(&json, key).map_err(error::encode_error)?;
+    let values: Vec<&Value> =
+        jsonpath_lib::select(&json, &canonicalize_json_key(key)).map_err(error::encode_error)?;
     // values is an array of items. Depending on the JsonPath key, they
     // can be many or a single item. An item can be a single value or
     // an entire JSON object.
+    if let Some(coercion_type) = coerce {
+        if values.iter().any(|value| value.is_object()) {
+            return Err(error::encode_error(format!(
+                "You can only coerce values or arrays, not JSON objects. The key '{key}' returns an object",
+            )))
+        }
+        let final_val = if let Some(array) = values[0].as_array() {
+            array.iter().map(|v| v.to_string().replace('\"', "")).collect::<Vec<String>>()
+        } else {
+            vec![values[0].to_string().replace('\"', "")]
+        };
+        let bytes = parse(final_val, coercion_type, values[0].is_array());
+        return bytes
+    }
     let res = values
         .iter()
         .map(|inner| {
@@ -392,9 +436,13 @@ fn parse_json(_state: &mut Cheatcodes, json_str: &str, key: &str) -> Result<Byte
                 error::encode_error(err.wrap_err(format!("Failed to parse key {key}")))
             })
         })
-        .collect::<Result<Vec<Token>, Bytes>>();
+        .collect::<Result<Vec<Token>, Bytes>>()?;
     // encode the bytes as the 'bytes' solidity type
-    let abi_encoded = abi::encode(&[Token::Bytes(abi::encode(&res?))]);
+    let abi_encoded = if res.len() == 1 {
+        abi::encode(&[Token::Bytes(abi::encode(&res))])
+    } else {
+        abi::encode(&[Token::Bytes(abi::encode(&[Token::Array(res)]))])
+    };
     Ok(abi_encoded.into())
 }
 /// Serializes a key:value pair to a specific object. By calling this function multiple times,
@@ -415,7 +463,7 @@ fn serialize_json(
         serialization.insert(value_key.to_string(), parsed_value);
         serialization.clone()
     } else {
-        let mut serialization = HashMap::new();
+        let mut serialization = BTreeMap::new();
         serialization.insert(value_key.to_string(), parsed_value);
         state.serialized_jsons.insert(object_key.to_string(), serialization.clone());
         serialization.clone()
@@ -428,13 +476,13 @@ fn serialize_json(
 /// ellements. This is to signify that the elements of the array are string themselves.
 fn array_str_to_str<T: UIfmt>(array: &Vec<T>) -> String {
     format!(
-        "[{}",
+        "[{}]",
         array
             .iter()
             .enumerate()
             .map(|(index, value)| {
                 if index == array.len() - 1 {
-                    format!("\"{}\"]", value.pretty())
+                    format!("\"{}\"", value.pretty())
                 } else {
                     format!("\"{}\",", value.pretty())
                 }
@@ -448,13 +496,13 @@ fn array_str_to_str<T: UIfmt>(array: &Vec<T>) -> String {
 /// etc.)
 fn array_eval_to_str<T: UIfmt>(array: &Vec<T>) -> String {
     format!(
-        "[{}",
+        "[{}]",
         array
             .iter()
             .enumerate()
             .map(|(index, value)| {
                 if index == array.len() - 1 {
-                    format!("{}]", value.pretty())
+                    value.pretty()
                 } else {
                     format!("{},", value.pretty())
                 }
@@ -463,7 +511,7 @@ fn array_eval_to_str<T: UIfmt>(array: &Vec<T>) -> String {
     )
 }
 
-/// Write an object to a new file OR replaces the value of an existing JSON file with the supplied
+/// Write an object to a new file OR replace the value of an existing JSON file with the supplied
 /// object.
 fn write_json(
     _state: &mut Cheatcodes,
@@ -480,8 +528,10 @@ fn write_json(
             .map_err(error::encode_error)?;
         let data = serde_json::from_str(&fs::read_to_string(path).map_err(error::encode_error)?)
             .map_err(error::encode_error)?;
-        jsonpath_lib::replace_with(data, &format!("${json_path}"), &mut |_| Some(json.clone()))
-            .map_err(error::encode_error)?
+        jsonpath_lib::replace_with(data, &canonicalize_json_key(json_path), &mut |_| {
+            Some(json.clone())
+        })
+        .map_err(error::encode_error)?
     } else {
         json
     })
@@ -498,7 +548,7 @@ pub fn apply(
     Some(match call {
         HEVMCalls::Ffi(inner) => {
             if !ffi_enabled {
-                Err("FFI disabled: run again with `--ffi` if you want to allow tests to call external scripts.".to_string().encode().into())
+                Err(error::encode_error("FFI disabled: run again with `--ffi` if you want to allow tests to call external scripts."))
             } else {
                 ffi(state, &inner.0)
             }
@@ -597,8 +647,50 @@ pub fn apply(
         HEVMCalls::FsMetadata(inner) => fs_metadata(state, &inner.0),
         // If no key argument is passed, return the whole JSON object.
         // "$" is the JSONPath key for the root of the object
-        HEVMCalls::ParseJson0(inner) => parse_json(state, &inner.0, "$"),
-        HEVMCalls::ParseJson1(inner) => parse_json(state, &inner.0, &format!("$.{}", &inner.1)),
+        HEVMCalls::ParseJson0(inner) => parse_json(state, &inner.0, "$", None),
+        HEVMCalls::ParseJson1(inner) => parse_json(state, &inner.0, &inner.1, None),
+        HEVMCalls::ParseJsonBool(inner) => {
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::Bool))
+        }
+        HEVMCalls::ParseJsonBoolArray(inner) => {
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::Bool))
+        }
+        HEVMCalls::ParseJsonUint(inner) => {
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::Uint(256)))
+        }
+        HEVMCalls::ParseJsonUintArray(inner) => {
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::Uint(256)))
+        }
+        HEVMCalls::ParseJsonInt(inner) => {
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::Int(256)))
+        }
+        HEVMCalls::ParseJsonIntArray(inner) => {
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::Int(256)))
+        }
+        HEVMCalls::ParseJsonString(inner) => {
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::String))
+        }
+        HEVMCalls::ParseJsonStringArray(inner) => {
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::String))
+        }
+        HEVMCalls::ParseJsonAddress(inner) => {
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::Address))
+        }
+        HEVMCalls::ParseJsonAddressArray(inner) => {
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::Address))
+        }
+        HEVMCalls::ParseJsonBytes(inner) => {
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::Bytes))
+        }
+        HEVMCalls::ParseJsonBytesArray(inner) => {
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::Bytes))
+        }
+        HEVMCalls::ParseJsonBytes32(inner) => {
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::FixedBytes(32)))
+        }
+        HEVMCalls::ParseJsonBytes32Array(inner) => {
+            parse_json(state, &inner.0, &inner.1, Some(ParamType::FixedBytes(32)))
+        }
         HEVMCalls::SerializeBool0(inner) => {
             serialize_json(state, &inner.0, &inner.1, &inner.2.pretty())
         }
@@ -681,5 +773,15 @@ mod tests {
 
         let output = String::decode(&output).unwrap();
         assert_eq!(output, msg);
+    }
+
+    #[test]
+    fn test_artifact_parsing() {
+        let s = include_str!("../../../../test-data/solc-obj.json");
+        let artifact: ArtifactBytecode = serde_json::from_str(s).unwrap();
+        assert!(artifact.into_bytecode().is_some());
+
+        let artifact: ArtifactBytecode = serde_json::from_str(s).unwrap();
+        assert!(artifact.into_deployed_bytecode().is_some());
     }
 }

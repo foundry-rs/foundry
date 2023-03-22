@@ -189,7 +189,7 @@ pub fn has_batch_support(chain: u64) -> bool {
 
 /// Helpers for loading configuration.
 ///
-/// This is usually implicity implemented on a "&CmdArgs" struct via impl macros defined in
+/// This is usually implicitly implemented on a "&CmdArgs" struct via impl macros defined in
 /// `forge_config` (See [`forge_config::impl_figment_convert`] for more details) and the impl
 /// definition on `T: Into<Config> + Into<Figment>` below.
 ///
@@ -238,7 +238,8 @@ where
 
     fn load_config_and_evm_opts(self) -> eyre::Result<(Config, EvmOpts)> {
         let figment: Figment = self.into();
-        let mut evm_opts = figment.extract::<EvmOpts>()?;
+
+        let mut evm_opts = figment.extract::<EvmOpts>().map_err(ExtractConfigError::new)?;
         let config = Config::try_from(figment)?.sanitized();
 
         // update the fork url if it was an alias

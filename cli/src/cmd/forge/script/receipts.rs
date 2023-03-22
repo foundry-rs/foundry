@@ -142,12 +142,6 @@ async fn check_tx_status(
             return Ok(receipt.into())
         }
 
-        // Next check if the tx is in the mempool
-        let tx_opt = provider.get_transaction(hash).await?;
-        if tx_opt.is_none() {
-            return Ok(TxStatus::Dropped)
-        }
-
         // If the tx is present in the mempool, run the pending tx future, and
         // assume the next drop is really really real
         let pending_res = PendingTransaction::new(hash, provider).await?;

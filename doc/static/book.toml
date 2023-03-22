@@ -1,0 +1,11 @@
+# For more configuration see https://rust-lang.github.io/mdBook/format/configuration/index.html
+[book]
+src = "src"
+
+[output.html]
+no-section-label = true
+additional-js = ["solidity.min.js"]
+additional-css = ["book.css"]
+
+[output.html.fold]
+enable = true

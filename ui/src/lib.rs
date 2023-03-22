@@ -867,7 +867,6 @@ impl Tui {
                     indices_affected.iter().find(|(affected_index, _name)| *affected_index == i);
 
                 let mut words: Vec<Span> = (0..32)
-                    .into_iter()
                     .rev()
                     .map(|i| stack_item.byte(i))
                     .map(|byte| {

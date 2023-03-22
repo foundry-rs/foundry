@@ -163,7 +163,7 @@ forgetest_async!(
 
         cmd.forge_fuse().args([
             "create",
-            format!("./src/{}.sol:{}", TEMPLATE_CONTRACT, TEMPLATE_CONTRACT).as_str(),
+            format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
             "--use",
             "solc:0.8.15",
             "--rpc-url",
@@ -201,13 +201,13 @@ forgetest_async!(
 
         cmd.forge_fuse().args([
             "create",
-            format!("./src/{}.sol:{}", TEMPLATE_CONTRACT, TEMPLATE_CONTRACT).as_str(),
+            format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
             "--use",
             "solc:0.8.15",
             "--rpc-url",
             rpc.as_str(),
             "--from",
-            format!("{:?}", dev).as_str(),
+            format!("{dev:?}").as_str(),
             "--unlocked",
         ]);
 

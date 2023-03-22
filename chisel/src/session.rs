@@ -27,13 +27,13 @@ impl ChiselSession {
     ///
     /// ### Takes
     ///
-    /// A reference to a [SessionSourceConfig]
+    /// An instance of [SessionSourceConfig]
     ///
     /// ### Returns
     ///
-    /// An owned [ChiselSession]
-    pub fn new(config: &SessionSourceConfig) -> Result<Self> {
-        // Solc version precidence
+    /// A new instance of [ChiselSession]
+    pub fn new(config: SessionSourceConfig) -> Result<Self> {
+        // Solc version precedence
         // - Foundry configuration / `--use` flag
         // - Latest installed version via SVM
         // - Default: 0.8.17
@@ -43,7 +43,7 @@ impl ChiselSession {
                 if let Ok(None) = Solc::find_svm_installed_version(&version) {
                     println!(
                         "{}",
-                        Paint::green(format!("Installing solidity version {}...", &version))
+                        Paint::green(format!("Installing solidity version {version}..."))
                     );
                 }
                 version
@@ -64,7 +64,7 @@ impl ChiselSession {
         );
 
         // Return initialized ChiselSession with set solc version
-        solc.map(|solc| Self { session_source: Some(SessionSource::new(&solc, config)), id: None })
+        solc.map(|solc| Self { session_source: Some(SessionSource::new(solc, config)), id: None })
             .map_err(|e| eyre::eyre!(e))
     }
 

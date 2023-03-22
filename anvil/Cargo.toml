@@ -18,7 +18,7 @@ vergen = { version = "7.0", default-features = false, features = ["build", "rust
 [dependencies]
 # foundry internal
 foundry-evm = { path = "../evm" }
-anvil-core = { path = "core", features = ["fastrlp", "serde"] }
+anvil-core = { path = "core", features = ["fastrlp", "serde", "impersonated-tx"] }
 anvil-rpc = { path = "rpc" }
 anvil-server = { path = "server" }
 foundry-utils = { path = "../utils" }
@@ -28,7 +28,7 @@ foundry-config = { path = "../config" }
 
 # evm support
 bytes = "1.1.0"
-ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["ws"] }
+ethers = { workspace = true, features = ["ws"] }
 trie-db = { version = "0.23" }
 hash-db = { version = "0.15" }
 memory-db = { version = "0.29" }
@@ -68,13 +68,13 @@ ethereum-forkid = "0.11"
 
 # ethers
 [target.'cfg(not(windows))'.dependencies]
-ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["rustls", "ws", "ipc"] }
+ethers = { workspace = true, features = ["rustls", "ws", "ipc"] }
 [target.'cfg(windows)'.dependencies]
-ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["rustls", "ws"] }
+ethers = { workspace = true, features = ["rustls", "ws"] }
 
 [dev-dependencies]
-ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["abigen"] }
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs", features = ["project-util", "full"] }
+ethers = { workspace = true, features = ["abigen"] }
+ethers-solc = { workspace = true, features = ["project-util", "full"] }
 pretty_assertions = "1.2.1"
 tokio = { version = "1", features = ["full"] }
 crc = "3.0.0"

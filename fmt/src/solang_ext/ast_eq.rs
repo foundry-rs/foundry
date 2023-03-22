@@ -310,6 +310,7 @@ impl AstEq for Statement {
                 DoWhile(loc, stmt1, expr),
                 For(loc, stmt1, expr, stmt2, stmt3),
                 Try(loc, expr, params, claus),
+                Error(loc)
                 _
                 Block {
                     loc,
@@ -408,18 +409,41 @@ derive_ast_eq! { struct YulFor {
 derive_ast_eq! { struct YulTypedIdentifier { loc, id, ty } }
 derive_ast_eq! { struct VariableDeclaration { loc, ty, storage, name } }
 derive_ast_eq! { struct Using { loc, list, ty, global } }
+derive_ast_eq! { struct UsingFunction { loc, path, oper } }
 derive_ast_eq! { struct TypeDefinition { loc, name, ty } }
 derive_ast_eq! { struct ContractDefinition { loc, ty, name, base, parts } }
 derive_ast_eq! { struct EventParameter { loc, ty, indexed, name } }
 derive_ast_eq! { struct ErrorParameter { loc, ty, name } }
 derive_ast_eq! { struct EventDefinition { loc, name, fields, anonymous } }
-derive_ast_eq! { struct ErrorDefinition { loc, name, fields } }
+derive_ast_eq! { struct ErrorDefinition { loc, keyword, name, fields } }
 derive_ast_eq! { struct StructDefinition { loc, name, fields } }
 derive_ast_eq! { struct EnumDefinition { loc, name, values } }
+derive_ast_eq! { struct Annotation { loc, id, value } }
 derive_ast_eq! { enum UsingList {
     _
     Library(expr),
     Functions(exprs),
+    Error(),
+    _
+}}
+derive_ast_eq! { enum UserDefinedOperator {
+    BitwiseAnd,
+    Complement,
+    Negate,
+    BitwiseOr,
+    BitwiseXor,
+    Add,
+    Divide,
+    Modulo,
+    Multiply,
+    Subtract,
+    Equal,
+    More,
+    MoreEqual,
+    Less,
+    LessEqual,
+    NotEqual,
+    _
     _
 }}
 derive_ast_eq! { enum Visibility {
@@ -438,18 +462,6 @@ derive_ast_eq! { enum Mutability {
     Payable(loc),
     _
 }}
-derive_ast_eq! { enum Unit {
-    _
-    Seconds(loc),
-    Minutes(loc),
-    Hours(loc),
-    Days(loc),
-    Weeks(loc),
-    Wei(loc),
-    Gwei(loc),
-    Ether(loc),
-    _
-}}
 derive_ast_eq! { enum FunctionAttribute {
     _
     Mutability(muta),
@@ -458,7 +470,7 @@ derive_ast_eq! { enum FunctionAttribute {
     Immutable(loc),
     Override(loc, idents),
     BaseOrModifier(loc, base),
-    NameValue(loc, ident, expr),
+    Error(loc),
     _
 }}
 derive_ast_eq! { enum StorageLocation {
@@ -480,8 +492,8 @@ derive_ast_eq! { enum Type {
     Int(int),
     Uint(int),
     Bytes(int),
-    Mapping(loc, expr1, expr2),
     _
+    Mapping{ loc, key, key_name, value, value_name },
     Function { params, attributes, returns },
 }}
 derive_ast_eq! { enum Expression {
@@ -506,7 +518,7 @@ derive_ast_eq! { enum Expression {
     PreIncrement(loc, expr1),
     PreDecrement(loc, expr1),
     UnaryPlus(loc, expr1),
-    UnaryMinus(loc, expr1),
+    Negate(loc, expr1),
     Power(loc, expr1, expr2),
     Multiply(loc, expr1, expr2),
     Divide(loc, expr1, expr2),
@@ -526,7 +538,7 @@ derive_ast_eq! { enum Expression {
     NotEqual(loc, expr1, expr2),
     And(loc, expr1, expr2),
     Or(loc, expr1, expr2),
-    Ternary(loc, expr1, expr2, expr3),
+    ConditionalOperator(loc, expr1, expr2, expr3),
     Assign(loc, expr1, expr2),
     AssignOr(loc, expr1, expr2),
     AssignAnd(loc, expr1, expr2),
@@ -539,14 +551,15 @@ derive_ast_eq! { enum Expression {
     AssignDivide(loc, expr1, expr2),
     AssignModulo(loc, expr1, expr2),
     BoolLiteral(loc, bool1),
-    NumberLiteral(loc, #[ast_eq_use(to_num)] str1, #[ast_eq_use(to_num)] str2),
+    NumberLiteral(loc, #[ast_eq_use(to_num)] str1, #[ast_eq_use(to_num)] str2, unit),
     RationalNumberLiteral(
         loc,
         #[ast_eq_use(to_num)] str1,
         #[ast_eq_use(to_num_reversed)] str2,
-        #[ast_eq_use(to_num)] str3
+        #[ast_eq_use(to_num)] str3,
+        unit
     ),
-    HexNumberLiteral(loc, str1),
+    HexNumberLiteral(loc, str1, unit),
     StringLiteral(strs1),
     Type(loc, ty1),
     HexLiteral(hexs1),
@@ -554,7 +567,6 @@ derive_ast_eq! { enum Expression {
     Variable(ident1),
     List(loc, params1),
     ArrayLiteral(loc, exprs1),
-    Unit(loc, expr1, unit1),
     This(loc),
     Parenthesis(loc, expr)
     _
@@ -578,6 +590,7 @@ derive_ast_eq! { enum YulStatement {
     Block(block),
     FunctionDefinition(def),
     FunctionCall(func),
+    Error(loc),
     _
 }}
 derive_ast_eq! { enum YulExpression {
@@ -612,6 +625,7 @@ derive_ast_eq! { enum SourceUnitPart {
     TypeDefinition(def),
     Using(using),
     StraySemicolon(loc),
+    Annotation(annotation),
     _
 }}
 derive_ast_eq! { enum Import {
@@ -641,6 +655,7 @@ derive_ast_eq! { enum ContractPart {
     TypeDefinition(def),
     StraySemicolon(loc),
     Using(using),
+    Annotation(annotation),
     _
 }}
 derive_ast_eq! { enum ContractTy {

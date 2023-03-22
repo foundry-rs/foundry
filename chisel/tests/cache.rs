@@ -38,7 +38,7 @@ fn test_write_session() {
     ChiselSession::create_cache_dir().unwrap();
 
     // Create a new session
-    let mut env = ChiselSession::new(&chisel::session_source::SessionSourceConfig {
+    let mut env = ChiselSession::new(chisel::session_source::SessionSourceConfig {
         foundry_config: Config::default(),
         evm_opts: EvmOpts::default(),
         backend: None,
@@ -54,7 +54,7 @@ fn test_write_session() {
     num_items = if num_items > 0 { num_items - 1 } else { 0 };
 
     // Validate the session
-    assert_eq!(cached_session_name, format!("{}chisel-{}.json", cache_dir, num_items));
+    assert_eq!(cached_session_name, format!("{cache_dir}chisel-{num_items}.json"));
 }
 
 #[test]
@@ -65,7 +65,7 @@ fn test_write_session_with_name() {
     ChiselSession::create_cache_dir().unwrap();
 
     // Create a new session
-    let mut env = ChiselSession::new(&chisel::session_source::SessionSourceConfig::default())
+    let mut env = ChiselSession::new(chisel::session_source::SessionSourceConfig::default())
         .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
     env.id = Some(String::from("test"));
 
@@ -73,7 +73,7 @@ fn test_write_session_with_name() {
     let cached_session_name = env.write().unwrap();
 
     // Validate the session
-    assert_eq!(cached_session_name, format!("{}chisel-test.json", cache_dir));
+    assert_eq!(cached_session_name, format!("{cache_dir}chisel-test.json"));
 }
 
 #[test]
@@ -82,7 +82,7 @@ fn test_clear_cache() {
     // Create a session to validate clearing a non-empty cache directory
     let cache_dir = ChiselSession::cache_dir().unwrap();
     ChiselSession::create_cache_dir().unwrap();
-    let mut env = ChiselSession::new(&SessionSourceConfig::default())
+    let mut env = ChiselSession::new(SessionSourceConfig::default())
         .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
     env.write().unwrap();
 
@@ -90,7 +90,7 @@ fn test_clear_cache() {
     ChiselSession::clear_cache().unwrap();
 
     // Validate there are no items in the cache dir
-    let num_items = std::fs::read_dir(&cache_dir).unwrap().count();
+    let num_items = std::fs::read_dir(cache_dir).unwrap().count();
     assert_eq!(num_items, 0);
 }
 
@@ -102,7 +102,7 @@ fn test_list_sessions() {
     ChiselSession::clear_cache().unwrap();
 
     // Create a new session
-    let mut env = ChiselSession::new(&SessionSourceConfig::default())
+    let mut env = ChiselSession::new(SessionSourceConfig::default())
         .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
 
     env.write().unwrap();
@@ -123,7 +123,7 @@ fn test_load_cache() {
     ChiselSession::clear_cache().unwrap();
 
     // Create a new session
-    let mut env = ChiselSession::new(&SessionSourceConfig::default())
+    let mut env = ChiselSession::new(SessionSourceConfig::default())
         .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
     env.write().unwrap();
 
@@ -148,7 +148,7 @@ fn test_write_same_session_multiple_times() {
     ChiselSession::clear_cache().unwrap();
 
     // Create a new session
-    let mut env = ChiselSession::new(&SessionSourceConfig::default())
+    let mut env = ChiselSession::new(SessionSourceConfig::default())
         .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
     env.write().unwrap();
     env.write().unwrap();
@@ -165,14 +165,14 @@ fn test_load_latest_cache() {
     ChiselSession::clear_cache().unwrap();
 
     // Create sessions
-    let mut env = ChiselSession::new(&SessionSourceConfig::default())
+    let mut env = ChiselSession::new(SessionSourceConfig::default())
         .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
     env.write().unwrap();
 
     let wait_time = std::time::Duration::from_millis(100);
     std::thread::sleep(wait_time);
 
-    let mut env2 = ChiselSession::new(&SessionSourceConfig::default())
+    let mut env2 = ChiselSession::new(SessionSourceConfig::default())
         .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
     env2.write().unwrap();
 

@@ -8,7 +8,7 @@ use chrono::NaiveDateTime;
 use ethers_core::{
     abi::{
         token::{LenientTokenizer, Tokenizer},
-        Function, HumanReadableParser, RawAbi, Token,
+        Function, HumanReadableParser, ParamType, RawAbi, Token,
     },
     types::{Chain, *},
     utils::{
@@ -18,9 +18,15 @@ use ethers_core::{
 };
 use ethers_etherscan::{errors::EtherscanError, Client};
 use ethers_providers::{Middleware, PendingTransaction};
+use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
 use eyre::{Context, Result};
 use foundry_common::{abi::encode_args, fmt::*, TransactionReceiptWithRevertReason};
 pub use foundry_evm::*;
+pub use rusoto_core::{
+    credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
+    request::HttpClient as AwsHttpClient, Client as AwsClient,
+};
+pub use rusoto_kms::KmsClient;
 use rustc_hex::{FromHexIter, ToHex};
 use std::{path::PathBuf, str::FromStr};
 pub use tx::TxBuilder;
@@ -48,7 +54,6 @@ where
     /// ```
     /// use cast::Cast;
     /// use ethers_providers::{Provider, Http};
-    /// use std::convert::TryFrom;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -93,26 +98,29 @@ where
         let (tx, func) = builder_output;
         let res = self.provider.call(&tx, block).await?;
 
-        // decode args into tokens
-        let func = func.expect("no valid function signature was provided.");
-        let decoded = match func.decode_output(res.as_ref()) {
-            Ok(decoded) => decoded,
-            Err(err) => {
-                // ensure the address is a contract
-                if res.is_empty() {
-                    // check that the recipient is a contract that can be called
-                    if let Some(NameOrAddress::Address(addr)) = tx.to() {
-                        let code = self.provider.get_code(*addr, block).await?;
-                        if code.is_empty() {
-                            eyre::bail!("Contract {:?} does not exist", addr)
+        let mut decoded = vec![];
+
+        if let Some(func) = func {
+            // decode args into tokens
+            decoded = match func.decode_output(res.as_ref()) {
+                Ok(decoded) => decoded,
+                Err(err) => {
+                    // ensure the address is a contract
+                    if res.is_empty() {
+                        // check that the recipient is a contract that can be called
+                        if let Some(NameOrAddress::Address(addr)) = tx.to() {
+                            let code = self.provider.get_code(*addr, block).await?;
+                            if code.is_empty() {
+                                eyre::bail!("Contract {:?} does not exist", addr)
+                            }
                         }
                     }
+                    return Err(err).wrap_err(
+                        "could not decode output. did you specify the wrong function return data type perhaps?"
+                    );
                 }
-                return Err(err).wrap_err(
-                    "could not decode output. did you specify the wrong function return data type perhaps?"
-                );
-            }
-        };
+            };
+        }
         // handle case when return type is not specified
         Ok(if decoded.is_empty() {
             format!("{res}\n")
@@ -298,7 +306,6 @@ where
     /// ```no_run
     /// use cast::Cast;
     /// use ethers_providers::{Provider, Http};
-    /// use std::convert::TryFrom;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -381,7 +388,8 @@ where
     pub async fn age<T: Into<BlockId>>(&self, block: T) -> Result<String> {
         let timestamp_str =
             Cast::block_field_as_num(self, block, String::from("timestamp")).await?.to_string();
-        let datetime = NaiveDateTime::from_timestamp(timestamp_str.parse::<i64>().unwrap(), 0);
+        let datetime =
+            NaiveDateTime::from_timestamp_opt(timestamp_str.parse::<i64>().unwrap(), 0).unwrap();
         Ok(datetime.format("%a %b %e %H:%M:%S %Y").to_string())
     }
 
@@ -414,6 +422,9 @@ where
             "0x41941023680923e0fe4d74a34bdac8141f2540e3ae90623718e47d66d1ca4a2d" => "ropsten",
             "0x7ca38a1916c42007829c55e69d3e9a73265554b586a499015373241b8a3fa48b" => {
                 "optimism-mainnet"
+            }
+            "0xc1fc15cd51159b1f1e5cbc4b82e85c1447ddfa33c52cf1d98d14fba0d6354be1" => {
+                "optimism-goerli"
             }
             "0x02adc9b449ff5f2467b8c674ece7ff9b21319d76c4ad62a67a70d552655927e5" => {
                 "optimism-kovan"
@@ -494,6 +505,64 @@ where
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
+    /// let implementation = cast.implementation(addr, None).await?;
+    /// println!("{}", implementation);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn implementation<T: Into<NameOrAddress> + Send + Sync>(
+        &self,
+        who: T,
+        block: Option<BlockId>,
+    ) -> Result<String> {
+        let slot =
+            H256::from_str("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc")?;
+        let value = self.provider.get_storage_at(who, slot, block).await?;
+        let addr: H160 = value.into();
+        Ok(format!("{addr:?}"))
+    }
+
+    /// # Example
+    ///
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_providers::{Provider, Http};
+    /// use ethers_core::types::Address;
+    /// use std::{str::FromStr, convert::TryFrom};
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
+    /// let admin = cast.admin(addr, None).await?;
+    /// println!("{}", admin);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn admin<T: Into<NameOrAddress> + Send + Sync>(
+        &self,
+        who: T,
+        block: Option<BlockId>,
+    ) -> Result<String> {
+        let slot =
+            H256::from_str("0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103")?;
+        let value = self.provider.get_storage_at(who, slot, block).await?;
+        let addr: H160 = value.into();
+        Ok(format!("{addr:?}"))
+    }
+
+    /// # Example
+    ///
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_providers::{Provider, Http};
+    /// use ethers_core::types::Address;
+    /// use std::{str::FromStr, convert::TryFrom};
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
     /// let nonce = cast.nonce(addr, None).await? + 5;
     /// let computed_address = cast.compute_address(addr, Some(nonce)).await?;
     /// println!("Computed address for address {} with nonce {}: {}", addr, nonce, computed_address);
@@ -528,7 +597,7 @@ where
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")?;
-    /// let code = cast.code(addr, None).await?;
+    /// let code = cast.code(addr, None, false).await?;
     /// println!("{}", code);
     /// # Ok(())
     /// # }
@@ -537,8 +606,14 @@ where
         &self,
         who: T,
         block: Option<BlockId>,
+        disassemble: bool,
     ) -> Result<String> {
-        Ok(format!("{}", self.provider.get_code(who, block).await?))
+        if disassemble {
+            let code = self.provider.get_code(who, block).await?.to_vec();
+            Ok(format_operations(disassemble_bytes(code)?)?)
+        } else {
+            Ok(format!("{}", self.provider.get_code(who, block).await?))
+        }
     }
 
     /// # Example
@@ -546,7 +621,6 @@ where
     /// ```no_run
     /// use cast::Cast;
     /// use ethers_providers::{Provider, Http};
-    /// use std::convert::TryFrom;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -586,7 +660,6 @@ where
     /// ```no_run
     /// use cast::Cast;
     /// use ethers_providers::{Provider, Http};
-    /// use std::convert::TryFrom;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -649,7 +722,6 @@ where
     /// ```no_run
     /// use cast::Cast;
     /// use ethers_providers::{Provider, Http};
-    /// use std::convert::TryFrom;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -703,13 +775,77 @@ pub struct InterfaceSource {
     pub source: String,
 }
 
-pub enum InterfacePath {
+// Local is a path to the directory containing the ABI files
+// In case of etherscan, ABI is fetched from the address on the chain
+pub enum AbiPath {
     Local { path: String, name: Option<String> },
     Etherscan { address: Address, chain: Chain, api_key: String },
 }
 
 pub struct SimpleCast;
+
 impl SimpleCast {
+    /// Returns the maximum value of the given integer type
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use cast::SimpleCast;
+    /// # use ethers_core::types::{I256, U256};
+    /// assert_eq!(SimpleCast::max_int("uint256")?, format!("{}", U256::MAX));
+    /// assert_eq!(SimpleCast::max_int("int256")?, format!("{}", I256::MAX));
+    /// assert_eq!(SimpleCast::max_int("int32")?, format!("{}", i32::MAX));
+    /// # Ok::<(), eyre::Report>(())
+    /// ```
+    pub fn max_int(s: &str) -> Result<String> {
+        Self::max_min_int::<true>(s)
+    }
+
+    /// Returns the maximum value of the given integer type
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use cast::SimpleCast;
+    /// # use ethers_core::types::{I256, U256};
+    /// assert_eq!(SimpleCast::min_int("uint256")?, "0");
+    /// assert_eq!(SimpleCast::min_int("int256")?, format!("{}", I256::MIN));
+    /// assert_eq!(SimpleCast::min_int("int32")?, format!("{}", i32::MIN));
+    /// # Ok::<(), eyre::Report>(())
+    /// ```
+    pub fn min_int(s: &str) -> Result<String> {
+        Self::max_min_int::<false>(s)
+    }
+
+    fn max_min_int<const MAX: bool>(s: &str) -> Result<String> {
+        let ty = HumanReadableParser::parse_type(s)
+            .wrap_err("Invalid type, expected `(u)int<bit size>`")?;
+        match ty {
+            ParamType::Int(n) => {
+                let mask = U256::one() << U256::from(n - 1);
+                let max = (U256::MAX & mask) - 1;
+                if MAX {
+                    Ok(max.to_string())
+                } else {
+                    let min = I256::from_raw(max).wrapping_neg() + I256::minus_one();
+                    Ok(min.to_string())
+                }
+            }
+            ParamType::Uint(n) => {
+                if MAX {
+                    let mut max = U256::MAX;
+                    if n < 255 {
+                        max &= U256::one() << U256::from(n);
+                    }
+                    Ok(max.to_string())
+                } else {
+                    Ok("0".to_string())
+                }
+            }
+            _ => Err(eyre::eyre!("Type is not int/uint: {s}")),
+        }
+    }
+
     /// Converts UTF-8 text input to hex
     ///
     /// # Example
@@ -832,21 +968,19 @@ impl SimpleCast {
     /// use cast::SimpleCast as Cast;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Cast::concat_hex(vec!["0x00".to_string(), "0x01".to_string()]), "0x0001");
-    ///     assert_eq!(Cast::concat_hex(vec!["1".to_string(), "2".to_string()]), "0x12");
+    ///     assert_eq!(Cast::concat_hex(["0x00", "0x01"]), "0x0001");
+    ///     assert_eq!(Cast::concat_hex(["1", "2"]), "0x12");
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub fn concat_hex(values: Vec<String>) -> String {
-        format!(
-            "0x{}",
-            values
-                .into_iter()
-                .map(|s| s.strip_prefix("0x").unwrap_or(&s).to_string())
-                .collect::<Vec<String>>()
-                .join("")
-        )
+    pub fn concat_hex<T: AsRef<str>>(values: impl IntoIterator<Item = T>) -> String {
+        let mut out = String::new();
+        for s in values {
+            let s = s.as_ref();
+            out.push_str(s.strip_prefix("0x").unwrap_or(s))
+        }
+        format!("0x{out}")
     }
 
     /// Converts an Ethereum address to its checksum format
@@ -1022,11 +1156,10 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn from_rlp(value: impl AsRef<str>) -> Result<String> {
-        let value = value.as_ref();
-        let striped_value = strip_0x(value);
-        let bytes = hex::decode(striped_value).expect("Could not decode hex");
-        let item = rlp::decode::<Item>(&bytes).expect("Could not decode rlp");
-        Ok(format!("{item}"))
+        let data = strip_0x(value.as_ref());
+        let bytes = hex::decode(data).wrap_err("Could not decode hex")?;
+        let item = rlp::decode::<Item>(&bytes).wrap_err("Could not decode rlp")?;
+        Ok(item.to_string())
     }
 
     /// Encodes hex data or list of hex data to hexadecimal rlp
@@ -1045,7 +1178,8 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn to_rlp(value: &str) -> Result<String> {
-        let val = serde_json::from_str(value).unwrap_or(serde_json::Value::String(value.parse()?));
+        let val = serde_json::from_str(value)
+            .unwrap_or_else(|_| serde_json::Value::String(value.to_string()));
         let item = Item::value_to_item(&val)?;
         Ok(format!("0x{}", hex::encode(rlp::encode(&item))))
     }
@@ -1239,9 +1373,9 @@ impl SimpleCast {
     /// interface and their name.
     /// ```no_run
     /// use cast::SimpleCast as Cast;
-    /// use cast::InterfacePath;
+    /// use cast::AbiPath;
     /// # async fn foo() -> eyre::Result<()> {
-    /// let path = InterfacePath::Local {
+    /// let path = AbiPath::Local {
     ///     path: "utils/testdata/interfaceTestABI.json".to_owned(),
     ///     name: None,
     /// };
@@ -1250,22 +1384,18 @@ impl SimpleCast {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn generate_interface(
-        address_or_path: InterfacePath,
-    ) -> Result<Vec<InterfaceSource>> {
+    pub async fn generate_interface(address_or_path: AbiPath) -> Result<Vec<InterfaceSource>> {
         let (contract_abis, contract_names): (Vec<RawAbi>, Vec<String>) = match address_or_path {
-            InterfacePath::Local { path, name } => {
+            AbiPath::Local { path, name } => {
                 let file = std::fs::read_to_string(path).wrap_err("unable to read abi file")?;
-
                 let mut json: serde_json::Value = serde_json::from_str(&file)?;
                 let json = if !json["abi"].is_null() { json["abi"].take() } else { json };
-
                 let abi: RawAbi =
                     serde_json::from_value(json).wrap_err("unable to parse json ABI from file")?;
 
                 (vec![abi], vec![name.unwrap_or_else(|| "Interface".to_owned())])
             }
-            InterfacePath::Etherscan { address, chain, api_key } => {
+            AbiPath::Etherscan { address, chain, api_key } => {
                 let client = Client::new(chain, api_key)?;
 
                 // get the source
@@ -1508,6 +1638,24 @@ impl SimpleCast {
         source_tree.write_to(&output_directory)?;
         Ok(())
     }
+
+    /// Disassembles hex encoded bytecode into individual / human readable opcodes
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let bytecode = "0x608060405260043610603f57600035";
+    /// let opcodes = Cast::disassemble(bytecode)?;
+    /// println!("{}", opcodes);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn disassemble(bytecode: &str) -> Result<String> {
+        format_operations(disassemble_str(bytecode)?)
+    }
 }
 
 fn strip_0x(s: &str) -> &str {
@@ -1545,8 +1693,8 @@ mod tests {
 
     #[test]
     fn concat_hex() {
-        assert_eq!(Cast::concat_hex(vec!["0x00".to_string(), "0x01".to_string()]), "0x0001");
-        assert_eq!(Cast::concat_hex(vec!["1".to_string(), "2".to_string()]), "0x12");
+        assert_eq!(Cast::concat_hex(["0x00", "0x01"]), "0x0001");
+        assert_eq!(Cast::concat_hex(["1", "2"]), "0x12");
     }
 
     #[test]

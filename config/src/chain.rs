@@ -1,5 +1,6 @@
 use crate::U256;
-use ethers_core::types::U64;
+use ethers_core::types::{Chain as NamedChain, U64};
+use eyre::Result;
 use open_fastrlp::{Decodable, Encodable};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::{fmt, str::FromStr};
@@ -10,35 +11,39 @@ use std::{fmt, str::FromStr};
 pub enum Chain {
     /// Contains a known chain
     #[serde(serialize_with = "super::from_str_lowercase::serialize")]
-    Named(ethers_core::types::Chain),
+    Named(NamedChain),
     /// Contains the id of a chain
     Id(u64),
 }
 
 impl Chain {
-    /// The id of the chain
-    pub fn id(&self) -> u64 {
+    /// The id of the chain.
+    pub const fn id(&self) -> u64 {
         match self {
             Chain::Named(chain) => *chain as u64,
             Chain::Id(id) => *id,
         }
     }
 
+    /// Returns the wrapped named chain or tries converting the ID into one.
+    pub fn named(&self) -> Result<NamedChain> {
+        match self {
+            Self::Named(chain) => Ok(*chain),
+            Self::Id(id) => {
+                NamedChain::try_from(*id).map_err(|_| eyre::eyre!("Unsupported chain: {id}"))
+            }
+        }
+    }
+
     /// Helper function for checking if a chainid corresponds to a legacy chainid
     /// without eip1559
     pub fn is_legacy(&self) -> bool {
-        match self {
-            Chain::Named(c) => c.is_legacy(),
-            Chain::Id(_) => false,
-        }
+        self.named().map_or(false, |c| c.is_legacy())
     }
 
     /// Returns the corresponding etherscan URLs
     pub fn etherscan_urls(&self) -> Option<(&'static str, &'static str)> {
-        match self {
-            Chain::Named(c) => c.etherscan_urls(),
-            Chain::Id(_) => None,
-        }
+        self.named().ok().and_then(|c| c.etherscan_urls())
     }
 }
 
@@ -47,7 +52,7 @@ impl fmt::Display for Chain {
         match self {
             Chain::Named(chain) => chain.fmt(f),
             Chain::Id(id) => {
-                if let Ok(chain) = ethers_core::types::Chain::try_from(*id) {
+                if let Ok(chain) = NamedChain::try_from(*id) {
                     chain.fmt(f)
                 } else {
                     id.fmt(f)
@@ -57,15 +62,15 @@ impl fmt::Display for Chain {
     }
 }
 
-impl From<ethers_core::types::Chain> for Chain {
-    fn from(id: ethers_core::types::Chain) -> Self {
+impl From<NamedChain> for Chain {
+    fn from(id: NamedChain) -> Self {
         Chain::Named(id)
     }
 }
 
 impl From<u64> for Chain {
     fn from(id: u64) -> Self {
-        ethers_core::types::Chain::try_from(id).map(Chain::Named).unwrap_or_else(|_| Chain::Id(id))
+        NamedChain::try_from(id).map(Chain::Named).unwrap_or_else(|_| Chain::Id(id))
     }
 }
 
@@ -96,8 +101,8 @@ impl From<Chain> for U256 {
     }
 }
 
-impl TryFrom<Chain> for ethers_core::types::Chain {
-    type Error = <ethers_core::types::Chain as TryFrom<u64>>::Error;
+impl TryFrom<Chain> for NamedChain {
+    type Error = <NamedChain as TryFrom<u64>>::Error;
 
     fn try_from(chain: Chain) -> Result<Self, Self::Error> {
         match chain {
@@ -111,7 +116,7 @@ impl FromStr for Chain {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Ok(chain) = ethers_core::types::Chain::from_str(s) {
+        if let Ok(chain) = NamedChain::from_str(s) {
             Ok(Chain::Named(chain))
         } else {
             s.parse::<u64>()
@@ -137,9 +142,9 @@ impl<'de> Deserialize<'de> for Chain {
             ChainId::Named(s) => {
                 s.to_lowercase().parse().map(Chain::Named).map_err(serde::de::Error::custom)
             }
-            ChainId::Id(id) => Ok(ethers_core::types::Chain::try_from(id)
-                .map(Chain::Named)
-                .unwrap_or_else(|_| Chain::Id(id))),
+            ChainId::Id(id) => {
+                Ok(NamedChain::try_from(id).map(Chain::Named).unwrap_or_else(|_| Chain::Id(id)))
+            }
         }
     }
 }
@@ -167,6 +172,6 @@ impl Decodable for Chain {
 
 impl Default for Chain {
     fn default() -> Self {
-        ethers_core::types::Chain::Mainnet.into()
+        NamedChain::Mainnet.into()
     }
 }

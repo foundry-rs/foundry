@@ -1,9 +1,9 @@
-use super::{WalletTrait, WalletType};
+use super::{WalletSigner, WalletTrait};
+use cast::{AwsChainProvider, AwsClient, AwsHttpClient, AwsRegion, KmsClient};
 use clap::{ArgAction, Parser};
 use ethers::{
-    middleware::SignerMiddleware,
     prelude::{Middleware, Signer},
-    signers::{HDPath as LedgerHDPath, Ledger, LocalWallet, Trezor, TrezorHDPath},
+    signers::{AwsSigner, HDPath as LedgerHDPath, Ledger, LocalWallet, Trezor, TrezorHDPath},
     types::Address,
 };
 use eyre::{Context, ContextCompat, Result};
@@ -16,6 +16,7 @@ use std::{
     iter::repeat,
     sync::Arc,
 };
+use tracing::trace;
 
 macro_rules! get_wallets {
     ($id:ident, [ $($wallets:expr),+ ], $call:expr) => {
@@ -24,23 +25,6 @@ macro_rules! get_wallets {
                 $call;
             }
         )+
-    };
-}
-
-macro_rules! collect_addresses {
-    ($local:expr, $unused:expr, $addresses:expr, $addr:expr, $wallet:expr) => {
-        if $addresses.contains(&$addr) {
-            $addresses.remove(&$addr);
-
-            $local.insert($addr, $wallet);
-
-            if $addresses.is_empty() {
-                return Ok($local)
-            }
-        } else {
-            // Just to show on error.
-            $unused.push($addr);
-        }
     };
 }
 
@@ -208,6 +192,13 @@ pub struct MultiWallet {
     pub trezor: bool,
 
     #[clap(
+        long = "aws",
+        help_heading = "WALLET OPTIONS - KEYSTORE",
+        help = "Use AWS Key Management Service"
+    )]
+    pub aws: bool,
+
+    #[clap(
         env = "ETH_FROM",
         short = 'a',
         long = "froms",
@@ -233,19 +224,12 @@ impl MultiWallet {
         provider: Arc<RetryProvider>,
         mut addresses: HashSet<Address>,
         script_wallets: &[LocalWallet],
-    ) -> Result<HashMap<Address, WalletType>> {
+    ) -> Result<HashMap<Address, WalletSigner>> {
         println!("\n###\nFinding wallets for all the necessary addresses...");
         let chain = provider.get_chainid().await?.as_u64();
 
         let mut local_wallets = HashMap::new();
         let mut unused_wallets = vec![];
-
-        let script_wallets_fn = || -> Result<Option<Vec<LocalWallet>>> {
-            if !script_wallets.is_empty() {
-                return Ok(Some(script_wallets.to_vec()))
-            }
-            Ok(None)
-        };
 
         get_wallets!(
             wallets,
@@ -256,14 +240,24 @@ impl MultiWallet {
                 self.interactives()?,
                 self.mnemonics()?,
                 self.keystores()?,
-                script_wallets_fn()?
+                self.aws_signers(chain).await?,
+                (!script_wallets.is_empty()).then(|| script_wallets.to_vec())
             ],
             for wallet in wallets.into_iter() {
                 let address = wallet.address();
-                let wallet = wallet.with_chain_id(chain);
-                let wallet: WalletType = SignerMiddleware::new(provider.clone(), wallet).into();
+                if addresses.contains(&address) {
+                    addresses.remove(&address);
 
-                collect_addresses!(local_wallets, unused_wallets, addresses, address, wallet);
+                    let signer = WalletSigner::from(wallet.with_chain_id(chain));
+                    local_wallets.insert(address, signer);
+
+                    if addresses.is_empty() {
+                        return Ok(local_wallets)
+                    }
+                } else {
+                    // Just to show on error.
+                    unused_wallets.push(address);
+                }
             }
         );
 
@@ -386,6 +380,28 @@ impl MultiWallet {
         Ok(None)
     }
 
+    pub async fn aws_signers(&self, chain_id: u64) -> Result<Option<Vec<AwsSigner>>> {
+        if self.aws {
+            let mut wallets = vec![];
+            let client =
+                AwsClient::new_with(AwsChainProvider::default(), AwsHttpClient::new().unwrap());
+
+            let kms = KmsClient::new_with_client(client, AwsRegion::default());
+
+            let env_key_ids = std::env::var("AWS_KMS_KEY_IDS");
+            let key_ids =
+                if env_key_ids.is_ok() { env_key_ids? } else { std::env::var("AWS_KMS_KEY_ID")? };
+
+            for key in key_ids.split(',') {
+                let aws_signer = AwsSigner::new(kms.clone(), key, chain_id).await?;
+                wallets.push(aws_signer)
+            }
+
+            return Ok(Some(wallets))
+        }
+        Ok(None)
+    }
+
     async fn get_from_trezor(
         &self,
         chain_id: u64,
@@ -411,6 +427,7 @@ impl MultiWallet {
             None => LedgerHDPath::LedgerLive(mnemonic_index.unwrap_or(0)),
         };
 
+        trace!(?chain_id, "Creating new ledger signer");
         Ok(Some(Ledger::new(derivation, chain_id).await.wrap_err("Ledger device not available.")?))
     }
 }

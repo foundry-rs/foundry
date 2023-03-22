@@ -232,8 +232,7 @@ impl<'a> ContractRunner<'a> {
             ))
         }
 
-        let has_invariants =
-            self.contract.functions().into_iter().any(|func| func.name.is_invariant_test());
+        let has_invariants = self.contract.functions().any(|func| func.name.is_invariant_test());
 
         // Invariant testing requires tracing to figure out what contracts were created.
         let original_tracing = self.executor.inspector_config().tracing;
@@ -302,7 +301,6 @@ impl<'a> ContractRunner<'a> {
             let functions: Vec<&Function> = self
                 .contract
                 .functions()
-                .into_iter()
                 .filter(|func| {
                     func.name.is_invariant_test() && filter.matches_test(func.signature())
                 })
@@ -319,7 +317,7 @@ impl<'a> ContractRunner<'a> {
 
             results.into_iter().zip(functions.iter()).for_each(|(result, function)| {
                 match result.kind {
-                    TestKind::Invariant(ref _cases, _) => {
+                    TestKind::Invariant { .. } => {
                         test_results.insert(function.signature(), result);
                     }
                     _ => unreachable!(),
@@ -496,6 +494,12 @@ impl<'a> ContractRunner<'a> {
                         }
                     }
 
+                    let kind = TestKind::Invariant {
+                        runs: cases.len(),
+                        calls: cases.iter().map(|sequence| sequence.cases().len()).sum(),
+                        reverts,
+                    };
+
                     Ok(TestResult {
                         success: test_error.is_none(),
                         reason: test_error.as_ref().and_then(|err| {
@@ -504,7 +508,7 @@ impl<'a> ContractRunner<'a> {
                         counterexample,
                         decoded_logs: decode_console_logs(&logs),
                         logs,
-                        kind: TestKind::Invariant(cases.clone(), reverts),
+                        kind,
                         coverage: None, // todo?
                         traces,
                         labeled_addresses: labeled_addresses.clone(),
@@ -536,6 +540,13 @@ impl<'a> ContractRunner<'a> {
                 .fuzz(func, address, should_fail, self.errors)
                 .wrap_err("Failed to run fuzz test")?;
 
+        let kind = TestKind::Fuzz {
+            median_gas: result.median_gas(false),
+            mean_gas: result.mean_gas(false),
+            first_case: result.first_case,
+            runs: result.gas_by_case.len(),
+        };
+
         // Record logs, labels and traces
         logs.append(&mut result.logs);
         labeled_addresses.append(&mut result.labeled_addresses);
@@ -553,7 +564,7 @@ impl<'a> ContractRunner<'a> {
             counterexample: result.counterexample,
             decoded_logs: decode_console_logs(&logs),
             logs,
-            kind: TestKind::Fuzz(result.cases),
+            kind,
             traces,
             coverage: result.coverage,
             labeled_addresses,

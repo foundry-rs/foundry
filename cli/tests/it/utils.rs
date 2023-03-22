@@ -1,6 +1,6 @@
 //! Various helper functions
 
-use ethers::prelude::Chain;
+use ethers::prelude::{Address, Chain, LocalWallet, Signer};
 
 /// Returns the current millis since unix epoch.
 ///
@@ -8,7 +8,7 @@ use ethers::prelude::Chain;
 pub fn millis_since_epoch() -> u128 {
     let now = std::time::SystemTime::now();
     now.duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .unwrap_or_else(|err| panic!("Current time {:?} is invalid: {:?}", now, err))
+        .unwrap_or_else(|err| panic!("Current time {now:?} is invalid: {err:?}"))
         .as_millis()
 }
 
@@ -42,6 +42,11 @@ pub struct EnvExternalities {
 }
 
 impl EnvExternalities {
+    pub fn address(&self) -> Option<Address> {
+        let pk: LocalWallet = self.pk.parse().ok()?;
+        Some(pk.address())
+    }
+
     pub fn goerli() -> Option<Self> {
         Some(Self {
             chain: Chain::Goerli,
@@ -88,6 +93,16 @@ impl EnvExternalities {
             rpc: network_rpc_key("mumbai")?,
             pk: network_private_key("mumbai")?,
             etherscan: etherscan_key(Chain::PolygonMumbai)?,
+            verifier: "etherscan".to_string(),
+        })
+    }
+
+    pub fn sepolia() -> Option<Self> {
+        Some(Self {
+            chain: Chain::Sepolia,
+            rpc: network_rpc_key("sepolia")?,
+            pk: network_private_key("sepolia")?,
+            etherscan: etherscan_key(Chain::Sepolia)?,
             verifier: "etherscan".to_string(),
         })
     }

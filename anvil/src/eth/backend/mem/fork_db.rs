@@ -1,5 +1,7 @@
 use crate::{
-    eth::backend::db::{Db, MaybeHashDatabase, SerializableState, StateDb},
+    eth::backend::db::{
+        Db, MaybeHashDatabase, SerializableAccountRecord, SerializableState, StateDb,
+    },
     revm::AccountInfo,
     Address, U256,
 };
@@ -28,11 +30,31 @@ impl Db for ForkedDatabase {
     }
 
     fn dump_state(&self) -> DatabaseResult<Option<SerializableState>> {
-        Ok(None)
-    }
-
-    fn load_state(&mut self, _buf: SerializableState) -> DatabaseResult<bool> {
-        Ok(false)
+        let mut db = self.database().clone();
+        let accounts = self
+            .database()
+            .accounts
+            .clone()
+            .into_iter()
+            .map(|(k, v)| -> DatabaseResult<_> {
+                let code = if let Some(code) = v.info.code {
+                    code
+                } else {
+                    db.code_by_hash(v.info.code_hash)?
+                }
+                .to_checked();
+                Ok((
+                    k,
+                    SerializableAccountRecord {
+                        nonce: v.info.nonce,
+                        balance: v.info.balance,
+                        code: code.bytes()[..code.len()].to_vec().into(),
+                        storage: v.storage.into_iter().collect(),
+                    },
+                ))
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Some(SerializableState { accounts }))
     }
 
     fn snapshot(&mut self) -> U256 {

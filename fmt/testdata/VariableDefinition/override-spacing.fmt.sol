@@ -1,15 +1,15 @@
 // config: line_length = 40
-// config: variable_override_spacing = false
+// config: override_spacing = true
 contract Contract {
     bytes32 private constant BYTES;
     bytes32
         private
         constant
-        override(Base1) BYTES;
+        override (Base1) BYTES;
     bytes32
         private
         constant
-        override(Base1, Base2) BYTES;
+        override (Base1, Base2) BYTES;
     bytes32
         private
         constant
@@ -24,7 +24,7 @@ contract Contract {
     bytes32
         private
         constant
-        override(
+        override (
             Base1,
             Base2,
             SomeLongBaseContract,

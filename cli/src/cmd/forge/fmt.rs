@@ -4,9 +4,10 @@ use crate::{
 };
 use clap::{Parser, ValueHint};
 use console::{style, Style};
-use forge_fmt::{format, parse};
+use forge_fmt::{format, parse, print_diagnostics_report};
 use foundry_common::{fs, term::cli_warn};
 use foundry_config::{impl_figment_convert_basic, Config};
+use foundry_utils::glob::expand_globs;
 use rayon::prelude::*;
 use similar::{ChangeTag, TextDiff};
 use std::{
@@ -90,21 +91,8 @@ impl Cmd for FmtArgs {
     fn run(self) -> eyre::Result<Self::Output> {
         let config = self.try_load_config_emit_warnings()?;
 
-        // collect ignore paths first
-        let mut ignored = vec![];
-        let expanded = config
-            .fmt
-            .ignore
-            .iter()
-            .map(|pattern| glob::glob(&config.__root.0.join(pattern).display().to_string()));
-        for res in expanded {
-            match res {
-                Ok(paths) => ignored.extend(paths.into_iter().collect::<Result<Vec<_>, _>>()?),
-                Err(err) => {
-                    eyre::bail!("failed to parse ignore glob pattern: {err}")
-                }
-            }
-        }
+        // Expand ignore globs
+        let ignored = expand_globs(&config.__root.0, config.fmt.ignore.iter())?;
 
         let cwd = std::env::current_dir()?;
         let mut inputs = vec![];
@@ -134,12 +122,16 @@ impl Cmd for FmtArgs {
                     Input::Stdin(source) => source.to_string()
                 };
 
-                let parsed = parse(&source)
-                    .map_err(|diags| eyre::eyre!(
-                            "Failed to parse Solidity code for {}. Leaving source unchanged.\nDebug info: {:?}",
-                            input,
-                            diags
-                        ))?;
+                let parsed = match parse(&source) {
+                    Ok(result) => result,
+                    Err(diagnostics) => {
+                        let path = if let Input::Path(path) = input {Some(path)} else {None};
+                        print_diagnostics_report(&source,path,  diagnostics)?;
+                        eyre::bail!(
+                            "Failed to parse Solidity code for {input}. Leaving source unchanged."
+                        )
+                    }
+                };
 
                 if !parsed.invalid_inline_config_items.is_empty() {
                     let path = match input {

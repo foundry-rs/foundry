@@ -74,6 +74,8 @@ ethers::contract::abigen!(
             accesses(address)(bytes32[],bytes32[])
             recordLogs()
             getRecordedLogs()(Log[])
+            expectEmit()
+            expectEmit(address)
             expectEmit(bool,bool,bool,bool)
             expectEmit(bool,bool,bool,bool,address)
             mockCall(address,bytes,bytes)
@@ -81,6 +83,10 @@ ethers::contract::abigen!(
             clearMockedCalls()
             expectCall(address,bytes)
             expectCall(address,uint256,bytes)
+            expectCall(address,uint256,uint64,bytes)
+            expectCallMinGas(address,uint256,uint64,bytes)
+            expectSafeMemory(uint64,uint64)
+            expectSafeMemoryCall(uint64,uint64)
             getCode(string)
             getDeployedCode(string)
             label(address,string)
@@ -144,8 +150,22 @@ ethers::contract::abigen!(
             rpcUrl(string)(string)
             rpcUrls()(string[2][])
             rpcUrlStructs()(Rpc[])
-            parseJson(string, string)(bytes)
             parseJson(string)(bytes)
+            parseJson(string, string)(bytes)
+            parseJsonUint(string, string)(uint256)
+            parseJsonUintArray(string, string)(uint256[])
+            parseJsonInt(string, string)(int256)
+            parseJsonIntArray(string, string)(int256[])
+            parseJsonString(string, string)(string)
+            parseJsonStringArray(string, string)(string[])
+            parseJsonAddress(string, string)(address)
+            parseJsonAddressArray(string, string)(address[])
+            parseJsonBool(string, string)(bool)
+            parseJsonBoolArray(string, string)(bool[])
+            parseJsonBytes(string, string)(bytes)
+            parseJsonBytesArray(string, string)(bytes[])
+            parseJsonBytes32(string, string)(bytes32)
+            parseJsonBytes32Array(string, string)(bytes32[])
             allowCheatcodes(address)
             serializeBool(string,string,bool)(string)
             serializeBool(string,string,bool[])(string)
@@ -204,16 +224,13 @@ ethers::contract::abigen!(
             event log_named_array        (string key, uint256[] val)
             event log_named_array        (string key, int256[] val)
             event log_named_array        (string key, address[] val)
-    ]"#
+    ]"#,
 );
 pub use console::{ConsoleEvents, CONSOLE_ABI};
 
 // Bindings for Hardhat console
-ethers::contract::abigen!(HardhatConsole, "./abi/console.json",);
+ethers::contract::abigen!(HardhatConsole, "./abi/console.json", event_derives (foundry_macros::ConsoleFmt););
 pub use hardhat_console::HARDHATCONSOLE_ABI as HARDHAT_CONSOLE_ABI;
-
-mod fmt;
-pub use fmt::format_hardhat_call;
 
 /// If the input starts with a known `hardhat/console.log` `uint` selector, then this will replace
 /// it with the selector `abigen!` bindings expect.

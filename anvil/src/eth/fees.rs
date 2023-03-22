@@ -201,7 +201,6 @@ impl FeeHistoryService {
         let reward_percentiles: Vec<f64> = {
             let mut percentile: f64 = 0.0;
             (0..=200)
-                .into_iter()
                 .map(|_| {
                     let val = percentile;
                     percentile += 0.5;
@@ -236,7 +235,8 @@ impl FeeHistoryService {
                 .enumerate()
                 .map(|(i, receipt)| {
                     let gas_used = receipt.gas_used().as_u64();
-                    let effective_reward = match block.transactions.get(i) {
+                    let effective_reward = match block.transactions.get(i).map(|tx| &tx.transaction)
+                    {
                         Some(TypedTransaction::Legacy(t)) => {
                             t.gas_price.saturating_sub(base_fee).as_u64()
                         }

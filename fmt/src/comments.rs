@@ -212,7 +212,7 @@ impl CommentWithMetadata {
 }
 
 /// A list of comments
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct Comments {
     prefixes: VecDeque<CommentWithMetadata>,
     postfixes: VecDeque<CommentWithMetadata>,
@@ -303,9 +303,10 @@ impl Comments {
 }
 
 /// The state of a character in a string with possible comments
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
 pub enum CommentState {
     /// character not in a comment
+    #[default]
     None,
     /// First `/` in line comment start `"//"`
     LineStart1,
@@ -323,12 +324,6 @@ pub enum CommentState {
     BlockEnd1,
     /// `/` in block comment end `"*/"`
     BlockEnd2,
-}
-
-impl Default for CommentState {
-    fn default() -> Self {
-        CommentState::None
-    }
 }
 
 /// An Iterator over characters and indices in a string slice with information about the state of

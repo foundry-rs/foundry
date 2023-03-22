@@ -107,7 +107,7 @@ impl Visitor for CheatcodeVisitor {
             Expression::UnaryPlus(_, expr) => {
                 expr.visit(self)?;
             }
-            Expression::UnaryMinus(_, expr) => {
+            Expression::Negate(_, expr) => {
                 expr.visit(self)?;
             }
             Expression::Power(_, lhs, rhs) => {
@@ -186,7 +186,7 @@ impl Visitor for CheatcodeVisitor {
                 lhs.visit(self)?;
                 rhs.visit(self)?;
             }
-            Expression::Ternary(_, llhs, lhs, rhs) => {
+            Expression::ConditionalOperator(_, llhs, lhs, rhs) => {
                 llhs.visit(self)?;
                 lhs.visit(self)?;
                 rhs.visit(self)?;

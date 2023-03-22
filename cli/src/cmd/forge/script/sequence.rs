@@ -13,7 +13,7 @@ use ethers::{
     types::transaction::eip2718::TypedTransaction,
 };
 use eyre::{ContextCompat, WrapErr};
-use foundry_common::{fs, SELECTOR_LEN};
+use foundry_common::{fs, shell, SELECTOR_LEN};
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -110,8 +110,7 @@ impl ScriptSequence {
                 )?),
                 &self,
             )?;
-
-            println!("\nTransactions saved to: {path}\n");
+            shell::println(format!("\nTransactions saved to: {path}\n"))?;
         }
 
         Ok(())
@@ -184,9 +183,11 @@ impl ScriptSequence {
 
         verify.set_chain(config, self.chain.into());
 
-        if verify.etherscan_key.is_some() ||
+        if verify.etherscan.key.is_some() ||
             verify.verifier.verifier != VerificationProviderType::Etherscan
         {
+            trace!(target: "script", "prepare future verifications");
+
             let mut future_verifications = Vec::with_capacity(self.receipts.len());
             let mut unverifiable_contracts = vec![];
 
@@ -220,6 +221,8 @@ impl ScriptSequence {
                     };
                 }
             }
+
+            trace!(target: "script", "collected {} verification jobs and {} unverifiable contracts", future_verifications.len(), unverifiable_contracts.len());
 
             self.check_unverified(unverifiable_contracts, verify);
 

@@ -1,5 +1,5 @@
 use crate::abi::*;
-use anvil::{spawn, NodeConfig};
+use anvil::{spawn, Hardfork, NodeConfig};
 use ethers::{
     abi::ethereum_types::BigEndianHash,
     prelude::{
@@ -104,7 +104,7 @@ async fn can_respect_nonces() {
 
     // ensure the listener for ready transactions times out
     let mut listener = api.new_ready_transactions();
-    let res = timeout(Duration::from_millis(1500), async move { listener.next().await }).await;
+    let res = timeout(Duration::from_millis(1500), listener.next()).await;
     res.unwrap_err();
 
     // send with the actual nonce which is mined immediately
@@ -668,7 +668,7 @@ async fn can_handle_different_sender_nonce_calculation() {
     for idx in 1..=tx_count {
         let tx_from_first =
             TransactionRequest::new().from(from_first).value(1337u64).to(Address::random());
-        let _ = provider.send_transaction(tx_from_first, None).await.unwrap();
+        let _tx = provider.send_transaction(tx_from_first, None).await.unwrap();
         let nonce_from_first = provider
             .get_transaction_count(from_first, Some(BlockId::Number(BlockNumber::Pending)))
             .await
@@ -677,7 +677,7 @@ async fn can_handle_different_sender_nonce_calculation() {
 
         let tx_from_second =
             TransactionRequest::new().from(from_second).value(1337u64).to(Address::random());
-        let _ = provider.send_transaction(tx_from_second, None).await.unwrap();
+        let _tx = provider.send_transaction(tx_from_second, None).await.unwrap();
         let nonce_from_second = provider
             .get_transaction_count(from_second, Some(BlockId::Number(BlockNumber::Pending)))
             .await
@@ -964,4 +964,55 @@ async fn test_reject_gas_too_low() {
 
     let err = resp.unwrap_err().to_string();
     assert!(err.contains("intrinsic gas too low"));
+}
+
+// <https://github.com/foundry-rs/foundry/issues/3783>
+#[tokio::test(flavor = "multi_thread")]
+async fn can_call_with_high_gas_limit() {
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_gas_limit(Some(U256::from(100_000_000)))).await;
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
+        .unwrap()
+        .send()
+        .await
+        .unwrap();
+
+    let greeting = greeter_contract.greet().gas(60_000_000u64).call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reject_eip1559_pre_london() {
+    let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(Hardfork::Berlin))).await;
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let gas_limit = api.gas_limit();
+    let gas_price = api.gas_price().unwrap();
+    let unsupported = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
+        .unwrap()
+        .gas(gas_limit)
+        .gas_price(gas_price)
+        .send()
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(unsupported.contains("not supported by the current hardfork"), "{unsupported}");
+
+    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
+        .unwrap()
+        .legacy()
+        .send()
+        .await
+        .unwrap();
+
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
 }

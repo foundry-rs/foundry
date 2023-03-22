@@ -2,11 +2,8 @@ use super::{AddressIdentity, TraceIdentifier};
 use ethers::{
     abi::Address,
     etherscan,
-    etherscan::contract::Metadata,
-    prelude::{
-        artifacts::ContractBytecodeSome, contract::ContractMetadata, errors::EtherscanError,
-        ArtifactId,
-    },
+    etherscan::contract::{ContractMetadata, Metadata},
+    prelude::{artifacts::ContractBytecodeSome, errors::EtherscanError, ArtifactId},
     solc::utils::RuntimeOrHandle,
     types::H160,
 };
@@ -16,6 +13,7 @@ use futures::{
     future::{join_all, Future},
     stream::{FuturesUnordered, Stream, StreamExt},
     task::{Context, Poll},
+    TryFutureExt,
 };
 use std::{
     borrow::Cow,
@@ -79,7 +77,11 @@ impl EtherscanIdentifier {
             .clone()
             .map(|(address, metadata)| {
                 println!("Compiling: {} {address:?}", metadata.contract_name);
-                compile::compile_from_source(metadata)
+                let err_msg = format!(
+                    "Failed to compile contract {} from {address:?}",
+                    metadata.contract_name
+                );
+                compile::compile_from_source(metadata).map_err(move |err| err.wrap_err(err_msg))
             })
             .collect::<Vec<_>>();
 

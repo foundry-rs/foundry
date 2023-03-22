@@ -4,14 +4,14 @@ pub mod vanity;
 
 use crate::{
     cmd::{cast::wallet::vanity::VanityArgs, Cmd},
-    opts::{EthereumOpts, Wallet, WalletType},
+    opts::Wallet,
 };
 use cast::SimpleCast;
 use clap::Parser;
 use ethers::{
     core::rand::thread_rng,
     signers::{LocalWallet, Signer},
-    types::{Address, Chain, Signature},
+    types::{Address, Signature},
 };
 use eyre::Context;
 
@@ -84,8 +84,7 @@ impl WalletSubcommands {
                     let path = dunce::canonicalize(path)?;
                     if !path.is_dir() {
                         // we require path to be an existing directory
-                        eprintln!("`{}` is not a directory.", path.display());
-                        std::process::exit(1)
+                        eyre::bail!("`{}` is not a directory.", path.display());
                     }
 
                     let password = if let Some(password) = unsafe_password {
@@ -95,63 +94,33 @@ impl WalletSubcommands {
                         rpassword::prompt_password("Enter secret: ")?
                     };
 
-                    let (key, uuid) = LocalWallet::new_keystore(&path, &mut rng, password, None)?;
-                    let address = SimpleCast::to_checksum_address(&key.address());
-                    let filepath = path.join(uuid);
+                    let (wallet, uuid) =
+                        LocalWallet::new_keystore(&path, &mut rng, password, None)?;
 
-                    println!(
-                        r#"Created new encrypted keystore file: `{}`\nPublic Address of the key: {}"#,
-                        filepath.display(),
-                        address
-                    );
+                    println!("Created new encrypted keystore file: {}", path.join(uuid).display());
+                    println!("Address: {}", SimpleCast::to_checksum_address(&wallet.address()));
                 } else {
                     let wallet = LocalWallet::new(&mut rng);
-                    println!(
-                        "Successfully created new keypair.\nAddress: {}\nPrivate Key: 0x{}",
-                        SimpleCast::to_checksum_address(&wallet.address()),
-                        hex::encode(wallet.signer().to_bytes()),
-                    );
+                    println!("Successfully created new keypair.");
+                    println!("Address:     {}", SimpleCast::to_checksum_address(&wallet.address()));
+                    println!("Private key: 0x{}", hex::encode(wallet.signer().to_bytes()));
                 }
             }
             WalletSubcommands::Vanity(cmd) => {
                 cmd.run()?;
             }
             WalletSubcommands::Address { wallet, private_key_override } => {
-                let wallet = EthereumOpts {
-                    wallet: private_key_override
-                        .map(|pk| Wallet { private_key: Some(pk), ..Default::default() })
-                        .unwrap_or(wallet),
-                    rpc_url: Some("http://localhost:8545".to_string()),
-                    chain: Some(Chain::Mainnet.into()),
-                    ..Default::default()
-                }
-                .signer(0u64.into())
-                .await?
-                .unwrap();
-
-                let addr = match wallet {
-                    WalletType::Ledger(signer) => signer.address(),
-                    WalletType::Local(signer) => signer.address(),
-                    WalletType::Trezor(signer) => signer.address(),
-                };
+                let wallet = private_key_override
+                    .map(|pk| Wallet { private_key: Some(pk), ..Default::default() })
+                    .unwrap_or(wallet)
+                    .signer(0)
+                    .await?;
+                let addr = wallet.address();
                 println!("{}", SimpleCast::to_checksum_address(&addr));
             }
             WalletSubcommands::Sign { message, wallet } => {
-                let wallet = EthereumOpts {
-                    wallet,
-                    rpc_url: Some("http://localhost:8545".to_string()),
-                    chain: Some(Chain::Mainnet.into()),
-                    ..Default::default()
-                }
-                .signer(0u64.into())
-                .await?
-                .unwrap();
-
-                let sig = match wallet {
-                    WalletType::Ledger(wallet) => wallet.signer().sign_message(&message).await?,
-                    WalletType::Local(wallet) => wallet.signer().sign_message(&message).await?,
-                    WalletType::Trezor(wallet) => wallet.signer().sign_message(&message).await?,
-                };
+                let wallet = wallet.signer(0).await?;
+                let sig = wallet.sign_message(message).await?;
                 println!("Signature: 0x{sig}");
             }
             WalletSubcommands::Verify { message, signature, address } => {

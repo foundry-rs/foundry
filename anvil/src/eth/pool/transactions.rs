@@ -26,7 +26,7 @@ pub fn to_marker(nonce: u64, from: Address) -> TxMarker {
 /// Modes that determine the transaction ordering of the mempool
 ///
 /// This type controls the transaction order via the priority metric of a transaction
-#[derive(Debug, Clone, Eq, PartialEq, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Copy, serde::Serialize, serde::Deserialize, Default)]
 pub enum TransactionOrder {
     /// Keep the pool transaction transactions sorted in the order they arrive.
     ///
@@ -34,6 +34,7 @@ pub enum TransactionOrder {
     /// determined by their internal id
     Fifo,
     /// This means that it prioritizes transactions based on the fees paid to the miner.
+    #[default]
     Fees,
 }
 
@@ -60,12 +61,6 @@ impl FromStr for TransactionOrder {
             _ => return Err(format!("Unknown TransactionOrder: `{s}`")),
         };
         Ok(order)
-    }
-}
-
-impl Default for TransactionOrder {
-    fn default() -> Self {
-        TransactionOrder::Fees
     }
 }
 

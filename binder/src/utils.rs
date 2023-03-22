@@ -287,7 +287,7 @@ impl<'a> GitCheckout<'a> {
 }
 
 /// Represents a specific commit in a git repository
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub enum GitReference {
     /// Tag, like a release v0.0.1
     Tag(String),
@@ -296,6 +296,7 @@ pub enum GitReference {
     /// Specific revision.
     Rev(String),
     /// Default branch
+    #[default]
     DefaultBranch,
 }
 
@@ -340,12 +341,6 @@ impl GitReference {
             }
         };
         Ok(id)
-    }
-}
-
-impl Default for GitReference {
-    fn default() -> Self {
-        GitReference::DefaultBranch
     }
 }
 

@@ -1,0 +1,99 @@
+# This section is considered when running `cargo deny check advisories`
+# More documentation for the advisories section can be found here:
+# https://embarkstudios.github.io/cargo-deny/checks/advisories/cfg.html
+[advisories]
+vulnerability = "deny"
+unmaintained = "warn"
+yanked = "warn"
+notice = "warn"
+ignore = [
+    "RUSTSEC-2020-0071", # https://rustsec.org/advisories/RUSTSEC-2020-0071
+]
+
+# This section is considered when running `cargo deny check bans`.
+# More documentation about the 'bans' section can be found here:
+# https://embarkstudios.github.io/cargo-deny/checks/bans/cfg.html
+[bans]
+# Lint level for when multiple versions of the same crate are detected
+multiple-versions = "warn"
+# Lint level for when a crate version requirement is `*`
+wildcards = "allow"
+highlight = "all"
+# List of crates to deny
+deny = [
+    { name = "openssl" },
+]
+# Certain crates/versions that will be skipped when doing duplicate detection.
+skip = []
+# Similarly to `skip` allows you to skip certain crates during duplicate
+# detection. Unlike skip, it also includes the entire tree of transitive
+# dependencies starting at the specified crate, up to a certain depth, which is
+# by default infinite
+skip-tree = []
+
+[licenses]
+unlicensed = "deny"
+# List of explicitly allowed licenses
+# See https://spdx.org/licenses/ for list of possible licenses
+# [possible values: any SPDX 3.7 short identifier (+ optional exception)].
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "OpenSSL",
+    "Unlicense",
+    "WTFPL",
+    "BSL-1.0",
+    "0BSD",
+]
+
+# Allow 1 or more licenses on a per-crate basis, so that particular licenses
+# aren't accepted for every possible crate as with the normal allow list
+exceptions = [
+    # CC0 is a permissive license but somewhat unclear status for source code
+    # so we prefer to not have dependencies using it
+    # https://tldrlegal.com/license/creative-commons-cc0-1.0-universal
+    { allow = ["CC0-1.0"], name = "secp256k1" },
+    { allow = ["CC0-1.0"], name = "secp256k1-sys" },
+    { allow = ["CC0-1.0"], name = "tiny-keccak" },
+    { allow = ["CC0-1.0"], name = "more-asserts" },
+    { allow = ["CC0-1.0"], name = "trezor-client" },
+    { allow = ["CC0-1.0"], name = "notify" },
+    { allow = ["CC0-1.0"], name = "constant_time_eq" },
+    { allow = ["CC0-1.0"], name = "dunce" },
+
+    { allow = ["GPL-3.0"], name = "fastrlp" },
+    { allow = ["GPL-3.0"], name = "fastrlp-derive" },
+]
+#copyleft = "deny"
+
+# See note in unicode-ident's readme!
+[[licenses.clarify]]
+name = "unicode-ident"
+version = "*"
+expression = "(MIT OR Apache-2.0) AND Unicode-DFS-2016"
+license-files = [
+    { path = "LICENSE-UNICODE", hash = 0x3fb01745 }
+]
+[[licenses.clarify]]
+name = "ring"
+version = "*"
+expression = "OpenSSL"
+license-files = [
+    { path = "LICENSE", hash = 0xbd0eed23 }
+]
+
+# This section is considered when running `cargo deny check sources`.
+# More documentation about the 'sources' section can be found here:
+# https://embarkstudios.github.io/cargo-deny/checks/sources/cfg.html
+[sources]
+# Lint level for what to happen when a crate from a crate registry that is not
+# in the allow list is encountered
+unknown-registry = "warn"
+# Lint level for what to happen when a crate from a git repository that is not
+# in the allow list is encountered
+unknown-git = "allow"
