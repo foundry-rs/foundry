@@ -37,7 +37,7 @@ pub struct TransactionWithMetadata {
     pub function: Option<String>,
     #[serde(default = "default_vec_of_strings")]
     pub arguments: Option<Vec<String>>,
-    #[serde(skip_serializing)]
+    #[serde(default, skip_serializing)]
     pub rpc: Option<RpcUrl>,
     pub transaction: TypedTransaction,
     pub additional_contracts: Vec<AdditionalContract>,
