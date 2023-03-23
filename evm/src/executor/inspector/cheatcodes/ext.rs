@@ -421,6 +421,7 @@ fn parse_json(
                 "You can only coerce values or arrays, not JSON objects. The key '{key}' returns an object",
             )))
         }
+
         let final_val = if let Some(array) = values[0].as_array() {
             array.iter().map(|v| v.to_string().replace('\"', "")).collect::<Vec<String>>()
         } else {
