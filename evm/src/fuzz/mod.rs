@@ -109,6 +109,15 @@ impl<'a> FuzzedExecutor<'a> {
                 .as_ref()
                 .ok_or_else(|| TestCaseError::fail(FuzzError::EmptyChangeset))?;
 
+            // keep memory in check
+            {
+                let mut state = state.write();
+                state.enforce_limit(
+                    self.config.max_fuzz_dictionary_addresses,
+                    self.config.max_fuzz_dictionary_values,
+                );
+            }
+
             // Build fuzzer state
             collect_state_from_call(
                 &call.logs,
