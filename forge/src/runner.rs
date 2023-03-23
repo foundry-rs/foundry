@@ -225,6 +225,8 @@ impl<'a> ContractRunner<'a> {
                         traces: vec![],
                         coverage: None,
                         labeled_addresses: BTreeMap::new(),
+                        // TODO-f: get the breakpoints here
+                        pc_breakpoint: Default::default(),
                     },
                 )]
                 .into(),
@@ -259,6 +261,7 @@ impl<'a> ContractRunner<'a> {
                         traces: setup.traces,
                         coverage: None,
                         labeled_addresses: setup.labeled_addresses,
+                        pc_breakpoint: Default::default(),
                     },
                 )]
                 .into(),
@@ -417,6 +420,10 @@ impl<'a> ContractRunner<'a> {
             %gas
         );
 
+        if let Some(c) = &self.executor.inspector_config().cheatcodes {
+            dbg!(&c.breakpoints);
+        }
+
         Ok(TestResult {
             success,
             reason,
@@ -427,6 +434,7 @@ impl<'a> ContractRunner<'a> {
             traces,
             coverage,
             labeled_addresses,
+            pc_breakpoint: Default::default(),
         })
     }
 
@@ -512,6 +520,7 @@ impl<'a> ContractRunner<'a> {
                         coverage: None, // todo?
                         traces,
                         labeled_addresses: labeled_addresses.clone(),
+                        pc_breakpoint: Default::default(),
                     })
                 })
                 .collect::<Result<Vec<TestResult>>>()
@@ -568,6 +577,7 @@ impl<'a> ContractRunner<'a> {
             traces,
             coverage: result.coverage,
             labeled_addresses,
+            pc_breakpoint: Default::default(),
         })
     }
 }

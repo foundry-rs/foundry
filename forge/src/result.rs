@@ -8,7 +8,11 @@ use foundry_evm::{
     trace::Traces,
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fmt, time::Duration};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt,
+    time::Duration,
+};
 
 /// Results and duration for a set of tests included in the same test contract
 #[derive(Debug, Clone, Serialize)]
@@ -90,6 +94,9 @@ pub struct TestResult {
 
     /// Labeled addresses
     pub labeled_addresses: BTreeMap<Address, String>,
+
+    /// pc breakpoint char map
+    pub pc_breakpoint: HashMap<usize, char>,
 }
 
 impl TestResult {

@@ -70,7 +70,10 @@ impl Tui {
         identified_contracts: HashMap<Address, String>,
         known_contracts: HashMap<String, ContractBytecodeSome>,
         known_contracts_sources: HashMap<String, BTreeMap<u32, String>>,
+        pc_breakpoint: HashMap<usize, char>,
     ) -> Result<Self> {
+        dbg!(&pc_breakpoint);
+
         enable_raw_mode()?;
         let mut stdout = io::stdout();
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;

@@ -16,7 +16,7 @@ type NewSenderChanges = (CallTraceDecoder, Libraries, ArtifactContracts<Contract
 
 impl ScriptArgs {
     /// Executes the script
-    pub async fn run_script(mut self) -> eyre::Result<()> {
+    pub async fn run_script(mut self, pc_breakpoint: HashMap<usize, char>) -> eyre::Result<()> {
         trace!(target: "script", "executing script command");
 
         let (config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
@@ -85,7 +85,14 @@ impl ScriptArgs {
         let mut decoder = self.decode_traces(&script_config, &mut result, &known_contracts)?;
 
         if self.debug {
-            return self.run_debugger(&decoder, sources, result, project, highlevel_known_contracts)
+            return self.run_debugger(
+                &decoder,
+                sources,
+                result,
+                project,
+                highlevel_known_contracts,
+                pc_breakpoint,
+            )
         }
 
         if let Some((new_traces, updated_libraries, updated_contracts)) = self

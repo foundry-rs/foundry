@@ -501,6 +501,7 @@ where
 
         if let Some((_, value)) = self.breakpoints.iter_mut().find(|(_, pc)| pc.is_none()) {
             *value = Some(interpreter.program_counter());
+            dbg!(&self.breakpoints);
         }
 
         Return::Continue
