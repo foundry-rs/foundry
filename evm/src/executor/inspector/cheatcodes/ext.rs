@@ -410,6 +410,7 @@ fn parse_json(
     coerce: Option<ParamType>,
 ) -> Result<Bytes, Bytes> {
     let json = serde_json::from_str(json_str).map_err(error::encode_error)?;
+
     let values: Vec<&Value> =
         jsonpath_lib::select(&json, &canonicalize_json_key(key)).map_err(error::encode_error)?;
     // values is an array of items. Depending on the JsonPath key, they
@@ -419,6 +420,12 @@ fn parse_json(
         if values.iter().any(|value| value.is_object()) {
             return Err(error::encode_error(format!(
                 "You can only coerce values or arrays, not JSON objects. The key '{key}' returns an object",
+            )))
+        }
+
+        if values.is_empty() {
+            return Err(error::encode_error(format!(
+                "No matching value or array found for key {key}",
             )))
         }
 
