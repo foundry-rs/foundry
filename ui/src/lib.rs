@@ -59,6 +59,7 @@ pub struct Tui {
     known_contracts_sources: HashMap<String, BTreeMap<u32, String>>,
     /// A mapping of source -> (PC -> IC map for deploy code, PC -> IC map for runtime code)
     pc_ic_maps: BTreeMap<String, (PCICMap, PCICMap)>,
+    breakpoints: HashMap<char, Option<usize>>,
 }
 
 impl Tui {
@@ -70,10 +71,8 @@ impl Tui {
         identified_contracts: HashMap<Address, String>,
         known_contracts: HashMap<String, ContractBytecodeSome>,
         known_contracts_sources: HashMap<String, BTreeMap<u32, String>>,
-        pc_breakpoint: HashMap<usize, char>,
+        breakpoints: HashMap<char, Option<usize>>,
     ) -> Result<Self> {
-        dbg!(&pc_breakpoint);
-
         enable_raw_mode()?;
         let mut stdout = io::stdout();
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -113,6 +112,7 @@ impl Tui {
             known_contracts,
             known_contracts_sources,
             pc_ic_maps,
+            breakpoints,
         })
     }
 
@@ -1024,205 +1024,407 @@ impl Ui for Tui {
                 last_index = draw_memory.inner_call_index;
             }
             // Grab interrupt
-            match rx.recv()? {
-                // Key press
-                Interrupt::KeyPressed(event) => match event.code {
-                    // Exit
-                    KeyCode::Char('q') => {
-                        disable_raw_mode()?;
-                        execute!(
-                            self.terminal.backend_mut(),
-                            LeaveAlternateScreen,
-                            DisableMouseCapture
-                        )?;
-                        return Ok(TUIExitReason::CharExit)
-                    }
-                    // Move down
-                    KeyCode::Char('j') | KeyCode::Down => {
-                        // Grab number of times to do it
-                        for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
-                            if event.modifiers.contains(KeyModifiers::CONTROL) {
-                                let max_mem = (debug_call[draw_memory.inner_call_index].1
-                                    [self.current_step]
-                                    .memory
-                                    .len() /
-                                    32)
-                                .saturating_sub(1);
-                                if draw_memory.current_mem_startline < max_mem {
-                                    draw_memory.current_mem_startline += 1;
+
+            let receiver = rx.recv()?;
+
+            if let Some(c) = receiver.char_press() {
+                if self.key_buffer.ends_with('\'') {
+                    if let Some(pc) = self.breakpoints.get(&c) {
+                        let pc = pc.unwrap();
+                        // dbg!(&pc);
+
+                        let debug_steps = &debug_call[draw_memory.inner_call_index].1[..];
+                        if let Some(step) = debug_steps.iter().position(|step| step.pc >= pc) {
+                            // dbg!(&step);
+                            self.current_step = step;
+                        }
+
+                        self.key_buffer.clear();
+                    } else if let Interrupt::KeyPressed(event) = receiver {
+                        match event.code {
+                            // Exit
+                            KeyCode::Char('q') => {
+                                disable_raw_mode()?;
+                                execute!(
+                                    self.terminal.backend_mut(),
+                                    LeaveAlternateScreen,
+                                    DisableMouseCapture
+                                )?;
+                                return Ok(TUIExitReason::CharExit)
+                            }
+                            // Move down
+                            KeyCode::Char('j') | KeyCode::Down => {
+                                // Grab number of times to do it
+                                for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
+                                    if event.modifiers.contains(KeyModifiers::CONTROL) {
+                                        let max_mem = (debug_call[draw_memory.inner_call_index].1
+                                            [self.current_step]
+                                            .memory
+                                            .len() /
+                                            32)
+                                        .saturating_sub(1);
+                                        if draw_memory.current_mem_startline < max_mem {
+                                            draw_memory.current_mem_startline += 1;
+                                        }
+                                    } else if self.current_step < opcode_list.len() - 1 {
+                                        self.current_step += 1;
+                                    } else if draw_memory.inner_call_index < debug_call.len() - 1 {
+                                        draw_memory.inner_call_index += 1;
+                                        self.current_step = 0;
+                                    }
                                 }
-                            } else if self.current_step < opcode_list.len() - 1 {
-                                self.current_step += 1;
-                            } else if draw_memory.inner_call_index < debug_call.len() - 1 {
+                                self.key_buffer.clear();
+                            }
+                            KeyCode::Char('J') => {
+                                for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
+                                    let max_stack = debug_call[draw_memory.inner_call_index].1
+                                        [self.current_step]
+                                        .stack
+                                        .len()
+                                        .saturating_sub(1);
+                                    if draw_memory.current_stack_startline < max_stack {
+                                        draw_memory.current_stack_startline += 1;
+                                    }
+                                }
+                                self.key_buffer.clear();
+                            }
+                            // Move up
+                            KeyCode::Char('k') | KeyCode::Up => {
+                                for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
+                                    if event.modifiers.contains(KeyModifiers::CONTROL) {
+                                        draw_memory.current_mem_startline =
+                                            draw_memory.current_mem_startline.saturating_sub(1);
+                                    } else if self.current_step > 0 {
+                                        self.current_step -= 1;
+                                    } else if draw_memory.inner_call_index > 0 {
+                                        draw_memory.inner_call_index -= 1;
+                                        self.current_step =
+                                            debug_call[draw_memory.inner_call_index].1.len() - 1;
+                                    }
+                                }
+                                self.key_buffer.clear();
+                            }
+                            KeyCode::Char('K') => {
+                                for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
+                                    draw_memory.current_stack_startline =
+                                        draw_memory.current_stack_startline.saturating_sub(1);
+                                }
+                                self.key_buffer.clear();
+                            }
+                            // Go to top of file
+                            KeyCode::Char('g') => {
+                                draw_memory.inner_call_index = 0;
+                                self.current_step = 0;
+                                self.key_buffer.clear();
+                            }
+                            // Go to bottom of file
+                            KeyCode::Char('G') => {
+                                draw_memory.inner_call_index = debug_call.len() - 1;
+                                self.current_step =
+                                    debug_call[draw_memory.inner_call_index].1.len() - 1;
+                                self.key_buffer.clear();
+                            }
+                            // Go to previous call
+                            KeyCode::Char('c') => {
+                                draw_memory.inner_call_index =
+                                    draw_memory.inner_call_index.saturating_sub(1);
+                                self.current_step =
+                                    debug_call[draw_memory.inner_call_index].1.len() - 1;
+                                self.key_buffer.clear();
+                            }
+                            // Go to next call
+                            KeyCode::Char('C') => {
+                                if debug_call.len() > draw_memory.inner_call_index + 1 {
+                                    draw_memory.inner_call_index += 1;
+                                    self.current_step = 0;
+                                }
+                                self.key_buffer.clear();
+                            }
+                            // Step forward
+                            KeyCode::Char('s') => {
+                                for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
+                                    let remaining_ops =
+                                        opcode_list[self.current_step..].to_vec().clone();
+                                    self.current_step += remaining_ops
+                                        .iter()
+                                        .enumerate()
+                                        .find_map(|(i, op)| {
+                                            if i < remaining_ops.len() - 1 {
+                                                match (
+                                                    op.contains("JUMP") && op != "JUMPDEST",
+                                                    &*remaining_ops[i + 1],
+                                                ) {
+                                                    (true, "JUMPDEST") => Some(i + 1),
+                                                    _ => None,
+                                                }
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .unwrap_or(opcode_list.len() - 1);
+                                    if self.current_step > opcode_list.len() {
+                                        self.current_step = opcode_list.len() - 1
+                                    };
+                                }
+                                self.key_buffer.clear();
+                            }
+                            // Step backwards
+                            KeyCode::Char('a') => {
+                                for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
+                                    let prev_ops =
+                                        opcode_list[..self.current_step].to_vec().clone();
+                                    self.current_step = prev_ops
+                                        .iter()
+                                        .enumerate()
+                                        .rev()
+                                        .find_map(|(i, op)| {
+                                            if i > 0 {
+                                                match (
+                                                    prev_ops[i - 1].contains("JUMP") &&
+                                                        prev_ops[i - 1] != "JUMPDEST",
+                                                    &**op,
+                                                ) {
+                                                    (true, "JUMPDEST") => Some(i - 1),
+                                                    _ => None,
+                                                }
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .unwrap_or_default();
+                                }
+                                self.key_buffer.clear();
+                            }
+                            // toggle stack labels
+                            KeyCode::Char('t') => {
+                                stack_labels = !stack_labels;
+                            }
+                            // toggle memory utf8 decoding
+                            KeyCode::Char('m') => {
+                                mem_utf = !mem_utf;
+                            }
+                            KeyCode::Char(other) => match other {
+                                '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' |
+                                '\'' => {
+                                    self.key_buffer.push(other);
+                                }
+                                _ => {
+                                    // Invalid key, clear buffer
+                                    self.key_buffer.clear();
+                                }
+                            },
+                            _ => {
+                                self.key_buffer.clear();
+                            }
+                        }
+                    }
+                } else if let Interrupt::KeyPressed(event) = receiver {
+                    match event.code {
+                        // Exit
+                        KeyCode::Char('q') => {
+                            disable_raw_mode()?;
+                            execute!(
+                                self.terminal.backend_mut(),
+                                LeaveAlternateScreen,
+                                DisableMouseCapture
+                            )?;
+                            return Ok(TUIExitReason::CharExit)
+                        }
+                        // Move down
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            // Grab number of times to do it
+                            for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
+                                if event.modifiers.contains(KeyModifiers::CONTROL) {
+                                    let max_mem = (debug_call[draw_memory.inner_call_index].1
+                                        [self.current_step]
+                                        .memory
+                                        .len() /
+                                        32)
+                                    .saturating_sub(1);
+                                    if draw_memory.current_mem_startline < max_mem {
+                                        draw_memory.current_mem_startline += 1;
+                                    }
+                                } else if self.current_step < opcode_list.len() - 1 {
+                                    self.current_step += 1;
+                                } else if draw_memory.inner_call_index < debug_call.len() - 1 {
+                                    draw_memory.inner_call_index += 1;
+                                    self.current_step = 0;
+                                }
+                            }
+                            self.key_buffer.clear();
+                        }
+                        KeyCode::Char('J') => {
+                            for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
+                                let max_stack = debug_call[draw_memory.inner_call_index].1
+                                    [self.current_step]
+                                    .stack
+                                    .len()
+                                    .saturating_sub(1);
+                                if draw_memory.current_stack_startline < max_stack {
+                                    draw_memory.current_stack_startline += 1;
+                                }
+                            }
+                            self.key_buffer.clear();
+                        }
+                        // Move up
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
+                                if event.modifiers.contains(KeyModifiers::CONTROL) {
+                                    draw_memory.current_mem_startline =
+                                        draw_memory.current_mem_startline.saturating_sub(1);
+                                } else if self.current_step > 0 {
+                                    self.current_step -= 1;
+                                } else if draw_memory.inner_call_index > 0 {
+                                    draw_memory.inner_call_index -= 1;
+                                    self.current_step =
+                                        debug_call[draw_memory.inner_call_index].1.len() - 1;
+                                }
+                            }
+                            self.key_buffer.clear();
+                        }
+                        KeyCode::Char('K') => {
+                            for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
+                                draw_memory.current_stack_startline =
+                                    draw_memory.current_stack_startline.saturating_sub(1);
+                            }
+                            self.key_buffer.clear();
+                        }
+                        // Go to top of file
+                        KeyCode::Char('g') => {
+                            draw_memory.inner_call_index = 0;
+                            self.current_step = 0;
+                            self.key_buffer.clear();
+                        }
+                        // Go to bottom of file
+                        KeyCode::Char('G') => {
+                            draw_memory.inner_call_index = debug_call.len() - 1;
+                            self.current_step =
+                                debug_call[draw_memory.inner_call_index].1.len() - 1;
+                            self.key_buffer.clear();
+                        }
+                        // Go to previous call
+                        KeyCode::Char('c') => {
+                            draw_memory.inner_call_index =
+                                draw_memory.inner_call_index.saturating_sub(1);
+                            self.current_step =
+                                debug_call[draw_memory.inner_call_index].1.len() - 1;
+                            self.key_buffer.clear();
+                        }
+                        // Go to next call
+                        KeyCode::Char('C') => {
+                            if debug_call.len() > draw_memory.inner_call_index + 1 {
                                 draw_memory.inner_call_index += 1;
                                 self.current_step = 0;
                             }
+                            self.key_buffer.clear();
                         }
-                        self.key_buffer.clear();
-                    }
-                    KeyCode::Char('J') => {
-                        for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
-                            let max_stack = debug_call[draw_memory.inner_call_index].1
-                                [self.current_step]
-                                .stack
-                                .len()
-                                .saturating_sub(1);
-                            if draw_memory.current_stack_startline < max_stack {
-                                draw_memory.current_stack_startline += 1;
+                        // Step forward
+                        KeyCode::Char('s') => {
+                            for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
+                                let remaining_ops =
+                                    opcode_list[self.current_step..].to_vec().clone();
+                                self.current_step += remaining_ops
+                                    .iter()
+                                    .enumerate()
+                                    .find_map(|(i, op)| {
+                                        if i < remaining_ops.len() - 1 {
+                                            match (
+                                                op.contains("JUMP") && op != "JUMPDEST",
+                                                &*remaining_ops[i + 1],
+                                            ) {
+                                                (true, "JUMPDEST") => Some(i + 1),
+                                                _ => None,
+                                            }
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .unwrap_or(opcode_list.len() - 1);
+                                if self.current_step > opcode_list.len() {
+                                    self.current_step = opcode_list.len() - 1
+                                };
                             }
+                            self.key_buffer.clear();
                         }
-                        self.key_buffer.clear();
+                        // Step backwards
+                        KeyCode::Char('a') => {
+                            for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
+                                let prev_ops = opcode_list[..self.current_step].to_vec().clone();
+                                self.current_step = prev_ops
+                                    .iter()
+                                    .enumerate()
+                                    .rev()
+                                    .find_map(|(i, op)| {
+                                        if i > 0 {
+                                            match (
+                                                prev_ops[i - 1].contains("JUMP") &&
+                                                    prev_ops[i - 1] != "JUMPDEST",
+                                                &**op,
+                                            ) {
+                                                (true, "JUMPDEST") => Some(i - 1),
+                                                _ => None,
+                                            }
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .unwrap_or_default();
+                            }
+                            self.key_buffer.clear();
+                        }
+                        // toggle stack labels
+                        KeyCode::Char('t') => {
+                            stack_labels = !stack_labels;
+                        }
+                        // toggle memory utf8 decoding
+                        KeyCode::Char('m') => {
+                            mem_utf = !mem_utf;
+                        }
+                        KeyCode::Char(other) => match other {
+                            '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '\'' => {
+                                self.key_buffer.push(other);
+                            }
+                            _ => {
+                                // Invalid key, clear buffer
+                                self.key_buffer.clear();
+                            }
+                        },
+                        _ => {
+                            self.key_buffer.clear();
+                        }
                     }
-                    // Move up
-                    KeyCode::Char('k') | KeyCode::Up => {
-                        for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
-                            if event.modifiers.contains(KeyModifiers::CONTROL) {
-                                draw_memory.current_mem_startline =
-                                    draw_memory.current_mem_startline.saturating_sub(1);
-                            } else if self.current_step > 0 {
+                }
+            } else {
+                match receiver {
+                    Interrupt::MouseEvent(event) => match event.kind {
+                        MouseEventKind::ScrollUp => {
+                            if self.current_step > 0 {
                                 self.current_step -= 1;
                             } else if draw_memory.inner_call_index > 0 {
                                 draw_memory.inner_call_index -= 1;
+                                draw_memory.current_mem_startline = 0;
+                                draw_memory.current_stack_startline = 0;
                                 self.current_step =
                                     debug_call[draw_memory.inner_call_index].1.len() - 1;
                             }
                         }
-                        self.key_buffer.clear();
-                    }
-                    KeyCode::Char('K') => {
-                        for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
-                            draw_memory.current_stack_startline =
-                                draw_memory.current_stack_startline.saturating_sub(1);
+                        MouseEventKind::ScrollDown => {
+                            if self.current_step < opcode_list.len() - 1 {
+                                self.current_step += 1;
+                            } else if draw_memory.inner_call_index < debug_call.len() - 1 {
+                                draw_memory.inner_call_index += 1;
+                                draw_memory.current_mem_startline = 0;
+                                draw_memory.current_stack_startline = 0;
+                                self.current_step = 0;
+                            }
                         }
-                        self.key_buffer.clear();
-                    }
-                    // Go to top of file
-                    KeyCode::Char('g') => {
-                        draw_memory.inner_call_index = 0;
-                        self.current_step = 0;
-                        self.key_buffer.clear();
-                    }
-                    // Go to bottom of file
-                    KeyCode::Char('G') => {
-                        draw_memory.inner_call_index = debug_call.len() - 1;
-                        self.current_step = debug_call[draw_memory.inner_call_index].1.len() - 1;
-                        self.key_buffer.clear();
-                    }
-                    // Go to previous call
-                    KeyCode::Char('c') => {
-                        draw_memory.inner_call_index =
-                            draw_memory.inner_call_index.saturating_sub(1);
-                        self.current_step = debug_call[draw_memory.inner_call_index].1.len() - 1;
-                        self.key_buffer.clear();
-                    }
-                    // Go to next call
-                    KeyCode::Char('C') => {
-                        if debug_call.len() > draw_memory.inner_call_index + 1 {
-                            draw_memory.inner_call_index += 1;
-                            self.current_step = 0;
-                        }
-                        self.key_buffer.clear();
-                    }
-                    // Step forward
-                    KeyCode::Char('s') => {
-                        for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
-                            let remaining_ops = opcode_list[self.current_step..].to_vec().clone();
-                            self.current_step += remaining_ops
-                                .iter()
-                                .enumerate()
-                                .find_map(|(i, op)| {
-                                    if i < remaining_ops.len() - 1 {
-                                        match (
-                                            op.contains("JUMP") && op != "JUMPDEST",
-                                            &*remaining_ops[i + 1],
-                                        ) {
-                                            (true, "JUMPDEST") => Some(i + 1),
-                                            _ => None,
-                                        }
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .unwrap_or(opcode_list.len() - 1);
-                            if self.current_step > opcode_list.len() {
-                                self.current_step = opcode_list.len() - 1
-                            };
-                        }
-                        self.key_buffer.clear();
-                    }
-                    // Step backwards
-                    KeyCode::Char('a') => {
-                        for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
-                            let prev_ops = opcode_list[..self.current_step].to_vec().clone();
-                            self.current_step = prev_ops
-                                .iter()
-                                .enumerate()
-                                .rev()
-                                .find_map(|(i, op)| {
-                                    if i > 0 {
-                                        match (
-                                            prev_ops[i - 1].contains("JUMP") &&
-                                                prev_ops[i - 1] != "JUMPDEST",
-                                            &**op,
-                                        ) {
-                                            (true, "JUMPDEST") => Some(i - 1),
-                                            _ => None,
-                                        }
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .unwrap_or_default();
-                        }
-                        self.key_buffer.clear();
-                    }
-                    // toggle stack labels
-                    KeyCode::Char('t') => {
-                        stack_labels = !stack_labels;
-                    }
-                    // toggle memory utf8 decoding
-                    KeyCode::Char('m') => {
-                        mem_utf = !mem_utf;
-                    }
-                    KeyCode::Char(other) => match other {
-                        '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' => {
-                            self.key_buffer.push(other);
-                        }
-                        _ => {
-                            // Invalid key, clear buffer
-                            self.key_buffer.clear();
-                        }
+                        _ => {}
                     },
-                    _ => {
-                        self.key_buffer.clear();
-                    }
-                },
-                Interrupt::MouseEvent(event) => match event.kind {
-                    MouseEventKind::ScrollUp => {
-                        if self.current_step > 0 {
-                            self.current_step -= 1;
-                        } else if draw_memory.inner_call_index > 0 {
-                            draw_memory.inner_call_index -= 1;
-                            draw_memory.current_mem_startline = 0;
-                            draw_memory.current_stack_startline = 0;
-                            self.current_step =
-                                debug_call[draw_memory.inner_call_index].1.len() - 1;
-                        }
-                    }
-                    MouseEventKind::ScrollDown => {
-                        if self.current_step < opcode_list.len() - 1 {
-                            self.current_step += 1;
-                        } else if draw_memory.inner_call_index < debug_call.len() - 1 {
-                            draw_memory.inner_call_index += 1;
-                            draw_memory.current_mem_startline = 0;
-                            draw_memory.current_stack_startline = 0;
-                            self.current_step = 0;
-                        }
-                    }
-                    _ => {}
-                },
-                Interrupt::IntervalElapsed => {}
+                    Interrupt::IntervalElapsed => {}
+                    _ => (),
+                }
             }
+
             // Draw
             let current_step = self.current_step;
             self.terminal.draw(|f| {
@@ -1251,6 +1453,24 @@ enum Interrupt {
     KeyPressed(KeyEvent),
     MouseEvent(MouseEvent),
     IntervalElapsed,
+}
+
+impl Interrupt {
+    fn char_press(&self) -> Option<char> {
+        if let Self::KeyPressed(event) = &self {
+            if let KeyCode::Char(c) = event.code {
+                if c.is_alphabetic() || c == '\'' {
+                    Some(c)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
 }
 
 /// This is currently used to remember last scroll

@@ -41,7 +41,7 @@ pub struct DebugArgs {
 }
 
 impl DebugArgs {
-    pub async fn debug(self, pc_breakpoint: HashMap<usize, char>) -> eyre::Result<()> {
+    pub async fn debug(self, breakpoints: HashMap<char, Option<usize>>) -> eyre::Result<()> {
         let script = ScriptArgs {
             path: self.path.to_str().expect("Invalid path string.").to_string(),
             args: self.args,
@@ -54,6 +54,6 @@ impl DebugArgs {
             retry: RETRY_VERIFY_ON_CREATE,
             ..Default::default()
         };
-        script.run_script(pc_breakpoint).await
+        script.run_script(breakpoints).await
     }
 }

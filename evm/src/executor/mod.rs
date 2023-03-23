@@ -22,7 +22,7 @@ use revm::{
 };
 /// Reexport commonly used revm types
 pub use revm::{db::DatabaseRef, Env, SpecId};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, hash::Hash};
 use tracing::trace;
 
 /// ABIs used internally in the executor
@@ -671,6 +671,8 @@ pub struct CallResult<D: Detokenize> {
     pub script_wallets: Vec<LocalWallet>,
     /// The `revm::Env` after the call
     pub env: Env,
+    /// breakpoints
+    pub breakpoints: std::collections::HashMap<char, Option<usize>>,
 }
 
 /// The result of a raw call.
@@ -828,6 +830,12 @@ fn convert_call_result<D: Detokenize>(
         ..
     } = call_result;
 
+    let breakpoints = if let Some(c) = call_result.cheatcodes {
+        c.breakpoints
+    } else {
+        std::collections::HashMap::new()
+    };
+
     match status {
         return_ok!() => {
             let result = decode_function_data(func, result, false)?;
@@ -846,6 +854,7 @@ fn convert_call_result<D: Detokenize>(
                 state_changeset,
                 script_wallets,
                 env,
+                breakpoints,
             })
         }
         _ => {

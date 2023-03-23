@@ -430,7 +430,7 @@ impl ScriptArgs {
         result: ScriptResult,
         project: Project,
         highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
-        pc_breakpoint: HashMap<usize, char>,
+        breakpoints: HashMap<char, Option<usize>>,
     ) -> eyre::Result<()> {
         trace!(target: "script", "debugging script");
 
@@ -459,7 +459,7 @@ impl ScriptArgs {
                 .into_iter()
                 .map(|(id, _)| (id.name, sources.clone()))
                 .collect(),
-            pc_breakpoint,
+            breakpoints,
         )?;
         match tui.start().expect("Failed to start tui") {
             TUIExitReason::CharExit => Ok(()),
