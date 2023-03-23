@@ -22,7 +22,7 @@ use revm::{
 };
 /// Reexport commonly used revm types
 pub use revm::{db::DatabaseRef, Env, SpecId};
-use std::{collections::BTreeMap, hash::Hash};
+use std::collections::BTreeMap;
 use tracing::trace;
 
 /// ABIs used internally in the executor
@@ -672,7 +672,7 @@ pub struct CallResult<D: Detokenize> {
     /// The `revm::Env` after the call
     pub env: Env,
     /// breakpoints
-    pub breakpoints: std::collections::HashMap<char, Option<usize>>,
+    pub breakpoints: std::collections::HashMap<char, usize>,
 }
 
 /// The result of a raw call.

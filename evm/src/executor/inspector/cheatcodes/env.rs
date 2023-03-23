@@ -208,8 +208,8 @@ fn add_breakpoint(state: &mut Cheatcodes, inner: &str) -> Result<Bytes, Bytes> {
         return Err("Only alphabetic chars are accepted".encode().into())
     }
 
-    // add a breakpoint that the interpreter will complete with the current pc
-    state.breakpoints.insert(point, None);
+    // add a breakpoint from the interpreter
+    state.breakpoints.insert(point, state.pc);
 
     Ok(Bytes::new())
 }

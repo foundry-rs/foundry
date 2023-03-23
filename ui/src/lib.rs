@@ -59,7 +59,7 @@ pub struct Tui {
     known_contracts_sources: HashMap<String, BTreeMap<u32, String>>,
     /// A mapping of source -> (PC -> IC map for deploy code, PC -> IC map for runtime code)
     pc_ic_maps: BTreeMap<String, (PCICMap, PCICMap)>,
-    breakpoints: HashMap<char, Option<usize>>,
+    breakpoints: HashMap<char, usize>,
 }
 
 impl Tui {
@@ -71,7 +71,7 @@ impl Tui {
         identified_contracts: HashMap<Address, String>,
         known_contracts: HashMap<String, ContractBytecodeSome>,
         known_contracts_sources: HashMap<String, BTreeMap<u32, String>>,
-        breakpoints: HashMap<char, Option<usize>>,
+        breakpoints: HashMap<char, usize>,
     ) -> Result<Self> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
@@ -413,17 +413,19 @@ impl Tui {
                                 if let Some(source) = source_code.get(&source_idx) {
                                     let offset = sourcemap[*ic].offset;
                                     let len = sourcemap[*ic].length;
+                                    let max = source.len();
 
                                     // split source into before, relevant, and after chunks
                                     // split by line as well to do some formatting stuff
-                                    let mut before = source[..offset]
+                                    let mut before = source[..std::cmp::min(offset, max)]
                                         .split_inclusive('\n')
                                         .collect::<Vec<&str>>();
-                                    let actual = source[offset..offset + len]
+                                    let actual = source[std::cmp::min(offset, max)..
+                                        std::cmp::min(offset + len, max)]
                                         .split_inclusive('\n')
                                         .map(|s| s.to_string())
                                         .collect::<Vec<String>>();
-                                    let mut after = source[offset + len..]
+                                    let mut after = source[std::cmp::min(offset + len, max)..]
                                         .split_inclusive('\n')
                                         .collect::<VecDeque<&str>>();
 
@@ -1011,6 +1013,8 @@ impl Ui for Tui {
             debug_call[0].1.iter().map(|step| step.pretty_opcode()).collect();
         let mut last_index = 0;
 
+        // dbg!(&self.breakpoints);
+
         let mut stack_labels = false;
         let mut mem_utf = false;
         // UI thread that manages drawing
@@ -1030,194 +1034,13 @@ impl Ui for Tui {
             if let Some(c) = receiver.char_press() {
                 if self.key_buffer.ends_with('\'') {
                     if let Some(pc) = self.breakpoints.get(&c) {
-                        let pc = pc.unwrap();
-                        // dbg!(&pc);
-
                         let debug_steps = &debug_call[draw_memory.inner_call_index].1[..];
-                        if let Some(step) = debug_steps.iter().position(|step| step.pc >= pc) {
-                            // dbg!(&step);
+                        if let Some(step) = debug_steps.iter().position(|step| step.pc == *pc) {
                             self.current_step = step;
                         }
+                    } // else, this breakpoint was not stored
 
-                        self.key_buffer.clear();
-                    } else if let Interrupt::KeyPressed(event) = receiver {
-                        match event.code {
-                            // Exit
-                            KeyCode::Char('q') => {
-                                disable_raw_mode()?;
-                                execute!(
-                                    self.terminal.backend_mut(),
-                                    LeaveAlternateScreen,
-                                    DisableMouseCapture
-                                )?;
-                                return Ok(TUIExitReason::CharExit)
-                            }
-                            // Move down
-                            KeyCode::Char('j') | KeyCode::Down => {
-                                // Grab number of times to do it
-                                for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
-                                    if event.modifiers.contains(KeyModifiers::CONTROL) {
-                                        let max_mem = (debug_call[draw_memory.inner_call_index].1
-                                            [self.current_step]
-                                            .memory
-                                            .len() /
-                                            32)
-                                        .saturating_sub(1);
-                                        if draw_memory.current_mem_startline < max_mem {
-                                            draw_memory.current_mem_startline += 1;
-                                        }
-                                    } else if self.current_step < opcode_list.len() - 1 {
-                                        self.current_step += 1;
-                                    } else if draw_memory.inner_call_index < debug_call.len() - 1 {
-                                        draw_memory.inner_call_index += 1;
-                                        self.current_step = 0;
-                                    }
-                                }
-                                self.key_buffer.clear();
-                            }
-                            KeyCode::Char('J') => {
-                                for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
-                                    let max_stack = debug_call[draw_memory.inner_call_index].1
-                                        [self.current_step]
-                                        .stack
-                                        .len()
-                                        .saturating_sub(1);
-                                    if draw_memory.current_stack_startline < max_stack {
-                                        draw_memory.current_stack_startline += 1;
-                                    }
-                                }
-                                self.key_buffer.clear();
-                            }
-                            // Move up
-                            KeyCode::Char('k') | KeyCode::Up => {
-                                for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
-                                    if event.modifiers.contains(KeyModifiers::CONTROL) {
-                                        draw_memory.current_mem_startline =
-                                            draw_memory.current_mem_startline.saturating_sub(1);
-                                    } else if self.current_step > 0 {
-                                        self.current_step -= 1;
-                                    } else if draw_memory.inner_call_index > 0 {
-                                        draw_memory.inner_call_index -= 1;
-                                        self.current_step =
-                                            debug_call[draw_memory.inner_call_index].1.len() - 1;
-                                    }
-                                }
-                                self.key_buffer.clear();
-                            }
-                            KeyCode::Char('K') => {
-                                for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
-                                    draw_memory.current_stack_startline =
-                                        draw_memory.current_stack_startline.saturating_sub(1);
-                                }
-                                self.key_buffer.clear();
-                            }
-                            // Go to top of file
-                            KeyCode::Char('g') => {
-                                draw_memory.inner_call_index = 0;
-                                self.current_step = 0;
-                                self.key_buffer.clear();
-                            }
-                            // Go to bottom of file
-                            KeyCode::Char('G') => {
-                                draw_memory.inner_call_index = debug_call.len() - 1;
-                                self.current_step =
-                                    debug_call[draw_memory.inner_call_index].1.len() - 1;
-                                self.key_buffer.clear();
-                            }
-                            // Go to previous call
-                            KeyCode::Char('c') => {
-                                draw_memory.inner_call_index =
-                                    draw_memory.inner_call_index.saturating_sub(1);
-                                self.current_step =
-                                    debug_call[draw_memory.inner_call_index].1.len() - 1;
-                                self.key_buffer.clear();
-                            }
-                            // Go to next call
-                            KeyCode::Char('C') => {
-                                if debug_call.len() > draw_memory.inner_call_index + 1 {
-                                    draw_memory.inner_call_index += 1;
-                                    self.current_step = 0;
-                                }
-                                self.key_buffer.clear();
-                            }
-                            // Step forward
-                            KeyCode::Char('s') => {
-                                for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
-                                    let remaining_ops =
-                                        opcode_list[self.current_step..].to_vec().clone();
-                                    self.current_step += remaining_ops
-                                        .iter()
-                                        .enumerate()
-                                        .find_map(|(i, op)| {
-                                            if i < remaining_ops.len() - 1 {
-                                                match (
-                                                    op.contains("JUMP") && op != "JUMPDEST",
-                                                    &*remaining_ops[i + 1],
-                                                ) {
-                                                    (true, "JUMPDEST") => Some(i + 1),
-                                                    _ => None,
-                                                }
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                        .unwrap_or(opcode_list.len() - 1);
-                                    if self.current_step > opcode_list.len() {
-                                        self.current_step = opcode_list.len() - 1
-                                    };
-                                }
-                                self.key_buffer.clear();
-                            }
-                            // Step backwards
-                            KeyCode::Char('a') => {
-                                for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
-                                    let prev_ops =
-                                        opcode_list[..self.current_step].to_vec().clone();
-                                    self.current_step = prev_ops
-                                        .iter()
-                                        .enumerate()
-                                        .rev()
-                                        .find_map(|(i, op)| {
-                                            if i > 0 {
-                                                match (
-                                                    prev_ops[i - 1].contains("JUMP") &&
-                                                        prev_ops[i - 1] != "JUMPDEST",
-                                                    &**op,
-                                                ) {
-                                                    (true, "JUMPDEST") => Some(i - 1),
-                                                    _ => None,
-                                                }
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                        .unwrap_or_default();
-                                }
-                                self.key_buffer.clear();
-                            }
-                            // toggle stack labels
-                            KeyCode::Char('t') => {
-                                stack_labels = !stack_labels;
-                            }
-                            // toggle memory utf8 decoding
-                            KeyCode::Char('m') => {
-                                mem_utf = !mem_utf;
-                            }
-                            KeyCode::Char(other) => match other {
-                                '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' |
-                                '\'' => {
-                                    self.key_buffer.push(other);
-                                }
-                                _ => {
-                                    // Invalid key, clear buffer
-                                    self.key_buffer.clear();
-                                }
-                            },
-                            _ => {
-                                self.key_buffer.clear();
-                            }
-                        }
-                    }
+                    self.key_buffer.clear();
                 } else if let Interrupt::KeyPressed(event) = receiver {
                     match event.code {
                         // Exit
@@ -1459,7 +1282,7 @@ impl Interrupt {
     fn char_press(&self) -> Option<char> {
         if let Self::KeyPressed(event) = &self {
             if let KeyCode::Char(c) = event.code {
-                if c.is_alphabetic() || c == '\'' {
+                if c.is_alphanumeric() || c == '\'' {
                     Some(c)
                 } else {
                     None

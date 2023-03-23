@@ -41,7 +41,7 @@ pub struct DebugArgs {
 }
 
 impl DebugArgs {
-    pub async fn debug(self, breakpoints: HashMap<char, Option<usize>>) -> eyre::Result<()> {
+    pub async fn debug(self, breakpoints: HashMap<char, usize>) -> eyre::Result<()> {
         let script = ScriptArgs {
             path: self.path.to_str().expect("Invalid path string.").to_string(),
             args: self.args,

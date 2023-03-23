@@ -27,7 +27,7 @@ use revm::{
 };
 use serde_json::Value;
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
     fs::File,
     io::BufReader,
     ops::Range,
@@ -163,9 +163,11 @@ pub struct Cheatcodes {
     /// CREATE / CREATE2 frames. This is needed to make gas meter pausing work correctly when
     /// paused and creating new contracts.
     pub gas_metering_create: Option<Option<revm::Gas>>,
+    /// current program counter
+    pub pc: usize,
     /// Breakpoints supplied by the `vm.breakpoint("<char>")` cheatcode
     /// char -> pc
-    pub breakpoints: HashMap<char, Option<usize>>,
+    pub breakpoints: HashMap<char, usize>,
 }
 
 impl Cheatcodes {
@@ -289,6 +291,8 @@ where
         data: &mut EVMData<'_, DB>,
         _: bool,
     ) -> Return {
+        self.pc = interpreter.program_counter();
+
         // reset gas if gas metering is turned off
         match self.gas_metering {
             Some(None) => {
@@ -497,11 +501,6 @@ where
                 (RETURN, 0, 1, false),
                 (REVERT, 0, 1, false)
             ])
-        }
-
-        // complete the map
-        if let Some((_, value)) = self.breakpoints.iter_mut().find(|(_, pc)| pc.is_none()) {
-            *value = Some(interpreter.program_counter());
         }
 
         Return::Continue

@@ -430,7 +430,7 @@ impl ScriptArgs {
         result: ScriptResult,
         project: Project,
         highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
-        breakpoints: HashMap<char, Option<usize>>,
+        breakpoints: HashMap<char, usize>,
     ) -> eyre::Result<()> {
         trace!(target: "script", "debugging script");
 
