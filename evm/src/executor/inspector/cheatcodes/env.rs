@@ -356,6 +356,10 @@ pub fn apply<DB: DatabaseExt>(
             data.env.cfg.chain_id = inner.0;
             Bytes::new()
         }
+        HEVMCalls::GasPrice(inner) => {
+            data.env.tx.gas_price = inner.0;
+            Bytes::new()
+        }
         HEVMCalls::Broadcast0(_) => {
             correct_sender_nonce(
                 data.env.tx.caller,
