@@ -19,6 +19,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
+use tracing::{instrument, trace};
 
 pub mod multi_wallet;
 use crate::opts::error::PrivateKeyError;
@@ -182,7 +183,10 @@ impl Wallet {
     }
 
     /// Returns a [Signer] corresponding to the provided private key, mnemonic or hardware signer.
+    #[instrument(skip(self), level = "trace")]
     pub async fn signer(&self, chain_id: u64) -> eyre::Result<WalletSigner> {
+        trace!("start finding signer");
+
         if self.ledger {
             let derivation = match self.hd_path.as_ref() {
                 Some(hd_path) => LedgerHDPath::Other(hd_path.clone()),
@@ -213,11 +217,16 @@ impl Wallet {
 
             Ok(WalletSigner::Aws(aws_signer))
         } else {
+            trace!("finding local key");
+
             let maybe_local = self
                 .private_key()
-                .or_else(|_| self.interactive())
-                .or_else(|_| self.mnemonic())
-                .or_else(|_| self.keystore())?;
+                .transpose()
+                .or_else(|| self.interactive().transpose())
+                .or_else(|| self.mnemonic().transpose())
+                .or_else(|| self.keystore().transpose())
+                .transpose()?;
+
             let local = maybe_local
                 .ok_or_else(|| eyre::eyre!("\
                     Error accessing local wallet. Did you set a private key, mnemonic or keystore?\n\

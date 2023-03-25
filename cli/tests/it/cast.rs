@@ -66,6 +66,25 @@ casttest!(new_wallet_keystore_with_password, |_: TestProject, mut cmd: TestComma
     assert!(out.contains("Address"));
 });
 
+// tests that we can get the address of a keystore file
+casttest!(wallet_address_keystore_with_password_file, |_: TestProject, mut cmd: TestCommand| {
+    let keystore_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/keystore");
+
+    cmd.args([
+        "wallet",
+        "address",
+        "--keystore",
+        keystore_dir
+            .join("UTC--2022-12-20T10-30-43.591916000Z--ec554aeafe75601aaab43bd4621a22284db566c2")
+            .to_str()
+            .unwrap(),
+        "--password-file",
+        keystore_dir.join("password-ec554").to_str().unwrap(),
+    ]);
+    let out = cmd.stdout_lossy();
+    assert!(out.contains("0xeC554aeAFE75601AaAb43Bd4621A22284dB566C2"));
+});
+
 // tests that `cast estimate` is working correctly.
 casttest!(estimate_function_gas, |_: TestProject, mut cmd: TestCommand| {
     let eth_rpc_url = next_http_rpc_endpoint();
