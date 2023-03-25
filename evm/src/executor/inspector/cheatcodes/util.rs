@@ -15,7 +15,13 @@ use ethers::{
         k256::{ecdsa::SigningKey, elliptic_curve::bigint::Encoding, Secp256k1},
         LocalWallet, Signer, H160, *,
     },
-    signers::{coins_bip39::English, MnemonicBuilder},
+    signers::{
+        coins_bip39::{
+            ChineseSimplified, ChineseTraditional, Czech, English, French, Italian, Japanese,
+            Korean, Portuguese, Spanish, Wordlist,
+        },
+        MnemonicBuilder,
+    },
     types::{transaction::eip2718::TypedTransaction, NameOrAddress, H256, U256},
     utils,
 };
@@ -112,11 +118,11 @@ fn sign(private_key: U256, digest: H256, chain_id: U256) -> Result {
     Ok((sig.v, r_bytes, s_bytes).encode().into())
 }
 
-fn derive_key(mnemonic: &str, path: &str, index: u32) -> Result {
+fn derive_key<W: Wordlist>(mnemonic: &str, path: &str, index: u32) -> Result<Bytes, Bytes> {
     let derivation_path =
         if path.ends_with('/') { format!("{path}{index}") } else { format!("{path}/{index}") };
 
-    let wallet = MnemonicBuilder::<English>::default()
+    let wallet = MnemonicBuilder::<W>::default()
         .phrase(mnemonic)
         .derivation_path(&derivation_path)?
         .build()?;
@@ -152,9 +158,41 @@ pub fn apply<DB: Database>(
         HEVMCalls::Addr(inner) => addr(inner.0),
         HEVMCalls::Sign(inner) => sign(inner.0, inner.1.into(), data.env.cfg.chain_id.into()),
         HEVMCalls::DeriveKey0(inner) => {
-            derive_key(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1)
+            derive_key::<English>(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1)
         }
-        HEVMCalls::DeriveKey1(inner) => derive_key(&inner.0, &inner.1, inner.2),
+        HEVMCalls::DeriveKey1(inner) => derive_key::<English>(&inner.0, &inner.1, inner.2),
+        HEVMCalls::DeriveKey2(inner) => match inner.2.as_str() {
+            "chinese_simplified" => {
+                derive_key::<ChineseSimplified>(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1)
+            }
+            "chinese_traditional" => {
+                derive_key::<ChineseTraditional>(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1)
+            }
+            "czech" => derive_key::<Czech>(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1),
+            "english" => derive_key::<English>(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1),
+            "french" => derive_key::<French>(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1),
+            "italian" => derive_key::<Italian>(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1),
+            "japanese" => derive_key::<Japanese>(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1),
+            "korean" => derive_key::<Korean>(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1),
+            "portuguese" => {
+                derive_key::<Portuguese>(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1)
+            }
+            "spanish" => derive_key::<Spanish>(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1),
+            _ => Err(format!("the language `{}` has no wordlist", inner.2).encode().into()),
+        },
+        HEVMCalls::DeriveKey3(inner) => match inner.3.as_str() {
+            "chinese_simplified" => derive_key::<ChineseSimplified>(&inner.0, &inner.1, inner.2),
+            "chinese_traditional" => derive_key::<ChineseTraditional>(&inner.0, &inner.1, inner.2),
+            "czech" => derive_key::<Czech>(&inner.0, &inner.1, inner.2),
+            "english" => derive_key::<English>(&inner.0, &inner.1, inner.2),
+            "french" => derive_key::<French>(&inner.0, &inner.1, inner.2),
+            "italian" => derive_key::<Italian>(&inner.0, &inner.1, inner.2),
+            "japanese" => derive_key::<Japanese>(&inner.0, &inner.1, inner.2),
+            "korean" => derive_key::<Korean>(&inner.0, &inner.1, inner.2),
+            "portuguese" => derive_key::<Portuguese>(&inner.0, &inner.1, inner.2),
+            "spanish" => derive_key::<Spanish>(&inner.0, &inner.1, inner.2),
+            _ => Err(format!("the language `{}` has no wordlist", inner.3).encode().into()),
+        },
         HEVMCalls::RememberKey(inner) => remember_key(state, inner.0, data.env.cfg.chain_id.into()),
         HEVMCalls::Label(inner) => {
             state.labels.insert(inner.0, inner.1.clone());
