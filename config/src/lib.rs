@@ -2891,7 +2891,7 @@ mod tests {
                 env_value
             );
 
-            let mut with_key = config.clone();
+            let mut with_key = config;
             with_key.etherscan_api_key = Some("via etherscan_api_key".to_string());
 
             assert_eq!(
