@@ -152,7 +152,7 @@ fn expand_input_param_type(
             let ty = if let Some(struct_name) =
                 structs.get_function_input_struct_solidity_id(&fun.name, param)
             {
-                struct_name.to_string()
+                struct_name.split('.').last().unwrap().to_string()
             } else {
                 kind.to_string()
             };
@@ -187,7 +187,7 @@ fn expand_output_param_type(
                     &fun.name,
                     param.internal_type.as_ref().unwrap(),
                 ) {
-                    struct_name.to_string()
+                    struct_name.split('.').last().unwrap().to_string()
                 } else {
                     kind.to_string()
                 };
@@ -260,7 +260,7 @@ fn expand_event_param_type(
             let ty = if let Some(struct_name) =
                 structs.get_event_input_struct_solidity_id(&event.name, idx)
             {
-                struct_name.to_string()
+                struct_name.split('.').last().unwrap().to_string()
             } else {
                 kind.to_string()
             };
