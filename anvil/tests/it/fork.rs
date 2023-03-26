@@ -13,6 +13,7 @@ use ethers::{
         U256,
     },
 };
+use foundry_common::get_http_provider;
 use foundry_config::Config;
 use foundry_utils::{rpc, rpc::next_http_rpc_endpoint};
 use futures::StreamExt;
@@ -588,14 +589,11 @@ async fn test_reset_fork_on_new_blocks() {
     let anvil_provider = handle.http_provider();
 
     let endpoint = next_http_rpc_endpoint();
-    let provider =
-        Arc::new(Provider::try_from(&endpoint).unwrap().interval(Duration::from_secs(2)));
+    let provider = Arc::new(get_http_provider(&endpoint).interval(Duration::from_secs(2)));
 
     let current_block = anvil_provider.get_block_number().await.unwrap();
 
-    handle.task_manager().spawn_reset_on_new_polled_blocks(provider, api);
-
-    let provider = Provider::try_from(endpoint).unwrap();
+    handle.task_manager().spawn_reset_on_new_polled_blocks(provider.clone(), api);
 
     let mut stream = provider.watch_blocks().await.unwrap();
     // the http watcher may fetch multiple blocks at once, so we set a timeout here to offset edge

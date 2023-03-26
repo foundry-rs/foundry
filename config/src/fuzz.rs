@@ -14,8 +14,6 @@ pub struct FuzzConfig {
     /// `max_local_rejects` option isn't exposed here since we're not using
     /// `prop_filter`.
     pub max_test_rejects: u32,
-    /// Being deprecated in favor of `max_test_rejects`. Will be removed in future versions.
-    pub max_global_rejects: u32,
     /// Optional seed for the fuzzing RNG algorithm
     #[serde(
         deserialize_with = "ethers_core::types::serde_helpers::deserialize_stringified_numeric_opt"
@@ -28,6 +26,14 @@ pub struct FuzzConfig {
     pub include_storage: bool,
     /// The flag indicating whether to include push bytes values
     pub include_push_bytes: bool,
+    /// How many addresses to record at most.
+    /// Once the fuzzer exceeds this limit, it will start evicting random entries
+    ///
+    /// This limit is put in place to prevent memory blowup.
+    pub max_fuzz_dictionary_addresses: usize,
+    /// How many values to record at most.
+    /// Once the fuzzer exceeds this limit, it will start evicting random entries
+    pub max_fuzz_dictionary_values: usize,
 }
 
 impl Default for FuzzConfig {
@@ -35,11 +41,14 @@ impl Default for FuzzConfig {
         FuzzConfig {
             runs: 256,
             max_test_rejects: 65536,
-            max_global_rejects: 65536,
             seed: None,
             dictionary_weight: 40,
             include_storage: true,
             include_push_bytes: true,
+            // limit this to 200MB
+            max_fuzz_dictionary_addresses: (200 * 1024 * 1024) / 20,
+            // limit this to 200MB
+            max_fuzz_dictionary_values: (200 * 1024 * 1024) / 32,
         }
     }
 }

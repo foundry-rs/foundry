@@ -64,6 +64,18 @@ contract GasMeteringTest is DSTest {
         assertEq(gas_end_not_metered, 0);
     }
 
+    function testGasMeteringContractCreate() public {
+        cheats.pauseGasMetering();
+        uint256 gas_start_not_metered = gasleft();
+
+        B b = new B();
+
+        uint256 gas_end_not_metered = gas_start_not_metered - gasleft();
+        cheats.resumeGasMetering();
+
+        assertEq(gas_end_not_metered, 0);
+    }
+
     function addInLoop() internal returns (uint256) {
         uint256 b;
         for (uint256 i; i < 10000; i++) {

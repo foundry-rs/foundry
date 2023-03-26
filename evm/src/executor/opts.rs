@@ -72,7 +72,7 @@ impl EvmOpts {
     /// Returns an error if a RPC request failed, or the fork url is not a valid url
     pub fn evm_env_blocking(&self) -> eyre::Result<revm::Env> {
         if let Some(ref fork_url) = self.fork_url {
-            RuntimeOrHandle::new().block_on(async { self.fork_evm_env(fork_url).await })
+            RuntimeOrHandle::new().block_on(self.fork_evm_env(fork_url))
         } else {
             Ok(self.local_evm_env())
         }

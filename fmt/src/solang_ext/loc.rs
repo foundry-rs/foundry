@@ -201,7 +201,7 @@ impl LineOfCode for Expression {
             PreIncrement(loc, expr) => Loc::File(loc.file_no(), loc.start(), expr.loc().end()),
             PreDecrement(loc, expr) => Loc::File(loc.file_no(), loc.start(), expr.loc().end()),
             UnaryPlus(loc, _) => *loc,
-            UnaryMinus(loc, _) => *loc,
+            Negate(loc, _) => *loc,
             Power(loc, left, right) => Loc::File(
                 loc.file_no(),
                 LineOfCode::loc(&left).start(),
@@ -358,9 +358,9 @@ impl LineOfCode for Expression {
                 LineOfCode::loc(&right).end(),
             ),
             BoolLiteral(loc, _) => *loc,
-            NumberLiteral(loc, _, _) => *loc,
-            RationalNumberLiteral(loc, _, _, _) => *loc,
-            HexNumberLiteral(loc, _) => *loc,
+            NumberLiteral(loc, _, _, _) => *loc,
+            RationalNumberLiteral(loc, _, _, _, _) => *loc,
+            HexNumberLiteral(loc, _, _) => *loc,
             StringLiteral(literals) => {
                 let left_loc = literals.first().unwrap().loc;
                 Loc::File(left_loc.file_no(), left_loc.start(), literals.last().unwrap().loc.end())
@@ -374,7 +374,6 @@ impl LineOfCode for Expression {
             Variable(ident) => ident.loc,
             List(loc, _) => *loc,
             ArrayLiteral(loc, _) => *loc,
-            Unit(loc, _, _) => *loc,
             This(loc) => *loc,
             Parenthesis(loc, _) => *loc,
         }
@@ -435,21 +434,6 @@ impl<T> OptionalLineOfCode for Vec<(Loc, T)> {
 impl OptionalLineOfCode for SourceUnit {
     fn loc(&self) -> Option<Loc> {
         self.0.get(0).map(|unit| *unit.loc())
-    }
-}
-
-impl LineOfCode for Unit {
-    fn loc(&self) -> Loc {
-        match *self {
-            Unit::Seconds(loc) => loc,
-            Unit::Minutes(loc) => loc,
-            Unit::Hours(loc) => loc,
-            Unit::Days(loc) => loc,
-            Unit::Weeks(loc) => loc,
-            Unit::Wei(loc) => loc,
-            Unit::Gwei(loc) => loc,
-            Unit::Ether(loc) => loc,
-        }
     }
 }
 

@@ -10,9 +10,7 @@ foundry-common = { path = "./../common" }
 foundry-config = { path = "./../config" }
 foundry-evm = { path = "./../evm" }
 
-ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = [
-    "solc-full",
-] }
+ethers = { workspace = true, default-features = false, features = ["solc-full"] }
 eyre = "0.6.5"
 semver = "1.0.5"
 serde_json = "1.0.67"
@@ -33,7 +31,7 @@ comfy-table = "6.0.0"
 parking_lot = "0.12"
 
 [dev-dependencies]
-ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = [
+ethers = { workspace = true, default-features = false, features = [
     "solc-full",
     "solc-tests",
 ] }

@@ -337,7 +337,8 @@ forgetest_async!(
             return
         }
 
-        let info = info.unwrap();
+        let info = info.expect("Missing goerli env vars");
+        println!("Verifying via {:?}", info.address());
 
         add_unique(&prj);
 

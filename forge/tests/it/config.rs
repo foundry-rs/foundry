@@ -97,11 +97,12 @@ pub static TEST_OPTS: TestOptions = TestOptions {
     fuzz: FuzzConfig {
         runs: 256,
         max_test_rejects: 65536,
-        max_global_rejects: 65536,
         seed: None,
         include_storage: true,
         include_push_bytes: true,
+        max_fuzz_dictionary_addresses: 10_000,
         dictionary_weight: 40,
+        max_fuzz_dictionary_values: 10_000,
     },
     invariant: InvariantConfig {
         runs: 256,

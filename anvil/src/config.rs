@@ -785,8 +785,7 @@ impl NodeConfig {
                     .compute_units_per_second(self.compute_units_per_second)
                     .max_retry(10)
                     .initial_backoff(1000)
-                    .connect()
-                    .await
+                    .build()
                     .expect("Failed to establish provider to fork url"),
             );
 
@@ -1020,9 +1019,7 @@ impl AccountGenerator {
         Self {
             chain_id: CHAIN_ID,
             amount,
-            phrase: Mnemonic::<English>::new(&mut thread_rng())
-                .to_phrase()
-                .expect("Failed to create mnemonic phrase"),
+            phrase: Mnemonic::<English>::new(&mut thread_rng()).to_phrase(),
             derivation_path: None,
         }
     }

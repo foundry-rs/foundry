@@ -84,7 +84,8 @@ main() {
         | grep -Eo '"sha"[^,]*' \
         | grep -Eo '[^:]*$' \
         | tr -d '"' \
-        | tr -d ' ')
+        | tr -d ' ' \
+        | cut -d ':' -f2 )
       FOUNDRYUP_TAG="nightly-${SHA}"
     elif [[ "$FOUNDRYUP_VERSION" == nightly* ]]; then
       FOUNDRYUP_VERSION="nightly"

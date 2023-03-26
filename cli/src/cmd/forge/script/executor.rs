@@ -182,8 +182,15 @@ impl ScriptArgs {
                         runner.executor.env_mut().block.number += U256::one();
                     }
 
-                    // We inflate the gas used by the user specified percentage
-                    tx.gas = Some(U256::from(result.gas_used * self.gas_estimate_multiplier / 100));
+                    let is_fixed_gas_limit = tx.gas.is_some();
+                    // If tx.gas is already set that means it was specified in script
+                    if !is_fixed_gas_limit {
+                        // We inflate the gas used by the user specified percentage
+                        tx.gas =
+                            Some(U256::from(result.gas_used * self.gas_estimate_multiplier / 100));
+                    } else {
+                        println!("Gas limit was set in script to {:}", tx.gas.unwrap());
+                    }
 
                     let tx = TransactionWithMetadata::new(
                         tx.into(),
@@ -192,6 +199,7 @@ impl ScriptArgs {
                         &address_to_abi,
                         decoder,
                         created_contracts,
+                        is_fixed_gas_limit,
                     )?;
 
                     Ok((Some(tx), result.traces))

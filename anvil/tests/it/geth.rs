@@ -1,6 +1,6 @@
 //! tests against local geth for local debug purposes
 
-use crate::revert::VENDING_MACHINE_CONTRACT;
+use crate::abi::VENDING_MACHINE_CONTRACT;
 use ethers::{
     abi::Address,
     contract::{Contract, ContractFactory},

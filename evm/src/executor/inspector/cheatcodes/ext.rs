@@ -19,7 +19,7 @@ use jsonpath_lib;
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     env,
     io::{BufRead, BufReader, Write},
     path::Path,
@@ -410,6 +410,7 @@ fn parse_json(
     coerce: Option<ParamType>,
 ) -> Result<Bytes, Bytes> {
     let json = serde_json::from_str(json_str).map_err(error::encode_error)?;
+
     let values: Vec<&Value> =
         jsonpath_lib::select(&json, &canonicalize_json_key(key)).map_err(error::encode_error)?;
     // values is an array of items. Depending on the JsonPath key, they
@@ -421,6 +422,13 @@ fn parse_json(
                 "You can only coerce values or arrays, not JSON objects. The key '{key}' returns an object",
             )))
         }
+
+        if values.is_empty() {
+            return Err(error::encode_error(format!(
+                "No matching value or array found for key {key}",
+            )))
+        }
+
         let final_val = if let Some(array) = values[0].as_array() {
             array.iter().map(|v| v.to_string().replace('\"', "")).collect::<Vec<String>>()
         } else {
@@ -463,7 +471,7 @@ fn serialize_json(
         serialization.insert(value_key.to_string(), parsed_value);
         serialization.clone()
     } else {
-        let mut serialization = HashMap::new();
+        let mut serialization = BTreeMap::new();
         serialization.insert(value_key.to_string(), parsed_value);
         state.serialized_jsons.insert(object_key.to_string(), serialization.clone());
         serialization.clone()

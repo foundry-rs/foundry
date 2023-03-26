@@ -46,14 +46,14 @@ use ethers::{
     prelude::{BlockNumber, GethTraceFrame, TxHash, H256, U256, U64},
     types::{
         transaction::eip2930::AccessList, Address, Block as EthersBlock, BlockId, Bytes,
-        DefaultFrame, Filter, FilteredParams, GethDebugTracingOptions, GethTrace, Log, Trace,
-        Transaction, TransactionReceipt,
+        DefaultFrame, Filter, FilteredParams, GethDebugTracingOptions, GethTrace, Log, OtherFields,
+        Trace, Transaction, TransactionReceipt,
     },
-    utils::{get_contract_address, keccak256, rlp},
+    utils::{get_contract_address, hex, keccak256, rlp},
 };
 use forge::{
     executor::inspector::AccessListTracer,
-    revm::{return_ok, return_revert, BlockEnv, ExecutionResult, Return},
+    revm::{return_ok, BlockEnv, ExecutionResult, Return},
 };
 use foundry_evm::{
     decode::decode_revert,
@@ -227,17 +227,34 @@ impl Backend {
     /// This will fund, create the genesis accounts
     async fn apply_genesis(&self) -> DatabaseResult<()> {
         trace!(target: "backend", "setting genesis balances");
-        let mut db = self.db.write().await;
 
         if self.fork.is_some() {
+            // fetch all account first
+            let mut genesis_accounts_futures = Vec::with_capacity(self.genesis.accounts.len());
+            for address in self.genesis.accounts.iter().copied() {
+                let db = Arc::clone(&self.db);
+
+                // The forking Database backend can handle concurrent requests, we can fetch all dev
+                // accounts concurrently by spawning the job to a new task
+                genesis_accounts_futures.push(tokio::task::spawn(async move {
+                    let db = db.read().await;
+                    let info = db.basic(address)?.unwrap_or_default();
+                    Ok::<_, DatabaseError>((address, info))
+                }));
+            }
+
+            let genesis_accounts = futures::future::join_all(genesis_accounts_futures).await;
+
+            let mut db = self.db.write().await;
+
             // in fork mode we only set the balance, this way the accountinfo is fetched from the
             // remote client, preserving code and nonce. The reason for that is private keys for dev
             // accounts are commonly known and are used on testnets
             let mut fork_genesis_infos = self.genesis.fork_genesis_account_infos.lock();
             fork_genesis_infos.clear();
 
-            for address in self.genesis.accounts.iter().copied() {
-                let mut info = db.basic(address)?.unwrap_or_default();
+            for res in genesis_accounts {
+                let (address, mut info) = res??;
                 info.balance = self.genesis.balance;
                 db.insert_account(address, info.clone());
 
@@ -245,11 +262,13 @@ impl Backend {
                 fork_genesis_infos.push(info);
             }
         } else {
+            let mut db = self.db.write().await;
             for (account, info) in self.genesis.account_infos() {
                 db.insert_account(account, info);
             }
         }
 
+        let db = self.db.write().await;
         // apply the genesis.json alloc
         self.genesis.apply_genesis_json_alloc(db)?;
         Ok(())
@@ -453,9 +472,35 @@ impl Backend {
         self.db.write().await.set_storage_at(address, slot, val.into_uint())
     }
 
+    /// Returns the configured specid
+    pub fn spec_id(&self) -> SpecId {
+        self.env.read().cfg.spec_id
+    }
+
     /// Returns true for post London
     pub fn is_eip1559(&self) -> bool {
-        (self.env().read().cfg.spec_id as u8) >= (SpecId::LONDON as u8)
+        (self.spec_id() as u8) >= (SpecId::LONDON as u8)
+    }
+
+    /// Returns true for post Berlin
+    pub fn is_eip2930(&self) -> bool {
+        (self.spec_id() as u8) >= (SpecId::BERLIN as u8)
+    }
+
+    /// Returns an error if EIP1559 is not active (pre Berlin)
+    pub fn ensure_eip1559_active(&self) -> Result<(), BlockchainError> {
+        if self.is_eip1559() {
+            return Ok(())
+        }
+        Err(BlockchainError::EIP1559TransactionUnsupportedAtHardfork)
+    }
+
+    /// Returns an error if EIP1559 is not active (pre muirGlacier)
+    pub fn ensure_eip2930_active(&self) -> Result<(), BlockchainError> {
+        if self.is_eip2930() {
+            return Ok(())
+        }
+        Err(BlockchainError::EIP2930TransactionUnsupportedAtHardfork)
     }
 
     /// Returns the block gas limit
@@ -746,16 +791,28 @@ impl Backend {
                     node_info!("    Gas used: {}", receipt.gas_used());
                     match info.exit {
                         return_ok!() => (),
-                        return_revert!() => {
+                        Return::OutOfFund => {
+                            node_info!("    Error: reverted due to running out of funds");
+                        }
+                        Return::CallTooDeep => {
+                            node_info!("    Error: reverted with call too deep");
+                        }
+                        Return::Revert => {
                             if let Some(ref r) = info.out {
                                 if let Ok(reason) = decode_revert(r.as_ref(), None, None) {
                                     node_info!("    Error: reverted with '{}'", reason);
                                 } else {
-                                    node_info!("    Error: reverted without a reason string");
+                                    node_info!(
+                                        "    Error: reverted with custom error: {}",
+                                        hex::encode(r)
+                                    );
                                 }
                             } else {
-                                node_info!("    Error: reverted without a reason string");
+                                node_info!("    Error: reverted without a reason");
                             }
+                        }
+                        Return::OutOfGas => {
+                            node_info!("    Error: ran out of gas");
                         }
                         reason => {
                             node_info!("    Error: failed due to {:?}", reason);
@@ -859,6 +916,9 @@ impl Backend {
         let gas_limit = gas.unwrap_or(block_env.gas_limit);
         let mut env = self.env.read().clone();
         env.block = block_env;
+        // we want to disable this in eth_call, since this is common practice used by other node
+        // impls and providers <https://github.com/foundry-rs/foundry/issues/4388>
+        env.cfg.disable_block_gas_limit = true;
 
         if let Some(base) = max_fee_per_gas {
             env.block.basefee = base;
@@ -1657,6 +1717,8 @@ impl Backend {
 
         let transaction = block.transactions[index].clone();
 
+        let transaction_type = transaction.transaction.r#type();
+
         let effective_gas_price = match transaction.transaction {
             TypedTransaction::Legacy(t) => t.gas_price,
             TypedTransaction::EIP2930(t) => t.gas_price,
@@ -1707,8 +1769,9 @@ impl Backend {
             status: Some(status_code.into()),
             root: None,
             logs_bloom,
-            transaction_type: None,
+            transaction_type: transaction_type.map(Into::into),
             effective_gas_price: Some(effective_gas_price),
+            other: OtherFields::default(),
         };
 
         Some(MinedTransactionReceipt { inner, out: info.out })
@@ -1974,9 +2037,20 @@ impl TransactionValidator for Backend {
             return Err(InvalidTransactionError::NonceTooLow)
         }
 
-        if (env.cfg.spec_id as u8) >= (SpecId::LONDON as u8) && tx.gas_price() < env.block.basefee {
-            warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.block.basefee);
-            return Err(InvalidTransactionError::FeeTooLow)
+        if (env.cfg.spec_id as u8) >= (SpecId::LONDON as u8) {
+            if tx.gas_price() < env.block.basefee {
+                warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.block.basefee);
+                return Err(InvalidTransactionError::FeeTooLow)
+            }
+
+            if let (Some(max_priority_fee_per_gas), Some(max_fee_per_gas)) =
+                (tx.essentials().max_priority_fee_per_gas, tx.essentials().max_fee_per_gas)
+            {
+                if max_priority_fee_per_gas > max_fee_per_gas {
+                    warn!(target: "backend", "max priority fee per gas={}, too high, max fee per gas={}", max_priority_fee_per_gas, max_fee_per_gas);
+                    return Err(InvalidTransactionError::TipAboveFeeCap)
+                }
+            }
         }
 
         let max_cost = tx.max_cost();

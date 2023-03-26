@@ -235,6 +235,11 @@ pub struct EnvArgs {
     #[clap(long, value_name = "GAS_LIMIT")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_gas_limit: Option<u64>,
+
+    /// The memory limit of the EVM in bytes (32 MB by default)
+    #[clap(long, value_name = "MEMORY_LIMIT")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_limit: Option<u64>,
 }
 
 impl EvmArgs {
@@ -262,5 +267,21 @@ mod tests {
 
         let env = EnvArgs::parse_from(["foundry-common", "--chain-id", "goerli"]);
         assert_eq!(env.chain_id, Some(ethers_core::types::Chain::Goerli.into()));
+    }
+
+    #[test]
+    fn test_memory_limit() {
+        let args = EvmArgs {
+            env: EnvArgs {
+                chain_id: Some(ethers_core::types::Chain::Mainnet.into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let config = Config::from_provider(Config::figment().merge(args));
+        assert_eq!(config.memory_limit, Config::default().memory_limit);
+
+        let env = EnvArgs::parse_from(["foundry-common", "--memory-limit", "100"]);
+        assert_eq!(env.memory_limit, Some(100));
     }
 }

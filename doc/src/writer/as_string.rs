@@ -1,5 +1,5 @@
 use ethers_core::{types::H160, utils::to_checksum};
-use forge_fmt::solang_ext::{AsStr, AttrSortKeyIteratorExt, Operator, OperatorComponents};
+use forge_fmt::solang_ext::{AttrSortKeyIteratorExt, Operator, OperatorComponents};
 use itertools::Itertools;
 use solang_parser::pt::{Expression, FunctionAttribute, IdentifierPath, Loc, Parameter, Type};
 use std::str::FromStr;
@@ -25,8 +25,18 @@ impl AsString for Expression {
                 Type::DynamicBytes => "bytes".to_owned(),
                 Type::Int(n) => format!("int{n}"),
                 Type::Uint(n) => format!("uint{n}"),
-                Type::Mapping(_, from, to) => {
-                    format!("mapping({} => {})", from.as_string(), to.as_string())
+                Type::Mapping { key, key_name, value, value_name, .. } => {
+                    let mut key = key.as_string();
+                    if let Some(name) = key_name {
+                        key.push(' ');
+                        key.push_str(&name.to_string());
+                    }
+                    let mut value = value.as_string();
+                    if let Some(name) = value_name {
+                        value.push(' ');
+                        value.push_str(&name.to_string());
+                    }
+                    format!("mapping({key} => {value})")
                 }
                 Type::Function { params, attributes, returns } => {
                     let params = params.as_string();
@@ -56,18 +66,25 @@ impl AsString for Expression {
             Expression::Parenthesis(_, expr) => {
                 format!("({})", expr.as_string())
             }
-            Expression::HexNumberLiteral(_, val) => {
+            Expression::HexNumberLiteral(_, val, unit) => {
                 // ref: https://docs.soliditylang.org/en/latest/types.html?highlight=address%20literal#address-literals
-                if val.len() == 42 {
+                let mut val = if val.len() == 42 {
                     to_checksum(&H160::from_str(val).expect(""), None)
                 } else {
                     val.to_owned()
+                };
+                if let Some(unit) = unit {
+                    val.push_str(&format!(" {}", unit.name));
                 }
+                val
             }
-            Expression::NumberLiteral(_, val, exp) => {
+            Expression::NumberLiteral(_, val, exp, unit) => {
                 let mut val = val.replace('_', "");
                 if !exp.is_empty() {
                     val.push_str(&format!("e{}", exp.replace('_', "")));
+                }
+                if let Some(unit) = unit {
+                    val.push_str(&format!(" {}", unit.name));
                 }
                 val
             }
@@ -87,20 +104,21 @@ impl AsString for Expression {
             Expression::ArrayLiteral(_, exprs) => {
                 format!("[{}]", exprs.iter().map(AsString::as_string).join(", "))
             }
-            Expression::RationalNumberLiteral(_, val, fraction, exp) => {
+            Expression::RationalNumberLiteral(_, val, fraction, exp, unit) => {
                 let mut val = val.replace('_', "");
                 if val.is_empty() {
                     val = "0".to_owned();
                 }
-
                 let mut fraction = fraction.trim_end_matches('0').to_owned();
                 if fraction.is_empty() {
                     fraction.push('0')
                 }
                 val.push_str(&format!(".{fraction}"));
-
                 if !exp.is_empty() {
                     val.push_str(&format!("e{}", exp.replace('_', "")));
+                }
+                if let Some(unit) = unit {
+                    val.push_str(&format!(" {}", unit.name));
                 }
                 val
             }
@@ -111,9 +129,6 @@ impl AsString for Expression {
                     exprs.iter().map(AsString::as_string).join(", ")
                 )
             }
-            Expression::Unit(_, expr, unit) => {
-                format!("{} {}", expr.as_string(), unit.as_str())
-            }
             Expression::PreIncrement(..) |
             Expression::PostIncrement(..) |
             Expression::PreDecrement(..) |
@@ -122,7 +137,7 @@ impl AsString for Expression {
             Expression::Complement(..) |
             Expression::UnaryPlus(..) |
             Expression::Add(..) |
-            Expression::UnaryMinus(..) |
+            Expression::Negate(..) |
             Expression::Subtract(..) |
             Expression::Power(..) |
             Expression::Multiply(..) |

@@ -64,8 +64,11 @@ impl<'a> FuzzedExecutor<'a> {
         should_fail: bool,
         errors: Option<&Abi>,
     ) -> Result<FuzzTestResult> {
-        // Stores the consumed gas and calldata of every successful fuzz call
-        let cases: RefCell<Vec<FuzzCase>> = RefCell::default();
+        // Stores the first Fuzzcase
+        let first_case: RefCell<Option<FuzzCase>> = RefCell::default();
+
+        // gas usage per case
+        let gas_by_case: RefCell<Vec<(u64, u64)>> = RefCell::default();
 
         // Stores the result and calldata of the last failed call, if any.
         let counterexample: RefCell<(Bytes, RawCallResult)> = RefCell::default();
@@ -106,6 +109,15 @@ impl<'a> FuzzedExecutor<'a> {
                 .as_ref()
                 .ok_or_else(|| TestCaseError::fail(FuzzError::EmptyChangeset))?;
 
+            // keep memory in check
+            {
+                let mut state = state.write();
+                state.enforce_limit(
+                    self.config.max_fuzz_dictionary_addresses,
+                    self.config.max_fuzz_dictionary_values,
+                );
+            }
+
             // Build fuzzer state
             collect_state_from_call(
                 &call.logs,
@@ -128,11 +140,15 @@ impl<'a> FuzzedExecutor<'a> {
             );
 
             if success {
-                cases.borrow_mut().push(FuzzCase {
-                    calldata,
-                    gas: call.gas_used,
-                    stipend: call.stipend,
-                });
+                let mut first_case = first_case.borrow_mut();
+                if first_case.is_none() {
+                    first_case.replace(FuzzCase {
+                        calldata,
+                        gas: call.gas_used,
+                        stipend: call.stipend,
+                    });
+                }
+                gas_by_case.borrow_mut().push((call.gas_used, call.stipend));
 
                 traces.replace(call.traces);
 
@@ -165,11 +181,10 @@ impl<'a> FuzzedExecutor<'a> {
             }
         });
 
-        tracing::trace!(target: "forge::test::fuzz::dictionary", "{:?}", state.read().iter().map(hex::encode).collect::<Vec<_>>());
-
         let (calldata, call) = counterexample.into_inner();
         let mut result = FuzzTestResult {
-            cases: FuzzedCases::new(cases.into_inner()),
+            first_case: first_case.take().unwrap_or_default(),
+            gas_by_case: gas_by_case.take(),
             success: run_result.is_ok(),
             reason: None,
             counterexample: None,
@@ -304,9 +319,10 @@ impl fmt::Display for BaseCounterExample {
 /// The outcome of a fuzz test
 #[derive(Debug)]
 pub struct FuzzTestResult {
-    /// Every successful fuzz test case
-    pub cases: FuzzedCases,
-
+    /// we keep this for the debugger
+    pub first_case: FuzzCase,
+    /// Gas usage (gas_used, call_stipend) per cases
+    pub gas_by_case: Vec<(u64, u64)>,
     /// Whether the test case was successful. This means that the transaction executed
     /// properly, or that there was a revert and that the test was expected to fail
     /// (prefixed with `testFail`)
@@ -337,6 +353,29 @@ pub struct FuzzTestResult {
 
     /// Raw coverage info
     pub coverage: Option<HitMaps>,
+}
+
+impl FuzzTestResult {
+    /// Returns the median gas of all test cases
+    pub fn median_gas(&self, with_stipend: bool) -> u64 {
+        let mut values = self.gas_values(with_stipend);
+        values.sort_unstable();
+        calc::median_sorted(&values)
+    }
+
+    /// Returns the average gas use of all test cases
+    pub fn mean_gas(&self, with_stipend: bool) -> u64 {
+        let mut values = self.gas_values(with_stipend);
+        values.sort_unstable();
+        calc::mean(&values).as_u64()
+    }
+
+    fn gas_values(&self, with_stipend: bool) -> Vec<u64> {
+        self.gas_by_case
+            .iter()
+            .map(|gas| if with_stipend { gas.0 } else { gas.0.saturating_sub(gas.1) })
+            .collect()
+    }
 }
 
 /// Container type for all successful test cases
@@ -380,7 +419,10 @@ impl FuzzedCases {
     }
 
     fn gas_values(&self, with_stipend: bool) -> Vec<u64> {
-        self.cases.iter().map(|c| if with_stipend { c.gas } else { c.gas - c.stipend }).collect()
+        self.cases
+            .iter()
+            .map(|c| if with_stipend { c.gas } else { c.gas.saturating_sub(c.stipend) })
+            .collect()
     }
 
     /// Returns the case with the highest gas usage
@@ -407,7 +449,7 @@ impl FuzzedCases {
 }
 
 /// Data of a single fuzz test case
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct FuzzCase {
     /// The calldata used for this fuzz test
     pub calldata: Bytes,

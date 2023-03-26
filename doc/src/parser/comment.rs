@@ -84,7 +84,7 @@ impl Comment {
     /// Match the first word of the comment with the expected.
     /// Returns [None] if the word doesn't match.
     /// Useful for [CommentTag::Param] and [CommentTag::Return] comments.
-    pub fn match_first_word<'a>(&'a self, expected: &str) -> Option<&'a str> {
+    pub fn match_first_word(&self, expected: &str) -> Option<&str> {
         self.split_first_word().and_then(
             |(word, rest)| {
                 if word.eq(expected) {
@@ -106,7 +106,7 @@ pub struct Comments(Vec<Comment>);
 macro_rules! ref_fn {
     ($vis:vis fn $name:ident(&self$(, )?$($arg_name:ident: $arg:ty),*) -> $ret:ty) => {
         /// Forward the function implementation to [CommentsRef] reference type.
-        $vis fn $name<'a>(&'a self, $($arg_name: $arg),*) -> $ret {
+        $vis fn $name(&self, $($arg_name: $arg),*) -> $ret {
             CommentsRef::from(self).$name($($arg_name),*)
         }
     };

@@ -37,9 +37,12 @@ impl SessionSource {
             compiled.compiler_output.contracts_into_iter().find(|(name, _)| name == "REPL")
         {
             // These *should* never panic after a successful compilation.
-            let bytecode = contract.get_bytecode_bytes().expect("No bytecode for contract.");
-            let deployed_bytecode =
-                contract.get_deployed_bytecode_bytes().expect("No deployed bytecode for contract.");
+            let bytecode = contract
+                .get_bytecode_bytes()
+                .ok_or_else(|| eyre::eyre!("No bytecode found for `REPL` contract"))?;
+            let deployed_bytecode = contract
+                .get_deployed_bytecode_bytes()
+                .ok_or_else(|| eyre::eyre!("No deployed bytecode found for `REPL` contract"))?;
 
             // Fetch the run function's body statement
             let run_func_statements = compiled.intermediate.run_func_body()?;
@@ -457,7 +460,6 @@ impl Type {
             pt::Expression::Parenthesis(_, inner) |         // (<inner>)
             pt::Expression::New(_, inner) |                 // new <inner>
             pt::Expression::UnaryPlus(_, inner) |           // +<inner>
-            pt::Expression::Unit(_, inner, _) |             // <inner> *unit*
             // ops
             pt::Expression::Complement(_, inner) |          // ~<inner>
             pt::Expression::ArraySlice(_, inner, _, _) |    // <inner>[*start*:*end*]
@@ -486,7 +488,7 @@ impl Type {
 
             // address
             pt::Expression::AddressLiteral(_, _) => Some(Self::Builtin(ParamType::Address)),
-            pt::Expression::HexNumberLiteral(_, s) => {
+            pt::Expression::HexNumberLiteral(_, s, _) => {
                 match s.parse() {
                     Ok(addr) => {
                         let checksummed = ethers::utils::to_checksum(&addr, None);
@@ -504,7 +506,7 @@ impl Type {
 
             // uint and int
             // invert
-            pt::Expression::UnaryMinus(_, inner) => Self::from_expression(inner).map(Self::invert_int),
+            pt::Expression::Negate(_, inner) => Self::from_expression(inner).map(Self::invert_int),
 
             // int if either operand is int
             // TODO: will need an update for Solidity v0.8.18 user defined operators:
@@ -533,10 +535,10 @@ impl Type {
             pt::Expression::BitwiseXor(_, _, _) |
             pt::Expression::ShiftRight(_, _, _) |
             pt::Expression::ShiftLeft(_, _, _) |
-            pt::Expression::NumberLiteral(_, _, _) => Some(Self::Builtin(ParamType::Uint(256))),
+            pt::Expression::NumberLiteral(_, _, _, _) => Some(Self::Builtin(ParamType::Uint(256))),
 
             // TODO: Rational numbers
-            pt::Expression::RationalNumberLiteral(_, _, _, _) => {
+            pt::Expression::RationalNumberLiteral(_, _, _, _, _) => {
                 Some(Self::Builtin(ParamType::Uint(256)))
             }
 
@@ -597,7 +599,7 @@ impl Type {
             pt::Type::Uint(size) => Self::Builtin(ParamType::Uint(*size as usize)),
             pt::Type::Bytes(size) => Self::Builtin(ParamType::FixedBytes(*size as usize)),
             pt::Type::DynamicBytes => Self::Builtin(ParamType::Bytes),
-            pt::Type::Mapping(_, _, right) => Self::from_expression(right)?,
+            pt::Type::Mapping { value, .. } => Self::from_expression(value)?,
             pt::Type::Function { params, returns, .. } => {
                 let params = map_parameters(params);
                 let returns = returns
@@ -1124,39 +1126,44 @@ fn types_to_parameters(
 
 fn parse_number_literal(expr: &pt::Expression) -> Option<U256> {
     match expr {
-        pt::Expression::NumberLiteral(_, num, exp) => {
+        pt::Expression::NumberLiteral(_, num, exp, unit) => {
             let num = U256::from_dec_str(num).unwrap_or(U256::zero());
             let exp = exp.parse().unwrap_or(0u32);
             if exp > 77 {
                 None
             } else {
-                Some(num * U256::from(10usize.pow(exp)))
+                let exp = U256::from(10usize.pow(exp));
+                let unit_mul = unit_multiplier(unit).ok()?;
+                Some(num * exp * unit_mul)
             }
         }
-        pt::Expression::HexNumberLiteral(_, num) => num.parse::<U256>().ok(),
-        // TODO: Rational numbers
-        pt::Expression::RationalNumberLiteral(_, _, _, _) => None,
-
-        pt::Expression::Unit(_, expr, unit) => {
-            parse_number_literal(expr).map(|x| x * unit_multiplier(unit))
+        pt::Expression::HexNumberLiteral(_, num, unit) => {
+            let unit_mul = unit_multiplier(unit).ok()?;
+            num.parse::<U256>().map(|num| num * unit_mul).ok()
         }
-
+        // TODO: Rational numbers
+        pt::Expression::RationalNumberLiteral(..) => None,
         _ => None,
     }
 }
 
 #[inline]
-const fn unit_multiplier(unit: &pt::Unit) -> usize {
-    use pt::Unit::*;
-    match unit {
-        Seconds(_) => 1,
-        Minutes(_) => 60,
-        Hours(_) => 60 * 60,
-        Days(_) => 60 * 60 * 24,
-        Weeks(_) => 60 * 60 * 24 * 7,
-        Wei(_) => 1,
-        Gwei(_) => 10_usize.pow(9),
-        Ether(_) => 10_usize.pow(18),
+fn unit_multiplier(unit: &Option<pt::Identifier>) -> Result<U256> {
+    if let Some(unit) = unit {
+        let mul = match unit.name.as_str() {
+            "seconds" => 1,
+            "minutes" => 60,
+            "hours" => 60 * 60,
+            "days" => 60 * 60 * 24,
+            "weeks" => 60 * 60 * 24 * 7,
+            "wei" => 1,
+            "gwei" => 10_usize.pow(9),
+            "ether" => 10_usize.pow(18),
+            other => eyre::bail!("unknown unit: {other}"),
+        };
+        Ok(mul.into())
+    } else {
+        Ok(U256::one())
     }
 }
 
@@ -1201,7 +1208,7 @@ impl<'a> Iterator for InstructionIter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethers_solc::Solc;
+    use ethers_solc::{error::SolcError, Solc};
     use once_cell::sync::Lazy;
     use std::sync::Mutex;
 
@@ -1297,7 +1304,7 @@ mod tests {
             ]
         };
 
-        let ref mut source = source();
+        let source = &mut source();
 
         let array_expressions: &[(&str, ParamType)] = &[
             ("[1, 2, 3]", fixed_array(ParamType::Uint(256), 3)),
@@ -1469,18 +1476,32 @@ mod tests {
         generic_type_test(&mut source(), global_variables);
     }
 
+    #[track_caller]
     fn source() -> SessionSource {
         // synchronize solc install
         static PRE_INSTALL_SOLC_LOCK: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
-        let mut is_preinstalled = PRE_INSTALL_SOLC_LOCK.lock().unwrap();
-        if !*is_preinstalled {
-            let solc = Solc::find_or_install_svm_version("0.8.17").and_then(|solc| solc.version());
-            if solc.is_err() {
-                // try reinstalling
-                let solc = Solc::blocking_install(&"0.8.17".parse().unwrap());
-                *is_preinstalled = solc.is_ok();
+
+        // on some CI targets installing results in weird malformed solc files, we try installing it
+        // multiple times
+        for _ in 0..3 {
+            let mut is_preinstalled = PRE_INSTALL_SOLC_LOCK.lock().unwrap();
+            if !*is_preinstalled {
+                let solc =
+                    Solc::find_or_install_svm_version("0.8.17").and_then(|solc| solc.version());
+                if solc.is_err() {
+                    // try reinstalling
+                    let solc = Solc::blocking_install(&"0.8.17".parse().unwrap());
+                    if solc.map_err(SolcError::from).and_then(|solc| solc.version()).is_ok() {
+                        *is_preinstalled = true;
+                        break
+                    }
+                } else {
+                    // successfully installed
+                    break
+                }
             }
         }
+
         let solc = Solc::find_or_install_svm_version("0.8.17").expect("could not install solc");
         SessionSource::new(solc, Default::default())
     }
@@ -1503,7 +1524,7 @@ mod tests {
         let input = input.trim_end().trim_end_matches(';').to_string() + ";";
         let (mut _s, _) = s.clone_with_new_line(input).unwrap();
         *s = _s.clone();
-        let ref mut s = _s;
+        let s = &mut _s;
 
         if let Err(e) = s.parse() {
             for err in e {

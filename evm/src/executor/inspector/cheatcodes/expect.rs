@@ -206,6 +206,10 @@ pub struct ExpectedCallData {
     pub calldata: Bytes,
     /// The expected value sent in the call
     pub value: Option<U256>,
+    /// The expected gas supplied to the call
+    pub gas: Option<u64>,
+    /// The expected *minimum* gas supplied to the call
+    pub min_gas: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -254,7 +258,24 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::ExpectRevert2(inner) => {
             expect_revert(state, Some(inner.0.to_vec().into()), data.journaled_state.depth())
         }
-        HEVMCalls::ExpectEmit0(inner) => {
+        HEVMCalls::ExpectEmit0(_) => {
+            state.expected_emits.push(ExpectedEmit {
+                depth: data.journaled_state.depth() - 1,
+                checks: [true, true, true, true],
+                ..Default::default()
+            });
+            Ok(Bytes::new())
+        }
+        HEVMCalls::ExpectEmit1(inner) => {
+            state.expected_emits.push(ExpectedEmit {
+                depth: data.journaled_state.depth() - 1,
+                checks: [true, true, true, true],
+                address: Some(inner.0),
+                ..Default::default()
+            });
+            Ok(Bytes::new())
+        }
+        HEVMCalls::ExpectEmit2(inner) => {
             state.expected_emits.push(ExpectedEmit {
                 depth: data.journaled_state.depth() - 1,
                 checks: [inner.0, inner.1, inner.2, inner.3],
@@ -262,7 +283,7 @@ pub fn apply<DB: DatabaseExt>(
             });
             Ok(Bytes::new())
         }
-        HEVMCalls::ExpectEmit1(inner) => {
+        HEVMCalls::ExpectEmit3(inner) => {
             state.expected_emits.push(ExpectedEmit {
                 depth: data.journaled_state.depth() - 1,
                 checks: [inner.0, inner.1, inner.2, inner.3],
@@ -272,19 +293,51 @@ pub fn apply<DB: DatabaseExt>(
             Ok(Bytes::new())
         }
         HEVMCalls::ExpectCall0(inner) => {
-            state
-                .expected_calls
-                .entry(inner.0)
-                .or_default()
-                .push(ExpectedCallData { calldata: inner.1.to_vec().into(), value: None });
+            state.expected_calls.entry(inner.0).or_default().push(ExpectedCallData {
+                calldata: inner.1.to_vec().into(),
+                value: None,
+                gas: None,
+                min_gas: None,
+            });
             Ok(Bytes::new())
         }
         HEVMCalls::ExpectCall1(inner) => {
-            state
-                .expected_calls
-                .entry(inner.0)
-                .or_default()
-                .push(ExpectedCallData { calldata: inner.2.to_vec().into(), value: Some(inner.1) });
+            state.expected_calls.entry(inner.0).or_default().push(ExpectedCallData {
+                calldata: inner.2.to_vec().into(),
+                value: Some(inner.1),
+                gas: None,
+                min_gas: None,
+            });
+            Ok(Bytes::new())
+        }
+        HEVMCalls::ExpectCall2(inner) => {
+            let value = inner.1;
+
+            // If the value of the transaction is non-zero, the EVM adds a call stipend of 2300 gas
+            // to ensure that the basic fallback function can be called.
+            let positive_value_cost_stipend = if value > U256::zero() { 2300 } else { 0 };
+
+            state.expected_calls.entry(inner.0).or_default().push(ExpectedCallData {
+                calldata: inner.3.to_vec().into(),
+                value: Some(value),
+                gas: Some(inner.2 + positive_value_cost_stipend),
+                min_gas: None,
+            });
+            Ok(Bytes::new())
+        }
+        HEVMCalls::ExpectCallMinGas(inner) => {
+            let value = inner.1;
+
+            // If the value of the transaction is non-zero, the EVM adds a call stipend of 2300 gas
+            // to ensure that the basic fallback function can be called.
+            let positive_value_cost_stipend = if value > U256::zero() { 2300 } else { 0 };
+
+            state.expected_calls.entry(inner.0).or_default().push(ExpectedCallData {
+                calldata: inner.3.to_vec().into(),
+                value: Some(value),
+                gas: None,
+                min_gas: Some(inner.2 + positive_value_cost_stipend),
+            });
             Ok(Bytes::new())
         }
         HEVMCalls::MockCall0(inner) => {
@@ -336,6 +389,38 @@ pub fn apply<DB: DatabaseExt>(
         }
         HEVMCalls::ClearMockedCalls(_) => {
             state.mocked_calls = Default::default();
+            Ok(Bytes::new())
+        }
+        HEVMCalls::ExpectSafeMemory(inner) => {
+            if inner.0 >= inner.1 {
+                return Some(Err(format!("Invalid memory range: [{}, {})", inner.0, inner.1)
+                    .encode()
+                    .into()))
+            }
+
+            // Write the new range to the map at the current call depth
+            let offsets = state
+                .allowed_mem_writes
+                .entry(data.journaled_state.depth())
+                .or_insert(vec![(0..0x60)]);
+            offsets.push(inner.0..inner.1);
+
+            Ok(Bytes::new())
+        }
+        HEVMCalls::ExpectSafeMemoryCall(inner) => {
+            if inner.0 >= inner.1 {
+                return Some(Err(format!("Invalid memory range: [{}, {})", inner.0, inner.1)
+                    .encode()
+                    .into()))
+            }
+
+            // Write the new range to the map at the current call depth + 1
+            let offsets = state
+                .allowed_mem_writes
+                .entry(data.journaled_state.depth() + 1)
+                .or_insert(vec![(0..0x60)]);
+            offsets.push(inner.0..inner.1);
+
             Ok(Bytes::new())
         }
         _ => return None,

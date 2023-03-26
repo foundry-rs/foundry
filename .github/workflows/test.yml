@@ -7,7 +7,6 @@ on:
 name: test
 
 env:
-    NEXTEST_EXPERIMENTAL_FILTER_EXPR: 1
     CARGO_TERM_COLOR: always
 
 jobs:

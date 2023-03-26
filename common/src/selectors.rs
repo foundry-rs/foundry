@@ -332,8 +332,9 @@ impl fmt::Display for PossibleSigs {
 
         writeln!(f, " ------------")?;
         for (i, row) in self.data.iter().enumerate() {
-            let pad = if i < 10 { "  " } else { " " };
-            writeln!(f, " [{i}]:{pad}{row}")?;
+            let row_label_decimal = i * 32;
+            let row_label_hex = format!("{row_label_decimal:03x}");
+            writeln!(f, " [{row_label_hex}]: {row}")?;
         }
         Ok(())
     }

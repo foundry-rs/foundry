@@ -7,7 +7,7 @@ use crate::eth::{
 use ethers_core::{
     types::{
         transaction::eip2930::{AccessList, AccessListItem},
-        Address, Bloom, Bytes, Signature, SignatureError, TxHash, H256, U256,
+        Address, Bloom, Bytes, Signature, SignatureError, TxHash, H256, U256, U64,
     },
     utils::{
         keccak256, rlp,
@@ -40,7 +40,7 @@ pub enum TypedTransactionRequest {
 }
 
 /// Represents _all_ transaction requests received from RPC
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
@@ -66,6 +66,9 @@ pub struct EthTransactionRequest {
     pub data: Option<Bytes>,
     /// Transaction nonce
     pub nonce: Option<U256>,
+    /// chain id
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub chain_id: Option<U64>,
     /// warm storage access pre-payment
     #[cfg_attr(feature = "serde", serde(default))]
     pub access_list: Option<Vec<AccessListItem>>,
@@ -89,8 +92,10 @@ impl EthTransactionRequest {
             data,
             nonce,
             mut access_list,
+            chain_id,
             ..
         } = self;
+        let chain_id = chain_id.map(|id| id.as_u64());
         match (gas_price, max_fee_per_gas, access_list.take()) {
             // legacy transaction
             (Some(_), None, None) => {
@@ -104,7 +109,7 @@ impl EthTransactionRequest {
                         Some(to) => TransactionKind::Call(to),
                         None => TransactionKind::Create,
                     },
-                    chain_id: None,
+                    chain_id,
                 }))
             }
             // EIP2930
@@ -119,7 +124,7 @@ impl EthTransactionRequest {
                         Some(to) => TransactionKind::Call(to),
                         None => TransactionKind::Create,
                     },
-                    chain_id: 0,
+                    chain_id: chain_id.unwrap_or_default(),
                     access_list,
                 }))
             }
@@ -137,7 +142,7 @@ impl EthTransactionRequest {
                         Some(to) => TransactionKind::Call(to),
                         None => TransactionKind::Create,
                     },
-                    chain_id: 0,
+                    chain_id: chain_id.unwrap_or_default(),
                     access_list: access_list.unwrap_or_default(),
                 }))
             }
@@ -545,6 +550,15 @@ impl TypedTransaction {
             TypedTransaction::Legacy(tx) => &tx.input,
             TypedTransaction::EIP2930(tx) => &tx.input,
             TypedTransaction::EIP1559(tx) => &tx.input,
+        }
+    }
+
+    /// Returns the transaction type
+    pub fn r#type(&self) -> Option<u8> {
+        match self {
+            TypedTransaction::Legacy(_) => None,
+            TypedTransaction::EIP2930(_) => Some(1),
+            TypedTransaction::EIP1559(_) => Some(2),
         }
     }
 

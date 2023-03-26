@@ -754,10 +754,12 @@ impl EthApi {
         let pending_transaction = if self.is_impersonated(from) {
             let bypass_signature = self.backend.cheats().bypass_signature();
             let transaction = sign::build_typed_transaction(request, bypass_signature)?;
+            self.ensure_typed_transaction_supported(&transaction)?;
             trace!(target : "node", ?from, "eth_sendTransaction: impersonating");
             PendingTransaction::with_impersonated(transaction, from)
         } else {
             let transaction = self.sign_request(&from, request)?;
+            self.ensure_typed_transaction_supported(&transaction)?;
             PendingTransaction::new(transaction)?
         };
 
@@ -792,10 +794,14 @@ impl EthApi {
             // valid rlp and then rlp decode impl of `TypedTransaction` will remove and check the
             // version byte
             let extend = rlp::encode(&data);
-            match rlp::decode::<TypedTransaction>(&extend[..]) {
+            let tx = match rlp::decode::<TypedTransaction>(&extend[..]) {
                 Ok(transaction) => transaction,
                 Err(_) => return Err(BlockchainError::FailedToDecodeSignedTransaction),
-            }
+            };
+
+            self.ensure_typed_transaction_supported(&tx)?;
+
+            tx
         };
 
         let pending_transaction = PendingTransaction::new(transaction)?;
@@ -1194,10 +1200,12 @@ impl EthApi {
     /// Introduced in EIP-1159, a Geth-specific and simplified priority fee oracle.
     /// Leverages the already existing fee history cache.
     ///
+    /// Returns a suggestion for a gas tip cap for dynamic fee transactions.
+    ///
     /// Handler for ETH RPC call: `eth_maxPriorityFeePerGas`
     pub fn max_priority_fee_per_gas(&self) -> Result<U256> {
         node_info!("eth_maxPriorityFeePerGas");
-        Err(BlockchainError::RpcUnimplemented)
+        Ok(self.backend.max_priority_fee_per_gas())
     }
 
     /// Creates a filter object, based on filter options, to notify when the state changes (logs).
@@ -1504,6 +1512,12 @@ impl EthApi {
     /// Handler for RPC call: `anvil_setNextBlockBaseFeePerGas`
     pub async fn anvil_set_next_block_base_fee_per_gas(&self, basefee: U256) -> Result<()> {
         node_info!("anvil_setNextBlockBaseFeePerGas");
+        if !self.backend.is_eip1559() {
+            return Err(RpcError::invalid_params(
+                "anvil_setNextBlockBaseFeePerGas is only supported when EIP-1559 is active",
+            )
+            .into())
+        }
         self.backend.set_base_fee(basefee);
         Ok(())
     }
@@ -1777,6 +1791,8 @@ impl EthApi {
 
         let bypass_signature = self.backend.cheats().bypass_signature();
         let transaction = sign::build_typed_transaction(request, bypass_signature)?;
+
+        self.ensure_typed_transaction_supported(&transaction)?;
 
         let pending_transaction = PendingTransaction::with_impersonated(transaction, from);
 
@@ -2085,9 +2101,9 @@ impl EthApi {
             mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
         }
 
-        trace!(target : "node", "Estimated Gas for call {:?}", gas);
+        trace!(target : "node", "Estimated Gas for call {:?}", highest_gas_limit);
 
-        Ok(gas)
+        Ok(highest_gas_limit)
     }
 
     /// Updates the `TransactionOrder`
@@ -2184,7 +2200,7 @@ impl EthApi {
         request: EthTransactionRequest,
         nonce: U256,
     ) -> Result<TypedTransactionRequest> {
-        let chain_id = self.chain_id();
+        let chain_id = request.chain_id.map(|c| c.as_u64()).unwrap_or_else(|| self.chain_id());
         let max_fee_per_gas = request.max_fee_per_gas;
         let gas_price = request.gas_price;
 
@@ -2287,6 +2303,15 @@ impl EthApi {
     /// Returns the current state root
     pub async fn state_root(&self) -> Option<H256> {
         self.backend.get_db().read().await.maybe_state_root()
+    }
+
+    /// additional validation against hardfork
+    fn ensure_typed_transaction_supported(&self, tx: &TypedTransaction) -> Result<()> {
+        match &tx {
+            TypedTransaction::EIP2930(_) => self.backend.ensure_eip2930_active(),
+            TypedTransaction::EIP1559(_) => self.backend.ensure_eip1559_active(),
+            TypedTransaction::Legacy(_) => Ok(()),
+        }
     }
 }
 

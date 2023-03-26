@@ -4,8 +4,9 @@ members = [
     "anvil/core",
     "anvil/rpc",
     "anvil/server",
-    "cast",
     "binder",
+    "cast",
+    "chisel",
     "cli",
     "cli/test-utils",
     "common",
@@ -14,11 +15,10 @@ members = [
     "evm",
     "fmt",
     "forge",
-    "ui",
-    "utils",
-    "chisel",
     "macros",
     "macros/impl",
+    "ui",
+    "utils",
 ]
 
 [profile.dev]
@@ -57,6 +57,18 @@ debug = 0
 strip = true
 panic = "abort"
 codegen-units = 1
+
+# Lock ethers-rs to a rev to allow this crate be safely used as a dependency
+[workspace.dependencies]
+ethers = { git = "https://github.com/gakonst/ethers-rs", rev = "80ac394" }
+ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", rev = "80ac394" }
+ethers-core = { git = "https://github.com/gakonst/ethers-rs", rev = "80ac394" }
+ethers-contract = { git = "https://github.com/gakonst/ethers-rs", rev = "80ac394" }
+ethers-providers = { git = "https://github.com/gakonst/ethers-rs", rev = "80ac394" }
+ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "80ac394" }
+ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "80ac394" }
+ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", rev = "80ac394" }
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "80ac394" }
 
 # # Patch ethers-rs with a local checkout then run `cargo update -p ethers`
 # [patch."https://github.com/gakonst/ethers-rs"]

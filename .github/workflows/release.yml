@@ -200,7 +200,7 @@ jobs:
                       ${{ steps.man.outputs.foundry_man }}
 
             # If this is a nightly release, it also updates the release
-            # tagged `nightly` for compatability with `foundryup`
+            # tagged `nightly` for compatibility with `foundryup`
             - name: Update nightly release
               if: ${{ env.IS_NIGHTLY }}
               uses: softprops/action-gh-release@v1

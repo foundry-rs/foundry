@@ -14,13 +14,13 @@ foundry-config = { path = "./../config" }
 foundry-common = { path = "./../common" }
 
 futures = "0.3.17"
-ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-contract = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = [
+ethers-etherscan = { workspace = true, default-features = false }
+ethers-contract = { workspace = true, default-features = false, features = [
     "abigen",
 ] }
-ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-providers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-signers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-core = { workspace = true, default-features = false }
+ethers-providers = { workspace = true, default-features = false }
+ethers-signers = { workspace = true, default-features = false }
 eyre = "0.6.5"
 rustc-hex = "2.1.0"
 serde = "1.0.136"
@@ -31,6 +31,7 @@ hex = "0.4.3"
 # aws
 rusoto_core = { version = "0.48.0", default-features = false, optional = true }
 rusoto_kms = { version = "0.48.0", default-features = false, optional = true }
+evm-disassembler = "0.2.0"
 
 [dev-dependencies]
 async-trait = "0.1.53"
