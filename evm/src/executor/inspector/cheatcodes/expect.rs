@@ -220,6 +220,14 @@ pub struct MockCallDataContext {
     pub value: Option<U256>,
 }
 
+#[derive(Clone, Debug)]
+pub struct MockCallReturnData {
+    /// The return type for the mocked call
+    pub ret_type: Return,
+    /// Return data or error
+    pub data: Bytes,
+}
+
 impl Ord for MockCallDataContext {
     fn cmp(&self, other: &Self) -> Ordering {
         // Calldata matching is reversed to ensure that a tighter match is
@@ -354,14 +362,28 @@ pub fn apply<DB: DatabaseExt>(
             }
             state.mocked_calls.entry(inner.0).or_default().insert(
                 MockCallDataContext { calldata: inner.1.to_vec().into(), value: None },
-                inner.2.to_vec().into(),
+                MockCallReturnData { data: inner.2.to_vec().into(), ret_type: Return::Return },
             );
             Ok(Bytes::new())
         }
         HEVMCalls::MockCall1(inner) => {
             state.mocked_calls.entry(inner.0).or_default().insert(
                 MockCallDataContext { calldata: inner.2.to_vec().into(), value: Some(inner.1) },
-                inner.3.to_vec().into(),
+                MockCallReturnData { data: inner.3.to_vec().into(), ret_type: Return::Return },
+            );
+            Ok(Bytes::new())
+        }
+        HEVMCalls::MockCallRevert0(inner) => {
+            state.mocked_calls.entry(inner.0).or_default().insert(
+                MockCallDataContext { calldata: inner.1.to_vec().into(), value: None },
+                MockCallReturnData { data: inner.2.to_vec().into(), ret_type: Return::Revert },
+            );
+            Ok(Bytes::new())
+        }
+        HEVMCalls::MockCallRevert1(inner) => {
+            state.mocked_calls.entry(inner.0).or_default().insert(
+                MockCallDataContext { calldata: inner.2.to_vec().into(), value: Some(inner.1) },
+                MockCallReturnData { data: inner.3.to_vec().into(), ret_type: Return::Revert },
             );
             Ok(Bytes::new())
         }
