@@ -4,7 +4,7 @@ use crate::{
     document::{read_context, DocumentContent},
     parser::ParseSource,
     writer::BufWriter,
-    AsString, CommentTag, Comments, CommentsRef, Document, Markdown, PreprocessorOutput,
+    CommentTag, Comments, CommentsRef, Document, Markdown, PreprocessorOutput,
     CONTRACT_INHERITANCE_ID, GIT_SOURCE_ID, INHERITDOC_ID,
 };
 use forge_fmt::solang_ext::SafeUnwrap;
@@ -91,7 +91,7 @@ impl AsDoc for Document {
                             "({})",
                             func.params
                                 .iter()
-                                .map(|p| p.1.as_ref().map(|p| p.ty.as_string()).unwrap_or_default())
+                                .map(|p| p.1.as_ref().map(|p| p.ty.to_string()).unwrap_or_default())
                                 .join(", ")
                         ));
                     }

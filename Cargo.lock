@@ -6097,13 +6097,12 @@ dependencies = [
 [[package]]
 name = "solang-parser"
 version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff87dae6cdccacdbf3b19e99b271083556e808de0f59c74a01482f64fdbc61fc"
 dependencies = [
  "itertools",
  "lalrpop",
  "lalrpop-util",
  "phf 0.11.1",
+ "thiserror",
  "unicode-xid",
 ]
 

@@ -1,6 +1,5 @@
 //! Visitor helpers to traverse the [solang](https://github.com/hyperledger-labs/solang) Solidity Parse Tree
 
-use crate::solang_ext::*;
 use solang_parser::pt::*;
 
 /// A trait that is invoked while traversing the Solidity Parse Tree.
@@ -341,7 +340,7 @@ pub trait Visitor {
         _expr: &mut Option<&mut YulExpression>,
     ) -> Result<(), Self::Error>
     where
-        T: Visitable + LineOfCode,
+        T: Visitable + CodeLocation,
     {
         self.visit_source(loc)
     }
@@ -576,7 +575,7 @@ impl Visitable for Expression {
     where
         V: Visitor,
     {
-        v.visit_expr(LineOfCode::loc(self), self)
+        v.visit_expr(self.loc(), self)
     }
 }
 
