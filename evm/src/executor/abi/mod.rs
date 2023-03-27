@@ -94,6 +94,7 @@ ethers::contract::abigen!(
             setNonce(address,uint64)
             getNonce(address)
             chainId(uint256)
+            txGasPrice(uint256)
             broadcast()
             broadcast(address)
             broadcast(uint256)
