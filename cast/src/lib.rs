@@ -886,7 +886,7 @@ impl SimpleCast {
         let iter = FromHexIter::new(hex_trimmed);
         let mut ascii = String::new();
         for letter in iter.collect::<Vec<_>>() {
-            ascii.push(letter.unwrap() as char);
+            ascii.push(letter? as char);
         }
         Ok(ascii)
     }
