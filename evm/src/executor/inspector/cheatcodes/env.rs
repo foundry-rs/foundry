@@ -356,7 +356,7 @@ pub fn apply<DB: DatabaseExt>(
             data.env.cfg.chain_id = inner.0;
             Bytes::new()
         }
-        HEVMCalls::GasPrice(inner) => {
+        HEVMCalls::TxGasPrice(inner) => {
             data.env.tx.gas_price = inner.0;
             Bytes::new()
         }
