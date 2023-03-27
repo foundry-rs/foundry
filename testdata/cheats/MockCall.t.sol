@@ -164,7 +164,6 @@ contract MockCallRevertTest is DSTest {
 
     bytes constant ERROR_MESSAGE = "ERROR_MESSAGE";
 
-    
     function testMockGettersRevert() public {
         Mock target = new Mock();
 
@@ -215,7 +214,7 @@ contract MockCallRevertTest is DSTest {
         cheats.mockCallRevert(address(target), abi.encodeWithSelector(target.add.selector, 5, 5), ERROR_MESSAGE);
 
         assertEq(target.add(6, 4), 10);
-        
+
         cheats.expectRevert(ERROR_MESSAGE);
         target.add(5, 5);
     }
@@ -258,7 +257,7 @@ contract MockCallRevertTest is DSTest {
         Mock mock = new Mock();
 
         cheats.mockCallRevert(address(mock), abi.encodeWithSelector(mock.add.selector), ERROR_MESSAGE);
-        
+
         cheats.mockCall(address(mock), abi.encodeWithSelector(mock.add.selector), abi.encode(5));
         assertEq(mock.add(2, 3), 5);
     }
