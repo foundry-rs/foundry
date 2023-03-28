@@ -4,13 +4,12 @@
 //! wrapper for a serializable REPL session.
 
 use crate::prelude::{SessionSource, SessionSourceConfig};
-use ethers_solc::Solc;
+
 use eyre::Result;
-use foundry_config::SolcReq;
+
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use time::{format_description, OffsetDateTime};
-use yansi::Paint;
 
 /// A Chisel REPL Session
 #[derive(Debug, Serialize, Deserialize)]
@@ -33,39 +32,10 @@ impl ChiselSession {
     ///
     /// A new instance of [ChiselSession]
     pub fn new(config: SessionSourceConfig) -> Result<Self> {
-        // Solc version precedence
-        // - Foundry configuration / `--use` flag
-        // - Latest installed version via SVM
-        // - Default: 0.8.17
-        let solc = Solc::find_or_install_svm_version(
-            if let Some(SolcReq::Version(version)) = config.foundry_config.solc.as_ref() {
-                let version = format!("{}.{}.{}", version.major, version.minor, version.patch);
-                if let Ok(None) = Solc::find_svm_installed_version(&version) {
-                    println!(
-                        "{}",
-                        Paint::green(format!("Installing solidity version {version}..."))
-                    );
-                }
-                version
-            } else {
-                // If no version was explicitly set, use the latest SVM version.
-                if let Some(version) = Solc::installed_versions().into_iter().max() {
-                    version.to_string()
-                } else {
-                    println!(
-                        "{}",
-                        Paint::green(
-                            "No solidity versions installed! Installing solidity version 0.8.17..."
-                        )
-                    );
-                    String::from("0.8.17")
-                }
-            },
-        );
+        let solc = config.solc()?;
 
         // Return initialized ChiselSession with set solc version
-        solc.map(|solc| Self { session_source: Some(SessionSource::new(solc, config)), id: None })
-            .map_err(|e| eyre::eyre!(e))
+        Ok(Self { session_source: Some(SessionSource::new(solc, config)), id: None })
     }
 
     /// Render the full source code for the current session.
