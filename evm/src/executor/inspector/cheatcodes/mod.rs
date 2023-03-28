@@ -174,6 +174,8 @@ pub struct Cheatcodes {
     /// Breakpoints supplied by the `vm.breakpoint("<char>")` cheatcode
     /// char -> pc
     pub breakpoints: Breakpoints,
+    /// Current's call memory
+    pub memory: Vec<u8>,
 }
 
 impl Cheatcodes {
@@ -301,6 +303,7 @@ where
         _: bool,
     ) -> InstructionResult {
         self.pc = interpreter.program_counter();
+        self.memory = interpreter.memory.data().clone();
 
         // reset gas if gas metering is turned off
         match self.gas_metering {

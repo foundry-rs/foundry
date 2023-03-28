@@ -25,7 +25,7 @@ use revm::{
     primitives::{Account, TransactTo},
     Database, EVMData, JournaledState,
 };
-use std::collections::VecDeque;
+use std::{collections::VecDeque, fmt::Write};
 use tracing::trace;
 
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
@@ -145,6 +145,68 @@ pub fn parse(s: &str, ty: &ParamType) -> Result<Bytes, Bytes> {
         .map_err(|e| format!("Failed to parse `{s}` as type `{ty}`: {e}").encode().into())
 }
 
+struct FormattedMemory {
+    header: String,
+    words: Vec<String>,
+}
+
+fn check_format_memory_inputs(
+    start: U256,
+    end: U256,
+    memory_length: u32,
+) -> Result<(u32, u32), String> {
+    // let start = u32::try_from(start).map_err(|err| err.to_string().encode())?;
+    let start = u32::try_from(start).map_err(|err| format!("start parameter: {}", err))?;
+    let end = u32::try_from(end).map_err(|err| format!("end parameter: {}", err))?;
+    if start > end {
+        return Err(format!("invalid parameters: start ({}) must be <= end ({})", start, end))
+    }
+    if end > memory_length - 1 {
+        return Err(format!(
+            "invalid parameters: end ({}). Max memory offset: {}",
+            end,
+            memory_length - 1
+        ))
+    }
+    Ok((start, end))
+}
+
+fn format_memory(mem: &Vec<u8>, start: U256, end: U256) -> Result<FormattedMemory, String> {
+    let (start, end) = check_format_memory_inputs(start, end, mem.len() as u32)?;
+
+    let optional_mem = mem.iter().map(|v| Some(*v)).collect::<Vec<Option<u8>>>();
+    let mem_slice = &optional_mem[(start as usize)..=(end as usize)];
+
+    let pre_fill: Vec<Option<u8>> = vec![None; (start % 32) as usize];
+    let post_fill: Vec<Option<u8>> = vec![None; (31 - end % 32) as usize];
+
+    let mem = [pre_fill.as_slice(), mem_slice, post_fill.as_slice()].concat();
+    let mem = mem.chunks(32).collect::<Vec<&[Option<u8>]>>();
+
+    let mut formatted_mem = vec![];
+
+    let start_print: usize = (start - start % 32) as usize;
+
+    for (i, chunk) in mem.iter().enumerate() {
+        // println!("{:02x?} {1:#04x}({1})", chunk, i * 32);
+        let mut s = String::new();
+        for v in chunk.iter() {
+            if let Some(v) = v {
+                write!(&mut s, "{:02x?} ", v).map_err(|err| err.to_string())?;
+            } else {
+                write!(&mut s, "   ").map_err(|err| err.to_string())?;
+            }
+        }
+        write!(&mut s, " {0:#04x} ({0})", start_print + i * 32).map_err(|err| err.to_string())?;
+
+        formatted_mem.push(s);
+    }
+
+    let header = (0..32).map(|x| format!("{:>2?}", x)).collect::<Vec<String>>().join(" ");
+
+    Ok(FormattedMemory { header, words: formatted_mem })
+}
+
 pub fn apply<DB: Database>(
     state: &mut Cheatcodes,
     data: &mut EVMData<'_, DB>,
@@ -186,6 +248,51 @@ pub fn apply<DB: Database>(
         HEVMCalls::ParseInt(inner) => parse(&inner.0, &ParamType::Int(256)),
         HEVMCalls::ParseBytes32(inner) => parse(&inner.0, &ParamType::FixedBytes(32)),
         HEVMCalls::ParseBool(inner) => parse(&inner.0, &ParamType::Bool),
+        HEVMCalls::GetMemory(inner) => {
+            match check_format_memory_inputs(inner.0, inner.1, state.memory.len() as u32) {
+                Ok((start, end)) => {
+                    let mem = state.memory[start as usize..=end as usize].to_vec();
+                    Ok(ethers::abi::encode(&[Token::Bytes(mem)]).into())
+                }
+                Err(err) => Err(format!("Error getMemory: {}", err).encode().into()),
+            }
+        }
+        HEVMCalls::GetMemoryFormattedAsString(inner) => {
+            match format_memory(&state.memory, inner.0, inner.1) {
+                Ok(mem) => {
+                    let mem_as_string = format!(
+                        "{}\n{}",
+                        mem.header,
+                        // when using `console.log()` it seems like the first line is always
+                        // indented with 2 spaces so we add 2 spaces before
+                        // each line after the header
+                        mem.words.iter().fold(String::new(), |acc, s| acc + "  " + s + "\n")
+                    );
+
+                    Ok(ethers::abi::encode(&[Token::String(mem_as_string)]).into())
+                }
+                Err(err) => {
+                    Err(format!("Error getMemoryFormattedAsString: {}", err).encode().into())
+                }
+            }
+        }
+        HEVMCalls::GetMemoryFormatted(inner) => {
+            match format_memory(&state.memory, inner.0, inner.1) {
+                Ok(mem) => {
+                    let formatted_mem = mem
+                        .words
+                        .iter()
+                        .map(|v| Token::String(v.to_owned()))
+                        .collect::<Vec<Token>>();
+                    Ok(abi::encode(&[Token::Tuple(vec![
+                        Token::String(mem.header),
+                        Token::Array(formatted_mem),
+                    ])])
+                    .into())
+                }
+                Err(err) => Err(format!("Error getMemoryFormatted: {}", err).encode().into()),
+            }
+        }
         _ => return None,
     })
 }

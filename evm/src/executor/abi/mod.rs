@@ -223,6 +223,11 @@ abigen!(
 
         pauseGasMetering()
         resumeGasMetering()
+
+        struct FormattedMemory {string header; string[] words;}
+        getMemory(uint256,uint256)(bytes)
+        getMemoryFormattedAsString(uint256,uint256)(string)
+        getMemoryFormatted(uint256,uint256)(FormattedMemory)
     ]",
 );
 pub use hevm::{HEVMCalls, HEVM_ABI};
