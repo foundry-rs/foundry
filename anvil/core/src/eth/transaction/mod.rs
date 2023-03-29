@@ -93,12 +93,15 @@ impl EthTransactionRequest {
             nonce,
             mut access_list,
             chain_id,
+            transaction_type,
             ..
         } = self;
         let chain_id = chain_id.map(|id| id.as_u64());
-        match (gas_price, max_fee_per_gas, access_list.take()) {
+        let transaction_type = transaction_type.map(|id| id.as_u64());
+        match (transaction_type, gas_price, max_fee_per_gas, max_priority_fee_per_gas, access_list.take()) {
             // legacy transaction
-            (Some(_), None, None) => {
+            (Some(0), _, None, None, None) |
+            (None, Some(_), None, None, None) => {
                 Some(TypedTransactionRequest::Legacy(LegacyTransactionRequest {
                     nonce: nonce.unwrap_or(U256::zero()),
                     gas_price: gas_price.unwrap_or_default(),
@@ -113,7 +116,8 @@ impl EthTransactionRequest {
                 }))
             }
             // EIP2930
-            (_, None, Some(access_list)) => {
+            (Some(1), _, None, None, _) |
+            (None, _, None, None, Some(_)) => {
                 Some(TypedTransactionRequest::EIP2930(EIP2930TransactionRequest {
                     nonce: nonce.unwrap_or(U256::zero()),
                     gas_price: gas_price.unwrap_or_default(),
@@ -125,11 +129,14 @@ impl EthTransactionRequest {
                         None => TransactionKind::Create,
                     },
                     chain_id: chain_id.unwrap_or_default(),
-                    access_list,
+                    access_list: access_list.unwrap_or_default(),
                 }))
             }
             // EIP1559
-            (None, Some(_), access_list) | (None, None, access_list @ None) => {
+            (Some(2), None, _, _, _) |
+            (None, None, Some(_), _, _) |
+            (None, None, _, Some(_), _) |
+            (None, None, None, None, None) => {
                 // Empty fields fall back to the canonical transaction schema.
                 Some(TypedTransactionRequest::EIP1559(EIP1559TransactionRequest {
                     nonce: nonce.unwrap_or(U256::zero()),
