@@ -240,9 +240,18 @@ where
     I: IntoIterator<Item = T>,
     T: AsRef<str>,
 {
-    let tokens =
-        values.into_iter().map(|v| parse_token(v.as_ref(), ty)).collect::<Result<Vec<_>, _>>()?;
-    Ok(abi::encode(&[Token::Array(tokens)]).into())
+    let mut values = values.into_iter();
+    match values.next() {
+        Some(first) if !first.as_ref().is_empty() => {
+            let tokens = std::iter::once(first)
+                .chain(values)
+                .map(|v| parse_token(v.as_ref(), ty))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(abi::encode(&[Token::Array(tokens)]).into())
+        }
+        // return the empty encoded Bytes when values is empty or the first element is empty
+        _ => Ok(abi::encode(&[Token::String(String::new())]).into()),
+    }
 }
 
 fn parse_token(s: &str, ty: &ParamType) -> Result<Token, String> {
