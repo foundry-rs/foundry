@@ -98,10 +98,15 @@ impl EthTransactionRequest {
         } = self;
         let chain_id = chain_id.map(|id| id.as_u64());
         let transaction_type = transaction_type.map(|id| id.as_u64());
-        match (transaction_type, gas_price, max_fee_per_gas, max_priority_fee_per_gas, access_list.take()) {
+        match (
+            transaction_type,
+            gas_price,
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            access_list.take(),
+        ) {
             // legacy transaction
-            (Some(0), _, None, None, None) |
-            (None, Some(_), None, None, None) => {
+            (Some(0), _, None, None, None) | (None, Some(_), None, None, None) => {
                 Some(TypedTransactionRequest::Legacy(LegacyTransactionRequest {
                     nonce: nonce.unwrap_or(U256::zero()),
                     gas_price: gas_price.unwrap_or_default(),
@@ -116,8 +121,7 @@ impl EthTransactionRequest {
                 }))
             }
             // EIP2930
-            (Some(1), _, None, None, _) |
-            (None, _, None, None, Some(_)) => {
+            (Some(1), _, None, None, _) | (None, _, None, None, Some(_)) => {
                 Some(TypedTransactionRequest::EIP2930(EIP2930TransactionRequest {
                     nonce: nonce.unwrap_or(U256::zero()),
                     gas_price: gas_price.unwrap_or_default(),
