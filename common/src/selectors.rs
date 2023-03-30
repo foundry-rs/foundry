@@ -622,7 +622,7 @@ mod tests {
         assert_eq!(
             result,
             ParsedSignatures {
-                signatures: RawSelectorImportData { ..Default::default() },
+                signatures: Default::default(),
                 ..Default::default()
             }
         );
