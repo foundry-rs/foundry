@@ -1034,7 +1034,7 @@ impl DatabaseExt for Backend {
                 persistent_addrs.extend(self.caller_address());
 
                 let active = self.inner.get_fork_mut(active_idx);
-                active.journaled_state = self.fork_init_journaled_state.clone();
+                active.journaled_state = journaled_state.clone();
                 active.journaled_state.depth = journaled_state.depth;
                 for addr in persistent_addrs {
                     merge_journaled_state_data(addr, journaled_state, &mut active.journaled_state);
