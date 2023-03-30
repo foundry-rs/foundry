@@ -1034,11 +1034,18 @@ impl DatabaseExt for Backend {
                 persistent_addrs.extend(self.caller_address());
 
                 let active = self.inner.get_fork_mut(active_idx);
-                active.journaled_state = journaled_state.clone();
+                active.journaled_state = self.fork_init_journaled_state.clone();
+
                 active.journaled_state.depth = journaled_state.depth;
                 for addr in persistent_addrs {
                     merge_journaled_state_data(addr, journaled_state, &mut active.journaled_state);
                 }
+
+                // ensure all previously loaded accounts are present in the journaled state to prevent issues in the new journalstate, e.g. assumptions that accounts are loaded
+                for addr in journaled_state.state.keys().copied() {
+                    let _ = active.journaled_state.load_account(addr, &mut active.db);
+                }
+
                 *journaled_state = active.journaled_state.clone();
             }
         }
