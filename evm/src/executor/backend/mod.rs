@@ -1041,12 +1041,16 @@ impl DatabaseExt for Backend {
                     merge_journaled_state_data(addr, journaled_state, &mut active.journaled_state);
                 }
 
-
-                // ensure all previously loaded accounts are present in the journaled state to prevent issues in the new journalstate, e.g. assumptions that accounts are loaded
+                // ensure all previously loaded accounts are present in the journaled state to
+                // prevent issues in the new journalstate, e.g. assumptions that accounts are loaded
                 // if the account is not touched, we reload it, if it's touched we clone it
                 for (addr, acc) in journaled_state.state.iter() {
                     if acc.is_touched {
-                        merge_journaled_state_data(*addr, &journaled_state, &mut active.journaled_state);
+                        merge_journaled_state_data(
+                            *addr,
+                            journaled_state,
+                            &mut active.journaled_state,
+                        );
                     } else {
                         let _ = active.journaled_state.load_account(*addr, &mut active.db);
                     }
