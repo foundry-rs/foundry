@@ -1,5 +1,4 @@
 //! terminal utils
-use atty::{self, Stream};
 use ethers_solc::{
     remappings::Remapping,
     report::{self, BasicStdoutReporter, Reporter, SolcCompilerIoReporter},
@@ -39,7 +38,7 @@ pub struct TermSettings {
 impl TermSettings {
     #[allow(missing_docs)]
     pub fn from_env() -> TermSettings {
-        if atty::is(Stream::Stdout) {
+        if is_terminal::is_terminal(&std::io::stdout()) {
             TermSettings { indicate_progress: true }
         } else {
             TermSettings { indicate_progress: false }

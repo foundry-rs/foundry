@@ -62,7 +62,7 @@ pub const DEFAULT_IPC_ENDPOINT: &str = "/tmp/anvil.ipc";
 pub const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     " (",
-    env!("VERGEN_GIT_SHA_SHORT"),
+    env!("VERGEN_GIT_SHA"),
     " ",
     env!("VERGEN_BUILD_TIMESTAMP"),
     ")"

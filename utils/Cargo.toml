@@ -22,26 +22,26 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
 
 forge-fmt = { path = "../fmt" }
 
-eyre = { version = "0.6.5", default-features = false }
+eyre = { version = "0.6.8", default-features = false }
 hex = "0.4.3"
-reqwest = { version = "0.11.8", default-features = false, features = ["json", "rustls"] }
+reqwest = { version = "0.11.16", default-features = false, features = ["json", "rustls"] }
 rustc-hex = { version = "2.1.0", default-features = false }
-serde = "1.0.132"
-serde_json = { version = "1.0.67", default-features = false }
+serde = "1.0.159"
+serde_json = { version = "1.0.95", default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-rlp = "0.5.1"
-futures = "0.3.17"
+rlp = "0.5.2"
+futures = "0.3.27"
 tracing = "0.1"
-once_cell = "1.13"
+once_cell = "1.17"
 rand = "0.8"
-glob = "0.3.0"
+glob = "0.3.1"
 
 [dev-dependencies]
 foundry-common = { path = "./../common" }
 ethers = { workspace = true, default-features = false, features = [
     "solc-full",
 ] }
-pretty_assertions = "1.0.0"
+pretty_assertions = "1.3.0"
 
 [features]
 test = ["tracing-subscriber"]

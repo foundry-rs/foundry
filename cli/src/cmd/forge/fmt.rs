@@ -64,9 +64,10 @@ impl FmtArgs {
         let mut paths = self.paths.iter().peekable();
 
         if let Some(path) = paths.peek() {
-            if *path == Path::new("-") && !atty::is(atty::Stream::Stdin) {
+            let mut stdin = io::stdin();
+            if *path == Path::new("-") && !is_terminal::is_terminal(&stdin) {
                 let mut buf = String::new();
-                io::stdin().read_to_string(&mut buf).expect("Failed to read from stdin");
+                stdin.read_to_string(&mut buf).expect("Failed to read from stdin");
                 return vec![Input::Stdin(buf)]
             }
         }

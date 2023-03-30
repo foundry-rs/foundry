@@ -15,12 +15,10 @@ ethers-solc = { workspace = true, default-features = false, features = [
     "svm-solc",
     "project-util",
 ] }
-ethers-contract = { workspace = true, default-features = false, features = [
-    "abigen",
-] }
+ethers-contract = { workspace = true, default-features = false, features = ["abigen"] }
 curl = { version = "0.4", default-features = false, features = ["http2"] }
 eyre = "0.6"
 git2 = { version = "0.16.1", default-features = false }
-url = "2.2"
+url = "2.3"
 tracing = "0.1"
-tempfile = "3.3.0"
+tempfile = "3.5"
