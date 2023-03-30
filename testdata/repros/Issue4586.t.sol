@@ -18,18 +18,17 @@ contract Issue4586Test is DSTest {
     }
 
     function test_rollForkHandlerContract() public {
-         assertEq(block.number, initialBlock);
+        assertEq(block.number, initialBlock);
         handler.rollFork();
-         assertEq(block.number, initialBlock + 1);
+        assertEq(block.number, initialBlock + 1);
     }
 
-     function test_rollForkTestContract() public {
-         assertEq(block.number, initialBlock);
-         vm.rollFork(block.number + 1);
-         assertEq(block.number, initialBlock + 1);
-     }
+    function test_rollForkTestContract() public {
+        assertEq(block.number, initialBlock);
+        vm.rollFork(block.number + 1);
+        assertEq(block.number, initialBlock + 1);
+    }
 }
-
 
 contract InvariantHandler {
     address constant HEVM_ADDRESS = address(bytes20(uint160(uint256(keccak256("hevm cheat code")))));
@@ -41,6 +40,4 @@ contract InvariantHandler {
         vm.rollFork(block.number + 1);
         calledRollFork += 1;
     }
-
 }
-
