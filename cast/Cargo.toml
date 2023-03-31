@@ -13,19 +13,17 @@ foundry-evm = { path = "./../evm" }
 foundry-config = { path = "./../config" }
 foundry-common = { path = "./../common" }
 
-futures = "0.3.17"
+futures = "0.3.27"
 ethers-etherscan = { workspace = true, default-features = false }
-ethers-contract = { workspace = true, default-features = false, features = [
-    "abigen",
-] }
+ethers-contract = { workspace = true, default-features = false, features = ["abigen"] }
 ethers-core = { workspace = true, default-features = false }
 ethers-providers = { workspace = true, default-features = false }
 ethers-signers = { workspace = true, default-features = false }
-eyre = "0.6.5"
+eyre = "0.6.8"
 rustc-hex = "2.1.0"
-serde = "1.0.136"
-serde_json = "1.0.67"
-chrono = "0.4.22"
+serde = "1.0.159"
+serde_json = "1.0.95"
+chrono = "0.4.24"
 hex = "0.4.3"
 
 # aws
@@ -34,9 +32,9 @@ rusoto_kms = { version = "0.48.0", default-features = false, optional = true }
 evm-disassembler = "0.2.0"
 
 [dev-dependencies]
-async-trait = "0.1.53"
+async-trait = "0.1.68"
 tokio = "1"
-thiserror = "1.0.30"
+thiserror = "1.0"
 
 [features]
 default = ["ledger", "trezor", "aws"]

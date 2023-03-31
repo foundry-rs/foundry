@@ -24,7 +24,7 @@ foundry_config::merge_impl_figment_convert!(ChiselParser, opts, evm_opts);
 pub(crate) const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     " (",
-    env!("VERGEN_GIT_SHA_SHORT"),
+    env!("VERGEN_GIT_SHA"),
     " ",
     env!("VERGEN_BUILD_TIMESTAMP"),
     ")"
@@ -129,7 +129,7 @@ async fn main() -> eyre::Result<()> {
     }
 
     // Create a new rustyline Editor
-    let mut rl = Editor::<SolidityHelper>::new()?;
+    let mut rl = Editor::<SolidityHelper, _>::new()?;
     rl.set_helper(Some(SolidityHelper::default()));
 
     // Print welcome header
@@ -152,7 +152,7 @@ async fn main() -> eyre::Result<()> {
                 interrupt = false;
 
                 // Add line to history
-                rl.add_history_entry(&line);
+                rl.add_history_entry(&line)?;
 
                 // Dispatch and match results
                 match dispatcher.dispatch(&line).await {

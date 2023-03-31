@@ -621,10 +621,7 @@ mod tests {
         let result = parse_signatures(vec!["event".to_string()]);
         assert_eq!(
             result,
-            ParsedSignatures {
-                signatures: RawSelectorImportData { ..Default::default() },
-                ..Default::default()
-            }
+            ParsedSignatures { signatures: Default::default(), ..Default::default() }
         );
     }
 

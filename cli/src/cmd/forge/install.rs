@@ -5,7 +5,6 @@ use crate::{
     prompt,
     utils::{p_println, CommandUtils},
 };
-use atty::{self, Stream};
 use clap::{Parser, ValueHint};
 use ethers::solc::Project;
 use foundry_common::fs;
@@ -458,7 +457,7 @@ fn git_checkout(
     let mut tag = dep.tag.clone().unwrap();
     let mut is_branch = false;
     // only try to match tag if current terminal is a tty
-    if atty::is(Stream::Stdout) {
+    if is_terminal::is_terminal(&std::io::stdout()) {
         if tag.is_empty() {
             tag = match_tag(&tag, libs, target_dir)?;
         } else if let Some(branch) = match_branch(&tag, libs, target_dir)? {

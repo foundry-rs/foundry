@@ -67,7 +67,7 @@ impl Server {
         let input_404 = book
             .config
             .get("output.html.input-404")
-            .and_then(toml::Value::as_str)
+            .and_then(|v| v.as_str())
             .map(ToString::to_string);
         let file_404 = get_404_output_file(&input_404);
 
