@@ -13,4 +13,11 @@ contract Issue3055Test is DSTest {
         assertEq(uint256(0), uint256(1));
         vm.revertTo(snapId);
     }
+
+    function test_snapshot2() public {
+        uint256 snapshot = vm.snapshot();
+        assertTrue(false);
+        vm.revertTo(snapshot);
+        assertTrue(true);
+    }
 }
