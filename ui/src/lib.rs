@@ -420,8 +420,8 @@ impl Tui {
                                     let mut before = source[..std::cmp::min(offset, max)]
                                         .split_inclusive('\n')
                                         .collect::<Vec<&str>>();
-                                    let actual = source[std::cmp::min(offset, max)..
-                                        std::cmp::min(offset + len, max)]
+                                    let actual = source[std::cmp::min(offset, max)
+                                        ..std::cmp::min(offset + len, max)]
                                         .split_inclusive('\n')
                                         .map(|s| s.to_string())
                                         .collect::<Vec<String>>();
@@ -987,18 +987,18 @@ impl Ui for Tui {
                     let event = event::read().unwrap();
                     if let Event::Key(key) = event {
                         if tx.send(Interrupt::KeyPressed(key)).is_err() {
-                            return
+                            return;
                         }
                     } else if let Event::Mouse(mouse) = event {
                         if tx.send(Interrupt::MouseEvent(mouse)).is_err() {
-                            return
+                            return;
                         }
                     }
                 }
                 // Force update if time has passed
                 if last_tick.elapsed() > tick_rate {
                     if tx.send(Interrupt::IntervalElapsed).is_err() {
-                        return
+                        return;
                     }
                     last_tick = Instant::now();
                 }
@@ -1012,8 +1012,6 @@ impl Ui for Tui {
         let mut opcode_list: Vec<String> =
             debug_call[0].1.iter().map(|step| step.pretty_opcode()).collect();
         let mut last_index = 0;
-
-        // dbg!(&self.breakpoints);
 
         let mut stack_labels = false;
         let mut mem_utf = false;
@@ -1034,9 +1032,12 @@ impl Ui for Tui {
             if let Some(c) = receiver.char_press() {
                 if self.key_buffer.ends_with('\'') {
                     if let Some(pc) = self.breakpoints.get(&c) {
-                        let debug_steps = &debug_call[draw_memory.inner_call_index].1[..];
-                        if let Some(step) = debug_steps.iter().position(|step| step.pc == *pc) {
-                            self.current_step = step;
+                        for (i, (_, debug_steps, _)) in debug_call.iter().enumerate() {
+                            if let Some(step) = debug_steps.iter().position(|step| step.pc == *pc) {
+                                draw_memory.inner_call_index = i;
+                                self.current_step = step;
+                                break;
+                            }
                         }
                     } // else, this breakpoint was not stored
 
@@ -1051,7 +1052,7 @@ impl Ui for Tui {
                                 LeaveAlternateScreen,
                                 DisableMouseCapture
                             )?;
-                            return Ok(TUIExitReason::CharExit)
+                            return Ok(TUIExitReason::CharExit);
                         }
                         // Move down
                         KeyCode::Char('j') | KeyCode::Down => {
@@ -1061,9 +1062,9 @@ impl Ui for Tui {
                                     let max_mem = (debug_call[draw_memory.inner_call_index].1
                                         [self.current_step]
                                         .memory
-                                        .len() /
-                                        32)
-                                    .saturating_sub(1);
+                                        .len()
+                                        / 32)
+                                        .saturating_sub(1);
                                     if draw_memory.current_mem_startline < max_mem {
                                         draw_memory.current_mem_startline += 1;
                                     }
@@ -1180,8 +1181,8 @@ impl Ui for Tui {
                                     .find_map(|(i, op)| {
                                         if i > 0 {
                                             match (
-                                                prev_ops[i - 1].contains("JUMP") &&
-                                                    prev_ops[i - 1] != "JUMPDEST",
+                                                prev_ops[i - 1].contains("JUMP")
+                                                    && prev_ops[i - 1] != "JUMPDEST",
                                                 &**op,
                                             ) {
                                                 (true, "JUMPDEST") => Some(i - 1),
