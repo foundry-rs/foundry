@@ -56,6 +56,7 @@ impl CheatsManager {
 
     /// Sets the auto impersonation flag which if set to true will make the `is_impersonated` function always return true
     pub fn set_auto_impersonate_account(&self, enabled: bool) {
+        trace!(target: "cheats", "Auto impersonation set to {:?}", enabled);
         self.state.write().auto_impersonate_accounts = enabled
     }
 }
@@ -73,6 +74,6 @@ pub struct CheatsState {
 
 impl Default for CheatsState {
     fn default() -> Self {
-        Self { impersonated_accounts: Default::default(), bypass_signature: IMPERSONATED_SIGNATURE }
+        Self { impersonated_accounts: Default::default(), bypass_signature: IMPERSONATED_SIGNATURE, auto_impersonate_accounts: false}
     }
 }
