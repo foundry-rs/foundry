@@ -30,9 +30,11 @@ pub struct FuzzConfig {
     /// Once the fuzzer exceeds this limit, it will start evicting random entries
     ///
     /// This limit is put in place to prevent memory blowup.
+    #[serde(deserialize_with = "crate::deserialize_usize_or_max")]
     pub max_fuzz_dictionary_addresses: usize,
     /// How many values to record at most.
     /// Once the fuzzer exceeds this limit, it will start evicting random entries
+    #[serde(deserialize_with = "crate::deserialize_usize_or_max")]
     pub max_fuzz_dictionary_values: usize,
 }
 

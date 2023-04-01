@@ -287,7 +287,7 @@ impl<'a> ContractRunner<'a> {
                                 *should_fail,
                                 test_options.fuzzer(),
                                 setup.clone(),
-                                test_options.fuzz.clone(),
+                                test_options.fuzz,
                             )
                         } else {
                             self.clone().run_test(func, *should_fail, setup.clone())
