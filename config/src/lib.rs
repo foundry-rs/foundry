@@ -85,7 +85,7 @@ use crate::{
 use providers::*;
 
 mod fuzz;
-pub use fuzz::FuzzConfig;
+pub use fuzz::{FuzzConfig, FuzzDictionaryConfig};
 
 mod invariant;
 use crate::fs_permissions::PathPermission;

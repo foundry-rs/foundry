@@ -56,13 +56,13 @@ pub fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
 /// Works with ABI Encoder v2 tuples.
 pub fn fuzz_param_from_state(param: &ParamType, arc_state: EvmFuzzState) -> BoxedStrategy<Token> {
     // These are to comply with lifetime requirements
-    let state_len = arc_state.read().len();
+    let state_len = arc_state.read().values().len();
 
     // Select a value from the state
     let st = arc_state.clone();
     let value = any::<prop::sample::Index>()
         .prop_map(move |index| index.index(state_len))
-        .prop_map(move |index| *st.read().iter().nth(index).unwrap());
+        .prop_map(move |index| *st.read().values().iter().nth(index).unwrap());
 
     // Convert the value based on the parameter type
     match param {
@@ -131,6 +131,7 @@ pub fn fuzz_param_from_state(param: &ParamType, arc_state: EvmFuzzState) -> Boxe
 mod tests {
     use crate::fuzz::strategies::{build_initial_state, fuzz_calldata, fuzz_calldata_from_state};
     use ethers::abi::HumanReadableParser;
+    use foundry_config::FuzzDictionaryConfig;
     use revm::db::{CacheDB, EmptyDB};
 
     #[test]
@@ -139,7 +140,7 @@ mod tests {
         let func = HumanReadableParser::parse_function(f).unwrap();
 
         let db = CacheDB::new(EmptyDB());
-        let state = build_initial_state(&db, true, true);
+        let state = build_initial_state(&db, &FuzzDictionaryConfig::default());
 
         let strat = proptest::strategy::Union::new_weighted(vec![
             (60, fuzz_calldata(func.clone())),
