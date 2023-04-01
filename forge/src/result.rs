@@ -96,7 +96,7 @@ pub struct TestResult {
     pub labeled_addresses: BTreeMap<Address, String>,
 
     /// pc breakpoint char map
-    pub breakpoints: HashMap<char, usize>,
+    pub breakpoints: HashMap<char, (Address, usize)>,
 }
 
 impl TestResult {

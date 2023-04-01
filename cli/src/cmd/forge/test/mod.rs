@@ -207,7 +207,6 @@ impl TestArgs {
                         opts,
                         evm_opts: self.evm_opts,
                     };
-                    // TODO: pass the breakpoint map here
                     utils::block_on(debugger.debug(breakpoints))?;
 
                     Ok(TestOutcome::new(results, self.allow_failure))

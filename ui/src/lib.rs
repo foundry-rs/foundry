@@ -59,7 +59,7 @@ pub struct Tui {
     known_contracts_sources: HashMap<String, BTreeMap<u32, String>>,
     /// A mapping of source -> (PC -> IC map for deploy code, PC -> IC map for runtime code)
     pc_ic_maps: BTreeMap<String, (PCICMap, PCICMap)>,
-    breakpoints: HashMap<char, usize>,
+    breakpoints: HashMap<char, (Address, usize)>,
 }
 
 impl Tui {
@@ -71,7 +71,7 @@ impl Tui {
         identified_contracts: HashMap<Address, String>,
         known_contracts: HashMap<String, ContractBytecodeSome>,
         known_contracts_sources: HashMap<String, BTreeMap<u32, String>>,
-        breakpoints: HashMap<char, usize>,
+        breakpoints: HashMap<char, (Address, usize)>,
     ) -> Result<Self> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
@@ -420,8 +420,8 @@ impl Tui {
                                     let mut before = source[..std::cmp::min(offset, max)]
                                         .split_inclusive('\n')
                                         .collect::<Vec<&str>>();
-                                    let actual = source[std::cmp::min(offset, max)
-                                        ..std::cmp::min(offset + len, max)]
+                                    let actual = source[std::cmp::min(offset, max)..
+                                        std::cmp::min(offset + len, max)]
                                         .split_inclusive('\n')
                                         .map(|s| s.to_string())
                                         .collect::<Vec<String>>();
@@ -987,18 +987,18 @@ impl Ui for Tui {
                     let event = event::read().unwrap();
                     if let Event::Key(key) = event {
                         if tx.send(Interrupt::KeyPressed(key)).is_err() {
-                            return;
+                            return
                         }
                     } else if let Event::Mouse(mouse) = event {
                         if tx.send(Interrupt::MouseEvent(mouse)).is_err() {
-                            return;
+                            return
                         }
                     }
                 }
                 // Force update if time has passed
                 if last_tick.elapsed() > tick_rate {
                     if tx.send(Interrupt::IntervalElapsed).is_err() {
-                        return;
+                        return
                     }
                     last_tick = Instant::now();
                 }
@@ -1031,16 +1031,19 @@ impl Ui for Tui {
 
             if let Some(c) = receiver.char_press() {
                 if self.key_buffer.ends_with('\'') {
-                    if let Some(pc) = self.breakpoints.get(&c) {
-                        for (i, (_, debug_steps, _)) in debug_call.iter().enumerate() {
-                            if let Some(step) = debug_steps.iter().position(|step| step.pc == *pc) {
-                                draw_memory.inner_call_index = i;
-                                self.current_step = step;
-                                break;
+                    if let Some((caller, pc)) = self.breakpoints.get(&c) {
+                        for (i, (_caller, debug_steps, _)) in debug_call.iter().enumerate() {
+                            if _caller == caller {
+                                if let Some(step) =
+                                    debug_steps.iter().position(|step| step.pc == *pc)
+                                {
+                                    draw_memory.inner_call_index = i;
+                                    self.current_step = step;
+                                    break
+                                }
                             }
                         }
-                    } // else, this breakpoint was not stored
-
+                    }
                     self.key_buffer.clear();
                 } else if let Interrupt::KeyPressed(event) = receiver {
                     match event.code {
@@ -1052,7 +1055,7 @@ impl Ui for Tui {
                                 LeaveAlternateScreen,
                                 DisableMouseCapture
                             )?;
-                            return Ok(TUIExitReason::CharExit);
+                            return Ok(TUIExitReason::CharExit)
                         }
                         // Move down
                         KeyCode::Char('j') | KeyCode::Down => {
@@ -1062,9 +1065,9 @@ impl Ui for Tui {
                                     let max_mem = (debug_call[draw_memory.inner_call_index].1
                                         [self.current_step]
                                         .memory
-                                        .len()
-                                        / 32)
-                                        .saturating_sub(1);
+                                        .len() /
+                                        32)
+                                    .saturating_sub(1);
                                     if draw_memory.current_mem_startline < max_mem {
                                         draw_memory.current_mem_startline += 1;
                                     }
@@ -1181,8 +1184,8 @@ impl Ui for Tui {
                                     .find_map(|(i, op)| {
                                         if i > 0 {
                                             match (
-                                                prev_ops[i - 1].contains("JUMP")
-                                                    && prev_ops[i - 1] != "JUMPDEST",
+                                                prev_ops[i - 1].contains("JUMP") &&
+                                                    prev_ops[i - 1] != "JUMPDEST",
                                                 &**op,
                                             ) {
                                                 (true, "JUMPDEST") => Some(i - 1),

@@ -191,7 +191,7 @@ fn get_recorded_logs(state: &mut Cheatcodes) -> Bytes {
     }
 }
 
-fn add_breakpoint(state: &mut Cheatcodes, inner: &str) -> Result<Bytes, Bytes> {
+fn add_breakpoint(state: &mut Cheatcodes, caller: Address, inner: &str) -> Result<Bytes, Bytes> {
     let mut chars = inner.chars();
     let point = chars.next();
 
@@ -209,7 +209,7 @@ fn add_breakpoint(state: &mut Cheatcodes, inner: &str) -> Result<Bytes, Bytes> {
     }
 
     // add a breakpoint from the interpreter
-    state.breakpoints.insert(point, state.pc);
+    state.breakpoints.insert(point, (caller, state.pc));
 
     Ok(Bytes::new())
 }
@@ -264,7 +264,7 @@ pub fn apply<DB: DatabaseExt>(
                 .map_err(|err| err.encode_string())?;
             val.encode().into()
         }
-        HEVMCalls::Breakpoint(inner) => add_breakpoint(state, &inner.0)?,
+        HEVMCalls::Breakpoint(inner) => add_breakpoint(state, caller, &inner.0)?,
         HEVMCalls::Etch(inner) => {
             let code = inner.1.clone();
             trace!(address=?inner.0, code=?hex::encode(&code.0), "etch cheatcode");

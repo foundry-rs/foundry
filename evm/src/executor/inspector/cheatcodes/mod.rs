@@ -167,7 +167,7 @@ pub struct Cheatcodes {
     pub pc: usize,
     /// Breakpoints supplied by the `vm.breakpoint("<char>")` cheatcode
     /// char -> pc
-    pub breakpoints: HashMap<char, usize>,
+    pub breakpoints: HashMap<char, (Address, usize)>,
 }
 
 impl Cheatcodes {

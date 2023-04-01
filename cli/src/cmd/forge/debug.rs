@@ -1,6 +1,7 @@
 use super::{build::BuildArgs, script::ScriptArgs};
 use crate::cmd::{forge::build::CoreBuildArgs, retry::RETRY_VERIFY_ON_CREATE};
 use clap::{Parser, ValueHint};
+use ethers::types::Address;
 use foundry_common::evm::EvmArgs;
 use std::{collections::HashMap, path::PathBuf};
 
@@ -41,7 +42,7 @@ pub struct DebugArgs {
 }
 
 impl DebugArgs {
-    pub async fn debug(self, breakpoints: HashMap<char, usize>) -> eyre::Result<()> {
+    pub async fn debug(self, breakpoints: HashMap<char, (Address, usize)>) -> eyre::Result<()> {
         let script = ScriptArgs {
             path: self.path.to_str().expect("Invalid path string.").to_string(),
             args: self.args,

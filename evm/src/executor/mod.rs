@@ -672,7 +672,7 @@ pub struct CallResult<D: Detokenize> {
     /// The `revm::Env` after the call
     pub env: Env,
     /// breakpoints
-    pub breakpoints: std::collections::HashMap<char, usize>,
+    pub breakpoints: std::collections::HashMap<char, (Address, usize)>,
 }
 
 /// The result of a raw call.
