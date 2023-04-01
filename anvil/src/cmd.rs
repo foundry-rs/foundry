@@ -9,7 +9,7 @@ use clap::Parser;
 use core::fmt;
 use ethers::utils::WEI_IN_ETHER;
 use foundry_config::{Chain, Config};
-use futures::FutureExt;
+use futures::{pin_mut, FutureExt};
 use std::{
     future::Future,
     net::IpAddr,
@@ -287,9 +287,20 @@ impl NodeArgs {
         let mut state_dumper = PeriodicStateDumper::new(api, dump_state, dump_interval);
 
         task_manager.spawn(async move {
+
+            let mut stream =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+            let sigterm = stream.recv();
+            pin_mut!(sigterm);
+
             // await shutdown signal but also periodically flush state
             tokio::select! {
-                _ = &mut on_shutdown =>{}
+                 _ = sigterm => {
+                    trace!("received sigterm signal, shutting down");
+                },
+                _ = &mut on_shutdown =>{
+
+                }
                 _ = &mut state_dumper =>{}
             }
 
