@@ -11,6 +11,7 @@ use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     TestFunctionExt,
 };
+use foundry_config::FuzzConfig;
 use foundry_evm::{
     decode::decode_console_logs,
     executor::{CallResult, DeployResult, EvmError, ExecutionErr, Executor},
@@ -286,6 +287,7 @@ impl<'a> ContractRunner<'a> {
                                 *should_fail,
                                 test_options.fuzzer(),
                                 setup.clone(),
+                                test_options.fuzz.clone(),
                             )
                         } else {
                             self.clone().run_test(func, *should_fail, setup.clone())
@@ -530,15 +532,15 @@ impl<'a> ContractRunner<'a> {
         should_fail: bool,
         runner: TestRunner,
         setup: TestSetup,
+        fuzz_config: FuzzConfig,
     ) -> Result<TestResult> {
         let TestSetup { address, mut logs, mut traces, mut labeled_addresses, .. } = setup;
 
         // Run fuzz test
         let start = Instant::now();
-        let mut result =
-            FuzzedExecutor::new(&self.executor, runner, self.sender, Default::default())
-                .fuzz(func, address, should_fail, self.errors)
-                .wrap_err("Failed to run fuzz test")?;
+        let mut result = FuzzedExecutor::new(&self.executor, runner, self.sender, fuzz_config)
+            .fuzz(func, address, should_fail, self.errors)
+            .wrap_err("Failed to run fuzz test")?;
 
         let kind = TestKind::Fuzz {
             median_gas: result.median_gas(false),
