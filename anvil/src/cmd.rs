@@ -289,7 +289,7 @@ impl NodeArgs {
         task_manager.spawn(async move {
 
             let mut stream =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).unwrap();
             let sigterm = stream.recv();
             pin_mut!(sigterm);
 
