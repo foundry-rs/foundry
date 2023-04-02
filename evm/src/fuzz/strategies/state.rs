@@ -7,10 +7,10 @@ use crate::{
 use bytes::Bytes;
 use ethers::{
     abi::Function,
-    prelude::rand::{seq::IteratorRandom, thread_rng},
     types::{Address, Log, H256, U256},
 };
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
+use foundry_config::FuzzDictionaryConfig;
 use hashbrown::HashSet;
 use parking_lot::RwLock;
 use proptest::prelude::{BoxedStrategy, Strategy};
@@ -18,12 +18,7 @@ use revm::{
     db::{CacheDB, DatabaseRef},
     opcode, spec_opcode_gas, SpecId,
 };
-use std::{
-    collections::BTreeSet,
-    io::Write,
-    ops::{Deref, DerefMut},
-    sync::Arc,
-};
+use std::{io::Write, sync::Arc};
 
 /// A set of arbitrary 32 byte data from the VM used to generate values for the strategy.
 ///
@@ -32,46 +27,31 @@ pub type EvmFuzzState = Arc<RwLock<FuzzDictionary>>;
 
 #[derive(Debug, Default)]
 pub struct FuzzDictionary {
-    inner: BTreeSet<[u8; 32]>,
+    /// Collected state values.
+    state_values: HashSet<[u8; 32]>,
     /// Addresses that already had their PUSH bytes collected.
-    cache: HashSet<Address>,
+    addresses: HashSet<Address>,
 }
 
 impl FuzzDictionary {
-    /// If the dictionary exceeds these limits it randomly evicts
-    pub fn enforce_limit(&mut self, max_addresses: usize, max_values: usize) {
-        if self.inner.len() < max_values && self.cache.len() < max_addresses {
-            return
-        }
-        if max_addresses == 0 {
-            self.cache.clear();
-        }
-        if max_values == 0 {
-            self.inner.clear();
-        }
-        let mut rng = thread_rng();
-        while self.inner.len() > max_values {
-            let evict = self.inner.iter().choose(&mut rng).copied().expect("not empty");
-            self.inner.remove(&evict);
-        }
-        while self.cache.len() > max_addresses {
-            let evict = self.cache.iter().choose(&mut rng).copied().expect("not empty");
-            self.cache.remove(&evict);
-        }
+    #[inline]
+    pub fn values(&self) -> &HashSet<[u8; 32]> {
+        &self.state_values
     }
-}
 
-impl Deref for FuzzDictionary {
-    type Target = BTreeSet<[u8; 32]>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
+    #[inline]
+    pub fn values_mut(&mut self) -> &mut HashSet<[u8; 32]> {
+        &mut self.state_values
     }
-}
 
-impl DerefMut for FuzzDictionary {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner
+    #[inline]
+    pub fn addresses(&mut self) -> &HashSet<Address> {
+        &self.addresses
+    }
+
+    #[inline]
+    pub fn addresses_mut(&mut self) -> &mut HashSet<Address> {
+        &mut self.addresses
     }
 }
 
@@ -106,89 +86,91 @@ This is a bug, please open an issue: https://github.com/foundry-rs/foundry/issue
 /// Builds the initial [EvmFuzzState] from a database.
 pub fn build_initial_state<DB: DatabaseRef>(
     db: &CacheDB<DB>,
-    include_storage: bool,
-    include_push_bytes: bool,
+    config: &FuzzDictionaryConfig,
 ) -> EvmFuzzState {
     let mut state = FuzzDictionary::default();
 
     for (address, account) in db.accounts.iter() {
         // Insert basic account information
-        state.insert(H256::from(*address).into());
+        state.values_mut().insert(H256::from(*address).into());
 
         // Insert push bytes
-        if include_push_bytes {
+        if config.include_push_bytes {
             if let Some(code) = &account.info.code {
-                if state.cache.insert(*address) {
+                if state.addresses_mut().insert(*address) {
                     for push_byte in collect_push_bytes(code.bytes().clone()) {
-                        state.insert(push_byte);
+                        state.values_mut().insert(push_byte);
                     }
                 }
             }
         }
 
-        if include_storage {
+        if config.include_storage {
             // Insert storage
             for (slot, value) in &account.storage {
-                state.insert(utils::u256_to_h256_be(*slot).into());
-                state.insert(utils::u256_to_h256_be(*value).into());
+                state.values_mut().insert(utils::u256_to_h256_be(*slot).into());
+                state.values_mut().insert(utils::u256_to_h256_be(*value).into());
             }
         }
     }
 
     // need at least some state data if db is empty otherwise we can't select random data for state
     // fuzzing
-    if state.is_empty() {
+    if state.values().is_empty() {
         // prefill with a random addresses
-        state.insert(H256::from(Address::random()).into());
+        state.values_mut().insert(H256::from(Address::random()).into());
     }
 
     Arc::new(RwLock::new(state))
 }
 
-/// Collects state changes from a [StateChangeset] and logs into an [EvmFuzzState].
+/// Collects state changes from a [StateChangeset] and logs into an [EvmFuzzState] according to the
+/// given [FuzzDictionaryConfig].
 pub fn collect_state_from_call(
     logs: &[Log],
     state_changeset: &StateChangeset,
     state: EvmFuzzState,
-    include_storage: bool,
-    include_push_bytes: bool,
+    config: &FuzzDictionaryConfig,
 ) {
     let mut state = state.write();
 
     for (address, account) in state_changeset {
         // Insert basic account information
-        state.insert(H256::from(*address).into());
+        state.values_mut().insert(H256::from(*address).into());
 
-        if include_storage {
-            // Insert storage
-            for (slot, value) in &account.storage {
-                state.insert(utils::u256_to_h256_be(*slot).into());
-                state.insert(utils::u256_to_h256_be(value.present_value()).into());
-            }
-        }
-
-        if include_push_bytes {
+        if config.include_push_bytes && state.addresses.len() < config.max_fuzz_dictionary_addresses
+        {
             // Insert push bytes
             if let Some(code) = &account.info.code {
-                if state.cache.insert(*address) {
+                if state.addresses_mut().insert(*address) {
                     for push_byte in collect_push_bytes(code.bytes().clone()) {
-                        state.insert(push_byte);
+                        state.values_mut().insert(push_byte);
                     }
                 }
             }
         }
 
+        if config.include_storage && state.state_values.len() < config.max_fuzz_dictionary_values {
+            // Insert storage
+            for (slot, value) in &account.storage {
+                state.values_mut().insert(utils::u256_to_h256_be(*slot).into());
+                state.values_mut().insert(utils::u256_to_h256_be(value.present_value()).into());
+            }
+        } else {
+            return
+        }
+
         // Insert log topics and data
         for log in logs {
             log.topics.iter().for_each(|topic| {
-                state.insert(topic.0);
+                state.values_mut().insert(topic.0);
             });
             log.data.0.chunks(32).for_each(|chunk| {
                 let mut buffer: [u8; 32] = [0; 32];
                 let _ = (&mut buffer[..])
                     .write(chunk)
                     .expect("log data chunk was larger than 32 bytes");
-                state.insert(buffer);
+                state.values_mut().insert(buffer);
             });
         }
     }
@@ -264,30 +246,4 @@ pub fn collect_created_contracts(
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ethers::prelude::rand::RngCore;
-
-    #[test]
-    fn can_enforce_entries() {
-        let mut dictionary = FuzzDictionary::default();
-        let max_values = 10;
-        let max_address = 10;
-
-        for _ in 0..(max_values + 1) {
-            dictionary.cache.insert(Address::random());
-        }
-        for _ in 0..(max_address + 1) {
-            let mut val = [0u8; 32];
-            thread_rng().fill_bytes(&mut val[..]);
-            dictionary.inner.insert(val);
-        }
-
-        dictionary.enforce_limit(max_address, max_values);
-        assert_eq!(dictionary.cache.len(), max_address);
-        assert_eq!(dictionary.inner.len(), max_values);
-    }
 }

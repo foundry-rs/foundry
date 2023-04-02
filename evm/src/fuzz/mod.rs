@@ -81,22 +81,17 @@ impl<'a> FuzzedExecutor<'a> {
 
         // Stores fuzz state for use with [fuzz_calldata_from_state]
         let state: EvmFuzzState = if let Some(fork_db) = self.executor.backend().active_fork_db() {
-            build_initial_state(
-                fork_db,
-                self.config.include_storage,
-                self.config.include_push_bytes,
-            )
+            build_initial_state(fork_db, &self.config.dictionary)
         } else {
-            build_initial_state(
-                self.executor.backend().mem_db(),
-                self.config.include_storage,
-                self.config.include_push_bytes,
-            )
+            build_initial_state(self.executor.backend().mem_db(), &self.config.dictionary)
         };
 
         let strat = proptest::strategy::Union::new_weighted(vec![
-            (100 - self.config.dictionary_weight, fuzz_calldata(func.clone())),
-            (self.config.dictionary_weight, fuzz_calldata_from_state(func.clone(), state.clone())),
+            (100 - self.config.dictionary.dictionary_weight, fuzz_calldata(func.clone())),
+            (
+                self.config.dictionary.dictionary_weight,
+                fuzz_calldata_from_state(func.clone(), state.clone()),
+            ),
         ]);
         tracing::debug!(func = ?func.name, should_fail, "fuzzing");
         let run_result = self.runner.clone().run(&strat, |calldata| {
@@ -109,22 +104,12 @@ impl<'a> FuzzedExecutor<'a> {
                 .as_ref()
                 .ok_or_else(|| TestCaseError::fail(FuzzError::EmptyChangeset))?;
 
-            // keep memory in check
-            {
-                let mut state = state.write();
-                state.enforce_limit(
-                    self.config.max_fuzz_dictionary_addresses,
-                    self.config.max_fuzz_dictionary_values,
-                );
-            }
-
             // Build fuzzer state
             collect_state_from_call(
                 &call.logs,
                 state_changeset,
                 state.clone(),
-                self.config.include_storage,
-                self.config.include_push_bytes,
+                &self.config.dictionary,
             );
 
             // When assume cheat code is triggered return a special string "FOUNDRY::ASSUME"
