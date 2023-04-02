@@ -487,10 +487,14 @@ async fn create_fork(
     );
 
     // initialise the fork environment
-    fork.env = fork.evm_opts.fork_evm_env(&fork.url).await?;
-
+    let (env, block) = fork.evm_opts.fork_evm_env(&fork.url).await?;
+    fork.env = env;
     let meta = BlockchainDbMeta::new(fork.env.clone(), fork.url.clone());
-    let number = meta.block_env.number.as_u64();
+
+    // we need to use the block number from the block because the env's number can be different on
+    // some L2s (e.g. Arbitrum).
+    let number =
+        block.number.map(|num| num.as_u64()).unwrap_or_else(|| meta.block_env.number.as_u64());
 
     // determine the cache path if caching is enabled
     let cache_path = if fork.enable_caching {
