@@ -133,7 +133,7 @@ impl Default for DebugStep {
         Self {
             stack: vec![],
             memory: Memory::new(),
-            instruction: Instruction::OpCode(revm::opcode::INVALID),
+            instruction: Instruction::OpCode(revm::interpreter::opcode::INVALID),
             push_bytes: None,
             pc: 0,
             total_gas_used: 0,
