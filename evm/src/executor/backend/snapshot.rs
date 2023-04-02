@@ -1,6 +1,6 @@
 use ethers::types::{Address, H256, U256};
 use hashbrown::HashMap as Map;
-use revm::{AccountInfo, Env, JournaledState};
+use revm::{primitives::{AccountInfo, Env}, JournaledState};
 use serde::{Deserialize, Serialize};
 
 /// A minimal abstraction of a state at a certain point in time
