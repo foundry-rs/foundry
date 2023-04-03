@@ -31,6 +31,16 @@ pub fn h256_to_u256_le(storage: H256) -> U256 {
     U256::from_little_endian(storage.as_bytes())
 }
 
+/// Small helper function to convert revm's [B160] into ethers's [H160].
+pub fn b160_to_h160(b: revm::primitives::B160) -> ethers::types::H160 {
+    ethers::types::H160::from_slice(&b.to_fixed_bytes())
+}
+
+/// Small helper function to convert ethers's [H160] into revm's [B160].
+pub fn h160_to_b160(h: ethers::types::H160) -> revm::primitives::B160 {
+    revm::primitives::B160::from_slice(&h.to_fixed_bytes())
+}
+
 /// Depending on the configured chain id and block number this should apply any specific changes
 ///
 /// This checks for:
