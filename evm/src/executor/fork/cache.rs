@@ -1,8 +1,8 @@
 //! Cache related abstraction
-use crate::{executor::backend::snapshot::StateSnapshot, HashMap as Map};
+use crate::{executor::backend::snapshot::StateSnapshot, HashMap as Map, utils::{ru256_to_u256, b160_to_h160}};
 use ethers::types::{Address, H256, U256};
 use parking_lot::RwLock;
-use revm::{Account, AccountInfo, DatabaseCommit, KECCAK_EMPTY};
+use revm::{primitives::{Account, AccountInfo, B160, U256 as rU256, KECCAK_EMPTY}, DatabaseCommit};
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
 use std::{collections::BTreeSet, fs, io::BufWriter, path::PathBuf, sync::Arc};
 use tracing::{trace, warn};
@@ -110,15 +110,15 @@ impl BlockchainDb {
 /// relevant identifying markers in the context of [BlockchainDb]
 #[derive(Debug, Clone, Eq, Serialize)]
 pub struct BlockchainDbMeta {
-    pub cfg_env: revm::CfgEnv,
-    pub block_env: revm::BlockEnv,
+    pub cfg_env: revm::primitives::CfgEnv,
+    pub block_env: revm::primitives::BlockEnv,
     /// all the hosts used to connect to
     pub hosts: BTreeSet<String>,
 }
 
 impl BlockchainDbMeta {
     /// Creates a new instance
-    pub fn new(env: revm::Env, url: String) -> Self {
+    pub fn new(env: revm::primitives::Env, url: String) -> Self {
         let host = Url::parse(&url)
             .ok()
             .and_then(|url| url.host().map(|host| host.to_string()))
@@ -151,7 +151,7 @@ impl<'de> Deserialize<'de> for BlockchainDbMeta {
         /// default [revm::CfgEnv], for example enabling an optional feature.
         /// By hand rolling deserialize impl we can prevent cache file issues
         struct CfgEnvBackwardsCompat {
-            inner: revm::CfgEnv,
+            inner: revm::primitives::CfgEnv,
         }
 
         impl<'de> Deserialize<'de> for CfgEnvBackwardsCompat {
@@ -177,7 +177,7 @@ impl<'de> Deserialize<'de> for BlockchainDbMeta {
                     }
                 }
 
-                let cfg_env: revm::CfgEnv =
+                let cfg_env: revm::primitives::CfgEnv =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(Self { inner: cfg_env })
             }
@@ -187,7 +187,7 @@ impl<'de> Deserialize<'de> for BlockchainDbMeta {
         #[derive(Deserialize)]
         struct Meta {
             cfg_env: CfgEnvBackwardsCompat,
-            block_env: revm::BlockEnv,
+            block_env: revm::primitives::BlockEnv,
             /// all the hosts used to connect to
             #[serde(alias = "host")]
             hosts: Hosts,
@@ -238,13 +238,13 @@ impl MemDb {
     }
 
     /// The implementation of [DatabaseCommit::commit()]
-    pub fn do_commit(&self, changes: Map<Address, Account>) {
+    pub fn do_commit(&self, changes: Map<B160, Account>) {
         let mut storage = self.storage.write();
         let mut accounts = self.accounts.write();
         for (add, mut acc) in changes {
             if acc.is_empty() || acc.is_destroyed {
-                accounts.remove(&add);
-                storage.remove(&add);
+                accounts.remove(&b160_to_h160(add));
+                storage.remove(&b160_to_h160(add));
             } else {
                 // insert account
                 if let Some(code_hash) =
@@ -254,21 +254,21 @@ impl MemDb {
                 } else if acc.info.code_hash.is_zero() {
                     acc.info.code_hash = KECCAK_EMPTY;
                 }
-                accounts.insert(add, acc.info);
+                accounts.insert(b160_to_h160(add), acc.info);
 
-                let acc_storage = storage.entry(add).or_default();
+                let acc_storage = storage.entry(b160_to_h160(add)).or_default();
                 if acc.storage_cleared {
                     acc_storage.clear();
                 }
                 for (index, value) in acc.storage {
-                    if value.present_value().is_zero() {
-                        acc_storage.remove(&index);
+                    if value.present_value() == rU256::from(0) {
+                        acc_storage.remove(&ru256_to_u256(index));
                     } else {
-                        acc_storage.insert(index, value.present_value());
+                        acc_storage.insert(ru256_to_u256(index), ru256_to_u256(value.present_value()));
                     }
                 }
                 if acc_storage.is_empty() {
-                    storage.remove(&add);
+                    storage.remove(&b160_to_h160(add));
                 }
             }
         }
@@ -286,7 +286,7 @@ impl Clone for MemDb {
 }
 
 impl DatabaseCommit for MemDb {
-    fn commit(&mut self, changes: Map<Address, Account>) {
+    fn commit(&mut self, changes: Map<B160, Account>) {
         self.do_commit(changes)
     }
 }

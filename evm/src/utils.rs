@@ -41,6 +41,28 @@ pub fn h160_to_b160(h: ethers::types::H160) -> revm::primitives::B160 {
     revm::primitives::B160::from_slice(&h.to_fixed_bytes())
 }
 
+/// Small helper function to convert revm's [B256] into ethers's [H256].
+pub fn b256_to_h256(b: revm::primitives::B256) -> ethers::types::H256 {
+    ethers::types::H256::from_slice(&b.to_fixed_bytes())
+}
+
+/// Small helper function to convert ether's [H256] into revm's [B256].
+pub fn h256_to_b256(h: ethers::types::H256) -> revm::primitives::B256 {
+    revm::primitives::B256::from_slice(&h.to_fixed_bytes())
+}
+
+/// Small helper function to convert ether's [U256] into revm's [U256].
+pub fn u256_to_ru256(u: ethers::types::U256) -> revm::primitives::U256 {
+    let mut buffer = [0u8; 32];
+    u.to_little_endian(buffer);
+    revm::primitives::U256::from_le_bytes(buffer)
+}
+
+/// Small helper function to convert revm's [U256] into ethers's [U256].
+pub fn ru256_to_u256(u: revm::primitives::U256) -> ethers::types::U256 {
+    ethers::types::U256::from_little_endian(u.as_le_slice())
+}
+
 /// Depending on the configured chain id and block number this should apply any specific changes
 ///
 /// This checks for:

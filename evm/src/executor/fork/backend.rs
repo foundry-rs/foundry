@@ -1,12 +1,12 @@
 //! Smart caching and deduplication of requests when using a forking provider
-use crate::executor::{
+use crate::{executor::{
     backend::error::{DatabaseError, DatabaseResult},
     fork::{cache::FlushJsonBlockCacheDB, BlockchainDb},
-};
+}, utils::{b256_to_h256, b160_to_h160, h256_to_b256}};
 use ethers::{
     core::abi::ethereum_types::BigEndianHash,
     providers::Middleware,
-    types::{Address, Block, BlockId, Bytes, Transaction, H160, H256, U256},
+    types::{Address, Block, BlockId, Bytes, Transaction, H256, U256},
     utils::keccak256,
 };
 use futures::{
@@ -15,7 +15,7 @@ use futures::{
     task::{Context, Poll},
     Future, FutureExt,
 };
-use revm::{db::DatabaseRef, AccountInfo, Bytecode, KECCAK_EMPTY};
+use revm::{db::DatabaseRef, primitives::{AccountInfo, Bytecode, B160, B256, U256 as rU256, KECCAK_EMPTY}};
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
     pin::Pin,
@@ -265,7 +265,7 @@ where
                             warn!(target: "backendhandler", ?number, "block not found");
                             // if no block was returned then the block does not exist, in which case
                             // we return empty hash
-                            Ok(KECCAK_EMPTY)
+                            Ok(b256_to_h256(KECCAK_EMPTY))
                         }
                         Err(err) => {
                             error!(target: "backendhandler", ?err, ?number, "failed to get block");
@@ -341,7 +341,7 @@ where
                             // update the cache
                             let acc = AccountInfo {
                                 nonce: nonce.as_u64(),
-                                balance,
+                                balance: balance.into(),
                                 code: code.map(|bytes| Bytecode::new_raw(bytes).to_checked()),
                                 code_hash,
                             };
@@ -628,36 +628,43 @@ impl SharedBackend {
 impl DatabaseRef for SharedBackend {
     type Error = DatabaseError;
 
-    fn basic(&self, address: H160) -> Result<Option<AccountInfo>, Self::Error> {
+    fn basic(&self, address: B160) -> Result<Option<AccountInfo>, Self::Error> {
         trace!( target: "sharedbackend", "request basic {:?}", address);
-        self.do_get_basic(address).map_err(|err| {
+        self.do_get_basic(b160_to_h160(address)).map_err(|err| {
             error!(target: "sharedbackend",  ?err, ?address,  "Failed to send/recv `basic`");
             err
         })
     }
 
-    fn code_by_hash(&self, hash: H256) -> Result<Bytecode, Self::Error> {
-        Err(DatabaseError::MissingCode(hash))
+    fn code_by_hash(&self, hash: B256) -> Result<Bytecode, Self::Error> {
+        Err(DatabaseError::MissingCode(b256_to_h256(hash).into()))
     }
 
-    fn storage(&self, address: H160, index: U256) -> Result<U256, Self::Error> {
+    fn storage(&self, address: B160, index: rU256) -> Result<rU256, Self::Error> {
         trace!( target: "sharedbackend", "request storage {:?} at {:?}", address, index);
-        self.do_get_storage(address, index).map_err(|err| {
+        match self.do_get_storage(b160_to_h160(address), index.into()).map_err(|err| {
             error!( target: "sharedbackend", ?err, ?address, ?index, "Failed to send/recv `storage`");
           err
-        })
+        }) {
+            Ok(val) => Ok(val.into()),
+            Err(err) => Err(err),
+        }
     }
 
-    fn block_hash(&self, number: U256) -> Result<H256, Self::Error> {
-        if number > U256::from(u64::MAX) {
+    fn block_hash(&self, number: rU256) -> Result<B256, Self::Error> {
+        if number > rU256::from(u64::MAX) {
             return Ok(KECCAK_EMPTY)
         }
+        let number: U256 = number.into();
         let number = number.as_u64();
         trace!( target: "sharedbackend", "request block hash for number {:?}", number);
-        self.do_get_block_hash(number).map_err(|err| {
+        match self.do_get_block_hash(number).map_err(|err| {
             error!(target: "sharedbackend",?err, ?number, "Failed to send/recv `block_hash`");
             err
-        })
+        }) {
+            Ok(val) => Ok(h256_to_b256(val).into()),
+            Err(err) => Err(err),
+        }
     }
 }
 
@@ -669,6 +676,7 @@ mod tests {
         opts::EvmOpts,
         Backend,
     };
+    use crate::utils::h160_to_b160;
     use ethers::{
         solc::utils::RuntimeOrHandle,
         types::{Address, Chain},
@@ -696,26 +704,26 @@ mod tests {
         let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
 
         let idx = U256::from(0u64);
-        let value = backend.storage(address, idx).unwrap();
-        let account = backend.basic(address).unwrap().unwrap();
+        let value = backend.storage(h160_to_b160(address), idx.into()).unwrap();
+        let account = backend.basic(h160_to_b160(address)).unwrap().unwrap();
 
         let mem_acc = db.accounts().read().get(&address).unwrap().clone();
         assert_eq!(account.balance, mem_acc.balance);
         assert_eq!(account.nonce, mem_acc.nonce);
         let slots = db.storage().read().get(&address).unwrap().clone();
         assert_eq!(slots.len(), 1);
-        assert_eq!(slots.get(&idx).copied().unwrap(), value);
+        assert_eq!(slots.get(&idx).copied().unwrap(), value.into());
 
         let num = U256::from(10u64);
-        let hash = backend.block_hash(num).unwrap();
+        let hash = backend.block_hash(num.into()).unwrap();
         let mem_hash = *db.block_hashes().read().get(&num).unwrap();
-        assert_eq!(hash, mem_hash);
+        assert_eq!(hash, h256_to_b256(mem_hash));
 
         let max_slots = 5;
         let handle = std::thread::spawn(move || {
             for i in 1..max_slots {
                 let idx = U256::from(i);
-                let _ = backend.storage(address, idx);
+                let _ = backend.storage(h160_to_b160(address), idx.into());
             }
         });
         handle.join().unwrap();
@@ -754,14 +762,14 @@ mod tests {
         // some rng contract from etherscan
         let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
 
-        let idx = U256::from(0u64);
-        let _value = backend.storage(address, idx);
-        let _account = backend.basic(address);
+        let idx = rU256::from(0u64);
+        let _value = backend.storage(h160_to_b160(address), idx);
+        let _account = backend.basic(h160_to_b160(address));
 
         // fill some slots
         let num_slots = 10u64;
         for idx in 1..num_slots {
-            let _ = backend.storage(address, idx.into());
+            let _ = backend.storage(h160_to_b160(address), rU256::from(idx));
         }
         drop(backend);
 
