@@ -7,7 +7,9 @@ use ethers::{
     types::{Address, Log, H256},
 };
 use foundry_macros::ConsoleFmt;
-use revm::{db::Database, CallInputs, EVMData, Gas, Inspector, Return};
+use revm::{Database, EVMData, Inspector};
+use revm::interpreter::{CallInputs, Gas, InstructionResult};
+use revm::primitives::{B160, B256};
 
 /// An inspector that collects logs during execution.
 ///
@@ -42,10 +44,10 @@ impl<DB> Inspector<DB> for LogCollector
 where
     DB: Database,
 {
-    fn log(&mut self, _: &mut EVMData<'_, DB>, address: &Address, topics: &[H256], data: &Bytes) {
+    fn log(&mut self, _: &mut EVMData<'_, DB>, address: &B160, topics: &[B256], data: &Bytes) {
         self.logs.push(Log {
-            address: *address,
-            topics: topics.to_vec(),
+            address: Address::from_slice(address.as_bytes()),
+            topics: topics.to_vec().into_iter().map(|t| H256::from_slice(t.as_bytes())).collect(),
             data: data.clone().into(),
             ..Default::default()
         });
@@ -56,8 +58,8 @@ where
         _: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
         _: bool,
-    ) -> (Return, Gas, Bytes) {
-        if call.contract == HARDHAT_CONSOLE_ADDRESS {
+    ) -> (InstructionResult, Gas, Bytes) {
+        if call.contract == B160::from_slice(HARDHAT_CONSOLE_ADDRESS.as_bytes()) {
             let (status, reason) = self.hardhat_log(call.input.to_vec());
             (status, Gas::new(call.gas_limit), reason)
         } else {

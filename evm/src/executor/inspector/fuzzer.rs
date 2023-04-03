@@ -3,7 +3,10 @@ use crate::{
     utils,
 };
 use bytes::Bytes;
-use revm::{db::Database, CallInputs, CallScheme, EVMData, Gas, Inspector, Interpreter, Return};
+use ethers::types::H160;
+use revm::{Database, EVMData, Inspector};
+use revm::interpreter::{CallInputs, CallScheme, Gas, InstructionResult, Interpreter};
+use revm::primitives::{B160};
 
 /// An inspector that can fuzz and collect data for that effect.
 #[derive(Clone, Debug)]
@@ -95,21 +98,21 @@ impl Fuzzer {
     fn override_call(&mut self, call: &mut CallInputs) {
         if let Some(ref mut call_generator) = self.call_generator {
             // We only override external calls which are not coming from the test contract.
-            if call.context.caller != call_generator.test_address &&
+            if call.context.caller != B160::from_slice(call_generator.test_address.as_bytes()) &&
                 call.context.scheme == CallScheme::Call &&
                 !call_generator.used
             {
                 // There's only a 30% chance that an override happens.
                 if let Some((sender, (contract, input))) =
-                    call_generator.next(call.context.caller, call.contract)
+                    call_generator.next(H160::from_slice(call.context.caller.as_bytes()), H160::from_slice(call.contract.as_bytes()))
                 {
                     call.input = input.0;
-                    call.context.caller = sender;
-                    call.contract = contract;
+                    call.context.caller = B160::from_slice(sender.as_bytes());
+                    call.contract = B160::from_slice(contract.as_bytes());
 
                     // TODO: in what scenarios can the following be problematic
-                    call.context.code_address = contract;
-                    call.context.address = contract;
+                    call.context.code_address = B160::from_slice(contract.as_bytes());
+                    call.context.address = B160::from_slice(contract.as_bytes());
 
                     call_generator.used = true;
                 }

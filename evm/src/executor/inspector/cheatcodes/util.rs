@@ -20,8 +20,8 @@ use ethers::{
     utils,
 };
 use foundry_common::{fmt::*, RpcUrl};
-use revm::{Account, CreateInputs, Database, EVMData, JournaledState, TransactTo};
-use std::collections::VecDeque;
+use revm::{primitives::{Account, B160, TransactTo}, interpreter::CreateInputs, Database, EVMData, JournaledState};
+use std::{collections::VecDeque, str::FromStr};
 use tracing::trace;
 
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
@@ -41,11 +41,14 @@ pub struct BroadcastableTransaction {
 pub type BroadcastableTransactions = VecDeque<BroadcastableTransaction>;
 
 /// Configures the env for the transaction
-pub fn configure_tx_env(env: &mut revm::Env, tx: &Transaction) {
-    env.tx.caller = tx.from;
+pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction) {
+    env.tx.caller = B160::from_slice(tx.from.as_bytes());
     env.tx.gas_limit = tx.gas.as_u64();
-    env.tx.gas_price = tx.gas_price.unwrap_or_default();
-    env.tx.gas_priority_fee = tx.max_priority_fee_per_gas;
+    env.tx.gas_price = tx.gas_price.unwrap_or_default().into();
+    env.tx.gas_priority_fee = match tx.max_priority_fee_per_gas {
+        Some(fee) => Some(fee.into()),
+        None => None,
+    };
     env.tx.nonce = Some(tx.nonce.as_u64());
     env.tx.access_list = tx
         .access_list
@@ -53,11 +56,11 @@ pub fn configure_tx_env(env: &mut revm::Env, tx: &Transaction) {
         .unwrap_or_default()
         .0
         .into_iter()
-        .map(|item| (item.address, item.storage_keys.into_iter().map(h256_to_u256_be).collect()))
+        .map(|item| (item.address, item.storage_keys.into_iter().map(h256_to_u256_be).collect())) // TODO after revm bump
         .collect();
-    env.tx.value = tx.value;
+    env.tx.value = tx.value.into();
     env.tx.data = tx.input.0.clone();
-    env.tx.transact_to = tx.to.map(TransactTo::Call).unwrap_or_else(TransactTo::create)
+    env.tx.transact_to = tx.to.map(TransactTo::Call).unwrap_or_else(TransactTo::create) // TODO: unsure how to handle
 }
 
 /// Applies the given function `f` to the `revm::Account` belonging to the `addr`
@@ -72,6 +75,7 @@ pub fn with_journaled_account<F, R, DB: Database>(
 where
     F: FnMut(&mut Account) -> R,
 {
+    let addr = B160::from_slice(addr.as_bytes());
     journaled_state.load_account(addr, db)?;
     journaled_state.touch(&addr);
     let account = journaled_state.state.get_mut(&addr).expect("account loaded;");
@@ -141,12 +145,12 @@ pub fn apply<DB: Database>(
 ) -> Option<Result<Bytes, Bytes>> {
     Some(match call {
         HEVMCalls::Addr(inner) => addr(inner.0),
-        HEVMCalls::Sign(inner) => sign(inner.0, inner.1.into(), data.env.cfg.chain_id),
+        HEVMCalls::Sign(inner) => sign(inner.0, inner.1.into(), data.env.cfg.chain_id.into()),
         HEVMCalls::DeriveKey0(inner) => {
             derive_key(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1)
         }
         HEVMCalls::DeriveKey1(inner) => derive_key(&inner.0, &inner.1, inner.2),
-        HEVMCalls::RememberKey(inner) => remember_key(state, inner.0, data.env.cfg.chain_id),
+        HEVMCalls::RememberKey(inner) => remember_key(state, inner.0, data.env.cfg.chain_id.into()),
         HEVMCalls::Label(inner) => {
             state.labels.insert(inner.0, inner.1.clone());
             Ok(Bytes::new())
@@ -188,17 +192,18 @@ pub fn process_create<DB>(
 where
     DB: Database<Error = DatabaseError>,
 {
+    let broadcast_sender = B160::from_slice(broadcast_sender.as_bytes());
     match call.scheme {
-        revm::CreateScheme::Create => {
+        revm::primitives::CreateScheme::Create => {
             call.caller = broadcast_sender;
 
             Ok((bytecode, None, data.journaled_state.account(broadcast_sender).info.nonce))
         }
-        revm::CreateScheme::Create2 { salt } => {
+        revm::primitives::CreateScheme::Create2 { salt } => {
             // Sanity checks for our CREATE2 deployer
-            data.journaled_state.load_account(DEFAULT_CREATE2_DEPLOYER, data.db)?;
+            data.journaled_state.load_account(B160::from_slice(DEFAULT_CREATE2_DEPLOYER.as_bytes()), data.db)?;
 
-            let info = &data.journaled_state.account(DEFAULT_CREATE2_DEPLOYER).info;
+            let info = &data.journaled_state.account(B160::from_slice(DEFAULT_CREATE2_DEPLOYER.as_bytes())).info;
             match &info.code {
                 Some(code) => {
                     if code.is_empty() {
@@ -215,7 +220,7 @@ where
                 }
             }
 
-            call.caller = DEFAULT_CREATE2_DEPLOYER;
+            call.caller = B160::from_slice(DEFAULT_CREATE2_DEPLOYER.as_bytes());
 
             // We have to increment the nonce of the user address, since this create2 will be done
             // by the create2_deployer
@@ -225,9 +230,7 @@ where
 
             // Proxy deployer requires the data to be on the following format `salt.init_code`
             let mut calldata = BytesMut::with_capacity(32 + bytecode.len());
-            let mut salt_bytes = [0u8; 32];
-            salt.to_big_endian(&mut salt_bytes);
-            calldata.put_slice(&salt_bytes);
+            calldata.put_slice(salt.to_be_bytes().as_slice());
             calldata.put(bytecode);
 
             Ok((calldata.freeze(), Some(NameOrAddress::Address(DEFAULT_CREATE2_DEPLOYER)), nonce))

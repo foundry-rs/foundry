@@ -20,11 +20,9 @@ macro_rules! try_or_continue {
 /// Get the address of a contract creation
 pub fn get_create_address(call: &CreateInputs, nonce: u64) -> Address {
     match call.scheme {
-        CreateScheme::Create => get_contract_address(call.caller, nonce),
+        CreateScheme::Create => get_contract_address(Address::from_slice(call.caller.as_bytes()), nonce),
         CreateScheme::Create2 { salt } => {
-            let mut buffer: [u8; 4 * 8] = [0; 4 * 8];
-            salt.to_big_endian(&mut buffer);
-            get_create2_address(call.caller, buffer, call.init_code.clone())
+            get_create2_address(Address::from_slice(call.caller.as_bytes()), salt.to_be_bytes(), call.init_code.clone())
         }
     }
 }

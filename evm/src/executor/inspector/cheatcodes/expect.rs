@@ -9,7 +9,7 @@ use ethers::{
     abi::{AbiDecode, AbiEncode, RawLog},
     types::{Address, H160, U256},
 };
-use revm::{return_ok, Bytecode, EVMData, Return};
+use revm::{interpreter::{InstructionResult, return_ok}, primitives::{Bytecode, B160}, EVMData};
 use std::cmp::Ordering;
 use tracing::{instrument, trace};
 
@@ -342,7 +342,7 @@ pub fn apply<DB: DatabaseExt>(
         }
         HEVMCalls::MockCall0(inner) => {
             // TODO: Does this increase gas usage?
-            if let Err(err) = data.journaled_state.load_account(inner.0, data.db) {
+            if let Err(err) = data.journaled_state.load_account(B160::from_slice(inner.0.as_bytes()), data.db) {
                 return Some(Err(err.encode_string()))
             }
 
@@ -350,7 +350,7 @@ pub fn apply<DB: DatabaseExt>(
             // check Solidity might perform.
             if data
                 .journaled_state
-                .account(inner.0)
+                .account(B160::from_slice(inner.0.as_bytes()))
                 .info
                 .code
                 .as_ref()
@@ -358,7 +358,7 @@ pub fn apply<DB: DatabaseExt>(
                 .unwrap_or(true)
             {
                 let code = Bytecode::new_raw(Bytes::from_static(&[0u8])).to_checked();
-                data.journaled_state.set_code(inner.0, code);
+                data.journaled_state.set_code(B160::from_slice(inner.0.as_bytes()), code);
             }
             state.mocked_calls.entry(inner.0).or_default().insert(
                 MockCallDataContext { calldata: inner.1.to_vec().into(), value: None },

@@ -12,10 +12,9 @@ use ethers::{
     abi::RawLog,
     types::{Address, H256, U256},
 };
-use revm::{
-    opcode, return_ok, CallInputs, CallScheme, CreateInputs, Database, EVMData, Gas, GasInspector,
-    Inspector, Interpreter, JournalEntry, Return,
-};
+use revm::{Database, EVMData, Inspector, JournalEntry, primitives::{B160, B256}};
+use revm::inspectors::GasInspector;
+use revm::interpreter::{CallInputs, CallScheme, CreateInputs, Gas, InstructionResult, Interpreter, opcode, return_ok};
 use std::{cell::RefCell, rc::Rc};
 
 /// An inspector that collects call traces.
@@ -93,7 +92,7 @@ impl Tracer {
             depth: data.journaled_state.depth(),
             pc,
             op: OpCode(interp.contract.bytecode.bytecode()[pc]),
-            contract: interp.contract.address,
+            contract: H256::from_slice(interp.contract.address.as_bytes()).into(),
             stack: interp.stack.clone(),
             memory: interp.memory.clone(),
             gas: self.gas_inspector.borrow().gas_remaining(),
@@ -165,11 +164,12 @@ where
         Return::Continue
     }
 
-    fn log(&mut self, _: &mut EVMData<'_, DB>, _: &Address, topics: &[H256], data: &Bytes) {
+    fn log(&mut self, _: &mut EVMData<'_, DB>, _: &B160, topics: &[B256], data: &Bytes) {
         let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
+        let topics: Vec<_> = topics.to_vec().into_iter().map(|t| H256::from_slice(t.as_bytes())).collect();
         node.ordering.push(LogCallOrder::Log(node.logs.len()));
         node.logs
-            .push(RawOrDecodedLog::Raw(RawLog { topics: topics.to_vec(), data: data.to_vec() }));
+            .push(RawOrDecodedLog::Raw(RawLog { topics: topics, data: data.to_vec() }));
     }
 
     fn step_end(
@@ -203,11 +203,11 @@ where
 
         self.start_trace(
             data.journaled_state.depth() as usize,
-            to,
+            Address::from_slice(to.as_bytes()).into(),
             inputs.input.to_vec(),
             inputs.transfer.value,
             inputs.context.scheme.into(),
-            from,
+            Address::from_slice(from.as_bytes()).into(),
         );
 
         (Return::Continue, Gas::new(inputs.gas_limit), Bytes::new())
@@ -236,7 +236,7 @@ where
         &mut self,
         data: &mut EVMData<'_, DB>,
         inputs: &mut CreateInputs,
-    ) -> (Return, Option<Address>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<B160>, Gas, Bytes) {
         // TODO: Does this increase gas cost?
         let _ = data.journaled_state.load_account(inputs.caller, data.db);
         let nonce = data.journaled_state.account(inputs.caller).info.nonce;
@@ -246,7 +246,7 @@ where
             inputs.init_code.to_vec(),
             inputs.value,
             inputs.scheme.into(),
-            inputs.caller,
+            Address::from_slice(inputs.caller.as_bytes()).into(),
         );
 
         (Return::Continue, None, Gas::new(inputs.gas_limit), Bytes::new())
@@ -256,11 +256,11 @@ where
         &mut self,
         data: &mut EVMData<'_, DB>,
         _inputs: &CreateInputs,
-        status: Return,
-        address: Option<Address>,
+        status: InstructionResult,
+        address: Option<B160>,
         gas: Gas,
         retdata: Bytes,
-    ) -> (Return, Option<Address>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<B160>, Gas, Bytes) {
         let code = match address {
             Some(address) => data
                 .journaled_state
@@ -275,7 +275,7 @@ where
             status,
             gas_used(data.env.cfg.spec_id, gas.spend(), gas.refunded() as u64),
             code,
-            address,
+            address.map(|addr| Address::from_slice(addr.as_bytes()).into()),
         );
 
         (status, address, gas, retdata)

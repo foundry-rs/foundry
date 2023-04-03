@@ -29,7 +29,7 @@ pub use chisel_state::ChiselState;
 
 use ethers::types::U256;
 
-use revm::{BlockEnv, GasInspector};
+use revm::{primitives::BlockEnv, inspectors::GasInspector};
 
 mod fuzzer;
 pub use fuzzer::Fuzzer;

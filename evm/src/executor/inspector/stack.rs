@@ -8,13 +8,16 @@ use crate::{
 use bytes::Bytes;
 use ethers::{
     signers::LocalWallet,
-    types::{Address, Log, H256},
+    types::{Address, Log},
 };
 use revm::{
     return_revert, CallInputs, CreateInputs, EVMData, Gas, GasInspector, Inspector, Interpreter,
     Return,
 };
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
+use revm::{EVMData, Inspector, primitives::{B160, B256}};
+use revm::inspectors::GasInspector;
+use revm::interpreter::{CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Memory, Stack, return_revert};
 
 /// Helper macro to call the same method on multiple inspectors without resorting to dynamic
 /// dispatch
@@ -191,8 +194,8 @@ where
     fn log(
         &mut self,
         evm_data: &mut EVMData<'_, DB>,
-        address: &Address,
-        topics: &[H256],
+        address: &B160,
+        topics: &[B256],
         data: &Bytes,
     ) {
         call_inspectors!(
@@ -293,7 +296,7 @@ where
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &mut CreateInputs,
-    ) -> (Return, Option<Address>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<B160>, Gas, Bytes) {
         call_inspectors!(
             inspector,
             [
@@ -322,11 +325,11 @@ where
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &CreateInputs,
-        status: Return,
-        address: Option<Address>,
+        status: InstructionResult,
+        address: Option<B160>,
         remaining_gas: Gas,
         retdata: Bytes,
-    ) -> (Return, Option<Address>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<B160>, Gas, Bytes) {
         call_inspectors!(
             inspector,
             [
