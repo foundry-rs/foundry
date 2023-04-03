@@ -1,7 +1,7 @@
 use self::inspector::{
     cheatcodes::util::BroadcastableTransactions, Cheatcodes, InspectorData, InspectorStackConfig,
 };
-use crate::{debug::DebugArena, decode, trace::CallTraceArena, CALLER};
+use crate::{debug::DebugArena, decode, trace::CallTraceArena, CALLER, utils::{h160_to_b160, b160_to_h160}};
 pub use abi::{
     patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS, CONSOLE_ABI,
     HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
@@ -16,13 +16,11 @@ use ethers::{
 };
 use foundry_common::abi::IntoFunction;
 use hashbrown::HashMap;
-use revm::{
-    db::DatabaseCommit, return_ok, Account, BlockEnv, Bytecode, CreateScheme, ExecutionResult,
-    Return, TransactOut, TransactTo, TxEnv,
-};
 /// Reexport commonly used revm types
 pub use revm::{db::DatabaseRef, Env, SpecId};
 use std::collections::BTreeMap;
+use revm::interpreter::{CreateScheme, InstructionResult, Memory, return_ok, Stack};
+use revm::primitives::{Account, BlockEnv, Bytecode, Env, ExecutionResult, SpecId, TransactTo, TxEnv, Output, U256 as rU256};
 use tracing::trace;
 
 /// ABIs used internally in the executor
@@ -92,7 +90,7 @@ impl Executor {
         // does not fail
         backend.insert_account_info(
             CHEATCODE_ADDRESS,
-            revm::AccountInfo {
+            revm::primitives::AccountInfo {
                 code: Some(Bytecode::new_raw(vec![0u8].into()).to_checked()),
                 ..Default::default()
             },
@@ -135,7 +133,7 @@ impl Executor {
         trace!("deploying local create2 deployer");
         let create2_deployer_account = self
             .backend_mut()
-            .basic(DEFAULT_CREATE2_DEPLOYER)?
+            .basic(h160_to_b160(DEFAULT_CREATE2_DEPLOYER))?
             .ok_or(DatabaseError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
 
         if create2_deployer_account.code.is_none() ||
@@ -163,8 +161,8 @@ impl Executor {
     /// Set the balance of an account.
     pub fn set_balance(&mut self, address: Address, amount: U256) -> DatabaseResult<&mut Self> {
         trace!(?address, ?amount, "setting account balance");
-        let mut account = self.backend_mut().basic(address)?.unwrap_or_default();
-        account.balance = amount;
+        let mut account = self.backend_mut().basic(h160_to_b160(address))?.unwrap_or_default();
+        account.balance = amount.into();
 
         self.backend_mut().insert_account_info(address, account);
         Ok(self)
@@ -172,12 +170,12 @@ impl Executor {
 
     /// Gets the balance of an account
     pub fn get_balance(&self, address: Address) -> DatabaseResult<U256> {
-        Ok(self.backend().basic(address)?.map(|acc| acc.balance).unwrap_or_default())
+        Ok(self.backend().basic(h160_to_b160(address))?.map(|acc| acc.balance.into()).unwrap_or_default())
     }
 
     /// Set the nonce of an account.
     pub fn set_nonce(&mut self, address: Address, nonce: u64) -> DatabaseResult<&mut Self> {
-        let mut account = self.backend_mut().basic(address)?.unwrap_or_default();
+        let mut account = self.backend_mut().basic(h160_to_b160(address))?.unwrap_or_default();
         account.nonce = nonce;
 
         self.backend_mut().insert_account_info(address, account);
@@ -282,7 +280,7 @@ impl Executor {
         calldata: Bytes,
         value: U256,
     ) -> eyre::Result<RawCallResult> {
-        let env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
+        let env = self.build_test_env(from, TransactTo::Call(h160_to_b160(to)), calldata, value);
         let mut result = self.call_raw_with_env(env)?;
         self.commit(&mut result);
         Ok(result)
@@ -302,7 +300,7 @@ impl Executor {
         let calldata = Bytes::from(encode_function_data(&func, args)?.to_vec());
 
         // execute the call
-        let env = self.build_test_env(from, TransactTo::Call(test_contract), calldata, value);
+        let env = self.build_test_env(from, TransactTo::Call(h160_to_b160(test_contract)), calldata, value);
         let call_result = self.call_raw_with_env(env)?;
 
         convert_call_result(abi, &func, call_result)
@@ -339,7 +337,7 @@ impl Executor {
         // execute the call
         let mut inspector = self.inspector_config.stack();
         // Build VM
-        let mut env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
+        let mut env = self.build_test_env(from, TransactTo::Call(h160_to_b160(to)), calldata, value);
         let mut db = FuzzBackendWrapper::new(self.backend());
         let result = db.inspect_ref(&mut env, &mut inspector);
 
@@ -413,13 +411,13 @@ impl Executor {
         } = result;
 
         let result = match out {
-            TransactOut::Create(ref data, _) => data.to_owned(),
+            Output::Create(ref data, _) => data.to_owned(),
             _ => Bytes::default(),
         };
 
         let address = match exit_reason {
             return_ok!() => {
-                if let TransactOut::Create(_, Some(addr)) = out {
+                if let Output::Create(_, Some(addr)) = out {
                     addr
                 } else {
                     return Err(EvmError::Execution(Box::new(ExecutionErr {
@@ -460,11 +458,11 @@ impl Executor {
 
         // also mark this library as persistent, this will ensure that the state of the library is
         // persistent across fork swaps in forking mode
-        self.backend.add_persistent_account(address);
+        self.backend.add_persistent_account(b160_to_h160(address));
 
         trace!(address=?address, "deployed contract");
 
-        Ok(DeployResult { address, gas_used, gas_refunded, logs, traces, debug, env })
+        Ok(DeployResult { address: b160_to_h160(address), gas_used, gas_refunded, logs, traces, debug, env })
     }
 
     /// Deploys a contract and commits the new state to the underlying database.
@@ -525,7 +523,7 @@ impl Executor {
         // we only clone the test contract and cheatcode accounts, that's all we need to evaluate
         // success
         for addr in [address, CHEATCODE_ADDRESS] {
-            let acc = self.backend().basic(addr)?.unwrap_or_default();
+            let acc = self.backend().basic(h160_to_b160(addr))?.unwrap_or_default();
             backend.insert_account_info(addr, acc);
         }
 
@@ -567,17 +565,17 @@ impl Executor {
             // network conditions - the actual gas price is kept in `self.block` and is applied by
             // the cheatcode handler if it is enabled
             block: BlockEnv {
-                basefee: 0.into(),
-                gas_limit: self.gas_limit,
+                basefee: rU256::from(0),
+                gas_limit: self.gas_limit.into(),
                 ..self.env.block.clone()
             },
             tx: TxEnv {
-                caller,
+                caller: h160_to_b160(caller),
                 transact_to,
                 data,
                 value,
                 // As above, we set the gas price to 0.
-                gas_price: 0.into(),
+                gas_price: rU256::from(0),
                 gas_priority_fee: None,
                 gas_limit: self.gas_limit.as_u64(),
                 ..self.env.tx.clone()
@@ -712,7 +710,7 @@ pub struct RawCallResult {
     /// The cheatcode states after execution
     pub cheatcodes: Option<Cheatcodes>,
     /// The raw output of the execution
-    pub out: TransactOut,
+    pub out: Output,
     /// The chisel state
     pub chisel_state: Option<(revm::Stack, revm::Memory, revm::Return)>,
 }
@@ -736,7 +734,7 @@ impl Default for RawCallResult {
             script_wallets: Vec::new(),
             env: Default::default(),
             cheatcodes: Default::default(),
-            out: TransactOut::None,
+            out: Output::None, // TODO: How to handle, Option<>?
             chisel_state: None,
         }
     }
@@ -760,7 +758,7 @@ fn convert_executed_result(
     let stipend = calc_stipend(&env.tx.data, env.cfg.spec_id);
 
     let result = match out {
-        TransactOut::Call(ref data) => data.to_owned(),
+        Output::Call(ref data) => data.to_owned(),
         _ => Bytes::default(),
     };
 

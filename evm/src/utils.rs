@@ -54,7 +54,7 @@ pub fn h256_to_b256(h: ethers::types::H256) -> revm::primitives::B256 {
 /// Small helper function to convert ether's [U256] into revm's [U256].
 pub fn u256_to_ru256(u: ethers::types::U256) -> revm::primitives::U256 {
     let mut buffer = [0u8; 32];
-    u.to_little_endian(buffer);
+    u.to_little_endian(buffer.as_mut_slice());
     revm::primitives::U256::from_le_bytes(buffer)
 }
 

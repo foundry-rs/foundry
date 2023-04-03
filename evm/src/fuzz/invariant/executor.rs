@@ -32,6 +32,7 @@ use proptest::{
     test_runner::{TestCaseError, TestRunner},
 };
 use revm::DatabaseCommit;
+use revm::primitives::{B160};
 use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
 use tracing::warn;
 
@@ -521,7 +522,7 @@ impl<'a> InvariantExecutor<'a> {
 /// before inserting it into the dictionary. Otherwise, we flood the dictionary with
 /// randomly generated addresses.
 fn collect_data(
-    state_changeset: &mut HashMap<Address, revm::Account>,
+    state_changeset: &mut HashMap<B160, revm::primitives::Account>,
     sender: &Address,
     call_result: &RawCallResult,
     fuzz_state: EvmFuzzState,
