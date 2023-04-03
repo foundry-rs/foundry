@@ -165,7 +165,7 @@ fn derive_key<W: Wordlist>(mnemonic: &str, path: &str, index: u32) -> Result {
     Ok(private_key.encode().into())
 }
 
-fn derive_key_wordlist(mnemonic: &str, path: &str, index: u32, lang: &str) -> Result {
+fn derive_key_with_wordlist(mnemonic: &str, path: &str, index: u32, lang: &str) -> Result {
     let lang = WordlistLang::from_str(lang)?;
     match lang {
         WordlistLang::ChineseSimplified => derive_key::<ChineseSimplified>(mnemonic, path, index),
@@ -211,9 +211,11 @@ pub fn apply<DB: Database>(
         }
         HEVMCalls::DeriveKey1(inner) => derive_key::<English>(&inner.0, &inner.1, inner.2),
         HEVMCalls::DeriveKey2(inner) => {
-            derive_key_wordlist(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1, &inner.2)
+            derive_key_with_wordlist(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1, &inner.2)
         }
-        HEVMCalls::DeriveKey3(inner) => derive_key_wordlist(&inner.0, &inner.1, inner.2, &inner.3),
+        HEVMCalls::DeriveKey3(inner) => {
+            derive_key_with_wordlist(&inner.0, &inner.1, inner.2, &inner.3)
+        }
         HEVMCalls::RememberKey(inner) => remember_key(state, inner.0, data.env.cfg.chain_id.into()),
         HEVMCalls::Label(inner) => {
             state.labels.insert(inner.0, inner.1.clone());
