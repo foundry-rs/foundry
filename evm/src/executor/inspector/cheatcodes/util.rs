@@ -31,7 +31,7 @@ use revm::{
     primitives::{Account, TransactTo},
     Database, EVMData, JournaledState,
 };
-use std::collections::VecDeque;
+use std::{collections::VecDeque, str::FromStr};
 
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 
@@ -118,7 +118,40 @@ fn sign(private_key: U256, digest: H256, chain_id: U256) -> Result {
     Ok((sig.v, r_bytes, s_bytes).encode().into())
 }
 
-fn derive_key<W: Wordlist>(mnemonic: &str, path: &str, index: u32) -> Result<Bytes, Bytes> {
+enum WordlistLang {
+    ChineseSimplified,
+    ChineseTraditional,
+    Czech,
+    English,
+    French,
+    Italian,
+    Japanese,
+    Korean,
+    Portuguese,
+    Spanish,
+}
+
+impl FromStr for WordlistLang {
+    type Err = String;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        match input {
+            "chinese_simplified" => Ok(Self::ChineseSimplified),
+            "chinese_traditional" => Ok(Self::ChineseTraditional),
+            "czech" => Ok(Self::Czech),
+            "english" => Ok(Self::English),
+            "french" => Ok(Self::French),
+            "italian" => Ok(Self::Italian),
+            "japanese" => Ok(Self::Japanese),
+            "korean" => Ok(Self::Korean),
+            "portuguese" => Ok(Self::Portuguese),
+            "spanish" => Ok(Self::Spanish),
+            _ => Err(format!("the language `{}` has no wordlist", input)),
+        }
+    }
+}
+
+fn derive_key<W: Wordlist>(mnemonic: &str, path: &str, index: u32) -> Result {
     let derivation_path =
         if path.ends_with('/') { format!("{path}{index}") } else { format!("{path}/{index}") };
 
@@ -130,6 +163,22 @@ fn derive_key<W: Wordlist>(mnemonic: &str, path: &str, index: u32) -> Result<Byt
     let private_key = U256::from_big_endian(wallet.signer().to_bytes().as_slice());
 
     Ok(private_key.encode().into())
+}
+
+fn derive_key_wordlist(mnemonic: &str, path: &str, index: u32, lang: &str) -> Result {
+    let lang = WordlistLang::from_str(lang)?;
+    match lang {
+        WordlistLang::ChineseSimplified => derive_key::<ChineseSimplified>(mnemonic, path, index),
+        WordlistLang::ChineseTraditional => derive_key::<ChineseTraditional>(mnemonic, path, index),
+        WordlistLang::Czech => derive_key::<Czech>(mnemonic, path, index),
+        WordlistLang::English => derive_key::<English>(mnemonic, path, index),
+        WordlistLang::French => derive_key::<French>(mnemonic, path, index),
+        WordlistLang::Italian => derive_key::<Italian>(mnemonic, path, index),
+        WordlistLang::Japanese => derive_key::<Japanese>(mnemonic, path, index),
+        WordlistLang::Korean => derive_key::<Korean>(mnemonic, path, index),
+        WordlistLang::Portuguese => derive_key::<Portuguese>(mnemonic, path, index),
+        WordlistLang::Spanish => derive_key::<Spanish>(mnemonic, path, index),
+    }
 }
 
 fn remember_key(state: &mut Cheatcodes, private_key: U256, chain_id: U256) -> Result {
@@ -161,38 +210,10 @@ pub fn apply<DB: Database>(
             derive_key::<English>(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1)
         }
         HEVMCalls::DeriveKey1(inner) => derive_key::<English>(&inner.0, &inner.1, inner.2),
-        HEVMCalls::DeriveKey2(inner) => match inner.2.as_str() {
-            "chinese_simplified" => {
-                derive_key::<ChineseSimplified>(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1)
-            }
-            "chinese_traditional" => {
-                derive_key::<ChineseTraditional>(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1)
-            }
-            "czech" => derive_key::<Czech>(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1),
-            "english" => derive_key::<English>(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1),
-            "french" => derive_key::<French>(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1),
-            "italian" => derive_key::<Italian>(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1),
-            "japanese" => derive_key::<Japanese>(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1),
-            "korean" => derive_key::<Korean>(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1),
-            "portuguese" => {
-                derive_key::<Portuguese>(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1)
-            }
-            "spanish" => derive_key::<Spanish>(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1),
-            _ => Err(format!("the language `{}` has no wordlist", inner.2).encode().into()),
-        },
-        HEVMCalls::DeriveKey3(inner) => match inner.3.as_str() {
-            "chinese_simplified" => derive_key::<ChineseSimplified>(&inner.0, &inner.1, inner.2),
-            "chinese_traditional" => derive_key::<ChineseTraditional>(&inner.0, &inner.1, inner.2),
-            "czech" => derive_key::<Czech>(&inner.0, &inner.1, inner.2),
-            "english" => derive_key::<English>(&inner.0, &inner.1, inner.2),
-            "french" => derive_key::<French>(&inner.0, &inner.1, inner.2),
-            "italian" => derive_key::<Italian>(&inner.0, &inner.1, inner.2),
-            "japanese" => derive_key::<Japanese>(&inner.0, &inner.1, inner.2),
-            "korean" => derive_key::<Korean>(&inner.0, &inner.1, inner.2),
-            "portuguese" => derive_key::<Portuguese>(&inner.0, &inner.1, inner.2),
-            "spanish" => derive_key::<Spanish>(&inner.0, &inner.1, inner.2),
-            _ => Err(format!("the language `{}` has no wordlist", inner.3).encode().into()),
-        },
+        HEVMCalls::DeriveKey2(inner) => {
+            derive_key_wordlist(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1, &inner.2)
+        }
+        HEVMCalls::DeriveKey3(inner) => derive_key_wordlist(&inner.0, &inner.1, inner.2, &inner.3),
         HEVMCalls::RememberKey(inner) => remember_key(state, inner.0, data.env.cfg.chain_id.into()),
         HEVMCalls::Label(inner) => {
             state.labels.insert(inner.0, inner.1.clone());

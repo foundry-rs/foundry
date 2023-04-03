@@ -53,6 +53,8 @@ addr(uint256)(address)
 sign(uint256,bytes32)(uint8,bytes32,bytes32)
 deriveKey(string,uint32)(uint256)
 deriveKey(string,string,uint32)(uint256)
+deriveKey(string,uint32,string)(uint256)
+deriveKey(string,string,uint32,string)(uint256)
 rememberKey(uint256)(address)
 
 prank(address)
