@@ -446,7 +446,12 @@ pub struct AnvilEvmArgs {
     pub no_storage_caching: bool,
 
     /// The block gas limit.
-    #[clap(long, value_name = "GAS_LIMIT", help_heading = "Environment config")]
+    #[clap(
+        long,
+        value_name = "GAS_LIMIT",
+        alias = "block-gas-limit",
+        help_heading = "Environment config"
+    )]
     pub gas_limit: Option<u64>,
 
     /// Disable the `call.gas_limit <= block.gas_limit` constraint.
