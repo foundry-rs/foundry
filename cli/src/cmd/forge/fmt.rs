@@ -23,7 +23,6 @@ use tracing::log::warn;
 pub struct FmtArgs {
     #[clap(
         help = "path to the file, directory or '-' to read from stdin",
-        conflicts_with = "root",
         value_hint = ValueHint::FilePath,
         value_name = "PATH",
         num_args(1..)
