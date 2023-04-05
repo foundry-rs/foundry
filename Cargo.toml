@@ -71,7 +71,7 @@ ethers-etherscan = { version = "2" }
 ethers-solc = { version = "2" }
 
 # # Patch ethers-rs with a local checkout then run `cargo update -p ethers`
-# [patch."https://github.com/gakonst/ethers-rs"]
+[patch.crates-io]
 # ethers = { path = "../ethers-rs" }
 # ethers-addressbook = { path = "../ethers-rs/ethers-addressbook" }
 # ethers-core = { path = "../ethers-rs/ethers-core" }
@@ -80,7 +80,5 @@ ethers-solc = { version = "2" }
 # ethers-signers = { path = "../ethers-rs/ethers-signers" }
 # ethers-etherscan = { path = "../ethers-rs/ethers-etherscan" }
 # ethers-solc = { path = "../ethers-rs/ethers-solc" }
-
-[patch.crates-io]
 solang-parser = { path = "../solang/solang-parser" }
 # revm = { path = "../revm/crates/revm" }
