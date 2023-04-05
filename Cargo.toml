@@ -60,15 +60,15 @@ codegen-units = 1
 
 # Lock ethers-rs to a rev to allow this crate be safely used as a dependency
 [workspace.dependencies]
-ethers = { git = "https://github.com/gakonst/ethers-rs", rev = "80ac394" }
-ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", rev = "80ac394" }
-ethers-core = { git = "https://github.com/gakonst/ethers-rs", rev = "80ac394" }
-ethers-contract = { git = "https://github.com/gakonst/ethers-rs", rev = "80ac394" }
-ethers-providers = { git = "https://github.com/gakonst/ethers-rs", rev = "80ac394" }
-ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "80ac394" }
-ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "80ac394" }
-ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", rev = "80ac394" }
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "80ac394" }
+ethers = { version = "2" }
+ethers-addressbook = { version = "2" }
+ethers-core = { version = "2" }
+ethers-contract = { version = "2" }
+ethers-providers = { version = "2" }
+ethers-signers = { version = "2" }
+ethers-middleware = { version = "2" }
+ethers-etherscan = { version = "2" }
+ethers-solc = { version = "2" }
 
 # # Patch ethers-rs with a local checkout then run `cargo update -p ethers`
 # [patch."https://github.com/gakonst/ethers-rs"]

@@ -1,7 +1,7 @@
 use crate::utils::apply_chain_and_block_specific_env_changes;
 use ethers::{
     providers::Middleware,
-    types::{Address, U256},
+    types::{Address, Block, TxHash, U256},
 };
 use eyre::WrapErr;
 use futures::TryFutureExt;
@@ -16,7 +16,7 @@ pub async fn environment<M: Middleware>(
     override_chain_id: Option<u64>,
     pin_block: Option<u64>,
     origin: Address,
-) -> eyre::Result<Env>
+) -> eyre::Result<(Env, Block<TxHash>)>
 where
     M::Error: 'static,
 {
@@ -80,5 +80,5 @@ where
 
     apply_chain_and_block_specific_env_changes(&mut env, &block);
 
-    Ok(env)
+    Ok((env, block))
 }

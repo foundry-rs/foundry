@@ -287,9 +287,30 @@ impl NodeArgs {
         let mut state_dumper = PeriodicStateDumper::new(api, dump_state, dump_interval);
 
         task_manager.spawn(async move {
+            // wait for the SIGTERM signal on unix systems
+            #[cfg(unix)]
+            let mut sigterm = Box::pin(async {
+                if let Ok(mut stream) =
+                    tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                {
+                    stream.recv().await;
+                } else {
+                    futures::future::pending::<()>().await;
+                }
+            });
+
+            // on windows, this will never fires
+            #[cfg(not(unix))]
+            let mut sigterm = Box::pin(futures::future::pending::<()>());
+
             // await shutdown signal but also periodically flush state
             tokio::select! {
-                _ = &mut on_shutdown =>{}
+                 _ = &mut sigterm => {
+                    trace!("received sigterm signal, shutting down");
+                },
+                _ = &mut on_shutdown =>{
+
+                }
                 _ = &mut state_dumper =>{}
             }
 
@@ -425,7 +446,12 @@ pub struct AnvilEvmArgs {
     pub no_storage_caching: bool,
 
     /// The block gas limit.
-    #[clap(long, value_name = "GAS_LIMIT", help_heading = "Environment config")]
+    #[clap(
+        long,
+        value_name = "GAS_LIMIT",
+        alias = "block-gas-limit",
+        help_heading = "Environment config"
+    )]
     pub gas_limit: Option<u64>,
 
     /// Disable the `call.gas_limit <= block.gas_limit` constraint.
