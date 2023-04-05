@@ -4,7 +4,11 @@ use ethers::{
     types::{Block, Chain},
 };
 use eyre::ContextCompat;
+<<<<<<< HEAD
 use revm::{opcode, spec_opcode_gas, SpecId};
+=======
+use revm::interpreter::{opcode};
+>>>>>>> 21d2a575 (feat: executor/fuzz/coverage progress, mark unknowns as TODOs)
 use std::collections::BTreeMap;
 
 /// Small helper function to convert [U256] into [H256].

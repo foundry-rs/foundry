@@ -1725,7 +1725,7 @@ fn commit_transaction(
 ) {
     configure_tx_env(&mut env, &tx);
 
-    let (_, state) = {
+    let (_, state) = { // TODO: Unsure how to handle
         let mut evm = EVM::new();
         evm.env = env;
 

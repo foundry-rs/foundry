@@ -51,7 +51,7 @@ use crate::{
 pub use builder::ExecutorBuilder;
 
 /// A mapping of addresses to their changed state.
-pub type StateChangeset = HashMap<Address, Account>;
+pub type StateChangeset = HashMap<Address, Account>; // TODO: Unsure if this should be changed to <B160, Account>
 
 /// A type that can execute calls
 ///

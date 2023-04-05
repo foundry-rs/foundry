@@ -127,7 +127,7 @@ impl Tracer {
             step.state_diff = match (op, journal_entry) {
                 (
                     opcode::SLOAD | opcode::SSTORE,
-                    Some(JournalEntry::StorageChage { address, key, .. }),
+                    Some(JournalEntry::StorageChange { address, key, .. }),
                 ) => {
                     let value = data.journaled_state.state[address].storage[key].present_value();
                     Some((*key, value))

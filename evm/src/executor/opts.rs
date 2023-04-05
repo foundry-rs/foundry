@@ -1,10 +1,14 @@
-use crate::executor::fork::CreateFork;
+use crate::{executor::fork::CreateFork, utils::{h256_to_b256, h160_to_b160}};
 use ethers::{
     providers::{Middleware, Provider},
     solc::utils::RuntimeOrHandle,
     types::{Address, Block, Chain, TxHash, H256, U256},
 };
 use eyre::WrapErr;
+<<<<<<< HEAD
+=======
+use revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv, U256 as rU256};
+>>>>>>> 21d2a575 (feat: executor/fuzz/coverage progress, mark unknowns as TODOs)
 use foundry_common::{self, ProviderBuilder, RpcUrl, ALCHEMY_FREE_TIER_CUPS};
 use foundry_config::Config;
 use revm::{BlockEnv, CfgEnv, SpecId, TxEnv};
@@ -57,7 +61,7 @@ impl EvmOpts {
     ///
     /// If a `fork_url` is set, it gets configured with settings fetched from the endpoint (chain
     /// id, )
-    pub async fn evm_env(&self) -> revm::Env {
+    pub async fn evm_env(&self) -> revm::primitives::Env {
         if let Some(ref fork_url) = self.fork_url {
             self.fork_evm_env(fork_url).await.expect("Could not instantiate forked environment").0
         } else {
@@ -70,7 +74,7 @@ impl EvmOpts {
     /// This only attaches are creates a temporary tokio runtime if `fork_url` is set
     ///
     /// Returns an error if a RPC request failed, or the fork url is not a valid url
-    pub fn evm_env_blocking(&self) -> eyre::Result<revm::Env> {
+    pub fn evm_env_blocking(&self) -> eyre::Result<revm::primitives::Env> {
         if let Some(ref fork_url) = self.fork_url {
             RuntimeOrHandle::new().block_on(self.fork_evm_env(fork_url)).map(|res| res.0)
         } else {
@@ -78,12 +82,17 @@ impl EvmOpts {
         }
     }
 
+<<<<<<< HEAD
     /// Returns the `revm::Env` that is configured with settings retrieved from the endpoint.
     /// And the block that was used to configure the environment.
     pub async fn fork_evm_env(
         &self,
         fork_url: impl AsRef<str>,
     ) -> eyre::Result<(revm::Env, Block<TxHash>)> {
+=======
+    /// Returns the `revm::Env` configured with settings retrieved from the endpoints
+    pub async fn fork_evm_env(&self, fork_url: impl AsRef<str>) -> eyre::Result<revm::primitives::Env> {
+>>>>>>> 21d2a575 (feat: executor/fuzz/coverage progress, mark unknowns as TODOs)
         let fork_url = fork_url.as_ref();
         let provider = ProviderBuilder::new(fork_url)
             .compute_units_per_second(self.get_compute_units_per_second())
@@ -103,6 +112,7 @@ impl EvmOpts {
     }
 
     /// Returns the `revm::Env` configured with only local settings
+<<<<<<< HEAD
     pub fn local_evm_env(&self) -> revm::Env {
         revm::Env {
             block: BlockEnv {
@@ -113,9 +123,21 @@ impl EvmOpts {
                 prevrandao: Some(self.env.block_prevrandao),
                 basefee: self.env.block_base_fee_per_gas.into(),
                 gas_limit: self.gas_limit(),
+=======
+    pub fn local_evm_env(&self) -> revm::primitives::Env {
+        revm::primitives::Env {
+            block: BlockEnv {
+                number: rU256::from(self.env.block_number),
+                coinbase: h160_to_b160(self.env.block_coinbase),
+                timestamp: rU256::from(self.env.block_timestamp),
+                difficulty: rU256::from(self.env.block_difficulty),
+                prevrandao: Some(h256_to_b256(self.env.block_prevrandao)),
+                basefee: rU256::from(self.env.block_base_fee_per_gas),
+                gas_limit: self.gas_limit().into(),
+>>>>>>> 21d2a575 (feat: executor/fuzz/coverage progress, mark unknowns as TODOs)
             },
             cfg: CfgEnv {
-                chain_id: self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID).into(),
+                chain_id: rU256::from(self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID)),
                 spec_id: SpecId::MERGE,
                 limit_contract_code_size: self.env.code_size_limit.or(Some(usize::MAX)),
                 memory_limit: self.memory_limit,
@@ -126,7 +148,7 @@ impl EvmOpts {
                 ..Default::default()
             },
             tx: TxEnv {
-                gas_price: self.env.gas_price.unwrap_or_default().into(),
+                gas_price: rU256::from(self.env.gas_price.unwrap_or_default()),
                 gas_limit: self.gas_limit().as_u64(),
                 caller: self.sender,
                 ..Default::default()
@@ -147,9 +169,9 @@ impl EvmOpts {
     ///
     /// for `mainnet` and `--fork-block-number 14435000` on mac the corresponding storage cache will
     /// be at `~/.foundry/cache/mainnet/14435000/storage.json`
-    pub fn get_fork(&self, config: &Config, env: revm::Env) -> Option<CreateFork> {
+    pub fn get_fork(&self, config: &Config, env: revm::primitives::Env) -> Option<CreateFork> {
         let url = self.fork_url.clone()?;
-        let enable_caching = config.enable_caching(&url, env.cfg.chain_id.as_u64());
+        let enable_caching = config.enable_caching(&url, env.cfg.chain_id.to::<u64>());
         Some(CreateFork { url, enable_caching, env, evm_opts: self.clone() })
     }
 

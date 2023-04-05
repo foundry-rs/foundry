@@ -16,7 +16,18 @@ use parking_lot::RwLock;
 use proptest::prelude::{BoxedStrategy, Strategy};
 use revm::{
     db::{CacheDB, DatabaseRef},
+<<<<<<< HEAD
     opcode, spec_opcode_gas, SpecId,
+=======
+    primitives::SpecId,
+    interpreter::opcode,
+};
+use std::{
+    collections::BTreeSet,
+    io::Write,
+    ops::{Deref, DerefMut},
+    sync::Arc,
+>>>>>>> 21d2a575 (feat: executor/fuzz/coverage progress, mark unknowns as TODOs)
 };
 use std::{io::Write, sync::Arc};
 
@@ -138,8 +149,20 @@ pub fn collect_state_from_call(
         // Insert basic account information
         state.values_mut().insert(H256::from(*address).into());
 
+<<<<<<< HEAD
         if config.include_push_bytes && state.addresses.len() < config.max_fuzz_dictionary_addresses
         {
+=======
+        if include_storage {
+            // Insert storage
+            for (slot, value) in &account.storage {
+                state.insert(slot.to_be_bytes());
+                state.insert(value.present_value().to_be_bytes());
+            }
+        }
+
+        if include_push_bytes {
+>>>>>>> 21d2a575 (feat: executor/fuzz/coverage progress, mark unknowns as TODOs)
             // Insert push bytes
             if let Some(code) = &account.info.code {
                 if state.addresses_mut().insert(*address) {

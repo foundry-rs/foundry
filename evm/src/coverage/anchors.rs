@@ -4,7 +4,7 @@ use ethers::prelude::{
     sourcemap::{SourceElement, SourceMap},
     Bytes,
 };
-use revm::{interpreter::{opcode, spec_opcode_gas}, primitives::SpecId};
+use revm::interpreter::{opcode, primitives::SpecId};
 
 /// Attempts to find anchors for the given items using the given source map and bytecode.
 pub fn find_anchors(
