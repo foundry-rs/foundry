@@ -230,7 +230,11 @@ impl DocBuilder {
         let out_dir_src = out_dir.join(Self::SRC);
         fs::create_dir_all(&out_dir_src)?;
 
-        // Write readme content if any
+
+
+
+        /*
+     // Write readme content if any
         let readme_content = {
             let src_readme = self.sources.join(Self::README);
             let root_readme = self.root.join(Self::README);
@@ -242,8 +246,39 @@ impl DocBuilder {
                 String::new()
             }
         };
+      
+        */
+
+
+        // Write readme content if any
+        let homepage_content = {
+            
+            let src_readme = self.sources.join(Self::README);
+            let root_readme = self.root.join(Self::README);
+            
+
+            let homepage_path = {
+                if self.config.homepage.is_file() {
+                    Some(self.config.homepage.clone())
+                } else if src_readme.exists() {
+                    Some(src_readme)
+                }else if root_readme.exists() {
+                    Some(root_readme)
+                }else {
+                    None                
+                }
+            };
+            
+            match homepage_path {
+                Some(path) => fs::read_to_string(path)?,
+                None => String::new(),
+            }
+           
+  
+        
+        };
         let readme_path = out_dir_src.join(Self::README);
-        fs::write(&readme_path, readme_content)?;
+        fs::write(&readme_path, homepage_content)?;
 
         // Write summary and section readmes
         let mut summary = BufWriter::default();
