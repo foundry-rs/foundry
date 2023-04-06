@@ -230,12 +230,6 @@ impl DocBuilder {
         let out_dir_src = out_dir.join(Self::SRC);
         fs::create_dir_all(&out_dir_src)?;
 
-
-
-
-      
-
-
         // Write readme content if any
         let homepage_content = {
             
@@ -261,8 +255,6 @@ impl DocBuilder {
                 None => String::new(),
             }
            
-  
-        
         };
         let readme_path = out_dir_src.join(Self::README);
         fs::write(&readme_path, homepage_content)?;
