@@ -250,6 +250,28 @@ fn get_mapping_slot_at(state: &mut Cheatcodes, address: Address, slot: U256, ind
     abi::encode(&[Token::Uint(result.into())]).into()
 }
 
+fn get_mapping_key(state: &mut Cheatcodes, address: Address, slot: U256) -> Bytes {
+    let result = match state.mapping_slots.as_ref().and_then(|dict| dict.get(&address)) {
+        Some(mapping_slots) => {
+            mapping_slots.keys.get(&slot).copied().unwrap_or_default()
+        },
+        None => 0.into()
+    };
+    println!("get_mapping_key {:x} => {:x}", slot, result);
+    abi::encode(&[Token::Uint(result.into())]).into()
+}
+
+fn get_mapping_parent(state: &mut Cheatcodes, address: Address, slot: U256) -> Bytes {
+    let result = match state.mapping_slots.as_ref().and_then(|dict| dict.get(&address)) {
+        Some(mapping_slots) => {
+            mapping_slots.parent_slots.get(&slot).copied().unwrap_or_default()
+        },
+        None => 0.into()
+    };
+    println!("get_mapping_key {:x} => {:x}", slot, result);
+    abi::encode(&[Token::Uint(result.into())]).into()
+}
+
 pub fn apply<DB: DatabaseExt>(
     state: &mut Cheatcodes,
     data: &mut EVMData<'_, DB>,
@@ -549,6 +571,8 @@ pub fn apply<DB: DatabaseExt>(
         }
         HEVMCalls::GetMappingLength(inner) => get_mapping_length(state, inner.0, inner.1.into()),
         HEVMCalls::GetMappingSlotAt(inner) => get_mapping_slot_at(state, inner.0, inner.1.into(), inner.2),
+        HEVMCalls::GetMappingKeyOf(inner) => get_mapping_key(state, inner.0, inner.1.into()),
+        HEVMCalls::GetMappingParentOf(inner) => get_mapping_parent(state, inner.0, inner.1.into()),
         _ => return Ok(None),
     };
 

@@ -191,6 +191,8 @@ ethers::contract::abigen!(
             startMappingRecording()
             getMappingLength(address,bytes32)
             getMappingSlotAt(address,bytes32,uint256)
+            getMappingKeyOf(address,bytes32)
+            getMappingParentOf(address,bytes32)
     ]"#,
 );
 pub use hevm::{HEVMCalls, HEVM_ABI};
