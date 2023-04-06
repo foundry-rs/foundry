@@ -17,7 +17,7 @@ use foundry_config::{
     },
     Config,
 };
-use rustyline::{error::ReadlineError, Editor};
+use rustyline::{config::Configurer, error::ReadlineError, Editor};
 use yansi::Paint;
 
 // Loads project's figment and merges the build cli arguments into it
@@ -135,6 +135,9 @@ async fn main() -> eyre::Result<()> {
     let mut rl = Editor::<SolidityHelper, _>::new()?;
     rl.set_helper(Some(SolidityHelper::default()));
 
+    // automatically add lines to history
+    rl.set_auto_add_history(true);
+
     // load history
     if let Some(chisel_history) = chisel_history_file() {
         let _ = rl.load_history(&chisel_history);
@@ -158,9 +161,6 @@ async fn main() -> eyre::Result<()> {
             Ok(line) => {
                 // Clear interrupt flag
                 interrupt = false;
-
-                // Add line to history
-                rl.add_history_entry(&line)?;
 
                 // Dispatch and match results
                 match dispatcher.dispatch(&line).await {
