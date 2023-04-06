@@ -188,6 +188,9 @@ ethers::contract::abigen!(
             writeJson(string, string, string)
             pauseGasMetering()
             resumeGasMetering()
+            startMappingRecording()
+            getMappingLength(bytes32)
+            getMappingSlotAt(bytes32,uint256)
     ]"#,
 );
 pub use hevm::{HEVMCalls, HEVM_ABI};

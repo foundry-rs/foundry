@@ -191,6 +191,56 @@ fn get_recorded_logs(state: &mut Cheatcodes) -> Bytes {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct MappingSlots {
+    /// Holds mapping parent (slots => slots)
+    pub parent_slots: BTreeMap<U256, U256>,
+
+    /// Holds mapping key (slots => key)
+    pub keys: BTreeMap<U256, U256>,
+
+    /// Holds mapping child (slots => slots[])
+    pub children: BTreeMap<U256, Vec<U256>>,
+
+    /// Holds the last sha3 result `((data_low, data_high), sha3_result)`, this would only record
+    /// when sha3 is called with `size == 0x40`, and the lower 256 bits would be stored in `data_low`,
+    /// higher 256 bits in `data_high`.
+    /// This is needed for mapping_key detect if the slot is for some mapping and record that.
+    pub last_sha3: Option<((U256, U256), U256)>,
+}
+
+impl MappingSlots {
+    pub fn insert(&mut self, slot: U256, parent: U256, key: U256) -> bool {
+        if self.parent_slots.contains_key(&slot) {
+            return false
+        }
+        self.parent_slots.insert(slot, parent);
+        self.keys.insert(slot, key);
+        self.children.entry(slot).or_default().push(parent);
+        true
+    }
+}
+
+fn get_mapping_length(state: &mut Cheatcodes, slot: U256) -> Bytes {
+    let result = match &state.mapping_slots {
+        Some(mapping_slots) => {
+            mapping_slots.children.get(&slot).map(|set| set.len()).unwrap_or_default()
+        },
+        None => 0
+    };
+    abi::encode(&[Token::Uint(result.into())]).into()
+}
+
+fn get_mapping_slot_at(state: &mut Cheatcodes, slot: U256, index: U256) -> Bytes {
+    let result = match &state.mapping_slots {
+        Some(mapping_slots) => {
+            mapping_slots.children.get(&slot).and_then(|set| set.get(index.as_usize())).copied().unwrap_or_default()
+        },
+        None => 0.into()
+    };
+    abi::encode(&[Token::Uint(result.into())]).into()
+}
+
 pub fn apply<DB: DatabaseExt>(
     state: &mut Cheatcodes,
     data: &mut EVMData<'_, DB>,
@@ -481,6 +531,14 @@ pub fn apply<DB: DatabaseExt>(
             state.gas_metering = None;
             Bytes::new()
         }
+        HEVMCalls::StartMappingRecording(_) => {
+            if state.mapping_slots.is_none() {
+                state.mapping_slots = Some(Default::default());
+            }
+            Bytes::new()
+        }
+        HEVMCalls::GetMappingLength(inner) => get_mapping_length(state, inner.0.into()),
+        HEVMCalls::GetMappingSlotAt(inner) => get_mapping_slot_at(state, inner.0.into(), inner.1),
         _ => return Ok(None),
     };
 
