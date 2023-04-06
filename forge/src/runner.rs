@@ -462,11 +462,16 @@ impl<'a> ContractRunner<'a> {
             evm.invariant_fuzz(invariant_contract)?
         {
             let results = invariants
-                .iter()
+                .into_iter()
                 .map(|(func_name, test_error)| {
                     let mut counterexample = None;
                     let mut logs = logs.clone();
                     let mut traces = traces.clone();
+
+                    let success = test_error.is_none();
+                    let reason = test_error.as_ref().and_then(|err| {
+                        (!err.revert_reason.is_empty()).then(|| err.revert_reason.clone())
+                    });
 
                     match test_error {
                         // If invariants were broken, replay the error to collect logs and traces
@@ -480,12 +485,18 @@ impl<'a> ContractRunner<'a> {
                                 &mut logs,
                                 &mut traces,
                             )?;
+
+                            logs.extend(error.logs);
+
+                            if let Some(error_traces) = error.traces {
+                                traces.push((TraceKind::Execution, error_traces));
+                            }
                         }
                         // If invariants ran successfully, collect last call logs and traces
                         _ => {
                             if let Some(last_call_result) = last_call_results
                                 .as_mut()
-                                .and_then(|call_results| call_results.remove(func_name))
+                                .and_then(|call_results| call_results.remove(&func_name))
                             {
                                 logs.extend(last_call_result.logs);
 
@@ -503,10 +514,8 @@ impl<'a> ContractRunner<'a> {
                     };
 
                     Ok(TestResult {
-                        success: test_error.is_none(),
-                        reason: test_error.as_ref().and_then(|err| {
-                            (!err.revert_reason.is_empty()).then(|| err.revert_reason.clone())
-                        }),
+                        success,
+                        reason,
                         counterexample,
                         decoded_logs: decode_console_logs(&logs),
                         logs,
