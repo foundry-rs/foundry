@@ -202,23 +202,29 @@ pub struct MappingSlots {
     /// Holds mapping child (slots => slots[])
     pub children: BTreeMap<U256, Vec<U256>>,
 
-    /// Holds the last sha3 result `((data_low, data_high), sha3_result)`, this would only record
+    /// Holds the last sha3 result `sha3_result => (data_low, data_high)`, this would only record
     /// when sha3 is called with `size == 0x40`, and the lower 256 bits would be stored in `data_low`,
     /// higher 256 bits in `data_high`.
     /// This is needed for mapping_key detect if the slot is for some mapping and record that.
-    pub last_sha3: Option<((U256, U256), U256)>,
+    pub seen_sha3: BTreeMap<U256, (U256, U256)>,
 }
 
 impl MappingSlots {
-    pub fn insert(&mut self, slot: U256, parent: U256, key: U256) -> bool {
-        if self.parent_slots.contains_key(&slot) {
-            println!("warn: contains: {:x}", slot);
-            return false
+    pub fn insert(&mut self, slot: U256) -> bool {
+        match self.seen_sha3.get(&slot).copied() {
+            Some((key, parent)) => {
+                if self.keys.contains_key(&slot) {
+                    println!("warn: contains: {:x}", slot);
+                    return false
+                }
+                self.keys.insert(slot, key);
+                self.parent_slots.insert(slot, parent);
+                self.children.entry(parent).or_default().push(slot);
+                self.insert(parent);
+                true
+            }
+            None => false
         }
-        self.parent_slots.insert(slot, parent);
-        self.keys.insert(slot, key);
-        self.children.entry(parent).or_default().push(slot);
-        true
     }
 }
 

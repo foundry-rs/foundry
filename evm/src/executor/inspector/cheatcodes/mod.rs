@@ -514,17 +514,13 @@ where
                         let result: U256 = keccak256(interpreter.memory.get_slice(offset, 0x40)).into();
 
                         println!("sha3({:x}): {:x} {:x} {:x}", address, low, high, result);
-                        mapping_slots.entry(address).or_default().last_sha3 = Some(((low, high), result))
+                        mapping_slots.entry(address).or_default().seen_sha3.insert(result, (low, high));
                     }
                 }
                 opcode::SSTORE => {
                     if let Some(mapping_slots) = mapping_slots.get_mut(&interpreter.contract.address) {
-                        match (mapping_slots.last_sha3, interpreter.stack.peek(0)) {
-                            (Some((data, last)), Ok(slot)) if last == slot => {
-                                println!("sstore: {:x} {:x} {:x}", data.0, data.1, slot);
-                                mapping_slots.insert(slot, data.1, data.0);
-                            }
-                            _ => {}
+                        if let Ok(slot) = interpreter.stack.peek(0) {
+                            mapping_slots.insert(slot);
                         }
                     }
                 }
