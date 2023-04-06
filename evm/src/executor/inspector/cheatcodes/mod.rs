@@ -513,7 +513,6 @@ where
                         let high: U256 = interpreter.memory.get_slice(offset + 0x20, 0x20).into();
                         let result: U256 = keccak256(interpreter.memory.get_slice(offset, 0x40)).into();
 
-                        println!("sha3({:x}): {:x} {:x} {:x}", address, low, high, result);
                         mapping_slots.entry(address).or_default().seen_sha3.insert(result, (low, high));
                     }
                 }

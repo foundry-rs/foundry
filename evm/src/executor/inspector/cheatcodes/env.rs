@@ -214,7 +214,6 @@ impl MappingSlots {
         match self.seen_sha3.get(&slot).copied() {
             Some((key, parent)) => {
                 if self.keys.contains_key(&slot) {
-                    println!("warn: contains: {:x}", slot);
                     return false
                 }
                 self.keys.insert(slot, key);
@@ -235,7 +234,6 @@ fn get_mapping_length(state: &mut Cheatcodes, address: Address, slot: U256) -> B
         },
         None => 0
     };
-    println!("get_mapping_length {:x} => {}", slot, result);
     abi::encode(&[Token::Uint(result.into())]).into()
 }
 
@@ -246,7 +244,6 @@ fn get_mapping_slot_at(state: &mut Cheatcodes, address: Address, slot: U256, ind
         },
         None => 0.into()
     };
-    println!("get_mapping_slot_at {:x} {} => {:x}", slot, index, result);
     abi::encode(&[Token::Uint(result.into())]).into()
 }
 
@@ -257,7 +254,6 @@ fn get_mapping_key(state: &mut Cheatcodes, address: Address, slot: U256) -> Byte
         },
         None => 0.into()
     };
-    println!("get_mapping_key {:x} => {:x}", slot, result);
     abi::encode(&[Token::Uint(result.into())]).into()
 }
 
@@ -268,7 +264,6 @@ fn get_mapping_parent(state: &mut Cheatcodes, address: Address, slot: U256) -> B
         },
         None => 0.into()
     };
-    println!("get_mapping_key {:x} => {:x}", slot, result);
     abi::encode(&[Token::Uint(result.into())]).into()
 }
 
@@ -563,7 +558,6 @@ pub fn apply<DB: DatabaseExt>(
             Bytes::new()
         }
         HEVMCalls::StartMappingRecording(_) => {
-            println!("start_mapping");
             if state.mapping_slots.is_none() {
                 state.mapping_slots = Some(Default::default());
             }
