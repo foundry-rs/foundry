@@ -212,6 +212,7 @@ pub struct MappingSlots {
 impl MappingSlots {
     pub fn insert(&mut self, slot: U256, parent: U256, key: U256) -> bool {
         if self.parent_slots.contains_key(&slot) {
+            println!("warn: contains: {:x}", slot);
             return false
         }
         self.parent_slots.insert(slot, parent);
@@ -221,23 +222,25 @@ impl MappingSlots {
     }
 }
 
-fn get_mapping_length(state: &mut Cheatcodes, slot: U256) -> Bytes {
-    let result = match &state.mapping_slots {
+fn get_mapping_length(state: &mut Cheatcodes, address: Address, slot: U256) -> Bytes {
+    let result = match state.mapping_slots.as_ref().and_then(|dict| dict.get(&address)) {
         Some(mapping_slots) => {
             mapping_slots.children.get(&slot).map(|set| set.len()).unwrap_or_default()
         },
         None => 0
     };
+    println!("get_mapping_length {:x} => {}", slot, result);
     abi::encode(&[Token::Uint(result.into())]).into()
 }
 
-fn get_mapping_slot_at(state: &mut Cheatcodes, slot: U256, index: U256) -> Bytes {
-    let result = match &state.mapping_slots {
+fn get_mapping_slot_at(state: &mut Cheatcodes, address: Address, slot: U256, index: U256) -> Bytes {
+    let result = match state.mapping_slots.as_ref().and_then(|dict| dict.get(&address)) {
         Some(mapping_slots) => {
             mapping_slots.children.get(&slot).and_then(|set| set.get(index.as_usize())).copied().unwrap_or_default()
         },
         None => 0.into()
     };
+    println!("get_mapping_slot_at {:x} {} => {:x}", slot, index, result);
     abi::encode(&[Token::Uint(result.into())]).into()
 }
 
@@ -532,13 +535,14 @@ pub fn apply<DB: DatabaseExt>(
             Bytes::new()
         }
         HEVMCalls::StartMappingRecording(_) => {
+            println!("start_mapping");
             if state.mapping_slots.is_none() {
                 state.mapping_slots = Some(Default::default());
             }
             Bytes::new()
         }
-        HEVMCalls::GetMappingLength(inner) => get_mapping_length(state, inner.0.into()),
-        HEVMCalls::GetMappingSlotAt(inner) => get_mapping_slot_at(state, inner.0.into(), inner.1),
+        HEVMCalls::GetMappingLength(inner) => get_mapping_length(state, inner.0, inner.1.into()),
+        HEVMCalls::GetMappingSlotAt(inner) => get_mapping_slot_at(state, inner.0, inner.1.into(), inner.2),
         _ => return Ok(None),
     };
 

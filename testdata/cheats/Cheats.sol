@@ -485,8 +485,8 @@ interface Cheats {
     function resumeGasMetering() external;
 
     function startMappingRecording() external;
-    function getMappingLength(bytes32 slot) external returns (uint);
-    function getMappingSlotAt(bytes32 slot, uint256 idx) external returns (bytes32);
+    function getMappingLength(address target, bytes32 slot) external returns (uint);
+    function getMappingSlotAt(address target, bytes32 slot, uint256 idx) external returns (bytes32);
 }
 
 import "ds-test/test.sol";
@@ -520,14 +520,15 @@ contract RecordMappingTest is DSTest {
 
         bytes32 dataSlot = bytes32(uint(1));
         bytes32 nestDataSlot = bytes32(uint(2));
-        assertEq(uint(cheats.getMappingLength(dataSlot)), 1, "number of data is incorrect");
-        // assertEq(uint(cheats.getMappingLength(nestDataSlot)), 2, "number of nestedData is incorrect");
+        assertEq(uint(cheats.getMappingLength(address(target), dataSlot)), 1, "number of data is incorrect");
+        assertEq(uint(cheats.getMappingLength(address(this), dataSlot)), 0, "number of data is incorrect");
+        // assertEq(uint(cheats.getMappingLength(address(target), nestDataSlot)), 2, "number of nestedData is incorrect");
 
-        bytes32 dataValueSlot = cheats.getMappingSlotAt(dataSlot, 0);
+        bytes32 dataValueSlot = cheats.getMappingSlotAt(address(target), dataSlot, 0);
         assertGt(uint(dataValueSlot), 0);
         assertEq(uint(cheats.load(address(target), dataValueSlot)), 100);
 
-        for (uint i; i < cheats.getMappingLength(nestDataSlot); i++) {
+        for (uint i; i < cheats.getMappingLength(address(target), nestDataSlot); i++) {
 
         }
     }

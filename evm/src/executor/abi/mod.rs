@@ -189,8 +189,8 @@ ethers::contract::abigen!(
             pauseGasMetering()
             resumeGasMetering()
             startMappingRecording()
-            getMappingLength(bytes32)
-            getMappingSlotAt(bytes32,uint256)
+            getMappingLength(address,bytes32)
+            getMappingSlotAt(address,bytes32,uint256)
     ]"#,
 );
 pub use hevm::{HEVMCalls, HEVM_ABI};

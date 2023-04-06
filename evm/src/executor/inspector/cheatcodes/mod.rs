@@ -168,7 +168,7 @@ pub struct Cheatcodes {
     pub gas_metering_create: Option<Option<revm::Gas>>,
 
     /// Holds mapping slots info
-    pub mapping_slots: Option<MappingSlots>,
+    pub mapping_slots: Option<BTreeMap<Address, MappingSlots>>,
 }
 
 impl Cheatcodes {
@@ -507,19 +507,25 @@ where
             match interpreter.contract.bytecode.bytecode()[interpreter.program_counter()] {
                 opcode::SHA3 => {
                     if interpreter.stack.peek(1) == Ok(0x40.into()) {
+                        let address = interpreter.contract.address;
                         let offset = interpreter.stack.peek(0).expect("stack size > 1").as_usize();
                         let low: U256 = interpreter.memory.get_slice(offset, 0x20).into();
                         let high: U256 = interpreter.memory.get_slice(offset + 0x20, 0x20).into();
                         let result: U256 = keccak256(interpreter.memory.get_slice(offset, 0x40)).into();
-                        mapping_slots.last_sha3 = Some(((low, high), result))
+
+                        println!("sha3({:x}): {:x} {:x} {:x}", address, low, high, result);
+                        mapping_slots.entry(address).or_default().last_sha3 = Some(((low, high), result))
                     }
                 }
                 opcode::SSTORE => {
-                    match (mapping_slots.last_sha3, interpreter.stack.peek(0)) {
-                        (Some((data, last)), Ok(slot)) if last == slot => {
-                            mapping_slots.insert(slot, data.1, data.0);
+                    if let Some(mapping_slots) = mapping_slots.get_mut(&interpreter.contract.address) {
+                        match (mapping_slots.last_sha3, interpreter.stack.peek(0)) {
+                            (Some((data, last)), Ok(slot)) if last == slot => {
+                                println!("sstore: {:x} {:x} {:x}", data.0, data.1, slot);
+                                mapping_slots.insert(slot, data.1, data.0);
+                            }
+                            _ => {}
                         }
-                        _ => {}
                     }
                 }
                 _ => {}
