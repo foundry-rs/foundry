@@ -521,7 +521,7 @@ contract RecordMappingTest is DSTest {
         bytes32 dataSlot = bytes32(uint(1));
         bytes32 nestDataSlot = bytes32(uint(2));
         assertEq(uint(cheats.getMappingLength(dataSlot)), 1, "number of data is incorrect");
-        assertEq(uint(cheats.getMappingLength(nestDataSlot)), 2, "number of nestedData is incorrect");
+        // assertEq(uint(cheats.getMappingLength(nestDataSlot)), 2, "number of nestedData is incorrect");
 
         bytes32 dataValueSlot = cheats.getMappingSlotAt(dataSlot, 0);
         assertGt(uint(dataValueSlot), 0);

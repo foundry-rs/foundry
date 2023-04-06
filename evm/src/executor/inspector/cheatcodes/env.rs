@@ -216,7 +216,7 @@ impl MappingSlots {
         }
         self.parent_slots.insert(slot, parent);
         self.keys.insert(slot, key);
-        self.children.entry(slot).or_default().push(parent);
+        self.children.entry(parent).or_default().push(slot);
         true
     }
 }
