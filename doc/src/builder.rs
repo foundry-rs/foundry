@@ -233,21 +233,7 @@ impl DocBuilder {
 
 
 
-        /*
-     // Write readme content if any
-        let readme_content = {
-            let src_readme = self.sources.join(Self::README);
-            let root_readme = self.root.join(Self::README);
-            if src_readme.exists() {
-                fs::read_to_string(src_readme)?
-            } else if root_readme.exists() {
-                fs::read_to_string(root_readme)?
-            } else {
-                String::new()
-            }
-        };
       
-        */
 
 
         // Write readme content if any
@@ -256,7 +242,8 @@ impl DocBuilder {
             let src_readme = self.sources.join(Self::README);
             let root_readme = self.root.join(Self::README);
             
-
+            //Check to see if there is a 'homepage' option specified in config.
+            //If not, fall back to src and root readme files.
             let homepage_path = {
                 if self.config.homepage.is_file() {
                     Some(self.config.homepage.clone())
