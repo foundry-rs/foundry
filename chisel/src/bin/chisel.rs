@@ -3,7 +3,10 @@
 //! This module contains the core readline loop for the Chisel CLI as well as the
 //! executable's `main` function.
 
-use chisel::prelude::{ChiselCommand, ChiselDispatcher, DispatchResult, SolidityHelper};
+use chisel::{
+    history::chisel_history_file,
+    prelude::{ChiselCommand, ChiselDispatcher, DispatchResult, SolidityHelper},
+};
 use clap::Parser;
 use foundry_cli::cmd::{forge::build::BuildArgs, LoadConfig};
 use foundry_common::evm::EvmArgs;
@@ -132,6 +135,11 @@ async fn main() -> eyre::Result<()> {
     let mut rl = Editor::<SolidityHelper, _>::new()?;
     rl.set_helper(Some(SolidityHelper::default()));
 
+    // load history
+    if let Some(chisel_history) = chisel_history_file() {
+        let _ = rl.load_history(&chisel_history);
+    }
+
     // Print welcome header
     println!("Welcome to Chisel! Type `{}` to show available commands.", Paint::green("!help"));
 
@@ -183,6 +191,10 @@ async fn main() -> eyre::Result<()> {
                 break
             }
         }
+    }
+
+    if let Some(chisel_history) = chisel_history_file() {
+        let _ = rl.save_history(&chisel_history);
     }
 
     Ok(())
