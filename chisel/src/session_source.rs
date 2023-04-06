@@ -11,11 +11,12 @@ use ethers_solc::{
 use eyre::Result;
 use forge::executor::{opts::EvmOpts, Backend};
 use forge_fmt::solang_ext::SafeUnwrap;
-use foundry_config::Config;
+use foundry_config::{Config, SolcReq};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use solang_parser::pt;
 use std::{collections::HashMap, fs, path::PathBuf};
+use yansi::Paint;
 
 /// Solidity source for the `Vm` interface in [forge-std](https://github.com/foundry-rs/forge-std)
 static VM_SOURCE: &str = include_str!("../../testdata/cheats/Cheats.sol");
@@ -75,6 +76,53 @@ pub struct SessionSourceConfig {
     pub traces: bool,
 }
 
+impl SessionSourceConfig {
+    /// Returns the solc version to use
+    ///
+    /// Solc version precedence
+    /// - Foundry configuration / `--use` flag
+    /// - Latest installed version via SVM
+    /// - Default: Latest 0.8.17
+    pub(crate) fn solc(&self) -> Result<Solc> {
+        let solc_req = if let Some(solc_req) = self.foundry_config.solc.clone() {
+            solc_req
+        } else if let Some(version) = Solc::installed_versions().into_iter().max() {
+            SolcReq::Version(version.into())
+        } else {
+            if !self.foundry_config.offline {
+                print!("{}", Paint::green("No solidity versions installed! "));
+            }
+            // use default
+            SolcReq::Version("0.8.17".parse().unwrap())
+        };
+
+        match solc_req {
+            SolcReq::Version(version) => {
+                let v = version.to_string();
+                let mut solc = Solc::find_svm_installed_version(&v)?;
+                if solc.is_none() {
+                    if self.foundry_config.offline {
+                        eyre::bail!("can't install missing solc {version} in offline mode")
+                    }
+                    println!(
+                        "{}",
+                        Paint::green(format!("Installing solidity version {version}..."))
+                    );
+                    Solc::blocking_install(&version)?;
+                    solc = Solc::find_svm_installed_version(&v)?;
+                }
+                solc.ok_or_else(|| eyre::eyre!("Failed to install {version}"))
+            }
+            SolcReq::Local(solc) => {
+                if !solc.is_file() {
+                    eyre::bail!("`solc` {} does not exist", solc.display());
+                }
+                Ok(Solc::new(solc))
+            }
+        }
+    }
+}
+
 /// REPL Session Source wrapper
 ///
 /// Heavily based on soli's [`ConstructedSource`](https://github.com/jpopesculian/soli/blob/master/src/main.rs#L166)
@@ -118,6 +166,7 @@ impl SessionSource {
     /// ### Returns
     ///
     /// A new instance of [SessionSource]
+    #[track_caller]
     pub fn new(solc: Solc, config: SessionSourceConfig) -> Self {
         debug_assert!(solc.version().is_ok(), "{:?}", solc.version());
 

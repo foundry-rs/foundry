@@ -1,17 +1,13 @@
 // cast estimate subcommands
 use crate::{
     opts::{EthereumOpts, TransactionOpts},
-    utils::parse_ether_value,
+    utils::{self, parse_ether_value},
 };
 use cast::{Cast, TxBuilder};
 use clap::Parser;
-use ethers::{
-    providers::Middleware,
-    types::{BlockId, NameOrAddress, U256},
-};
+use ethers::types::{BlockId, NameOrAddress, U256};
 use eyre::WrapErr;
-use foundry_common::try_get_http_provider;
-use foundry_config::{Chain, Config};
+use foundry_config::Config;
 use std::str::FromStr;
 
 #[derive(Debug, Parser)]
@@ -47,7 +43,8 @@ pub struct CallArgs {
     #[clap(
         long,
         short,
-        help = "the block you want to query, can also be earliest/latest/pending",
+        help = "The block height you want to query at.",
+        long_help = "The block height you want to query at. Can also be the tags earliest, finalized, safe, latest, or pending.",
         value_name = "BLOCK"
     )]
     block: Option<BlockId>,
@@ -81,13 +78,12 @@ Examples: 1ether, 10gwei, 0.01ether"#,
 impl CallArgs {
     pub async fn run(self) -> eyre::Result<()> {
         let CallArgs { to, sig, args, data, tx, eth, command, block } = self;
+
         let config = Config::from(&eth);
-        let provider = try_get_http_provider(config.get_rpc_url_or_localhost_http()?)?;
+        let provider = utils::get_provider(&config)?;
+        let chain = utils::get_chain(config.chain_id, &provider).await?;
+        let sender = eth.wallet.sender().await;
 
-        let chain: Chain =
-            if let Some(chain) = eth.chain { chain } else { provider.get_chainid().await?.into() };
-
-        let sender = eth.sender().await;
         let mut builder = TxBuilder::new(&provider, sender, to, chain, tx.legacy).await?;
         builder
             .gas(tx.gas_limit)

@@ -1,6 +1,6 @@
 //! Various helper functions
 
-use ethers::prelude::Chain;
+use ethers::prelude::{Address, Chain, LocalWallet, Signer};
 
 /// Returns the current millis since unix epoch.
 ///
@@ -41,7 +41,13 @@ pub struct EnvExternalities {
     pub verifier: String,
 }
 
+#[allow(dead_code)]
 impl EnvExternalities {
+    pub fn address(&self) -> Option<Address> {
+        let pk: LocalWallet = self.pk.parse().ok()?;
+        Some(pk.address())
+    }
+
     pub fn goerli() -> Option<Self> {
         Some(Self {
             chain: Chain::Goerli,
@@ -88,6 +94,16 @@ impl EnvExternalities {
             rpc: network_rpc_key("mumbai")?,
             pk: network_private_key("mumbai")?,
             etherscan: etherscan_key(Chain::PolygonMumbai)?,
+            verifier: "etherscan".to_string(),
+        })
+    }
+
+    pub fn sepolia() -> Option<Self> {
+        Some(Self {
+            chain: Chain::Sepolia,
+            rpc: network_rpc_key("sepolia")?,
+            pk: network_private_key("sepolia")?,
+            etherscan: etherscan_key(Chain::Sepolia)?,
             verifier: "etherscan".to_string(),
         })
     }

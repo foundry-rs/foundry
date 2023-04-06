@@ -28,7 +28,7 @@ fn ganache_wallet2() -> LocalWallet {
 
 fn wallet(key_str: &str) -> LocalWallet {
     let key_hex = hex::decode(key_str).expect("could not parse as hex");
-    let key = SecretKey::from_be_bytes(&key_hex).expect("did not get private key");
+    let key = SecretKey::from_bytes(key_hex.as_slice().into()).expect("did not get private key");
     key.into()
 }
 

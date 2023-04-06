@@ -228,7 +228,11 @@ impl ScriptArgs {
     ) -> eyre::Result<()> {
         trace!(target: "script", "resuming single deployment");
 
-        let fork_url = self.evm_opts.ensure_fork_url()?;
+        let fork_url = script_config
+            .evm_opts
+            .fork_url
+            .as_deref()
+            .ok_or_else(|| eyre::eyre!("Missing `--fork-url` field."))?;
         let provider = Arc::new(try_get_http_provider(fork_url)?);
 
         let chain = provider.get_chainid().await?.as_u64();

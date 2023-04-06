@@ -1,3 +1,4 @@
+use crate::abi::VENDING_MACHINE_CONTRACT;
 use anvil::{spawn, NodeConfig};
 use ethers::{
     contract::{ContractFactory, ContractInstance},
@@ -94,31 +95,6 @@ contract Contract {
     let msg = err.to_string();
     assert!(msg.contains("execution reverted: !authorized"));
 }
-
-// <https://docs.soliditylang.org/en/latest/control-structures.html#revert>
-pub(crate) const VENDING_MACHINE_CONTRACT: &str = r#"// SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.13;
-
-contract VendingMachine {
-    address owner;
-    error Unauthorized();
-    function buyRevert(uint amount) public payable {
-        if (amount > msg.value / 2 ether)
-            revert("Not enough Ether provided.");
-    }
-    function buyRequire(uint amount) public payable {
-        require(
-            amount <= msg.value / 2 ether,
-            "Not enough Ether provided."
-        );
-    }
-    function withdraw() public {
-        if (msg.sender != owner)
-            revert Unauthorized();
-
-        payable(msg.sender).transfer(address(this).balance);
-    }
-}"#;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_solc_revert_example() {

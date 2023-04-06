@@ -4,7 +4,7 @@ use crate::Address;
 use ethers::prelude::Log;
 use foundry_evm::{
     coverage::HitMaps,
-    fuzz::{CounterExample, FuzzedCases},
+    fuzz::{CounterExample, FuzzCase},
     trace::Traces,
 };
 use serde::{Deserialize, Serialize};
@@ -95,7 +95,7 @@ pub struct TestResult {
 impl TestResult {
     /// Returns `true` if this is the result of a fuzz test
     pub fn is_fuzz(&self) -> bool {
-        matches!(self.kind, TestKind::Fuzz(_))
+        matches!(self.kind, TestKind::Fuzz { .. })
     }
 }
 
@@ -144,9 +144,15 @@ pub enum TestKind {
     /// Holds the consumed gas
     Standard(u64),
     /// A solidity fuzz test, that stores all test cases
-    Fuzz(FuzzedCases),
+    Fuzz {
+        /// we keep this for the debugger
+        first_case: FuzzCase,
+        runs: usize,
+        mean_gas: u64,
+        median_gas: u64,
+    },
     /// A solidity invariant test, that stores all test cases
-    Invariant(Vec<FuzzedCases>, usize),
+    Invariant { runs: usize, calls: usize, reverts: usize },
 }
 
 impl TestKind {
@@ -154,16 +160,12 @@ impl TestKind {
     pub fn report(&self) -> TestKindReport {
         match self {
             TestKind::Standard(gas) => TestKindReport::Standard { gas: *gas },
-            TestKind::Fuzz(fuzzed) => TestKindReport::Fuzz {
-                runs: fuzzed.cases().len(),
-                median_gas: fuzzed.median_gas(false),
-                mean_gas: fuzzed.mean_gas(false),
-            },
-            TestKind::Invariant(fuzzed, reverts) => TestKindReport::Invariant {
-                runs: fuzzed.len(),
-                calls: fuzzed.iter().map(|sequence| sequence.cases().len()).sum(),
-                reverts: *reverts,
-            },
+            TestKind::Fuzz { runs, mean_gas, median_gas, .. } => {
+                TestKindReport::Fuzz { runs: *runs, mean_gas: *mean_gas, median_gas: *median_gas }
+            }
+            TestKind::Invariant { runs, calls, reverts } => {
+                TestKindReport::Invariant { runs: *runs, calls: *calls, reverts: *reverts }
+            }
         }
     }
 }

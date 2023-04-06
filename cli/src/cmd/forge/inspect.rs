@@ -52,6 +52,7 @@ possible_values = ["abi", "b/bytes/bytecode", "deployedBytecode/deployed_bytecod
 
 impl Cmd for InspectArgs {
     type Output = ();
+
     fn run(self) -> eyre::Result<Self::Output> {
         let InspectArgs { mut contract, field, build, pretty } = self;
 

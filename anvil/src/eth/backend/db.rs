@@ -122,7 +122,36 @@ pub trait Db:
     fn dump_state(&self) -> DatabaseResult<Option<SerializableState>>;
 
     /// Deserialize and add all chain data to the backend storage
-    fn load_state(&mut self, buf: SerializableState) -> DatabaseResult<bool>;
+    fn load_state(&mut self, state: SerializableState) -> DatabaseResult<bool> {
+        for (addr, account) in state.accounts.into_iter() {
+            let old_account_nonce = DatabaseRef::basic(self, addr)
+                .ok()
+                .and_then(|acc| acc.map(|acc| acc.nonce))
+                .unwrap_or_default();
+            // use max nonce in case account is imported multiple times with difference
+            // nonces to prevent collisions
+            let nonce = std::cmp::max(old_account_nonce, account.nonce);
+
+            self.insert_account(
+                addr,
+                AccountInfo {
+                    balance: account.balance,
+                    code_hash: KECCAK_EMPTY, // will be set automatically
+                    code: if account.code.0.is_empty() {
+                        None
+                    } else {
+                        Some(Bytecode::new_raw(account.code.0).to_checked())
+                    },
+                    nonce,
+                },
+            );
+
+            for (k, v) in account.storage.into_iter() {
+                self.set_storage_at(addr, k, v)?;
+            }
+        }
+        Ok(true)
+    }
 
     /// Creates a new snapshot
     fn snapshot(&mut self) -> U256;
@@ -160,10 +189,6 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
 
     fn dump_state(&self) -> DatabaseResult<Option<SerializableState>> {
         Ok(None)
-    }
-
-    fn load_state(&mut self, _buf: SerializableState) -> DatabaseResult<bool> {
-        Ok(false)
     }
 
     fn snapshot(&mut self) -> U256 {

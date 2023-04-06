@@ -12,33 +12,33 @@ repository = "https://github.com/foundry-rs/foundry"
 foundry-config = { path = "../config" }
 
 # eth
-ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-providers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["ethers-solc"] }
+ethers-core = { workspace = true, default-features = false }
+ethers-solc = { workspace = true, default-features = false }
+ethers-providers = { workspace = true, default-features = false }
+ethers-middleware = { workspace = true, default-features = false }
+ethers-etherscan = { workspace = true, default-features = false, features = ["ethers-solc"] }
 
 # io
 reqwest = { version = "0.11", default-features = false }
 
 # cli
-clap = { version = "4.0", features = ["derive", "env", "unicode", "wrap_help"] }
-comfy-table = "6.0.0"
+clap = { version = "4.2", features = ["derive", "env", "unicode", "wrap_help"] }
+comfy-table = "6.1.4"
 tracing = "0.1"
-atty = "0.2.14"
-yansi = "0.5.1"
-tempfile = "3.3.0"
+is-terminal = "0.4"
+yansi = "0.5"
+tempfile = "3.5"
 
 #  misc
-serde = "1.0.133"
-serde_json = "1.0.67"
-thiserror = "1.0.31"
+serde = "1.0.159"
+serde_json = "1.0.95"
+thiserror = "1.0.40"
 eyre = "0.6"
-walkdir = "2.3.2"
-semver = "1.0.5"
-once_cell = "1.13.1"
-dunce = "1.0.2"
-regex = "1.6.0"
+walkdir = "2.3"
+semver = "1.0.17"
+once_cell = "1.17"
+dunce = "1.0"
+regex = "1.7"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

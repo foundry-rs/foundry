@@ -220,6 +220,14 @@ pub struct MockCallDataContext {
     pub value: Option<U256>,
 }
 
+#[derive(Clone, Debug)]
+pub struct MockCallReturnData {
+    /// The return type for the mocked call
+    pub ret_type: Return,
+    /// Return data or error
+    pub data: Bytes,
+}
+
 impl Ord for MockCallDataContext {
     fn cmp(&self, other: &Self) -> Ordering {
         // Calldata matching is reversed to ensure that a tighter match is
@@ -250,7 +258,24 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::ExpectRevert2(inner) => {
             expect_revert(state, Some(inner.0.to_vec().into()), data.journaled_state.depth())
         }
-        HEVMCalls::ExpectEmit0(inner) => {
+        HEVMCalls::ExpectEmit0(_) => {
+            state.expected_emits.push(ExpectedEmit {
+                depth: data.journaled_state.depth() - 1,
+                checks: [true, true, true, true],
+                ..Default::default()
+            });
+            Ok(Bytes::new())
+        }
+        HEVMCalls::ExpectEmit1(inner) => {
+            state.expected_emits.push(ExpectedEmit {
+                depth: data.journaled_state.depth() - 1,
+                checks: [true, true, true, true],
+                address: Some(inner.0),
+                ..Default::default()
+            });
+            Ok(Bytes::new())
+        }
+        HEVMCalls::ExpectEmit2(inner) => {
             state.expected_emits.push(ExpectedEmit {
                 depth: data.journaled_state.depth() - 1,
                 checks: [inner.0, inner.1, inner.2, inner.3],
@@ -258,7 +283,7 @@ pub fn apply<DB: DatabaseExt>(
             });
             Ok(Bytes::new())
         }
-        HEVMCalls::ExpectEmit1(inner) => {
+        HEVMCalls::ExpectEmit3(inner) => {
             state.expected_emits.push(ExpectedEmit {
                 depth: data.journaled_state.depth() - 1,
                 checks: [inner.0, inner.1, inner.2, inner.3],
@@ -337,19 +362,65 @@ pub fn apply<DB: DatabaseExt>(
             }
             state.mocked_calls.entry(inner.0).or_default().insert(
                 MockCallDataContext { calldata: inner.1.to_vec().into(), value: None },
-                inner.2.to_vec().into(),
+                MockCallReturnData { data: inner.2.to_vec().into(), ret_type: Return::Return },
             );
             Ok(Bytes::new())
         }
         HEVMCalls::MockCall1(inner) => {
             state.mocked_calls.entry(inner.0).or_default().insert(
                 MockCallDataContext { calldata: inner.2.to_vec().into(), value: Some(inner.1) },
-                inner.3.to_vec().into(),
+                MockCallReturnData { data: inner.3.to_vec().into(), ret_type: Return::Return },
+            );
+            Ok(Bytes::new())
+        }
+        HEVMCalls::MockCallRevert0(inner) => {
+            state.mocked_calls.entry(inner.0).or_default().insert(
+                MockCallDataContext { calldata: inner.1.to_vec().into(), value: None },
+                MockCallReturnData { data: inner.2.to_vec().into(), ret_type: Return::Revert },
+            );
+            Ok(Bytes::new())
+        }
+        HEVMCalls::MockCallRevert1(inner) => {
+            state.mocked_calls.entry(inner.0).or_default().insert(
+                MockCallDataContext { calldata: inner.2.to_vec().into(), value: Some(inner.1) },
+                MockCallReturnData { data: inner.3.to_vec().into(), ret_type: Return::Revert },
             );
             Ok(Bytes::new())
         }
         HEVMCalls::ClearMockedCalls(_) => {
             state.mocked_calls = Default::default();
+            Ok(Bytes::new())
+        }
+        HEVMCalls::ExpectSafeMemory(inner) => {
+            if inner.0 >= inner.1 {
+                return Some(Err(format!("Invalid memory range: [{}, {})", inner.0, inner.1)
+                    .encode()
+                    .into()))
+            }
+
+            // Write the new range to the map at the current call depth
+            let offsets = state
+                .allowed_mem_writes
+                .entry(data.journaled_state.depth())
+                .or_insert(vec![(0..0x60)]);
+            offsets.push(inner.0..inner.1);
+
+            Ok(Bytes::new())
+        }
+        HEVMCalls::ExpectSafeMemoryCall(inner) => {
+            if inner.0 >= inner.1 {
+                return Some(Err(format!("Invalid memory range: [{}, {})", inner.0, inner.1)
+                    .encode()
+                    .into()))
+            }
+
+            // Write the new range to the map at the current call depth + 1
+            let offsets = state
+                .allowed_mem_writes
+                .entry(data.journaled_state.depth() + 1)
+                .or_insert(vec![(0..0x60)]);
+            offsets.push(inner.0..inner.1);
+
             Ok(Bytes::new())
         }
         _ => return None,

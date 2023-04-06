@@ -1,27 +1,12 @@
-use clap::{
-    builder::{PossibleValuesParser, TypedValueParser},
-    Parser,
-};
-use ethers::types::Chain;
+use clap::builder::{PossibleValuesParser, TypedValueParser};
+use ethers::types::Chain as NamedChain;
+use foundry_config::Chain;
 use std::ffi::OsStr;
 use strum::VariantNames;
 
-// Helper for exposing enum values for `Chain`
-// TODO: Is this a duplicate of config/src/chain.rs?
-#[derive(Debug, Clone, Parser, Copy)]
-pub struct ClapChain {
-    #[clap(
-        short = 'c',
-        long = "chain",
-        env = "CHAIN",
-        default_value = "mainnet",
-        value_parser = ChainValueParser::default(),
-        value_name = "CHAIN"
-    )]
-    pub inner: Chain,
-}
-
-/// The value parser for `Chain`s
+/// Custom Clap value parser for [`Chain`]s.
+///
+/// Displays all possible chains when an invalid chain is provided.
 #[derive(Clone, Debug)]
 pub struct ChainValueParser {
     pub inner: PossibleValuesParser,
@@ -29,7 +14,7 @@ pub struct ChainValueParser {
 
 impl Default for ChainValueParser {
     fn default() -> Self {
-        ChainValueParser { inner: Chain::VARIANTS.into() }
+        Self { inner: PossibleValuesParser::from(NamedChain::VARIANTS) }
     }
 }
 
@@ -42,22 +27,19 @@ impl TypedValueParser for ChainValueParser {
         arg: Option<&clap::Arg>,
         value: &OsStr,
     ) -> Result<Self::Value, clap::Error> {
-        self.inner.parse_ref(cmd, arg, value)?.parse::<Chain>().map_err(|_| {
-            clap::Error::raw(
-                clap::error::ErrorKind::InvalidValue,
-                "chain argument did not match any possible chain variant",
-            )
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn can_parse_clap_chain() {
-        let args: ClapChain = ClapChain::parse_from(["foundry-cli", "--chain", "mainnet"]);
-        assert_eq!(args.inner, Chain::Mainnet);
+        let s =
+            value.to_str().ok_or_else(|| clap::Error::new(clap::error::ErrorKind::InvalidUtf8))?;
+        if let Ok(id) = s.parse() {
+            Ok(Chain::Id(id))
+        } else {
+            // NamedChain::VARIANTS is a subset of all possible variants, since there are aliases:
+            // mumbai instead of polygon-mumbai etc
+            //
+            // Parse first as NamedChain, if it fails parse with NamedChain::VARIANTS for displaying
+            // the error to the user
+            s.parse()
+                .map_err(|_| self.inner.parse_ref(cmd, arg, value).unwrap_err())
+                .map(Chain::Named)
+        }
     }
 }

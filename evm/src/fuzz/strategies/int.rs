@@ -25,12 +25,12 @@ impl IntValueTree {
     /// * `start` - Starting value for the tree
     /// * `fixed` - If `true` the tree would only contain one element and won't be simplified.
     fn new(start: I256, fixed: bool) -> Self {
-        Self { lo: 0.into(), curr: start, hi: start, fixed }
+        Self { lo: I256::zero(), curr: start, hi: start, fixed }
     }
 
     fn reposition(&mut self) -> bool {
         let interval = self.hi - self.lo;
-        let new_mid = self.lo + interval / 2.into();
+        let new_mid = self.lo + interval / I256::from(2);
 
         if new_mid == self.curr {
             false
@@ -69,7 +69,7 @@ impl ValueTree for IntValueTree {
             return false
         }
 
-        self.lo = self.curr + if self.hi < 0.into() { (-1).into() } else { 1.into() };
+        self.lo = self.curr + if self.hi.is_negative() { I256::minus_one() } else { I256::one() };
 
         self.reposition()
     }
@@ -119,7 +119,7 @@ impl IntStrategy {
         let kind = rng.gen_range(0..4);
         let start = match kind {
             0 => I256::overflowing_from_sign_and_abs(Sign::Negative, umax + 1).0 + offset,
-            1 => -offset - 1.into(),
+            1 => -offset - I256::one(),
             2 => offset,
             3 => I256::overflowing_from_sign_and_abs(Sign::Positive, umax).0 - offset,
             _ => unreachable!(),
@@ -143,7 +143,7 @@ impl IntStrategy {
         let bits = rng.gen_range(0..=self.bits);
 
         if bits == 0 {
-            return Ok(IntValueTree::new(0.into(), false))
+            return Ok(IntValueTree::new(I256::zero(), false))
         }
 
         // init 2 128-bit randoms

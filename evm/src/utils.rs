@@ -39,7 +39,6 @@ pub fn apply_chain_and_block_specific_env_changes<T>(env: &mut revm::Env, block:
     if let Ok(chain) = Chain::try_from(env.cfg.chain_id) {
         let block_number = block.number.unwrap_or_default();
 
-        #[allow(clippy::single_match)]
         match chain {
             Chain::Mainnet => {
                 // after merge difficulty is supplanted with prevrandao EIP-4399
@@ -48,6 +47,18 @@ pub fn apply_chain_and_block_specific_env_changes<T>(env: &mut revm::Env, block:
                 }
 
                 return
+            }
+            Chain::Arbitrum |
+            Chain::ArbitrumGoerli |
+            Chain::ArbitrumNova |
+            Chain::ArbitrumTestnet => {
+                // on arbitrum `block.number` is the L1 block which is included in the
+                // `l1BlockNumber` field
+                if let Some(l1_block_number) = block.other.get("l1BlockNumber").cloned() {
+                    if let Ok(l1_block_number) = serde_json::from_value::<U256>(l1_block_number) {
+                        env.block.number = l1_block_number;
+                    }
+                }
             }
             _ => {}
         }

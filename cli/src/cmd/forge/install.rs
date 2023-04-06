@@ -5,7 +5,6 @@ use crate::{
     prompt,
     utils::{p_println, CommandUtils},
 };
-use atty::{self, Stream};
 use clap::{Parser, ValueHint};
 use ethers::solc::Project;
 use foundry_common::fs;
@@ -163,17 +162,30 @@ pub(crate) fn install(
             // Pin branch to submodule if branch is used
             if let Some(ref branch) = installed_tag {
                 if !branch.is_empty() {
-                    let libs = libs.strip_prefix(&root).unwrap_or(&libs);
-                    let mut cmd = Command::new("git");
-                    cmd.current_dir(&root).args([
-                        "submodule",
-                        "set-branch",
-                        "-b",
+                    // First, check if this tag has a branch
+                    let mut check_for_branch = Command::new("git");
+                    check_for_branch.current_dir(&root).args([
+                        "branch",
+                        "--list",
                         branch.as_str(),
                         libs.join(target_dir).to_str().unwrap(),
                     ]);
-                    trace!(?cmd, "submodule set branch");
-                    cmd.exec()?;
+                    trace!(?check_for_branch, "check if tag has branch");
+                    let output = check_for_branch.exec()?;
+                    let branch_found = String::from_utf8(output.stdout)?;
+                    if !branch_found.is_empty() {
+                        let libs = libs.strip_prefix(&root).unwrap_or(&libs);
+                        let mut cmd = Command::new("git");
+                        cmd.current_dir(&root).args([
+                            "submodule",
+                            "set-branch",
+                            "-b",
+                            branch.as_str(),
+                            libs.join(target_dir).to_str().unwrap(),
+                        ]);
+                        trace!(?cmd, "submodule set branch");
+                        cmd.exec()?;
+                    }
 
                     // this changed the .gitmodules files
                     trace!("git add .gitmodules");
@@ -445,7 +457,7 @@ fn git_checkout(
     let mut tag = dep.tag.clone().unwrap();
     let mut is_branch = false;
     // only try to match tag if current terminal is a tty
-    if atty::is(Stream::Stdout) {
+    if is_terminal::is_terminal(&std::io::stdout()) {
         if tag.is_empty() {
             tag = match_tag(&tag, libs, target_dir)?;
         } else if let Some(branch) = match_branch(&tag, libs, target_dir)? {

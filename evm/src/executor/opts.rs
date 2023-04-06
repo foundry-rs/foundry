@@ -2,7 +2,7 @@ use crate::executor::fork::CreateFork;
 use ethers::{
     providers::{Middleware, Provider},
     solc::utils::RuntimeOrHandle,
-    types::{Address, Chain, H256, U256},
+    types::{Address, Block, Chain, TxHash, H256, U256},
 };
 use eyre::WrapErr;
 use foundry_common::{self, ProviderBuilder, RpcUrl, ALCHEMY_FREE_TIER_CUPS};
@@ -59,7 +59,7 @@ impl EvmOpts {
     /// id, )
     pub async fn evm_env(&self) -> revm::Env {
         if let Some(ref fork_url) = self.fork_url {
-            self.fork_evm_env(fork_url).await.expect("Could not instantiate forked environment")
+            self.fork_evm_env(fork_url).await.expect("Could not instantiate forked environment").0
         } else {
             self.local_evm_env()
         }
@@ -72,14 +72,18 @@ impl EvmOpts {
     /// Returns an error if a RPC request failed, or the fork url is not a valid url
     pub fn evm_env_blocking(&self) -> eyre::Result<revm::Env> {
         if let Some(ref fork_url) = self.fork_url {
-            RuntimeOrHandle::new().block_on(async { self.fork_evm_env(fork_url).await })
+            RuntimeOrHandle::new().block_on(self.fork_evm_env(fork_url)).map(|res| res.0)
         } else {
             Ok(self.local_evm_env())
         }
     }
 
-    /// Returns the `revm::Env` configured with settings retrieved from the endpoints
-    pub async fn fork_evm_env(&self, fork_url: impl AsRef<str>) -> eyre::Result<revm::Env> {
+    /// Returns the `revm::Env` that is configured with settings retrieved from the endpoint.
+    /// And the block that was used to configure the environment.
+    pub async fn fork_evm_env(
+        &self,
+        fork_url: impl AsRef<str>,
+    ) -> eyre::Result<(revm::Env, Block<TxHash>)> {
         let fork_url = fork_url.as_ref();
         let provider = ProviderBuilder::new(fork_url)
             .compute_units_per_second(self.get_compute_units_per_second())

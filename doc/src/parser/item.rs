@@ -4,8 +4,8 @@ use forge_fmt::{
     Visitor,
 };
 use solang_parser::pt::{
-    ContractDefinition, EnumDefinition, ErrorDefinition, EventDefinition, FunctionDefinition,
-    StructDefinition, TypeDefinition, VariableDefinition,
+    ContractDefinition, ContractTy, EnumDefinition, ErrorDefinition, EventDefinition,
+    FunctionDefinition, StructDefinition, TypeDefinition, VariableDefinition,
 };
 
 /// The parsed item.
@@ -116,7 +116,12 @@ impl ParseItem {
     /// Format the item's filename.
     pub fn filename(&self) -> String {
         let prefix = match self.source {
-            ParseSource::Contract(_) => "contract",
+            ParseSource::Contract(ref c) => match c.ty {
+                ContractTy::Contract(_) => "contract",
+                ContractTy::Abstract(_) => "abstract",
+                ContractTy::Interface(_) => "interface",
+                ContractTy::Library(_) => "library",
+            },
             ParseSource::Function(_) => "function",
             ParseSource::Variable(_) => "variable",
             ParseSource::Event(_) => "event",

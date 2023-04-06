@@ -13,7 +13,6 @@ use foundry_cli::{
     handler,
     opts::cast::{Opts, Subcommands, ToBaseArgs},
     prompt, stdin, utils,
-    utils::try_consume_config_rpc_url,
 };
 use foundry_common::{
     abi::{format_tokens, get_event},
@@ -22,9 +21,8 @@ use foundry_common::{
         decode_calldata, decode_event_topic, decode_function_selector, import_selectors,
         parse_signatures, pretty_calldata, ParsedSignatures, SelectorImportData,
     },
-    try_get_http_provider,
 };
-use foundry_config::{Chain, Config};
+use foundry_config::Config;
 use rustc_hex::ToHex;
 
 #[tokio::main]
@@ -177,8 +175,8 @@ async fn main() -> eyre::Result<()> {
         Subcommands::CalldataEncode { sig, args } => {
             println!("{}", SimpleCast::calldata_encode(sig, &args)?);
         }
-        Subcommands::Interface(cmd) => cmd.run()?.await?,
-        Subcommands::Bind(cmd) => cmd.run()?.await?,
+        Subcommands::Interface(cmd) => cmd.run().await?,
+        Subcommands::Bind(cmd) => cmd.run().await?,
         Subcommands::PrettyCalldata { calldata, offline } => {
             let calldata = stdin::unwrap_line(calldata)?;
             println!("{}", pretty_calldata(&calldata, offline).await?);
@@ -190,15 +188,10 @@ async fn main() -> eyre::Result<()> {
         }
 
         // Blockchain & RPC queries
-        Subcommands::AccessList { eth, address, sig, args, block, to_json } => {
-            let config = Config::from(&eth);
-            let provider = try_get_http_provider(config.get_rpc_url_or_localhost_http()?)?;
-
-            let chain: Chain = if let Some(chain) = eth.chain {
-                chain
-            } else {
-                provider.get_chainid().await?.into()
-            };
+        Subcommands::AccessList { address, sig, args, block, to_json, rpc } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
+            let chain = utils::get_chain(config.chain_id, &provider).await?;
 
             let mut builder =
                 TxBuilder::new(&provider, config.sender, Some(address), chain, false).await?;
@@ -207,17 +200,17 @@ async fn main() -> eyre::Result<()> {
 
             println!("{}", Cast::new(&provider).access_list(builder_output, block, to_json).await?);
         }
-        Subcommands::Age { block, rpc_url } => {
-            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-            let provider = try_get_http_provider(rpc_url)?;
+        Subcommands::Age { block, rpc } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
             println!(
                 "{}",
                 Cast::new(provider).age(block.unwrap_or(BlockId::Number(Latest))).await?
             );
         }
-        Subcommands::Balance { block, who, rpc_url, to_ether } => {
-            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-            let provider = try_get_http_provider(rpc_url)?;
+        Subcommands::Balance { block, who, to_ether, rpc } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
             let value = Cast::new(provider).balance(who, block).await?;
             if to_ether {
                 println!("{}", SimpleCast::from_wei(&value.to_string(), "eth")?);
@@ -225,92 +218,99 @@ async fn main() -> eyre::Result<()> {
                 println!("{value}");
             }
         }
-        Subcommands::BaseFee { block, rpc_url } => {
-            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-            let provider = try_get_http_provider(rpc_url)?;
+        Subcommands::BaseFee { block, rpc } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
             println!(
                 "{}",
                 Cast::new(provider).base_fee(block.unwrap_or(BlockId::Number(Latest))).await?
             );
         }
-        Subcommands::Block { rpc_url, block, full, field, to_json } => {
-            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-            let provider = try_get_http_provider(rpc_url)?;
-            println!("{}", Cast::new(provider).block(block, full, field, to_json).await?);
+        Subcommands::Block { block, full, field, to_json, rpc } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
+            println!(
+                "{}",
+                Cast::new(provider)
+                    .block(block.unwrap_or(BlockId::Number(Latest)), full, field, to_json)
+                    .await?
+            );
         }
-        Subcommands::BlockNumber { rpc_url } => {
-            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-            let provider = try_get_http_provider(rpc_url)?;
+        Subcommands::BlockNumber { rpc } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
             println!("{}", Cast::new(provider).block_number().await?);
         }
-        Subcommands::Chain { rpc_url } => {
-            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-            let provider = try_get_http_provider(rpc_url)?;
+        Subcommands::Chain { rpc } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
             println!("{}", Cast::new(provider).chain().await?);
         }
-        Subcommands::ChainId { rpc_url } => {
-            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-            let provider = try_get_http_provider(rpc_url)?;
+        Subcommands::ChainId { rpc } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
             println!("{}", Cast::new(provider).chain_id().await?);
         }
-        Subcommands::Client { rpc_url } => {
-            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-            let provider = try_get_http_provider(rpc_url)?;
+        Subcommands::Client { rpc } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
             println!("{}", provider.client_version().await?);
         }
-        Subcommands::Code { block, who, rpc_url } => {
-            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-            let provider = try_get_http_provider(rpc_url)?;
-            println!("{}", Cast::new(provider).code(who, block).await?);
+        Subcommands::Code { block, who, disassemble, rpc } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
+            println!("{}", Cast::new(provider).code(who, block, disassemble).await?);
         }
-        Subcommands::ComputeAddress { address, nonce, rpc_url } => {
-            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-            let provider = try_get_http_provider(rpc_url)?;
+        Subcommands::ComputeAddress { address, nonce, rpc } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
 
             let address: Address = stdin::unwrap_line(address)?.parse()?;
             let computed = Cast::new(&provider).compute_address(address, nonce).await?;
             println!("Computed Address: {}", SimpleCast::to_checksum_address(&computed));
         }
-        Subcommands::FindBlock(cmd) => cmd.run()?.await?,
-        Subcommands::GasPrice { rpc_url } => {
-            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-            let provider = try_get_http_provider(rpc_url)?;
+        Subcommands::Disassemble { bytecode } => {
+            println!("{}", SimpleCast::disassemble(&bytecode)?);
+        }
+        Subcommands::FindBlock(cmd) => cmd.run().await?,
+        Subcommands::GasPrice { rpc } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
             println!("{}", Cast::new(provider).gas_price().await?);
         }
         Subcommands::Index { key_type, key, slot_number } => {
-            let encoded = SimpleCast::index(&key_type, &key, &slot_number)?;
-            println!("{encoded}");
+            println!("{}", SimpleCast::index(&key_type, &key, &slot_number)?);
         }
-        Subcommands::Implementation { block, who, rpc_url } => {
-            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-            let provider = try_get_http_provider(rpc_url)?;
+        Subcommands::Implementation { block, who, rpc } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
             println!("{}", Cast::new(provider).implementation(who, block).await?);
         }
-        Subcommands::Admin { block, who, rpc_url } => {
-            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-            let provider = try_get_http_provider(rpc_url)?;
+        Subcommands::Admin { block, who, rpc } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
             println!("{}", Cast::new(provider).admin(who, block).await?);
         }
-        Subcommands::Nonce { block, who, rpc_url } => {
-            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-            let provider = try_get_http_provider(rpc_url)?;
+        Subcommands::Nonce { block, who, rpc } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
             println!("{}", Cast::new(provider).nonce(who, block).await?);
         }
-        Subcommands::Proof { address, slots, rpc_url, block } => {
-            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-            let provider = try_get_http_provider(rpc_url)?;
+        Subcommands::Proof { address, slots, rpc, block } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
             let value = provider.get_proof(address, slots, block).await?;
             println!("{}", serde_json::to_string(&value)?);
         }
-        Subcommands::Rpc(cmd) => cmd.run()?.await?,
+        Subcommands::Rpc(cmd) => cmd.run().await?,
         Subcommands::Storage(cmd) => cmd.run().await?,
 
         // Calls & transactions
         Subcommands::Call(cmd) => cmd.run().await?,
         Subcommands::Estimate(cmd) => cmd.run().await?,
-        Subcommands::PublishTx { eth, raw_tx, cast_async } => {
-            let config = Config::from(&eth);
-            let provider = try_get_http_provider(config.get_rpc_url_or_localhost_http()?)?;
+        Subcommands::PublishTx { raw_tx, cast_async, rpc } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
             let cast = Cast::new(&provider);
             let pending_tx = cast.publish(raw_tx).await?;
             let tx_hash = *pending_tx;
@@ -323,9 +323,9 @@ async fn main() -> eyre::Result<()> {
                 println!("{}", serde_json::json!(receipt));
             }
         }
-        Subcommands::Receipt { tx_hash, field, to_json, rpc_url, cast_async, confirmations } => {
-            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-            let provider = try_get_http_provider(rpc_url)?;
+        Subcommands::Receipt { tx_hash, field, to_json, cast_async, confirmations, rpc } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
             println!(
                 "{}",
                 Cast::new(provider)
@@ -333,11 +333,11 @@ async fn main() -> eyre::Result<()> {
                     .await?
             );
         }
-        Subcommands::Run(cmd) => cmd.run()?,
+        Subcommands::Run(cmd) => cmd.run().await?,
         Subcommands::SendTx(cmd) => cmd.run().await?,
-        Subcommands::Tx { tx_hash, field, to_json, rpc_url } => {
-            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-            let provider = try_get_http_provider(rpc_url)?;
+        Subcommands::Tx { tx_hash, field, to_json, rpc } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
             println!("{}", Cast::new(&provider).transaction(tx_hash, field, to_json).await?)
         }
 
@@ -397,9 +397,9 @@ async fn main() -> eyre::Result<()> {
             let name = stdin::unwrap_line(name)?;
             println!("{}", SimpleCast::namehash(&name)?);
         }
-        Subcommands::LookupAddress { who, rpc_url, verify } => {
-            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-            let provider = try_get_http_provider(rpc_url)?;
+        Subcommands::LookupAddress { who, rpc, verify } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
 
             let who = stdin::unwrap_line(who)?;
             let name = provider.lookup_address(who).await?;
@@ -412,9 +412,9 @@ async fn main() -> eyre::Result<()> {
             }
             println!("{name}");
         }
-        Subcommands::ResolveName { who, rpc_url, verify } => {
-            let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-            let provider = try_get_http_provider(rpc_url)?;
+        Subcommands::ResolveName { who, rpc, verify } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
 
             let who = stdin::unwrap_line(who)?;
             let address = provider.resolve_name(&who).await?;
@@ -457,32 +457,18 @@ async fn main() -> eyre::Result<()> {
         Subcommands::RightShift { value, bits, base_in, base_out } => {
             println!("{}", SimpleCast::right_shift(&value, &bits, base_in, &base_out)?);
         }
-        Subcommands::EtherscanSource { chain, address, directory, etherscan_api_key } => {
-            let api_key = match etherscan_api_key {
-                Some(inner) => inner,
-                _ => {
-                    if let Some(etherscan_api_key) = Config::load().etherscan_api_key {
-                        etherscan_api_key
-                    } else {
-                        eyre::bail!("No Etherscan API Key is set. Consider using the ETHERSCAN_API_KEY env var, or setting the -e CLI argument or etherscan-api-key in foundry.toml")
-                    }
-                }
-            };
+        Subcommands::EtherscanSource { address, directory, etherscan } => {
+            let config = Config::from(&etherscan);
+            let chain = config.chain_id.unwrap_or_default();
+            let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
+            let chain = chain.named()?;
             match directory {
                 Some(dir) => {
-                    SimpleCast::expand_etherscan_source_to_directory(
-                        chain.inner,
-                        address,
-                        api_key,
-                        dir,
-                    )
-                    .await?
+                    SimpleCast::expand_etherscan_source_to_directory(chain, address, api_key, dir)
+                        .await?
                 }
                 None => {
-                    println!(
-                        "{}",
-                        SimpleCast::etherscan_source(chain.inner, address, api_key).await?
-                    );
+                    println!("{}", SimpleCast::etherscan_source(chain, address, api_key).await?);
                 }
             }
         }

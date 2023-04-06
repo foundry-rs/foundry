@@ -26,7 +26,6 @@ impl Operator for Expression {
                 HexLiteral(..) |
                 AddressLiteral(..) |
                 Variable(..) |
-                Unit(..) |
                 This(..)
         )
     }
@@ -41,7 +40,7 @@ impl Operator for Expression {
             Complement(..) => "~",
             Delete(..) => "delete",
             UnaryPlus(..) | Add(..) => "+",
-            UnaryMinus(..) | Subtract(..) => "-",
+            Negate(..) | Subtract(..) => "-",
             Power(..) => "**",
             Multiply(..) => "*",
             Divide(..) => "/",
@@ -88,7 +87,6 @@ impl Operator for Expression {
             Variable(..) |
             List(..) |
             ArrayLiteral(..) |
-            Unit(..) |
             This(..) |
             Parenthesis(..) => return None,
         })
@@ -105,7 +103,7 @@ impl Operator for Expression {
                 Not(..) |
                 Complement(..) |
                 UnaryPlus(..) |
-                UnaryMinus(..)
+                Negate(..)
         )
     }
 }
@@ -120,7 +118,7 @@ impl OperatorComponents for Expression {
             New(_, expr) |
             Delete(_, expr) |
             UnaryPlus(_, expr) |
-            UnaryMinus(_, expr) |
+            Negate(_, expr) |
             PreDecrement(_, expr) |
             Parenthesis(_, expr) |
             PreIncrement(_, expr) => (None, Some(expr)),
@@ -172,7 +170,6 @@ impl OperatorComponents for Expression {
             Variable(..) |
             List(..) |
             ArrayLiteral(..) |
-            Unit(..) |
             This(..) => (None, None),
         }
     }
@@ -187,7 +184,7 @@ impl OperatorComponents for Expression {
             New(_, expr) |
             Delete(_, expr) |
             UnaryPlus(_, expr) |
-            UnaryMinus(_, expr) |
+            Negate(_, expr) |
             PreDecrement(_, expr) |
             Parenthesis(_, expr) |
             PreIncrement(_, expr) => (None, Some(expr.as_mut())),
@@ -239,7 +236,6 @@ impl OperatorComponents for Expression {
             Variable(..) |
             List(..) |
             ArrayLiteral(..) |
-            Unit(..) |
             This(..) => (None, None),
         }
     }

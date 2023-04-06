@@ -12,8 +12,7 @@ path = "src/anvil.rs"
 required-features = ["cli"]
 
 [build-dependencies]
-# used to generate constants
-vergen = { version = "7.0", default-features = false, features = ["build", "rustc", "git"] }
+vergen = { version = "8", default-features = false, features = ["build", "git", "git2"] }
 
 [dependencies]
 # foundry internal
@@ -27,8 +26,8 @@ forge = { path = "../forge", optional = true }
 foundry-config = { path = "../config" }
 
 # evm support
-bytes = "1.1.0"
-ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["ws"] }
+bytes = "1.4.0"
+ethers = { workspace = true, features = ["ws"] }
 trie-db = { version = "0.23" }
 hash-db = { version = "0.15" }
 memory-db = { version = "0.29" }
@@ -37,7 +36,7 @@ memory-db = { version = "0.29" }
 axum = { version = "0.5", features = ["ws"] }
 hyper = "0.14"
 tower = "0.4"
-tower-http = { version = "0.3", features = ["trace"] }
+tower-http = { version = "0.4", features = ["trace"] }
 
 # tracing
 tracing = "0.1"
@@ -50,34 +49,34 @@ futures = "0.3"
 async-trait = "0.1"
 
 # misc
-serde_json = "1.0.67"
+serde_json = "1.0.95"
 serde = { version = "1.0", features = ["derive"] }
-thiserror = "1.0.30"
-yansi = "0.5.1"
-tempfile = "3.3.0"
+thiserror = "1.0"
+yansi = "0.5"
+tempfile = "3.5"
 
 # cli
-clap = { version = "4.0", features = ["derive", "env", "wrap_help"], optional = true }
-clap_complete = { version = "4.0", optional = true }
-chrono = "0.4.19"
-auto_impl = "0.5.0"
+clap = { version = "4.2", features = ["derive", "env", "wrap_help"], optional = true }
+clap_complete = { version = "4.2", optional = true }
+chrono = "0.4.24"
+auto_impl = "1.0"
 ctrlc = { version = "3", optional = true }
 fdlimit = { version = "0.2.1", optional = true }
-clap_complete_fig = "4.0"
+clap_complete_fig = "4.2"
 ethereum-forkid = "0.11"
 
 # ethers
 [target.'cfg(not(windows))'.dependencies]
-ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["rustls", "ws", "ipc"] }
+ethers = { workspace = true, features = ["rustls", "ws", "ipc"] }
 [target.'cfg(windows)'.dependencies]
-ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["rustls", "ws"] }
+ethers = { workspace = true, features = ["rustls", "ws"] }
 
 [dev-dependencies]
-ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["abigen"] }
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs", features = ["project-util", "full"] }
-pretty_assertions = "1.2.1"
+ethers = { workspace = true, features = ["abigen"] }
+ethers-solc = { workspace = true, features = ["project-util", "full"] }
+pretty_assertions = "1.3.0"
 tokio = { version = "1", features = ["full"] }
-crc = "3.0.0"
+crc = "3.0.1"
 
 [features]
 default = ["cli"]

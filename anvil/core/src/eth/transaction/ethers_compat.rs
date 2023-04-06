@@ -116,7 +116,7 @@ fn to_ethers_transaction_with_hash_and_sender(
             r: t.signature.r,
             s: t.signature.s,
             access_list: None,
-            transaction_type: Some(0u64.into()),
+            transaction_type: None,
             other: Default::default(),
         },
         TypedTransaction::EIP2930(t) => EthersTransaction {

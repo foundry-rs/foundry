@@ -50,9 +50,11 @@ cd foundry
 cargo install --path ./cli --profile local --bins --locked --force
 # install anvil
 cargo install --path ./anvil --profile local --locked --force
+# install chisel
+cargo install --path ./chisel --profile local --locked --force
 ```
 
-Or via `cargo install --git https://github.com/foundry-rs/foundry --profile local --locked foundry-cli anvil`.
+Or via `cargo install --git https://github.com/foundry-rs/foundry --profile local --locked foundry-cli anvil chisel`.
 
 ### Installing for CI in Github Action
 

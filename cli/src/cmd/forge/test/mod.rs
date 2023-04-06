@@ -83,12 +83,8 @@ pub struct TestArgs {
     #[clap(flatten)]
     evm_opts: EvmArgs,
 
-    #[clap(
-        long,
-        env = "ETHERSCAN_API_KEY",
-        help = "Set etherscan api key to better decode traces",
-        value_name = "ETHERSCAN_KEY"
-    )]
+    /// The Etherscan (or equivalent) API key
+    #[clap(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
     etherscan_api_key: Option<String>,
 
     #[clap(flatten)]
@@ -189,11 +185,11 @@ impl TestArgs {
 
                     // Build debugger args if this is a fuzz test
                     let sig = match test_kind {
-                        TestKind::Fuzz(cases) => {
+                        TestKind::Fuzz { first_case, .. } => {
                             if let Some(CounterExample::Single(counterexample)) = counterexample {
                                 counterexample.calldata.to_string()
                             } else {
-                                cases.cases().first().expect("no fuzz cases run").calldata.to_string()
+                                first_case.calldata.to_string()
                             }
                         },
                         _ => sig,

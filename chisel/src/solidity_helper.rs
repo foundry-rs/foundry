@@ -3,7 +3,10 @@
 //! This module contains the `SolidityHelper`, a [rustyline::Helper] implementation for
 //! usage in Chisel. It is ported from [soli](https://github.com/jpopesculian/soli/blob/master/src/main.rs).
 
-use crate::prelude::{ChiselCommand, COMMAND_LEADER};
+use crate::{
+    dispatcher::PROMPT_ARROW,
+    prelude::{ChiselCommand, COMMAND_LEADER},
+};
 use rustyline::{
     completion::Completer,
     highlight::Highlighter,
@@ -34,9 +37,24 @@ const MAX_ANSI_LEN: usize = 9;
 pub type SpannedStyle = (usize, Style, usize);
 
 /// A rustyline helper for Solidity code
-pub struct SolidityHelper;
+#[derive(Clone, Debug, Default)]
+pub struct SolidityHelper {
+    /// Whether the dispatcher has errored.
+    pub errored: bool,
+}
 
 impl SolidityHelper {
+    /// Create a new SolidityHelper.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the errored field.
+    pub fn set_errored(&mut self, errored: bool) -> &mut Self {
+        self.errored = errored;
+        self
+    }
+
     /// Get styles for a solidity source string
     pub fn get_styles(input: &str) -> Vec<SpannedStyle> {
         let mut comments = Vec::with_capacity(DEFAULT_COMMENTS);
@@ -185,9 +203,20 @@ impl SolidityHelper {
     /// `Paint::is_enabled`
     #[inline]
     fn paint_unchecked(string: &str, style: Style, out: &mut String) {
-        let _ = style.fmt_prefix(out);
-        out.push_str(string);
-        let _ = style.fmt_suffix(out);
+        if style == Style::default() {
+            out.push_str(string);
+        } else {
+            let _ = style.fmt_prefix(out);
+            out.push_str(string);
+            let _ = style.fmt_suffix(out);
+        }
+    }
+
+    #[inline]
+    fn paint_unchecked_owned(string: &str, style: Style) -> String {
+        let mut out = String::with_capacity(MAX_ANSI_LEN + string.len());
+        Self::paint_unchecked(string, style, &mut out);
+        out
     }
 
     /// Whether to skip parsing this input due to known errors or panics
@@ -206,6 +235,41 @@ impl Highlighter for SolidityHelper {
 
     fn highlight_char(&self, line: &str, pos: usize) -> bool {
         pos == line.len()
+    }
+
+    fn highlight_prompt<'b, 's: 'b, 'p: 'b>(
+        &'s self,
+        prompt: &'p str,
+        _default: bool,
+    ) -> Cow<'b, str> {
+        if !Paint::is_enabled() {
+            return Cow::Borrowed(prompt)
+        }
+
+        let mut out = prompt.to_string();
+
+        // `^(\(ID: .*?\) )? ➜ `
+        if prompt.starts_with("(ID: ") {
+            let id_end = prompt.find(')').unwrap();
+            let id_span = 5..id_end;
+            let id = &prompt[id_span.clone()];
+            out.replace_range(id_span, &Self::paint_unchecked_owned(id, Color::Yellow.style()));
+            out.replace_range(1..=2, &Self::paint_unchecked_owned("ID", Color::Cyan.style()));
+        }
+
+        if let Some(i) = out.find(PROMPT_ARROW) {
+            let style = if self.errored { Color::Red.style() } else { Color::Green.style() };
+
+            let mut arrow = String::with_capacity(MAX_ANSI_LEN + 4);
+
+            let _ = style.fmt_prefix(&mut arrow);
+            arrow.push(PROMPT_ARROW);
+            let _ = style.fmt_suffix(&mut arrow);
+
+            out.replace_range(i..=i + 2, &arrow);
+        }
+
+        Cow::Owned(out)
     }
 }
 
@@ -236,7 +300,8 @@ impl<'a> TokenStyle for Token<'a> {
     fn style(&self) -> Style {
         use Token::*;
         match self {
-            StringLiteral(_, _) => Style::new(Color::Green),
+            StringLiteral(_, _) => Color::Green.style(),
+
             AddressLiteral(_) |
             HexLiteral(_) |
             Number(_, _) |
@@ -244,26 +309,24 @@ impl<'a> TokenStyle for Token<'a> {
             HexNumber(_) |
             True |
             False |
-            Seconds |
-            Minutes |
-            Hours |
-            Days |
-            Weeks |
-            Gwei |
-            Wei |
-            Ether |
             This => Color::Yellow.style(),
+
             Memory | Storage | Calldata | Public | Private | Internal | External | Constant |
             Pure | View | Payable | Anonymous | Indexed | Abstract | Virtual | Override |
             Modifier | Immutable | Unchecked => Color::Cyan.style(),
+
             Contract | Library | Interface | Function | Pragma | Import | Struct | Event |
-            Error | Enum | Type | Constructor | As | Is | Using | New | Delete | Do |
-            Continue | Break | Throw | Emit | Return | Returns | Revert | For | While | If |
-            Else | Try | Catch | Assembly | Let | Leave | Switch | Case | Default | YulArrow |
-            Arrow => Color::Magenta.style(),
+            Enum | Type | Constructor | As | Is | Using | New | Delete | Do | Continue |
+            Break | Throw | Emit | Return | Returns | Revert | For | While | If | Else | Try |
+            Catch | Assembly | Let | Leave | Switch | Case | Default | YulArrow | Arrow => {
+                Color::Magenta.style()
+            }
+
             Uint(_) | Int(_) | Bytes(_) | Byte | DynamicBytes | Bool | Address | String |
             Mapping => Color::Blue.style(),
+
             Identifier(_) => Style::default(),
+
             _ => Style::default(),
         }
     }

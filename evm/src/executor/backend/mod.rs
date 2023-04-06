@@ -669,15 +669,10 @@ impl Backend {
         logs
     }
 
-    /// Executes the configured test call of the `env` without commiting state changes
-    pub fn inspect_ref<INSP>(
-        &mut self,
-        env: &mut Env,
-        mut inspector: INSP,
-    ) -> (ExecutionResult, Map<Address, Account>)
-    where
-        INSP: Inspector<Self>,
-    {
+    /// Initializes settings we need to keep track of.
+    ///
+    /// We need to track these mainly to prevent issues when switching between different evms
+    pub(crate) fn initialize(&mut self, env: &Env) {
         self.set_caller(env.tx.caller);
         self.set_spec_id(env.cfg.spec_id);
 
@@ -692,6 +687,18 @@ impl Backend {
             }
         };
         self.set_test_contract(test_contract);
+    }
+
+    /// Executes the configured test call of the `env` without committing state changes
+    pub fn inspect_ref<INSP>(
+        &mut self,
+        env: &mut Env,
+        mut inspector: INSP,
+    ) -> (ExecutionResult, Map<Address, Account>)
+    where
+        INSP: Inspector<Self>,
+    {
+        self.initialize(env);
 
         revm::evm_inner::<Self, true>(env, self, &mut inspector).transact()
     }
@@ -1028,10 +1035,27 @@ impl DatabaseExt for Backend {
 
                 let active = self.inner.get_fork_mut(active_idx);
                 active.journaled_state = self.fork_init_journaled_state.clone();
+
                 active.journaled_state.depth = journaled_state.depth;
                 for addr in persistent_addrs {
                     merge_journaled_state_data(addr, journaled_state, &mut active.journaled_state);
                 }
+
+                // ensure all previously loaded accounts are present in the journaled state to
+                // prevent issues in the new journalstate, e.g. assumptions that accounts are loaded
+                // if the account is not touched, we reload it, if it's touched we clone it
+                for (addr, acc) in journaled_state.state.iter() {
+                    if acc.is_touched {
+                        merge_journaled_state_data(
+                            *addr,
+                            journaled_state,
+                            &mut active.journaled_state,
+                        );
+                    } else {
+                        let _ = active.journaled_state.load_account(*addr, &mut active.db);
+                    }
+                }
+
                 *journaled_state = active.journaled_state.clone();
             }
         }
@@ -1054,9 +1078,6 @@ impl DatabaseExt for Backend {
         // roll the fork to the transaction's block or latest if it's pending
         self.roll_fork(Some(id), fork_block.as_u64().into(), env, journaled_state)?;
 
-        // replay all transactions that came before
-        let mut env = env.clone();
-
         // update the block's env accordingly
         env.block.timestamp = block.timestamp;
         env.block.coinbase = block.author.unwrap_or_default();
@@ -1065,6 +1086,9 @@ impl DatabaseExt for Backend {
         env.block.basefee = block.base_fee_per_gas.unwrap_or_default();
         env.block.gas_limit = block.gas_limit;
         env.block.number = block.number.unwrap_or(fork_block).as_u64().into();
+
+        // replay all transactions that came before
+        let env = env.clone();
 
         self.replay_until(id, env, transaction, journaled_state)?;
 

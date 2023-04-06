@@ -18,6 +18,7 @@ use ethers_core::{
 };
 use ethers_etherscan::{errors::EtherscanError, Client};
 use ethers_providers::{Middleware, PendingTransaction};
+use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
 use eyre::{Context, Result};
 use foundry_common::{abi::encode_args, fmt::*, TransactionReceiptWithRevertReason};
 pub use foundry_evm::*;
@@ -53,7 +54,6 @@ where
     /// ```
     /// use cast::Cast;
     /// use ethers_providers::{Provider, Http};
-    /// use std::convert::TryFrom;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -306,7 +306,6 @@ where
     /// ```no_run
     /// use cast::Cast;
     /// use ethers_providers::{Provider, Http};
-    /// use std::convert::TryFrom;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -423,6 +422,9 @@ where
             "0x41941023680923e0fe4d74a34bdac8141f2540e3ae90623718e47d66d1ca4a2d" => "ropsten",
             "0x7ca38a1916c42007829c55e69d3e9a73265554b586a499015373241b8a3fa48b" => {
                 "optimism-mainnet"
+            }
+            "0xc1fc15cd51159b1f1e5cbc4b82e85c1447ddfa33c52cf1d98d14fba0d6354be1" => {
+                "optimism-goerli"
             }
             "0x02adc9b449ff5f2467b8c674ece7ff9b21319d76c4ad62a67a70d552655927e5" => {
                 "optimism-kovan"
@@ -595,7 +597,7 @@ where
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")?;
-    /// let code = cast.code(addr, None).await?;
+    /// let code = cast.code(addr, None, false).await?;
     /// println!("{}", code);
     /// # Ok(())
     /// # }
@@ -604,8 +606,14 @@ where
         &self,
         who: T,
         block: Option<BlockId>,
+        disassemble: bool,
     ) -> Result<String> {
-        Ok(format!("{}", self.provider.get_code(who, block).await?))
+        if disassemble {
+            let code = self.provider.get_code(who, block).await?.to_vec();
+            Ok(format_operations(disassemble_bytes(code)?)?)
+        } else {
+            Ok(format!("{}", self.provider.get_code(who, block).await?))
+        }
     }
 
     /// # Example
@@ -613,7 +621,6 @@ where
     /// ```no_run
     /// use cast::Cast;
     /// use ethers_providers::{Provider, Http};
-    /// use std::convert::TryFrom;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -653,7 +660,6 @@ where
     /// ```no_run
     /// use cast::Cast;
     /// use ethers_providers::{Provider, Http};
-    /// use std::convert::TryFrom;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -716,7 +722,6 @@ where
     /// ```no_run
     /// use cast::Cast;
     /// use ethers_providers::{Provider, Http};
-    /// use std::convert::TryFrom;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
@@ -778,6 +783,7 @@ pub enum AbiPath {
 }
 
 pub struct SimpleCast;
+
 impl SimpleCast {
     /// Returns the maximum value of the given integer type
     ///
@@ -880,7 +886,7 @@ impl SimpleCast {
         let iter = FromHexIter::new(hex_trimmed);
         let mut ascii = String::new();
         for letter in iter.collect::<Vec<_>>() {
-            ascii.push(letter.unwrap() as char);
+            ascii.push(letter? as char);
         }
         Ok(ascii)
     }
@@ -1150,11 +1156,10 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn from_rlp(value: impl AsRef<str>) -> Result<String> {
-        let value = value.as_ref();
-        let striped_value = strip_0x(value);
-        let bytes = hex::decode(striped_value).expect("Could not decode hex");
-        let item = rlp::decode::<Item>(&bytes).expect("Could not decode rlp");
-        Ok(format!("{item}"))
+        let data = strip_0x(value.as_ref());
+        let bytes = hex::decode(data).wrap_err("Could not decode hex")?;
+        let item = rlp::decode::<Item>(&bytes).wrap_err("Could not decode rlp")?;
+        Ok(item.to_string())
     }
 
     /// Encodes hex data or list of hex data to hexadecimal rlp
@@ -1173,7 +1178,8 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn to_rlp(value: &str) -> Result<String> {
-        let val = serde_json::from_str(value).unwrap_or(serde_json::Value::String(value.parse()?));
+        let val = serde_json::from_str(value)
+            .unwrap_or_else(|_| serde_json::Value::String(value.to_string()));
         let item = Item::value_to_item(&val)?;
         Ok(format!("0x{}", hex::encode(rlp::encode(&item))))
     }
@@ -1631,6 +1637,24 @@ impl SimpleCast {
         let source_tree = meta.source_tree();
         source_tree.write_to(&output_directory)?;
         Ok(())
+    }
+
+    /// Disassembles hex encoded bytecode into individual / human readable opcodes
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let bytecode = "0x608060405260043610603f57600035";
+    /// let opcodes = Cast::disassemble(bytecode)?;
+    /// println!("{}", opcodes);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn disassemble(bytecode: &str) -> Result<String> {
+        format_operations(disassemble_str(bytecode)?)
     }
 }
 

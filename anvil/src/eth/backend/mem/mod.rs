@@ -46,8 +46,8 @@ use ethers::{
     prelude::{BlockNumber, GethTraceFrame, TxHash, H256, U256, U64},
     types::{
         transaction::eip2930::AccessList, Address, Block as EthersBlock, BlockId, Bytes,
-        DefaultFrame, Filter, FilteredParams, GethDebugTracingOptions, GethTrace, Log, Trace,
-        Transaction, TransactionReceipt,
+        DefaultFrame, Filter, FilteredParams, GethDebugTracingOptions, GethTrace, Log, OtherFields,
+        Trace, Transaction, TransactionReceipt,
     },
     utils::{get_contract_address, hex, keccak256, rlp},
 };
@@ -227,17 +227,34 @@ impl Backend {
     /// This will fund, create the genesis accounts
     async fn apply_genesis(&self) -> DatabaseResult<()> {
         trace!(target: "backend", "setting genesis balances");
-        let mut db = self.db.write().await;
 
         if self.fork.is_some() {
+            // fetch all account first
+            let mut genesis_accounts_futures = Vec::with_capacity(self.genesis.accounts.len());
+            for address in self.genesis.accounts.iter().copied() {
+                let db = Arc::clone(&self.db);
+
+                // The forking Database backend can handle concurrent requests, we can fetch all dev
+                // accounts concurrently by spawning the job to a new task
+                genesis_accounts_futures.push(tokio::task::spawn(async move {
+                    let db = db.read().await;
+                    let info = db.basic(address)?.unwrap_or_default();
+                    Ok::<_, DatabaseError>((address, info))
+                }));
+            }
+
+            let genesis_accounts = futures::future::join_all(genesis_accounts_futures).await;
+
+            let mut db = self.db.write().await;
+
             // in fork mode we only set the balance, this way the accountinfo is fetched from the
             // remote client, preserving code and nonce. The reason for that is private keys for dev
             // accounts are commonly known and are used on testnets
             let mut fork_genesis_infos = self.genesis.fork_genesis_account_infos.lock();
             fork_genesis_infos.clear();
 
-            for address in self.genesis.accounts.iter().copied() {
-                let mut info = db.basic(address)?.unwrap_or_default();
+            for res in genesis_accounts {
+                let (address, mut info) = res??;
                 info.balance = self.genesis.balance;
                 db.insert_account(address, info.clone());
 
@@ -245,11 +262,13 @@ impl Backend {
                 fork_genesis_infos.push(info);
             }
         } else {
+            let mut db = self.db.write().await;
             for (account, info) in self.genesis.account_infos() {
                 db.insert_account(account, info);
             }
         }
 
+        let db = self.db.write().await;
         // apply the genesis.json alloc
         self.genesis.apply_genesis_json_alloc(db)?;
         Ok(())
@@ -1698,6 +1717,8 @@ impl Backend {
 
         let transaction = block.transactions[index].clone();
 
+        let transaction_type = transaction.transaction.r#type();
+
         let effective_gas_price = match transaction.transaction {
             TypedTransaction::Legacy(t) => t.gas_price,
             TypedTransaction::EIP2930(t) => t.gas_price,
@@ -1748,8 +1769,9 @@ impl Backend {
             status: Some(status_code.into()),
             root: None,
             logs_bloom,
-            transaction_type: None,
+            transaction_type: transaction_type.map(Into::into),
             effective_gas_price: Some(effective_gas_price),
+            other: OtherFields::default(),
         };
 
         Some(MinedTransactionReceipt { inner, out: info.out })

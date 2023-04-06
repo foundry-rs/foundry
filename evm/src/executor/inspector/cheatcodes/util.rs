@@ -1,7 +1,10 @@
 use super::Cheatcodes;
 use crate::{
     abi::HEVMCalls,
-    executor::backend::error::{DatabaseError, DatabaseResult},
+    executor::backend::{
+        error::{DatabaseError, DatabaseResult},
+        DatabaseExt,
+    },
     utils::h256_to_u256_be,
 };
 use bytes::{BufMut, Bytes, BytesMut};
@@ -17,9 +20,8 @@ use ethers::{
     utils,
 };
 use foundry_common::{fmt::*, RpcUrl};
-use hex::FromHex;
 use revm::{Account, CreateInputs, Database, EVMData, JournaledState, TransactTo};
-use std::{collections::VecDeque, str::FromStr};
+use std::collections::VecDeque;
 use tracing::trace;
 
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
@@ -87,7 +89,7 @@ fn sign(private_key: U256, digest: H256, chain_id: U256) -> Result<Bytes, Bytes>
     let wallet = LocalWallet::from(key).with_chain_id(chain_id.as_u64());
 
     // The `ecrecover` precompile does not use EIP-155
-    let sig = wallet.sign_hash(digest);
+    let sig = wallet.sign_hash(digest).map_err(|err| err.to_string().encode())?;
     let recovered = sig.recover(digest).map_err(|err| err.to_string().encode())?;
 
     assert_eq!(recovered, wallet.address());
@@ -119,19 +121,17 @@ fn derive_key(mnemonic: &str, path: &str, index: u32) -> Result<Bytes, Bytes> {
 fn remember_key(state: &mut Cheatcodes, private_key: U256, chain_id: U256) -> Result<Bytes, Bytes> {
     let key = parse_private_key(private_key)?;
     let wallet = LocalWallet::from(key).with_chain_id(chain_id.as_u64());
+    let address = wallet.address();
 
-    state.script_wallets.push(wallet.clone());
+    state.script_wallets.push(wallet);
 
-    Ok(wallet.address().encode().into())
+    Ok(address.encode().into())
 }
 
-pub fn parse(
-    val: Vec<impl AsRef<str> + Clone>,
-    r#type: ParamType,
-    is_array: bool,
-) -> Result<Bytes, Bytes> {
-    let msg = format!("Failed to parse `{}` as type `{}`", &val[0].as_ref(), &r#type);
-    value_to_abi(val, r#type, is_array).map_err(|e| format!("{msg}: {e}").encode().into())
+pub fn parse(s: &str, ty: &ParamType) -> Result<Bytes, Bytes> {
+    parse_token(s, ty)
+        .map(|token| abi::encode(&[token]).into())
+        .map_err(|e| format!("Failed to parse `{s}` as type `{ty}`: {e}").encode().into())
 }
 
 pub fn apply<DB: Database>(
@@ -169,12 +169,12 @@ pub fn apply<DB: Database>(
         HEVMCalls::ToString5(inner) => {
             Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
         }
-        HEVMCalls::ParseBytes(inner) => parse(vec![&inner.0], ParamType::Bytes, false),
-        HEVMCalls::ParseAddress(inner) => parse(vec![&inner.0], ParamType::Address, false),
-        HEVMCalls::ParseUint(inner) => parse(vec![&inner.0], ParamType::Uint(256), false),
-        HEVMCalls::ParseInt(inner) => parse(vec![&inner.0], ParamType::Int(256), false),
-        HEVMCalls::ParseBytes32(inner) => parse(vec![&inner.0], ParamType::FixedBytes(32), false),
-        HEVMCalls::ParseBool(inner) => parse(vec![&inner.0], ParamType::Bool, false),
+        HEVMCalls::ParseBytes(inner) => parse(&inner.0, &ParamType::Bytes),
+        HEVMCalls::ParseAddress(inner) => parse(&inner.0, &ParamType::Address),
+        HEVMCalls::ParseUint(inner) => parse(&inner.0, &ParamType::Uint(256)),
+        HEVMCalls::ParseInt(inner) => parse(&inner.0, &ParamType::Int(256)),
+        HEVMCalls::ParseBytes32(inner) => parse(&inner.0, &ParamType::FixedBytes(32)),
+        HEVMCalls::ParseBool(inner) => parse(&inner.0, &ParamType::Bool),
         _ => return None,
     })
 }
@@ -235,78 +235,71 @@ where
     }
 }
 
-/// Parses string values into the corresponding `ParamType` and returns it abi-encoded
-///
-/// If the value is a hex number then it tries to parse
-///     1. as hex if `0x` prefix
-///     2. as decimal string
-///     3. as hex if 2. failed
-pub fn value_to_abi(
-    val: Vec<impl AsRef<str>>,
-    r#type: ParamType,
-    is_array: bool,
-) -> Result<Bytes, String> {
-    if is_array && val.len() == 1 && val.first().unwrap().as_ref().is_empty() {
-        return Ok(abi::encode(&[Token::String(String::from(""))]).into())
+pub fn parse_array<I, T>(values: I, ty: &ParamType) -> Result<Bytes, Bytes>
+where
+    I: IntoIterator<Item = T>,
+    T: AsRef<str>,
+{
+    let mut values = values.into_iter();
+    match values.next() {
+        Some(first) if !first.as_ref().is_empty() => {
+            let tokens = std::iter::once(first)
+                .chain(values)
+                .map(|v| parse_token(v.as_ref(), ty))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(abi::encode(&[Token::Array(tokens)]).into())
+        }
+        // return the empty encoded Bytes when values is empty or the first element is empty
+        _ => Ok(abi::encode(&[Token::String(String::new())]).into()),
     }
-    let parse_bool = |v: &str| v.to_lowercase().parse::<bool>();
-    let parse_uint = |v: &str| {
-        if v.starts_with("0x") {
-            v.parse::<U256>().map_err(|err| err.to_string())
-        } else {
-            match U256::from_dec_str(v) {
-                Ok(val) => Ok(val),
-                Err(dec_err) => v.parse::<U256>().map_err(|hex_err| {
-                    format!(
-                        "Failed to parse uint value `{v}` from hex and as decimal string {hex_err}, {dec_err}"
-                    )
-                }),
-            }
-        }
-    };
-    let parse_int = |v: &str| {
-        // hex string may start with "0x", "+0x", or "-0x" which needs to be stripped for
-        // `I256::from_hex_str`
-        if v.starts_with("0x") || v.starts_with("+0x") || v.starts_with("-0x") {
-            v.replacen("0x", "", 1).parse::<I256>().map_err(|err| err.to_string())
-        } else {
-            match I256::from_dec_str(v) {
-                Ok(val) => Ok(val),
-                Err(dec_err) => v.parse::<I256>().map_err(|hex_err| {
-                    format!(
-                        "Failed to parse int value `{v}` from hex and as decimal string {hex_err}, {dec_err}"
-                    )
-                }),
-            }
-        }
-        .map(|v| v.into_raw())
-    };
-    let parse_address = |v: &str| Address::from_str(v);
-    let parse_string = |v: &str| -> Result<String, ()> { Ok(v.to_string()) };
-    let parse_bytes = |v: &str| Vec::from_hex(v.strip_prefix("0x").unwrap_or(v));
+}
 
-    val.iter()
-        .map(AsRef::as_ref)
-        .map(|v| match r#type {
-            ParamType::Bool => parse_bool(v).map(Token::Bool).map_err(|e| e.to_string()),
-            ParamType::Uint(256) => parse_uint(v).map(Token::Uint),
-            ParamType::Int(256) => parse_int(v).map(Token::Int),
-            ParamType::Address => parse_address(v).map(Token::Address).map_err(|e| e.to_string()),
-            ParamType::FixedBytes(32) => {
-                parse_bytes(v).map(Token::FixedBytes).map_err(|e| e.to_string())
-            }
-            ParamType::String => parse_string(v).map(Token::String).map_err(|_| "".to_string()),
-            ParamType::Bytes => parse_bytes(v).map(Token::Bytes).map_err(|e| e.to_string()),
-            _ => Err(format!("{type} is not a supported type")),
-        })
-        .collect::<Result<Vec<Token>, String>>()
-        .map(|mut tokens| {
-            if is_array {
-                abi::encode(&[Token::Array(tokens)]).into()
-            } else {
-                abi::encode(&[tokens.remove(0)]).into()
-            }
-        })
+fn parse_token(s: &str, ty: &ParamType) -> Result<Token, String> {
+    match ty {
+        ParamType::Bool => {
+            s.to_ascii_lowercase().parse().map(Token::Bool).map_err(|e| e.to_string())
+        }
+        ParamType::Uint(256) => parse_uint(s).map(Token::Uint),
+        ParamType::Int(256) => parse_int(s).map(Token::Int),
+        ParamType::Address => s.parse().map(Token::Address).map_err(|e| e.to_string()),
+        ParamType::FixedBytes(32) => parse_bytes(s).map(Token::FixedBytes),
+        ParamType::Bytes => parse_bytes(s).map(Token::Bytes),
+        ParamType::String => Ok(Token::String(s.to_string())),
+        _ => Err("unsupported type".into()),
+    }
+}
+
+fn parse_int(s: &str) -> Result<U256, String> {
+    // hex string may start with "0x", "+0x", or "-0x" which needs to be stripped for
+    // `I256::from_hex_str`
+    if s.starts_with("0x") || s.starts_with("+0x") || s.starts_with("-0x") {
+        s.replacen("0x", "", 1).parse::<I256>().map_err(|err| err.to_string())
+    } else {
+        match I256::from_dec_str(s) {
+            Ok(val) => Ok(val),
+            Err(dec_err) => s.parse::<I256>().map_err(|hex_err| {
+                format!("could not parse value as decimal or hex: {dec_err}, {hex_err}")
+            }),
+        }
+    }
+    .map(|v| v.into_raw())
+}
+
+fn parse_uint(s: &str) -> Result<U256, String> {
+    if s.starts_with("0x") {
+        s.parse::<U256>().map_err(|err| err.to_string())
+    } else {
+        match U256::from_dec_str(s) {
+            Ok(val) => Ok(val),
+            Err(dec_err) => s.parse::<U256>().map_err(|hex_err| {
+                format!("could not parse value as decimal or hex: {dec_err}, {hex_err}")
+            }),
+        }
+    }
+}
+
+fn parse_bytes(s: &str) -> Result<Vec<u8>, String> {
+    hex::decode(s.strip_prefix("0x").unwrap_or(s)).map_err(|e| e.to_string())
 }
 
 pub fn parse_private_key(private_key: U256) -> Result<SigningKey, Bytes> {
@@ -321,7 +314,24 @@ pub fn parse_private_key(private_key: U256) -> Result<SigningKey, Bytes> {
     let mut bytes: [u8; 32] = [0; 32];
     private_key.to_big_endian(&mut bytes);
 
-    SigningKey::from_bytes(&bytes).map_err(|err| err.to_string().encode().into())
+    SigningKey::from_bytes((&bytes).into()).map_err(|err| err.to_string().encode().into())
+}
+
+// Determines if the gas limit on a given call was manually set in the script and should therefore
+// not be overwritten by later estimations
+pub fn check_if_fixed_gas_limit<DB: DatabaseExt>(
+    data: &EVMData<'_, DB>,
+    call_gas_limit: u64,
+) -> bool {
+    // If the gas limit was not set in the source code it is set to the estimated gas left at the
+    // time of the call, which should be rather close to configured gas limit.
+    // TODO: Find a way to reliably make this determination. (for example by
+    // generating it in the compilation or evm simulation process)
+    U256::from(data.env.tx.gas_limit) > data.env.block.gas_limit &&
+        U256::from(call_gas_limit) <= data.env.block.gas_limit
+        // Transfers in forge scripts seem to be estimated at 2300 by revm leading to "Intrinsic
+        // gas too low" failure when simulated on chain
+        && call_gas_limit > 2300
 }
 
 #[cfg(test)]
@@ -333,17 +343,15 @@ mod tests {
     fn test_uint_env() {
         let pk = "0x10532cc9d0d992825c3f709c62c969748e317a549634fb2a9fa949326022e81f";
         let val: U256 = pk.parse().unwrap();
-        let parsed = value_to_abi(vec![pk], ParamType::Uint(256), false).unwrap();
+        let parsed = parse(pk, &ParamType::Uint(256)).unwrap();
         let decoded = U256::decode(&parsed).unwrap();
         assert_eq!(val, decoded);
 
-        let parsed =
-            value_to_abi(vec![pk.strip_prefix("0x").unwrap()], ParamType::Uint(256), false)
-                .unwrap();
+        let parsed = parse(pk.strip_prefix("0x").unwrap(), &ParamType::Uint(256)).unwrap();
         let decoded = U256::decode(&parsed).unwrap();
         assert_eq!(val, decoded);
 
-        let parsed = value_to_abi(vec!["1337"], ParamType::Uint(256), false).unwrap();
+        let parsed = parse("1337", &ParamType::Uint(256)).unwrap();
         let decoded = U256::decode(&parsed).unwrap();
         assert_eq!(U256::from(1337u64), decoded);
     }
@@ -351,11 +359,11 @@ mod tests {
     #[test]
     fn test_int_env() {
         let val = U256::from(100u64);
-        let parsed = value_to_abi(vec![format!("0x{val:x}")], ParamType::Int(256), false).unwrap();
+        let parsed = parse(&val.to_string(), &ParamType::Int(256)).unwrap();
         let decoded = I256::decode(parsed).unwrap();
         assert_eq!(val, decoded.try_into().unwrap());
 
-        let parsed = value_to_abi(vec!["100"], ParamType::Int(256), false).unwrap();
+        let parsed = parse("100", &ParamType::Int(256)).unwrap();
         let decoded = I256::decode(parsed).unwrap();
         assert_eq!(U256::from(100u64), decoded.try_into().unwrap());
     }

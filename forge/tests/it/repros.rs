@@ -1,8 +1,11 @@
 //! Tests for reproducing issues
 
-use crate::{config::*, test_helpers::filter::Filter};
+use crate::{
+    config::*,
+    test_helpers::{filter::Filter, PROJECT},
+};
 use ethers::abi::{Address, Event, EventParam, Log, LogParam, ParamType, RawLog, Token};
-use foundry_config::Config;
+use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
 use std::str::FromStr;
 
 /// A macro that tests a single pattern (".*/repros/<issue>")
@@ -14,7 +17,8 @@ macro_rules! test_repro {
         let pattern = concat!(".*repros/", $issue);
         let filter = Filter::path(pattern);
 
-        let mut config = Config::default();
+        let mut config = Config::with_root(PROJECT.root());
+        config.fs_permissions = FsPermissions::new(vec![PathPermission::read("./fixtures")]);
         if let Some(sender) = $sender {
             config.sender = sender;
         }
@@ -90,6 +94,12 @@ fn test_issue_2956() {
 #[test]
 fn test_issue_2984() {
     test_repro!("Issue2984");
+}
+
+// <https://github.com/foundry-rs/foundry/issues/4640>
+#[test]
+fn test_issue_4640() {
+    test_repro!("Issue4640");
 }
 
 // <https://github.com/foundry-rs/foundry/issues/3077>
@@ -232,4 +242,16 @@ fn test_issue_3703() {
 #[test]
 fn test_issue_3753() {
     test_repro!("Issue3753");
+}
+
+// <https://github.com/foundry-rs/foundry/issues/4630>
+#[test]
+fn test_issue_4630() {
+    test_repro!("Issue4630");
+}
+
+// <https://github.com/foundry-rs/foundry/issues/4586>
+#[test]
+fn test_issue_4586() {
+    test_repro!("Issue4586");
 }

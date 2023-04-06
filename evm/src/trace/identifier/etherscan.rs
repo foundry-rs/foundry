@@ -2,11 +2,8 @@ use super::{AddressIdentity, TraceIdentifier};
 use ethers::{
     abi::Address,
     etherscan,
-    etherscan::contract::Metadata,
-    prelude::{
-        artifacts::ContractBytecodeSome, contract::ContractMetadata, errors::EtherscanError,
-        ArtifactId,
-    },
+    etherscan::contract::{ContractMetadata, Metadata},
+    prelude::{artifacts::ContractBytecodeSome, errors::EtherscanError, ArtifactId},
     solc::utils::RuntimeOrHandle,
     types::H160,
 };
