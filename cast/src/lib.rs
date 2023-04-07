@@ -1672,9 +1672,9 @@ impl SimpleCast {
     /// use cast::SimpleCast as Cast;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Cast::get_selector("foo(address,uint256)")?.0, String::from("0xbd0d639f");
-    ///     assert_eq!(Cast::get_selector("foo(address,uint256)", 2)?.0, String::from("0x0000bf3e");
-    ///     assert_eq!(Cast::get_selector("foo(address,uint256)", 2)?.1, String::from("foo71661(address,uint256)");
+    ///     assert_eq!(Cast::get_selector(String::from("foo(address,uint256)"), None)?.0, String::from("0xbd0d639f"));
+    ///     assert_eq!(Cast::get_selector(String::from("foo(address,uint256)"), Some(2))?.0, String::from("0x0000bf3e"));
+    ///     assert_eq!(Cast::get_selector(String::from("foo(address,uint256)"), Some(2))?.1, Some(String::from("foo71661(address,uint256)")));
     ///
     ///     Ok(())
     /// }
@@ -1685,7 +1685,7 @@ impl SimpleCast {
     ) -> Result<(String, Option<String>, Option<Duration>)> {
         if optimize.is_none() || optimize.unwrap() > 4 {
             let selector = HumanReadableParser::parse_function(&signature)?.short_signature();
-            return Ok((hex::encode(selector), None, None))
+            return Ok((format!("0x{}", hex::encode(selector)), None, None))
         }
         let mut name: &str = "";
         let mut params: &str = "";
@@ -1712,7 +1712,7 @@ impl SimpleCast {
 
                     if selector.iter().take(optimize.unwrap()).all(|&byte| byte == 0) {
                         found.store(true, Ordering::Relaxed);
-                        return Some((nonce, hex::encode(selector), input))
+                        return Some((nonce, format!("0x{}", hex::encode(selector)), input))
                     }
 
                     nonce += nonce_step;
