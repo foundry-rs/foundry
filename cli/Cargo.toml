@@ -22,7 +22,7 @@ cast = { path = "../cast" }
 ui = { path = "../ui" }
 
 # eth
-ethers = { workspace = true, default-features = false, features = ["rustls"] }
+ethers = { workspace = true, features = ["rustls"] }
 solang-parser = "=0.2.3"
 
 # cli

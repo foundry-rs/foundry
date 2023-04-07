@@ -14,11 +14,11 @@ foundry-config = { path = "./../config" }
 foundry-common = { path = "./../common" }
 
 futures = "0.3.27"
-ethers-etherscan = { workspace = true, default-features = false }
-ethers-contract = { workspace = true, default-features = false, features = ["abigen"] }
-ethers-core = { workspace = true, default-features = false }
-ethers-providers = { workspace = true, default-features = false }
-ethers-signers = { workspace = true, default-features = false }
+ethers-etherscan = { workspace = true }
+ethers-contract = { workspace = true, features = ["abigen"] }
+ethers-core = { workspace = true }
+ethers-providers = { workspace = true }
+ethers-signers = { workspace = true }
 eyre = "0.6.8"
 rustc-hex = "2.1.0"
 serde = "1.0.159"
