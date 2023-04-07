@@ -1920,8 +1920,6 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "697aba1bec98cb86e7bebd69f9bb365218871464137af9e93e7a72bd6dc421d0"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1936,8 +1934,6 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0b603812e5e4d63521c691cbc1f34743879e96a1ee96c6594639d7fa0cf6fbc"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1948,8 +1944,6 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4e8ed7c2b2a22e07b65ae0eb426c948a7448f1be15c66e4813e02c423751fc9"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1967,8 +1961,6 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf0984f4ec4e267fd27b7c9fa2f73e72c5c98491a73f777290654154d104f723"
 dependencies = [
  "Inflector",
  "dunce",
@@ -1994,8 +1986,6 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "914e9211077a1b590af1ee6b8dfbd54515c808119546c95da69479908dc3d4de"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -2008,8 +1998,6 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40bf114f1017ace0f622f1652f59c2c5e1abfe7d88891cca0c43da979b351de0"
 dependencies = [
  "arrayvec",
  "bytes",
@@ -2041,8 +2029,6 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8920b59cf81e357df2c8102d6a9dc81c2d68f7409543ff3b6868851ecf007807"
 dependencies = [
  "ethers-core",
  "ethers-solc",
@@ -2058,8 +2044,6 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c54b30f67c1883ed68bd38aedbdd321831382c12e1b95089c8261c79bb85e4da"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -2085,8 +2069,6 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2fa0857eaad0c1678f982a2f4cfbe33ebd51d273cc93de0182b7c693f2a84a1"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -2124,8 +2106,6 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5caa7cad4f444931d0ed45818e609847781582399eff0be5c089e8666475c7fb"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -2152,8 +2132,6 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "139542f51f4c405d0dd7e97c34232140a14e8744d1cf121777355567187259e4"
 dependencies = [
  "cfg-if",
  "dunce",
