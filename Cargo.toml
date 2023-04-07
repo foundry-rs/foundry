@@ -70,15 +70,23 @@ ethers-middleware = { version = "2" }
 ethers-etherscan = { version = "2" }
 ethers-solc = { version = "2" }
 
-# # Patch ethers-rs with a local checkout then run `cargo update -p ethers`
 [patch.crates-io]
-ethers = { path = "../ethers-rs/ethers" }
-ethers-addressbook = { path = "../ethers-rs/ethers-addressbook" }
-ethers-contract = { path = "../ethers-rs/ethers-contract" }
-ethers-core = { path = "../ethers-rs/ethers-core" }
-ethers-etherscan = { path = "../ethers-rs/ethers-etherscan" }
-ethers-middleware = { path = "../ethers-rs/ethers-middleware" }
-ethers-providers = { path = "../ethers-rs/ethers-providers" }
-ethers-signers = { path = "../ethers-rs/ethers-signers" }
-ethers-solc = { path = "../ethers-rs/ethers-solc" }
+# ethers = { path = "../ethers-rs/ethers" }
+# ethers-addressbook = { path = "../ethers-rs/ethers-addressbook" }
+# ethers-contract = { path = "../ethers-rs/ethers-contract" }
+# ethers-core = { path = "../ethers-rs/ethers-core" }
+# ethers-etherscan = { path = "../ethers-rs/ethers-etherscan" }
+# ethers-middleware = { path = "../ethers-rs/ethers-middleware" }
+# ethers-providers = { path = "../ethers-rs/ethers-providers" }
+# ethers-signers = { path = "../ethers-rs/ethers-signers" }
+# ethers-solc = { path = "../ethers-rs/ethers-solc" }
+ethers = { git = "https://github.com/danipopes/ethers-rs", branch = "chore/update-solang" }
+ethers-addressbook = { git = "https://github.com/danipopes/ethers-rs", branch = "chore/update-solang" }
+ethers-contract = { git = "https://github.com/danipopes/ethers-rs", branch = "chore/update-solang" }
+ethers-core = { git = "https://github.com/danipopes/ethers-rs", branch = "chore/update-solang" }
+ethers-etherscan = { git = "https://github.com/danipopes/ethers-rs", branch = "chore/update-solang" }
+ethers-middleware = { git = "https://github.com/danipopes/ethers-rs", branch = "chore/update-solang" }
+ethers-providers = { git = "https://github.com/danipopes/ethers-rs", branch = "chore/update-solang" }
+ethers-signers = { git = "https://github.com/danipopes/ethers-rs", branch = "chore/update-solang" }
+ethers-solc = { git = "https://github.com/danipopes/ethers-rs", branch = "chore/update-solang" }
 # revm = { path = "../revm/crates/revm" }
