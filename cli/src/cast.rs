@@ -183,8 +183,15 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::Sig { sig, optimize } => {
             let sig = stdin::unwrap_line(sig)?;
-            let selector = HumanReadableParser::parse_function(&sig)?.short_signature();
-            println!("0x{}", hex::encode(selector));
+            if optimize.is_none() {
+                println!("{}", SimpleCast::get_selector(sig, None)?.0);
+            } else {
+                println!("Starting to optimize signature...");
+                let result = SimpleCast::get_selector(sig, optimize)?;
+                println!("Successfully generated in {} seconds", result.2.unwrap().as_secs());
+                println!("Selector: {}", result.0);
+                println!("Optimized signature: {}", result.1.unwrap());
+            }
         }
 
         // Blockchain & RPC queries
