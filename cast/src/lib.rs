@@ -1689,7 +1689,7 @@ impl SimpleCast {
         }
         let mut name: &str = "";
         let mut params: &str = "";
-        if let Some(index) = signature.find("(") {
+        if let Some(index) = signature.find('(') {
             name = &signature[..index];
             params = &signature[index..];
         }
@@ -1721,7 +1721,7 @@ impl SimpleCast {
             })
             .collect();
 
-        let result = results.into_iter().filter_map(|r| r).min_by_key(|r| r.0);
+        let result = results.into_iter().flatten().min_by_key(|r| r.0);
 
         match result {
             Some((_nonce, selector, signature)) => {
