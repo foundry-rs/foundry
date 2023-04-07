@@ -833,7 +833,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
             help = "Optimize signature to contain provided amount of leading zeroes in selector.",
             value_name = "OPTIMIZE"
         )]
-        optimize: u8,
+        optimize: Option<usize>,
     },
     #[clap(
         name = "create2",

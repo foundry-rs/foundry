@@ -181,7 +181,7 @@ async fn main() -> eyre::Result<()> {
             let calldata = stdin::unwrap_line(calldata)?;
             println!("{}", pretty_calldata(&calldata, offline).await?);
         }
-        Subcommands::Sig { sig } => {
+        Subcommands::Sig { sig, optimize } => {
             let sig = stdin::unwrap_line(sig)?;
             let selector = HumanReadableParser::parse_function(&sig)?.short_signature();
             println!("0x{}", hex::encode(selector));
