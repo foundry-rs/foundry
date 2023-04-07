@@ -2,7 +2,6 @@ use cast::{Cast, SimpleCast, TxBuilder};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use ethers::{
-    abi::HumanReadableParser,
     core::types::{BlockId, BlockNumber::Latest, H256},
     providers::Middleware,
     types::Address,
