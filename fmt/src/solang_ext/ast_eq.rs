@@ -430,7 +430,7 @@ derive_ast_eq! { enum UsingList {
 }}
 derive_ast_eq! { enum UserDefinedOperator {
     BitwiseAnd,
-    Complement,
+    BitwiseNot,
     Negate,
     BitwiseOr,
     BitwiseXor,
@@ -515,7 +515,7 @@ derive_ast_eq! { enum Expression {
     FunctionCallBlock(loc, expr1, stmt),
     NamedFunctionCall(loc, expr1, args),
     Not(loc, expr1),
-    Complement(loc, expr1),
+    BitwiseNot(loc, expr1),
     Delete(loc, expr1),
     PreIncrement(loc, expr1),
     PreDecrement(loc, expr1),

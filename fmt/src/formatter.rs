@@ -2099,7 +2099,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Expression::PreDecrement(..) |
             Expression::PostDecrement(..) |
             Expression::Not(..) |
-            Expression::Complement(..) |
             Expression::UnaryPlus(..) |
             Expression::Add(..) |
             Expression::Negate(..) |
@@ -2110,6 +2109,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Expression::Modulo(..) |
             Expression::ShiftLeft(..) |
             Expression::ShiftRight(..) |
+            Expression::BitwiseNot(..) |
             Expression::BitwiseAnd(..) |
             Expression::BitwiseXor(..) |
             Expression::BitwiseOr(..) |
