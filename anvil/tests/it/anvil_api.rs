@@ -8,7 +8,10 @@ use anvil_core::{
 use ethers::{
     abi::{ethereum_types::BigEndianHash, AbiDecode},
     prelude::{Middleware, SignerMiddleware},
-    types::{Address, BlockNumber, TransactionRequest, H256, U256, U64},
+    types::{
+        transaction::eip2718::TypedTransaction, Address, BlockNumber, Eip1559TransactionRequest,
+        TransactionRequest, H256, U256, U64,
+    },
     utils::hex,
 };
 use forge::revm::SpecId;
@@ -152,8 +155,7 @@ async fn can_impersonate_gnosis_safe() {
     api.anvil_impersonate_account(safe).await.unwrap();
 
     let code = provider.get_code(safe, None).await.unwrap();
-    // impersonated contract code is temporarily removed
-    assert!(code.is_empty());
+    assert!(!code.is_empty());
 
     let balance = U256::from(1e18 as u64);
     // fund the impersonated account
@@ -170,8 +172,6 @@ async fn can_impersonate_gnosis_safe() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
-// <https://github.com/foundry-rs/foundry/issues/3759>
 async fn can_impersonate_multiple_account() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
@@ -214,6 +214,8 @@ async fn can_impersonate_multiple_account() {
 
     let receipt = provider.get_transaction_receipt(res1.transaction_hash).await.unwrap().unwrap();
     assert_eq!(res1, receipt);
+
+    assert_ne!(res0, res1);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -255,6 +257,50 @@ async fn test_set_next_timestamp() {
     assert_eq!(next.number.unwrap().as_u64(), 2);
 
     assert!(next.timestamp > block.timestamp);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_evm_set_time() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+
+    let timestamp = now + Duration::from_secs(120);
+
+    // mock timestamp
+    api.evm_set_time(timestamp.as_secs()).unwrap();
+
+    // mine a block
+    api.evm_mine(None).await.unwrap();
+    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+
+    assert!(block.timestamp.as_u64() >= timestamp.as_secs());
+
+    api.evm_mine(None).await.unwrap();
+    let next = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+
+    assert!(next.timestamp > block.timestamp);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_evm_set_time_in_past() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+
+    let timestamp = now - Duration::from_secs(120);
+
+    // mock timestamp
+    api.evm_set_time(timestamp.as_secs()).unwrap();
+
+    // mine a block
+    api.evm_mine(None).await.unwrap();
+    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+
+    assert!(block.timestamp.as_u64() >= timestamp.as_secs());
+    assert!(block.timestamp.as_u64() < now.as_secs());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -365,4 +411,34 @@ async fn can_get_node_info() {
     };
 
     assert_eq!(node_info, expected_node_info);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_get_transaction_receipt() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    // set the base fee
+    let new_base_fee = U256::from(1_000);
+    api.anvil_set_next_block_base_fee_per_gas(new_base_fee).await.unwrap();
+
+    // send a EIP-1559 transaction
+    let tx =
+        TypedTransaction::Eip1559(Eip1559TransactionRequest::new().gas(U256::from(30_000_000)));
+    let receipt =
+        provider.send_transaction(tx.clone(), None).await.unwrap().await.unwrap().unwrap();
+
+    // the block should have the new base fee
+    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+    assert_eq!(block.base_fee_per_gas.unwrap().as_u64(), new_base_fee.as_u64());
+
+    // mine block
+    api.evm_mine(None).await.unwrap();
+
+    // the transaction receipt should have the original effective gas price
+    let new_receipt = provider.get_transaction_receipt(receipt.transaction_hash).await.unwrap();
+    assert_eq!(
+        receipt.effective_gas_price.unwrap().as_u64(),
+        new_receipt.unwrap().effective_gas_price.unwrap().as_u64()
+    );
 }

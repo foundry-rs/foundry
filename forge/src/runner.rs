@@ -11,6 +11,7 @@ use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     TestFunctionExt,
 };
+use foundry_config::FuzzConfig;
 use foundry_evm::{
     decode::decode_console_logs,
     executor::{CallResult, DeployResult, EvmError, ExecutionErr, Executor},
@@ -286,6 +287,7 @@ impl<'a> ContractRunner<'a> {
                                 *should_fail,
                                 test_options.fuzzer(),
                                 setup.clone(),
+                                test_options.fuzz,
                             )
                         } else {
                             self.clone().run_test(func, *should_fail, setup.clone())
@@ -317,7 +319,7 @@ impl<'a> ContractRunner<'a> {
 
             results.into_iter().zip(functions.iter()).for_each(|(result, function)| {
                 match result.kind {
-                    TestKind::Invariant(ref _cases, _) => {
+                    TestKind::Invariant { .. } => {
                         test_results.insert(function.signature(), result);
                     }
                     _ => unreachable!(),
@@ -460,11 +462,16 @@ impl<'a> ContractRunner<'a> {
             evm.invariant_fuzz(invariant_contract)?
         {
             let results = invariants
-                .iter()
+                .into_iter()
                 .map(|(func_name, test_error)| {
                     let mut counterexample = None;
                     let mut logs = logs.clone();
                     let mut traces = traces.clone();
+
+                    let success = test_error.is_none();
+                    let reason = test_error.as_ref().and_then(|err| {
+                        (!err.revert_reason.is_empty()).then(|| err.revert_reason.clone())
+                    });
 
                     match test_error {
                         // If invariants were broken, replay the error to collect logs and traces
@@ -478,12 +485,18 @@ impl<'a> ContractRunner<'a> {
                                 &mut logs,
                                 &mut traces,
                             )?;
+
+                            logs.extend(error.logs);
+
+                            if let Some(error_traces) = error.traces {
+                                traces.push((TraceKind::Execution, error_traces));
+                            }
                         }
                         // If invariants ran successfully, collect last call logs and traces
                         _ => {
                             if let Some(last_call_result) = last_call_results
                                 .as_mut()
-                                .and_then(|call_results| call_results.remove(func_name))
+                                .and_then(|call_results| call_results.remove(&func_name))
                             {
                                 logs.extend(last_call_result.logs);
 
@@ -494,15 +507,19 @@ impl<'a> ContractRunner<'a> {
                         }
                     }
 
+                    let kind = TestKind::Invariant {
+                        runs: cases.len(),
+                        calls: cases.iter().map(|sequence| sequence.cases().len()).sum(),
+                        reverts,
+                    };
+
                     Ok(TestResult {
-                        success: test_error.is_none(),
-                        reason: test_error.as_ref().and_then(|err| {
-                            (!err.revert_reason.is_empty()).then(|| err.revert_reason.clone())
-                        }),
+                        success,
+                        reason,
                         counterexample,
                         decoded_logs: decode_console_logs(&logs),
                         logs,
-                        kind: TestKind::Invariant(cases.clone(), reverts),
+                        kind,
                         coverage: None, // todo?
                         traces,
                         labeled_addresses: labeled_addresses.clone(),
@@ -524,15 +541,22 @@ impl<'a> ContractRunner<'a> {
         should_fail: bool,
         runner: TestRunner,
         setup: TestSetup,
+        fuzz_config: FuzzConfig,
     ) -> Result<TestResult> {
         let TestSetup { address, mut logs, mut traces, mut labeled_addresses, .. } = setup;
 
         // Run fuzz test
         let start = Instant::now();
-        let mut result =
-            FuzzedExecutor::new(&self.executor, runner, self.sender, Default::default())
-                .fuzz(func, address, should_fail, self.errors)
-                .wrap_err("Failed to run fuzz test")?;
+        let mut result = FuzzedExecutor::new(&self.executor, runner, self.sender, fuzz_config)
+            .fuzz(func, address, should_fail, self.errors)
+            .wrap_err("Failed to run fuzz test")?;
+
+        let kind = TestKind::Fuzz {
+            median_gas: result.median_gas(false),
+            mean_gas: result.mean_gas(false),
+            first_case: result.first_case,
+            runs: result.gas_by_case.len(),
+        };
 
         // Record logs, labels and traces
         logs.append(&mut result.logs);
@@ -551,7 +575,7 @@ impl<'a> ContractRunner<'a> {
             counterexample: result.counterexample,
             decoded_logs: decode_console_logs(&logs),
             logs,
-            kind: TestKind::Fuzz(result.cases),
+            kind,
             traces,
             coverage: result.coverage,
             labeled_addresses,

@@ -134,9 +134,10 @@ impl BindArgs {
                 "console[2]?",
                 "CommonBase",
                 "Components",
-                "[Ss]td(Math|Error|Json|Utils|Cheats|Assertions|Storage(Safe)?)",
+                "[Ss]td(Chains|Math|Error|Json|Utils|Cheats|Assertions|Storage(Safe)?)",
                 "[Vv]m.*",
             ])
+            .extend_names(["IMulticall3"])
             .into()
     }
 
@@ -220,7 +221,7 @@ impl Cmd for BindArgs {
             return self.check_existing_bindings(&artifacts)
         }
 
-        if self.overwrite {
+        if self.overwrite && self.bindings_exist(&artifacts) {
             fs::remove_dir_all(self.bindings_root(&artifacts))?;
         }
 

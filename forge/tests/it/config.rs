@@ -5,8 +5,8 @@ use crate::test_helpers::{
 };
 use forge::{result::SuiteResult, MultiContractRunner, MultiContractRunnerBuilder, TestOptions};
 use foundry_config::{
-    fs_permissions::PathPermission, Config, FsPermissions, FuzzConfig, InvariantConfig,
-    RpcEndpoint, RpcEndpoints,
+    fs_permissions::PathPermission, Config, FsPermissions, FuzzConfig, FuzzDictionaryConfig,
+    InvariantConfig, RpcEndpoint, RpcEndpoints,
 };
 use foundry_evm::{decode::decode_console_logs, executor::inspector::CheatsConfig};
 use std::{
@@ -97,20 +97,27 @@ pub static TEST_OPTS: TestOptions = TestOptions {
     fuzz: FuzzConfig {
         runs: 256,
         max_test_rejects: 65536,
-        max_global_rejects: 65536,
         seed: None,
-        include_storage: true,
-        include_push_bytes: true,
-        dictionary_weight: 40,
+        dictionary: FuzzDictionaryConfig {
+            include_storage: true,
+            include_push_bytes: true,
+            dictionary_weight: 40,
+            max_fuzz_dictionary_addresses: 10_000,
+            max_fuzz_dictionary_values: 10_000,
+        },
     },
     invariant: InvariantConfig {
         runs: 256,
         depth: 15,
-        dictionary_weight: 80,
         fail_on_revert: false,
         call_override: false,
-        include_storage: true,
-        include_push_bytes: true,
+        dictionary: FuzzDictionaryConfig {
+            dictionary_weight: 80,
+            include_storage: true,
+            include_push_bytes: true,
+            max_fuzz_dictionary_addresses: 10_000,
+            max_fuzz_dictionary_values: 10_000,
+        },
     },
 };
 

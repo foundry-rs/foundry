@@ -1,37 +1,31 @@
 //! cast find-block subcommand
 
-use crate::{cmd::Cmd, utils::try_consume_config_rpc_url};
+use crate::{opts::RpcOpts, utils};
 use cast::Cast;
 use clap::Parser;
 use ethers::prelude::*;
 use eyre::Result;
-use foundry_common::try_get_http_provider;
-use futures::{future::BoxFuture, join};
+use foundry_config::Config;
+use futures::join;
 
 /// CLI arguments for `cast find-block`.
 #[derive(Debug, Clone, Parser)]
 pub struct FindBlockArgs {
     #[clap(help = "The UNIX timestamp to search for (in seconds)", value_name = "TIMESTAMP")]
     timestamp: u64,
-    #[clap(long, env = "ETH_RPC_URL", value_name = "URL")]
-    rpc_url: Option<String>,
-}
 
-impl Cmd for FindBlockArgs {
-    type Output = BoxFuture<'static, Result<()>>;
-
-    fn run(self) -> Result<Self::Output> {
-        let FindBlockArgs { timestamp, rpc_url } = self;
-        Ok(Box::pin(Self::query_block(timestamp, rpc_url)))
-    }
+    #[clap(flatten)]
+    rpc: RpcOpts,
 }
 
 impl FindBlockArgs {
-    async fn query_block(timestamp: u64, rpc_url: Option<String>) -> Result<()> {
-        let ts_target = U256::from(timestamp);
-        let rpc_url = try_consume_config_rpc_url(rpc_url)?;
+    pub async fn run(self) -> Result<()> {
+        let FindBlockArgs { timestamp, rpc } = self;
 
-        let provider = try_get_http_provider(rpc_url)?;
+        let ts_target = U256::from(timestamp);
+        let config = Config::from(&rpc);
+        let provider = utils::get_provider(&config)?;
+
         let last_block_num = provider.get_block_number().await?;
         let cast_provider = Cast::new(provider);
 

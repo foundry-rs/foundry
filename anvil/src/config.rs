@@ -25,7 +25,7 @@ use ethers::{
         MnemonicBuilder, Signer,
     },
     types::BlockNumber,
-    utils::{format_ether, hex, WEI_IN_ETHER},
+    utils::{format_ether, hex, to_checksum, WEI_IN_ETHER},
 };
 use foundry_common::{ProviderBuilder, ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT};
 use foundry_config::Config;
@@ -33,6 +33,7 @@ use foundry_evm::{
     executor::fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     revm,
     revm::{BlockEnv, CfgEnv, SpecId, TxEnv},
+    utils::apply_chain_and_block_specific_env_changes,
 };
 use parking_lot::RwLock;
 use serde_json::{json, to_writer, Value};
@@ -61,7 +62,7 @@ pub const DEFAULT_IPC_ENDPOINT: &str = "/tmp/anvil.ipc";
 pub const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     " (",
-    env!("VERGEN_GIT_SHA_SHORT"),
+    env!("VERGEN_GIT_SHA"),
     " ",
     env!("VERGEN_BUILD_TIMESTAMP"),
     ")"
@@ -83,6 +84,8 @@ pub struct NodeConfig {
     pub chain_id: Option<u64>,
     /// Default gas limit for all txs
     pub gas_limit: U256,
+    /// If set to `true`, disables the block gas limit
+    pub disable_block_gas_limit: bool,
     /// Default gas price for all txs
     pub gas_price: Option<U256>,
     /// Default base fee
@@ -143,8 +146,10 @@ pub struct NodeConfig {
     pub enable_steps_tracing: bool,
     /// Configure the code size limit
     pub code_size_limit: Option<usize>,
-    /// If set to true, remove historic state entirely
-    pub prune_history: bool,
+    /// Configures how to remove historic state.
+    ///
+    /// If set to `Some(num)` keep latest num state in memory only.
+    pub prune_history: PruneStateHistoryConfig,
     /// The file where to load the state from
     pub init_state: Option<SerializableState>,
     /// max number of blocks with transactions in memory
@@ -172,7 +177,11 @@ Available Accounts
         );
         let balance = format_ether(self.genesis_balance);
         for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
-            let _ = write!(config_string, "\n({idx}) {:?} ({balance} ETH)", wallet.address());
+            let _ = write!(
+                config_string,
+                "\n({idx}) {:?} ({balance} ETH)",
+                to_checksum(&wallet.address(), None)
+            );
         }
 
         let _ = write!(
@@ -332,6 +341,7 @@ impl Default for NodeConfig {
         Self {
             chain_id: None,
             gas_limit: U256::from(30_000_000),
+            disable_block_gas_limit: false,
             gas_price: None,
             hardfork: None,
             signer_accounts: genesis_accounts.clone(),
@@ -365,7 +375,7 @@ impl Default for NodeConfig {
             compute_units_per_second: ALCHEMY_FREE_TIER_CUPS,
             ipc_path: None,
             code_size_limit: None,
-            prune_history: false,
+            prune_history: Default::default(),
             init_state: None,
             transaction_block_keeper: None,
         }
@@ -439,6 +449,15 @@ impl NodeConfig {
         self
     }
 
+    /// Disable block gas limit check
+    ///
+    /// If set to `true` block gas limit will not be enforced
+    #[must_use]
+    pub fn disable_block_gas_limit(mut self, disable_block_gas_limit: bool) -> Self {
+        self.disable_block_gas_limit = disable_block_gas_limit;
+        self
+    }
+
     /// Sets the gas price
     #[must_use]
     pub fn with_gas_price<U: Into<U256>>(mut self, gas_price: Option<U>) -> Self {
@@ -448,8 +467,8 @@ impl NodeConfig {
 
     /// Sets prune history status.
     #[must_use]
-    pub fn set_pruned_history(mut self, prune_history: bool) -> Self {
-        self.prune_history = prune_history;
+    pub fn set_pruned_history(mut self, prune_history: Option<Option<usize>>) -> Self {
+        self.prune_history = PruneStateHistoryConfig::from_args(prune_history);
         self
     }
 
@@ -714,12 +733,10 @@ impl NodeConfig {
     /// Returns the path where the cache file should be stored
     ///
     /// See also [ Config::foundry_block_cache_file()]
-    pub fn block_cache_path(&self) -> Option<PathBuf> {
+    pub fn block_cache_path(&self, block: u64) -> Option<PathBuf> {
         if self.no_storage_caching || self.eth_rpc_url.is_none() {
             return None
         }
-        // cache only if block explicitly set
-        let block = self.fork_block_number?;
         let chain_id = self.get_chain_id();
 
         Config::foundry_block_cache_file(chain_id, block)
@@ -736,6 +753,11 @@ impl NodeConfig {
                 spec_id: self.get_hardfork().into(),
                 chain_id: self.get_chain_id().into(),
                 limit_contract_code_size: self.code_size_limit,
+                // EIP-3607 rejects transactions from senders with deployed code.
+                // If EIP-3607 is enabled it can cause issues during fuzz/invariant tests if the
+                // caller is a contract. So we disable the check by default.
+                disable_eip3607: true,
+                disable_block_gas_limit: self.disable_block_gas_limit,
                 ..Default::default()
             },
             block: BlockEnv {
@@ -761,8 +783,7 @@ impl NodeConfig {
                     .compute_units_per_second(self.compute_units_per_second)
                     .max_retry(10)
                     .initial_backoff(1000)
-                    .connect()
-                    .await
+                    .build()
                     .expect("Failed to establish provider to fork url"),
             );
 
@@ -796,14 +817,10 @@ impl NodeConfig {
                     )
                 };
 
-            let block = if self.fork_chain_id.is_some() {
-                Some(Default::default())
-            } else {
-                provider
-                    .get_block(BlockNumber::Number(fork_block_number.into()))
-                    .await
-                    .expect("Failed to get fork block")
-            };
+            let block = provider
+                .get_block(BlockNumber::Number(fork_block_number.into()))
+                .await
+                .expect("Failed to get fork block");
 
             let block = if let Some(block) = block {
                 block
@@ -825,12 +842,16 @@ impl NodeConfig {
                 number: fork_block_number.into(),
                 timestamp: block.timestamp,
                 difficulty: block.difficulty,
-                prevrandao: block.mix_hash,
+                // ensures prevrandao is set
+                prevrandao: Some(block.mix_hash.unwrap_or_default()),
                 gas_limit,
                 // Keep previous `coinbase` and `basefee` value
                 coinbase: env.block.coinbase,
                 basefee: env.block.basefee,
             };
+
+            // apply changes such as difficulty -> prevrandao
+            apply_chain_and_block_specific_env_changes(&mut env, &block);
 
             // if not set explicitly we use the base fee of the latest block
             if self.base_fee.is_none() {
@@ -879,9 +900,9 @@ impl NodeConfig {
 
             let meta = BlockchainDbMeta::new(env.clone(), eth_rpc_url.clone());
             let block_chain_db = if self.fork_chain_id.is_some() {
-                BlockchainDb::new_skip_check(meta, self.block_cache_path())
+                BlockchainDb::new_skip_check(meta, self.block_cache_path(fork_block_number))
             } else {
-                BlockchainDb::new(meta, self.block_cache_path())
+                BlockchainDb::new(meta, self.block_cache_path(fork_block_number))
             };
 
             // This will spawn the background thread that will use the provider to fetch
@@ -941,6 +962,7 @@ impl NodeConfig {
             self.enable_steps_tracing,
             self.prune_history,
             self.transaction_block_keeper,
+            self.block_time,
         )
         .await;
 
@@ -954,6 +976,30 @@ impl NodeConfig {
         }
 
         backend
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PruneStateHistoryConfig {
+    pub enabled: bool,
+    pub max_memory_history: Option<usize>,
+}
+
+// === impl PruneStateHistoryConfig ===
+
+impl PruneStateHistoryConfig {
+    /// Returns `true` if writing state history is supported
+    pub fn is_state_history_supported(&self) -> bool {
+        !self.enabled || self.max_memory_history.is_some()
+    }
+
+    /// Returns tru if this setting was enabled.
+    pub fn is_config_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn from_args(val: Option<Option<usize>>) -> Self {
+        val.map(|max_memory_history| Self { enabled: true, max_memory_history }).unwrap_or_default()
     }
 }
 
@@ -971,9 +1017,7 @@ impl AccountGenerator {
         Self {
             chain_id: CHAIN_ID,
             amount,
-            phrase: Mnemonic::<English>::new(&mut thread_rng())
-                .to_phrase()
-                .expect("Failed to create mnemonic phrase"),
+            phrase: Mnemonic::<English>::new(&mut thread_rng()).to_phrase(),
             derivation_path: None,
         }
     }
@@ -1058,4 +1102,19 @@ async fn find_latest_fork_block<M: Middleware>(provider: M) -> Result<u64, M::Er
     }
 
     Ok(num)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_prune_history() {
+        let config = PruneStateHistoryConfig::default();
+        assert!(config.is_state_history_supported());
+        let config = PruneStateHistoryConfig::from_args(Some(None));
+        assert!(!config.is_state_history_supported());
+        let config = PruneStateHistoryConfig::from_args(Some(Some(10)));
+        assert!(config.is_state_history_supported());
+    }
 }

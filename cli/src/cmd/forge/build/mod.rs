@@ -54,7 +54,7 @@ foundry_config::merge_impl_figment_convert!(BuildArgs, args);
 /// Some arguments are marked as `#[serde(skip)]` and require manual processing in
 /// `figment::Provider` implementation
 #[derive(Debug, Clone, Parser, Serialize, Default)]
-#[clap(next_help_heading = "Build options", about = None)] // override doc
+#[clap(next_help_heading = "Build options", about = None, long_about = None)] // override doc
 pub struct BuildArgs {
     #[clap(flatten)]
     #[serde(flatten)]
@@ -83,6 +83,7 @@ pub struct BuildArgs {
 
 impl Cmd for BuildArgs {
     type Output = ProjectCompileOutput;
+
     fn run(self) -> eyre::Result<Self::Output> {
         let mut config = self.try_load_config_emit_warnings()?;
         let mut project = config.project()?;

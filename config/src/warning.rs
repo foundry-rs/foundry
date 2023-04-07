@@ -19,14 +19,14 @@ pub enum Warning {
     CouldNotReadToml {
         /// The path of the TOML file
         path: PathBuf,
-        /// The error message that occured
+        /// The error message that occurred
         err: String,
     },
     /// Could not write TOML
     CouldNotWriteToml {
         /// The path of the TOML file
         path: PathBuf,
-        /// The error message that occured
+        /// The error message that occurred
         err: String,
     },
     /// Invalid profile. Profile should be a table
@@ -35,7 +35,7 @@ pub enum Warning {
         path: PathBuf,
         /// The profile to be fixed
         profile: String,
-        /// The error message that occured
+        /// The error message that occurred
         err: String,
     },
     /// Deprecated key.

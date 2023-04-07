@@ -1,7 +1,7 @@
 use self::{
     env::Broadcast,
     expect::{handle_expect_emit, handle_expect_revert},
-    util::{process_create, BroadcastableTransactions},
+    util::{check_if_fixed_gas_limit, process_create, BroadcastableTransactions},
 };
 use crate::{
     abi::HEVMCalls,
@@ -20,6 +20,7 @@ use ethers::{
         U256,
     },
 };
+use itertools::Itertools;
 use revm::{
     opcode, BlockEnv, CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return,
     TransactTo,
@@ -29,6 +30,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     fs::File,
     io::BufReader,
+    ops::Range,
     path::PathBuf,
     sync::Arc,
 };
@@ -39,7 +41,9 @@ mod env;
 pub use env::{Log, Prank, RecordAccess};
 /// Assertion helpers (such as `expectEmit`)
 mod expect;
-pub use expect::{ExpectedCallData, ExpectedEmit, ExpectedRevert, MockCallDataContext};
+pub use expect::{
+    ExpectedCallData, ExpectedEmit, ExpectedRevert, MockCallDataContext, MockCallReturnData,
+};
 
 /// Cheatcodes that interact with the external environment (FFI etc.)
 mod ext;
@@ -113,13 +117,16 @@ pub struct Cheatcodes {
     pub recorded_logs: Option<RecordedLogs>,
 
     /// Mocked calls
-    pub mocked_calls: BTreeMap<Address, BTreeMap<MockCallDataContext, Bytes>>,
+    pub mocked_calls: BTreeMap<Address, BTreeMap<MockCallDataContext, MockCallReturnData>>,
 
     /// Expected calls
     pub expected_calls: BTreeMap<Address, Vec<ExpectedCallData>>,
 
     /// Expected emits
     pub expected_emits: Vec<ExpectedEmit>,
+
+    /// Map of context depths to memory offset ranges that may be written to within the call depth.
+    pub allowed_mem_writes: BTreeMap<u64, Vec<Range<u64>>>,
 
     /// Current broadcasting information
     pub broadcast: Option<Broadcast>,
@@ -141,7 +148,7 @@ pub struct Cheatcodes {
     // Used to prevent duplicate changes file executing non-committing calls.
     pub fs_commit: bool,
 
-    pub serialized_jsons: HashMap<String, HashMap<String, Value>>,
+    pub serialized_jsons: BTreeMap<String, BTreeMap<String, Value>>,
 
     /// Records all eth deals
     pub eth_deals: Vec<DealRecord>,
@@ -153,6 +160,11 @@ pub struct Cheatcodes {
     /// the interpreter, we copy the gas struct. Then each time there is an execution of an
     /// operation, we reset the gas.
     pub gas_metering: Option<Option<revm::Gas>>,
+
+    /// Holds stored gas info for when we pause gas metering, and we're entering/inside
+    /// CREATE / CREATE2 frames. This is needed to make gas meter pausing work correctly when
+    /// paused and creating new contracts.
+    pub gas_metering_create: Option<Option<revm::Gas>>,
 }
 
 impl Cheatcodes {
@@ -270,7 +282,12 @@ where
         Return::Continue
     }
 
-    fn step(&mut self, interpreter: &mut Interpreter, _: &mut EVMData<'_, DB>, _: bool) -> Return {
+    fn step(
+        &mut self,
+        interpreter: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        _: bool,
+    ) -> Return {
         // reset gas if gas metering is turned off
         match self.gas_metering {
             Some(None) => {
@@ -279,6 +296,11 @@ where
             }
             Some(Some(gas)) => {
                 match interpreter.contract.bytecode.bytecode()[interpreter.program_counter()] {
+                    opcode::CREATE | opcode::CREATE2 => {
+                        // set we're about to enter CREATE frame to meter its gas on first opcode
+                        // inside it
+                        self.gas_metering_create = Some(None)
+                    }
                     opcode::STOP | opcode::RETURN | opcode::SELFDESTRUCT | opcode::REVERT => {
                         // If we are ending current execution frame, we want to just fully reset gas
                         // otherwise weird things with returning gas from a call happen
@@ -286,9 +308,35 @@ where
                         //
                         // It would be nice if we had access to the interpreter in `call_end`, as we
                         // could just do this there instead.
-                        interpreter.gas = revm::Gas::new(0);
+                        match self.gas_metering_create {
+                            None | Some(None) => {
+                                interpreter.gas = revm::Gas::new(0);
+                            }
+                            Some(Some(gas)) => {
+                                // If this was CREATE frame, set correct gas limit. This is needed
+                                // because CREATE opcodes deduct additional gas for code storage,
+                                // and deducted amount is compared to gas limit. If we set this to
+                                // 0, the CREATE would fail with out of gas.
+                                //
+                                // If we however set gas limit to the limit of outer frame, it would
+                                // cause a panic after erasing gas cost post-create. Reason for this
+                                // is pre-create REVM records `gas_limit - (gas_limit / 64)` as gas
+                                // used, and erases costs by `remaining` gas post-create.
+                                // gas used ref: https://github.com/bluealloy/revm/blob/2cb991091d32330cfe085320891737186947ce5a/crates/revm/src/instructions/host.rs#L254-L258
+                                // post-create erase ref: https://github.com/bluealloy/revm/blob/2cb991091d32330cfe085320891737186947ce5a/crates/revm/src/instructions/host.rs#L279
+                                interpreter.gas = revm::Gas::new(gas.limit());
+
+                                // reset CREATE gas metering because we're about to exit its frame
+                                self.gas_metering_create = None
+                            }
+                        }
                     }
                     _ => {
+                        // if just starting with CREATE opcodes, record its inner frame gas
+                        if let Some(None) = self.gas_metering_create {
+                            self.gas_metering_create = Some(Some(interpreter.gas))
+                        }
+
                         // dont monitor gas changes, keep it constant
                         interpreter.gas = gas;
                     }
@@ -325,6 +373,129 @@ where
                 }
                 _ => (),
             }
+        }
+
+        // If the allowed memory writes cheatcode is active at this context depth, check to see
+        // if the current opcode can either mutate directly or expand memory. If the opcode at
+        // the current program counter is a match, check if the modified memory lies within the
+        // allowed ranges. If not, revert and fail the test.
+        if let Some(ranges) = self.allowed_mem_writes.get(&data.journaled_state.depth()) {
+            // The `mem_opcode_match` macro is used to match the current opcode against a list of
+            // opcodes that can mutate memory (either directly or expansion via reading). If the
+            // opcode is a match, the memory offsets that are being written to are checked to be
+            // within the allowed ranges. If not, the test is failed and the transaction is
+            // reverted. For all opcodes that can mutate memory aside from MSTORE,
+            // MSTORE8, and MLOAD, the size and destination offset are on the stack, and
+            // the macro expands all of these cases. For MSTORE, MSTORE8, and MLOAD, the
+            // size of the memory write is implicit, so these cases are hard-coded.
+            macro_rules! mem_opcode_match {
+                ([$(($opcode:ident, $offset_depth:expr, $size_depth:expr, $writes:expr)),*]) => {
+                    match interpreter.contract.bytecode.bytecode()[interpreter.program_counter()] {
+                        ////////////////////////////////////////////////////////////////
+                        //    OPERATIONS THAT CAN EXPAND/MUTATE MEMORY BY WRITING     //
+                        ////////////////////////////////////////////////////////////////
+
+                        opcode::MSTORE => {
+                            // The offset of the mstore operation is at the top of the stack.
+                            let offset = try_or_continue!(interpreter.stack().peek(0)).as_u64();
+
+                            // If none of the allowed ranges contain [offset, offset + 32), memory has been
+                            // unexpectedly mutated.
+                            if !ranges.iter().any(|range| {
+                                range.contains(&offset) && range.contains(&(offset + 31))
+                            }) {
+                                revert_helper::disallowed_mem_write(offset, 32, interpreter, ranges);
+                                return Return::Revert
+                            }
+                        }
+                        opcode::MSTORE8 => {
+                            // The offset of the mstore8 operation is at the top of the stack.
+                            let offset = try_or_continue!(interpreter.stack().peek(0)).as_u64();
+
+                            // If none of the allowed ranges contain the offset, memory has been
+                            // unexpectedly mutated.
+                            if !ranges.iter().any(|range| range.contains(&offset)) {
+                                revert_helper::disallowed_mem_write(offset, 1, interpreter, ranges);
+                                return Return::Revert
+                            }
+                        }
+
+                        ////////////////////////////////////////////////////////////////
+                        //        OPERATIONS THAT CAN EXPAND MEMORY BY READING        //
+                        ////////////////////////////////////////////////////////////////
+
+                        opcode::MLOAD => {
+                            // The offset of the mload operation is at the top of the stack
+                            let offset = try_or_continue!(interpreter.stack().peek(0)).as_u64();
+
+                            // If the offset being loaded is >= than the memory size, the
+                            // memory is being expanded. If none of the allowed ranges contain
+                            // [offset, offset + 32), memory has been unexpectedly mutated.
+                            if offset >= interpreter.memory.len() as u64 && !ranges.iter().any(|range| {
+                                range.contains(&offset) && range.contains(&(offset + 31))
+                            }) {
+                                revert_helper::disallowed_mem_write(offset, 32, interpreter, ranges);
+                                return Return::Revert
+                            }
+                        }
+
+                        ////////////////////////////////////////////////////////////////
+                        //          OPERATIONS WITH OFFSET AND SIZE ON STACK          //
+                        ////////////////////////////////////////////////////////////////
+
+                        $(opcode::$opcode => {
+                            // The destination offset of the operation is at the top of the stack.
+                            let dest_offset = try_or_continue!(interpreter.stack().peek($offset_depth)).as_u64();
+
+                            // The size of the data that will be copied is the third item on the stack.
+                            let size = try_or_continue!(interpreter.stack().peek($size_depth)).as_u64();
+
+                            // If none of the allowed ranges contain [dest_offset, dest_offset + size),
+                            // memory outside of the expected ranges has been touched. If the opcode
+                            // only reads from memory, this is okay as long as the memory is not expanded.
+                            let fail_cond = !ranges.iter().any(|range| {
+                                    range.contains(&dest_offset) &&
+                                        range.contains(&(dest_offset + size.saturating_sub(1)))
+                                }) && ($writes ||
+                                    [dest_offset, (dest_offset + size).saturating_sub(1)].into_iter().any(|offset| {
+                                        offset >= interpreter.memory.len() as u64
+                                    })
+                                );
+
+                            // If the failure condition is met, set the output buffer to a revert string
+                            // that gives information about the allowed ranges and revert.
+                            if fail_cond {
+                                revert_helper::disallowed_mem_write(dest_offset, size, interpreter, ranges);
+                                return Return::Revert
+                            }
+                        })*
+                        _ => ()
+                    }
+                }
+            }
+
+            // Check if the current opcode can write to memory, and if so, check if the memory
+            // being written to is registered as safe to modify.
+            mem_opcode_match!([
+                (CALLDATACOPY, 0, 2, true),
+                (CODECOPY, 0, 2, true),
+                (RETURNDATACOPY, 0, 2, true),
+                (EXTCODECOPY, 1, 3, true),
+                (CALL, 5, 6, true),
+                (CALLCODE, 5, 6, true),
+                (STATICCALL, 4, 5, true),
+                (DELEGATECALL, 4, 5, true),
+                (SHA3, 0, 1, false),
+                (LOG0, 0, 1, false),
+                (LOG1, 0, 1, false),
+                (LOG2, 0, 1, false),
+                (LOG3, 0, 1, false),
+                (LOG4, 0, 1, false),
+                (CREATE, 1, 2, false),
+                (CREATE2, 1, 2, false),
+                (RETURN, 0, 1, false),
+                (REVERT, 0, 1, false)
+            ])
         }
 
         Return::Continue
@@ -366,7 +537,9 @@ where
                 if let Some(found_match) = expecteds.iter().position(|expected| {
                     expected.calldata.len() <= call.input.len() &&
                         expected.calldata == call.input[..expected.calldata.len()] &&
-                        expected.value.map(|value| value == call.transfer.value).unwrap_or(true)
+                        expected.value.map_or(true, |value| value == call.transfer.value) &&
+                        expected.gas.map_or(true, |gas| gas == call.gas_limit) &&
+                        expected.min_gas.map_or(true, |min_gas| min_gas <= call.gas_limit)
                 }) {
                     expecteds.remove(found_match);
                 }
@@ -379,13 +552,21 @@ where
                     value: Some(call.transfer.value),
                 };
                 if let Some(mock_retdata) = mocks.get(&ctx) {
-                    return (Return::Return, Gas::new(call.gas_limit), mock_retdata.clone())
+                    return (
+                        mock_retdata.ret_type,
+                        Gas::new(call.gas_limit),
+                        mock_retdata.data.clone(),
+                    )
                 } else if let Some((_, mock_retdata)) = mocks.iter().find(|(mock, _)| {
                     mock.calldata.len() <= call.input.len() &&
                         *mock.calldata == call.input[..mock.calldata.len()] &&
                         mock.value.map(|value| value == call.transfer.value).unwrap_or(true)
                 }) {
-                    return (Return::Return, Gas::new(call.gas_limit), mock_retdata.clone())
+                    return (
+                        mock_retdata.ret_type,
+                        Gas::new(call.gas_limit),
+                        mock_retdata.data.clone(),
+                    )
                 }
             }
 
@@ -434,6 +615,8 @@ where
                             return (Return::Revert, Gas::new(call.gas_limit), err.encode_string())
                         }
 
+                        let is_fixed_gas_limit = check_if_fixed_gas_limit(data, call.gas_limit);
+
                         let account =
                             data.journaled_state.state().get_mut(&broadcast.new_origin).unwrap();
 
@@ -445,6 +628,11 @@ where
                                 value: Some(call.transfer.value),
                                 data: Some(call.input.clone().into()),
                                 nonce: Some(account.info.nonce.into()),
+                                gas: if is_fixed_gas_limit {
+                                    Some(call.gas_limit.into())
+                                } else {
+                                    None
+                                },
                                 ..Default::default()
                             }),
                         });
@@ -495,7 +683,9 @@ where
 
         // Clean up broadcast
         if let Some(broadcast) = &self.broadcast {
-            data.env.tx.caller = broadcast.original_origin;
+            if data.journaled_state.depth() == broadcast.depth {
+                data.env.tx.caller = broadcast.original_origin;
+            }
 
             if broadcast.single_call {
                 std::mem::take(&mut self.broadcast);
@@ -544,17 +734,23 @@ where
             if let Some((address, expecteds)) =
                 self.expected_calls.iter().find(|(_, expecteds)| !expecteds.is_empty())
             {
+                let ExpectedCallData { calldata, gas, min_gas, value } = &expecteds[0];
+                let calldata = ethers::types::Bytes::from(calldata.clone());
+                let expected_values = [
+                    Some(format!("data {calldata}")),
+                    value.map(|v| format!("value {v}")),
+                    gas.map(|g| format!("gas {g}")),
+                    min_gas.map(|g| format!("minimum gas {g}")),
+                ]
+                .into_iter()
+                .flatten()
+                .join(" and ");
                 return (
                     Return::Revert,
                     remaining_gas,
-                    format!(
-                        "Expected a call to {:?} with data {}{}, but got none",
-                        address,
-                        ethers::types::Bytes::from(expecteds[0].calldata.clone()),
-                        expecteds[0].value.map(|v| format!(" and value {v}")).unwrap_or_default()
-                    )
-                    .encode()
-                    .into(),
+                    format!("Expected a call to {address:?} with {expected_values}, but got none")
+                        .encode()
+                        .into(),
                 )
             }
 
@@ -644,6 +840,8 @@ where
                     }
                 };
 
+                let is_fixed_gas_limit = check_if_fixed_gas_limit(data, call.gas_limit);
+
                 self.broadcastable_transactions.push_back(BroadcastableTransaction {
                     rpc: data.db.active_fork_url(),
                     transaction: TypedTransaction::Legacy(TransactionRequest {
@@ -652,6 +850,7 @@ where
                         value: Some(call.value),
                         data: Some(bytecode.into()),
                         nonce: Some(nonce.into()),
+                        gas: if is_fixed_gas_limit { Some(call.gas_limit.into()) } else { None },
                         ..Default::default()
                     }),
                 });
@@ -682,7 +881,9 @@ where
 
         // Clean up broadcasts
         if let Some(broadcast) = &self.broadcast {
-            data.env.tx.caller = broadcast.original_origin;
+            if data.journaled_state.depth() == broadcast.depth {
+                data.env.tx.caller = broadcast.original_origin;
+            }
 
             if broadcast.single_call {
                 std::mem::take(&mut self.broadcast);
@@ -732,4 +933,37 @@ pub struct DealRecord {
     pub old_balance: U256,
     /// Balance after deal was applied
     pub new_balance: U256,
+}
+
+/// Helper module to store revert strings in memory
+mod revert_helper {
+    use super::*;
+
+    /// Helper that expands memory, stores a revert string pertaining to a disallowed memory write,
+    /// and sets the return range to the revert string's location in memory.
+    pub fn disallowed_mem_write(
+        dest_offset: u64,
+        size: u64,
+        interpreter: &mut Interpreter,
+        ranges: &[Range<u64>],
+    ) {
+        let revert_string: Bytes = format!(
+            "Memory write at offset 0x{:02X} of size 0x{:02X} not allowed. Safe range: {}",
+            dest_offset,
+            size,
+            ranges.iter().map(|r| format!("(0x{:02X}, 0x{:02X}]", r.start, r.end)).join(" ∪ ")
+        )
+        .encode()
+        .into();
+        mstore_revert_string(revert_string, interpreter);
+    }
+
+    /// Expands memory, stores a revert string, and sets the return range to the revert
+    /// string's location in memory.
+    fn mstore_revert_string(bytes: Bytes, interpreter: &mut Interpreter) {
+        let starting_offset = interpreter.memory.len();
+        interpreter.memory.resize(starting_offset + bytes.len());
+        interpreter.memory.set_data(starting_offset, 0, bytes.len(), &bytes);
+        interpreter.return_range = starting_offset..interpreter.memory.len();
+    }
 }

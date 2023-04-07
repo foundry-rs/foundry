@@ -1,6 +1,6 @@
 use derive_more::{Deref, DerefMut};
 use solang_parser::doccomment::DocCommentTag;
-use std::{collections::HashMap, str::FromStr};
+use std::collections::HashMap;
 
 /// The natspec comment tag explaining the purpose of the comment.
 /// See: https://docs.soliditylang.org/en/v0.8.17/natspec-format.html#tags.
@@ -24,10 +24,8 @@ pub enum CommentTag {
     Custom(String),
 }
 
-impl FromStr for CommentTag {
-    type Err = eyre::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+impl CommentTag {
+    fn from_str(s: &str) -> Option<Self> {
         let trimmed = s.trim();
         let tag = match trimmed {
             "title" => CommentTag::Title,
@@ -46,11 +44,12 @@ impl FromStr for CommentTag {
                     _ => CommentTag::Custom(custom_tag.to_owned()),
                 }
             }
-            _ => eyre::bail!(
-                "unknown comment tag: {trimmed}, custom tags must be preceded by \"custom:\""
-            ),
+            _ => {
+                tracing::warn!(target: "forge::doc", tag = trimmed, "unknown comment tag. custom tags must be preceded by `custom:`");
+                return None
+            }
         };
-        Ok(tag)
+        Some(tag)
     }
 }
 
@@ -70,6 +69,12 @@ impl Comment {
         Self { tag, value }
     }
 
+    /// Create new instance of [Comment] from [DocCommentTag]
+    /// if it has a valid natspec tag.
+    pub fn from_doc_comment(value: DocCommentTag) -> Option<Self> {
+        CommentTag::from_str(&value.tag).map(|tag| Self { tag, value: value.value })
+    }
+
     /// Split the comment at first word.
     /// Useful for [CommentTag::Param] and [CommentTag::Return] comments.
     pub fn split_first_word(&self) -> Option<(&str, &str)> {
@@ -79,7 +84,7 @@ impl Comment {
     /// Match the first word of the comment with the expected.
     /// Returns [None] if the word doesn't match.
     /// Useful for [CommentTag::Param] and [CommentTag::Return] comments.
-    pub fn match_first_word<'a>(&'a self, expected: &str) -> Option<&'a str> {
+    pub fn match_first_word(&self, expected: &str) -> Option<&str> {
         self.split_first_word().and_then(
             |(word, rest)| {
                 if word.eq(expected) {
@@ -92,15 +97,6 @@ impl Comment {
     }
 }
 
-impl TryFrom<DocCommentTag> for Comment {
-    type Error = eyre::Error;
-
-    fn try_from(value: DocCommentTag) -> Result<Self, Self::Error> {
-        let tag = CommentTag::from_str(&value.tag)?;
-        Ok(Self { tag, value: value.value })
-    }
-}
-
 /// The collection of natspec [Comment] items.
 #[derive(Deref, DerefMut, PartialEq, Default, Clone, Debug)]
 pub struct Comments(Vec<Comment>);
@@ -110,7 +106,7 @@ pub struct Comments(Vec<Comment>);
 macro_rules! ref_fn {
     ($vis:vis fn $name:ident(&self$(, )?$($arg_name:ident: $arg:ty),*) -> $ret:ty) => {
         /// Forward the function implementation to [CommentsRef] reference type.
-        $vis fn $name<'a>(&'a self, $($arg_name: $arg),*) -> $ret {
+        $vis fn $name(&self, $($arg_name: $arg),*) -> $ret {
             CommentsRef::from(self).$name($($arg_name),*)
         }
     };
@@ -149,11 +145,9 @@ impl Comments {
     }
 }
 
-impl TryFrom<Vec<DocCommentTag>> for Comments {
-    type Error = eyre::Error;
-
-    fn try_from(value: Vec<DocCommentTag>) -> Result<Self, Self::Error> {
-        Ok(Self(value.into_iter().map(TryInto::try_into).collect::<Result<Vec<_>, _>>()?))
+impl From<Vec<DocCommentTag>> for Comments {
+    fn from(value: Vec<DocCommentTag>) -> Self {
+        Self(value.into_iter().flat_map(Comment::from_doc_comment).collect())
     }
 }
 
@@ -211,26 +205,26 @@ mod tests {
 
     #[test]
     fn parse_comment_tag() {
-        assert_eq!(CommentTag::from_str("title").unwrap(), CommentTag::Title);
-        assert_eq!(CommentTag::from_str(" title  ").unwrap(), CommentTag::Title);
-        assert_eq!(CommentTag::from_str("author").unwrap(), CommentTag::Author);
-        assert_eq!(CommentTag::from_str("notice").unwrap(), CommentTag::Notice);
-        assert_eq!(CommentTag::from_str("dev").unwrap(), CommentTag::Dev);
-        assert_eq!(CommentTag::from_str("param").unwrap(), CommentTag::Param);
-        assert_eq!(CommentTag::from_str("return").unwrap(), CommentTag::Return);
-        assert_eq!(CommentTag::from_str("inheritdoc").unwrap(), CommentTag::Inheritdoc);
-        assert_eq!(CommentTag::from_str("custom:").unwrap(), CommentTag::Custom("".to_owned()));
+        assert_eq!(CommentTag::from_str("title"), Some(CommentTag::Title));
+        assert_eq!(CommentTag::from_str(" title  "), Some(CommentTag::Title));
+        assert_eq!(CommentTag::from_str("author"), Some(CommentTag::Author));
+        assert_eq!(CommentTag::from_str("notice"), Some(CommentTag::Notice));
+        assert_eq!(CommentTag::from_str("dev"), Some(CommentTag::Dev));
+        assert_eq!(CommentTag::from_str("param"), Some(CommentTag::Param));
+        assert_eq!(CommentTag::from_str("return"), Some(CommentTag::Return));
+        assert_eq!(CommentTag::from_str("inheritdoc"), Some(CommentTag::Inheritdoc));
+        assert_eq!(CommentTag::from_str("custom:"), Some(CommentTag::Custom("".to_owned())));
         assert_eq!(
-            CommentTag::from_str("custom:some").unwrap(),
-            CommentTag::Custom("some".to_owned())
+            CommentTag::from_str("custom:some"),
+            Some(CommentTag::Custom("some".to_owned()))
         );
         assert_eq!(
-            CommentTag::from_str("  custom:   some   ").unwrap(),
-            CommentTag::Custom("some".to_owned())
+            CommentTag::from_str("  custom:   some   "),
+            Some(CommentTag::Custom("some".to_owned()))
         );
 
-        assert!(CommentTag::from_str("").is_err());
-        assert!(CommentTag::from_str("custom").is_err());
-        assert!(CommentTag::from_str("sometag").is_err());
+        assert_eq!(CommentTag::from_str(""), None);
+        assert_eq!(CommentTag::from_str("custom"), None);
+        assert_eq!(CommentTag::from_str("sometag"), None);
     }
 }

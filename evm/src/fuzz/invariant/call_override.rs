@@ -21,7 +21,7 @@ pub struct RandomCallGenerator {
     pub strategy: SBoxedStrategy<Option<(Address, Bytes)>>,
     /// Reference to which contract we want a fuzzed calldata from.
     pub target_reference: Arc<RwLock<Address>>,
-    /// Flag to know if a call has been overriden. Don't allow nesting for now.
+    /// Flag to know if a call has been overridden. Don't allow nesting for now.
     pub used: bool,
     /// If set to `true`, consumes the next call from `last_sequence`, otherwise queries it from
     /// the strategy.

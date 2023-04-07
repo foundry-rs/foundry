@@ -5,22 +5,22 @@ use crate::{
         forge::build::CoreBuildArgs, read_constructor_args_file, remove_contract, retry::RetryArgs,
         LoadConfig,
     },
-    opts::{EthereumOpts, TransactionOpts, WalletType},
+    opts::{EthereumOpts, EtherscanOpts, TransactionOpts},
+    utils,
 };
 use cast::SimpleCast;
 use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, Constructor, Token},
-    prelude::{artifacts::BytecodeObject, ContractFactory, Middleware},
+    prelude::{artifacts::BytecodeObject, ContractFactory, Middleware, MiddlewareBuilder},
     solc::{info::ContractInfo, utils::canonicalized},
     types::{transaction::eip2718::TypedTransaction, Chain},
 };
 use eyre::Context;
-use foundry_common::{abi::parse_tokens, compile, estimate_eip1559_fees, try_get_http_provider};
+use foundry_common::{abi::parse_tokens, compile, estimate_eip1559_fees};
 use rustc_hex::ToHex;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
-use tracing::log::trace;
 
 /// CLI arguments for `forge create`.
 #[derive(Debug, Clone, Parser)]
@@ -120,7 +120,7 @@ impl CreateArgs {
 
         // Add arguments to constructor
         let config = self.eth.try_load_config_emit_warnings()?;
-        let provider = Arc::new(try_get_http_provider(config.get_rpc_url_or_localhost_http()?)?);
+        let provider = utils::get_provider(&config)?;
         let params = match abi.constructor {
             Some(ref v) => {
                 let constructor_args =
@@ -134,29 +134,18 @@ impl CreateArgs {
             None => vec![],
         };
 
+        let chain_id = provider.get_chainid().await?.as_u64();
         if self.unlocked {
-            let sender = self.eth.wallet.from.expect("is required");
-            trace!("creating with unlocked account={:?}", sender);
-            // use unlocked provider
-            let provider =
-                Arc::try_unwrap(provider).expect("Only one ref; qed.").with_sender(sender);
-            self.deploy(abi, bin, params, provider).await?;
-            return Ok(())
+            // Deploy with unlocked account
+            let sender = self.eth.wallet.from.expect("required");
+            let provider = provider.with_sender(sender);
+            self.deploy(abi, bin, params, provider, chain_id).await
+        } else {
+            // Deploy with signer
+            let signer = self.eth.wallet.signer(chain_id).await?;
+            let provider = provider.with_signer(signer);
+            self.deploy(abi, bin, params, provider, chain_id).await
         }
-
-        // Deploy with signer
-        let chain_id = provider.get_chainid().await?;
-        match self.eth.signer_with(chain_id, provider).await? {
-            Some(signer) => match signer {
-                WalletType::Ledger(signer) => self.deploy(abi, bin, params, signer).await?,
-                WalletType::Local(signer) => self.deploy(abi, bin, params, signer).await?,
-                WalletType::Trezor(signer) => self.deploy(abi, bin, params, signer).await?,
-                WalletType::Aws(signer) => self.deploy(abi, bin, params, signer).await?,
-            },
-            None => eyre::bail!("could not find artifact"),
-        };
-
-        Ok(())
     }
 
     /// Ensures the verify command can be executed.
@@ -179,8 +168,10 @@ impl CreateArgs {
             constructor_args,
             constructor_args_path: None,
             num_of_optimizations: None,
-            chain: chain.into(),
-            etherscan_key: self.eth.etherscan_api_key.clone(),
+            etherscan: EtherscanOpts {
+                key: self.eth.etherscan.key.clone(),
+                chain: Some(chain.into()),
+            },
             flatten: false,
             force: false,
             watch: true,
@@ -201,8 +192,8 @@ impl CreateArgs {
         bin: BytecodeObject,
         args: Vec<Token>,
         provider: M,
+        chain: u64,
     ) -> eyre::Result<()> {
-        let chain = provider.get_chainid().await?.as_u64();
         let deployer_address =
             provider.default_sender().expect("no sender address set for provider");
         let bin = bin.into_bytes().unwrap_or_else(|| {
@@ -324,8 +315,7 @@ impl CreateArgs {
             constructor_args,
             constructor_args_path: None,
             num_of_optimizations,
-            chain: chain.into(),
-            etherscan_key: self.eth.etherscan_api_key,
+            etherscan: EtherscanOpts { key: self.eth.etherscan.key, chain: Some(chain.into()) },
             flatten: false,
             force: false,
             watch: true,

@@ -4,7 +4,7 @@ use crate::{
 };
 use clap::{Parser, ValueHint};
 use console::{style, Style};
-use forge_fmt::{format, parse};
+use forge_fmt::{format, parse, print_diagnostics_report};
 use foundry_common::{fs, term::cli_warn};
 use foundry_config::{impl_figment_convert_basic, Config};
 use foundry_utils::glob::expand_globs;
@@ -23,7 +23,6 @@ use tracing::log::warn;
 pub struct FmtArgs {
     #[clap(
         help = "path to the file, directory or '-' to read from stdin",
-        conflicts_with = "root",
         value_hint = ValueHint::FilePath,
         value_name = "PATH",
         num_args(1..)
@@ -64,9 +63,10 @@ impl FmtArgs {
         let mut paths = self.paths.iter().peekable();
 
         if let Some(path) = paths.peek() {
-            if *path == Path::new("-") && !atty::is(atty::Stream::Stdin) {
+            let mut stdin = io::stdin();
+            if *path == Path::new("-") && !is_terminal::is_terminal(&stdin) {
                 let mut buf = String::new();
-                io::stdin().read_to_string(&mut buf).expect("Failed to read from stdin");
+                stdin.read_to_string(&mut buf).expect("Failed to read from stdin");
                 return vec![Input::Stdin(buf)]
             }
         }
@@ -122,12 +122,16 @@ impl Cmd for FmtArgs {
                     Input::Stdin(source) => source.to_string()
                 };
 
-                let parsed = parse(&source)
-                    .map_err(|diags| eyre::eyre!(
-                            "Failed to parse Solidity code for {}. Leaving source unchanged.\nDebug info: {:?}",
-                            input,
-                            diags
-                        ))?;
+                let parsed = match parse(&source) {
+                    Ok(result) => result,
+                    Err(diagnostics) => {
+                        let path = if let Input::Path(path) = input {Some(path)} else {None};
+                        print_diagnostics_report(&source,path,  diagnostics)?;
+                        eyre::bail!(
+                            "Failed to parse Solidity code for {input}. Leaving source unchanged."
+                        )
+                    }
+                };
 
                 if !parsed.invalid_inline_config_items.is_empty() {
                     let path = match input {

@@ -42,18 +42,11 @@ impl TestOptions {
     }
 
     pub fn fuzzer_with_cases(&self, cases: u32) -> TestRunner {
-        let max_global_rejects = if self.fuzz.max_test_rejects !=
-            foundry_config::FuzzConfig::default().max_test_rejects
-        {
-            self.fuzz.max_test_rejects
-        } else {
-            self.fuzz.max_global_rejects
-        };
         // TODO: Add Options to modify the persistence
         let cfg = proptest::test_runner::Config {
             failure_persistence: None,
             cases,
-            max_global_rejects,
+            max_global_rejects: self.fuzz.max_test_rejects,
             ..Default::default()
         };
 
@@ -62,10 +55,10 @@ impl TestOptions {
             let mut bytes: [u8; 32] = [0; 32];
             fuzz_seed.to_big_endian(&mut bytes);
             let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &bytes);
-            proptest::test_runner::TestRunner::new_with_rng(cfg, rng)
+            TestRunner::new_with_rng(cfg, rng)
         } else {
             trace!(target: "forge::test", "building stochastic fuzzer");
-            proptest::test_runner::TestRunner::new(cfg)
+            TestRunner::new(cfg)
         }
     }
 }

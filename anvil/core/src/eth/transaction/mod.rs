@@ -7,7 +7,7 @@ use crate::eth::{
 use ethers_core::{
     types::{
         transaction::eip2930::{AccessList, AccessListItem},
-        Address, Bloom, Bytes, Signature, SignatureError, TxHash, H256, U256,
+        Address, Bloom, Bytes, Signature, SignatureError, TxHash, H256, U256, U64,
     },
     utils::{
         keccak256, rlp,
@@ -16,9 +16,15 @@ use ethers_core::{
 };
 use foundry_evm::trace::CallTraceArena;
 use revm::{CreateScheme, Return, TransactTo, TxEnv};
+use std::ops::Deref;
 
 /// compatibility with `ethers-rs` types
 mod ethers_compat;
+
+/// The signature used to bypass signing via the `eth_sendUnsignedTransaction` cheat RPC
+#[cfg(feature = "impersonated-tx")]
+pub const IMPERSONATED_SIGNATURE: Signature =
+    Signature { r: U256([0, 0, 0, 0]), s: U256([0, 0, 0, 0]), v: 0 };
 
 /// Container type for various Ethereum transaction requests
 ///
@@ -34,7 +40,7 @@ pub enum TypedTransactionRequest {
 }
 
 /// Represents _all_ transaction requests received from RPC
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
@@ -60,6 +66,9 @@ pub struct EthTransactionRequest {
     pub data: Option<Bytes>,
     /// Transaction nonce
     pub nonce: Option<U256>,
+    /// chain id
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub chain_id: Option<U64>,
     /// warm storage access pre-payment
     #[cfg_attr(feature = "serde", serde(default))]
     pub access_list: Option<Vec<AccessListItem>>,
@@ -83,11 +92,21 @@ impl EthTransactionRequest {
             data,
             nonce,
             mut access_list,
+            chain_id,
+            transaction_type,
             ..
         } = self;
-        match (gas_price, max_fee_per_gas, access_list.take()) {
+        let chain_id = chain_id.map(|id| id.as_u64());
+        let transaction_type = transaction_type.map(|id| id.as_u64());
+        match (
+            transaction_type,
+            gas_price,
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            access_list.take(),
+        ) {
             // legacy transaction
-            (Some(_), None, None) => {
+            (Some(0), _, None, None, None) | (None, Some(_), None, None, None) => {
                 Some(TypedTransactionRequest::Legacy(LegacyTransactionRequest {
                     nonce: nonce.unwrap_or(U256::zero()),
                     gas_price: gas_price.unwrap_or_default(),
@@ -98,11 +117,11 @@ impl EthTransactionRequest {
                         Some(to) => TransactionKind::Call(to),
                         None => TransactionKind::Create,
                     },
-                    chain_id: None,
+                    chain_id,
                 }))
             }
             // EIP2930
-            (_, None, Some(access_list)) => {
+            (Some(1), _, None, None, _) | (None, _, None, None, Some(_)) => {
                 Some(TypedTransactionRequest::EIP2930(EIP2930TransactionRequest {
                     nonce: nonce.unwrap_or(U256::zero()),
                     gas_price: gas_price.unwrap_or_default(),
@@ -113,12 +132,15 @@ impl EthTransactionRequest {
                         Some(to) => TransactionKind::Call(to),
                         None => TransactionKind::Create,
                     },
-                    chain_id: 0,
-                    access_list,
+                    chain_id: chain_id.unwrap_or_default(),
+                    access_list: access_list.unwrap_or_default(),
                 }))
             }
             // EIP1559
-            (None, Some(_), access_list) | (None, None, access_list @ None) => {
+            (Some(2), None, _, _, _) |
+            (None, None, Some(_), _, _) |
+            (None, None, _, Some(_), _) |
+            (None, None, None, None, None) => {
                 // Empty fields fall back to the canonical transaction schema.
                 Some(TypedTransactionRequest::EIP1559(EIP1559TransactionRequest {
                     nonce: nonce.unwrap_or(U256::zero()),
@@ -131,7 +153,7 @@ impl EthTransactionRequest {
                         Some(to) => TransactionKind::Call(to),
                         None => TransactionKind::Create,
                     },
-                    chain_id: 0,
+                    chain_id: chain_id.unwrap_or_default(),
                     access_list: access_list.unwrap_or_default(),
                 }))
             }
@@ -387,6 +409,115 @@ impl Encodable for EIP1559TransactionRequest {
     }
 }
 
+/// A wrapper for `TypedTransaction` that allows impersonating accounts.
+///
+/// This is a helper that carries the `impersonated` sender so that the right hash
+/// [TypedTransaction::impersonated_hash] can be created.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct MaybeImpersonatedTransaction {
+    #[cfg_attr(feature = "serde", serde(flatten))]
+    pub transaction: TypedTransaction,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub impersonated_sender: Option<Address>,
+}
+
+// === impl MaybeImpersonatedTransaction ===
+
+impl MaybeImpersonatedTransaction {
+    /// Creates a new wrapper for the given transaction
+    pub fn new(transaction: TypedTransaction) -> Self {
+        Self { transaction, impersonated_sender: None }
+    }
+
+    /// Creates a new impersonated transaction wrapper using the given sender
+    pub fn impersonated(transaction: TypedTransaction, impersonated_sender: Address) -> Self {
+        Self { transaction, impersonated_sender: Some(impersonated_sender) }
+    }
+
+    /// Recovers the Ethereum address which was used to sign the transaction.
+    ///
+    /// Note: this is feature gated so it does not conflict with the `Deref`ed
+    /// [TypedTransaction::recover] function by default.
+    #[cfg(feature = "impersonated-tx")]
+    pub fn recover(&self) -> Result<Address, SignatureError> {
+        if let Some(sender) = self.impersonated_sender {
+            return Ok(sender)
+        }
+        self.transaction.recover()
+    }
+
+    /// Returns the hash of the transaction
+    ///
+    /// Note: this is feature gated so it does not conflict with the `Deref`ed
+    /// [TypedTransaction::hash] function by default.
+    #[cfg(feature = "impersonated-tx")]
+    pub fn hash(&self) -> H256 {
+        if self.transaction.is_impersonated() {
+            if let Some(sender) = self.impersonated_sender {
+                return self.transaction.impersonated_hash(sender)
+            }
+        }
+        self.transaction.hash()
+    }
+}
+
+impl Encodable for MaybeImpersonatedTransaction {
+    fn rlp_append(&self, s: &mut RlpStream) {
+        self.transaction.rlp_append(s)
+    }
+}
+
+impl From<MaybeImpersonatedTransaction> for TypedTransaction {
+    fn from(value: MaybeImpersonatedTransaction) -> Self {
+        value.transaction
+    }
+}
+
+impl From<TypedTransaction> for MaybeImpersonatedTransaction {
+    fn from(value: TypedTransaction) -> Self {
+        MaybeImpersonatedTransaction::new(value)
+    }
+}
+
+impl Decodable for MaybeImpersonatedTransaction {
+    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+        let transaction = TypedTransaction::decode(rlp)?;
+        Ok(Self { transaction, impersonated_sender: None })
+    }
+}
+
+#[cfg(feature = "fastrlp")]
+impl open_fastrlp::Encodable for MaybeImpersonatedTransaction {
+    fn encode(&self, out: &mut dyn open_fastrlp::BufMut) {
+        self.transaction.encode(out)
+    }
+    fn length(&self) -> usize {
+        self.transaction.length()
+    }
+}
+
+#[cfg(feature = "fastrlp")]
+impl open_fastrlp::Decodable for MaybeImpersonatedTransaction {
+    fn decode(buf: &mut &[u8]) -> Result<Self, open_fastrlp::DecodeError> {
+        Ok(Self { transaction: open_fastrlp::Decodable::decode(buf)?, impersonated_sender: None })
+    }
+}
+
+impl AsRef<TypedTransaction> for MaybeImpersonatedTransaction {
+    fn as_ref(&self) -> &TypedTransaction {
+        &self.transaction
+    }
+}
+
+impl Deref for MaybeImpersonatedTransaction {
+    type Target = TypedTransaction;
+
+    fn deref(&self) -> &Self::Target {
+        &self.transaction
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TypedTransaction {
@@ -430,6 +561,15 @@ impl TypedTransaction {
             TypedTransaction::Legacy(tx) => &tx.input,
             TypedTransaction::EIP2930(tx) => &tx.input,
             TypedTransaction::EIP1559(tx) => &tx.input,
+        }
+    }
+
+    /// Returns the transaction type
+    pub fn r#type(&self) -> Option<u8> {
+        match self {
+            TypedTransaction::Legacy(_) => None,
+            TypedTransaction::EIP2930(_) => Some(1),
+            TypedTransaction::EIP1559(_) => Some(2),
         }
     }
 
@@ -513,12 +653,32 @@ impl TypedTransaction {
         matches!(self, TypedTransaction::EIP1559(_))
     }
 
+    /// Returns the hash of the transaction.
+    ///
+    /// Note: If this transaction has the Impersonated signature then this returns a modified unique
+    /// hash. This allows us to treat impersonated transactions as unique.
     pub fn hash(&self) -> H256 {
         match self {
             TypedTransaction::Legacy(t) => t.hash(),
             TypedTransaction::EIP2930(t) => t.hash(),
             TypedTransaction::EIP1559(t) => t.hash(),
         }
+    }
+
+    /// Returns true if the transaction was impersonated (using the impersonate Signature)
+    #[cfg(feature = "impersonated-tx")]
+    pub fn is_impersonated(&self) -> bool {
+        self.signature() == IMPERSONATED_SIGNATURE
+    }
+
+    /// Returns the hash if the transaction is impersonated (using a fake signature)
+    ///
+    /// This appends the `address` before hashing it
+    #[cfg(feature = "impersonated-tx")]
+    pub fn impersonated_hash(&self, sender: Address) -> H256 {
+        let mut bytes = rlp::encode(self);
+        bytes.extend_from_slice(sender.as_ref());
+        H256::from_slice(keccak256(&bytes).as_slice())
     }
 
     /// Recovers the Ethereum address which was used to sign the transaction.
@@ -594,20 +754,6 @@ impl Decodable for TypedTransaction {
 
 #[cfg(feature = "fastrlp")]
 impl open_fastrlp::Encodable for TypedTransaction {
-    fn length(&self) -> usize {
-        match self {
-            TypedTransaction::Legacy(tx) => tx.length(),
-            tx => {
-                let payload_len = match tx {
-                    TypedTransaction::EIP2930(tx) => tx.length() + 1,
-                    TypedTransaction::EIP1559(tx) => tx.length() + 1,
-                    _ => unreachable!("legacy tx length already matched"),
-                };
-                // we include a string header for signed types txs, so include the length here
-                payload_len + open_fastrlp::length_of_length(payload_len)
-            }
-        }
-    }
     fn encode(&self, out: &mut dyn open_fastrlp::BufMut) {
         match self {
             TypedTransaction::Legacy(tx) => tx.encode(out),
@@ -637,6 +783,20 @@ impl open_fastrlp::Encodable for TypedTransaction {
                     }
                     _ => unreachable!("legacy tx encode already matched"),
                 }
+            }
+        }
+    }
+    fn length(&self) -> usize {
+        match self {
+            TypedTransaction::Legacy(tx) => tx.length(),
+            tx => {
+                let payload_len = match tx {
+                    TypedTransaction::EIP2930(tx) => tx.length() + 1,
+                    TypedTransaction::EIP1559(tx) => tx.length() + 1,
+                    _ => unreachable!("legacy tx length already matched"),
+                };
+                // we include a string header for signed types txs, so include the length here
+                payload_len + open_fastrlp::length_of_length(payload_len)
             }
         }
     }
@@ -971,7 +1131,7 @@ pub struct TransactionEssentials {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingTransaction {
     /// The actual transaction
-    pub transaction: TypedTransaction,
+    pub transaction: MaybeImpersonatedTransaction,
     /// the recovered sender of this transaction
     sender: Address,
     /// hash of `transaction`, so it can easily be reused with encoding and hashing agan
@@ -984,12 +1144,20 @@ impl PendingTransaction {
     /// Creates a new pending transaction and tries to verify transaction and recover sender.
     pub fn new(transaction: TypedTransaction) -> Result<Self, SignatureError> {
         let sender = transaction.recover()?;
-        Ok(Self::with_sender(transaction, sender))
+        Ok(Self { hash: transaction.hash(), transaction: transaction.into(), sender })
     }
 
-    /// Creates a new transaction with the given sender
-    pub fn with_sender(transaction: TypedTransaction, sender: Address) -> Self {
-        Self { hash: transaction.hash(), transaction, sender }
+    /// Creates a new transaction with the given sender.
+    ///
+    /// In order to prevent collisions from multiple different impersonated accounts, we update the
+    /// transaction's hash with the address to make it unique.
+    ///
+    /// See: <https://github.com/foundry-rs/foundry/issues/3759>
+    #[cfg(feature = "impersonated-tx")]
+    pub fn with_impersonated(transaction: TypedTransaction, sender: Address) -> Self {
+        let hash = transaction.impersonated_hash(sender);
+        let transaction = MaybeImpersonatedTransaction::impersonated(transaction, sender);
+        Self { hash, transaction, sender }
     }
 
     pub fn nonce(&self) -> &U256 {
@@ -1015,7 +1183,7 @@ impl PendingTransaction {
         }
 
         let caller = *self.sender();
-        match &self.transaction {
+        match &self.transaction.transaction {
             TypedTransaction::Legacy(tx) => {
                 let chain_id = tx.chain_id();
                 let LegacyTransaction { nonce, gas_price, gas_limit, value, kind, input, .. } = tx;

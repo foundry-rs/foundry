@@ -1,8 +1,4 @@
-use crate::eth::{
-    receipt::TypedReceipt,
-    transaction::{TransactionInfo, TypedTransaction},
-    trie,
-};
+use crate::eth::{receipt::TypedReceipt, transaction::TransactionInfo, trie};
 use ethers_core::{
     types::{Address, Bloom, Bytes, H256, H64, U256},
     utils::{
@@ -19,24 +15,39 @@ pub struct BlockInfo {
     pub receipts: Vec<TypedReceipt>,
 }
 
-/// ethereum block
+// Type alias to optionally support impersonated transactions
+#[cfg(not(feature = "impersonated-tx"))]
+type Transaction = crate::eth::transaction::TypedTransaction;
+#[cfg(feature = "impersonated-tx")]
+type Transaction = crate::eth::transaction::MaybeImpersonatedTransaction;
+
+/// An Ethereum block
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "fastrlp", derive(open_fastrlp::RlpEncodable, open_fastrlp::RlpDecodable))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Block {
     pub header: Header,
-    pub transactions: Vec<TypedTransaction>,
+    /// Note: this supports impersonated transactions
+    pub transactions: Vec<Transaction>,
     pub ommers: Vec<Header>,
 }
 
 // == impl Block ==
 
 impl Block {
-    pub fn new(
+    /// Creates a new block
+    ///
+    /// Note: if the `impersonate-tx` feature is enabled this  will also accept
+    /// [MaybeImpersonatedTransaction]
+    pub fn new<T>(
         partial_header: PartialHeader,
-        transactions: Vec<TypedTransaction>,
+        transactions: impl IntoIterator<Item = T>,
         ommers: Vec<Header>,
-    ) -> Self {
+    ) -> Self
+    where
+        T: Into<Transaction>,
+    {
+        let transactions: Vec<_> = transactions.into_iter().map(Into::into).collect();
         let ommers_hash = H256::from_slice(keccak256(&rlp::encode_list(&ommers)[..]).as_slice());
         let transactions_root =
             trie::ordered_trie_root(transactions.iter().map(|r| rlp::encode(r).freeze()));

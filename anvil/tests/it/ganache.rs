@@ -3,7 +3,7 @@
 use crate::init_tracing;
 use ethers::{
     abi::Address,
-    contract::{Contract, ContractFactory},
+    contract::{Contract, ContractFactory, ContractInstance},
     core::k256::SecretKey,
     prelude::{abigen, Middleware, Signer, SignerMiddleware, TransactionRequest, Ws},
     providers::{Http, Provider},
@@ -28,7 +28,7 @@ fn ganache_wallet2() -> LocalWallet {
 
 fn wallet(key_str: &str) -> LocalWallet {
     let key_hex = hex::decode(key_str).expect("could not parse as hex");
-    let key = SecretKey::from_be_bytes(&key_hex).expect("did not get private key");
+    let key = SecretKey::from_bytes(key_hex.as_slice().into()).expect("did not get private key");
     key.into()
 }
 
@@ -159,7 +159,7 @@ contract Contract {
         Provider::<Http>::try_from("http://127.0.0.1:8545").unwrap(),
         ganache_wallet2(),
     );
-    let contract = Contract::new(contract.address(), abi.unwrap(), provider);
+    let contract = ContractInstance::new(contract.address(), abi.unwrap(), provider);
     let resp = contract.method::<_, U256>("getSecret", ()).unwrap().legacy().call().await;
     resp.unwrap_err();
 

@@ -5,7 +5,7 @@ import "ds-test/test.sol";
 
 contract Malicious {
     function world() public {
-        // Does not matter, since it will get overriden.
+        // Does not matter, since it will get overridden.
     }
 }
 

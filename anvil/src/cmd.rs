@@ -8,7 +8,7 @@ use anvil_server::ServerConfig;
 use clap::Parser;
 use core::fmt;
 use ethers::utils::WEI_IN_ETHER;
-use foundry_config::Chain;
+use foundry_config::{Chain, Config};
 use futures::FutureExt;
 use std::{
     future::Future,
@@ -78,7 +78,7 @@ pub struct NodeArgs {
     #[clap(flatten)]
     pub server_config: ServerConfig,
 
-    #[clap(long, help = "Don't print anything on startup.")]
+    #[clap(long, help = "Don't print anything on startup and don't print logs")]
     pub silent: bool,
 
     #[clap(long, help = "The EVM hardfork to use.", value_name = "HARDFORK", value_parser = Hardfork::from_str)]
@@ -176,8 +176,11 @@ pub struct NodeArgs {
     )]
     pub ipc: Option<Option<String>>,
 
-    #[clap(long, help = "Don't keep full chain history.")]
-    pub prune_history: bool,
+    #[clap(
+        long,
+        help = "Don't keep full chain history. If a number argument is specified, at most this number of states is kept in memory."
+    )]
+    pub prune_history: Option<Option<usize>>,
 
     #[clap(long, help = "Number of blocks with transactions to keep in memory.")]
     pub transaction_block_keeper: Option<usize>,
@@ -205,6 +208,7 @@ impl NodeArgs {
 
         NodeConfig::default()
             .with_gas_limit(self.evm_opts.gas_limit)
+            .disable_block_gas_limit(self.evm_opts.disable_block_gas_limit)
             .with_gas_price(self.evm_opts.gas_price)
             .with_hardfork(self.hardfork)
             .with_blocktime(self.block_time.map(Duration::from_secs))
@@ -283,9 +287,30 @@ impl NodeArgs {
         let mut state_dumper = PeriodicStateDumper::new(api, dump_state, dump_interval);
 
         task_manager.spawn(async move {
+            // wait for the SIGTERM signal on unix systems
+            #[cfg(unix)]
+            let mut sigterm = Box::pin(async {
+                if let Ok(mut stream) =
+                    tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                {
+                    stream.recv().await;
+                } else {
+                    futures::future::pending::<()>().await;
+                }
+            });
+
+            // on windows, this will never fires
+            #[cfg(not(unix))]
+            let mut sigterm = Box::pin(futures::future::pending::<()>());
+
             // await shutdown signal but also periodically flush state
             tokio::select! {
-                _ = &mut on_shutdown =>{}
+                 _ = &mut sigterm => {
+                    trace!("received sigterm signal, shutting down");
+                },
+                _ = &mut on_shutdown =>{
+
+                }
                 _ = &mut state_dumper =>{}
             }
 
@@ -405,7 +430,8 @@ pub struct AnvilEvmArgs {
         requires = "fork_url",
         value_name = "NO_RATE_LIMITS",
         help = "Disables rate limiting for this node provider.",
-        help_heading = "Fork config"
+        help_heading = "Fork config",
+        visible_alias = "no-rpc-rate-limit"
     )]
     pub no_rate_limit: bool,
 
@@ -420,8 +446,23 @@ pub struct AnvilEvmArgs {
     pub no_storage_caching: bool,
 
     /// The block gas limit.
-    #[clap(long, value_name = "GAS_LIMIT", help_heading = "Environment config")]
+    #[clap(
+        long,
+        value_name = "GAS_LIMIT",
+        alias = "block-gas-limit",
+        help_heading = "Environment config"
+    )]
     pub gas_limit: Option<u64>,
+
+    /// Disable the `call.gas_limit <= block.gas_limit` constraint.
+    #[clap(
+        long,
+        value_name = "DISABLE_GAS_LIMIT",
+        help_heading = "Environment config",
+        alias = "disable-gas-limit",
+        conflicts_with = "gas_limit"
+    )]
+    pub disable_block_gas_limit: bool,
 
     /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests. By
     /// default, it is 0x6000 (~25kb).
@@ -451,6 +492,20 @@ pub struct AnvilEvmArgs {
         visible_alias = "tracing"
     )]
     pub steps_tracing: bool,
+}
+
+/// Resolves an alias passed as fork-url to the matching url defined in the rpc_endpoints section
+/// of the project configuration file.
+/// Does nothing if the fork-url is not a configured alias.
+impl AnvilEvmArgs {
+    pub fn resolve_rpc_alias(&mut self) {
+        if let Some(fork_url) = &self.fork_url {
+            let config = Config::load();
+            if let Some(Ok(url)) = config.get_rpc_url_with_alias(&fork_url.url) {
+                self.fork_url = Some(ForkUrl { url: url.to_string(), block: fork_url.block });
+            }
+        }
+    }
 }
 
 /// Helper type to periodically dump the state of the chain to disk
@@ -525,8 +580,7 @@ impl Future for PeriodicStateDumper {
             if this.interval.poll_tick(cx).is_ready() {
                 let api = this.api.clone();
                 let path = this.dump_state.clone().expect("exists; see above");
-                this.in_progress_dump =
-                    Some(Box::pin(async move { PeriodicStateDumper::dump_state(api, path).await }));
+                this.in_progress_dump = Some(Box::pin(PeriodicStateDumper::dump_state(api, path)));
             } else {
                 break
             }
@@ -640,5 +694,24 @@ mod tests {
     fn can_parse_hardfork() {
         let args: NodeArgs = NodeArgs::parse_from(["anvil", "--hardfork", "berlin"]);
         assert_eq!(args.hardfork, Some(Hardfork::Berlin));
+    }
+
+    #[test]
+    fn can_parse_prune_config() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--prune-history"]);
+        assert!(args.prune_history.is_some());
+
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--prune-history", "100"]);
+        assert_eq!(args.prune_history, Some(Some(100)));
+    }
+
+    #[test]
+    fn can_parse_disable_block_gas_limit() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--disable-block-gas-limit"]);
+        assert!(args.evm_opts.disable_block_gas_limit);
+
+        let args =
+            NodeArgs::try_parse_from(["anvil", "--disable-block-gas-limit", "--gas-limit", "100"]);
+        assert!(args.is_err());
     }
 }

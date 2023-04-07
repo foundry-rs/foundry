@@ -24,4 +24,13 @@ contract UsingExampleContract {
             .into
             .lines
     } for uint256;
+    using {and as &, or as |, xor as ^, cpl as ~} for Bitmap global;
+    using {
+        eq as ==,
+        ne as !=,
+        lt as <,
+        lte as <=,
+        gt as >,
+        gte as >=
+    } for Bitmap global;
 }

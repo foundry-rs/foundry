@@ -4,7 +4,7 @@ use crate::Config;
 use ethers_core::types::{serde_helpers::Numeric, U256};
 use ethers_solc::remappings::{Remapping, RemappingError};
 use figment::value::Value;
-use serde::{Deserialize, Deserializer};
+use serde::{de::Error, Deserialize, Deserializer};
 use std::{
     path::{Path, PathBuf},
     str::FromStr,
@@ -181,4 +181,31 @@ where
     } else {
         Err(serde::de::Error::custom("percent must be lte 100"))
     }
+}
+
+/// Deserialize an usize or
+pub(crate) fn deserialize_usize_or_max<'de, D>(deserializer: D) -> Result<usize, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Val {
+        Number(usize),
+        Text(String),
+    }
+
+    let num = match Val::deserialize(deserializer)? {
+        Val::Number(num) => num,
+        Val::Text(s) => {
+            match s.as_str() {
+                "max" | "MAX" | "Max" => {
+                    // toml limitation
+                    i64::MAX as usize
+                }
+                s => s.parse::<usize>().map_err(D::Error::custom).unwrap(),
+            }
+        }
+    };
+    Ok(num)
 }

@@ -4,8 +4,9 @@ members = [
     "anvil/core",
     "anvil/rpc",
     "anvil/server",
-    "cast",
     "binder",
+    "cast",
+    "chisel",
     "cli",
     "cli/test-utils",
     "common",
@@ -14,11 +15,10 @@ members = [
     "evm",
     "fmt",
     "forge",
-    "ui",
-    "utils",
-    "chisel",
     "macros",
     "macros/impl",
+    "ui",
+    "utils",
 ]
 
 [profile.dev]
@@ -57,6 +57,17 @@ debug = 0
 strip = true
 panic = "abort"
 codegen-units = 1
+
+[workspace.dependencies]
+ethers = { version = "2", default-features = false }
+ethers-addressbook = { version = "2", default-features = false }
+ethers-core = { version = "2", default-features = false }
+ethers-contract = { version = "2", default-features = false }
+ethers-providers = { version = "2", default-features = false }
+ethers-signers = { version = "2", default-features = false }
+ethers-middleware = { version = "2", default-features = false }
+ethers-etherscan = { version = "2", default-features = false }
+ethers-solc = { version = "2", default-features = false }
 
 # # Patch ethers-rs with a local checkout then run `cargo update -p ethers`
 # [patch."https://github.com/gakonst/ethers-rs"]

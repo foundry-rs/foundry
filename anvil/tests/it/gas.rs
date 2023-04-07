@@ -3,7 +3,10 @@
 use anvil::{eth::fees::INITIAL_BASE_FEE, spawn, NodeConfig};
 use ethers::{
     prelude::Middleware,
-    types::{transaction::eip2718::TypedTransaction, Address, BlockNumber, TransactionRequest},
+    types::{
+        transaction::eip2718::TypedTransaction, Address, BlockNumber, Eip1559TransactionRequest,
+        TransactionRequest,
+    },
 };
 
 const GAS_TRANSFER: u64 = 21_000u64;
@@ -86,4 +89,24 @@ async fn test_respect_base_fee() {
     tx.set_gas_price(base_fee);
     let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
     assert_eq!(tx.status, Some(1u64.into()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tip_above_fee_cap() {
+    let base_fee = 50u64;
+    let (_api, handle) = spawn(NodeConfig::test().with_base_fee(Some(base_fee))).await;
+    let provider = handle.http_provider();
+    let tx = TypedTransaction::Eip1559(
+        Eip1559TransactionRequest::new()
+            .max_fee_per_gas(base_fee)
+            .max_priority_fee_per_gas(base_fee + 1)
+            .to(Address::random())
+            .value(100u64),
+    );
+    let res = provider.send_transaction(tx, None).await;
+    assert!(res.is_err());
+    assert!(res
+        .unwrap_err()
+        .to_string()
+        .contains("max priority fee per gas higher than max fee per gas"));
 }

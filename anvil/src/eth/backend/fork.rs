@@ -172,9 +172,27 @@ impl ClientFork {
         request: &EthTransactionRequest,
         block: Option<BlockNumber>,
     ) -> Result<Bytes, ProviderError> {
-        let tx = ethers::utils::serialize(request);
-        let block = ethers::utils::serialize(&block.unwrap_or(BlockNumber::Latest));
-        self.provider().request("eth_call", [tx, block]).await
+        let request = Arc::new(request.clone());
+        let block = block.unwrap_or(BlockNumber::Latest);
+
+        if let BlockNumber::Number(num) = block {
+            // check if this request was already been sent
+            let key = (request.clone(), num.as_u64());
+            if let Some(res) = self.storage_read().eth_call.get(&key).cloned() {
+                return Ok(res)
+            }
+        }
+
+        let tx = ethers::utils::serialize(request.as_ref());
+        let block_value = ethers::utils::serialize(&block);
+        let res: Bytes = self.provider().request("eth_call", [tx, block_value]).await?;
+
+        if let BlockNumber::Number(num) = block {
+            // cache result
+            let mut storage = self.storage_write();
+            storage.eth_call.insert((request, num.as_u64()), res.clone());
+        }
+        Ok(res)
     }
 
     /// Sends `eth_call`
@@ -183,12 +201,30 @@ impl ClientFork {
         request: &EthTransactionRequest,
         block: Option<BlockNumber>,
     ) -> Result<U256, ProviderError> {
-        let tx = ethers::utils::serialize(request);
-        let block = ethers::utils::serialize(&block.unwrap_or(BlockNumber::Latest));
-        self.provider().request("eth_estimateGas", [tx, block]).await
+        let request = Arc::new(request.clone());
+        let block = block.unwrap_or(BlockNumber::Latest);
+
+        if let BlockNumber::Number(num) = block {
+            // check if this request was already been sent
+            let key = (request.clone(), num.as_u64());
+            if let Some(res) = self.storage_read().eth_gas_estimations.get(&key).cloned() {
+                return Ok(res)
+            }
+        }
+        let tx = ethers::utils::serialize(request.as_ref());
+        let block_value = ethers::utils::serialize(&block);
+        let res = self.provider().request("eth_estimateGas", [tx, block_value]).await?;
+
+        if let BlockNumber::Number(num) = block {
+            // cache result
+            let mut storage = self.storage_write();
+            storage.eth_gas_estimations.insert((request, num.as_u64()), res);
+        }
+
+        Ok(res)
     }
 
-    /// Sends `eth_call`
+    /// Sends `eth_createAccessList`
     pub async fn create_access_list(
         &self,
         request: &EthTransactionRequest,
@@ -210,7 +246,15 @@ impl ClientFork {
     }
 
     pub async fn logs(&self, filter: &Filter) -> Result<Vec<Log>, ProviderError> {
-        self.provider().get_logs(filter).await
+        if let Some(logs) = self.storage_read().logs.get(filter).cloned() {
+            return Ok(logs)
+        }
+
+        let logs = self.provider().get_logs(filter).await?;
+
+        let mut storage = self.storage_write();
+        storage.logs.insert(filter.clone(), logs.clone());
+        Ok(logs)
     }
 
     pub async fn get_code(
@@ -556,8 +600,11 @@ pub struct ForkedStorage {
     pub transactions: HashMap<H256, Transaction>,
     pub transaction_receipts: HashMap<H256, TransactionReceipt>,
     pub transaction_traces: HashMap<H256, Vec<Trace>>,
+    pub logs: HashMap<Filter, Vec<Log>>,
     pub geth_transaction_traces: HashMap<H256, GethTrace>,
     pub block_traces: HashMap<u64, Vec<Trace>>,
+    pub eth_gas_estimations: HashMap<(Arc<EthTransactionRequest>, u64), U256>,
+    pub eth_call: HashMap<(Arc<EthTransactionRequest>, u64), Bytes>,
     pub code_at: HashMap<(Address, u64), Bytes>,
 }
 

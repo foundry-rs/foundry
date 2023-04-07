@@ -92,8 +92,12 @@ impl Future for NodeService {
 
         if pin.filter_eviction_interval.poll_tick(cx).is_ready() {
             let filters = pin.filters.clone();
-            // evict filters that timed out
-            tokio::task::spawn(async move { filters.evict().await });
+
+            #[allow(clippy::redundant_async_block)]
+            tokio::task::spawn(async move {
+                // evict filters that timed out
+                filters.evict().await
+            });
         }
 
         Poll::Pending

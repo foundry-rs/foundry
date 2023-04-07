@@ -99,7 +99,7 @@ fn broadcast_key(
     let mut bytes: [u8; 32] = [0; 32];
     private_key.to_big_endian(&mut bytes);
 
-    let key = SigningKey::from_bytes(&bytes).map_err(|err| err.to_string().encode())?;
+    let key = SigningKey::from_bytes((&bytes).into()).map_err(|err| err.to_string().encode())?;
     let wallet = LocalWallet::from(key).with_chain_id(chain_id.as_u64());
 
     let new_origin = wallet.address();
@@ -356,6 +356,10 @@ pub fn apply<DB: DatabaseExt>(
             data.env.cfg.chain_id = inner.0;
             Bytes::new()
         }
+        HEVMCalls::TxGasPrice(inner) => {
+            data.env.tx.gas_price = inner.0;
+            Bytes::new()
+        }
         HEVMCalls::Broadcast0(_) => {
             correct_sender_nonce(
                 data.env.tx.caller,
@@ -461,6 +465,9 @@ pub fn apply<DB: DatabaseExt>(
             )?
         }
         HEVMCalls::StopBroadcast(_) => {
+            if state.broadcast.is_none() {
+                return Err("No broadcast in progress to stop".to_string().encode().into())
+            }
             state.broadcast = None;
             Bytes::new()
         }

@@ -168,6 +168,15 @@ interface Cheats {
     // Gets all the recorded logs
     function getRecordedLogs() external returns (Log[] memory);
 
+    // Prepare an expected log with all four checks enabled.
+    // Call this function, then emit an event, then call a function. Internally after the call, we check if
+    // logs were emitted in the expected order with the expected topics and data.
+    // Second form also checks supplied address against emitting contract.
+    function expectEmit() external;
+
+    // Prepare an expected log with all four checks enabled, and check supplied address against emitting contract.
+    function expectEmit(address) external;
+
     // Prepare an expected log with (bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData).
     // Call this function, then emit an event, then call a function. Internally after the call, we check if
     // logs were emitted in the expected order with the expected topics and data (as specified by the booleans).
@@ -186,6 +195,12 @@ interface Cheats {
     // Calldata match takes precedence over msg.value in case of ambiguity.
     function mockCall(address, uint256, bytes calldata, bytes calldata) external;
 
+    // Reverts a call to an address with specified revert data.
+    function mockCallRevert(address, bytes calldata, bytes calldata) external;
+
+    // Reverts a call to an address with a specific msg.value, with specified revert data.
+    function mockCallRevert(address, uint256 msgValue, bytes calldata, bytes calldata) external;
+
     // Clears all mocked calls
     function clearMockedCalls() external;
 
@@ -195,6 +210,20 @@ interface Cheats {
 
     // Expect a call to an address with the specified msg.value and calldata
     function expectCall(address, uint256, bytes calldata) external;
+
+    // Expect a call to an address with the specified msg.value, gas, and calldata.
+    function expectCall(address, uint256, uint64, bytes calldata) external;
+
+    // Expect a call to an address with the specified msg.value and calldata, and a *minimum* amount of gas.
+    function expectCallMinGas(address, uint256, uint64, bytes calldata) external;
+
+    // Only allows memory writes to offsets [0x00, 0x60) ∪ [min, max) in the current subcontext. If any other
+    // memory is written to, the test will fail.
+    function expectSafeMemory(uint64, uint64) external;
+
+    // Only allows memory writes to offsets [0x00, 0x60) ∪ [min, max) in the next created subcontext.
+    // If any other memory is written to, the test will fail.
+    function expectSafeMemoryCall(uint64, uint64) external;
 
     // Gets the bytecode from an artifact file. Takes in the relative path to the json file
     function getCode(string calldata) external returns (bytes memory);

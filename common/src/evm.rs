@@ -101,6 +101,38 @@ pub struct EvmArgs {
     #[clap(flatten)]
     #[serde(flatten)]
     pub env: EnvArgs,
+
+    /// Sets the number of assumed available compute units per second for this provider
+    ///
+    /// default value: 330
+    ///
+    /// See --fork-url.
+    /// See also, https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups
+    #[clap(
+        long,
+        requires = "fork_url",
+        alias = "cups",
+        value_name = "CUPS",
+        help_heading = "Fork config"
+    )]
+    pub compute_units_per_second: Option<u64>,
+
+    /// Disables rate limiting for this node's provider.
+    ///
+    /// default value: false
+    ///
+    /// See --fork-url.
+    /// See also, https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups
+    #[clap(
+        long,
+        requires = "fork_url",
+        value_name = "NO_RATE_LIMITS",
+        help = "Disables rate limiting for this node provider.",
+        help_heading = "Fork config",
+        visible_alias = "no-rate-limit"
+    )]
+    #[serde(skip)]
+    pub no_rpc_rate_limit: bool,
 }
 
 // Make this set of options a `figment::Provider` so that it can be merged into the `Config`
@@ -125,6 +157,10 @@ impl Provider for EvmArgs {
 
         if self.no_storage_caching {
             dict.insert("no_storage_caching".to_string(), self.no_storage_caching.into());
+        }
+
+        if self.no_rpc_rate_limit {
+            dict.insert("no_rpc_rate_limit".to_string(), self.no_rpc_rate_limit.into());
         }
 
         if let Some(fork_url) = &self.fork_url {
@@ -199,6 +235,11 @@ pub struct EnvArgs {
     #[clap(long, value_name = "GAS_LIMIT")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_gas_limit: Option<u64>,
+
+    /// The memory limit of the EVM in bytes (32 MB by default)
+    #[clap(long, value_name = "MEMORY_LIMIT")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_limit: Option<u64>,
 }
 
 impl EvmArgs {
@@ -226,5 +267,21 @@ mod tests {
 
         let env = EnvArgs::parse_from(["foundry-common", "--chain-id", "goerli"]);
         assert_eq!(env.chain_id, Some(ethers_core::types::Chain::Goerli.into()));
+    }
+
+    #[test]
+    fn test_memory_limit() {
+        let args = EvmArgs {
+            env: EnvArgs {
+                chain_id: Some(ethers_core::types::Chain::Mainnet.into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let config = Config::from_provider(Config::figment().merge(args));
+        assert_eq!(config.memory_limit, Config::default().memory_limit);
+
+        let env = EnvArgs::parse_from(["foundry-common", "--memory-limit", "100"]);
+        assert_eq!(env.memory_limit, Some(100));
     }
 }

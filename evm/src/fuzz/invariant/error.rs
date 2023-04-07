@@ -14,6 +14,8 @@ use tracing::trace;
 
 #[derive(Debug, Clone)]
 pub struct InvariantFuzzError {
+    pub logs: Vec<Log>,
+    pub traces: Option<CallTraceArena>,
     /// The proptest error occurred as a result of a test case.
     pub test_error: TestError<Vec<BasicTxDetails>>,
     /// The return reason of the offending call.
@@ -47,6 +49,8 @@ impl InvariantFuzzError {
         }
 
         InvariantFuzzError {
+            logs: call_result.logs,
+            traces: call_result.traces,
             test_error: proptest::test_runner::TestError::Fail(
                 format!(
                     "{}, reason: '{}'",
@@ -132,8 +136,6 @@ impl InvariantFuzzError {
                     .expect("bad call to evm");
 
                 if error_call_result.reverted {
-                    logs.extend(error_call_result.logs);
-                    traces.push((TraceKind::Execution, error_call_result.traces.unwrap()));
                     break
                 }
             }
@@ -201,7 +203,7 @@ impl InvariantFuzzError {
     ) -> Vec<&'a BasicTxDetails> {
         let mut anchor = 0;
         let mut removed_calls = vec![];
-        let mut shrinked = calls.iter().collect::<Vec<_>>();
+        let mut shrunk = calls.iter().collect::<Vec<_>>();
         trace!(target: "forge::test", "Shrinking.");
 
         while anchor != calls.len() {
@@ -209,8 +211,8 @@ impl InvariantFuzzError {
             let removed =
                 match self.fails_successfully(executor.clone(), calls, anchor, &removed_calls) {
                     Ok(new_sequence) => {
-                        if shrinked.len() > new_sequence.len() {
-                            shrinked = new_sequence;
+                        if shrunk.len() > new_sequence.len() {
+                            shrunk = new_sequence;
                         }
                         removed_calls.last().cloned()
                     }
@@ -236,6 +238,6 @@ impl InvariantFuzzError {
             }
         }
 
-        shrinked
+        shrunk
     }
 }

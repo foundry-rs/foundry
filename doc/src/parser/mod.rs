@@ -124,7 +124,7 @@ impl Parser {
             .into_iter()
             .filter(|c| c.tag.trim() != "solidity" && !c.tag.trim().is_empty())
             .collect_vec();
-        Ok(res.try_into()?)
+        Ok(res.into())
     }
 }
 

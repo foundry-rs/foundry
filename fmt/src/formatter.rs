@@ -224,7 +224,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         self.config.line_length >=
             self.total_indent_len()
                 .saturating_add(self.current_line_len())
-                .saturating_add(text.len() + space)
+                .saturating_add(text.chars().count() + space)
     }
 
     /// Write empty brackets with respect to `config.bracket_spacing` setting:
@@ -470,15 +470,21 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         write!(self.buf(), "{}", comment.start_token())?;
 
-        let mut lines = comment.contents().lines().peekable();
+        let mut wrapped = false;
+        let contents = comment.contents();
+        let mut lines = contents.lines().peekable();
         while let Some(line) = lines.next() {
-            self.write_comment_line(comment, line)?;
+            wrapped |= self.write_comment_line(comment, line)?;
             if lines.peek().is_some() {
                 self.write_preserved_line()?;
             }
         }
 
         if let Some(end) = comment.end_token() {
+            // Check if the end token in the original comment was on the separate line
+            if !wrapped && comment.comment.lines().count() > contents.lines().count() {
+                self.write_preserved_line()?;
+            }
             write!(self.buf(), "{end}")?;
         }
         if self.find_next_line(comment.loc.end()).is_some() {
@@ -549,14 +555,14 @@ impl<'a, W: Write> Formatter<'a, W> {
     }
 
     /// Write a comment line that might potentially overflow the maximum line length
-    /// and, if configured, will be wrapped to the next line
-    fn write_comment_line(&mut self, comment: &CommentWithMetadata, line: &str) -> Result<()> {
+    /// and, if configured, will be wrapped to the next line.
+    fn write_comment_line(&mut self, comment: &CommentWithMetadata, line: &str) -> Result<bool> {
         if self.will_it_fit(line) || !self.config.wrap_comments {
             let start_with_ws =
                 line.chars().next().map(|ch| ch.is_whitespace()).unwrap_or_default();
             if !self.is_beginning_of_line() || !start_with_ws {
                 write!(self.buf(), "{line}")?;
-                return Ok(())
+                return Ok(false)
             }
 
             // if this is the beginning of the line,
@@ -568,7 +574,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                 .map(|(_, ch)| ch);
             let padded = format!("{}{}", " ".repeat(indent), chars.join(""));
             self.write_raw(padded)?;
-            return Ok(())
+            return Ok(false)
         }
 
         let mut words = line.split(' ').peekable();
@@ -587,13 +593,13 @@ impl<'a, W: Write> Formatter<'a, W> {
                     // write newline wrap token
                     write!(self.buf(), "{}", comment.wrap_token())?;
                     self.write_comment_line(comment, &words.join(" "))?;
-                    return Ok(())
+                    return Ok(true)
                 }
 
                 self.write_whitespace_separator(false)?;
             }
         }
-        Ok(())
+        Ok(false)
     }
 
     /// Write a raw comment. This is like [`write_comment`] but won't do any formatting or worry
@@ -887,11 +893,15 @@ impl<'a, W: Write> Formatter<'a, W> {
         last: SurroundingChunk,
         mut fun: impl FnMut(&mut Self, bool) -> Result<()>,
     ) -> Result<()> {
-        write_chunk!(self, first.loc_before(), first.loc_next(), "{}", first.content)?;
+        let first_chunk =
+            self.chunk_at(first.loc_before(), first.loc_next(), first.spaced, first.content);
+        self.write_chunk(&first_chunk)?;
 
         let multiline = !self.try_on_single_line(|fmt| {
             fun(fmt, false)?;
-            write_chunk!(fmt, last.loc_before(), last.loc_next(), "{}", last.content)?;
+            let last_chunk =
+                fmt.chunk_at(last.loc_before(), last.loc_next(), last.spaced, &last.content);
+            fmt.write_chunk(&last_chunk)?;
             Ok(())
         })?;
 
@@ -904,7 +914,9 @@ impl<'a, W: Write> Formatter<'a, W> {
             if !last.content.trim_start().is_empty() {
                 self.write_whitespace_separator(true)?;
             }
-            write_chunk!(self, last.loc_before(), last.loc_next(), "{}", last.content)?;
+            let last_chunk =
+                self.chunk_at(last.loc_before(), last.loc_next(), last.spaced, &last.content);
+            self.write_chunk(&last_chunk)?;
         }
 
         Ok(())
@@ -1274,12 +1286,15 @@ impl<'a, W: Write> Formatter<'a, W> {
         value: &str,
         fractional: Option<&str>,
         exponent: &str,
+        unit: &mut Option<Identifier>,
     ) -> Result<()> {
         let config = self.config.number_underscore;
 
         // get source if we preserve underscores
         let (value, fractional, exponent) = if matches!(config, NumberUnderscore::Preserve) {
             let source = &self.source[loc.start()..loc.end()];
+            // Strip unit
+            let (source, _) = source.split_once(' ').unwrap_or((source, ""));
             let (val, exp) = source.split_once(['e', 'E']).unwrap_or((source, ""));
             let (val, fract) =
                 val.split_once('.').map(|(val, fract)| (val, Some(fract))).unwrap_or((val, None));
@@ -1345,7 +1360,16 @@ impl<'a, W: Write> Formatter<'a, W> {
             out.push_str(&add_underscores(exp, false));
         }
 
-        write_chunk!(self, loc.start(), loc.end(), "{out}")
+        write_chunk!(self, loc.start(), loc.end(), "{out}")?;
+        self.write_unit(unit)
+    }
+
+    /// Write built-in unit.
+    fn write_unit(&mut self, unit: &mut Option<Identifier>) -> Result<()> {
+        if let Some(unit) = unit {
+            write_chunk!(self, unit.loc.start(), unit.loc.end(), "{}", unit.name)?;
+        }
+        Ok(())
     }
 
     /// Write the function header
@@ -1691,6 +1715,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     return Ok(())
                 }
 
+                if fmt.config.contract_new_lines {
+                    write_chunk!(fmt, "\n")?;
+                }
+
                 fmt.write_lined_visitable(
                     contract.loc,
                     contract.parts.iter_mut(),
@@ -1729,7 +1757,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
             if !contract.parts.is_empty() {
                 fmt.write_whitespace_separator(true)?;
+
+                if fmt.config.contract_new_lines {
+                    write_chunk!(fmt, "\n")?;
+                }
             }
+
             write_chunk!(fmt, contract.loc.end(), "}}")?;
 
             Ok(())
@@ -1922,26 +1955,58 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                         _ => write_chunk!(self, loc.start(), "{int}{n}")?,
                     }
                 }
-                Type::Mapping(loc, from, to) => {
-                    write_chunk!(self, loc.start(), "mapping(")?;
+                Type::Mapping { loc, key, key_name, value, value_name } => {
                     let arrow_loc = self.find_next_str_in_src(loc.start(), "=>");
-                    let key_chunk = self.visit_to_chunk(from.loc().start(), arrow_loc, from)?;
-                    self.write_chunk(&key_chunk)?;
-                    write!(self.buf(), " => ")?;
-                    let close_paren_loc = self.find_next_in_src(to.loc().end(), ')');
-                    let value_chunk = self.visit_to_chunk(to.loc().start(), close_paren_loc, to)?;
-                    self.write_chunk(&value_chunk)?;
-                    write!(self.buf(), ")")?;
+                    let close_paren_loc =
+                        self.find_next_in_src(value.loc().end(), ')').unwrap_or(loc.end());
+                    let first = SurroundingChunk::new(
+                        "mapping(",
+                        Some(loc.start()),
+                        Some(key.loc().start()),
+                    );
+                    let last = SurroundingChunk::new(")", Some(close_paren_loc), Some(loc.end()))
+                        .non_spaced();
+                    self.surrounded(first, last, |fmt, multiline| {
+                        fmt.grouped(|fmt| {
+                            key.visit(fmt)?;
+
+                            if let Some(name) = key_name {
+                                let end_loc = arrow_loc.unwrap_or(value.loc().start());
+                                write_chunk!(fmt, name.loc.start(), end_loc, " {}", name)?;
+                            } else if let Some(arrow_loc) = arrow_loc {
+                                fmt.write_postfix_comments_before(arrow_loc)?;
+                            }
+
+                            let mut write_arrow_and_value = |fmt: &mut Self| {
+                                write!(fmt.buf(), "=> ")?;
+                                value.visit(fmt)?;
+                                if let Some(name) = value_name {
+                                    write_chunk!(fmt, name.loc.start(), " {}", name)?;
+                                }
+                                Ok(())
+                            };
+
+                            let rest_str = fmt.simulate_to_string(&mut write_arrow_and_value)?;
+                            let multiline = multiline && !fmt.will_it_fit(rest_str);
+                            fmt.write_whitespace_separator(multiline)?;
+
+                            write_arrow_and_value(fmt)?;
+
+                            fmt.write_postfix_comments_before(close_paren_loc)?;
+                            fmt.write_prefix_comments_before(close_paren_loc)
+                        })?;
+                        Ok(())
+                    })?;
                 }
                 Type::Function { .. } => self.visit_source(*loc)?,
             },
             Expression::BoolLiteral(loc, val) => {
                 write_chunk!(self, loc.start(), loc.end(), "{val}")?;
             }
-            Expression::NumberLiteral(loc, val, exp) => {
-                self.write_num_literal(*loc, val, None, exp)?;
+            Expression::NumberLiteral(loc, val, exp, unit) => {
+                self.write_num_literal(*loc, val, None, exp, unit)?;
             }
-            Expression::HexNumberLiteral(loc, val) => {
+            Expression::HexNumberLiteral(loc, val, unit) => {
                 // ref: https://docs.soliditylang.org/en/latest/types.html?highlight=address%20literal#address-literals
                 let val = if val.len() == 42 {
                     to_checksum(&H160::from_str(val).expect(""), None)
@@ -1949,9 +2014,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     val.to_owned()
                 };
                 write_chunk!(self, loc.start(), loc.end(), "{val}")?;
+                self.write_unit(unit)?;
             }
-            Expression::RationalNumberLiteral(loc, val, fraction, exp) => {
-                self.write_num_literal(*loc, val, Some(fraction), exp)?;
+            Expression::RationalNumberLiteral(loc, val, fraction, exp, unit) => {
+                self.write_num_literal(*loc, val, Some(fraction), exp, unit)?;
             }
             Expression::StringLiteral(vals) => {
                 for StringLiteral { loc, string, unicode } in vals {
@@ -1967,11 +2033,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Expression::AddressLiteral(loc, val) => {
                 // support of solana/substrate address literals
                 self.write_quoted_str(*loc, Some("address"), val)?;
-            }
-            Expression::Unit(_, expr, unit) => {
-                expr.visit(self)?;
-                let unit_loc = unit.loc();
-                write_chunk!(self, unit_loc.start(), unit_loc.end(), "{}", unit.as_str())?;
             }
             Expression::This(loc) => {
                 write_chunk!(self, loc.start(), loc.end(), "this")?;
@@ -2052,7 +2113,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Expression::Complement(..) |
             Expression::UnaryPlus(..) |
             Expression::Add(..) |
-            Expression::UnaryMinus(..) |
+            Expression::Negate(..) |
             Expression::Subtract(..) |
             Expression::Power(..) |
             Expression::Multiply(..) |
@@ -2229,12 +2290,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
     fn visit_emit(&mut self, loc: Loc, event: &mut Expression) -> Result<()> {
         return_source_if_disabled!(self, loc);
-        self.grouped(|fmt| {
-            write_chunk!(fmt, loc.start(), "emit")?;
-            event.visit(fmt)?;
-            fmt.write_semicolon()?;
-            Ok(())
-        })?;
+        write_chunk!(self, loc.start(), "emit")?;
+        event.visit(self)?;
+        self.write_semicolon()?;
         Ok(())
     }
 
@@ -2606,7 +2664,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 while let Some(func) = funcs.next() {
                     let next_byte_end = funcs.peek().map(|func| func.loc.start());
                     chunks.push(self.chunked(func.loc.start(), next_byte_end, |fmt| {
-                        fmt.visit_ident_path(func)?;
+                        fmt.visit_ident_path(&mut func.path)?;
+                        if let Some(op) = func.oper {
+                            write!(fmt.buf(), " as {op}")?;
+                        }
                         Ok(())
                     })?);
                 }
@@ -2946,17 +3007,26 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         }
 
         if let Some(first) = chunks.first_mut() {
-            if first.prefixes.is_empty() && first.postfixes_before.is_empty() {
+            if first.prefixes.is_empty() &&
+                first.postfixes_before.is_empty() &&
+                !self.config.bracket_spacing
+            {
                 first.needs_space = Some(false);
             }
         }
         let multiline = self.are_chunks_separated_multiline("{}}", &chunks, ",")?;
         self.indented_if(multiline, 1, |fmt| fmt.write_chunks_separated(&chunks, ",", multiline))?;
 
-        let prefix = if multiline && !self.is_beginning_of_line() { "\n" } else { "" };
+        let prefix = if multiline && !self.is_beginning_of_line() {
+            "\n"
+        } else if self.config.bracket_spacing {
+            " "
+        } else {
+            ""
+        };
         let closing_bracket = format!("{prefix}{}", "}");
         let closing_bracket_loc = args.last().unwrap().loc.end();
-        write_chunk_spaced!(self, closing_bracket_loc, Some(false), "{closing_bracket}")?;
+        write_chunk!(self, closing_bracket_loc, "{closing_bracket}")?;
 
         Ok(())
     }
@@ -3617,4 +3687,7 @@ mod tests {
     test_directory! { TrailingComma }
     test_directory! { PragmaDirective }
     test_directory! { Annotation }
+    test_directory! { MappingType }
+    test_directory! { EmitStatement }
+    test_directory! { Repros }
 }

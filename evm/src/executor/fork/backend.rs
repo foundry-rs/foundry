@@ -543,7 +543,7 @@ impl SharedBackend {
                     .build()
                     .expect("failed to create fork-backend-thread tokio runtime");
 
-                rt.block_on(async move { handler.await });
+                rt.block_on(handler);
             })
             .expect("failed to spawn backendhandler thread");
         trace!(target: "backendhandler", "spawned Backendhandler thread");
@@ -740,7 +740,7 @@ mod tests {
         let mut evm_opts = config.extract::<EvmOpts>().unwrap();
         evm_opts.fork_block_number = Some(block_num);
 
-        let env = evm_opts.fork_evm_env(ENDPOINT).await.unwrap();
+        let (env, _block) = evm_opts.fork_evm_env(ENDPOINT).await.unwrap();
 
         let fork = CreateFork {
             enable_caching: true,

@@ -1,11 +1,9 @@
-use crate::{cmd::Cmd, init_progress, update_progress, utils::try_consume_config_rpc_url};
+use crate::{init_progress, opts::RpcOpts, update_progress, utils};
 use cast::trace::{identifier::SignaturesIdentifier, CallTraceDecoder, Traces};
 use clap::Parser;
 use ethers::{
     abi::Address,
     prelude::{artifacts::ContractBytecodeSome, ArtifactId, Middleware},
-    solc::utils::RuntimeOrHandle,
-    types::H256,
 };
 use eyre::WrapErr;
 use forge::{
@@ -16,7 +14,6 @@ use forge::{
     },
     trace::{identifier::EtherscanIdentifier, CallTraceDecoderBuilder, TraceKind},
 };
-use foundry_common::try_get_http_provider;
 use foundry_config::{find_project_root_path, Config};
 use std::{collections::BTreeMap, str::FromStr};
 use tracing::trace;
@@ -28,50 +25,47 @@ use yansi::Paint;
 pub struct RunArgs {
     #[clap(help = "The transaction hash.", value_name = "TXHASH")]
     tx_hash: String,
-    #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
-    rpc_url: Option<String>,
+
     #[clap(long, short = 'd', help = "Debugs the transaction.")]
     debug: bool,
+
     #[clap(long, short = 't', help = "Print out opcode traces.")]
     trace_printer: bool,
+
     #[clap(
         long,
         short = 'q',
         help = "Executes the transaction only with the state from the previous block. May result in different results than the live execution!"
     )]
     quick: bool,
+
     #[clap(long, short = 'v', help = "Prints full address")]
     verbose: bool,
+
     #[clap(
         long,
         help = "Labels address in the trace. 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045:vitalik.eth",
         value_name = "LABEL"
     )]
     label: Vec<String>,
+
+    #[clap(flatten)]
+    rpc: RpcOpts,
 }
 
-impl Cmd for RunArgs {
-    type Output = ();
+impl RunArgs {
     /// Executes the transaction by replaying it
     ///
     /// This replays the entire block the transaction was mined in unless `quick` is set to true
     ///
     /// Note: This executes the transaction(s) as is: Cheatcodes are disabled
-    fn run(self) -> eyre::Result<Self::Output> {
-        RuntimeOrHandle::new().block_on(self.run_tx())
-    }
-}
-
-impl RunArgs {
-    async fn run_tx(self) -> eyre::Result<()> {
-        let figment = Config::figment_with_root(find_project_root_path().unwrap());
+    pub async fn run(self) -> eyre::Result<()> {
+        let figment = Config::figment_with_root(find_project_root_path().unwrap()).merge(self.rpc);
         let mut evm_opts = figment.extract::<EvmOpts>()?;
         let config = Config::from_provider(figment).sanitized();
+        let provider = utils::get_provider(&config)?;
 
-        let rpc_url = try_consume_config_rpc_url(self.rpc_url)?;
-        let provider = try_get_http_provider(&rpc_url)?;
-
-        let tx_hash = H256::from_str(&self.tx_hash).wrap_err("invalid tx hash")?;
+        let tx_hash = self.tx_hash.parse().wrap_err("invalid tx hash")?;
         let tx = provider
             .get_transaction(tx_hash)
             .await?
@@ -81,7 +75,7 @@ impl RunArgs {
             .block_number
             .ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?
             .as_u64();
-        evm_opts.fork_url = Some(rpc_url);
+        evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
         // we need to set the fork block to the previous block, because that's the state at
         // which we access the data in order to execute the transaction(s)
         evm_opts.fork_block_number = Some(tx_block_number - 1);

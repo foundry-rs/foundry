@@ -42,6 +42,8 @@ pub enum DatabaseError {
         "CREATE2 Deployer not present on this chain. [0x4e59b44847b379578588920ca78fbf26c0b4956c]"
     )]
     MissingCreate2Deployer,
+    #[error(transparent)]
+    JoinError(#[from] tokio::task::JoinError),
 }
 
 impl DatabaseError {

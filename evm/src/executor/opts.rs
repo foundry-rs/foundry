@@ -2,10 +2,10 @@ use crate::executor::fork::CreateFork;
 use ethers::{
     providers::{Middleware, Provider},
     solc::utils::RuntimeOrHandle,
-    types::{Address, Chain, H256, U256},
+    types::{Address, Block, Chain, TxHash, H256, U256},
 };
 use eyre::WrapErr;
-use foundry_common::{self, try_get_http_provider, RpcUrl};
+use foundry_common::{self, ProviderBuilder, RpcUrl, ALCHEMY_FREE_TIER_CUPS};
 use foundry_config::Config;
 use revm::{BlockEnv, CfgEnv, SpecId, TxEnv};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -26,6 +26,12 @@ pub struct EvmOpts {
 
     /// initial retry backoff
     pub fork_retry_backoff: Option<u64>,
+
+    /// The available compute units per second
+    pub compute_units_per_second: Option<u64>,
+
+    /// Disables rate limiting entirely.
+    pub no_rpc_rate_limit: bool,
 
     /// Disables storage caching entirely.
     pub no_storage_caching: bool,
@@ -53,7 +59,7 @@ impl EvmOpts {
     /// id, )
     pub async fn evm_env(&self) -> revm::Env {
         if let Some(ref fork_url) = self.fork_url {
-            self.fork_evm_env(fork_url).await.expect("Could not instantiate forked environment")
+            self.fork_evm_env(fork_url).await.expect("Could not instantiate forked environment").0
         } else {
             self.local_evm_env()
         }
@@ -66,16 +72,22 @@ impl EvmOpts {
     /// Returns an error if a RPC request failed, or the fork url is not a valid url
     pub fn evm_env_blocking(&self) -> eyre::Result<revm::Env> {
         if let Some(ref fork_url) = self.fork_url {
-            RuntimeOrHandle::new().block_on(async { self.fork_evm_env(fork_url).await })
+            RuntimeOrHandle::new().block_on(self.fork_evm_env(fork_url)).map(|res| res.0)
         } else {
             Ok(self.local_evm_env())
         }
     }
 
-    /// Returns the `revm::Env` configured with settings retrieved from the endpoints
-    pub async fn fork_evm_env(&self, fork_url: impl AsRef<str>) -> eyre::Result<revm::Env> {
+    /// Returns the `revm::Env` that is configured with settings retrieved from the endpoint.
+    /// And the block that was used to configure the environment.
+    pub async fn fork_evm_env(
+        &self,
+        fork_url: impl AsRef<str>,
+    ) -> eyre::Result<(revm::Env, Block<TxHash>)> {
         let fork_url = fork_url.as_ref();
-        let provider = try_get_http_provider(fork_url)?;
+        let provider = ProviderBuilder::new(fork_url)
+            .compute_units_per_second(self.get_compute_units_per_second())
+            .build()?;
         environment(
             &provider,
             self.memory_limit,
@@ -105,9 +117,12 @@ impl EvmOpts {
             cfg: CfgEnv {
                 chain_id: self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID).into(),
                 spec_id: SpecId::MERGE,
-                perf_all_precompiles_have_balance: false,
                 limit_contract_code_size: self.env.code_size_limit.or(Some(usize::MAX)),
                 memory_limit: self.memory_limit,
+                // EIP-3607 rejects transactions from senders with deployed code.
+                // If EIP-3607 is enabled it can cause issues during fuzz/invariant tests if the
+                // caller is a contract. So we disable the check by default.
+                disable_eip3607: true,
                 ..Default::default()
             },
             tx: TxEnv {
@@ -153,6 +168,20 @@ impl EvmOpts {
             return id
         }
         self.get_remote_chain_id().map_or(Chain::Mainnet as u64, |id| id as u64)
+    }
+
+    /// Returns the available compute units per second, which will be
+    /// - u64::MAX, if `no_rpc_rate_limit` if set (as rate limiting is disabled)
+    /// - the assigned compute units, if `compute_units_per_second` is set
+    /// - ALCHEMY_FREE_TIER_CUPS (330) otherwise
+    pub fn get_compute_units_per_second(&self) -> u64 {
+        if self.no_rpc_rate_limit {
+            u64::MAX
+        } else if let Some(cups) = self.compute_units_per_second {
+            return cups
+        } else {
+            ALCHEMY_FREE_TIER_CUPS
+        }
     }
 
     /// Returns the chain ID from the RPC, if any.

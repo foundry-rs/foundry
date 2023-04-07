@@ -2,7 +2,7 @@ use ethers_core::utils::rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream
 use serde_json::Value;
 use std::fmt::{Debug, Display, Formatter, Write};
 
-/// Arbitrarly nested data
+/// Arbitrary nested data
 /// Item::Array(vec![]); is equivalent to []
 /// Item::Array(vec![Item::Data(vec![])]); is equivalent to [""] or [null]
 #[derive(Debug, Clone, Eq, PartialEq)]

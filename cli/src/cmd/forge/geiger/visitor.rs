@@ -107,7 +107,7 @@ impl Visitor for CheatcodeVisitor {
             Expression::UnaryPlus(_, expr) => {
                 expr.visit(self)?;
             }
-            Expression::UnaryMinus(_, expr) => {
+            Expression::Negate(_, expr) => {
                 expr.visit(self)?;
             }
             Expression::Power(_, lhs, rhs) => {

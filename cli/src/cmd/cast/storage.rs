@@ -1,7 +1,7 @@
 use crate::{
     cmd::forge::build,
-    opts::cast::{parse_block_id, parse_name_or_address, parse_slot},
-    utils::try_consume_config_rpc_url,
+    opts::{cast::parse_slot, EtherscanOpts, RpcOpts},
+    utils,
 };
 use cast::Cast;
 use clap::Parser;
@@ -10,15 +10,19 @@ use ethers::{
     abi::ethabi::ethereum_types::BigEndianHash, etherscan::Client, prelude::*,
     solc::artifacts::StorageLayout,
 };
-use eyre::{ContextCompat, Result};
+use eyre::Result;
 use foundry_common::{
     abi::find_source,
     compile::{compile, etherscan_project, suppress_compile},
-    try_get_http_provider, RetryProvider,
+    RetryProvider,
 };
-use foundry_config::Config;
+use foundry_config::{
+    figment::{self, value::Dict, Metadata, Profile},
+    impl_figment_convert_cast, Config,
+};
 use futures::future::join_all;
 use semver::Version;
+use std::str::FromStr;
 
 /// The minimum Solc version for outputting storage layouts.
 ///
@@ -28,52 +32,53 @@ const MIN_SOLC: Version = Version::new(0, 6, 5);
 /// CLI arguments for `cast storage`.
 #[derive(Debug, Clone, Parser)]
 pub struct StorageArgs {
-    // Storage
-    #[clap(help = "The contract address.", value_parser = parse_name_or_address, value_name = "ADDRESS")]
+    /// The contract address
+    #[clap(value_parser = NameOrAddress::from_str)]
     address: NameOrAddress,
-    #[clap(
-        help = "The storage slot number (hex or decimal)",
-        value_parser = parse_slot,
-        value_name = "SLOT"
-    )]
+
+    /// The storage slot number
+    #[clap(value_parser = parse_slot)]
     slot: Option<H256>,
-    #[clap(long, env = "ETH_RPC_URL", value_name = "URL")]
-    rpc_url: Option<String>,
-    #[clap(
-        long,
-        short = 'B',
-        help = "The block height you want to query at.",
-        long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
-        value_parser = parse_block_id,
-        value_name = "BLOCK"
-    )]
+
+    /// The block height you want to query at
+    ///
+    /// Can also be the tags earliest, finalized, safe, latest, or pending
+    #[clap(long, short = 'B')]
     block: Option<BlockId>,
 
-    // Etherscan
-    #[clap(long, short, env = "ETHERSCAN_API_KEY", help = "etherscan API key", value_name = "KEY")]
-    etherscan_api_key: Option<String>,
-    #[clap(
-        long,
-        visible_alias = "chain-id",
-        env = "CHAIN",
-        help = "The chain ID the contract is deployed to.",
-        default_value = "mainnet",
-        value_name = "CHAIN"
-    )]
-    chain: Chain,
+    #[clap(flatten)]
+    rpc: RpcOpts,
 
-    // Forge
+    #[clap(flatten)]
+    etherscan: EtherscanOpts,
+
     #[clap(flatten)]
     build: build::CoreBuildArgs,
 }
 
+impl_figment_convert_cast!(StorageArgs);
+
+impl figment::Provider for StorageArgs {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("StorageArgs")
+    }
+
+    fn data(&self) -> Result<figment::value::Map<Profile, Dict>, figment::Error> {
+        let mut map = self.build.data()?;
+        let dict = map.get_mut(&Config::selected_profile()).unwrap();
+        dict.extend(self.rpc.dict());
+        dict.extend(self.etherscan.dict());
+        Ok(map)
+    }
+}
+
 impl StorageArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { address, block, build, rpc_url, slot, chain, etherscan_api_key } = self;
+        let config = Config::from(&self);
 
-        let rpc_url = try_consume_config_rpc_url(rpc_url)?;
-        let provider = try_get_http_provider(rpc_url)?;
+        let Self { address, slot, block, build, .. } = self;
 
+        let provider = utils::get_provider(&config)?;
         let address = match address {
             NameOrAddress::Name(name) => provider.resolve_name(&name).await?,
             NameOrAddress::Address(address) => address,
@@ -114,11 +119,10 @@ impl StorageArgs {
         // Not a forge project or artifact not found
         // Get code from Etherscan
         eprintln!("No matching artifacts found, fetching source code from Etherscan...");
-        let api_key = etherscan_api_key.or_else(|| {
-            let config = Config::load();
-            config.get_etherscan_api_key(Some(chain))
-        }).wrap_err("No Etherscan API Key is set. Consider using the ETHERSCAN_API_KEY env var, or setting the -e CLI argument or etherscan-api-key in foundry.toml")?;
-        let client = Client::new(chain, api_key)?;
+
+        let chain = utils::get_chain(config.chain_id, &provider).await?;
+        let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
+        let client = Client::new(chain.named()?, api_key)?;
         let source = find_source(client, address).await?;
         let metadata = source.items.first().unwrap();
         if metadata.is_vyper() {

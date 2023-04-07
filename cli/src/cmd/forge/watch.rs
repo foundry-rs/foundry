@@ -136,10 +136,10 @@ pub async fn watch_test(args: TestArgs) -> eyre::Result<()> {
     let filter = args.filter(&config);
 
     // marker to check whether to override the command
-    let no_reconfigure = filter.pattern.is_some() ||
-        filter.test_pattern.is_some() ||
-        filter.path_pattern.is_some() ||
-        filter.contract_pattern.is_some() ||
+    let no_reconfigure = filter.args().pattern.is_some() ||
+        filter.args().test_pattern.is_some() ||
+        filter.args().path_pattern.is_some() ||
+        filter.args().contract_pattern.is_some() ||
         args.watch.run_all;
 
     let state = WatchTestState {
@@ -332,7 +332,7 @@ fn on_action<F, T>(
             if !signals.is_empty() {
                 let mut out = Outcome::DoNothing;
                 for sig in signals {
-                    out = Outcome::both(out, Outcome::Signal(sig.into()));
+                    out = Outcome::both(out, Outcome::Signal(sig));
                 }
 
                 action.outcome(out);

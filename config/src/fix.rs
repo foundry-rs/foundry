@@ -300,7 +300,7 @@ mod tests {
     // mocking the `$HOME` has no effect on windows, see [`dirs_next::home_dir()`]
     fix_test!(
         #[cfg(not(windows))]
-        test_gloabl_toml_is_edited,
+        test_global_toml_is_edited,
         |jail| {
             jail.create_file(
                 "foundry.toml",

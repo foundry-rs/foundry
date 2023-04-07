@@ -5,7 +5,7 @@ pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 use ethers::{
     abi::{ethereum_types::BigEndianHash, Address, RawLog},
     core::utils::to_checksum,
-    types::{Bytes, GethDebugTracingOptions, GethTrace, StructLog, H256, U256},
+    types::{Bytes, DefaultFrame, GethDebugTracingOptions, StructLog, H256, U256},
 };
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use hashbrown::HashMap;
@@ -127,6 +127,8 @@ impl CallTraceArena {
                 Instruction::OpCode(opc) => {
                     match opc {
                         // If yes, descend into a child trace
+                        opcode::CREATE |
+                        opcode::CREATE2 |
                         opcode::DELEGATECALL |
                         opcode::CALL |
                         opcode::STATICCALL |
@@ -148,7 +150,11 @@ impl CallTraceArena {
     }
 
     /// Generate a geth-style trace e.g. for debug_traceTransaction
-    pub fn geth_trace(&self, receipt_gas_used: U256, opts: GethDebugTracingOptions) -> GethTrace {
+    pub fn geth_trace(
+        &self,
+        receipt_gas_used: U256,
+        opts: GethDebugTracingOptions,
+    ) -> DefaultFrame {
         if self.arena.is_empty() {
             return Default::default()
         }
@@ -158,7 +164,7 @@ impl CallTraceArena {
         let main_trace_node = &self.arena[0];
         let main_trace = &main_trace_node.trace;
         // Start geth trace
-        let mut acc = GethTrace {
+        let mut acc = DefaultFrame {
             // If the top-level trace succeeded, then it was a success
             failed: !main_trace.success,
             gas: receipt_gas_used,

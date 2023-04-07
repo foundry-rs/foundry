@@ -2,10 +2,12 @@ use console::Emoji;
 use ethers::{
     abi::token::{LenientTokenizer, Tokenizer},
     prelude::TransactionReceipt,
+    providers::Middleware,
     solc::EvmVersion,
     types::U256,
     utils::format_units,
 };
+use eyre::Result;
 use forge::executor::SpecId;
 use foundry_config::{Chain, Config};
 use std::{
@@ -29,7 +31,7 @@ pub use foundry_config::utils::*;
 pub(crate) const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     " (",
-    env!("VERGEN_GIT_SHA_SHORT"),
+    env!("VERGEN_GIT_SHA"),
     " ",
     env!("VERGEN_BUILD_TIMESTAMP"),
     ")"
@@ -93,19 +95,29 @@ pub fn evm_spec(evm: &EvmVersion) -> SpecId {
 }
 
 /// parse a hex str or decimal str as U256
-pub fn parse_u256(s: &str) -> eyre::Result<U256> {
+pub fn parse_u256(s: &str) -> Result<U256> {
     Ok(if s.starts_with("0x") { U256::from_str(s)? } else { U256::from_dec_str(s)? })
 }
 
-/// Returns `rpc-url` cli argument if given, or consume `eth-rpc-url` from foundry.toml. Default to
-/// `localhost:8545`
+/// Returns a [RetryProvider](foundry_common::RetryProvider) instantiated using [Config]'s RPC URL
+/// and chain.
 ///
-/// This also supports rpc aliases and try to load the current foundry.toml file if it exists
-pub fn try_consume_config_rpc_url(rpc_url: Option<String>) -> eyre::Result<String> {
-    let mut config = Config::load();
-    config.eth_rpc_url = rpc_url;
+/// Defaults to `http://localhost:8545` and `Mainnet`.
+pub fn get_provider(config: &Config) -> Result<foundry_common::RetryProvider> {
     let url = config.get_rpc_url_or_localhost_http()?;
-    Ok(url.into_owned())
+    let chain = config.chain_id.unwrap_or_default();
+    foundry_common::ProviderBuilder::new(url.as_ref()).chain(chain).build()
+}
+
+pub async fn get_chain<M>(chain: Option<Chain>, provider: M) -> Result<Chain>
+where
+    M: Middleware,
+    M::Error: 'static,
+{
+    match chain {
+        Some(chain) => Ok(chain),
+        None => Ok(Chain::Id(provider.get_chainid().await?.as_u64())),
+    }
 }
 
 /// Parses an ether value from a string.
@@ -114,7 +126,7 @@ pub fn try_consume_config_rpc_url(rpc_url: Option<String>) -> eyre::Result<Strin
 ///
 /// If the string represents an untagged amount (e.g. "100") then
 /// it is interpreted as wei.
-pub fn parse_ether_value(value: &str) -> eyre::Result<U256> {
+pub fn parse_ether_value(value: &str) -> Result<U256> {
     Ok(if value.starts_with("0x") {
         U256::from_str(value)?
     } else {
@@ -123,7 +135,7 @@ pub fn parse_ether_value(value: &str) -> eyre::Result<U256> {
 }
 
 /// Parses a `Duration` from a &str
-pub fn parse_delay(delay: &str) -> eyre::Result<Duration> {
+pub fn parse_delay(delay: &str) -> Result<Duration> {
     let delay = if delay.ends_with("ms") {
         let d: u64 = delay.trim_end_matches("ms").parse()?;
         Duration::from_millis(d)
@@ -172,7 +184,7 @@ pub(crate) use p_println;
 /// to not be able to configure the colors. It would also mess up the JSON output.
 pub fn load_dotenv() {
     let load = |p: &Path| {
-        dotenv::from_path(p.join(".env")).ok();
+        dotenvy::from_path(p.join(".env")).ok();
     };
 
     // we only want the .env file of the cwd and project root
@@ -241,17 +253,17 @@ pub fn print_receipt(chain: Chain, receipt: &TransactionReceipt) {
 /// Useful extensions to [`std::process::Command`].
 pub trait CommandUtils {
     /// Returns the command's output if execution is successful, otherwise, throws an error.
-    fn exec(&mut self) -> eyre::Result<Output>;
+    fn exec(&mut self) -> Result<Output>;
 
     /// Returns the command's stdout if execution is successful, otherwise, throws an error.
-    fn get_stdout_lossy(&mut self) -> eyre::Result<String>;
+    fn get_stdout_lossy(&mut self) -> Result<String>;
 }
 
 impl CommandUtils for Command {
     #[track_caller]
-    fn exec(&mut self) -> eyre::Result<Output> {
+    fn exec(&mut self) -> Result<Output> {
         let output = self.output()?;
-        if !&output.status.success() {
+        if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             eyre::bail!("{}", stderr.trim())
         }
@@ -259,7 +271,7 @@ impl CommandUtils for Command {
     }
 
     #[track_caller]
-    fn get_stdout_lossy(&mut self) -> eyre::Result<String> {
+    fn get_stdout_lossy(&mut self) -> Result<String> {
         let output = self.exec()?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         Ok(stdout.trim().into())

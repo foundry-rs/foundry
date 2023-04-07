@@ -5,8 +5,11 @@ FOUNDRY_DIR=${FOUNDRY_DIR-"$HOME/.foundry"}
 FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
 FOUNDRY_MAN_DIR="$FOUNDRY_DIR/share/man/man1"
 
+BINS=(forge cast anvil chisel)
+
+export RUSTFLAGS="-C target-cpu=native"
+
 main() {
-  banner
   need_cmd git
   need_cmd curl
 
@@ -25,11 +28,16 @@ main() {
         exit 0
         ;;
       *)
-        err "internal error: unknown option "$1"\n";;
+        warn "unknown option: $1"
+        usage
+        exit 1
     esac; shift
   done
 
-  if [ ! -z "$FOUNDRYUP_PR" ]; then
+  # Print the banner after successfully parsing args
+  banner
+
+  if [ -n "$FOUNDRYUP_PR" ]; then
     if [ -z "$FOUNDRYUP_BRANCH" ]; then
       FOUNDRYUP_BRANCH="refs/pull/$FOUNDRYUP_PR/head"
     else
@@ -48,21 +56,15 @@ main() {
 
     # Enter local repo and build
     say "installing from $FOUNDRYUP_LOCAL_REPO"
-    cd $FOUNDRYUP_LOCAL_REPO
-    RUSTFLAGS="-C target-cpu=native" ensure cargo build --release # need 4 speed
+    cd "$FOUNDRYUP_LOCAL_REPO"
+    ensure cargo build --release # need 4 speed
 
-
-    # Remove prior installations if they exist
-    rm -f "$FOUNDRY_BIN_DIR/forge"
-    rm -f "$FOUNDRY_BIN_DIR/cast"
-    rm -f "$FOUNDRY_BIN_DIR/anvil"
-    rm -f "$FOUNDRY_BIN_DIR/chisel"
-
-    # Symlink from local repo binaries to bin dir
-    ensure ln -s "$PWD/target/release/forge" "$FOUNDRY_BIN_DIR/forge"
-    ensure ln -s "$PWD/target/release/cast" "$FOUNDRY_BIN_DIR/cast"
-    ensure ln -s "$PWD/target/release/anvil" "$FOUNDRY_BIN_DIR/anvil"
-    ensure ln -s "$PWD/target/release/chisel" "$FOUNDRY_BIN_DIR/chisel"
+    for bin in "${BINS[@]}"; do
+      # Remove prior installations if they exist
+      rm -f "$FOUNDRY_BIN_DIR/$bin"
+      # Symlink from local repo binaries to bin dir
+      ensure ln -s "$PWD/target/release/$bin" "$FOUNDRY_BIN_DIR/$bin"
+    done
 
     say "done"
     exit 0
@@ -70,6 +72,7 @@ main() {
 
   FOUNDRYUP_REPO=${FOUNDRYUP_REPO-foundry-rs/foundry}
 
+  # Install by downloading binaries
   if [[ "$FOUNDRYUP_REPO" == "foundry-rs/foundry" && -z "$FOUNDRYUP_BRANCH" && -z "$FOUNDRYUP_COMMIT" ]]; then
     FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION-nightly}
     FOUNDRYUP_TAG=$FOUNDRYUP_VERSION
@@ -77,11 +80,12 @@ main() {
     # Normalize versions (handle channels, versions without v prefix
     if [[ "$FOUNDRYUP_VERSION" == "nightly" ]]; then
       # Locate real nightly tag
-      SHA=$(ensure curl -sSf https://api.github.com/repos/${FOUNDRYUP_REPO}/git/refs/tags/nightly \
+      SHA=$(ensure curl -sSf "https://api.github.com/repos/$FOUNDRYUP_REPO/git/refs/tags/nightly" \
         | grep -Eo '"sha"[^,]*' \
         | grep -Eo '[^:]*$' \
         | tr -d '"' \
-        | tr -d ' ')
+        | tr -d ' ' \
+        | cut -d ':' -f2 )
       FOUNDRYUP_TAG="nightly-${SHA}"
     elif [[ "$FOUNDRYUP_VERSION" == nightly* ]]; then
       FOUNDRYUP_VERSION="nightly"
@@ -127,69 +131,74 @@ main() {
 
     # Download the binaries tarball and unpack it into the .foundry bin directory.
     say "downloading latest forge, cast, anvil, and chisel"
-    ensure curl -# -L $BIN_TARBALL_URL | tar -xzC $FOUNDRY_BIN_DIR
+    ensure curl -# -L "$BIN_TARBALL_URL" | tar -xzC "$FOUNDRY_BIN_DIR"
+
     # Download the man tarball and unpack it into the .foundry man directory.
     say "downloading manpages"
-    ensure curl -# -L $MAN_TARBALL_URL | tar -xzC $FOUNDRY_MAN_DIR
-    say "installed - $($FOUNDRY_BIN_DIR/forge --version)"
-    say "installed - $($FOUNDRY_BIN_DIR/cast --version)"
-    say "installed - $($FOUNDRY_BIN_DIR/anvil --version)"
-    say "installed - $($FOUNDRY_BIN_DIR/chisel --version)"
+    ensure curl -# -L "$MAN_TARBALL_URL" | tar -xzC "$FOUNDRY_MAN_DIR"
+
+    for bin in "${BINS[@]}"; do
+      bin_path="$FOUNDRY_BIN_DIR/$bin"
+
+      # Print installed msg
+      say "installed - $("$bin_path" --version)"
+
+      # Check if the default path of the binary is not in FOUNDRY_BIN_DIR
+      which_path="$(which "$bin")"
+      if [ "$which_path" != "$bin_path" ]; then
+        warn ""
+        cat 1>&2 <<EOF
+There are multiple binaries with the name '$bin' present in your 'PATH'.
+This may be the result of installing '$bin' using another method,
+like Cargo or other package managers.
+You may need to run 'rm $which_path' or move '$FOUNDRY_BIN_DIR'
+in your 'PATH' to allow the newly installed version to take precedence!
+EOF
+      fi
+    done
+
     say "done"
 
-    if [[ $(which forge) =~ "cargo" ]]; then
-      warn "it appears your system has already has forge installed via cargo. you may need to run 'rm $(which forge)' to allow foundryup to take precedence!"
-    fi
-
-    if [[ $(which cast) =~ "cargo" ]]; then
-      warn "it appears your system has already has cast installed via cargo. you may need to run 'rm $(which cast)' to allow foundryup to take precedence!"
-    fi
-
-    if [[ $(which anvil) =~ "cargo" ]]; then
-      warn "it appears your system has already has anvil installed via cargo. you may need to run 'rm $(which anvil)' to allow foundryup to take precedence!"
-    fi
-
-    if [[ $(which chisel) =~ "cargo" ]]; then
-      warn "it appears your system has already has chisel installed via cargo. you may need to run 'rm $(which chisel)' to allow foundryup to take precedence!"
-    fi
+  # Install by cloning the repo with the provided branch/tag
   else
     need_cmd cargo
     FOUNDRYUP_BRANCH=${FOUNDRYUP_BRANCH-master}
-    REPO_PATH="${FOUNDRY_DIR}/${FOUNDRYUP_REPO}"
+    REPO_PATH="$FOUNDRY_DIR/$FOUNDRYUP_REPO"
 
-    if [ ! -d $REPO_PATH ]; then
-      # Repo path did not exist, grab the author from the repo, make a directory in .foundry, cd to it and clone.
-      IFS="/" read -ra AUTHOR <<< "$FOUNDRYUP_REPO"
+    # If repo path does not exist, grab the author from the repo, make a directory in .foundry, cd to it and clone.
+    if [ ! -d "$REPO_PATH" ]; then
+      AUTHOR="$(echo "$FOUNDRYUP_REPO" | cut -d'/' -f1 -)"
       ensure mkdir -p "$FOUNDRY_DIR/$AUTHOR"
       cd "$FOUNDRY_DIR/$AUTHOR"
-      ensure git clone https://github.com/${FOUNDRYUP_REPO}
+      ensure git clone "https://github.com/$FOUNDRYUP_REPO"
     fi
-    # force checkout, discarding any local changes
-    cd $REPO_PATH
-    ensure git fetch origin ${FOUNDRYUP_BRANCH}:remotes/origin/${FOUNDRYUP_BRANCH}
-    ensure git checkout origin/${FOUNDRYUP_BRANCH}
-    # checkout submodules for Chisel build
-    ensure git submodule update --init --recursive
+
+    # Force checkout, discarding any local changes
+    cd "$REPO_PATH"
+    ensure git fetch origin "${FOUNDRYUP_BRANCH}:remotes/origin/${FOUNDRYUP_BRANCH}"
+    ensure git checkout "origin/${FOUNDRYUP_BRANCH}"
+
     # If set, checkout specific commit from branch
-    if [ ! -z $FOUNDRYUP_COMMIT ]; then
-      say "installing at commit ${FOUNDRYUP_COMMIT}"
-      ensure git checkout ${FOUNDRYUP_COMMIT}
+    if [ -n "$FOUNDRYUP_COMMIT" ]; then
+      say "installing at commit $FOUNDRYUP_COMMIT"
+      ensure git checkout "$FOUNDRYUP_COMMIT"
     fi
-    # Build the repo and install it locally to the .foundry bin directory.
+
+    # Build the repo and install the binaries locally to the .foundry bin directory.
     # --root appends /bin to the directory it is given, so we pass FOUNDRY_DIR.
-    RUSTFLAGS="-C target-cpu=native" ensure cargo install --path ./cli --bins --locked --force --root $FOUNDRY_DIR
+    ensure cargo install --path ./cli --bins --locked --force --root "$FOUNDRY_DIR"
     # install anvil
-    RUSTFLAGS="-C target-cpu=native" ensure cargo install --path ./anvil --bin anvil --locked --force --root $FOUNDRY_DIR
+    ensure cargo install --path ./anvil --bin anvil --locked --force --root "$FOUNDRY_DIR"
     # install chisel
-    RUSTFLAGS="-C target-cpu=native" ensure cargo install --path ./chisel --bin chisel --locked --force --root $FOUNDRY_DIR
+    ensure cargo install --path ./chisel --bin chisel --locked --force --root "$FOUNDRY_DIR"
 
     # If help2man is installed, use it to add Foundry man pages.
-    if command -v help2man &> /dev/null ; then
-      help2man -N $FOUNDRY_BIN_DIR/forge > $FOUNDRY_MAN_DIR/forge.1
-      help2man -N $FOUNDRY_BIN_DIR/cast > $FOUNDRY_MAN_DIR/cast.1
-      help2man -N $FOUNDRY_BIN_DIR/anvil > $FOUNDRY_MAN_DIR/anvil.1
-      help2man -N $FOUNDRY_BIN_DIR/chisel > $FOUNDRY_MAN_DIR/chisel.1
+    if check_cmd help2man; then
+      for bin in "${BINS[@]}"; do
+        help2man -N "$FOUNDRY_BIN_DIR/$bin" > "$FOUNDRY_MAN_DIR/$bin.1"
+      done
     fi
+
     say "done"
   fi
 }
@@ -215,7 +224,7 @@ EOF
 }
 
 say() {
-  printf 'foundryup: %s\n' "$1"
+  printf "foundryup: %s\n" "$1"
 }
 
 warn() {
@@ -245,7 +254,6 @@ ensure() {
 }
 
 # Banner Function for Foundry 
-
 banner() {
   printf '
 

@@ -86,7 +86,7 @@ where
 
         let total_gas_used = gas_used(
             data.env.cfg.spec_id,
-            interpreter.gas.limit() - self.gas_inspector.borrow().gas_remaining(),
+            interpreter.gas.limit().saturating_sub(self.gas_inspector.borrow().gas_remaining()),
             interpreter.gas.refunded() as u64,
         );
 

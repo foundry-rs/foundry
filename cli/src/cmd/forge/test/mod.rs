@@ -32,7 +32,8 @@ use tracing::trace;
 use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
 mod filter;
-pub use filter::Filter;
+use crate::cmd::forge::test::filter::ProjectPathsAwareFilter;
+pub use filter::FilterArgs;
 use foundry_common::shell;
 use foundry_config::figment::{
     value::{Dict, Map},
@@ -47,7 +48,7 @@ foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
 #[clap(next_help_heading = "Test options")]
 pub struct TestArgs {
     #[clap(flatten)]
-    filter: Filter,
+    filter: FilterArgs,
 
     /// Run a test in the debugger.
     ///
@@ -82,12 +83,8 @@ pub struct TestArgs {
     #[clap(flatten)]
     evm_opts: EvmArgs,
 
-    #[clap(
-        long,
-        env = "ETHERSCAN_API_KEY",
-        help = "Set etherscan api key to better decode traces",
-        value_name = "ETHERSCAN_KEY"
-    )]
+    /// The Etherscan (or equivalent) API key
+    #[clap(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
     etherscan_api_key: Option<String>,
 
     #[clap(flatten)]
@@ -172,7 +169,7 @@ impl TestArgs {
             .build(project.paths.root, output, env, evm_opts)?;
 
         if self.debug.is_some() {
-            filter.test_pattern = self.debug;
+            filter.args_mut().test_pattern = self.debug;
 
             match runner.count_filtered_tests(&filter) {
                 1 => {
@@ -188,11 +185,11 @@ impl TestArgs {
 
                     // Build debugger args if this is a fuzz test
                     let sig = match test_kind {
-                        TestKind::Fuzz(cases) => {
+                        TestKind::Fuzz { first_case, .. } => {
                             if let Some(CounterExample::Single(counterexample)) = counterexample {
                                 counterexample.calldata.to_string()
                             } else {
-                                cases.cases().first().expect("no fuzz cases run").calldata.to_string()
+                                first_case.calldata.to_string()
                             }
                         },
                         _ => sig,
@@ -236,9 +233,9 @@ impl TestArgs {
         }
     }
 
-    /// Returns the flattened [`Filter`] arguments merged with [`Config`]
-    pub fn filter(&self, config: &Config) -> Filter {
-        self.filter.with_merged_config(config)
+    /// Returns the flattened [`FilterArgs`] arguments merged with [`Config`]
+    pub fn filter(&self, config: &Config) -> ProjectPathsAwareFilter {
+        self.filter.merge_with_config(config)
     }
 
     /// Returns whether `BuildArgs` was configured with `--watch`
@@ -443,7 +440,11 @@ fn short_test_result(name: &str, result: &TestResult) {
 }
 
 /// Lists all matching tests
-fn list(runner: MultiContractRunner, filter: Filter, json: bool) -> eyre::Result<TestOutcome> {
+fn list(
+    runner: MultiContractRunner,
+    filter: ProjectPathsAwareFilter,
+    json: bool,
+) -> eyre::Result<TestOutcome> {
     let results = runner.list(&filter);
 
     if json {
@@ -466,7 +467,7 @@ fn test(
     config: Config,
     mut runner: MultiContractRunner,
     verbosity: u8,
-    filter: Filter,
+    filter: ProjectPathsAwareFilter,
     json: bool,
     allow_failure: bool,
     test_options: TestOptions,
@@ -483,7 +484,7 @@ fn test(
             println!("\nNo tests match the provided pattern:");
             println!("{filter_str}");
             // Try to suggest a test when there's no match
-            if let Some(ref test_pattern) = filter.test_pattern {
+            if let Some(ref test_pattern) = filter.args().test_pattern {
                 let test_name = test_pattern.as_str();
                 let candidates = runner.get_tests(&filter);
                 if let Some(suggestion) = suggestions::did_you_mean(test_name, candidates).pop() {
