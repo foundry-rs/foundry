@@ -22,6 +22,7 @@ use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
 use eyre::{Context, Result};
 use foundry_common::{abi::encode_args, fmt::*, TransactionReceiptWithRevertReason};
 pub use foundry_evm::*;
+use rayon::prelude::*;
 pub use rusoto_core::{
     credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
     request::HttpClient as AwsHttpClient, Client as AwsClient,
@@ -1698,7 +1699,7 @@ impl SimpleCast {
         let found = AtomicBool::new(false);
 
         let results: Vec<Option<(u32, String, String)>> = (0..num_threads)
-            .into_iter()
+            .into_par_iter()
             .map(|i| {
                 let nonce_start = i as u32;
                 let nonce_step = num_threads as u32;
