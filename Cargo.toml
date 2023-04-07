@@ -58,17 +58,16 @@ strip = true
 panic = "abort"
 codegen-units = 1
 
-# Lock ethers-rs to a rev to allow this crate be safely used as a dependency
 [workspace.dependencies]
-ethers = { version = "2" }
-ethers-addressbook = { version = "2" }
-ethers-core = { version = "2" }
-ethers-contract = { version = "2" }
-ethers-providers = { version = "2" }
-ethers-signers = { version = "2" }
-ethers-middleware = { version = "2" }
-ethers-etherscan = { version = "2" }
-ethers-solc = { version = "2" }
+ethers = { version = "2", default-features = false }
+ethers-addressbook = { version = "2", default-features = false }
+ethers-core = { version = "2", default-features = false }
+ethers-contract = { version = "2", default-features = false }
+ethers-providers = { version = "2", default-features = false }
+ethers-signers = { version = "2", default-features = false }
+ethers-middleware = { version = "2", default-features = false }
+ethers-etherscan = { version = "2", default-features = false }
+ethers-solc = { version = "2", default-features = false }
 
 [patch.crates-io]
 # ethers = { path = "../ethers-rs/ethers" }
