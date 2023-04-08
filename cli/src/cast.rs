@@ -23,6 +23,7 @@ use foundry_common::{
 };
 use foundry_config::Config;
 use rustc_hex::ToHex;
+use std::time::Instant;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -183,13 +184,15 @@ async fn main() -> eyre::Result<()> {
         Subcommands::Sig { sig, optimize } => {
             let sig = stdin::unwrap_line(sig)?;
             if optimize.is_none() {
-                println!("{}", SimpleCast::get_selector(sig, None)?.0);
+                println!("{}", SimpleCast::get_selector(&sig, None)?.0);
             } else {
                 println!("Starting to optimize signature...");
-                let result = SimpleCast::get_selector(sig, optimize)?;
-                println!("Successfully generated in {} seconds", result.2.unwrap().as_secs());
-                println!("Selector: {}", result.0);
-                println!("Optimized signature: {}", result.1.unwrap());
+                let start_time = Instant::now();
+                let (selector, signature) = SimpleCast::get_selector(&sig, optimize)?;
+                let elapsed_time = start_time.elapsed();
+                println!("Successfully generated in {} seconds", elapsed_time.as_secs());
+                println!("Selector: {}", selector);
+                println!("Optimized signature: {}", signature);
             }
         }
 

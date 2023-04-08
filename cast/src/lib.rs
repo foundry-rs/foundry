@@ -33,7 +33,6 @@ use std::{
     path::PathBuf,
     str::FromStr,
     sync::atomic::{AtomicBool, Ordering},
-    time::{Duration, Instant},
 };
 pub use tx::TxBuilder;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
@@ -1672,45 +1671,39 @@ impl SimpleCast {
     /// use cast::SimpleCast as Cast;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Cast::get_selector(String::from("foo(address,uint256)"), None)?.0, String::from("0xbd0d639f"));
-    ///     assert_eq!(Cast::get_selector(String::from("foo(address,uint256)"), Some(2))?.0, String::from("0x0000bf3e"));
-    ///     assert_eq!(Cast::get_selector(String::from("foo(address,uint256)"), Some(2))?.1, Some(String::from("foo71661(address,uint256)")));
+    ///     assert_eq!(Cast::get_selector("foo(address,uint256)", None)?.0, String::from("0xbd0d639f"));
     ///
     ///     Ok(())
     /// }
     /// ```    
-    pub fn get_selector(
-        signature: String,
-        optimize: Option<usize>,
-    ) -> Result<(String, Option<String>, Option<Duration>)> {
-        if optimize.is_none() || optimize.unwrap() > 4 {
-            let selector = HumanReadableParser::parse_function(&signature)?.short_signature();
-            return Ok((format!("0x{}", hex::encode(selector)), None, None))
+    pub fn get_selector(signature: &str, optimize: Option<usize>) -> Result<(String, String)> {
+        let optimize = optimize.unwrap_or(0);
+        if optimize > 4 {
+            eyre::bail!("Number of leading zeroes must not be greater than 4");
         }
-        let mut name: &str = "";
-        let mut params: &str = "";
-        if let Some(index) = signature.find('(') {
-            name = &signature[..index];
-            params = &signature[index..];
+        if optimize == 0 {
+            let selector = HumanReadableParser::parse_function(signature)?.short_signature();
+            return Ok((format!("0x{}", hex::encode(selector)), String::from(signature)))
         }
+        let Some((name, params)) = signature.split_once('(') else {
+            eyre::bail!("Invalid signature");
+        };
 
         let num_threads = num_cpus::get();
-        let start_time = Instant::now();
         let found = AtomicBool::new(false);
 
-        let results: Vec<Option<(u32, String, String)>> = (0..num_threads)
-            .into_par_iter()
-            .map(|i| {
+        let result: Option<(u32, String, String)> =
+            (0..num_threads).into_par_iter().find_map_any(|i| {
                 let nonce_start = i as u32;
                 let nonce_step = num_threads as u32;
 
                 let mut nonce = nonce_start;
                 while nonce < std::u32::MAX && !found.load(Ordering::Relaxed) {
-                    let input = format!("{}{}{}", name, nonce, params);
+                    let input = format!("{}{}({}", name, nonce, params);
                     let hash = keccak256(input.as_bytes());
                     let selector = &hash[..4];
 
-                    if selector.iter().take(optimize.unwrap()).all(|&byte| byte == 0) {
+                    if selector.iter().take(optimize).all(|&byte| byte == 0) {
                         found.store(true, Ordering::Relaxed);
                         return Some((nonce, format!("0x{}", hex::encode(selector)), input))
                     }
@@ -1718,17 +1711,11 @@ impl SimpleCast {
                     nonce += nonce_step;
                 }
                 None
-            })
-            .collect();
-
-        let result = results.into_iter().flatten().min_by_key(|r| r.0);
+            });
 
         match result {
-            Some((_nonce, selector, signature)) => {
-                let elapsed_time = start_time.elapsed();
-                Ok((selector, Some(signature), Some(elapsed_time)))
-            }
-            None => Ok((String::from(""), None, None)),
+            Some((_nonce, selector, signature)) => Ok((selector, signature)),
+            None => eyre::bail!("No selector found"),
         }
     }
 }
