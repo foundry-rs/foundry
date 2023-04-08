@@ -96,9 +96,9 @@ pub fn on_evm_step<DB: Database>(
             if interpreter.stack.peek(1) == Ok(0x40.into()) {
                 let address = interpreter.contract.address;
                 let offset = interpreter.stack.peek(0).expect("stack size > 1").as_usize();
-                let low: U256 = interpreter.memory.get_slice(offset, 0x20).into();
-                let high: U256 = interpreter.memory.get_slice(offset + 0x20, 0x20).into();
-                let result: U256 = keccak256(interpreter.memory.get_slice(offset, 0x40)).into();
+                let low = U256::from(interpreter.memory.get_slice(offset, 0x20));
+                let high = U256::from(interpreter.memory.get_slice(offset + 0x20, 0x20));
+                let result = U256::from(keccak256(interpreter.memory.get_slice(offset, 0x40)));
 
                 mapping_slots.entry(address).or_default().seen_sha3.insert(result, (low, high));
             }
