@@ -485,8 +485,12 @@ interface Cheats {
     function resumeGasMetering() external;
 
     function startMappingRecording() external;
+
     function getMappingLength(address target, bytes32 slot) external returns (uint);
+
     function getMappingSlotAt(address target, bytes32 slot, uint256 idx) external returns (bytes32);
-    function getMappingKeyOf(address target, bytes32 slot) external returns (uint);
+
+    function getMappingKeyOf(address target, bytes32 slot) external returns (bytes32);
+
     function getMappingParentOf(address target, bytes32 slot) external returns (bytes32);
 }

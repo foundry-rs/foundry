@@ -45,11 +45,11 @@ contract RecordMappingTest is DSTest {
 
         for (uint k; k < cheats.getMappingLength(address(target), nestDataSlot); k++) {
             bytes32 subSlot = cheats.getMappingSlotAt(address(target), nestDataSlot, k);
-            uint i = cheats.getMappingKeyOf(address(target), subSlot);
+            uint i = uint(cheats.getMappingKeyOf(address(target), subSlot));
             assertEq(cheats.getMappingParentOf(address(target), subSlot), nestDataSlot, "parent of nestedData[i][j] is incorrect");
             assertEq(uint(cheats.getMappingLength(address(target), subSlot)), 1, "number of nestedData[i] is incorrect");
             bytes32 leafSlot = cheats.getMappingSlotAt(address(target), subSlot, 0);
-            uint j = cheats.getMappingKeyOf(address(target), leafSlot);
+            uint j = uint(cheats.getMappingKeyOf(address(target), leafSlot));
             assertEq(cheats.getMappingParentOf(address(target), leafSlot), subSlot, "parent of nestedData[i][j] is incorrect");
             assertEq(j, 10);
             assertEq(uint(cheats.load(address(target), leafSlot)), i * j, "value of nestedData[i][j] is incorrect");
