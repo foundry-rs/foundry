@@ -1,7 +1,7 @@
 use self::{
-    env::{Broadcast, MappingSlots},
+    env::Broadcast,
     expect::{handle_expect_emit, handle_expect_revert},
-    util::{check_if_fixed_gas_limit, process_create, BroadcastableTransactions},
+    util::{check_if_fixed_gas_limit, process_create, BroadcastableTransactions}, mapping::MappingSlots,
 };
 use crate::{
     abi::HEVMCalls,
@@ -19,7 +19,6 @@ use ethers::{
         transaction::eip2718::TypedTransaction, Address, NameOrAddress, TransactionRequest, H256,
         U256,
     },
-    utils::keccak256,
 };
 use itertools::Itertools;
 use revm::{
@@ -54,6 +53,8 @@ mod fork;
 mod fuzz;
 /// Snapshot related cheatcodes
 mod snapshot;
+/// Mapping related cheatcodes
+mod mapping;
 /// Utility cheatcodes (`sign` etc.)
 pub mod util;
 pub use util::{BroadcastableTransaction, DEFAULT_CREATE2_DEPLOYER};
@@ -504,27 +505,7 @@ where
 
         // Record writes with sstore (and sha3) if `StartMappingRecording` has been called
         if let Some(mapping_slots) = &mut self.mapping_slots {
-            match interpreter.contract.bytecode.bytecode()[interpreter.program_counter()] {
-                opcode::SHA3 => {
-                    if interpreter.stack.peek(1) == Ok(0x40.into()) {
-                        let address = interpreter.contract.address;
-                        let offset = interpreter.stack.peek(0).expect("stack size > 1").as_usize();
-                        let low: U256 = interpreter.memory.get_slice(offset, 0x20).into();
-                        let high: U256 = interpreter.memory.get_slice(offset + 0x20, 0x20).into();
-                        let result: U256 = keccak256(interpreter.memory.get_slice(offset, 0x40)).into();
-
-                        mapping_slots.entry(address).or_default().seen_sha3.insert(result, (low, high));
-                    }
-                }
-                opcode::SSTORE => {
-                    if let Some(mapping_slots) = mapping_slots.get_mut(&interpreter.contract.address) {
-                        if let Ok(slot) = interpreter.stack.peek(0) {
-                            mapping_slots.insert(slot);
-                        }
-                    }
-                }
-                _ => {}
-            }
+            mapping::on_evm_step(mapping_slots, interpreter, data)
         }
 
         Return::Continue
