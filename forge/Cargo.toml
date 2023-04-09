@@ -10,7 +10,7 @@ foundry-common = { path = "./../common" }
 foundry-config = { path = "./../config" }
 foundry-evm = { path = "./../evm" }
 
-ethers = { workspace = true, default-features = false, features = ["solc-full"] }
+ethers = { workspace = true, features = ["solc-full"] }
 eyre = "0.6.8"
 semver = "1.0.17"
 serde_json = "1.0.95"
@@ -31,5 +31,5 @@ comfy-table = "6.1.4"
 parking_lot = "0.12"
 
 [dev-dependencies]
-ethers = { workspace = true, default-features = false, features = ["solc-full", "solc-tests"] }
+ethers = { workspace = true, features = ["solc-full", "solc-tests"] }
 foundry-utils = { path = "./../utils", features = ["test"] }

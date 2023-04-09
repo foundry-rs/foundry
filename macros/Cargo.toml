@@ -10,4 +10,4 @@ repository = "https://github.com/foundry-rs/foundry"
 foundry-macros-impl = { path = "./impl" }
 foundry-common = { path = "../common" }
 
-ethers-core = { workspace = true, default-features = false }
+ethers-core = { workspace = true }

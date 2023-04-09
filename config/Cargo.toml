@@ -9,9 +9,9 @@ readme = "README.md"
 
 [dependencies]
 # eth
-ethers-core = { workspace = true, default-features = false }
-ethers-solc = { workspace = true, default-features = false, features = ["async", "svm-solc"] }
-ethers-etherscan = { workspace = true, default-features = false }
+ethers-core = { workspace = true }
+ethers-solc = { workspace = true, features = ["async", "svm-solc"] }
+ethers-etherscan = { workspace = true }
 
 # formats
 Inflector = "0.11.4"
