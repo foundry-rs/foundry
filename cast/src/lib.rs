@@ -1703,7 +1703,7 @@ impl SimpleCast {
                     let hash = keccak256(input.as_bytes());
                     let selector = &hash[..4];
 
-                    if selector.iter().take(optimize).all(|&byte| byte == 0) {
+                    if selector.iter().take_while(|&&byte| byte == 0).count() == optimize {
                         found.store(true, Ordering::Relaxed);
                         return Some((nonce, format!("0x{}", hex::encode(selector)), input))
                     }
