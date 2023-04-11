@@ -1,6 +1,6 @@
 use crate::coverage::{HitMap, HitMaps};
+use crate::utils::b256_to_h256;
 use bytes::Bytes;
-use ethers::types::H256;
 use revm::{Database, EVMData, Inspector};
 use revm::interpreter::{InstructionResult, Interpreter};
 
@@ -20,7 +20,7 @@ where
         _: &mut EVMData<'_, DB>,
         _: bool,
     ) -> InstructionResult {
-        self.maps.entry(H256::from_slice(interpreter.contract.bytecode.hash().as_bytes())).or_insert_with(|| {
+        self.maps.entry(b256_to_h256(interpreter.contract.bytecode.hash())).or_insert_with(|| {
             HitMap::new(Bytes::copy_from_slice(
                 interpreter.contract.bytecode.original_bytecode_slice(),
             ))
@@ -36,7 +36,7 @@ where
         _is_static: bool,
     ) -> InstructionResult {
         self.maps
-            .entry(H256::from_slice(interpreter.contract.bytecode.hash().as_bytes()))
+            .entry(b256_to_h256(interpreter.contract.bytecode.hash()))
             .and_modify(|map| map.hit(interpreter.program_counter()));
 
         Return::Continue

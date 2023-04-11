@@ -1,10 +1,10 @@
-use crate::executor::{
+use crate::{executor::{
     patch_hardhat_console_selector, HardhatConsoleCalls, HARDHAT_CONSOLE_ADDRESS,
-};
+}, utils::{b160_to_h160, h160_to_b160, b256_to_h256}};
 use bytes::Bytes;
 use ethers::{
     abi::{AbiDecode, Token},
-    types::{Address, Log, H256},
+    types::{Log, H256},
 };
 use foundry_macros::ConsoleFmt;
 use revm::{Database, EVMData, Inspector};
@@ -46,8 +46,8 @@ where
 {
     fn log(&mut self, _: &mut EVMData<'_, DB>, address: &B160, topics: &[B256], data: &Bytes) {
         self.logs.push(Log {
-            address: Address::from_slice(address.as_bytes()),
-            topics: topics.to_vec().into_iter().map(|t| H256::from_slice(t.as_bytes())).collect(),
+            address: b160_to_h160(*address),
+            topics: topics.to_vec().into_iter().map(b256_to_h256).collect(),
             data: data.clone().into(),
             ..Default::default()
         });
@@ -59,7 +59,7 @@ where
         call: &mut CallInputs,
         _: bool,
     ) -> (InstructionResult, Gas, Bytes) {
-        if call.contract == B160::from_slice(HARDHAT_CONSOLE_ADDRESS.as_bytes()) {
+        if call.contract == h160_to_b160(HARDHAT_CONSOLE_ADDRESS) {
             let (status, reason) = self.hardhat_log(call.input.to_vec());
             (status, Gas::new(call.gas_limit), reason)
         } else {

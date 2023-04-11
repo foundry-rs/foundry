@@ -4,7 +4,9 @@ use ethers::{
 };
 use revm::{CreateInputs, CreateScheme, SpecId};
 
-/// Returns [Return::Continue] on an error, discarding the error.
+use crate::utils::b160_to_h160;
+
+/// Returns [InstructionResult::Continue] on an error, discarding the error.
 ///
 /// Useful for inspectors that read state that might be invalid, but do not want to emit
 /// appropriate errors themselves, instead opting to continue.
@@ -20,9 +22,9 @@ macro_rules! try_or_continue {
 /// Get the address of a contract creation
 pub fn get_create_address(call: &CreateInputs, nonce: u64) -> Address {
     match call.scheme {
-        CreateScheme::Create => get_contract_address(Address::from_slice(call.caller.as_bytes()), nonce),
+        CreateScheme::Create => get_contract_address(b160_to_h160(call.caller), nonce),
         CreateScheme::Create2 { salt } => {
-            get_create2_address(Address::from_slice(call.caller.as_bytes()), salt.to_be_bytes(), call.init_code.clone())
+            get_create2_address(b160_to_h160(call.caller), salt.to_be_bytes(), call.init_code.clone())
         }
     }
 }

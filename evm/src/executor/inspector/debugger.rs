@@ -6,10 +6,10 @@ use crate::{
         inspector::utils::{gas_used, get_create_address},
         CHEATCODE_ADDRESS,
     },
-    CallKind,
+    CallKind, utils::b160_to_h160,
 };
 use bytes::Bytes;
-use ethers::types::{Address, H160};
+use ethers::types::Address;
 use std::{cell::RefCell, rc::Rc};
 use revm::{EVMData, Inspector, primitives::B160};
 use revm::inspectors::GasInspector;
@@ -109,10 +109,10 @@ where
     ) -> (InstructionResult, Gas, Bytes) {
         self.enter(
             data.journaled_state.depth() as usize,
-            H160::from_slice(call.context.code_address.as_bytes()),
+            b160_to_h160(call.context.code_address),
             call.context.scheme.into(),
         );
-        if CHEATCODE_ADDRESS == H160::from_slice(call.contract.as_bytes()) {
+        if CHEATCODE_ADDRESS == b160_to_h160(call.contract) {
             self.arena.arena[self.head].steps.push(DebugStep {
                 memory: Memory::new(),
                 instruction: Instruction::Cheatcode(

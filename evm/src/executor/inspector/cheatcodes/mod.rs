@@ -9,15 +9,14 @@ use crate::{
     executor::{
         backend::DatabaseExt, inspector::cheatcodes::env::RecordedLogs, CHEATCODE_ADDRESS,
         HARDHAT_CONSOLE_ADDRESS,
-    }, utils::{h160_to_b160, b160_to_h160},
+    }, utils::{h160_to_b160, b160_to_h160, b256_to_h256},
 };
 use bytes::Bytes;
 use ethers::{
     abi::{AbiDecode, AbiEncode, RawLog},
     signers::LocalWallet,
     types::{
-        transaction::eip2718::TypedTransaction, Address, NameOrAddress, TransactionRequest, H160, H256,
-        U256,
+        transaction::eip2718::TypedTransaction, Address, NameOrAddress, TransactionRequest, U256,
     },
 };
 use itertools::Itertools;
@@ -222,7 +221,7 @@ impl Cheatcodes {
             .unwrap_or_default();
         let created_address = get_create_address(inputs, old_nonce);
 
-        if data.journaled_state.depth > 1 && !data.db.has_cheatcode_access(H160::from_slice(inputs.caller.as_bytes())) {
+        if data.journaled_state.depth > 1 && !data.db.has_cheatcode_access(b160_to_h160(inputs.caller)) {
             // we only grant cheat code access for new contracts if the caller also has
             // cheatcode access and the new contract is created in top most call
             return
@@ -252,7 +251,7 @@ impl Cheatcodes {
         // This will prevent overflow issues in revm's [`JournaledState::journal_revert`] routine
         // which rolls back any transfers.
         while let Some(record) = self.eth_deals.pop() {
-            if let Some(acc) = data.journaled_state.state.get_mut(&B160::from_slice(record.address.as_bytes())) {
+            if let Some(acc) = data.journaled_state.state.get_mut(&h160_to_b160(record.address)) {
                 acc.info.balance = record.old_balance.into();
             }
         }
@@ -351,7 +350,7 @@ where
                     let key = try_or_continue!(interpreter.stack().peek(0));
                     storage_accesses
                         .reads
-                        .entry(H160::from_slice(interpreter.contract().address.as_bytes()))
+                        .entry(b160_to_h160(interpreter.contract().address))
                         .or_insert_with(Vec::new)
                         .push(key);
                 }
@@ -361,12 +360,12 @@ where
                     // An SSTORE does an SLOAD internally
                     storage_accesses
                         .reads
-                        .entry(H160::from_slice(interpreter.contract().address.as_bytes()))
+                        .entry(b160_to_h160(interpreter.contract().address))
                         .or_insert_with(Vec::new)
                         .push(key.into());
                     storage_accesses
                         .writes
-                        .entry(H160::from_slice(interpreter.contract().address.as_bytes()))
+                        .entry(b160_to_h160(interpreter.contract().address))
                         .or_insert_with(Vec::new)
                         .push(key);
                 }
@@ -505,16 +504,16 @@ where
         if !self.expected_emits.is_empty() {
             handle_expect_emit(
                 self,
-                RawLog { topics: topics.to_vec().into_iter().map(|topic| H256::from_slice(topic.as_bytes())).collect_vec(), data: data.to_vec() },
-                &H160::from_slice(address.as_bytes()),
+                RawLog { topics: topics.to_vec().into_iter().map(|topic| b256_to_h256(topic)).collect_vec(), data: data.to_vec() },
+                &b160_to_h160(*address),
             );
         }
 
         // Stores this log if `recordLogs` has been called
         if let Some(storage_recorded_logs) = &mut self.recorded_logs {
             storage_recorded_logs.entries.push(Log {
-                emitter: H160::from_slice(address.as_bytes()),
-                inner: RawLog { topics: topics.to_vec().into_iter().map(|topic| H256::from_slice(topic.as_bytes())).collect_vec(), data: data.to_vec() },
+                emitter: b160_to_h160(*address),
+                inner: RawLog { topics: topics.to_vec().into_iter().map(|topic| b256_to_h256(topic)).collect_vec(), data: data.to_vec() },
             });
         }
     }

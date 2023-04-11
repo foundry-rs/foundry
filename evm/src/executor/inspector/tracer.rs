@@ -5,12 +5,12 @@ use crate::{
         CallTrace, CallTraceArena, CallTraceStep, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog,
         RawOrDecodedReturnData,
     },
-    CallKind,
+    CallKind, utils::{b160_to_h160, b256_to_h256},
 };
 use bytes::Bytes;
 use ethers::{
     abi::RawLog,
-    types::{Address, H256, U256},
+    types::{Address, U256},
 };
 use revm::{Database, EVMData, Inspector, JournalEntry, primitives::{B160, B256}};
 use revm::inspectors::GasInspector;
@@ -92,7 +92,7 @@ impl Tracer {
             depth: data.journaled_state.depth(),
             pc,
             op: OpCode(interp.contract.bytecode.bytecode()[pc]),
-            contract: H256::from_slice(interp.contract.address.as_bytes()).into(),
+            contract: b160_to_h160(interp.contract.address),
             stack: interp.stack.clone(),
             memory: interp.memory.clone(),
             gas: self.gas_inspector.borrow().gas_remaining(),
@@ -166,10 +166,10 @@ where
 
     fn log(&mut self, _: &mut EVMData<'_, DB>, _: &B160, topics: &[B256], data: &Bytes) {
         let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
-        let topics: Vec<_> = topics.to_vec().into_iter().map(|t| H256::from_slice(t.as_bytes())).collect();
+        let topics: Vec<_> = topics.to_vec().into_iter().map(b256_to_h256).collect();
         node.ordering.push(LogCallOrder::Log(node.logs.len()));
         node.logs
-            .push(RawOrDecodedLog::Raw(RawLog { topics: topics, data: data.to_vec() }));
+            .push(RawOrDecodedLog::Raw(RawLog { topics, data: data.to_vec() }));
     }
 
     fn step_end(
@@ -203,11 +203,11 @@ where
 
         self.start_trace(
             data.journaled_state.depth() as usize,
-            Address::from_slice(to.as_bytes()).into(),
+            b160_to_h160(to),
             inputs.input.to_vec(),
             inputs.transfer.value,
             inputs.context.scheme.into(),
-            Address::from_slice(from.as_bytes()).into(),
+            b160_to_h160(from),
         );
 
         (Return::Continue, Gas::new(inputs.gas_limit), Bytes::new())
@@ -246,7 +246,7 @@ where
             inputs.init_code.to_vec(),
             inputs.value,
             inputs.scheme.into(),
-            Address::from_slice(inputs.caller.as_bytes()).into(),
+            b160_to_h160(inputs.caller),
         );
 
         (Return::Continue, None, Gas::new(inputs.gas_limit), Bytes::new())
@@ -275,7 +275,7 @@ where
             status,
             gas_used(data.env.cfg.spec_id, gas.spend(), gas.refunded() as u64),
             code,
-            address.map(|addr| Address::from_slice(addr.as_bytes()).into()),
+            address.map(b160_to_h160),
         );
 
         (status, address, gas, retdata)

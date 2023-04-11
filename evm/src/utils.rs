@@ -72,14 +72,14 @@ pub fn ru256_to_u256(u: revm::primitives::U256) -> ethers::types::U256 {
 /// This checks for:
 ///    - prevrandao mixhash after merge
 pub fn apply_chain_and_block_specific_env_changes<T>(env: &mut revm::primitives::Env, block: &Block<T>) {
-    if let Ok(chain) = Chain::try_from(U256::from_little_endian(&env.cfg.chain_id.to_le_bytes())) {
+    if let Ok(chain) = Chain::try_from(ru256_to_u256(env.cfg.chain_id)) {
         let block_number = block.number.unwrap_or_default();
 
         match chain {
             Chain::Mainnet => {
                 // after merge difficulty is supplanted with prevrandao EIP-4399
                 if block_number.as_u64() >= 15_537_351u64 {
-                    env.block.difficulty = revm::primitives::U256::from_be_bytes(env.block.prevrandao.unwrap_or_default().to_fixed_bytes());
+                    env.block.difficulty = env.block.prevrandao.unwrap_or_default().into();
                 }
 
                 return
@@ -102,7 +102,7 @@ pub fn apply_chain_and_block_specific_env_changes<T>(env: &mut revm::primitives:
 
     // if difficulty is `0` we assume it's past merge
     if block.difficulty.is_zero() {
-        env.block.difficulty = revm::primitives::U256::from_be_bytes(env.block.prevrandao.unwrap_or_default().to_fixed_bytes());
+        env.block.difficulty = env.block.prevrandao.unwrap_or_default().into();
     }
 }
 

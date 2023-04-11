@@ -6,7 +6,7 @@ use crate::{
         inspector::{cheatcodes::Cheatcodes, DEFAULT_CREATE2_DEPLOYER},
         snapshot::Snapshots,
     },
-    CALLER, TEST_CONTRACT_ADDRESS,
+    CALLER, TEST_CONTRACT_ADDRESS, utils::{h160_to_b160, b160_to_h160, h256_to_b256, ru256_to_u256, u256_to_ru256},
 };
 use ethers::{
     prelude::{Block, H160, H256, U256},
@@ -448,9 +448,9 @@ impl Backend {
 
     pub fn insert_account_info(&mut self, address: H160, account: AccountInfo) {
         if let Some(db) = self.active_fork_db_mut() {
-            db.insert_account_info(B160::from_slice(address.as_bytes()), account)
+            db.insert_account_info(h160_to_b160(address), account)
         } else {
-            self.mem_db.insert_account_info(B160::from_slice(address.as_bytes()), account)
+            self.mem_db.insert_account_info(h160_to_b160(address), account)
         }
     }
 
@@ -535,7 +535,7 @@ impl Backend {
             bool private _failed;
          }
         */
-        let value = self.storage(B160::from_slice(address.as_bytes()), U256::zero().into()).unwrap_or_default();
+        let value = self.storage(h160_to_b160(address), U256::zero().into()).unwrap_or_default();
         value.as_le_bytes()[1] != 0
     }
 
@@ -550,7 +550,7 @@ impl Backend {
         address: Address,
         current_state: &JournaledState,
     ) -> bool {
-        let address = B160::from_slice(address.as_bytes());
+        let address = h160_to_b160(address);
         if let Some(account) = current_state.state.get(&address) {
             let value =
                 account.storage.get(&revm::primitives::U256::from(0)).cloned().unwrap_or_default().present_value();
@@ -565,7 +565,7 @@ impl Backend {
     /// See <https://github.com/dapphub/ds-test/blob/9310e879db8ba3ea6d5c6489a579118fd264a3f5/src/test.sol#L66-L72>
     pub fn is_global_failure(&self) -> bool {
         let index = U256::from(&b"failed"[..]);
-        self.storage(B160::from_slice(CHEATCODE_ADDRESS.as_bytes()), index.into()).map(|value| value == revm::primitives::U256::from(1)).unwrap_or_default()
+        self.storage(h160_to_b160(CHEATCODE_ADDRESS), index.into()).map(|value| value == revm::primitives::U256::from(1)).unwrap_or_default()
     }
 
     /// When creating or switching forks, we update the AccountInfo of the contract
@@ -684,7 +684,7 @@ impl Backend {
             }
             TransactTo::Create(CreateScheme::Create2 { salt }) => {
                 let code_hash = H256::from_slice(keccak256(&env.tx.data).as_slice());
-                revm::primitives::create2_address(env.tx.caller, B256::from_slice(code_hash.as_bytes()), salt)
+                revm::primitives::create2_address(env.tx.caller, h256_to_b256(code_hash), salt)
             }
         };
         self.set_test_contract(test_contract);
@@ -706,7 +706,7 @@ impl Backend {
 
     /// Returns true if the address is a precompile
     pub fn is_existing_precompile(&self, addr: &B160) -> bool {
-        self.inner.precompiles().contains(addr.as_fixed_bytes())
+        self.inner.precompiles().contains(addr)
     }
 
     /// Ths will clean up already loaded accounts that would be initialized without the correct data
@@ -723,7 +723,7 @@ impl Backend {
             .fork_init_journaled_state
             .state
             .iter()
-            .filter(|(addr, _)| !self.is_existing_precompile(addr) && !self.is_persistent(&H160::from_slice(addr.as_bytes())))
+            .filter(|(addr, _)| !self.is_existing_precompile(addr) && !self.is_persistent(&b160_to_h160(**addr)))
             .map(|(addr, _)| addr)
             .copied()
             .collect::<Vec<_>>();
@@ -733,7 +733,7 @@ impl Backend {
             for loaded_account in loaded_accounts.iter().copied() {
                 trace!(?loaded_account, "replacing account on init");
                 let fork_account = Database::basic(&mut fork.db, loaded_account)?
-                    .ok_or(DatabaseError::MissingAccount(H160::from_slice(loaded_account.as_bytes())))?;
+                    .ok_or(DatabaseError::MissingAccount(b160_to_h160(loaded_account)))?;
                 let init_account =
                     journaled_state.state.get_mut(&loaded_account).expect("exists; qed");
                 init_account.info = fork_account;
@@ -787,7 +787,7 @@ impl Backend {
 
         let fork = self.inner.get_fork_by_id_mut(id)?;
         let full_block =
-            fork.db.db.get_full_block(BlockNumber::Number(U64::from_little_endian(env.block.number.as_le_slice())))?;
+            fork.db.db.get_full_block(BlockNumber::Number(ru256_to_u256(env.block.number).as_u64().into()))?;
 
         for tx in full_block.transactions.into_iter() {
             if tx.hash().eq(&tx_hash) {
@@ -943,7 +943,7 @@ impl DatabaseExt for Backend {
                 // Initialize caller with its fork info
                 if let Some(mut acc) = caller_account {
                     let fork_account = Database::basic(&mut target_fork.db, caller)?
-                        .ok_or(DatabaseError::MissingAccount(H160::from_slice(caller.as_bytes())))?;
+                        .ok_or(DatabaseError::MissingAccount(b160_to_h160(caller)))?;
 
                     acc.info = fork_account;
                     target_fork.journaled_state.state.insert(caller, acc);
@@ -1081,15 +1081,15 @@ impl DatabaseExt for Backend {
 
         // update the block's env accordingly
         env.block.timestamp = block.timestamp.into();
-        env.block.coinbase = B160::from_slice(block.author.unwrap_or_default().as_bytes());
+        env.block.coinbase = h160_to_b160(block.author.unwrap_or_default());
         env.block.difficulty = block.difficulty.into();
         env.block.prevrandao = match block.mix_hash {
-            Some(mix_hash) => Some(B256::from_slice(mix_hash.as_bytes())),
+            Some(mix_hash) => Some(h256_to_b256(mix_hash)),
             None => None,
         };
         env.block.basefee = block.base_fee_per_gas.unwrap_or_default().into();
         env.block.gas_limit = block.gas_limit.into();
-        env.block.number = revm::primitives::U256::from(block.number.unwrap_or(fork_block).as_u64());
+        env.block.number = u256_to_ru256(block.number.unwrap_or(fork_block).as_u64().into());
 
         // replay all transactions that came before
         let env = env.clone();
@@ -1363,7 +1363,7 @@ pub struct Fork {
 impl Fork {
     /// Returns true if the account is a contract
     pub fn is_contract(&self, acc: Address) -> bool {
-        if let Ok(Some(acc)) = self.db.basic(B160::from_slice(acc.as_bytes())) {
+        if let Ok(Some(acc)) = self.db.basic(h160_to_b160(acc)) {
             if acc.code_hash != KECCAK_EMPTY {
                 return true
             }
@@ -1657,7 +1657,7 @@ fn merge_journaled_state_data(
     active_journaled_state: &JournaledState,
     fork_journaled_state: &mut JournaledState,
 ) {
-    let addr = B160::from_slice(addr.as_bytes());
+    let addr = h160_to_b160(addr);
 
     if let Some(mut acc) = active_journaled_state.state.get(&addr).cloned() {
         trace!(?addr, "updating journaled_state account data");
@@ -1679,7 +1679,7 @@ fn merge_db_account_data<ExtDB: DatabaseRef>(
 ) {
     trace!(?addr, "merging database data");
 
-    let addr = B160::from_slice(addr.as_bytes());
+    let addr = h160_to_b160(addr);
 
     let mut acc = if let Some(acc) = active.accounts.get(&addr).cloned() {
         acc
@@ -1704,7 +1704,7 @@ fn merge_db_account_data<ExtDB: DatabaseRef>(
 
 /// Returns true of the address is a contract
 fn is_contract_in_state(journaled_state: &JournaledState, acc: Address) -> bool {
-    let acc = B160::from_slice(acc.as_bytes());
+    let acc = h160_to_b160(acc);
 
     journaled_state
         .state

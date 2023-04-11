@@ -2,11 +2,13 @@ use ethers::{
     abi::{ethereum_types::BigEndianHash, Address},
     types::{
         transaction::eip2930::{AccessList, AccessListItem},
-        H256, H160
+        H256
     },
 };
 use hashbrown::{HashMap, HashSet};
 use revm::{opcode, Database, EVMData, Inspector, Interpreter, Return};
+
+use crate::utils::b160_to_h160;
 
 /// An inspector that collects touched accounts and storage slots.
 #[derive(Default, Debug)]
@@ -64,10 +66,14 @@ where
                     let cur_contract = interpreter.contract.address;
                     self.access_list
 <<<<<<< HEAD
+<<<<<<< HEAD
                         .entry(cur_contract)
 =======
                         .entry(H160::from_slice(cur_contract.as_bytes()))
 >>>>>>> 30fa1965 (fix(inspector): inspector top level files compile)
+=======
+                        .entry(b160_to_h160(cur_contract))
+>>>>>>> 30d3fe2a (chore: move all manual conversions to use utils)
                         .or_default()
                         .insert(H256::from_uint(&slot));
                 }

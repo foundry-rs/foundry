@@ -7,7 +7,7 @@ use crate::{
     executor::{
         backend::DatabaseExt,
         inspector::cheatcodes::{util::with_journaled_account, DealRecord},
-    },
+    }, utils::{h160_to_b160, u256_to_ru256, b160_to_h160},
 };
 use bytes::Bytes;
 use ethers::{
@@ -18,10 +18,10 @@ use ethers::{
         Secp256k1,
     },
     signers::{LocalWallet, Signer},
-    types::{Address, U256, H160},
+    types::{Address, U256},
 };
 use foundry_config::Config;
-use revm::{primitives::{Bytecode, U256 as rU256}, Database, EVMData, primitives::B160};
+use revm::{primitives::Bytecode, Database, EVMData};
 use tracing::trace;
 
 #[derive(Clone, Debug, Default)]
@@ -215,29 +215,29 @@ pub fn apply<DB: DatabaseExt>(
             Bytes::new()
         }
         HEVMCalls::Coinbase(inner) => {
-            data.env.block.coinbase = B160::from_slice(inner.0.as_bytes());
+            data.env.block.coinbase = h160_to_b160(inner.0);
             Bytes::new()
         }
         HEVMCalls::Store(inner) => {
             data.journaled_state
-                .load_account(B160::from_slice(inner.0.as_bytes()), data.db)
+                .load_account(h160_to_b160(inner.0), data.db)
                 .map_err(|err| err.encode_string())?;
             // ensure the account is touched
-            data.journaled_state.touch(&B160::from_slice(inner.0.as_bytes()));
+            data.journaled_state.touch(&h160_to_b160(inner.0));
 
             data.journaled_state
-                .sstore(B160::from_slice(inner.0.as_bytes()), rU256::from_le_bytes(inner.1), rU256::from_le_bytes(inner.2), data.db)
+                .sstore(h160_to_b160(inner.0), u256_to_ru256(inner.1.into()), u256_to_ru256(inner.2.into()), data.db)
                 .map_err(|err| err.encode_string())?;
             Bytes::new()
         }
         HEVMCalls::Load(inner) => {
             // TODO: Does this increase gas usage?
             data.journaled_state
-                .load_account(B160::from_slice(inner.0.as_bytes()), data.db)
+                .load_account(h160_to_b160(inner.0), data.db)
                 .map_err(|err| err.encode_string())?;
             let (val, _) = data
                 .journaled_state
-                .sload(B160::from_slice(inner.0.as_bytes()), rU256::from_le_bytes(inner.1), data.db)
+                .sload(h160_to_b160(inner.0), u256_to_ru256(inner.1.into()), data.db)
                 .map_err(|err| err.encode_string())?;
             val.encode().into() // TODO: Unsure how to handle this
         }
@@ -246,9 +246,9 @@ pub fn apply<DB: DatabaseExt>(
             trace!(address=?inner.0, code=?hex::encode(&code.0), "etch cheatcode");
             // TODO: Does this increase gas usage?
             data.journaled_state
-                .load_account(B160::from_slice(inner.0.as_bytes()), data.db)
+                .load_account(h160_to_b160(inner.0), data.db)
                 .map_err(|err| err.encode_string())?;
-            data.journaled_state.set_code(B160::from_slice(inner.0.as_bytes()), Bytecode::new_raw(code.0).to_checked());
+            data.journaled_state.set_code(h160_to_b160(inner.0), Bytecode::new_raw(code.0).to_checked());
             Bytes::new()
         }
         HEVMCalls::Deal(inner) => {
@@ -272,7 +272,7 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::Prank0(inner) => prank(
             state,
             caller,
-            H160::from_slice(data.env.tx.caller.as_bytes()),
+            b160_to_h160(data.env.tx.caller),
             inner.0,
             None,
             data.journaled_state.depth(),
@@ -281,7 +281,7 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::Prank1(inner) => prank(
             state,
             caller,
-            H160::from_slice(data.env.tx.caller.as_bytes()),
+            b160_to_h160(data.env.tx.caller),
             inner.0,
             Some(inner.1),
             data.journaled_state.depth(),
@@ -290,7 +290,7 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::StartPrank0(inner) => prank(
             state,
             caller,
-            H160::from_slice(data.env.tx.caller.as_bytes()),
+            b160_to_h160(data.env.tx.caller),
             inner.0,
             None,
             data.journaled_state.depth(),
@@ -299,7 +299,7 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::StartPrank1(inner) => prank(
             state,
             caller,
-            H160::from_slice(data.env.tx.caller.as_bytes()),
+            b160_to_h160(data.env.tx.caller),
             inner.0,
             Some(inner.1),
             data.journaled_state.depth(),
@@ -332,7 +332,7 @@ pub fn apply<DB: DatabaseExt>(
         }
         HEVMCalls::GetNonce(inner) => {
             correct_sender_nonce(
-        H160::from_slice(data.env.tx.caller.as_bytes()),
+        b160_to_h160(data.env.tx.caller),
                 &mut data.journaled_state,
                 &mut data.db,
                 state,
@@ -342,11 +342,11 @@ pub fn apply<DB: DatabaseExt>(
             // TODO:  this is probably not a good long-term solution since it might mess up the gas
             // calculations
             data.journaled_state
-                .load_account(B160::from_slice(inner.0.as_bytes()), data.db)
+                .load_account(h160_to_b160(inner.0), data.db)
                 .map_err(|err| err.encode_string())?;
 
             // we can safely unwrap because `load_account` insert inner.0 to DB.
-            let account = data.journaled_state.state().get(&B160::from_slice(inner.0.as_bytes())).unwrap();
+            let account = data.journaled_state.state().get(&h160_to_b160(inner.0)).unwrap();
             abi::encode(&[Token::Uint(account.info.nonce.into())]).into()
         }
         HEVMCalls::ChainId(inner) => {
@@ -362,7 +362,7 @@ pub fn apply<DB: DatabaseExt>(
         }
         HEVMCalls::Broadcast0(_) => {
             correct_sender_nonce(
-                H160::from_slice(data.env.tx.caller.as_bytes()),
+                b160_to_h160(data.env.tx.caller),
                 &mut data.journaled_state,
                 &mut data.db,
                 state,
@@ -370,16 +370,16 @@ pub fn apply<DB: DatabaseExt>(
             .map_err(|err| err.encode_string())?;
             broadcast(
                 state,
-                H160::from_slice(data.env.tx.caller.as_bytes()),
+                b160_to_h160(data.env.tx.caller),
                 caller,
-                H160::from_slice(data.env.tx.caller.as_bytes()),
+                b160_to_h160(data.env.tx.caller),
                 data.journaled_state.depth(),
                 true,
             )?
         }
         HEVMCalls::Broadcast1(inner) => {
             correct_sender_nonce(
-                H160::from_slice(data.env.tx.caller.as_bytes()),
+                b160_to_h160(data.env.tx.caller),
                 &mut data.journaled_state,
                 &mut data.db,
                 state,
@@ -389,14 +389,14 @@ pub fn apply<DB: DatabaseExt>(
                 state,
                 inner.0,
                 caller,
-                H160::from_slice(data.env.tx.caller.as_bytes()),
+                b160_to_h160(data.env.tx.caller),
                 data.journaled_state.depth(),
                 true,
             )?
         }
         HEVMCalls::Broadcast2(inner) => {
             correct_sender_nonce(
-                H160::from_slice(data.env.tx.caller.as_bytes()),
+                b160_to_h160(data.env.tx.caller),
                 &mut data.journaled_state,
                 &mut data.db,
                 state,
@@ -406,7 +406,7 @@ pub fn apply<DB: DatabaseExt>(
                 state,
                 inner.0,
                 caller,
-                H160::from_slice(data.env.tx.caller.as_bytes()),
+                b160_to_h160(data.env.tx.caller),
                 data.env.cfg.chain_id.into(),
                 data.journaled_state.depth(),
                 true,
@@ -414,7 +414,7 @@ pub fn apply<DB: DatabaseExt>(
         }
         HEVMCalls::StartBroadcast0(_) => {
             correct_sender_nonce(
-                H160::from_slice(data.env.tx.caller.as_bytes()),
+                b160_to_h160(data.env.tx.caller),
                 &mut data.journaled_state,
                 &mut data.db,
                 state,
@@ -422,16 +422,16 @@ pub fn apply<DB: DatabaseExt>(
             .map_err(|err| err.encode_string())?;
             broadcast(
                 state,
-                H160::from_slice(data.env.tx.caller.as_bytes()),
+                b160_to_h160(data.env.tx.caller),
                 caller,
-                H160::from_slice(data.env.tx.caller.as_bytes()),
+                b160_to_h160(data.env.tx.caller),
                 data.journaled_state.depth(),
                 false,
             )?
         }
         HEVMCalls::StartBroadcast1(inner) => {
             correct_sender_nonce(
-                H160::from_slice(data.env.tx.caller.as_bytes()),
+                b160_to_h160(data.env.tx.caller),
                 &mut data.journaled_state,
                 &mut data.db,
                 state,
@@ -441,14 +441,14 @@ pub fn apply<DB: DatabaseExt>(
                 state,
                 inner.0,
                 caller,
-                H160::from_slice(data.env.tx.caller.as_bytes()),
+                b160_to_h160(data.env.tx.caller),
                 data.journaled_state.depth(),
                 false,
             )?
         }
         HEVMCalls::StartBroadcast2(inner) => {
             correct_sender_nonce(
-                H160::from_slice(data.env.tx.caller.as_bytes()),
+                b160_to_h160(data.env.tx.caller),
                 &mut data.journaled_state,
                 &mut data.db,
                 state,
@@ -458,7 +458,7 @@ pub fn apply<DB: DatabaseExt>(
                 state,
                 inner.0,
                 caller,
-                H160::from_slice(data.env.tx.caller.as_bytes()),
+                b160_to_h160(data.env.tx.caller),
                 data.env.cfg.chain_id.into(),
                 data.journaled_state.depth(),
                 false,

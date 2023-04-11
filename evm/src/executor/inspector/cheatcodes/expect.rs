@@ -2,7 +2,7 @@ use super::Cheatcodes;
 use crate::{
     abi::HEVMCalls,
     error::{SolError, ERROR_PREFIX, REVERT_PREFIX},
-    executor::backend::DatabaseExt,
+    executor::backend::DatabaseExt, utils::h160_to_b160,
 };
 use bytes::Bytes;
 use ethers::{
@@ -342,7 +342,7 @@ pub fn apply<DB: DatabaseExt>(
         }
         HEVMCalls::MockCall0(inner) => {
             // TODO: Does this increase gas usage?
-            if let Err(err) = data.journaled_state.load_account(B160::from_slice(inner.0.as_bytes()), data.db) {
+            if let Err(err) = data.journaled_state.load_account(h160_to_b160(inner.0), data.db) {
                 return Some(Err(err.encode_string()))
             }
 
