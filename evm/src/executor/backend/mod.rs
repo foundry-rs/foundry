@@ -701,7 +701,10 @@ impl Backend {
     {
         self.initialize(env);
 
-        Ok(revm::evm_inner::<Self, true>(env, self, &mut inspector).transact()?)
+        match revm::evm_inner::<Self, true>(env, self, &mut inspector).transact() {
+            Ok(res) => Ok(res),
+            Err(e) => eyre::bail!("backend: failed while inspecting: {:?}", e),
+        }
     }
 
     /// Returns true if the address is a precompile
@@ -1733,9 +1736,15 @@ fn commit_transaction(
         evm.database(db);
 
         if let Some(inspector) = cheatcodes_inspector {
-            evm.inspect(inspector)?.state
+            match evm.inspect(inspector) {
+                Ok(res) => res.state,
+                Err(e) => eyre::bail!("backend: failed committing transaction: {:?}", e),
+            }
         } else {
-            evm.transact()?.state
+            match evm.transact() {
+                Ok(res) => res.state,
+                Err(e) => eyre::bail!("backend: failed committing transaction: {:?}", e),
+            }
         }
     };
 
