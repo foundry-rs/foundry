@@ -66,24 +66,22 @@ pub fn get_mapping_slot_at(state: &mut Cheatcodes, address: Address, slot: U256,
     abi::encode(&[Token::Uint(result.into())]).into()
 }
 
-pub fn get_mapping_key(state: &mut Cheatcodes, address: Address, slot: U256) -> Bytes {
-    let result = match state.mapping_slots.as_ref().and_then(|dict| dict.get(&address)) {
+pub fn get_mapping_key_and_parent(state: &mut Cheatcodes, address: Address, slot: U256) -> Bytes {
+    let (found, key, parent) = match state.mapping_slots.as_ref().and_then(|dict| dict.get(&address)) {
         Some(mapping_slots) => {
-            mapping_slots.keys.get(&slot).copied().unwrap_or_default()
+            match mapping_slots.keys.get(&slot) {
+                Some(key) => (true, *key, mapping_slots.parent_slots[&slot]),
+                None => {
+                    match mapping_slots.seen_sha3.get(&slot).copied() {
+                        Some(maybe_info) => (true, maybe_info.0, maybe_info.1),
+                        None => (false, U256::zero(), U256::zero()),
+                    }
+                }
+            }
         },
-        None => 0.into()
+        None => (false, U256::zero(), U256::zero())
     };
-    abi::encode(&[Token::Uint(result.into())]).into()
-}
-
-pub fn get_mapping_parent(state: &mut Cheatcodes, address: Address, slot: U256) -> Bytes {
-    let result = match state.mapping_slots.as_ref().and_then(|dict| dict.get(&address)) {
-        Some(mapping_slots) => {
-            mapping_slots.parent_slots.get(&slot).copied().unwrap_or_default()
-        },
-        None => 0.into()
-    };
-    abi::encode(&[Token::Uint(result.into())]).into()
+    abi::encode(&[Token::Bool(found), Token::Uint(key.into()), Token::Uint(parent.into())]).into()
 }
 
 pub fn on_evm_step<DB: Database>(
