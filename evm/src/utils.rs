@@ -63,6 +63,40 @@ pub fn ru256_to_u256(u: revm::primitives::U256) -> ethers::types::U256 {
     ethers::types::U256::from_little_endian(u.as_le_slice())
 }
 
+/// Small helper function to convert an Eval into an InstructionResult
+pub fn eval_to_instruction_result(eval: revm::primitives::Eval) -> revm::interpreter::InstructionResult {
+    match eval {
+        revm::primitives::Eval::Return => revm::interpreter::InstructionResult::Return,
+        revm::primitives::Eval::Stop => revm::interpreter::InstructionResult::Stop,
+        revm::primitives::Eval::SelfDestruct => revm::interpreter::InstructionResult::SelfDestruct,
+    }
+}
+
+/// Small helper function to convert a Halt into an InstructionResult
+pub fn halt_to_instruction_result(halt: revm::primitives::Halt) -> revm::interpreter::InstructionResult {
+    match halt {
+        revm::primitives::Halt::OutOfGas(_) => revm::interpreter::InstructionResult::OutOfGas,
+        revm::primitives::Halt::OpcodeNotFound => revm::interpreter::InstructionResult::OpcodeNotFound,
+        revm::primitives::Halt::InvalidFEOpcode => revm::interpreter::InstructionResult::InvalidFEOpcode,
+        revm::primitives::Halt::InvalidJump => revm::interpreter::InstructionResult::InvalidJump,
+        revm::primitives::Halt::NotActivated => revm::interpreter::InstructionResult::NotActivated,
+        revm::primitives::Halt::StackOverflow => revm::interpreter::InstructionResult::StackOverflow,
+        revm::primitives::Halt::StackUnderflow => revm::interpreter::InstructionResult::StackUnderflow,
+        revm::primitives::Halt::OutOfOffset => revm::interpreter::InstructionResult::OutOfOffset,
+        revm::primitives::Halt::CreateCollision => revm::interpreter::InstructionResult::CreateCollision,
+        revm::primitives::Halt::PrecompileError => revm::interpreter::InstructionResult::PrecompileError,
+        revm::primitives::Halt::NonceOverflow => revm::interpreter::InstructionResult::NonceOverflow,
+        revm::primitives::Halt::CreateContractSizeLimit => revm::interpreter::InstructionResult::CreateContractSizeLimit,
+        revm::primitives::Halt::CreateContractStartingWithEF => revm::interpreter::InstructionResult::CreateContractStartingWithEF,
+        revm::primitives::Halt::CreateInitcodeSizeLimit => revm::interpreter::InstructionResult::CreateInitcodeSizeLimit,
+        revm::primitives::Halt::OverflowPayment => revm::interpreter::InstructionResult::OverflowPayment,
+        revm::primitives::Halt::StateChangeDuringStaticCall => revm::interpreter::InstructionResult::StateChangeDuringStaticCall,
+        revm::primitives::Halt::CallNotAllowedInsideStatic => revm::interpreter::InstructionResult::CallNotAllowedInsideStatic,
+        revm::primitives::Halt::OutOfFund => revm::interpreter::InstructionResult::OutOfFund,
+        revm::primitives::Halt::CallTooDeep => revm::interpreter::InstructionResult::CallTooDeep,
+    }
+}
+
 /// Depending on the configured chain id and block number this should apply any specific changes
 ///
 /// This checks for:

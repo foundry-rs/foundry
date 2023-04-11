@@ -1,7 +1,7 @@
 use self::inspector::{
     cheatcodes::util::BroadcastableTransactions, Cheatcodes, InspectorData, InspectorStackConfig,
 };
-use crate::{debug::DebugArena, decode, trace::CallTraceArena, CALLER, utils::{h160_to_b160, b160_to_h160}};
+use crate::{debug::DebugArena, decode, trace::CallTraceArena, CALLER, utils::{h160_to_b160, b160_to_h160, eval_to_instruction_result, halt_to_instruction_result}};
 pub use abi::{
     patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS, CONSOLE_ABI,
     HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
@@ -417,13 +417,13 @@ impl Executor {
         } = result;
 
         let result = match out {
-            Output::Create(ref data, _) => data.to_owned(),
+            Some(Output::Create(ref data, _)) => data.to_owned(),
             _ => Bytes::default(),
         };
 
         let address = match exit_reason {
             return_ok!() => {
-                if let Output::Create(_, Some(addr)) = out {
+                if let Some(Output::Create(_, Some(addr))) = out {
                     addr
                 } else {
                     return Err(EvmError::Execution(Box::new(ExecutionErr {
@@ -716,7 +716,7 @@ pub struct RawCallResult {
     /// The cheatcode states after execution
     pub cheatcodes: Option<Cheatcodes>,
     /// The raw output of the execution
-    pub out: Output,
+    pub out: Option<Output>,
     /// The chisel state
     pub chisel_state: Option<(revm::Stack, revm::Memory, revm::Return)>,
 }
@@ -740,7 +740,7 @@ impl Default for RawCallResult {
             script_wallets: Vec::new(),
             env: Default::default(),
             cheatcodes: Default::default(),
-            out: Output::None, // TODO: missing in revm
+            out: None, // TODO: missing in revm
             chisel_state: None,
         }
     }
@@ -759,13 +759,27 @@ fn convert_executed_result(
     result: ResultAndState,
 ) -> eyre::Result<RawCallResult> {
     let ResultAndState { result: exec_result, state: state_changeset } = result;
-    // TODO: Need a new way to access this in revm
-    let ExecutionResult { exit_reason, gas_refunded, gas_used, out, .. } = exec_result;
+    // need:
+    // exit_reason
+    // gas_refunded
+    // gas_used
+    // output
+    let (exit_reason, gas_refunded, gas_used, out) = match exec_result {
+        ExecutionResult::Success { reason, gas_used, gas_refunded, logs, output } => {
+            (eval_to_instruction_result(reason), gas_refunded, gas_used, Some(output))
+        },
+        ExecutionResult::Revert { gas_used, .. } => {
+            (InstructionResult::Revert, 0 as u64, gas_used, None)
+        },
+        ExecutionResult::Halt { reason, gas_used } => {
+            (halt_to_instruction_result(reason), 0 as u64, gas_used, None)
+        },
+    };
 
     let stipend = calc_stipend(&env.tx.data, env.cfg.spec_id);
 
     let result = match out {
-        Output::Call(ref data) => data.to_owned(),
+        Some(Output::Call(ref data)) => data.to_owned(),
         _ => Bytes::default(),
     };
 
