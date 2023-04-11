@@ -1,9 +1,8 @@
 use super::{build::BuildArgs, script::ScriptArgs};
 use crate::cmd::{forge::build::CoreBuildArgs, retry::RETRY_VERIFY_ON_CREATE};
 use clap::{Parser, ValueHint};
-use ethers::types::Address;
-use foundry_common::evm::EvmArgs;
-use std::{collections::HashMap, path::PathBuf};
+use foundry_common::evm::{Breakpoints, EvmArgs};
+use std::path::PathBuf;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(DebugArgs, opts, evm_opts);
@@ -42,7 +41,7 @@ pub struct DebugArgs {
 }
 
 impl DebugArgs {
-    pub async fn debug(self, breakpoints: HashMap<char, (Address, usize)>) -> eyre::Result<()> {
+    pub async fn debug(self, breakpoints: Breakpoints) -> eyre::Result<()> {
         let script = ScriptArgs {
             path: self.path.to_str().expect("Invalid path string.").to_string(),
             args: self.args,

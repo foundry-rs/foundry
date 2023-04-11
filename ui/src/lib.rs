@@ -13,6 +13,7 @@ use forge::{
     utils::{build_pc_ic_map, PCICMap},
     CallKind,
 };
+use foundry_common::evm::Breakpoints;
 use revm::{opcode, SpecId};
 use std::{
     cmp::{max, min},
@@ -59,7 +60,7 @@ pub struct Tui {
     known_contracts_sources: HashMap<String, BTreeMap<u32, String>>,
     /// A mapping of source -> (PC -> IC map for deploy code, PC -> IC map for runtime code)
     pc_ic_maps: BTreeMap<String, (PCICMap, PCICMap)>,
-    breakpoints: HashMap<char, (Address, usize)>,
+    breakpoints: Breakpoints,
 }
 
 impl Tui {
@@ -71,7 +72,7 @@ impl Tui {
         identified_contracts: HashMap<Address, String>,
         known_contracts: HashMap<String, ContractBytecodeSome>,
         known_contracts_sources: HashMap<String, BTreeMap<u32, String>>,
-        breakpoints: HashMap<char, (Address, usize)>,
+        breakpoints: Breakpoints,
     ) -> Result<Self> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
@@ -1031,6 +1032,8 @@ impl Ui for Tui {
 
             if let Some(c) = receiver.char_press() {
                 if self.key_buffer.ends_with('\'') {
+                    // Find the location of the called breakpoint in the whole debug arena (at this
+                    // address with this pc)
                     if let Some((caller, pc)) = self.breakpoints.get(&c) {
                         for (i, (_caller, debug_steps, _)) in debug_call.iter().enumerate() {
                             if _caller == caller {
@@ -1287,16 +1290,12 @@ impl Interrupt {
         if let Self::KeyPressed(event) = &self {
             if let KeyCode::Char(c) = event.code {
                 if c.is_alphanumeric() || c == '\'' {
-                    Some(c)
-                } else {
-                    None
+                    return Some(c)
                 }
-            } else {
-                None
             }
-        } else {
-            None
         }
+
+        None
     }
 }
 

@@ -191,14 +191,16 @@ fn get_recorded_logs(state: &mut Cheatcodes) -> Bytes {
     }
 }
 
+/// Entry point of the breakpoint cheatcode. Adds the called breakpoint to the state.
 fn add_breakpoint(state: &mut Cheatcodes, caller: Address, inner: &str) -> Result<Bytes, Bytes> {
     let mut chars = inner.chars();
     let point = chars.next();
 
-    if point.is_none() {
-        return Err("Please provide at least one char for the breakpoint".encode().into())
-    };
-    let point = point.unwrap();
+    let point = point.ok_or_else(|| {
+        std::convert::Into::<Bytes>::into(
+            "Please provide at least one char for the breakpoint".encode(),
+        )
+    })?;
 
     if chars.next().is_some() {
         return Err("Please provide only one char for the breakpoint".encode().into())

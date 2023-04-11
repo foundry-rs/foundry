@@ -20,6 +20,7 @@ use ethers::{
         U256,
     },
 };
+use foundry_common::evm::Breakpoints;
 use itertools::Itertools;
 use revm::{
     opcode, BlockEnv, CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return,
@@ -167,7 +168,7 @@ pub struct Cheatcodes {
     pub pc: usize,
     /// Breakpoints supplied by the `vm.breakpoint("<char>")` cheatcode
     /// char -> pc
-    pub breakpoints: HashMap<char, (Address, usize)>,
+    pub breakpoints: Breakpoints,
 }
 
 impl Cheatcodes {

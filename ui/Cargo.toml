@@ -15,3 +15,4 @@ hex = "0.4.3"
 ethers = { workspace = true }
 forge = { path = "../forge" }
 revm = { version = "2.3", features = ["std", "k256", "with-serde"] }
+foundry-common = { path = "../common" }

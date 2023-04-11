@@ -14,7 +14,7 @@ use ethers::{
     signers::LocalWallet,
     types::Log,
 };
-use foundry_common::abi::IntoFunction;
+use foundry_common::{abi::IntoFunction, evm::Breakpoints};
 use hashbrown::HashMap;
 use revm::{
     db::DatabaseCommit, return_ok, Account, BlockEnv, Bytecode, CreateScheme, ExecutionResult,
@@ -672,7 +672,7 @@ pub struct CallResult<D: Detokenize> {
     /// The `revm::Env` after the call
     pub env: Env,
     /// breakpoints
-    pub breakpoints: std::collections::HashMap<char, (Address, usize)>,
+    pub breakpoints: Breakpoints,
 }
 
 /// The result of a raw call.

@@ -2,17 +2,14 @@
 
 use crate::Address;
 use ethers::prelude::Log;
+use foundry_common::evm::Breakpoints;
 use foundry_evm::{
     coverage::HitMaps,
     fuzz::{CounterExample, FuzzCase},
     trace::Traces,
 };
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{BTreeMap, HashMap},
-    fmt,
-    time::Duration,
-};
+use std::{collections::BTreeMap, fmt, time::Duration};
 
 /// Results and duration for a set of tests included in the same test contract
 #[derive(Debug, Clone, Serialize)]
@@ -96,7 +93,7 @@ pub struct TestResult {
     pub labeled_addresses: BTreeMap<Address, String>,
 
     /// pc breakpoint char map
-    pub breakpoints: HashMap<char, (Address, usize)>,
+    pub breakpoints: Breakpoints,
 }
 
 impl TestResult {
