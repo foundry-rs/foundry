@@ -13,7 +13,7 @@ use ethers::types::Address;
 use std::{cell::RefCell, rc::Rc};
 use revm::{EVMData, Inspector, primitives::B160};
 use revm::inspectors::GasInspector;
-use revm::interpreter::{CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Memory, opcode, spec_opcode_gas}; // TODO: to re-add after revm bump
+use revm::interpreter::{CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Memory, opcode, spec_opcode_gas};
 
 /// An inspector that collects debug nodes on every step of the interpreter.
 #[derive(Debug)]

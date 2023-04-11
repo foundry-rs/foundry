@@ -1725,7 +1725,7 @@ fn commit_transaction(
 ) -> eyre::Result<()> {
     configure_tx_env(&mut env, &tx);
 
-    let state = { // TODO: Unsure how to handle
+    let state = {
         let mut evm = EVM::new();
         evm.env = env;
 

@@ -7,7 +7,7 @@ use crate::{
     executor::{
         backend::DatabaseExt,
         inspector::cheatcodes::{util::with_journaled_account, DealRecord},
-    }, utils::{h160_to_b160, u256_to_ru256, b160_to_h160},
+    }, utils::{h160_to_b160, u256_to_ru256, b160_to_h160, ru256_to_u256},
 };
 use bytes::Bytes;
 use ethers::{
@@ -239,7 +239,7 @@ pub fn apply<DB: DatabaseExt>(
                 .journaled_state
                 .sload(h160_to_b160(inner.0), u256_to_ru256(inner.1.into()), data.db)
                 .map_err(|err| err.encode_string())?;
-            val.encode().into() // TODO: Unsure how to handle this
+            ru256_to_u256(val).encode().into()
         }
         HEVMCalls::Etch(inner) => {
             let code = inner.1.clone();

@@ -57,7 +57,7 @@ use crate::{
 pub use builder::ExecutorBuilder;
 
 /// A mapping of addresses to their changed state.
-pub type StateChangeset = HashMap<B160, Account>; // TODO: Unsure if this should be changed to <B160, Account>
+pub type StateChangeset = HashMap<B160, Account>;
 
 /// A type that can execute calls
 ///
@@ -740,7 +740,7 @@ impl Default for RawCallResult {
             script_wallets: Vec::new(),
             env: Default::default(),
             cheatcodes: Default::default(),
-            out: Output::None, // TODO: How to handle, Option<>?
+            out: Output::None, // TODO: missing in revm
             chisel_state: None,
         }
     }
