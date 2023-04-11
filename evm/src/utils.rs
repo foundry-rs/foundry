@@ -4,16 +4,12 @@ use ethers::{
     types::{Block, Chain},
 };
 use eyre::ContextCompat;
-<<<<<<< HEAD
-use revm::{opcode, spec_opcode_gas, SpecId};
-=======
 use revm::interpreter::{opcode};
->>>>>>> 21d2a575 (feat: executor/fuzz/coverage progress, mark unknowns as TODOs)
 use std::collections::BTreeMap;
-
+use revm::primitives::SpecId;
+use revm::interpreter::spec_opcode_gas;
 /// Small helper function to convert [U256] into [H256].
 pub fn u256_to_h256_le(u: U256) -> H256 {
-    let mut h = H256::default();
     u.to_little_endian(h.as_mut());
     h
 }

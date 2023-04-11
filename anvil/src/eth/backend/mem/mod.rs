@@ -23,7 +23,7 @@ use crate::{
         inspector::Inspector,
         storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
     },
-    revm::{db::DatabaseRef, AccountInfo},
+    revm::{db::DatabaseRef, primitives::AccountInfo},
 };
 use anvil_core::{
     eth::{

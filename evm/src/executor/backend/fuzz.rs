@@ -9,9 +9,9 @@ use crate::{
     Address,
 };
 use ethers::prelude::{H256, U256};
-use hashbrown::HashMap as Map;
+
 use revm::{
-    db::DatabaseRef, primitives::{Account, AccountInfo, B160, B256, Bytecode, Env, ExecutionResult, U256 as rU256}, Database, Inspector,
+    db::DatabaseRef, primitives::{AccountInfo, B160, B256, Bytecode, Env, U256 as rU256, ResultAndState}, Database, Inspector,
     JournaledState,
 };
 use std::borrow::Cow;
@@ -55,14 +55,14 @@ impl<'a> FuzzBackendWrapper<'a> {
         &mut self,
         env: &mut Env,
         mut inspector: INSP,
-    ) -> (ExecutionResult, Map<Address, Account>)
+    ) -> eyre::Result<ResultAndState>
     where
         INSP: Inspector<Self>,
     {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
         self.is_initialized = false;
-        revm::evm_inner::<Self, true>(env, self, &mut inspector).transact()
+        Ok(revm::evm_inner::<Self, true>(env, self, &mut inspector).transact()?)
     }
 
     /// Returns a mutable instance of the Backend.

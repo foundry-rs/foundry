@@ -2,7 +2,7 @@ use super::fuzz_param_from_state;
 use crate::{
     executor::StateChangeset,
     fuzz::invariant::{ArtifactFilters, FuzzRunIdentifiedContracts},
-    utils::{self},
+    utils::{self, b160_to_h160},
 };
 use bytes::Bytes;
 use ethers::{
@@ -16,18 +16,14 @@ use parking_lot::RwLock;
 use proptest::prelude::{BoxedStrategy, Strategy};
 use revm::{
     db::{CacheDB, DatabaseRef},
-<<<<<<< HEAD
-    opcode, spec_opcode_gas, SpecId,
-=======
     primitives::SpecId,
-    interpreter::opcode,
+    interpreter::{opcode, spec_opcode_gas},
 };
 use std::{
     collections::BTreeSet,
     io::Write,
     ops::{Deref, DerefMut},
     sync::Arc,
->>>>>>> 21d2a575 (feat: executor/fuzz/coverage progress, mark unknowns as TODOs)
 };
 use std::{io::Write, sync::Arc};
 
@@ -147,22 +143,10 @@ pub fn collect_state_from_call(
 
     for (address, account) in state_changeset {
         // Insert basic account information
-        state.values_mut().insert(H256::from(*address).into());
+        state.values_mut().insert(H256::from(b160_to_h160(*address)).into());
 
-<<<<<<< HEAD
         if config.include_push_bytes && state.addresses.len() < config.max_fuzz_dictionary_addresses
         {
-=======
-        if include_storage {
-            // Insert storage
-            for (slot, value) in &account.storage {
-                state.insert(slot.to_be_bytes());
-                state.insert(value.present_value().to_be_bytes());
-            }
-        }
-
-        if include_push_bytes {
->>>>>>> 21d2a575 (feat: executor/fuzz/coverage progress, mark unknowns as TODOs)
             // Insert push bytes
             if let Some(code) = &account.info.code {
                 if state.addresses_mut().insert(*address) {
@@ -250,7 +234,7 @@ pub fn collect_created_contracts(
     let mut writable_targeted = targeted_contracts.lock();
 
     for (address, account) in state_changeset {
-        if !setup_contracts.contains_key(address) {
+        if !setup_contracts.contains_key(&b160_to_h160(*address)) {
             if let (true, Some(code)) = (&account.is_touched, &account.info.code) {
                 if !code.is_empty() {
                     if let Some((artifact, (abi, _))) = project_contracts.find_by_code(code.bytes())
@@ -258,9 +242,9 @@ pub fn collect_created_contracts(
                         if let Some(functions) =
                             artifact_filters.get_targeted_functions(artifact, abi)?
                         {
-                            created_contracts.push(*address);
+                            created_contracts.push(b160_to_h160(*address));
                             writable_targeted
-                                .insert(*address, (artifact.name.clone(), abi.clone(), functions));
+                                .insert(b160_to_h160(*address), (artifact.name.clone(), abi.clone(), functions));
                         }
                     }
                 }

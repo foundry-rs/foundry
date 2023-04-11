@@ -16,6 +16,12 @@ use ethers::{
 };
 use foundry_common::abi::IntoFunction;
 use hashbrown::HashMap;
+<<<<<<< HEAD
+=======
+use revm::{
+    db::DatabaseCommit, primitives::{B160, ResultAndState}
+};
+>>>>>>> 44b13209 (chore: modify state changeset to use proper types, annoying type conversions remain)
 /// Reexport commonly used revm types
 pub use revm::{db::DatabaseRef, Env, SpecId};
 use std::collections::BTreeMap;
@@ -51,7 +57,7 @@ use crate::{
 pub use builder::ExecutorBuilder;
 
 /// A mapping of addresses to their changed state.
-pub type StateChangeset = HashMap<Address, Account>; // TODO: Unsure if this should be changed to <B160, Account>
+pub type StateChangeset = HashMap<B160, Account>; // TODO: Unsure if this should be changed to <B160, Account>
 
 /// A type that can execute calls
 ///
@@ -339,7 +345,7 @@ impl Executor {
         // Build VM
         let mut env = self.build_test_env(from, TransactTo::Call(h160_to_b160(to)), calldata, value);
         let mut db = FuzzBackendWrapper::new(self.backend());
-        let result = db.inspect_ref(&mut env, &mut inspector);
+        let result = db.inspect_ref(&mut env, &mut inspector)?;
 
         convert_executed_result(env, inspector, result)
     }
@@ -355,7 +361,7 @@ impl Executor {
     pub fn call_raw_with_env(&mut self, mut env: Env) -> eyre::Result<RawCallResult> {
         // execute the call
         let mut inspector = self.inspector_config.stack();
-        let result = self.backend_mut().inspect_ref(&mut env, &mut inspector);
+        let result = self.backend_mut().inspect_ref(&mut env, &mut inspector)?;
         convert_executed_result(env, inspector, result)
     }
 
@@ -750,9 +756,10 @@ fn calc_stipend(calldata: &[u8], spec: SpecId) -> u64 {
 fn convert_executed_result(
     env: Env,
     inspector: InspectorStack,
-    result: (ExecutionResult, StateChangeset),
+    result: ResultAndState,
 ) -> eyre::Result<RawCallResult> {
-    let (exec_result, state_changeset) = result;
+    let ResultAndState { result: exec_result, state: state_changeset } = result;
+    // TODO: Need a new way to access this in revm
     let ExecutionResult { exit_reason, gas_refunded, gas_used, out, .. } = exec_result;
 
     let stipend = calc_stipend(&env.tx.data, env.cfg.spec_id);
