@@ -22,13 +22,21 @@ use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
 use eyre::{Context, Result};
 use foundry_common::{abi::encode_args, fmt::*, TransactionReceiptWithRevertReason};
 pub use foundry_evm::*;
+use rayon::prelude::*;
 pub use rusoto_core::{
     credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
     request::HttpClient as AwsHttpClient, Client as AwsClient,
 };
 pub use rusoto_kms::KmsClient;
 use rustc_hex::{FromHexIter, ToHex};
-use std::{path::PathBuf, str::FromStr};
+use std::{
+    path::PathBuf,
+    str::FromStr,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 pub use tx::TxBuilder;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
 
@@ -1655,6 +1663,67 @@ impl SimpleCast {
     /// ```
     pub fn disassemble(bytecode: &str) -> Result<String> {
         format_operations(disassemble_str(bytecode)?)
+    }
+
+    /// Gets the selector for a given function signature
+    /// Optimizes if the `optimize` parameter is set to a number of leading zeroes
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Cast::get_selector("foo(address,uint256)", None)?.0, String::from("0xbd0d639f"));
+    ///
+    ///     Ok(())
+    /// }
+    /// ```    
+    pub fn get_selector(signature: &str, optimize: Option<usize>) -> Result<(String, String)> {
+        let optimize = optimize.unwrap_or(0);
+        if optimize > 4 {
+            eyre::bail!("Number of leading zeroes must not be greater than 4");
+        }
+        if optimize == 0 {
+            let selector = HumanReadableParser::parse_function(signature)?.short_signature();
+            return Ok((format!("0x{}", hex::encode(selector)), String::from(signature)))
+        }
+        let Some((name, params)) = signature.split_once('(') else {
+            eyre::bail!("Invalid signature");
+        };
+
+        let num_threads = num_cpus::get();
+        let found = Arc::new(AtomicBool::new(false));
+
+        let result: Option<(u32, String, String)> = std::iter::repeat(Arc::clone(&found))
+            .take(num_threads)
+            .enumerate()
+            .collect::<Vec<_>>()
+            .into_par_iter()
+            .find_map_any(|(i, found)| {
+                let nonce_start = i as u32;
+                let nonce_step = num_threads as u32;
+
+                let mut nonce = nonce_start;
+                while nonce < u32::MAX && !found.load(Ordering::Relaxed) {
+                    let input = format!("{}{}({}", name, nonce, params);
+                    let hash = keccak256(input.as_bytes());
+                    let selector = &hash[..4];
+
+                    if selector.iter().take_while(|&&byte| byte == 0).count() == optimize {
+                        found.store(true, Ordering::Relaxed);
+                        return Some((nonce, format!("0x{}", hex::encode(selector)), input))
+                    }
+
+                    nonce += nonce_step;
+                }
+                None
+            });
+
+        match result {
+            Some((_nonce, selector, signature)) => Ok((selector, signature)),
+            None => eyre::bail!("No selector found"),
+        }
     }
 }
 
