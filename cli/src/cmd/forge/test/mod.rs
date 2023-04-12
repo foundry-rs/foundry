@@ -496,7 +496,7 @@ fn test(
 
     if json {
         let results = runner.test(&filter, None, test_options)?;
-        println!("{}", serde_json::to_string(&results)?);
+        println!("{}", serde_json::to_string_pretty(&results)?);
         Ok(TestOutcome::new(results, allow_failure))
     } else {
         // Set up identifiers
