@@ -141,7 +141,7 @@ pub struct SessionSource {
     pub global_code: String,
     /// Top level solidity code
     ///
-    /// Typically, this is code seen above the contructor
+    /// Typically, this is code seen above the constructor
     pub top_level_code: String,
     /// Code existing within the "run()" function's scope
     pub run_code: String,
@@ -296,7 +296,25 @@ impl SessionSource {
         let mut sources = Sources::new();
         sources.insert(PathBuf::from("forge-std/Vm.sol"), Source::new(VM_SOURCE.to_owned()));
         sources.insert(self.file_name.clone(), Source::new(self.to_repl_source()));
-        CompilerInput::with_sources(sources).pop().unwrap()
+        // we only care about the solidity source, so we can safely unwrap
+        let mut compiler_input = CompilerInput::with_sources(sources)
+            .into_iter()
+            .next()
+            .expect("Solidity source not found");
+
+        // get all remappings from the config so libraries can be found, but remove the forge-std
+        // remapping
+        // NOTE(mattsse): perhaps the better solution is to not add the Vm.sol
+        // file
+        compiler_input.settings.remappings = self
+            .config
+            .foundry_config
+            .get_all_remappings()
+            .into_iter()
+            .filter(|remapping| !remapping.name.starts_with("forge-std"))
+            .collect();
+
+        compiler_input
     }
 
     /// Compiles the source using [solang_parser]

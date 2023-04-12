@@ -12,11 +12,11 @@ repository = "https://github.com/foundry-rs/foundry"
 foundry-config = { path = "../config" }
 
 # eth
-ethers-core = { workspace = true, default-features = false }
-ethers-solc = { workspace = true, default-features = false }
-ethers-providers = { workspace = true, default-features = false }
-ethers-middleware = { workspace = true, default-features = false }
-ethers-etherscan = { workspace = true, default-features = false, features = ["ethers-solc"] }
+ethers-core = { workspace = true }
+ethers-solc = { workspace = true }
+ethers-providers = { workspace = true }
+ethers-middleware = { workspace = true }
+ethers-etherscan = { workspace = true, features = ["ethers-solc"] }
 
 # io
 reqwest = { version = "0.11", default-features = false }

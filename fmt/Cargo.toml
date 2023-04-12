@@ -13,7 +13,7 @@ keywords = ["ethereum", "web3", "solidity", "linter"]
 foundry-config = { path = "../config" }
 
 # ethers
-ethers-core = { workspace = true, default-features = false }
+ethers-core = { workspace = true }
 
 # parser
 solang-parser = "=0.2.3"
