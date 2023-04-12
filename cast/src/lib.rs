@@ -32,7 +32,10 @@ use rustc_hex::{FromHexIter, ToHex};
 use std::{
     path::PathBuf,
     str::FromStr,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 pub use tx::TxBuilder;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
@@ -1690,15 +1693,19 @@ impl SimpleCast {
         };
 
         let num_threads = num_cpus::get();
-        let found = AtomicBool::new(false);
+        let found = Arc::new(AtomicBool::new(false));
 
-        let result: Option<(u32, String, String)> =
-            (0..num_threads).into_par_iter().find_map_any(|i| {
+        let result: Option<(u32, String, String)> = std::iter::repeat(Arc::clone(&found))
+            .take(num_threads)
+            .enumerate()
+            .collect::<Vec<_>>()
+            .into_par_iter()
+            .find_map_any(|(i, found)| {
                 let nonce_start = i as u32;
                 let nonce_step = num_threads as u32;
 
                 let mut nonce = nonce_start;
-                while nonce < std::u32::MAX && !found.load(Ordering::Relaxed) {
+                while nonce < u32::MAX && !found.load(Ordering::Relaxed) {
                     let input = format!("{}{}({}", name, nonce, params);
                     let hash = keccak256(input.as_bytes());
                     let selector = &hash[..4];
