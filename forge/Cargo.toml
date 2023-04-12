@@ -33,3 +33,9 @@ parking_lot = "0.12"
 [dev-dependencies]
 ethers = { workspace = true, features = ["solc-full", "solc-tests"] }
 foundry-utils = { path = "./../utils", features = ["test"] }
+criterion = "0.4" 
+
+[[bench]]
+name = "bench_main"
+harness = false
+

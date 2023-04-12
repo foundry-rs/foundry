@@ -2368,6 +2368,7 @@ name = "forge"
 version = "0.2.0"
 dependencies = [
  "comfy-table",
+ "criterion",
  "ethers",
  "eyre",
  "foundry-common",
