@@ -1,6 +1,6 @@
 //! forge tests for core functionality
 
-use crate::{config::*, test_helpers::filter::Filter};
+use forge::test_utils::{config::*, test_helpers::filter::Filter};
 
 use forge::result::SuiteResult;
 

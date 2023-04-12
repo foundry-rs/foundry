@@ -1,6 +1,6 @@
 //! forge tests for cheat codes
 
-use crate::{
+use forge::test_utils::{
     config::*,
     test_helpers::{filter::Filter, RE_PATH_SEPARATOR},
 };

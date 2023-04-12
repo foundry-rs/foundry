@@ -1,8 +1,10 @@
 //! Tests for invariants
 
-use crate::{config::*, test_helpers::filter::Filter};
 use ethers::types::U256;
-use forge::result::SuiteResult;
+use forge::{
+    result::SuiteResult,
+    test_utils::{config::*, test_helpers::filter::Filter},
+};
 use std::collections::BTreeMap;
 
 #[test]

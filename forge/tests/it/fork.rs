@@ -1,10 +1,12 @@
 //! forge tests for cheat codes
 
-use crate::{
-    config::*,
-    test_helpers::{filter::Filter, RE_PATH_SEPARATOR},
+use forge::{
+    result::SuiteResult,
+    test_utils::{
+        config::*,
+        test_helpers::{filter::Filter, RE_PATH_SEPARATOR},
+    },
 };
-use forge::result::SuiteResult;
 
 /// Executes reverting fork test
 #[test]

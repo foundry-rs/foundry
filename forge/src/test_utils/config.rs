@@ -1,9 +1,9 @@
 //! Test setup
 
-use crate::test_helpers::{
+use super::test_helpers::{
     filter::Filter, COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT,
 };
-use forge::{result::SuiteResult, MultiContractRunner, MultiContractRunnerBuilder, TestOptions};
+use crate::{result::SuiteResult, MultiContractRunner, MultiContractRunnerBuilder, TestOptions};
 use foundry_config::{
     fs_permissions::PathPermission, Config, FsPermissions, FuzzConfig, FuzzDictionaryConfig,
     InvariantConfig, RpcEndpoint, RpcEndpoints,

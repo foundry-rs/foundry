@@ -1,10 +1,10 @@
 //! Tests for reproducing issues
 
-use crate::{
+use ethers::abi::{Address, Event, EventParam, Log, LogParam, ParamType, RawLog, Token};
+use forge::test_utils::{
     config::*,
     test_helpers::{filter::Filter, PROJECT},
 };
-use ethers::abi::{Address, Event, EventParam, Log, LogParam, ParamType, RawLog, Token};
 use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
 use std::str::FromStr;
 

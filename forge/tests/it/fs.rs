@@ -1,6 +1,6 @@
 //! Tests for reproducing issues
 
-use crate::{
+use forge::test_utils::{
     config::*,
     test_helpers::{filter::Filter, PROJECT},
 };
