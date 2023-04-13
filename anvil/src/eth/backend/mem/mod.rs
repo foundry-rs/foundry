@@ -1162,7 +1162,12 @@ impl Backend {
             let to_block =
                 self.convert_block_number(filter.block_option.get_to_block().copied()).min(best);
             let from_block =
-                self.convert_block_number(filter.block_option.get_from_block().copied()).min(best);
+                self.convert_block_number(filter.block_option.get_from_block().copied());
+            if from_block > best {
+                // requested log range does not exist yet
+                return Ok(vec![])
+            }
+
             self.logs_for_range(&filter, from_block, to_block).await
         }
     }
