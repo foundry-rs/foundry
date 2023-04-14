@@ -12,7 +12,9 @@ use forge::{
         inspector::cheatcodes::util::configure_tx_env, opts::EvmOpts, Backend, DeployResult,
         ExecutorBuilder, RawCallResult,
     },
+    revm::primitives::U256 as rU256,
     trace::{identifier::EtherscanIdentifier, CallTraceDecoderBuilder, TraceKind},
+    utils::{h256_to_b256, ru256_to_u256, u256_to_ru256},
 };
 use foundry_config::{find_project_root_path, Config};
 use std::{collections::BTreeMap, str::FromStr};
@@ -93,16 +95,16 @@ impl RunArgs {
         let mut executor = builder.build(db);
 
         let mut env = executor.env().clone();
-        env.block.number = tx_block_number.into();
+        env.block.number = rU256::from(tx_block_number);
 
         let block = provider.get_block_with_txs(tx_block_number).await?;
         if let Some(ref block) = block {
-            env.block.timestamp = block.timestamp;
-            env.block.coinbase = block.author.unwrap_or_default();
-            env.block.difficulty = block.difficulty;
-            env.block.prevrandao = block.mix_hash;
-            env.block.basefee = block.base_fee_per_gas.unwrap_or_default();
-            env.block.gas_limit = block.gas_limit;
+            env.block.timestamp = block.timestamp.into();
+            env.block.coinbase = block.author.unwrap_or_default().into();
+            env.block.difficulty = block.difficulty.into();
+            env.block.prevrandao = block.mix_hash.map(h256_to_b256);
+            env.block.basefee = block.base_fee_per_gas.unwrap_or_default().into();
+            env.block.gas_limit = block.gas_limit.into();
         }
 
         // Set the state to the moment right before the transaction

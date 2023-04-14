@@ -16,6 +16,7 @@ use eyre::{Result, WrapErr};
 use forge::{
     decode::decode_console_logs,
     executor::{inspector::CheatsConfig, Backend, ExecutorBuilder},
+    utils::ru256_to_u256,
 };
 use solang_parser::pt::{self, CodeLocation};
 use yansi::Paint;
@@ -185,7 +186,7 @@ impl SessionSource {
 
         // the file compiled correctly, thus the last stack item must be the memory offset of
         // the `bytes memory inspectoor` value
-        let mut offset = stack.data().last().unwrap().as_usize();
+        let mut offset = ru256_to_u256(*stack.data().last().unwrap()).as_usize();
         let mem = memory.data();
         let len = U256::from(&mem[offset..offset + 32]).as_usize();
         offset += 32;

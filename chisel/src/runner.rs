@@ -12,7 +12,7 @@ use forge::{
     executor::{DeployResult, Executor, RawCallResult},
     trace::{CallTraceArena, TraceKind},
 };
-use revm::{return_ok, Return};
+use revm::interpreter::{return_ok, InstructionResult};
 use std::collections::BTreeMap;
 
 /// The function selector of the REPL contract's entrypoint, the `run()` function.
@@ -50,7 +50,11 @@ pub struct ChiselResult {
     /// Called address
     pub address: Option<Address>,
     /// EVM State at the final instruction of the `run()` function
-    pub state: Option<(revm::Stack, revm::Memory, revm::Return)>,
+    pub state: Option<(
+        revm::interpreter::Stack,
+        revm::interpreter::Memory,
+        revm::interpreter::InstructionResult,
+    )>,
 }
 
 /// ChiselRunner implementation
@@ -142,10 +146,9 @@ impl ChiselRunner {
                 self.executor.env_mut().tx.gas_limit = mid_gas_limit;
                 let res = self.executor.call_raw(from, to, calldata.0.clone(), value)?;
                 match res.exit_reason {
-                    Return::Revert |
-                    Return::OutOfGas |
-                    Return::LackOfFundForGasLimit |
-                    Return::OutOfFund => {
+                    InstructionResult::Revert |
+                    InstructionResult::OutOfGas |
+                    InstructionResult::OutOfFund => {
                         lowest_gas_limit = mid_gas_limit;
                     }
                     _ => {
