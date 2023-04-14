@@ -1,6 +1,10 @@
 //! Configuration for invariant testing
 
-use crate::fuzz::FuzzDictionaryConfig;
+use crate::{
+    conf_parser::{ConfParser, ConfParserError},
+    fuzz::FuzzDictionaryConfig,
+    Config,
+};
 use serde::{Deserialize, Serialize};
 
 /// Contains for invariant testing
@@ -28,6 +32,90 @@ impl Default for InvariantConfig {
             fail_on_revert: false,
             call_override: false,
             dictionary: FuzzDictionaryConfig { dictionary_weight: 80, ..Default::default() },
+        }
+    }
+}
+
+impl ConfParser for InvariantConfig {
+    fn config_prefix() -> String {
+        let profile = Config::selected_profile().to_string();
+        format!("forge-config:{profile}.invariant.")
+    }
+
+    fn parse<S: AsRef<str>>(text: S) -> Result<Option<Self>, ConfParserError>
+    where
+        Self: Sized + 'static,
+    {
+        let vars: Vec<(String, String)> = Self::config_variables::<S>(text);
+        if vars.is_empty() {
+            return Ok(None)
+        }
+
+        let mut conf = Self::default();
+        for pair in vars {
+            let key = pair.0;
+            let value = pair.1;
+            match key.as_str() {
+                "runs" => conf.runs = value.parse()?,
+                "depth" => conf.depth = value.parse()?,
+                "fail-on-revert" => conf.fail_on_revert = value.parse()?,
+                "call-override" => conf.call_override = value.parse()?,
+                _ => Err(ConfParserError::InvalidConfigProperty(key.to_string()))?,
+            }
+        }
+        Ok(Some(conf))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{conf_parser::ConfParser, InvariantConfig};
+
+    #[test]
+    fn parse_config_default_profile() -> eyre::Result<()> {
+        let conf = r#"
+            forge-config: default.invariant.runs = 1024
+            forge-config: default.invariant.depth = 30
+            forge-config: default.invariant.fail-on-revert = true
+            forge-config: default.invariant.call-override = false
+        "#;
+
+        let parsed = InvariantConfig::parse(conf)?.expect("Parsed config exists");
+        assert_eq!(parsed.runs, 1024);
+        assert_eq!(parsed.depth, 30);
+        assert_eq!(parsed.fail_on_revert, true);
+        assert_eq!(parsed.call_override, false);
+
+        Ok(())
+    }
+
+    #[test]
+    fn parse_config_ci_profile() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            let conf = r#"
+                forge-config: ci.invariant.runs = 1024
+                forge-config: ci.invariant.depth = 30
+                forge-config: ci.invariant.fail-on-revert = true
+                forge-config: ci.invariant.call-override = false
+            "#;
+
+            let parsed = InvariantConfig::parse(conf).unwrap().expect("Parsed config exists");
+            assert_eq!(parsed.runs, 1024);
+            assert_eq!(parsed.depth, 30);
+            assert_eq!(parsed.fail_on_revert, true);
+            assert_eq!(parsed.call_override, false);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn unrecognized_property() {
+        let conf = "forge-config: default.invariant.unknownprop = 200";
+        if let Err(e) = InvariantConfig::parse(conf) {
+            assert_eq!(e.to_string(), "'unknownprop' is not a valid config property");
+        } else {
+            assert!(false)
         }
     }
 }

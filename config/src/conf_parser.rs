@@ -1,4 +1,4 @@
-use std::num::ParseIntError;
+use std::{num::ParseIntError, str::ParseBoolError};
 
 /// Errors returned by the [`ConfParser`] trait.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -7,6 +7,8 @@ pub enum ConfParserError {
     InvalidConfigProperty(String),
     #[error(transparent)]
     ParseIntError(#[from] ParseIntError),
+    #[error(transparent)]
+    ParseBoolError(#[from] ParseBoolError),
 }
 
 /// This trait is intended to parse configurations from
