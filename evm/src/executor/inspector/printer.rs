@@ -1,8 +1,10 @@
 use bytes::Bytes;
-use revm::primitives::B160;
-use revm::{Database, EVMData, Inspector};
-use revm::inspectors::GasInspector;
-use revm::interpreter::{CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, opcode};
+use revm::{
+    inspectors::GasInspector,
+    interpreter::{opcode, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},
+    primitives::B160,
+    Database, EVMData, Inspector,
+};
 
 #[derive(Clone, Default)]
 pub struct TracePrinter {

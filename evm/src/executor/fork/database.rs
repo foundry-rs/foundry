@@ -6,15 +6,16 @@ use crate::{
         fork::{BlockchainDb, SharedBackend},
         snapshot::Snapshots,
     },
-    revm::db::CacheDB, utils::{h256_to_b256, b160_to_h160},
+    revm::db::CacheDB,
 };
-use ethers::{
-    prelude::{U256},
-    types::BlockId,
-};
+use ethers::{prelude::U256, types::BlockId};
 use hashbrown::HashMap as Map;
 use parking_lot::Mutex;
-use revm::{db::DatabaseRef, primitives::{Account, AccountInfo, Bytecode, B160, B256, U256 as rU256}, Database, DatabaseCommit};
+use revm::{
+    db::DatabaseRef,
+    primitives::{Account, AccountInfo, Bytecode, B160, B256, U256 as rU256},
+    Database, DatabaseCommit,
+};
 use std::sync::Arc;
 use tracing::{trace, warn};
 
@@ -224,7 +225,7 @@ impl DatabaseRef for ForkDbSnapshot {
         match self.local.accounts.get(&address) {
             Some(account) => Ok(Some(account.info.clone())),
             None => {
-                let mut acc = self.snapshot.accounts.get(&b160_to_h160(address)).cloned();
+                let mut acc = self.snapshot.accounts.get(&address).cloned();
 
                 if acc.is_none() {
                     acc = self.local.basic(address)?;
@@ -255,9 +256,9 @@ impl DatabaseRef for ForkDbSnapshot {
     }
 
     fn block_hash(&self, number: rU256) -> Result<B256, Self::Error> {
-        match self.snapshot.block_hashes.get(&U256::from_big_endian(number.to_be_bytes().as_slice())).copied() {
+        match self.snapshot.block_hashes.get(&number).copied() {
             None => self.local.block_hash(number),
-            Some(block_hash) => Ok(h256_to_b256(block_hash)),
+            Some(block_hash) => Ok(block_hash),
         }
     }
 }
@@ -265,7 +266,7 @@ impl DatabaseRef for ForkDbSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{executor::fork::BlockchainDbMeta};
+    use crate::executor::fork::BlockchainDbMeta;
     use foundry_common::get_http_provider;
     use std::collections::BTreeSet;
 

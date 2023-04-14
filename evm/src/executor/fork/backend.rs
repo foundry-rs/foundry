@@ -1,8 +1,11 @@
 //! Smart caching and deduplication of requests when using a forking provider
-use crate::{executor::{
-    backend::error::{DatabaseError, DatabaseResult},
-    fork::{cache::FlushJsonBlockCacheDB, BlockchainDb},
-}, utils::{b256_to_h256, b160_to_h160, h256_to_b256}};
+use crate::{
+    executor::{
+        backend::error::{DatabaseError, DatabaseResult},
+        fork::{cache::FlushJsonBlockCacheDB, BlockchainDb},
+    },
+    utils::{b160_to_h160, b256_to_h256, h160_to_b160, h256_to_b256, ru256_to_u256, u256_to_ru256},
+};
 use ethers::{
     core::abi::ethereum_types::BigEndianHash,
     providers::Middleware,
@@ -15,7 +18,10 @@ use futures::{
     task::{Context, Poll},
     Future, FutureExt,
 };
-use revm::{db::DatabaseRef, primitives::{AccountInfo, Bytecode, B160, B256, U256 as rU256, KECCAK_EMPTY}};
+use revm::{
+    db::DatabaseRef,
+    primitives::{AccountInfo, Bytecode, B160, B256, KECCAK_EMPTY, U256 as rU256},
+};
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
     pin::Pin,
@@ -133,7 +139,7 @@ where
         match req {
             BackendRequest::Basic(addr, sender) => {
                 trace!(target: "backendhandler", "received request basic address={:?}", addr);
-                let acc = self.db.accounts().read().get(&addr).cloned();
+                let acc = self.db.accounts().read().get(&h160_to_b160(addr)).cloned();
                 if let Some(basic) = acc {
                     let _ = sender.send(Ok(basic));
                 } else {
@@ -141,9 +147,9 @@ where
                 }
             }
             BackendRequest::BlockHash(number, sender) => {
-                let hash = self.db.block_hashes().read().get(&U256::from(number)).cloned();
+                let hash = self.db.block_hashes().read().get(&rU256::from(number)).cloned();
                 if let Some(hash) = hash {
-                    let _ = sender.send(Ok(hash));
+                    let _ = sender.send(Ok(hash.into()));
                 } else {
                     self.request_hash(number, sender);
                 }
@@ -156,10 +162,14 @@ where
             }
             BackendRequest::Storage(addr, idx, sender) => {
                 // account is already stored in the cache
-                let value =
-                    self.db.storage().read().get(&addr).and_then(|acc| acc.get(&idx).copied());
+                let value = self
+                    .db
+                    .storage()
+                    .read()
+                    .get(&h160_to_b160(addr))
+                    .and_then(|acc| acc.get(&u256_to_ru256(idx)).copied());
                 if let Some(value) = value {
-                    let _ = sender.send(Ok(value));
+                    let _ = sender.send(Ok(ru256_to_u256(value)));
                 } else {
                     // account present but not storage -> fetch storage
                     self.request_account_storage(addr, idx, sender);
@@ -345,7 +355,7 @@ where
                                 code: code.map(|bytes| Bytecode::new_raw(bytes).to_checked()),
                                 code_hash,
                             };
-                            pin.db.accounts().write().insert(addr, acc.clone());
+                            pin.db.accounts().write().insert(addr.into(), acc.clone());
 
                             // notify all listeners
                             if let Some(listeners) = pin.account_requests.remove(&addr) {
@@ -379,7 +389,12 @@ where
                             };
 
                             // update the cache
-                            pin.db.storage().write().entry(addr).or_default().insert(idx, value);
+                            pin.db
+                                .storage()
+                                .write()
+                                .entry(addr.into())
+                                .or_default()
+                                .insert(idx.into(), value.into());
 
                             // notify all listeners
                             if let Some(listeners) = pin.storage_requests.remove(&(addr, idx)) {
@@ -410,7 +425,7 @@ where
                             };
 
                             // update the cache
-                            pin.db.block_hashes().write().insert(number.into(), value);
+                            pin.db.block_hashes().write().insert(rU256::from(number), value.into());
 
                             // notify all listeners
                             if let Some(listeners) = pin.block_requests.remove(&number) {
@@ -671,12 +686,14 @@ impl DatabaseRef for SharedBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::executor::{
-        fork::{BlockchainDbMeta, CreateFork, JsonBlockCacheDB},
-        opts::EvmOpts,
-        Backend,
+    use crate::{
+        executor::{
+            fork::{BlockchainDbMeta, CreateFork, JsonBlockCacheDB},
+            opts::EvmOpts,
+            Backend,
+        },
+        utils::h160_to_b160,
     };
-    use crate::utils::h160_to_b160;
     use ethers::{
         solc::utils::RuntimeOrHandle,
         types::{Address, Chain},
@@ -701,11 +718,11 @@ mod tests {
             runtime.block_on(SharedBackend::spawn_backend(Arc::new(provider), db.clone(), None));
 
         // some rng contract from etherscan
-        let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
+        let address: B160 = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
 
-        let idx = U256::from(0u64);
-        let value = backend.storage(h160_to_b160(address), idx.into()).unwrap();
-        let account = backend.basic(h160_to_b160(address)).unwrap().unwrap();
+        let idx = rU256::from(0u64);
+        let value = backend.storage(address, idx).unwrap();
+        let account = backend.basic(address).unwrap().unwrap();
 
         let mem_acc = db.accounts().read().get(&address).unwrap().clone();
         assert_eq!(account.balance, mem_acc.balance);
@@ -714,16 +731,16 @@ mod tests {
         assert_eq!(slots.len(), 1);
         assert_eq!(slots.get(&idx).copied().unwrap(), value.into());
 
-        let num = U256::from(10u64);
+        let num = rU256::from(10u64);
         let hash = backend.block_hash(num.into()).unwrap();
         let mem_hash = *db.block_hashes().read().get(&num).unwrap();
-        assert_eq!(hash, h256_to_b256(mem_hash));
+        assert_eq!(hash, mem_hash);
 
         let max_slots = 5;
         let handle = std::thread::spawn(move || {
             for i in 1..max_slots {
-                let idx = U256::from(i);
-                let _ = backend.storage(h160_to_b160(address), idx.into());
+                let idx = rU256::from(i);
+                let _ = backend.storage(address, idx);
             }
         });
         handle.join().unwrap();
@@ -760,16 +777,16 @@ mod tests {
         let backend = Backend::spawn(Some(fork));
 
         // some rng contract from etherscan
-        let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
+        let address: B160 = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
 
         let idx = rU256::from(0u64);
-        let _value = backend.storage(h160_to_b160(address), idx);
-        let _account = backend.basic(h160_to_b160(address));
+        let _value = backend.storage(address, idx);
+        let _account = backend.basic(address);
 
         // fill some slots
         let num_slots = 10u64;
         for idx in 1..num_slots {
-            let _ = backend.storage(h160_to_b160(address), rU256::from(idx));
+            let _ = backend.storage(address, rU256::from(idx));
         }
         drop(backend);
 

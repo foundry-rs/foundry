@@ -1,7 +1,13 @@
 use self::inspector::{
     cheatcodes::util::BroadcastableTransactions, Cheatcodes, InspectorData, InspectorStackConfig,
 };
-use crate::{debug::DebugArena, decode, trace::CallTraceArena, CALLER, utils::{h160_to_b160, b160_to_h160, eval_to_instruction_result, halt_to_instruction_result}};
+use crate::{
+    debug::DebugArena,
+    decode,
+    trace::CallTraceArena,
+    utils::{b160_to_h160, eval_to_instruction_result, h160_to_b160, halt_to_instruction_result},
+    CALLER,
+};
 pub use abi::{
     patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS, CONSOLE_ABI,
     HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
@@ -16,17 +22,17 @@ use ethers::{
 };
 use foundry_common::abi::IntoFunction;
 use hashbrown::HashMap;
-<<<<<<< HEAD
-=======
-use revm::{
-    db::DatabaseCommit, primitives::{B160, ResultAndState}
-};
->>>>>>> 44b13209 (chore: modify state changeset to use proper types, annoying type conversions remain)
 /// Reexport commonly used revm types
-pub use revm::{db::DatabaseRef, Env, SpecId};
+pub use revm::primitives::{DatabaseRef, Env, SpecId};
+use revm::{
+    db::DatabaseCommit,
+    interpreter::{return_ok, CreateScheme, InstructionResult, Memory, Stack},
+    primitives::{
+        Account, BlockEnv, Bytecode, Env, ExecutionResult, Output, ResultAndState, SpecId,
+        TransactTo, TxEnv, B160, U256 as rU256,
+    },
+};
 use std::collections::BTreeMap;
-use revm::interpreter::{CreateScheme, InstructionResult, Memory, return_ok, Stack};
-use revm::primitives::{Account, BlockEnv, Bytecode, Env, ExecutionResult, SpecId, TransactTo, TxEnv, Output, U256 as rU256};
 use tracing::trace;
 
 /// ABIs used internally in the executor
@@ -176,7 +182,11 @@ impl Executor {
 
     /// Gets the balance of an account
     pub fn get_balance(&self, address: Address) -> DatabaseResult<U256> {
-        Ok(self.backend().basic(h160_to_b160(address))?.map(|acc| acc.balance.into()).unwrap_or_default())
+        Ok(self
+            .backend()
+            .basic(h160_to_b160(address))?
+            .map(|acc| acc.balance.into())
+            .unwrap_or_default())
     }
 
     /// Set the nonce of an account.
@@ -306,7 +316,12 @@ impl Executor {
         let calldata = Bytes::from(encode_function_data(&func, args)?.to_vec());
 
         // execute the call
-        let env = self.build_test_env(from, TransactTo::Call(h160_to_b160(test_contract)), calldata, value);
+        let env = self.build_test_env(
+            from,
+            TransactTo::Call(h160_to_b160(test_contract)),
+            calldata,
+            value,
+        );
         let call_result = self.call_raw_with_env(env)?;
 
         convert_call_result(abi, &func, call_result)
@@ -343,7 +358,8 @@ impl Executor {
         // execute the call
         let mut inspector = self.inspector_config.stack();
         // Build VM
-        let mut env = self.build_test_env(from, TransactTo::Call(h160_to_b160(to)), calldata, value);
+        let mut env =
+            self.build_test_env(from, TransactTo::Call(h160_to_b160(to)), calldata, value);
         let mut db = FuzzBackendWrapper::new(self.backend());
         let result = db.inspect_ref(&mut env, &mut inspector)?;
 
@@ -468,7 +484,15 @@ impl Executor {
 
         trace!(address=?address, "deployed contract");
 
-        Ok(DeployResult { address: b160_to_h160(address), gas_used, gas_refunded, logs, traces, debug, env })
+        Ok(DeployResult {
+            address: b160_to_h160(address),
+            gas_used,
+            gas_refunded,
+            logs,
+            traces,
+            debug,
+            env,
+        })
     }
 
     /// Deploys a contract and commits the new state to the underlying database.
@@ -767,13 +791,13 @@ fn convert_executed_result(
     let (exit_reason, gas_refunded, gas_used, out) = match exec_result {
         ExecutionResult::Success { reason, gas_used, gas_refunded, logs, output } => {
             (eval_to_instruction_result(reason), gas_refunded, gas_used, Some(output))
-        },
+        }
         ExecutionResult::Revert { gas_used, .. } => {
             (InstructionResult::Revert, 0 as u64, gas_used, None)
-        },
+        }
         ExecutionResult::Halt { reason, gas_used } => {
             (halt_to_instruction_result(reason), 0 as u64, gas_used, None)
-        },
+        }
     };
 
     let stipend = calc_stipend(&env.tx.data, env.cfg.spec_id);

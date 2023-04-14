@@ -11,13 +11,14 @@ use ethers::{
     types::{Address, Log},
 };
 use revm::{
-    return_revert, CallInputs, CreateInputs, EVMData, Gas, GasInspector, Inspector, Interpreter,
-    Return,
+    inspectors::GasInspector,
+    interpreter::{
+        return_revert, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Memory, Stack,
+    },
+    primitives::{B160, B256},
+    EVMData, Inspector,
 };
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
-use revm::{EVMData, Inspector, primitives::{B160, B256}};
-use revm::inspectors::GasInspector;
-use revm::interpreter::{CallInputs, CreateInputs, Gas, InstructionResult, Interpreter, Memory, Stack, return_revert};
 
 /// Helper macro to call the same method on multiple inspectors without resorting to dynamic
 /// dispatch
@@ -45,8 +46,8 @@ pub struct InspectorData {
 
 /// An inspector that calls multiple inspectors in sequence.
 ///
-/// If a call to an inspector returns a value other than [Return::Continue] (or equivalent) the
-/// remaining inspectors are not called.
+/// If a call to an inspector returns a value other than [InstructionResult::Continue] (or
+/// equivalent) the remaining inspectors are not called.
 #[derive(Default)]
 pub struct InspectorStack {
     pub tracer: Option<Tracer>,
@@ -115,7 +116,8 @@ impl InspectorStack {
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
-                if new_status != status || (new_status == Return::Revert && new_retdata != retdata)
+                if new_status != status ||
+                    (new_status == InstructionResult::Revert && new_retdata != retdata)
                 {
                     return (new_status, new_gas, new_retdata)
                 }

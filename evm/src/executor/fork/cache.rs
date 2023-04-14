@@ -1,8 +1,10 @@
 //! Cache related abstraction
-use crate::{executor::backend::snapshot::StateSnapshot, HashMap as Map, utils::{ru256_to_u256, b160_to_h160}};
-use ethers::types::{Address, H256, U256};
+use crate::{executor::backend::snapshot::StateSnapshot, HashMap as Map};
 use parking_lot::RwLock;
-use revm::{primitives::{Account, AccountInfo, B160, U256 as rU256, KECCAK_EMPTY}, DatabaseCommit};
+use revm::{
+    primitives::{Account, AccountInfo, B160, B256, KECCAK_EMPTY, U256},
+    DatabaseCommit,
+};
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
 use std::{collections::BTreeSet, fs, io::BufWriter, path::PathBuf, sync::Arc};
 use tracing::{trace, warn};
@@ -77,17 +79,17 @@ impl BlockchainDb {
     }
 
     /// Returns the map that holds the account related info
-    pub fn accounts(&self) -> &RwLock<Map<Address, AccountInfo>> {
+    pub fn accounts(&self) -> &RwLock<Map<B160, AccountInfo>> {
         &self.db.accounts
     }
 
     /// Returns the map that holds the storage related info
-    pub fn storage(&self) -> &RwLock<Map<Address, StorageInfo>> {
+    pub fn storage(&self) -> &RwLock<Map<B160, StorageInfo>> {
         &self.db.storage
     }
 
     /// Returns the map that holds all the block hashes
-    pub fn block_hashes(&self) -> &RwLock<Map<U256, H256>> {
+    pub fn block_hashes(&self) -> &RwLock<Map<U256, B256>> {
         &self.db.block_hashes
     }
 
@@ -217,11 +219,11 @@ impl<'de> Deserialize<'de> for BlockchainDbMeta {
 #[derive(Debug, Default)]
 pub struct MemDb {
     /// Account related data
-    pub accounts: RwLock<Map<Address, AccountInfo>>,
+    pub accounts: RwLock<Map<B160, AccountInfo>>,
     /// Storage related data
-    pub storage: RwLock<Map<Address, StorageInfo>>,
+    pub storage: RwLock<Map<B160, StorageInfo>>,
     /// All retrieved block hashes
-    pub block_hashes: RwLock<Map<U256, H256>>,
+    pub block_hashes: RwLock<Map<U256, B256>>,
 }
 
 impl MemDb {
@@ -233,7 +235,7 @@ impl MemDb {
     }
 
     // Inserts the account, replacing it if it exists already
-    pub fn do_insert_account(&self, address: Address, account: AccountInfo) {
+    pub fn do_insert_account(&self, address: B160, account: AccountInfo) {
         self.accounts.write().insert(address, account);
     }
 
@@ -243,8 +245,8 @@ impl MemDb {
         let mut accounts = self.accounts.write();
         for (add, mut acc) in changes {
             if acc.is_empty() || acc.is_destroyed {
-                accounts.remove(&b160_to_h160(add));
-                storage.remove(&b160_to_h160(add));
+                accounts.remove(&add);
+                storage.remove(&add);
             } else {
                 // insert account
                 if let Some(code_hash) =
@@ -254,21 +256,21 @@ impl MemDb {
                 } else if acc.info.code_hash.is_zero() {
                     acc.info.code_hash = KECCAK_EMPTY;
                 }
-                accounts.insert(b160_to_h160(add), acc.info);
+                accounts.insert(add, acc.info);
 
-                let acc_storage = storage.entry(b160_to_h160(add)).or_default();
+                let acc_storage = storage.entry(add).or_default();
                 if acc.storage_cleared {
                     acc_storage.clear();
                 }
                 for (index, value) in acc.storage {
-                    if value.present_value() == rU256::from(0) {
-                        acc_storage.remove(&ru256_to_u256(index));
+                    if value.present_value() == U256::from(0) {
+                        acc_storage.remove(&index);
                     } else {
-                        acc_storage.insert(ru256_to_u256(index), ru256_to_u256(value.present_value()));
+                        acc_storage.insert(index, value.present_value());
                     }
                 }
                 if acc_storage.is_empty() {
-                    storage.remove(&b160_to_h160(add));
+                    storage.remove(&add);
                 }
             }
         }

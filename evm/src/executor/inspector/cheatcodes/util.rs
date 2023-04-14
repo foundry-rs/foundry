@@ -2,7 +2,7 @@ use super::Cheatcodes;
 use crate::{
     abi::HEVMCalls,
     executor::backend::error::{DatabaseError, DatabaseResult},
-    utils::{h256_to_u256_be, h160_to_b160, u256_to_ru256},
+    utils::{h160_to_b160, h256_to_u256_be, ru256_to_u256, u256_to_ru256},
 };
 use bytes::{BufMut, Bytes, BytesMut};
 use ethers::{
@@ -18,7 +18,11 @@ use ethers::{
 };
 use foundry_common::{fmt::*, RpcUrl};
 use hex::FromHex;
-use revm::{primitives::{Account, TransactTo}, interpreter::CreateInputs, Database, EVMData, JournaledState};
+use revm::{
+    interpreter::CreateInputs,
+    primitives::{Account, TransactTo},
+    Database, EVMData, JournaledState,
+};
 use std::{collections::VecDeque, str::FromStr};
 use tracing::trace;
 
@@ -54,11 +58,17 @@ pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction) {
         .unwrap_or_default()
         .0
         .into_iter()
-        .map(|item| (h160_to_b160(item.address), item.storage_keys.into_iter().map(h256_to_u256_be).map(u256_to_ru256).collect())) 
+        .map(|item| {
+            (
+                h160_to_b160(item.address),
+                item.storage_keys.into_iter().map(h256_to_u256_be).map(u256_to_ru256).collect(),
+            )
+        })
         .collect();
     env.tx.value = tx.value.into();
     env.tx.data = tx.input.0.clone();
-    env.tx.transact_to = tx.to.map(h160_to_b160).map(TransactTo::Call).unwrap_or_else(TransactTo::create)
+    env.tx.transact_to =
+        tx.to.map(h160_to_b160).map(TransactTo::Call).unwrap_or_else(TransactTo::create)
 }
 
 /// Applies the given function `f` to the `revm::Account` belonging to the `addr`
@@ -228,7 +238,10 @@ where
 
             // Proxy deployer requires the data to be on the following format `salt.init_code`
             let mut calldata = BytesMut::with_capacity(32 + bytecode.len());
-            calldata.put_slice(salt.to_be_bytes().as_slice());
+            let salt = ru256_to_u256(salt);
+            let mut salt_bytes = [0u8; 32];
+            salt.to_big_endian(&mut salt_bytes);
+            calldata.put_slice(&salt_bytes);
             calldata.put(bytecode);
 
             Ok((calldata.freeze(), Some(NameOrAddress::Address(DEFAULT_CREATE2_DEPLOYER)), nonce))

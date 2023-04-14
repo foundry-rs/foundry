@@ -1,11 +1,13 @@
-use crate::utils::{apply_chain_and_block_specific_env_changes, h160_to_b160, h256_to_b256, u256_to_ru256};
+use crate::utils::{
+    apply_chain_and_block_specific_env_changes, h160_to_b160, h256_to_b256, u256_to_ru256,
+};
 use ethers::{
     providers::Middleware,
     types::{Address, Block, TxHash, U256},
 };
 use eyre::WrapErr;
 use futures::TryFutureExt;
-use revm::{primitives::{BlockEnv, CfgEnv, Env, TxEnv}};
+use revm::primitives::{BlockEnv, CfgEnv, Env, TxEnv};
 
 /// Initializes a REVM block environment based on a forked
 /// ethereum provider.

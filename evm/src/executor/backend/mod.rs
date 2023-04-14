@@ -6,7 +6,8 @@ use crate::{
         inspector::{cheatcodes::Cheatcodes, DEFAULT_CREATE2_DEPLOYER},
         snapshot::Snapshots,
     },
-    CALLER, TEST_CONTRACT_ADDRESS, utils::{h160_to_b160, b160_to_h160, h256_to_b256, ru256_to_u256, u256_to_ru256},
+    utils::{b160_to_h160, h160_to_b160, h256_to_b256, ru256_to_u256, u256_to_ru256},
+    CALLER, TEST_CONTRACT_ADDRESS,
 };
 use ethers::{
     prelude::{Block, H160, H256, U256},
@@ -18,7 +19,10 @@ pub use in_memory_db::MemDb;
 use revm::{
     db::{CacheDB, DatabaseRef},
     precompile::{Precompiles, SpecId},
-    primitives::{Account, AccountInfo, B160, U256 as rU256, Bytecode, CreateScheme, Env, Log, TransactTo, KECCAK_EMPTY, B256, ResultAndState},
+    primitives::{
+        Account, AccountInfo, Bytecode, CreateScheme, Env, Log, ResultAndState, TransactTo, B160,
+        B256, KECCAK_EMPTY, U256 as rU256,
+    },
     Database, DatabaseCommit, Inspector, JournaledState, EVM,
 };
 use std::collections::{HashMap, HashSet};
@@ -552,8 +556,12 @@ impl Backend {
     ) -> bool {
         let address = h160_to_b160(address);
         if let Some(account) = current_state.state.get(&address) {
-            let value =
-                account.storage.get(&revm::primitives::U256::from(0)).cloned().unwrap_or_default().present_value();
+            let value = account
+                .storage
+                .get(&revm::primitives::U256::from(0))
+                .cloned()
+                .unwrap_or_default()
+                .present_value();
             return value.as_le_bytes()[1] != 0
         }
 
@@ -565,7 +573,9 @@ impl Backend {
     /// See <https://github.com/dapphub/ds-test/blob/9310e879db8ba3ea6d5c6489a579118fd264a3f5/src/test.sol#L66-L72>
     pub fn is_global_failure(&self) -> bool {
         let index = U256::from(&b"failed"[..]);
-        self.storage(h160_to_b160(CHEATCODE_ADDRESS), index.into()).map(|value| value == revm::primitives::U256::from(1)).unwrap_or_default()
+        self.storage(h160_to_b160(CHEATCODE_ADDRESS), index.into())
+            .map(|value| value == revm::primitives::U256::from(1))
+            .unwrap_or_default()
     }
 
     /// When creating or switching forks, we update the AccountInfo of the contract
@@ -726,7 +736,9 @@ impl Backend {
             .fork_init_journaled_state
             .state
             .iter()
-            .filter(|(addr, _)| !self.is_existing_precompile(addr) && !self.is_persistent(&b160_to_h160(**addr)))
+            .filter(|(addr, _)| {
+                !self.is_existing_precompile(addr) && !self.is_persistent(&b160_to_h160(**addr))
+            })
             .map(|(addr, _)| addr)
             .copied()
             .collect::<Vec<_>>();
@@ -789,8 +801,10 @@ impl Backend {
         let fork_id = self.ensure_fork_id(id)?.clone();
 
         let fork = self.inner.get_fork_by_id_mut(id)?;
-        let full_block =
-            fork.db.db.get_full_block(BlockNumber::Number(ru256_to_u256(env.block.number).as_u64().into()))?;
+        let full_block = fork
+            .db
+            .db
+            .get_full_block(BlockNumber::Number(ru256_to_u256(env.block.number).as_u64().into()))?;
 
         for tx in full_block.transactions.into_iter() {
             if tx.hash().eq(&tx_hash) {

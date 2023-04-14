@@ -1,10 +1,12 @@
 use crate::{
     fuzz::{invariant::RandomCallGenerator, strategies::EvmFuzzState},
-    utils::{self, h160_to_b160, b160_to_h160},
+    utils::{self, b160_to_h160, h160_to_b160},
 };
 use bytes::Bytes;
-use revm::{Database, EVMData, Inspector};
-use revm::interpreter::{CallInputs, CallScheme, Gas, InstructionResult, Interpreter};
+use revm::{
+    interpreter::{CallInputs, CallScheme, Gas, InstructionResult, Interpreter},
+    Database, EVMData, Inspector,
+};
 
 /// An inspector that can fuzz and collect data for that effect.
 #[derive(Clone, Debug)]
@@ -80,7 +82,7 @@ impl Fuzzer {
         let mut state = self.fuzz_state.write();
 
         for slot in interpreter.stack().data() {
-            state.values_mut().insert(utils::u256_to_h256_be(*slot).into());
+            state.values_mut().insert(utils::u256_to_h256_be(utils::ru256_to_u256(*slot)).into());
         }
 
         // TODO: disabled for now since it's flooding the dictionary
@@ -101,8 +103,8 @@ impl Fuzzer {
                 !call_generator.used
             {
                 // There's only a 30% chance that an override happens.
-                if let Some((sender, (contract, input))) =
-                    call_generator.next(b160_to_h160(call.context.caller), b160_to_h160(call.contract))
+                if let Some((sender, (contract, input))) = call_generator
+                    .next(b160_to_h160(call.context.caller), b160_to_h160(call.contract))
                 {
                     call.input = input.0;
                     call.context.caller = h160_to_b160(sender);

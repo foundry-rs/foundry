@@ -1,17 +1,16 @@
-use crate::{executor::fork::CreateFork, utils::{h256_to_b256, h160_to_b160}};
+use crate::{
+    executor::fork::CreateFork,
+    utils::{h160_to_b160, h256_to_b256},
+};
 use ethers::{
     providers::{Middleware, Provider},
     solc::utils::RuntimeOrHandle,
     types::{Address, Block, Chain, TxHash, H256, U256},
 };
 use eyre::WrapErr;
-<<<<<<< HEAD
-=======
-use revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv, U256 as rU256};
->>>>>>> 21d2a575 (feat: executor/fuzz/coverage progress, mark unknowns as TODOs)
 use foundry_common::{self, ProviderBuilder, RpcUrl, ALCHEMY_FREE_TIER_CUPS};
 use foundry_config::Config;
-use revm::{BlockEnv, CfgEnv, SpecId, TxEnv};
+use revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv, U256 as rU256};
 use serde::{Deserialize, Deserializer, Serialize};
 
 use super::fork::environment;
@@ -82,17 +81,12 @@ impl EvmOpts {
         }
     }
 
-<<<<<<< HEAD
     /// Returns the `revm::Env` that is configured with settings retrieved from the endpoint.
     /// And the block that was used to configure the environment.
     pub async fn fork_evm_env(
         &self,
         fork_url: impl AsRef<str>,
-    ) -> eyre::Result<(revm::Env, Block<TxHash>)> {
-=======
-    /// Returns the `revm::Env` configured with settings retrieved from the endpoints
-    pub async fn fork_evm_env(&self, fork_url: impl AsRef<str>) -> eyre::Result<revm::primitives::Env> {
->>>>>>> 21d2a575 (feat: executor/fuzz/coverage progress, mark unknowns as TODOs)
+    ) -> eyre::Result<revm::primitives::Env> {
         let fork_url = fork_url.as_ref();
         let provider = ProviderBuilder::new(fork_url)
             .compute_units_per_second(self.get_compute_units_per_second())
@@ -112,18 +106,6 @@ impl EvmOpts {
     }
 
     /// Returns the `revm::Env` configured with only local settings
-<<<<<<< HEAD
-    pub fn local_evm_env(&self) -> revm::Env {
-        revm::Env {
-            block: BlockEnv {
-                number: self.env.block_number.into(),
-                coinbase: self.env.block_coinbase,
-                timestamp: self.env.block_timestamp.into(),
-                difficulty: self.env.block_difficulty.into(),
-                prevrandao: Some(self.env.block_prevrandao),
-                basefee: self.env.block_base_fee_per_gas.into(),
-                gas_limit: self.gas_limit(),
-=======
     pub fn local_evm_env(&self) -> revm::primitives::Env {
         revm::primitives::Env {
             block: BlockEnv {
@@ -134,7 +116,6 @@ impl EvmOpts {
                 prevrandao: Some(h256_to_b256(self.env.block_prevrandao)),
                 basefee: rU256::from(self.env.block_base_fee_per_gas),
                 gas_limit: self.gas_limit().into(),
->>>>>>> 21d2a575 (feat: executor/fuzz/coverage progress, mark unknowns as TODOs)
             },
             cfg: CfgEnv {
                 chain_id: rU256::from(self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID)),

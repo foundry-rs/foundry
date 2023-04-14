@@ -2,9 +2,12 @@ use ethers::{
     types::Address,
     utils::{get_contract_address, get_create2_address},
 };
-use revm::{CreateInputs, CreateScheme, SpecId};
+use revm::{
+    interpreter::CreateInputs,
+    primitives::{CreateScheme, SpecId},
+};
 
-use crate::utils::b160_to_h160;
+use crate::utils::{b160_to_h160, ru256_to_u256};
 
 /// Returns [InstructionResult::Continue] on an error, discarding the error.
 ///
@@ -24,7 +27,10 @@ pub fn get_create_address(call: &CreateInputs, nonce: u64) -> Address {
     match call.scheme {
         CreateScheme::Create => get_contract_address(b160_to_h160(call.caller), nonce),
         CreateScheme::Create2 { salt } => {
-            get_create2_address(b160_to_h160(call.caller), salt.to_be_bytes(), call.init_code.clone())
+            let salt = ru256_to_u256(salt);
+            let mut salt_bytes = [0u8; 32];
+            salt.to_big_endian(&mut salt_bytes);
+            get_create2_address(b160_to_h160(call.caller), salt_bytes, call.init_code.clone())
         }
     }
 }

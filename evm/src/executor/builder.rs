@@ -7,7 +7,7 @@ use crate::{
     fuzz::{invariant::RandomCallGenerator, strategies::EvmFuzzState},
 };
 use ethers::types::U256;
-use revm::{Env, SpecId};
+use revm::primitives::{Env, SpecId};
 
 /// The builder that allows to configure an evm [`Executor`] which a stack of optional
 /// [`revm::Inspector`]s, such as [`Cheatcodes`]

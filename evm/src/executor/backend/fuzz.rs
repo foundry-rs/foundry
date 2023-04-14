@@ -11,8 +11,9 @@ use crate::{
 use ethers::prelude::{H256, U256};
 
 use revm::{
-    db::DatabaseRef, primitives::{AccountInfo, B160, B256, Bytecode, Env, U256 as rU256, ResultAndState}, Database, Inspector,
-    JournaledState,
+    db::DatabaseRef,
+    primitives::{AccountInfo, Bytecode, Env, ResultAndState, B160, B256, U256 as rU256},
+    Database, Inspector, JournaledState,
 };
 use std::borrow::Cow;
 use tracing::trace;

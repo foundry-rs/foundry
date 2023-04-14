@@ -1,15 +1,18 @@
-use crate::{executor::{
-    patch_hardhat_console_selector, HardhatConsoleCalls, HARDHAT_CONSOLE_ADDRESS,
-}, utils::{b160_to_h160, h160_to_b160, b256_to_h256}};
+use crate::{
+    executor::{patch_hardhat_console_selector, HardhatConsoleCalls, HARDHAT_CONSOLE_ADDRESS},
+    utils::{b160_to_h160, b256_to_h256, h160_to_b160},
+};
 use bytes::Bytes;
 use ethers::{
     abi::{AbiDecode, Token},
     types::{Log, H256},
 };
 use foundry_macros::ConsoleFmt;
-use revm::{Database, EVMData, Inspector};
-use revm::interpreter::{CallInputs, Gas, InstructionResult};
-use revm::primitives::{B160, B256};
+use revm::{
+    interpreter::{CallInputs, Gas, InstructionResult},
+    primitives::{B160, B256},
+    Database, EVMData, Inspector,
+};
 
 /// An inspector that collects logs during execution.
 ///

@@ -1,8 +1,12 @@
-use crate::coverage::{HitMap, HitMaps};
-use crate::utils::b256_to_h256;
+use crate::{
+    coverage::{HitMap, HitMaps},
+    utils::b256_to_h256,
+};
 use bytes::Bytes;
-use revm::{Database, EVMData, Inspector};
-use revm::interpreter::{InstructionResult, Interpreter};
+use revm::{
+    interpreter::{InstructionResult, Interpreter},
+    Database, EVMData, Inspector,
+};
 
 #[derive(Default, Debug)]
 pub struct CoverageCollector {

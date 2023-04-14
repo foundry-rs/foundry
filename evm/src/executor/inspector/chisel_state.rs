@@ -1,4 +1,7 @@
-use revm::{Database, Inspector};
+use revm::{
+    interpreter::{InstructionResult, Interpreter, Memory, Stack},
+    Database, Inspector,
+};
 
 /// An inspector for Chisel
 #[derive(Default)]

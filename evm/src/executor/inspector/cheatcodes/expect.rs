@@ -2,14 +2,19 @@ use super::Cheatcodes;
 use crate::{
     abi::HEVMCalls,
     error::{SolError, ERROR_PREFIX, REVERT_PREFIX},
-    executor::backend::DatabaseExt, utils::h160_to_b160,
+    executor::backend::DatabaseExt,
+    utils::h160_to_b160,
 };
 use bytes::Bytes;
 use ethers::{
     abi::{AbiDecode, AbiEncode, RawLog},
     types::{Address, H160, U256},
 };
-use revm::{interpreter::{InstructionResult, return_ok}, primitives::{Bytecode}, EVMData};
+use revm::{
+    interpreter::{return_ok, InstructionResult},
+    primitives::Bytecode,
+    EVMData,
+};
 use std::cmp::Ordering;
 use tracing::{instrument, trace};
 

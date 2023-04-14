@@ -5,16 +5,23 @@ use crate::{
         CallTrace, CallTraceArena, CallTraceStep, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog,
         RawOrDecodedReturnData,
     },
-    CallKind, utils::{b160_to_h160, b256_to_h256},
+    utils::{b160_to_h160, b256_to_h256},
+    CallKind,
 };
 use bytes::Bytes;
 use ethers::{
     abi::RawLog,
     types::{Address, U256},
 };
-use revm::{Database, EVMData, Inspector, JournalEntry, primitives::{B160, B256}};
-use revm::inspectors::GasInspector;
-use revm::interpreter::{CallInputs, CallScheme, CreateInputs, Gas, InstructionResult, Interpreter, opcode, return_ok};
+use revm::{
+    inspectors::GasInspector,
+    interpreter::{
+        opcode, return_ok, CallInputs, CallScheme, CreateInputs, Gas, InstructionResult,
+        Interpreter,
+    },
+    primitives::{B160, B256},
+    Database, EVMData, Inspector, JournalEntry,
+};
 use std::{cell::RefCell, rc::Rc};
 
 /// An inspector that collects call traces.
@@ -64,7 +71,13 @@ impl Tracer {
         ));
     }
 
-    fn fill_trace(&mut self, status: Return, cost: u64, output: Vec<u8>, address: Option<Address>) {
+    fn fill_trace(
+        &mut self,
+        status: InstructionResult,
+        cost: u64,
+        output: Vec<u8>,
+        address: Option<Address>,
+    ) {
         let success = matches!(status, return_ok!());
         let trace = &mut self.traces.arena
             [self.trace_stack.pop().expect("more traces were filled than started")]
@@ -168,8 +181,7 @@ where
         let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
         let topics: Vec<_> = topics.to_vec().into_iter().map(b256_to_h256).collect();
         node.ordering.push(LogCallOrder::Log(node.logs.len()));
-        node.logs
-            .push(RawOrDecodedLog::Raw(RawLog { topics, data: data.to_vec() }));
+        node.logs.push(RawOrDecodedLog::Raw(RawLog { topics, data: data.to_vec() }));
     }
 
     fn step_end(

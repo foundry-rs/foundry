@@ -7,7 +7,8 @@ use crate::{
     executor::{
         backend::DatabaseExt,
         inspector::cheatcodes::{util::with_journaled_account, DealRecord},
-    }, utils::{h160_to_b160, u256_to_ru256, b160_to_h160, ru256_to_u256},
+    },
+    utils::{b160_to_h160, h160_to_b160, ru256_to_u256, u256_to_ru256},
 };
 use bytes::Bytes;
 use ethers::{
@@ -226,7 +227,12 @@ pub fn apply<DB: DatabaseExt>(
             data.journaled_state.touch(&h160_to_b160(inner.0));
 
             data.journaled_state
-                .sstore(h160_to_b160(inner.0), u256_to_ru256(inner.1.into()), u256_to_ru256(inner.2.into()), data.db)
+                .sstore(
+                    h160_to_b160(inner.0),
+                    u256_to_ru256(inner.1.into()),
+                    u256_to_ru256(inner.2.into()),
+                    data.db,
+                )
                 .map_err(|err| err.encode_string())?;
             Bytes::new()
         }
@@ -248,7 +254,8 @@ pub fn apply<DB: DatabaseExt>(
             data.journaled_state
                 .load_account(h160_to_b160(inner.0), data.db)
                 .map_err(|err| err.encode_string())?;
-            data.journaled_state.set_code(h160_to_b160(inner.0), Bytecode::new_raw(code.0).to_checked());
+            data.journaled_state
+                .set_code(h160_to_b160(inner.0), Bytecode::new_raw(code.0).to_checked());
             Bytes::new()
         }
         HEVMCalls::Deal(inner) => {
@@ -332,7 +339,7 @@ pub fn apply<DB: DatabaseExt>(
         }
         HEVMCalls::GetNonce(inner) => {
             correct_sender_nonce(
-        b160_to_h160(data.env.tx.caller),
+                b160_to_h160(data.env.tx.caller),
                 &mut data.journaled_state,
                 &mut data.db,
                 state,

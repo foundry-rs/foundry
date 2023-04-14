@@ -3,9 +3,10 @@
 //! The design is similar to the single `SharedBackend`, `BackendHandler` but supports multiple
 //! concurrently active pairs at once.
 
-use crate::{executor::fork::{
-    BackendHandler, BlockchainDb, BlockchainDbMeta, CreateFork, SharedBackend,
-}, utils::ru256_to_u256};
+use crate::{
+    executor::fork::{BackendHandler, BlockchainDb, BlockchainDbMeta, CreateFork, SharedBackend},
+    utils::ru256_to_u256,
+};
 use ethers::{
     abi::{AbiDecode, AbiEncode, AbiError},
     providers::{Http, Provider, RetryClient},

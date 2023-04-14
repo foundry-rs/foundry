@@ -3,7 +3,8 @@ use crate::executor::backend::error::DatabaseError;
 use hashbrown::HashMap as Map;
 use revm::{
     db::{CacheDB, DatabaseRef, EmptyDB},
-    primitives::{Account, AccountInfo, Bytecode, B160, B256, U256}, Database, DatabaseCommit,
+    primitives::{Account, AccountInfo, Bytecode, B160, B256, U256},
+    Database, DatabaseCommit,
 };
 
 use crate::executor::snapshot::Snapshots;
