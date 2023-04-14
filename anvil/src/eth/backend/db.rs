@@ -7,9 +7,7 @@ use ethers::{
     types::H256,
     utils::keccak256,
 };
-use forge::{
-    revm::primitives::{B160, B256, KECCAK_EMPTY, U256 as rU256},
-};
+use forge::revm::primitives::{B160, B256, KECCAK_EMPTY, U256 as rU256};
 use foundry_common::errors::FsPathError;
 use foundry_evm::{
     executor::{

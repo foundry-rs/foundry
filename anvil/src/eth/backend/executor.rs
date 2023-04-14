@@ -280,12 +280,9 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         inspector.print_logs();
 
         let (exit_reason, gas_used, out, logs) = match exec_result {
-            ExecutionResult::Success { reason, gas_used, logs, output, .. } => (
-                eval_to_instruction_result(reason),
-                gas_used,
-                Some(output),
-                Some(logs),
-            ),
+            ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
+                (eval_to_instruction_result(reason), gas_used, Some(output), Some(logs))
+            }
             ExecutionResult::Revert { gas_used, .. } => {
                 (InstructionResult::Revert, gas_used, None, None)
             }

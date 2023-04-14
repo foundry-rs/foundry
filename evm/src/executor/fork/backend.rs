@@ -686,17 +686,12 @@ impl DatabaseRef for SharedBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        executor::{
-            fork::{BlockchainDbMeta, CreateFork, JsonBlockCacheDB},
-            opts::EvmOpts,
-            Backend,
-        },
+    use crate::executor::{
+        fork::{BlockchainDbMeta, CreateFork, JsonBlockCacheDB},
+        opts::EvmOpts,
+        Backend,
     };
-    use ethers::{
-        solc::utils::RuntimeOrHandle,
-        types::{Chain},
-    };
+    use ethers::{solc::utils::RuntimeOrHandle, types::Chain};
     use foundry_common::get_http_provider;
     use foundry_config::Config;
     use std::{collections::BTreeSet, path::PathBuf, sync::Arc};

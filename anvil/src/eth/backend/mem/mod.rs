@@ -39,7 +39,7 @@ use anvil_core::{
             TransactionInfo, TypedTransaction,
         },
         trie::RefTrieDB,
-        utils::{to_revm_access_list},
+        utils::to_revm_access_list,
     },
     types::{Forking, Index},
 };
@@ -62,8 +62,8 @@ use forge::{
         primitives::{BlockEnv, ExecutionResult},
     },
     utils::{
-        eval_to_instruction_result, h256_to_b256, halt_to_instruction_result,
-        ru256_to_u256, u256_to_ru256,
+        eval_to_instruction_result, h256_to_b256, halt_to_instruction_result, ru256_to_u256,
+        u256_to_ru256,
     },
 };
 use foundry_evm::{
@@ -681,12 +681,9 @@ impl Backend {
         let state: hashbrown::HashMap<H160, Account> =
             state.into_iter().map(|kv| (kv.0.into(), kv.1)).collect();
         let (exit_reason, gas_used, out, logs) = match result_and_state.result {
-            ExecutionResult::Success { reason, gas_used, logs, output, .. } => (
-                eval_to_instruction_result(reason),
-                gas_used,
-                Some(output),
-                Some(logs),
-            ),
+            ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
+                (eval_to_instruction_result(reason), gas_used, Some(output), Some(logs))
+            }
             ExecutionResult::Revert { gas_used, .. } => {
                 (InstructionResult::Revert, gas_used, None, None)
             }
@@ -1007,15 +1004,11 @@ impl Backend {
         let state = result_and_state.state;
         let state: hashbrown::HashMap<H160, Account> =
             state.into_iter().map(|kv| (kv.0.into(), kv.1)).collect();
-        let (exit_reason, gas_used, out ) = match result_and_state.result {
-            ExecutionResult::Success { reason, gas_used, output, .. } => (
-                eval_to_instruction_result(reason),
-                gas_used,
-                Some(output),
-            ),
-            ExecutionResult::Revert { gas_used, .. } => {
-                (InstructionResult::Revert, gas_used, None)
+        let (exit_reason, gas_used, out) = match result_and_state.result {
+            ExecutionResult::Success { reason, gas_used, output, .. } => {
+                (eval_to_instruction_result(reason), gas_used, Some(output))
             }
+            ExecutionResult::Revert { gas_used, .. } => (InstructionResult::Revert, gas_used, None),
             ExecutionResult::Halt { reason, gas_used } => {
                 (halt_to_instruction_result(reason), gas_used, None)
             }
@@ -1093,14 +1086,10 @@ impl Backend {
             Err(e) => return Err(BlockchainError::EvmError(InstructionResult::FatalExternalError)),
         };
         let (exit_reason, gas_used, out) = match result_and_state.result {
-            ExecutionResult::Success { reason, gas_used, output, .. } => (
-                eval_to_instruction_result(reason),
-                gas_used,
-                Some(output),
-            ),
-            ExecutionResult::Revert { gas_used, .. } => {
-                (InstructionResult::Revert, gas_used, None)
+            ExecutionResult::Success { reason, gas_used, output, .. } => {
+                (eval_to_instruction_result(reason), gas_used, Some(output))
             }
+            ExecutionResult::Revert { gas_used, .. } => (InstructionResult::Revert, gas_used, None),
             ExecutionResult::Halt { reason, gas_used } => {
                 (halt_to_instruction_result(reason), gas_used, None)
             }
