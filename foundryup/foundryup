@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-FOUNDRY_DIR=${FOUNDRY_DIR-"$HOME/.foundry"}
+FOUNDRY_DIR=${FOUNDRY_DIR-"$XDG_DATA_HOME/.foundry"}
 FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
 FOUNDRY_MAN_DIR="$FOUNDRY_DIR/share/man/man1"
 
