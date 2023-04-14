@@ -21,7 +21,7 @@ mkdir -p $FOUNDRY_MAN_DIR
 # Store the correct profile file (i.e. .profile for bash or .zshrc for ZSH).
 case $SHELL in
 */zsh)
-    PROFILE=$HOME/.zshrc
+    PROFILE=${ZDOTDIR-"$HOME"}/.zshrc
     PREF_SHELL=zsh
     ;;
 */bash)
