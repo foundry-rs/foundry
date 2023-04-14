@@ -92,6 +92,8 @@ use crate::fs_permissions::PathPermission;
 pub use invariant::InvariantConfig;
 use providers::remappings::RemappingsProvider;
 
+mod conf_parser;
+
 /// Foundry configuration
 ///
 /// # Defaults
