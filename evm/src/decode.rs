@@ -12,7 +12,7 @@ use ethers::{
 use foundry_common::{abi::format_token, SELECTOR_LEN};
 use itertools::Itertools;
 use once_cell::sync::Lazy;
-use revm::Return;
+use revm::interpreter::{return_ok, InstructionResult};
 
 /// Decode a set of logs, only returning logs from DSTest logging events and Hardhat's `console.log`
 pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {

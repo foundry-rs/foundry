@@ -31,8 +31,7 @@ use proptest::{
     strategy::{BoxedStrategy, Strategy, ValueTree},
     test_runner::{TestCaseError, TestRunner},
 };
-use revm::DatabaseCommit;
-use revm::primitives::{B160};
+use revm::{primitives::B160, DatabaseCommit};
 use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
 use tracing::warn;
 
@@ -530,7 +529,8 @@ fn collect_data(
 ) {
     // Verify it has no code.
     let mut has_code = false;
-    if let Some(Some(code)) = state_changeset.get(&h160_to_b160(*sender)).map(|account| account.info.code.as_ref())
+    if let Some(Some(code)) =
+        state_changeset.get(&h160_to_b160(*sender)).map(|account| account.info.code.as_ref())
     {
         has_code = !code.is_empty();
     }

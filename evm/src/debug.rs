@@ -1,6 +1,6 @@
 use crate::{abi::HEVM_ABI, CallKind};
 use ethers::types::{Address, U256};
-use revm::{Memory, OpCode};
+use revm::interpreter::{Memory, OpCode};
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 

@@ -7,11 +7,7 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 # foundry internal
 foundry-evm = { path = "../../evm" }
-<<<<<<< HEAD
 revm = { version = "3.1.1", default-features = false, features = [
-=======
-revm = { version = "3.1", default-features = false, features = [
->>>>>>> 49693bc4 (chore: bump revm to 3.1)
     "std",
     "serde",
     "memory_limit",
