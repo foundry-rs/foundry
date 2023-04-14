@@ -1,11 +1,12 @@
 //! Configuration for fuzz testing
 
-use std::error::Error;
-
 use ethers_core::types::U256;
 use serde::{Deserialize, Serialize};
 
-use crate::Config;
+use crate::{
+    conf_parser::{ConfParser, ConfParserError},
+    Config,
+};
 
 /// Contains for fuzz testing
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,64 +40,32 @@ impl Default for FuzzConfig {
     }
 }
 
-impl FuzzConfig {
-    /// Parses a [`FuzzConfig`] from Solidity function comments. <br>
-    /// This is intended to override general fuzzer configs for the current
-    /// execution profile (see [`Config`]).
-    ///
-    /// An example of compatible Solidity comments
-    ///
-    /// ```solidity
-    /// contract MyTest is Test {
-    /// // forge-config: default.fuzz.runs = 100
-    /// // forge-config: ci.fuzz.runs = 500
-    /// function test_SimpleFuzzTest(uint256 x) public {...}
-    ///
-    /// // forge-config: default.fuzz.runs = 500
-    /// // forge-config: ci.fuzz.runs = 10000
-    /// function test_ImportantFuzzTest(uint256 x) public {...}
-    /// }
-    /// ```
-    pub fn parse<S: AsRef<str>>(text: S) -> Result<Self, Box<dyn Error>> {
+impl ConfParser for FuzzConfig {
+    fn config_prefix() -> String {
         let profile = Config::selected_profile().to_string();
-        let prefix = format!("forge-config:{profile}.fuzz.");
-
-        let mut conf = Self::default();
-
-        // Get all lines containing a `forge-config:` prefix
-        let lines = text
-            .as_ref()
-            .split('\n')
-            .map(Self::remove_whitespaces)
-            .filter(|l| l.starts_with(&prefix));
-
-        // i.e. line = "forge-config:default.fuzz.runs=500"
-        for line in lines {
-            // i.e. pair = ["forge-config:default.fuzz.", "runs=500"]
-            let pair = line.split(&prefix).collect::<Vec<&str>>();
-
-            // i.e. assignment = "runs=500"
-            if let Some(assignment) = pair.last() {
-                // i.e. key_value = "['runs', '500']"
-                let key_value = assignment.split('=').collect::<Vec<&str>>();
-                if let Some(key) = key_value.first() {
-                    if let Some(value) = key_value.last() {
-                        match key.to_owned() {
-                            "runs" => conf.runs = value.parse()?,
-                            "max-test-rejects" => conf.max_test_rejects = value.parse()?,
-                            "seed" => conf.seed = Some(U256::zero()),
-                            _ => {}
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(conf)
+        format!("forge-config:{profile}.fuzz.")
     }
 
-    fn remove_whitespaces(s: &str) -> String {
-        s.chars().filter(|c| !c.is_whitespace()).collect()
+    fn parse<S: AsRef<str>>(text: S) -> Result<Option<Self>, ConfParserError>
+    where
+        Self: Sized + 'static,
+    {
+        let vars: Vec<(String, String)> = Self::config_variables::<S>(text);
+        if vars.is_empty() {
+            return Ok(None)
+        }
+
+        let mut conf = Self::default();
+        for pair in vars {
+            let key = pair.0;
+            let value = pair.1;
+            match key.as_str() {
+                "runs" => conf.runs = value.parse()?,
+                "max-test-rejects" => conf.max_test_rejects = value.parse()?,
+                _ => Err(ConfParserError::InvalidConfigProperty(key.to_string()))?,
+            }
+        }
+        Ok(Some(conf))
     }
 }
 
@@ -138,45 +107,37 @@ impl Default for FuzzDictionaryConfig {
 
 #[cfg(test)]
 mod tests {
-    use crate::FuzzConfig;
+    use crate::{conf_parser::ConfParser, FuzzConfig};
 
     #[test]
-    fn parse_config_default_profile() {
-        let conf = "forge-config: default.fuzz.runs = 600 \n forge-config: ci.fuzz.runs = 500 ";
-        let parsed = FuzzConfig::parse(conf).expect("Valid config");
-        assert_eq!(parsed.runs, 600);
-    }
-
-    #[test]
-    fn parse_config_white_spaces() {
-        let conf = "forge-config:    default.fuzz.runs =     600   ";
-        let parsed = FuzzConfig::parse(conf).expect("Valid config");
-        assert_eq!(parsed.runs, 600);
-    }
-
-    #[test]
-    fn parse_config_noisy_text() {
-        let conf = "Free text comment forge-config: default.fuzz.runs =     600 ";
-        let parsed = FuzzConfig::parse(conf).expect("Valid config");
-        let conf = FuzzConfig::default();
-        assert_eq!(parsed, conf);
-    }
-
-    #[test]
-    fn parse_config_error() {
-        let conf = "forge-config:default.fuzz.runs = foo \n ";
-        let parsed = FuzzConfig::parse(conf);
-        assert!(parsed.is_err());
+    fn parse_config_default_profile() -> eyre::Result<()> {
+        let conf = "forge-config: default.fuzz.runs = 1024";
+        let parsed = FuzzConfig::parse(conf)?.expect("Parsed config exists");
+        assert_eq!(parsed.runs, 1024);
+        Ok(())
     }
 
     #[test]
     fn parse_config_ci_profile() {
         figment::Jail::expect_with(|jail| {
             jail.set_env("FOUNDRY_PROFILE", "ci");
-            let conf = "forge-config: default.fuzz.runs = 500 \n forge-config: ci.fuzz.runs = 500 ";
-            let parsed = FuzzConfig::parse(conf).expect("Valid config");
-            assert_eq!(parsed.runs, 500);
+            let conf = r#"
+                forge-config: default.fuzz.runs = 1024
+                forge-config: ci.fuzz.runs = 2048"#;
+
+            let parsed = FuzzConfig::parse(conf).unwrap().expect("Parsed config exists");
+            assert_eq!(parsed.runs, 2048);
             Ok(())
         });
+    }
+
+    #[test]
+    fn unrecognized_property() {
+        let conf = "forge-config: default.fuzz.unknownprop = 200";
+        if let Err(e) = FuzzConfig::parse(conf) {
+            assert_eq!(e.to_string(), "'unknownprop' is not a valid config property");
+        } else {
+            assert!(false)
+        }
     }
 }
