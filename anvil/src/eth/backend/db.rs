@@ -9,7 +9,6 @@ use ethers::{
 };
 use forge::{
     revm::primitives::{B160, B256, KECCAK_EMPTY, U256 as rU256},
-    utils::b160_to_h160,
 };
 use foundry_common::errors::FsPathError;
 use foundry_evm::{

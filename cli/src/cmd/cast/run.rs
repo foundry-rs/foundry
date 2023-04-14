@@ -14,7 +14,7 @@ use forge::{
     },
     revm::primitives::U256 as rU256,
     trace::{identifier::EtherscanIdentifier, CallTraceDecoderBuilder, TraceKind},
-    utils::{h256_to_b256, ru256_to_u256, u256_to_ru256},
+    utils::{h256_to_b256},
 };
 use foundry_config::{find_project_root_path, Config};
 use std::{collections::BTreeMap, str::FromStr};

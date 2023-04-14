@@ -5,7 +5,7 @@ use crate::{
         AsHashDB, Db, MaybeHashDatabase, SerializableAccountRecord, SerializableState, StateDb,
     },
     mem::state::{state_merkle_trie_root, trie_hash_db},
-    revm::primitives::{AccountInfo, U256 as rU256},
+    revm::primitives::AccountInfo,
     Address, U256,
 };
 use ethers::prelude::H256;

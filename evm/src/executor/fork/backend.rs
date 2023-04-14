@@ -692,11 +692,10 @@ mod tests {
             opts::EvmOpts,
             Backend,
         },
-        utils::h160_to_b160,
     };
     use ethers::{
         solc::utils::RuntimeOrHandle,
-        types::{Address, Chain},
+        types::{Chain},
     };
     use foundry_common::get_http_provider;
     use foundry_config::Config;

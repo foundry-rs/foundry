@@ -789,7 +789,7 @@ fn convert_executed_result(
     // gas_used
     // output
     let (exit_reason, gas_refunded, gas_used, out) = match exec_result {
-        ExecutionResult::Success { reason, gas_used, gas_refunded, logs, output } => {
+        ExecutionResult::Success { reason, gas_used, gas_refunded, output, .. } => {
             (eval_to_instruction_result(reason), gas_refunded, gas_used, Some(output))
         }
         ExecutionResult::Revert { gas_used, .. } => {

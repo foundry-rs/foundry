@@ -6,7 +6,7 @@ use crate::{
     Address, U256,
 };
 use ethers::prelude::H256;
-use forge::{revm::Database, utils::u256_to_ru256};
+use forge::revm::Database;
 pub use foundry_evm::executor::fork::database::ForkedDatabase;
 use foundry_evm::executor::{
     backend::{snapshot::StateSnapshot, DatabaseResult},
