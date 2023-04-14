@@ -14,6 +14,7 @@ use ethers::{
     },
 };
 use foundry_common::get_http_provider;
+use forge::utils::h160_to_b160;
 use foundry_config::Config;
 use foundry_utils::{rpc, rpc::next_http_rpc_endpoint};
 use futures::StreamExt;
@@ -277,9 +278,9 @@ async fn test_separate_states() {
 
     let fork = api.get_fork().unwrap();
     let fork_db = fork.database.read().await;
-    let acc = fork_db.inner().db().accounts.read().get(&addr).cloned().unwrap();
+    let acc = fork_db.inner().db().accounts.read().get(&h160_to_b160(addr)).cloned().unwrap();
 
-    assert_eq!(acc.balance, remote_balance)
+    assert_eq!(acc.balance, remote_balance.into())
 }
 
 #[tokio::test(flavor = "multi_thread")]

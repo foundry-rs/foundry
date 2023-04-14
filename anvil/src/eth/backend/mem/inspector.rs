@@ -1,17 +1,19 @@
 //! Anvil specific [`revm::Inspector`] implementation
 
-use crate::{
-    eth::macros::node_info,
-    revm::{CreateInputs, Database, Interpreter},
-};
+use crate::{eth::macros::node_info, revm::Database};
 use bytes::Bytes;
-use ethers::types::{Address, Log, H256};
+use ethers::types::Log;
+use forge::revm::primitives::{B160, B256};
 use foundry_evm::{
     call_inspectors,
     decode::decode_console_logs,
     executor::inspector::{LogCollector, Tracer},
     revm,
-    revm::{CallInputs, EVMData, Gas, GasInspector, Return},
+    revm::{
+        inspectors::GasInspector,
+        interpreter::{CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},
+        EVMData,
+    },
 };
 use std::{cell::RefCell, rc::Rc};
 
@@ -60,7 +62,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         interp: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
         is_static: bool,
-    ) -> Return {
+    ) -> InstructionResult {
         call_inspectors!(
             inspector,
             [&mut self.gas.as_deref().map(|gas| gas.borrow_mut()), &mut self.tracer],
@@ -74,7 +76,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         interp: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
         is_static: bool,
-    ) -> Return {
+    ) -> InstructionResult {
         call_inspectors!(
             inspector,
             [&mut self.gas.as_deref().map(|gas| gas.borrow_mut()), &mut self.tracer],
@@ -88,8 +90,8 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
     fn log(
         &mut self,
         evm_data: &mut EVMData<'_, DB>,
-        address: &Address,
-        topics: &[H256],
+        address: &B160,
+        topics: &[B256],
         data: &Bytes,
     ) {
         call_inspectors!(
@@ -110,8 +112,8 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         interp: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
         is_static: bool,
-        eval: Return,
-    ) -> Return {
+        eval: InstructionResult,
+    ) -> InstructionResult {
         call_inspectors!(
             inspector,
             [&mut self.gas.as_deref().map(|gas| gas.borrow_mut()), &mut self.tracer],
@@ -127,7 +129,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
         is_static: bool,
-    ) -> (Return, Gas, Bytes) {
+    ) -> (InstructionResult, Gas, Bytes) {
         call_inspectors!(
             inspector,
             [
@@ -148,10 +150,10 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         data: &mut EVMData<'_, DB>,
         inputs: &CallInputs,
         remaining_gas: Gas,
-        ret: Return,
+        ret: InstructionResult,
         out: Bytes,
         is_static: bool,
-    ) -> (Return, Gas, Bytes) {
+    ) -> (InstructionResult, Gas, Bytes) {
         call_inspectors!(
             inspector,
             [&mut self.gas.as_deref().map(|gas| gas.borrow_mut()), &mut self.tracer],
@@ -166,7 +168,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &mut CreateInputs,
-    ) -> (Return, Option<Address>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<B160>, Gas, Bytes) {
         call_inspectors!(
             inspector,
             [&mut self.gas.as_deref().map(|gas| gas.borrow_mut()), &mut self.tracer],
@@ -182,11 +184,11 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         &mut self,
         data: &mut EVMData<'_, DB>,
         inputs: &CreateInputs,
-        status: Return,
-        address: Option<Address>,
+        status: InstructionResult,
+        address: Option<B160>,
         gas: Gas,
         retdata: Bytes,
-    ) -> (Return, Option<Address>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<B160>, Gas, Bytes) {
         call_inspectors!(
             inspector,
             [&mut self.gas.as_deref().map(|gas| gas.borrow_mut()), &mut self.tracer],

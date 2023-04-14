@@ -1,13 +1,16 @@
 //! Helper types for working with [revm](foundry_evm::revm)
 
-use crate::{mem::state::trie_hash_db, revm::AccountInfo, U256};
+use crate::{mem::state::trie_hash_db, revm::primitives::AccountInfo, U256};
 use anvil_core::eth::trie::KeccakHasher;
 use ethers::{
-    prelude::{Address, Bytes, H160},
+    prelude::{Address, Bytes},
     types::H256,
     utils::keccak256,
 };
-use forge::revm::KECCAK_EMPTY;
+use forge::{
+    revm::primitives::{B160, B256, KECCAK_EMPTY, U256 as rU256},
+    utils::b160_to_h160,
+};
 use foundry_common::errors::FsPathError;
 use foundry_evm::{
     executor::{
@@ -16,7 +19,8 @@ use foundry_evm::{
     },
     revm::{
         db::{CacheDB, DbAccount},
-        Bytecode, Database, DatabaseCommit,
+        primitives::Bytecode,
+        Database, DatabaseCommit,
     },
     HashMap,
 };
@@ -84,7 +88,7 @@ pub trait Db:
 
     /// Sets the nonce of the given address
     fn set_nonce(&mut self, address: Address, nonce: u64) -> DatabaseResult<()> {
-        let mut info = self.basic(address)?.unwrap_or_default();
+        let mut info = self.basic(address.into())?.unwrap_or_default();
         info.nonce = nonce;
         self.insert_account(address, info);
         Ok(())
@@ -92,19 +96,19 @@ pub trait Db:
 
     /// Sets the balance of the given address
     fn set_balance(&mut self, address: Address, balance: U256) -> DatabaseResult<()> {
-        let mut info = self.basic(address)?.unwrap_or_default();
-        info.balance = balance;
+        let mut info = self.basic(address.into())?.unwrap_or_default();
+        info.balance = balance.into();
         self.insert_account(address, info);
         Ok(())
     }
 
     /// Sets the balance of the given address
     fn set_code(&mut self, address: Address, code: Bytes) -> DatabaseResult<()> {
-        let mut info = self.basic(address)?.unwrap_or_default();
+        let mut info = self.basic(address.into())?.unwrap_or_default();
         let code_hash = if code.as_ref().is_empty() {
             KECCAK_EMPTY
         } else {
-            H256::from_slice(&keccak256(code.as_ref())[..])
+            B256::from_slice(&keccak256(code.as_ref())[..])
         };
         info.code_hash = code_hash;
         info.code = Some(Bytecode::new_raw(code.0).to_checked());
@@ -124,7 +128,7 @@ pub trait Db:
     /// Deserialize and add all chain data to the backend storage
     fn load_state(&mut self, state: SerializableState) -> DatabaseResult<bool> {
         for (addr, account) in state.accounts.into_iter() {
-            let old_account_nonce = DatabaseRef::basic(self, addr)
+            let old_account_nonce = DatabaseRef::basic(self, addr.into())
                 .ok()
                 .and_then(|acc| acc.map(|acc| acc.nonce))
                 .unwrap_or_default();
@@ -135,7 +139,7 @@ pub trait Db:
             self.insert_account(
                 addr,
                 AccountInfo {
-                    balance: account.balance,
+                    balance: account.balance.into(),
                     code_hash: KECCAK_EMPTY, // will be set automatically
                     code: if account.code.0.is_empty() {
                         None
@@ -176,15 +180,15 @@ pub trait Db:
 /// [Backend::pending_block()](crate::eth::backend::mem::Backend::pending_block())
 impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> Db for CacheDB<T> {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
-        self.insert_account_info(address, account)
+        self.insert_account_info(address.into(), account)
     }
 
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) -> DatabaseResult<()> {
-        self.insert_account_storage(address, slot, val)
+        self.insert_account_storage(address.into(), slot.into(), val.into())
     }
 
     fn insert_block_hash(&mut self, number: U256, hash: H256) {
-        self.block_hashes.insert(number, hash);
+        self.block_hashes.insert(number.into(), hash.into());
     }
 
     fn dump_state(&self) -> DatabaseResult<Option<SerializableState>> {
@@ -235,7 +239,7 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeHashDatabase for CacheDB<T> {
                 self.contracts.insert(acc.code_hash, code);
             }
             self.accounts.insert(
-                addr,
+                addr.into(),
                 DbAccount {
                     info: acc,
                     storage: storage.remove(&addr).unwrap_or_default(),
@@ -260,19 +264,19 @@ impl StateDb {
 
 impl DatabaseRef for StateDb {
     type Error = DatabaseError;
-    fn basic(&self, address: H160) -> DatabaseResult<Option<AccountInfo>> {
+    fn basic(&self, address: B160) -> DatabaseResult<Option<AccountInfo>> {
         self.0.basic(address)
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> DatabaseResult<Bytecode> {
+    fn code_by_hash(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
         self.0.code_by_hash(code_hash)
     }
 
-    fn storage(&self, address: H160, index: U256) -> DatabaseResult<U256> {
+    fn storage(&self, address: B160, index: rU256) -> DatabaseResult<rU256> {
         self.0.storage(address, index)
     }
 
-    fn block_hash(&self, number: U256) -> DatabaseResult<H256> {
+    fn block_hash(&self, number: rU256) -> DatabaseResult<B256> {
         self.0.block_hash(number)
     }
 }

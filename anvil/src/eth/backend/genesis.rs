@@ -6,15 +6,18 @@ use crate::{
 };
 use ethers::{
     abi::ethereum_types::BigEndianHash,
-    types::{Address, H256, U256},
+    types::{Address, H256},
 };
-use forge::revm::KECCAK_EMPTY;
+use forge::{
+    revm::primitives::{B160, B256, KECCAK_EMPTY, U256},
+    utils::b160_to_h160,
+};
 use foundry_evm::{
     executor::{
         backend::{snapshot::StateSnapshot, DatabaseError, DatabaseResult},
         DatabaseRef,
     },
-    revm::{AccountInfo, Bytecode},
+    revm::primitives::{AccountInfo, Bytecode},
 };
 use parking_lot::Mutex;
 use std::{collections::HashMap, sync::Arc};
@@ -45,7 +48,7 @@ impl GenesisConfig {
     pub fn account_infos(&self) -> impl Iterator<Item = (Address, AccountInfo)> + '_ {
         self.accounts.iter().copied().map(|address| {
             let info = AccountInfo {
-                balance: self.balance,
+                balance: self.balance.into(),
                 code_hash: KECCAK_EMPTY,
                 // we set this to empty so `Database::code_by_hash` doesn't get called
                 code: Some(Default::default()),
@@ -102,32 +105,35 @@ pub(crate) struct AtGenesisStateDb<'a> {
 
 impl<'a> DatabaseRef for AtGenesisStateDb<'a> {
     type Error = DatabaseError;
-    fn basic(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
-        if let Some(acc) = self.accounts.get(&address).cloned() {
+    fn basic(&self, address: B160) -> DatabaseResult<Option<AccountInfo>> {
+        if let Some(acc) = self.accounts.get(&address.into()).cloned() {
             return Ok(Some(acc))
         }
         self.db.basic(address)
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> DatabaseResult<Bytecode> {
+    fn code_by_hash(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
         if let Some((_, acc)) = self.accounts.iter().find(|(_, acc)| acc.code_hash == code_hash) {
             return Ok(acc.code.clone().unwrap_or_default())
         }
         self.db.code_by_hash(code_hash)
     }
 
-    fn storage(&self, address: Address, index: U256) -> DatabaseResult<U256> {
-        if let Some(acc) =
-            self.genesis.as_ref().and_then(|genesis| genesis.alloc.accounts.get(&address))
+    fn storage(&self, address: B160, index: U256) -> DatabaseResult<U256> {
+        if let Some(acc) = self
+            .genesis
+            .as_ref()
+            .and_then(|genesis| genesis.alloc.accounts.get(&b160_to_h160(address)))
         {
-            let value = acc.storage.get(&H256::from_uint(&index)).copied().unwrap_or_default();
-            return Ok(value.into_uint())
+            let value =
+                acc.storage.get(&H256::from_uint(&index.into())).copied().unwrap_or_default();
+            return Ok(value.into_uint().into())
         }
         self.db.storage(address, index)
     }
 
-    fn block_hash(&self, number: U256) -> DatabaseResult<H256> {
-        self.db.block_hash(number)
+    fn block_hash(&self, number: U256) -> DatabaseResult<B256> {
+        self.db.block_hash(number).into()
     }
 }
 
