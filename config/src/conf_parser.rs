@@ -12,7 +12,7 @@ pub enum ConfParserError {
 /// This trait is intended to parse configurations from
 /// structured text. Foundry users can annotate Solidity test functions,
 /// providing special configs just for the execution of a specific test.
-/// 
+///
 /// An example:
 ///
 /// ```solidity
@@ -32,8 +32,8 @@ pub trait ConfParser {
     fn config_prefix() -> String;
 
     /// Returns
-    /// * `Some(Self)`in case `text` contains a valid configuration for `Self`. 
-    /// * `None` in case `text` does NOT contain any configuration matching `config_prefix`. 
+    /// * `Some(Self)`in case `text` contains a valid configuration for `Self`.
+    /// * `None` in case `text` does NOT contain any configuration matching `config_prefix`.
     /// * `Err(ConfParserError)` in case of wrong configuration.
     fn parse<S: AsRef<str>>(text: S) -> Result<Option<Self>, ConfParserError>
     where
