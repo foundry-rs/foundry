@@ -11,6 +11,7 @@ use ethers_core::{
 use ethers_etherscan::{contract::ContractMetadata, errors::EtherscanError, Client};
 use eyre::{ContextCompat, Result, WrapErr};
 use std::{future::Future, pin::Pin, str::FromStr};
+use yansi::Paint;
 
 /// Given a function and a vector of string arguments, it proceeds to convert the args to ethabi
 /// Tokens and then ABI encode them.
@@ -150,6 +151,25 @@ pub fn format_tokens(tokens: &[Token]) -> impl Iterator<Item = String> + '_ {
     tokens.iter().map(format_token)
 }
 
+/// Formats a U256 as a string with the optional conversion to ether value
+pub fn format_uint_with_ether_conversion(num: &U256) -> String {
+    let eth = num.to_string().parse::<f32>().unwrap_or_default() / 1e18;
+
+    // skip printing the ether conversion if:
+    // - it is zero
+    // - it is too small (less than 0.0001 ether)
+    // - it is too big (more than 1 million ether)
+    if eth == 0f32 || eth.abs().lt(&0.000_1f32) || eth.abs().gt(&1_000_000f32) {
+        return num.to_string()
+    } else {
+        return format!(
+            "{} {}",
+            num.to_string(),
+            Paint::dimmed(Paint::default(format!("[{} ether]", eth)))
+        )
+    }
+}
+
 /// Gets pretty print strings for tokens
 pub fn format_token(param: &Token) -> String {
     match param {
@@ -157,7 +177,7 @@ pub fn format_token(param: &Token) -> String {
         Token::FixedBytes(bytes) => format!("0x{}", hex::encode(bytes)),
         Token::Bytes(bytes) => format!("0x{}", hex::encode(bytes)),
         Token::Int(num) => format!("{}", I256::from_raw(*num)),
-        Token::Uint(num) => num.to_string(),
+        Token::Uint(num) => format_uint_with_ether_conversion(num),
         Token::Bool(b) => format!("{b}"),
         Token::String(s) => s.to_string(),
         Token::FixedArray(tokens) => {
