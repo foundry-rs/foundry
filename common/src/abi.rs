@@ -157,8 +157,8 @@ pub fn format_uint_with_ether_conversion(num: &U256) -> String {
 
     // skip printing the ether conversion if:
     // - it is zero
-    // - it is too small (less than 0.0001 ether)
-    // - it is too big (more than 1 million ether)
+    // - it is less than 0.0001 ether
+    // - it is more than 1 million ether
     if eth == 0f32 || eth.abs().lt(&0.000_1f32) || eth.abs().gt(&1_000_000f32) {
         return num.to_string()
     } else {
