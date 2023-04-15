@@ -876,6 +876,12 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
         #[clap(value_name = "BYTES")]
         bytes: Option<String>,
     },
+    #[clap(name = "--parse-bytes32-address")]
+    #[clap(about = "Parses a checksummed address from bytes32 encoding.")]
+    ParseBytes32Address {
+        #[clap(value_name = "BYTES")]
+        bytes: Option<String>,
+    },
 }
 
 /// CLI arguments for `cast --to-base`.

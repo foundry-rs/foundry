@@ -1274,6 +1274,24 @@ impl SimpleCast {
         Ok(parse_bytes32_string(&buffer)?.to_owned())
     }
 
+    /// Decodes checksummed address from bytes32 value
+    pub fn parse_bytes32_address(s: &str) -> Result<String> {
+        let s = strip_0x(s);
+        if s.len() != 64 {
+            eyre::bail!("string not 32 bytes");
+        }
+
+        let s = strip_12_zero_bytes(s);
+        if s.len() != 40 {
+            eyre::bail!("Not convertible to address, there are non-zero bytes");
+        }
+
+        let lowercase_address_string = format!("0x{s}");
+        let lowercase_address = Address::from_str(&lowercase_address_string)?;
+
+        Ok(utils::to_checksum(&lowercase_address, None))
+    }
+
     /// Decodes abi-encoded hex input or output
     ///
     /// # Example
@@ -1722,6 +1740,10 @@ impl SimpleCast {
 
 fn strip_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
+}
+
+fn strip_12_zero_bytes(s: &str) -> &str {
+    s.strip_prefix("000000000000000000000000").unwrap_or(s)
 }
 
 #[cfg(test)]

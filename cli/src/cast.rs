@@ -157,6 +157,10 @@ async fn main() -> eyre::Result<()> {
             let value = stdin::unwrap_line(bytes)?;
             println!("{}", SimpleCast::parse_bytes32_string(&value)?);
         }
+        Subcommands::ParseBytes32Address { bytes } => {
+            let value = stdin::unwrap_line(bytes)?;
+            println!("{}", SimpleCast::parse_bytes32_address(&value)?);
+        }
 
         // ABI encoding & decoding
         Subcommands::AbiDecode { sig, calldata, input } => {
