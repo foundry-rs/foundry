@@ -2412,6 +2412,8 @@ dependencies = [
  "solang-parser",
  "thiserror",
  "toml 0.7.3",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

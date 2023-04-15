@@ -5,7 +5,7 @@ use crate::{
 use ariadne::{Color, Fmt, Label, Report, ReportKind, Source};
 use itertools::Itertools;
 use solang_parser::{diagnostics::Diagnostic, pt::*};
-use std::path::PathBuf;
+use std::{fmt::Write, path::PathBuf};
 
 /// Result of parsing the source code
 #[derive(Debug)]
@@ -33,11 +33,12 @@ pub fn parse(src: &str) -> Result<Parsed, Vec<Diagnostic>> {
 }
 
 /// Format parsed code
-pub fn format<W: std::fmt::Write>(
-    writer: &mut W,
+pub fn format<W: Write>(
+    writer: W,
     mut parsed: Parsed,
     config: FormatterConfig,
 ) -> Result<(), FormatterError> {
+    trace!(?parsed, ?config, "Formatting");
     let mut formatter =
         Formatter::new(writer, parsed.src, parsed.comments, parsed.inline_config, config);
     parsed.pt.visit(&mut formatter)

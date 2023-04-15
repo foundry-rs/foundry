@@ -82,7 +82,7 @@ struct Context {
 /// A Solidity formatter
 #[derive(Debug)]
 pub struct Formatter<'a, W> {
-    buf: FormatBuffer<&'a mut W>,
+    buf: FormatBuffer<W>,
     source: &'a str,
     config: FormatterConfig,
     temp_bufs: Vec<FormatBuffer<String>>,
@@ -115,10 +115,10 @@ impl<'f, 'a, W: Write> Transaction<'f, 'a, W> {
     /// Create a new transaction from a callback
     fn new(
         fmt: &'f mut Formatter<'a, W>,
-        mut fun: impl FnMut(&mut Formatter<'a, W>) -> Result<()>,
+        fun: impl FnMut(&mut Formatter<'a, W>) -> Result<()>,
     ) -> Result<Self> {
         let mut comments = fmt.comments.clone();
-        let buffer = fmt.with_temp_buf(|fmt| fun(fmt))?.w;
+        let buffer = fmt.with_temp_buf(fun)?.w;
         comments = std::mem::replace(&mut fmt.comments, comments);
         Ok(Self { fmt, buffer, comments })
     }
@@ -133,7 +133,7 @@ impl<'f, 'a, W: Write> Transaction<'f, 'a, W> {
 
 impl<'a, W: Write> Formatter<'a, W> {
     pub fn new(
-        w: &'a mut W,
+        w: W,
         source: &'a str,
         comments: Comments,
         inline_config: InlineConfig,
@@ -152,10 +152,18 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Get the Write interface of the current temp buffer or the underlying Write
     fn buf(&mut self) -> &mut dyn Write {
-        if self.temp_bufs.is_empty() {
-            &mut self.buf as &mut dyn Write
-        } else {
-            self.temp_bufs.last_mut().unwrap() as &mut dyn Write
+        match &mut self.temp_bufs[..] {
+            [] => &mut self.buf as &mut dyn Write,
+            [.., buf] => buf as &mut dyn Write,
+        }
+    }
+
+    /// Casts the current `W` writer as a `String` reference. Should only be used for debugging.
+    #[allow(dead_code)]
+    unsafe fn buf_contents(&self) -> &String {
+        match &self.temp_bufs[..] {
+            [] => unsafe { *(&self.buf.w as *const W as *const &mut String) },
+            [.., buf] => &buf.w,
         }
     }
 
@@ -980,6 +988,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             let (unwritten_whitespace_loc, unwritten_whitespace) =
                 unwritten_whitespace(last_byte_written, loc.start());
             let ignore_whitespace = if self.inline_config.is_disabled(unwritten_whitespace_loc) {
+                trace!("Unwritten whitespace: {:?}", unwritten_whitespace);
                 self.write_raw(unwritten_whitespace)?;
                 true
             } else {
@@ -1011,6 +1020,10 @@ impl<'a, W: Write> Formatter<'a, W> {
                     if let Some(next_item) = items.last() {
                         needs_space = needs_space_fn(item, next_item);
                     }
+                    trace!("Visiting {}", {
+                        let n = std::any::type_name::<V>();
+                        n.strip_prefix("solang_parser::pt::").unwrap_or(n)
+                    },);
                     item.visit(self)?;
                 }
             }
@@ -1576,6 +1589,7 @@ impl<'a, W: Write> Formatter<'a, W> {
 impl<'a, W: Write> Visitor for Formatter<'a, W> {
     type Error = FormatterError;
 
+    #[instrument(name = "source", skip(self))]
     fn visit_source(&mut self, loc: Loc) -> Result<()> {
         let source = String::from_utf8(self.source.as_bytes()[loc.range()].to_vec())
             .map_err(FormatterError::custom)?;
@@ -1593,6 +1607,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "SU", skip_all)]
     fn visit_source_unit(&mut self, source_unit: &mut SourceUnit) -> Result<()> {
         // TODO: do we need to put pragma and import directives at the top of the file?
         // source_unit.0.sort_by_key(|item| match item {
@@ -1640,6 +1655,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "contract", skip_all)]
     fn visit_contract(&mut self, contract: &mut ContractDefinition) -> Result<()> {
         return_source_if_disabled!(self, contract.loc);
 
@@ -1760,6 +1776,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "pragma", skip_all)]
     fn visit_pragma(
         &mut self,
         loc: Loc,
@@ -1785,6 +1802,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "import_plain", skip_all)]
     fn visit_import_plain(&mut self, loc: Loc, import: &mut StringLiteral) -> Result<()> {
         return_source_if_disabled!(self, loc, ';');
 
@@ -1797,6 +1815,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "import_global", skip_all)]
     fn visit_import_global(
         &mut self,
         loc: Loc,
@@ -1816,6 +1835,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "import_renames", skip_all)]
     fn visit_import_renames(
         &mut self,
         loc: Loc,
@@ -1884,6 +1904,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "enum", skip_all)]
     fn visit_enum(&mut self, enumeration: &mut EnumDefinition) -> Result<()> {
         return_source_if_disabled!(self, enumeration.loc);
 
@@ -1920,6 +1941,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "expr", skip_all)]
     fn visit_expr(&mut self, loc: Loc, expr: &mut Expression) -> Result<()> {
         return_source_if_disabled!(self, loc);
 
@@ -2249,12 +2271,14 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "ident", skip_all)]
     fn visit_ident(&mut self, loc: Loc, ident: &mut Identifier) -> Result<()> {
         return_source_if_disabled!(self, loc);
         write_chunk!(self, loc.end(), "{}", ident.name)?;
         Ok(())
     }
 
+    #[instrument(name = "ident_path", skip_all)]
     fn visit_ident_path(&mut self, idents: &mut IdentifierPath) -> Result<(), Self::Error> {
         if idents.identifiers.is_empty() {
             return Ok(())
@@ -2277,6 +2301,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "emit", skip_all)]
     fn visit_emit(&mut self, loc: Loc, event: &mut Expression) -> Result<()> {
         return_source_if_disabled!(self, loc);
         write_chunk!(self, loc.start(), "emit")?;
@@ -2285,6 +2310,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "var_declaration", skip_all)]
     fn visit_var_declaration(
         &mut self,
         var: &mut VariableDeclaration,
@@ -2309,6 +2335,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "break", skip_all)]
     fn visit_break(&mut self, loc: Loc, semicolon: bool) -> Result<()> {
         if semicolon {
             return_source_if_disabled!(self, loc, ';');
@@ -2318,6 +2345,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         write_chunk!(self, loc.start(), loc.end(), "break{}", if semicolon { ";" } else { "" })
     }
 
+    #[instrument(name = "continue", skip_all)]
     fn visit_continue(&mut self, loc: Loc, semicolon: bool) -> Result<()> {
         if semicolon {
             return_source_if_disabled!(self, loc, ';');
@@ -2327,12 +2355,14 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         write_chunk!(self, loc.start(), loc.end(), "continue{}", if semicolon { ";" } else { "" })
     }
 
+    #[instrument(name = "function", skip_all)]
     fn visit_function(&mut self, func: &mut FunctionDefinition) -> Result<()> {
         if func.body.is_some() {
             return_source_if_disabled!(self, func.loc());
         } else {
             return_source_if_disabled!(self, func.loc(), ';');
         }
+
         self.with_function_context(func.clone(), |fmt| {
             fmt.write_postfix_comments_before(func.loc.start())?;
             fmt.write_prefix_comments_before(func.loc.start())?;
@@ -2350,7 +2380,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             // write function body
             match &mut func.body {
                 Some(body) => {
-                    let body_loc = body_loc.unwrap();
+                    let body_loc = body.loc();
                     let byte_offset = body_loc.start();
                     let body = fmt.visit_to_chunk(byte_offset, Some(body_loc.end()), body)?;
                     fmt.write_whitespace_separator(
@@ -2367,6 +2397,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "function_attribute", skip_all)]
     fn visit_function_attribute(&mut self, attribute: &mut FunctionAttribute) -> Result<()> {
         return_source_if_disabled!(self, attribute.loc());
 
@@ -2416,6 +2447,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "base", skip_all)]
     fn visit_base(&mut self, base: &mut Base) -> Result<()> {
         return_source_if_disabled!(self, base.loc);
 
@@ -2460,6 +2492,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "parameter", skip_all)]
     fn visit_parameter(&mut self, parameter: &mut Parameter) -> Result<()> {
         return_source_if_disabled!(self, parameter.loc);
         self.grouped(|fmt| {
@@ -2475,6 +2508,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "struct", skip_all)]
     fn visit_struct(&mut self, structure: &mut StructDefinition) -> Result<()> {
         return_source_if_disabled!(self, structure.loc);
         self.grouped(|fmt| {
@@ -2507,6 +2541,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "type_definition", skip_all)]
     fn visit_type_definition(&mut self, def: &mut TypeDefinition) -> Result<()> {
         return_source_if_disabled!(self, def.loc, ';');
         self.grouped(|fmt| {
@@ -2520,11 +2555,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "stray_semicolon", skip_all)]
     fn visit_stray_semicolon(&mut self) -> Result<()> {
-        self.write_semicolon()?;
-        Ok(())
+        self.write_semicolon()
     }
 
+    #[instrument(name = "block", skip_all)]
     fn visit_block(
         &mut self,
         loc: Loc,
@@ -2540,21 +2576,25 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "opening_paren", skip_all)]
     fn visit_opening_paren(&mut self) -> Result<()> {
         write_chunk!(self, "(")?;
         Ok(())
     }
 
+    #[instrument(name = "closing_paren", skip_all)]
     fn visit_closing_paren(&mut self) -> Result<()> {
         write_chunk!(self, ")")?;
         Ok(())
     }
 
+    #[instrument(name = "newline", skip_all)]
     fn visit_newline(&mut self) -> Result<()> {
         writeln_chunk!(self)?;
         Ok(())
     }
 
+    #[instrument(name = "event", skip_all)]
     fn visit_event(&mut self, event: &mut EventDefinition) -> Result<()> {
         return_source_if_disabled!(self, event.loc, ';');
 
@@ -2587,6 +2627,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "event_parameter", skip_all)]
     fn visit_event_parameter(&mut self, param: &mut EventParameter) -> Result<()> {
         return_source_if_disabled!(self, param.loc);
 
@@ -2603,6 +2644,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "error", skip_all)]
     fn visit_error(&mut self, error: &mut ErrorDefinition) -> Result<()> {
         return_source_if_disabled!(self, error.loc, ';');
 
@@ -2619,6 +2661,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "error_parameter", skip_all)]
     fn visit_error_parameter(&mut self, param: &mut ErrorParameter) -> Result<()> {
         return_source_if_disabled!(self, param.loc);
         self.grouped(|fmt| {
@@ -2631,6 +2674,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "using", skip_all)]
     fn visit_using(&mut self, using: &mut Using) -> Result<()> {
         return_source_if_disabled!(self, using.loc, ';');
 
@@ -2733,6 +2777,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "var_attribute", skip_all)]
     fn visit_var_attribute(&mut self, attribute: &mut VariableAttribute) -> Result<()> {
         return_source_if_disabled!(self, attribute.loc());
 
@@ -2756,6 +2801,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "var_definition", skip_all)]
     fn visit_var_definition(&mut self, var: &mut VariableDefinition) -> Result<()> {
         return_source_if_disabled!(self, var.loc, ';');
 
@@ -2789,6 +2835,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "var_definition_stmt", skip_all)]
     fn visit_var_definition_stmt(
         &mut self,
         loc: Loc,
@@ -2818,6 +2865,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "for", skip_all)]
     fn visit_for(
         &mut self,
         loc: Loc,
@@ -2890,6 +2938,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "while", skip_all)]
     fn visit_while(
         &mut self,
         loc: Loc,
@@ -2913,6 +2962,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "do_while", skip_all)]
     fn visit_do_while(
         &mut self,
         loc: Loc,
@@ -2932,6 +2982,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "if", skip_all)]
     fn visit_if(
         &mut self,
         loc: Loc,
@@ -2969,6 +3020,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "args", skip_all)]
     fn visit_args(&mut self, loc: Loc, args: &mut Vec<NamedArgument>) -> Result<(), Self::Error> {
         return_source_if_disabled!(self, loc);
 
@@ -3015,6 +3067,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "revert", skip_all)]
     fn visit_revert(
         &mut self,
         loc: Loc,
@@ -3032,6 +3085,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "revert_named_args", skip_all)]
     fn visit_revert_named_args(
         &mut self,
         loc: Loc,
@@ -3062,6 +3116,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "return", skip_all)]
     fn visit_return(&mut self, loc: Loc, expr: &mut Option<Expression>) -> Result<(), Self::Error> {
         return_source_if_disabled!(self, loc, ';');
 
@@ -3117,7 +3172,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    #[allow(clippy::unused_peekable)]
+    #[instrument(name = "try", skip_all)]
     fn visit_try(
         &mut self,
         loc: Loc,
@@ -3227,6 +3282,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "assembly", skip_all)]
     fn visit_assembly(
         &mut self,
         loc: Loc,
@@ -3271,6 +3327,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         block.visit(self)
     }
 
+    #[instrument(name = "yul_block", skip_all)]
     fn visit_yul_block(
         &mut self,
         loc: Loc,
@@ -3282,6 +3339,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "yul_assignment", skip_all)]
     fn visit_yul_assignment<T>(
         &mut self,
         loc: Loc,
@@ -3313,6 +3371,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "yul_expr", skip_all)]
     fn visit_yul_expr(&mut self, expr: &mut YulExpression) -> Result<(), Self::Error> {
         return_source_if_disabled!(self, expr.loc());
 
@@ -3356,6 +3415,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         }
     }
 
+    #[instrument(name = "yul_for", skip_all)]
     fn visit_yul_for(&mut self, stmt: &mut YulFor) -> Result<(), Self::Error> {
         return_source_if_disabled!(self, stmt.loc);
         write_chunk!(self, stmt.loc.start(), "for")?;
@@ -3366,17 +3426,20 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "yul_function_call", skip_all)]
     fn visit_yul_function_call(&mut self, stmt: &mut YulFunctionCall) -> Result<(), Self::Error> {
         return_source_if_disabled!(self, stmt.loc);
         write_chunk!(self, stmt.loc.start(), "{}", stmt.id.name)?;
         self.visit_list("", &mut stmt.arguments, None, Some(stmt.loc.end()), true)
     }
 
+    #[instrument(name = "yul_typed_ident", skip_all)]
     fn visit_yul_typed_ident(&mut self, ident: &mut YulTypedIdentifier) -> Result<(), Self::Error> {
         return_source_if_disabled!(self, ident.loc);
         self.visit_yul_string_with_ident(ident.loc, &ident.id.name, &mut ident.ty)
     }
 
+    #[instrument(name = "yul_fun_def", skip_all)]
     fn visit_yul_fun_def(&mut self, stmt: &mut YulFunctionDefinition) -> Result<(), Self::Error> {
         return_source_if_disabled!(self, stmt.loc);
 
@@ -3406,6 +3469,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "yul_if", skip_all)]
     fn visit_yul_if(
         &mut self,
         loc: Loc,
@@ -3418,11 +3482,13 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         self.visit_yul_block(block.loc, &mut block.statements, true)
     }
 
+    #[instrument(name = "yul_leave", skip_all)]
     fn visit_yul_leave(&mut self, loc: Loc) -> Result<(), Self::Error> {
         return_source_if_disabled!(self, loc);
         write_chunk!(self, loc.start(), loc.end(), "leave")
     }
 
+    #[instrument(name = "yul_switch", skip_all)]
     fn visit_yul_switch(&mut self, stmt: &mut YulSwitch) -> Result<(), Self::Error> {
         return_source_if_disabled!(self, stmt.loc);
 
@@ -3446,6 +3512,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "yul_var_declaration", skip_all)]
     fn visit_yul_var_declaration(
         &mut self,
         loc: Loc,
@@ -3461,6 +3528,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     // Support extension for Solana/Substrate
+    #[instrument(name = "annotation", skip_all)]
     fn visit_annotation(&mut self, annotation: &mut Annotation) -> Result<()> {
         return_source_if_disabled!(self, annotation.loc);
         let id = self.simulate_to_string(|fmt| annotation.id.visit(fmt))?;
@@ -3471,208 +3539,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[instrument(name = "parser_error", skip_all)]
     fn visit_parser_error(&mut self, loc: Loc) -> Result<()> {
         Err(FormatterError::InvalidParsedItem(loc))
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::{format, parse};
-    use itertools::Itertools;
-    use std::{fs, path::PathBuf};
-
-    use super::*;
-
-    fn test_directory(base_name: &str) {
-        let mut original = None;
-
-        let tests = fs::read_dir(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata").join(base_name),
-        )
-        .unwrap()
-        .filter_map(|path| {
-            let path = path.unwrap().path();
-            let source = fs::read_to_string(&path).unwrap();
-
-            if let Some(filename) = path.file_name().and_then(|name| name.to_str()) {
-                if filename == "original.sol" {
-                    original = Some(source);
-                } else if filename
-                    .strip_suffix("fmt.sol")
-                    .map(|filename| filename.strip_suffix('.'))
-                    .is_some()
-                {
-                    // The majority of the tests were written with the assumption
-                    // that the default value for max line length is `80`.
-                    // Preserve that to avoid rewriting test logic.
-                    let default_config = FormatterConfig { line_length: 80, ..Default::default() };
-
-                    let mut config = toml::Value::try_from(&default_config).unwrap();
-                    let config_table = config.as_table_mut().unwrap();
-                    let mut lines = source.split('\n').peekable();
-                    let mut line_num = 1;
-                    while let Some(line) = lines.peek() {
-                        let entry = line
-                            .strip_prefix("//")
-                            .and_then(|line| line.trim().strip_prefix("config:"))
-                            .map(str::trim);
-                        let entry = if let Some(entry) = entry { entry } else { break };
-
-                        let values = match toml::from_str::<toml::Value>(entry) {
-                            Ok(toml::Value::Table(table)) => table,
-                            _ => panic!("Invalid config item in {filename} at {line_num}"),
-                        };
-                        config_table.extend(values);
-
-                        line_num += 1;
-                        lines.next();
-                    }
-                    let config = config
-                        .try_into()
-                        .unwrap_or_else(|err| panic!("Invalid config for {filename}: {err}"));
-
-                    return Some((filename.to_string(), config, lines.join("\n")))
-                }
-            }
-
-            None
-        })
-        .collect::<Vec<_>>();
-
-        for (filename, config, formatted) in tests {
-            test_formatter(
-                &filename,
-                config,
-                original.as_ref().expect("original.sol not found"),
-                &formatted,
-            );
-        }
-    }
-
-    fn assert_eof(content: &str) {
-        assert!(content.ends_with('\n') && !content.ends_with("\n\n"));
-    }
-
-    fn test_formatter(
-        filename: &str,
-        config: FormatterConfig,
-        source: &str,
-        expected_source: &str,
-    ) {
-        #[derive(Eq)]
-        struct PrettyString(String);
-
-        impl PartialEq for PrettyString {
-            fn eq(&self, other: &PrettyString) -> bool {
-                self.0.lines().eq(other.0.lines())
-            }
-        }
-
-        impl std::fmt::Debug for PrettyString {
-            fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str(&self.0)
-            }
-        }
-
-        assert_eof(expected_source);
-
-        let source_parsed = parse(source).unwrap();
-        let expected_parsed = parse(expected_source).unwrap();
-
-        if !source_parsed.pt.ast_eq(&expected_parsed.pt) {
-            pretty_assertions::assert_eq!(
-                source_parsed.pt,
-                expected_parsed.pt,
-                "(formatted Parse Tree == expected Parse Tree) in {}",
-                filename
-            );
-        }
-
-        let expected = PrettyString(expected_source.to_string());
-
-        let mut source_formatted = String::new();
-        format(&mut source_formatted, source_parsed, config.clone()).unwrap();
-        assert_eof(&source_formatted);
-
-        // println!("{}", source_formatted);
-        let source_formatted = PrettyString(source_formatted);
-
-        pretty_assertions::assert_eq!(
-            source_formatted,
-            expected,
-            "(formatted == expected) in {}",
-            filename
-        );
-
-        let mut expected_formatted = String::new();
-        format(&mut expected_formatted, expected_parsed, config).unwrap();
-        assert_eof(&expected_formatted);
-
-        let expected_formatted = PrettyString(expected_formatted);
-
-        pretty_assertions::assert_eq!(
-            expected_formatted,
-            expected,
-            "(formatted == expected) in {}",
-            filename
-        );
-    }
-
-    macro_rules! test_directory {
-        ($dir:ident) => {
-            #[allow(non_snake_case)]
-            #[test]
-            fn $dir() {
-                test_directory(stringify!($dir));
-            }
-        };
-    }
-
-    test_directory! { ConstructorDefinition }
-    test_directory! { ContractDefinition }
-    test_directory! { DocComments }
-    test_directory! { EnumDefinition }
-    test_directory! { ErrorDefinition }
-    test_directory! { EventDefinition }
-    test_directory! { FunctionDefinition }
-    test_directory! { FunctionType }
-    test_directory! { ImportDirective }
-    test_directory! { ModifierDefinition }
-    test_directory! { StatementBlock }
-    test_directory! { StructDefinition }
-    test_directory! { TypeDefinition }
-    test_directory! { UsingDirective }
-    test_directory! { VariableDefinition }
-    test_directory! { OperatorExpressions }
-    test_directory! { WhileStatement }
-    test_directory! { DoWhileStatement }
-    test_directory! { ForStatement }
-    test_directory! { IfStatement }
-    test_directory! { IfStatement2 }
-    test_directory! { VariableAssignment }
-    test_directory! { FunctionCallArgsStatement }
-    test_directory! { RevertStatement }
-    test_directory! { RevertNamedArgsStatement }
-    test_directory! { ReturnStatement }
-    test_directory! { TryStatement }
-    test_directory! { ConditionalOperatorExpression }
-    test_directory! { NamedFunctionCallExpression }
-    test_directory! { ArrayExpressions }
-    test_directory! { UnitExpression }
-    test_directory! { ThisExpression }
-    test_directory! { SimpleComments }
-    test_directory! { LiteralExpression }
-    test_directory! { Yul }
-    test_directory! { YulStrings }
-    test_directory! { IntTypes }
-    test_directory! { InlineDisable }
-    test_directory! { NumberLiteralUnderscore }
-    test_directory! { FunctionCall }
-    test_directory! { TrailingComma }
-    test_directory! { PragmaDirective }
-    test_directory! { Annotation }
-    test_directory! { MappingType }
-    test_directory! { EmitStatement }
-    test_directory! { Repros }
 }
