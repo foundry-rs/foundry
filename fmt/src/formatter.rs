@@ -2333,7 +2333,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         } else {
             return_source_if_disabled!(self, func.loc(), ';');
         }
-
         self.with_function_context(func.clone(), |fmt| {
             fmt.write_postfix_comments_before(func.loc.start())?;
             fmt.write_prefix_comments_before(func.loc.start())?;
@@ -2958,6 +2957,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             };
             Ok(())
         })?;
+
         if stmt_fits_on_single {
             tx.commit()?;
         } else {
@@ -3649,6 +3649,7 @@ mod tests {
     test_directory! { DoWhileStatement }
     test_directory! { ForStatement }
     test_directory! { IfStatement }
+    test_directory! { IfStatement2 }
     test_directory! { VariableAssignment }
     test_directory! { FunctionCallArgsStatement }
     test_directory! { RevertStatement }
