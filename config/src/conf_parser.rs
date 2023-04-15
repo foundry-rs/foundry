@@ -1,5 +1,7 @@
 use std::{num::ParseIntError, str::ParseBoolError};
 
+use regex::Regex;
+
 /// Errors returned by the [`ConfParser`] trait.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ConfParserError {
@@ -45,25 +47,22 @@ pub trait ConfParser {
     /// matching the `config_prefix`
     fn config_variables<S: AsRef<str>>(text: S) -> Vec<(String, String)> {
         let mut result: Vec<(String, String)> = vec![];
-
         let prefix = Self::config_prefix();
 
         text.as_ref()
             .split('\n')
             .map(remove_whitespaces)
-            .filter(|l| l.starts_with(&prefix))
+            .filter(|l| l.contains(&prefix))
+            .map(|l| {
+                let pattern = format!("^.*{prefix}");
+                let re = Regex::new(&pattern).unwrap();
+                re.replace(&l, "").to_string()
+            })
             .for_each(|line| {
-                // i.e. ["forge-config:default.fuzz.", "runs=500"]
-                let pair = line.split(&prefix).collect::<Vec<&str>>();
-                // i.e. "runs=500"
-                if let Some(assignment) = pair.last() {
-                    // i.e. "['runs', '500']"
-                    let key_value = assignment.split('=').collect::<Vec<&str>>();
-
-                    if let Some(key) = key_value.first() {
-                        if let Some(value) = key_value.last() {
-                            result.push((key.to_string(), value.to_string()));
-                        }
+                let key_value = line.split('=').collect::<Vec<&str>>(); // "['runs', '500']"
+                if let Some(key) = key_value.first() {
+                    if let Some(value) = key_value.last() {
+                        result.push((key.to_string(), value.to_string()));
                     }
                 }
             });

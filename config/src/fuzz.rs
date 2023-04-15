@@ -108,6 +108,7 @@ impl Default for FuzzDictionaryConfig {
 #[cfg(test)]
 mod tests {
     use crate::{conf_parser::ConfParser, FuzzConfig};
+    use solang_parser::pt::Comment;
 
     #[test]
     fn parse_config_default_profile() -> eyre::Result<()> {
@@ -139,5 +140,35 @@ mod tests {
         } else {
             assert!(false)
         }
+    }
+
+    #[test]
+    fn e2e() -> eyre::Result<()> {
+        use solang_parser::parse;
+        let code = r#"
+            contract FuzzTestContract {
+                /**
+                 * forge-config: default.fuzz.runs = 1023
+                 * forge-config: default.fuzz.max-test-rejects = 521
+                 */
+                function testFuzz(string name) public returns (string) {
+                    return name;
+                }
+            }
+        "#;
+
+        let (_, comments) = parse(code, 0).expect("Valid code");
+        let comm = &comments[0];
+        match comm {
+            Comment::DocBlock(_, text) => {
+                let config = FuzzConfig::parse(text)?.expect("Valid config");
+                assert_eq!(config.runs, 1023);
+                assert_eq!(config.max_test_rejects, 521);
+            }
+            _ => {
+                assert!(false); // Force test to fail
+            }
+        }
+        Ok(())
     }
 }
