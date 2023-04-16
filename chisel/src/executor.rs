@@ -34,7 +34,7 @@ impl SessionSource {
         // Recompile the project and ensure no errors occurred.
         let compiled = self.build()?;
         if let Some((_, contract)) =
-            compiled.compiler_output.contracts_into_iter().find(|(name, _)| name == "REPL")
+            compiled.clone().compiler_output.contracts_into_iter().find(|(name, _)| name == "REPL")
         {
             // These *should* never panic after a successful compilation.
             let bytecode = contract

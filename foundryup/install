@@ -18,10 +18,10 @@ chmod +x $BIN_PATH
 # Create the man directory for future man files if it doesn't exist.
 mkdir -p $FOUNDRY_MAN_DIR
 
-# Store the correct profile file (i.e. .profile for bash or .zshrc for ZSH).
+# Store the correct profile file (i.e. .profile for bash or .zshenv for ZSH).
 case $SHELL in
 */zsh)
-    PROFILE=$HOME/.zshrc
+    PROFILE=${ZDOTDIR-"$HOME"}/.zshenv
     PREF_SHELL=zsh
     ;;
 */bash)
