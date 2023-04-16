@@ -1264,7 +1264,7 @@ impl SimpleCast {
     pub fn parse_bytes32_string(s: &str) -> Result<String> {
         let s = strip_0x(s);
         if s.len() != 64 {
-            eyre::bail!("string not 32 bytes");
+            eyre::bail!("expected 64 byte hex-string, got {s}");
         }
 
         let bytes = hex::decode(s)?;
@@ -1278,7 +1278,7 @@ impl SimpleCast {
     pub fn parse_bytes32_address(s: &str) -> Result<String> {
         let s = strip_0x(s);
         if s.len() != 64 {
-            eyre::bail!("string not 32 bytes");
+            eyre::bail!("expected 64 byte hex-string, got {s}");
         }
 
         let s = strip_12_zero_bytes(s);
