@@ -1281,10 +1281,11 @@ impl SimpleCast {
             eyre::bail!("expected 64 byte hex-string, got {s}");
         }
 
-        let s = strip_12_zero_bytes(s);
-        if s.len() != 40 {
-            eyre::bail!("Not convertible to address, there are non-zero bytes");
-        }
+        let s = if let Some(stripped) = s.strip_prefix("000000000000000000000000") {
+            stripped
+        } else {
+            return Err(eyre::eyre!("Not convertible to address, there are non-zero bytes"));
+        };
 
         let lowercase_address_string = format!("0x{s}");
         let lowercase_address = Address::from_str(&lowercase_address_string)?;
@@ -1740,10 +1741,6 @@ impl SimpleCast {
 
 fn strip_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
-}
-
-fn strip_12_zero_bytes(s: &str) -> &str {
-    s.strip_prefix("000000000000000000000000").unwrap_or(s)
 }
 
 #[cfg(test)]
