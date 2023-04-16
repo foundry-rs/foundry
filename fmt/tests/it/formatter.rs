@@ -6,7 +6,7 @@ use tracing_subscriber::{EnvFilter, FmtSubscriber};
 fn tracing() {
     let subscriber = FmtSubscriber::builder()
         .with_env_filter(EnvFilter::from_default_env())
-        // .with_test_writer()
+        .with_test_writer()
         .finish();
     tracing::subscriber::set_global_default(subscriber).unwrap();
 }
