@@ -1,7 +1,8 @@
 use self::{
     env::Broadcast,
     expect::{handle_expect_emit, handle_expect_revert},
-    util::{check_if_fixed_gas_limit, process_create, BroadcastableTransactions}, mapping::MappingSlots,
+    mapping::MappingSlots,
+    util::{check_if_fixed_gas_limit, process_create, BroadcastableTransactions},
 };
 use crate::{
     abi::HEVMCalls,
@@ -51,10 +52,10 @@ mod ext;
 mod fork;
 /// Cheatcodes that configure the fuzzer
 mod fuzz;
-/// Snapshot related cheatcodes
-mod snapshot;
 /// Mapping related cheatcodes
 mod mapping;
+/// Snapshot related cheatcodes
+mod snapshot;
 /// Utility cheatcodes (`sign` etc.)
 pub mod util;
 pub use util::{BroadcastableTransaction, DEFAULT_CREATE2_DEPLOYER};

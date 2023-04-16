@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 
-use super::Cheatcodes;
-use super::mapping::{get_mapping_length, get_mapping_slot_at, get_mapping_key_and_parent};
+use super::{
+    mapping::{get_mapping_key_and_parent, get_mapping_length, get_mapping_slot_at},
+    Cheatcodes,
+};
 use crate::{
     abi::HEVMCalls,
     error::SolError,
@@ -489,8 +491,12 @@ pub fn apply<DB: DatabaseExt>(
             Bytes::new()
         }
         HEVMCalls::GetMappingLength(inner) => get_mapping_length(state, inner.0, inner.1.into()),
-        HEVMCalls::GetMappingSlotAt(inner) => get_mapping_slot_at(state, inner.0, inner.1.into(), inner.2),
-        HEVMCalls::GetMappingKeyAndParentOf(inner) => get_mapping_key_and_parent(state, inner.0, inner.1.into()),
+        HEVMCalls::GetMappingSlotAt(inner) => {
+            get_mapping_slot_at(state, inner.0, inner.1.into(), inner.2)
+        }
+        HEVMCalls::GetMappingKeyAndParentOf(inner) => {
+            get_mapping_key_and_parent(state, inner.0, inner.1.into())
+        }
         _ => return Ok(None),
     };
 
