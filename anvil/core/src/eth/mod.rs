@@ -715,7 +715,7 @@ mod tests {
 
     #[test]
     fn test_custom_auto_impersonate_account() {
-        let s = r#"{"method": "anvil_autoImpersonateAccount",  "params": ["true"]}"#;
+        let s = r#"{"method": "anvil_autoImpersonateAccount",  "params": [true]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
