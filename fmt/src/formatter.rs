@@ -7,7 +7,7 @@ use crate::{
         CommentPosition, CommentState, CommentStringExt, CommentType, CommentWithMetadata, Comments,
     },
     macros::*,
-    solang_ext::*,
+    solang_ext::{pt::*, *},
     string::{QuoteState, QuotedStringExt},
     visit::{Visitable, Visitor},
     FormatterConfig, InlineConfig, IntTypes, NumberUnderscore,
@@ -15,7 +15,6 @@ use crate::{
 use ethers_core::{types::H160, utils::to_checksum};
 use foundry_config::fmt::{MultilineFuncHeaderStyle, SingleLineBlockStyle};
 use itertools::{Either, Itertools};
-use solang_parser::pt::*;
 use std::{fmt::Write, str::FromStr};
 use thiserror::Error;
 

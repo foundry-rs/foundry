@@ -8,7 +8,7 @@ fn tracing() {
         .with_env_filter(EnvFilter::from_default_env())
         .with_test_writer()
         .finish();
-    tracing::subscriber::set_global_default(subscriber).unwrap();
+    let _ = tracing::subscriber::set_global_default(subscriber);
 }
 
 fn test_directory(base_name: &str) {
