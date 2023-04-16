@@ -1355,7 +1355,7 @@ impl EthApi {
     }
 
     /// If set to true will make every account impersonated
-    /// 
+    ///
     /// Handler for ETH RPC call: `anvil_autoImpersonateAccount`
     pub async fn anvil_auto_impersonate_account(&self, enabled: bool) -> Result<()> {
         node_info!("anvil_autoImpersonateAccount");

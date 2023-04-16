@@ -42,8 +42,8 @@ impl CheatsManager {
 
     /// Returns true if the `addr` is currently impersonated
     pub fn is_impersonated(&self, addr: Address) -> bool {
-        if (self.state.read().auto_impersonate_accounts) {
-            return true
+        if self.state.read().auto_impersonate_accounts {
+            true
         } else {
             self.state.read().impersonated_accounts.contains(&addr)
         }
@@ -54,7 +54,8 @@ impl CheatsManager {
         self.state.read().bypass_signature
     }
 
-    /// Sets the auto impersonation flag which if set to true will make the `is_impersonated` function always return true
+    /// Sets the auto impersonation flag which if set to true will make the `is_impersonated`
+    /// function always return true
     pub fn set_auto_impersonate_account(&self, enabled: bool) {
         trace!(target: "cheats", "Auto impersonation set to {:?}", enabled);
         self.state.write().auto_impersonate_accounts = enabled
@@ -74,6 +75,10 @@ pub struct CheatsState {
 
 impl Default for CheatsState {
     fn default() -> Self {
-        Self { impersonated_accounts: Default::default(), bypass_signature: IMPERSONATED_SIGNATURE, auto_impersonate_accounts: false}
+        Self {
+            impersonated_accounts: Default::default(),
+            bypass_signature: IMPERSONATED_SIGNATURE,
+            auto_impersonate_accounts: false,
+        }
     }
 }
