@@ -42,12 +42,22 @@ impl CheatsManager {
 
     /// Returns true if the `addr` is currently impersonated
     pub fn is_impersonated(&self, addr: Address) -> bool {
-        self.state.read().impersonated_accounts.contains(&addr)
+        if (self.state.read().auto_impersonate_accounts) {
+            return true
+        } else {
+            self.state.read().impersonated_accounts.contains(&addr)
+        }
     }
 
     /// Returns the signature to use to bypass transaction signing
     pub fn bypass_signature(&self) -> Signature {
         self.state.read().bypass_signature
+    }
+
+    /// Sets the auto impersonation flag which if set to true will make the `is_impersonated` function always return true
+    pub fn set_auto_impersonate_account(&self, enabled: bool) {
+        trace!(target: "cheats", "Auto impersonation set to {:?}", enabled);
+        self.state.write().auto_impersonate_accounts = enabled
     }
 }
 
@@ -58,10 +68,12 @@ pub struct CheatsState {
     pub impersonated_accounts: HashSet<Address>,
     /// The signature used for the `eth_sendUnsignedTransaction` cheat code
     pub bypass_signature: Signature,
+    /// If set to true will make the `is_impersonated` function always return true
+    pub auto_impersonate_accounts: bool,
 }
 
 impl Default for CheatsState {
     fn default() -> Self {
-        Self { impersonated_accounts: Default::default(), bypass_signature: IMPERSONATED_SIGNATURE }
+        Self { impersonated_accounts: Default::default(), bypass_signature: IMPERSONATED_SIGNATURE, auto_impersonate_accounts: false}
     }
 }
