@@ -2594,6 +2594,7 @@ dependencies = [
  "reqwest",
  "semver",
  "serde",
+ "serde_json",
  "serde_regex",
  "solang-parser",
  "tempfile",

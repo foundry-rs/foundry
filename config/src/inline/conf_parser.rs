@@ -5,10 +5,14 @@ use regex::Regex;
 /// Errors returned by the [`ConfParser`] trait.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ConfParserError {
+    /// An invalid configuration property has been provided.
+    /// The property cannot be mapped to the configutaion object
     #[error("'{0}' is not a valid config property")]
     InvalidConfigProperty(String),
+    /// An error occurred while tryin to parse an integer configuration value
     #[error(transparent)]
     ParseIntError(#[from] ParseIntError),
+    /// An error occurred while tryin to parse a boolean configuration value
     #[error(transparent)]
     ParseBoolError(#[from] ParseBoolError),
 }
@@ -59,7 +63,7 @@ pub trait ConfParser {
                 re.replace(&l, "").to_string()
             })
             .for_each(|line| {
-                let key_value = line.split('=').collect::<Vec<&str>>(); // "['runs', '500']"
+                let key_value = line.split('=').collect::<Vec<&str>>(); // i.e. "['runs', '500']"
                 if let Some(key) = key_value.first() {
                     if let Some(value) = key_value.last() {
                         result.push((key.to_string(), value.to_string()));

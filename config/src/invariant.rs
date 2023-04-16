@@ -1,8 +1,8 @@
 //! Configuration for invariant testing
 
 use crate::{
-    conf_parser::{ConfParser, ConfParserError},
     fuzz::FuzzDictionaryConfig,
+    inline::{ConfParser, ConfParserError},
     Config,
 };
 use serde::{Deserialize, Serialize};

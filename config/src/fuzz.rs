@@ -4,7 +4,7 @@ use ethers_core::types::U256;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    conf_parser::{ConfParser, ConfParserError},
+    inline::{ConfParser, ConfParserError},
     Config,
 };
 
