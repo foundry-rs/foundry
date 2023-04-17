@@ -467,7 +467,7 @@ pub struct CallTrace {
     /// The gas cost of the call
     pub gas_cost: u64,
     /// The status of the trace's call
-    pub status: Return,
+    pub status: InstructionResult,
     /// call context of the runtime
     pub call_context: Option<CallContext>,
     /// Opcode-level execution steps
@@ -497,7 +497,7 @@ impl Default for CallTrace {
             data: Default::default(),
             output: Default::default(),
             gas_cost: Default::default(),
-            status: Return::Continue,
+            status: InstructionResult::Continue,
             call_context: Default::default(),
             steps: Default::default(),
         }

@@ -1,7 +1,7 @@
 use super::Cheatcodes;
 use crate::{
     abi::HEVMCalls,
-    executor::backend::error::{DatabaseError, DatabaseResult},
+    executor::backend::{error::{DatabaseError, DatabaseResult}, DatabaseExt},
     utils::{h160_to_b160, h256_to_u256_be, ru256_to_u256, u256_to_ru256},
 };
 use bytes::{BufMut, Bytes, BytesMut};
@@ -17,13 +17,12 @@ use ethers::{
     utils,
 };
 use foundry_common::{fmt::*, RpcUrl};
-use hex::FromHex;
 use revm::{
     interpreter::CreateInputs,
     primitives::{Account, TransactTo},
     Database, EVMData, JournaledState,
 };
-use std::{collections::VecDeque, str::FromStr};
+use std::{collections::VecDeque};
 use tracing::trace;
 
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
@@ -341,8 +340,8 @@ pub fn check_if_fixed_gas_limit<DB: DatabaseExt>(
     // time of the call, which should be rather close to configured gas limit.
     // TODO: Find a way to reliably make this determination. (for example by
     // generating it in the compilation or evm simulation process)
-    U256::from(data.env.tx.gas_limit) > data.env.block.gas_limit &&
-        U256::from(call_gas_limit) <= data.env.block.gas_limit
+    U256::from(data.env.tx.gas_limit) > data.env.block.gas_limit.into() &&
+        U256::from(call_gas_limit) <= data.env.block.gas_limit.into()
         // Transfers in forge scripts seem to be estimated at 2300 by revm leading to "Intrinsic
         // gas too low" failure when simulated on chain
         && call_gas_limit > 2300

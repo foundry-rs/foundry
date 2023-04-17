@@ -364,7 +364,7 @@ pub fn apply<DB: DatabaseExt>(
             Bytes::new()
         }
         HEVMCalls::TxGasPrice(inner) => {
-            data.env.tx.gas_price = inner.0;
+            data.env.tx.gas_price = inner.0.into();
             Bytes::new()
         }
         HEVMCalls::Broadcast0(_) => {

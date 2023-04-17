@@ -86,7 +86,7 @@ impl EvmOpts {
     pub async fn fork_evm_env(
         &self,
         fork_url: impl AsRef<str>,
-    ) -> eyre::Result<revm::primitives::Env> {
+    ) -> eyre::Result<(revm::primitives::Env, Block<TxHash>)> {
         let fork_url = fork_url.as_ref();
         let provider = ProviderBuilder::new(fork_url)
             .compute_units_per_second(self.get_compute_units_per_second())
@@ -131,7 +131,7 @@ impl EvmOpts {
             tx: TxEnv {
                 gas_price: rU256::from(self.env.gas_price.unwrap_or_default()),
                 gas_limit: self.gas_limit().as_u64(),
-                caller: self.sender,
+                caller: h160_to_b160(self.sender),
                 ..Default::default()
             },
         }

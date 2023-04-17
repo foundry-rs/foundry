@@ -28,13 +28,13 @@ where
         interpreter: &mut Interpreter,
         _: &mut EVMData<'_, DB>,
         _is_static: bool,
-    ) -> Return {
+    ) -> InstructionResult {
         // We only collect `stack` and `memory` data before and after calls.
         if self.collect {
             self.collect_data(interpreter);
             self.collect = false;
         }
-        Return::Continue
+        InstructionResult::Continue
     }
 
     fn call(
@@ -42,7 +42,7 @@ where
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
         _: bool,
-    ) -> (Return, Gas, Bytes) {
+    ) -> (InstructionResult, Gas, Bytes) {
         // We don't want to override the very first call made to the test contract.
         if self.call_generator.is_some() && data.env.tx.caller != call.context.caller {
             self.override_call(call);
@@ -52,7 +52,7 @@ where
         // this will be turned off on the next `step`
         self.collect = true;
 
-        (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
+        (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
     }
 
     fn call_end(
@@ -60,10 +60,10 @@ where
         _: &mut EVMData<'_, DB>,
         _: &CallInputs,
         remaining_gas: Gas,
-        status: Return,
+        status: InstructionResult,
         retdata: Bytes,
         _: bool,
-    ) -> (Return, Gas, Bytes) {
+    ) -> (InstructionResult, Gas, Bytes) {
         if let Some(ref mut call_generator) = self.call_generator {
             call_generator.used = false;
         }

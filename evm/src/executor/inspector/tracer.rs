@@ -5,7 +5,7 @@ use crate::{
         CallTrace, CallTraceArena, CallTraceStep, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog,
         RawOrDecodedReturnData,
     },
-    utils::{b160_to_h160, b256_to_h256},
+    utils::{b160_to_h160, b256_to_h256, ru256_to_u256},
     CallKind,
 };
 use bytes::Bytes;
@@ -64,7 +64,7 @@ impl Tracer {
                 kind,
                 data: RawOrDecodedCall::Raw(data.into()),
                 value,
-                status: Return::Continue,
+                status: InstructionResult::Continue,
                 caller,
                 ..Default::default()
             },
@@ -120,7 +120,7 @@ impl Tracer {
         &mut self,
         interp: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
-        status: Return,
+        status: InstructionResult,
     ) {
         let (trace_idx, step_idx) =
             self.step_stack.pop().expect("can't fill step without starting a step first");
@@ -143,7 +143,7 @@ impl Tracer {
                     Some(JournalEntry::StorageChange { address, key, .. }),
                 ) => {
                     let value = data.journaled_state.state[address].storage[key].present_value();
-                    Some((*key, value))
+                    Some((ru256_to_u256(*key), value.into()))
                 }
                 _ => None,
             };
@@ -152,7 +152,7 @@ impl Tracer {
         }
 
         // Error codes only
-        if status as u8 > Return::OutOfGas as u8 {
+        if status as u8 > InstructionResult::OutOfGas as u8 {
             step.error = Some(format!("{status:?}"));
         }
     }
@@ -167,14 +167,14 @@ where
         interp: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
         _is_static: bool,
-    ) -> Return {
+    ) -> InstructionResult {
         if !self.record_steps {
-            return Return::Continue
+            return InstructionResult::Continue
         }
 
         self.start_step(interp, data);
 
-        Return::Continue
+        InstructionResult::Continue
     }
 
     fn log(&mut self, _: &mut EVMData<'_, DB>, _: &B160, topics: &[B256], data: &Bytes) {
@@ -189,10 +189,10 @@ where
         interp: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
         _is_static: bool,
-        status: Return,
-    ) -> Return {
+        status: InstructionResult,
+    ) -> InstructionResult {
         if !self.record_steps {
-            return Return::Continue
+            return InstructionResult::Continue
         }
 
         self.fill_step(interp, data, status);
@@ -205,7 +205,7 @@ where
         data: &mut EVMData<'_, DB>,
         inputs: &mut CallInputs,
         _is_static: bool,
-    ) -> (Return, Gas, Bytes) {
+    ) -> (InstructionResult, Gas, Bytes) {
         let (from, to) = match inputs.context.scheme {
             CallScheme::DelegateCall | CallScheme::CallCode => {
                 (inputs.context.address, inputs.context.code_address)
@@ -217,12 +217,12 @@ where
             data.journaled_state.depth() as usize,
             b160_to_h160(to),
             inputs.input.to_vec(),
-            inputs.transfer.value,
+            inputs.transfer.value.into(),
             inputs.context.scheme.into(),
             b160_to_h160(from),
         );
 
-        (Return::Continue, Gas::new(inputs.gas_limit), Bytes::new())
+        (InstructionResult::Continue, Gas::new(inputs.gas_limit), Bytes::new())
     }
 
     fn call_end(
@@ -230,10 +230,10 @@ where
         data: &mut EVMData<'_, DB>,
         _inputs: &CallInputs,
         gas: Gas,
-        status: Return,
+        status: InstructionResult,
         retdata: Bytes,
         _is_static: bool,
-    ) -> (Return, Gas, Bytes) {
+    ) -> (InstructionResult, Gas, Bytes) {
         self.fill_trace(
             status,
             gas_used(data.env.cfg.spec_id, gas.spend(), gas.refunded() as u64),
@@ -256,12 +256,12 @@ where
             data.journaled_state.depth() as usize,
             get_create_address(inputs, nonce),
             inputs.init_code.to_vec(),
-            inputs.value,
+            inputs.value.into(),
             inputs.scheme.into(),
             b160_to_h160(inputs.caller),
         );
 
-        (Return::Continue, None, Gas::new(inputs.gas_limit), Bytes::new())
+        (InstructionResult::Continue, None, Gas::new(inputs.gas_limit), Bytes::new())
     }
 
     fn create_end(

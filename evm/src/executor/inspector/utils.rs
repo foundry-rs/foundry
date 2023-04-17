@@ -3,7 +3,7 @@ use ethers::{
     utils::{get_contract_address, get_create2_address},
 };
 use revm::{
-    interpreter::CreateInputs,
+    interpreter::{CreateInputs, InstructionResult},
     primitives::{CreateScheme, SpecId},
 };
 
@@ -17,7 +17,7 @@ macro_rules! try_or_continue {
     ($e:expr) => {
         match $e {
             Ok(v) => v,
-            Err(_) => return Return::Continue,
+            Err(_) => return InstructionResult::Continue,
         }
     };
 }

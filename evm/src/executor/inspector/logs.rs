@@ -23,14 +23,14 @@ pub struct LogCollector {
 }
 
 impl LogCollector {
-    fn hardhat_log(&mut self, input: Vec<u8>) -> (Return, Bytes) {
+    fn hardhat_log(&mut self, input: Vec<u8>) -> (InstructionResult, Bytes) {
         // Patch the Hardhat-style selectors
         let input = patch_hardhat_console_selector(input.to_vec());
         let decoded = match HardhatConsoleCalls::decode(input) {
             Ok(inner) => inner,
             Err(err) => {
                 return (
-                    Return::Revert,
+                    InstructionResult::Revert,
                     ethers::abi::encode(&[Token::String(err.to_string())]).into(),
                 )
             }
@@ -39,7 +39,7 @@ impl LogCollector {
         // Convert it to a DS-style `emit log(string)` event
         self.logs.push(convert_hh_log_to_event(decoded));
 
-        (Return::Continue, Bytes::new())
+        (InstructionResult::Continue, Bytes::new())
     }
 }
 
@@ -66,7 +66,7 @@ where
             let (status, reason) = self.hardhat_log(call.input.to_vec());
             (status, Gas::new(call.gas_limit), reason)
         } else {
-            (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
+            (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
         }
     }
 }

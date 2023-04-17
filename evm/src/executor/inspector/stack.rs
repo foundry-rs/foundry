@@ -42,7 +42,7 @@ pub struct InspectorData {
     pub gas: Option<u64>,
     pub cheatcodes: Option<Cheatcodes>,
     pub script_wallets: Vec<LocalWallet>,
-    pub chisel_state: Option<(revm::Stack, revm::Memory, revm::Return)>,
+    pub chisel_state: Option<(Stack, Memory, InstructionResult)>,
 }
 
 /// An inspector that calls multiple inspectors in sequence.
@@ -90,10 +90,10 @@ impl InspectorStack {
         data: &mut EVMData<'_, DB>,
         call: &CallInputs,
         remaining_gas: Gas,
-        status: Return,
+        status: InstructionResult,
         retdata: Bytes,
         is_static: bool,
-    ) -> (Return, Gas, Bytes) {
+    ) -> (InstructionResult, Gas, Bytes) {
         call_inspectors!(
             inspector,
             [
@@ -139,7 +139,7 @@ where
         interpreter: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
         is_static: bool,
-    ) -> Return {
+    ) -> InstructionResult {
         call_inspectors!(
             inspector,
             [
@@ -155,13 +155,13 @@ where
                 let status = inspector.initialize_interp(interpreter, data, is_static);
 
                 // Allow inspectors to exit early
-                if status != Return::Continue {
+                if status != InstructionResult::Continue {
                     return status
                 }
             }
         );
 
-        Return::Continue
+        InstructionResult::Continue
     }
 
     fn step(
@@ -169,7 +169,7 @@ where
         interpreter: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
         is_static: bool,
-    ) -> Return {
+    ) -> InstructionResult {
         call_inspectors!(
             inspector,
             [
@@ -186,13 +186,13 @@ where
                 let status = inspector.step(interpreter, data, is_static);
 
                 // Allow inspectors to exit early
-                if status != Return::Continue {
+                if status != InstructionResult::Continue {
                     return status
                 }
             }
         );
 
-        Return::Continue
+        InstructionResult::Continue
     }
 
     fn log(
@@ -216,8 +216,8 @@ where
         interpreter: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
         is_static: bool,
-        status: Return,
-    ) -> Return {
+        status: InstructionResult,
+    ) -> InstructionResult {
         call_inspectors!(
             inspector,
             [
@@ -233,13 +233,13 @@ where
                 let status = inspector.step_end(interpreter, data, is_static, status);
 
                 // Allow inspectors to exit early
-                if status != Return::Continue {
+                if status != InstructionResult::Continue {
                     return status
                 }
             }
         );
 
-        Return::Continue
+        InstructionResult::Continue
     }
 
     fn call(
@@ -247,7 +247,7 @@ where
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
         is_static: bool,
-    ) -> (Return, Gas, Bytes) {
+    ) -> (InstructionResult, Gas, Bytes) {
         call_inspectors!(
             inspector,
             [
@@ -264,13 +264,13 @@ where
                 let (status, gas, retdata) = inspector.call(data, call, is_static);
 
                 // Allow inspectors to exit early
-                if status != Return::Continue {
+                if status != InstructionResult::Continue {
                     return (status, gas, retdata)
                 }
             }
         );
 
-        (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
+        (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
     }
 
     fn call_end(
@@ -278,10 +278,10 @@ where
         data: &mut EVMData<'_, DB>,
         call: &CallInputs,
         remaining_gas: Gas,
-        status: Return,
+        status: InstructionResult,
         retdata: Bytes,
         is_static: bool,
-    ) -> (Return, Gas, Bytes) {
+    ) -> (InstructionResult, Gas, Bytes) {
         let res = self.do_call_end(data, call, remaining_gas, status, retdata, is_static);
 
         if matches!(res.0, return_revert!()) {
@@ -316,13 +316,13 @@ where
                 let (status, addr, gas, retdata) = inspector.create(data, call);
 
                 // Allow inspectors to exit early
-                if status != Return::Continue {
+                if status != InstructionResult::Continue {
                     return (status, addr, gas, retdata)
                 }
             }
         );
 
-        (Return::Continue, None, Gas::new(call.gas_limit), Bytes::new())
+        (InstructionResult::Continue, None, Gas::new(call.gas_limit), Bytes::new())
     }
 
     fn create_end(

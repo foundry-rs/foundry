@@ -12,7 +12,7 @@ use ethers::{
     types::{Action, Address, Call, CallResult, Create, CreateResult, Res, Suicide},
 };
 use foundry_common::SELECTOR_LEN;
-use revm::Return;
+use revm::interpreter::InstructionResult;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -41,7 +41,7 @@ impl CallTraceNode {
     }
 
     /// Returns the status of the call
-    pub fn status(&self) -> Return {
+    pub fn status(&self) -> InstructionResult {
         self.trace.status
     }
 
@@ -64,7 +64,7 @@ impl CallTraceNode {
 
     /// Returns the `Action` for a parity trace
     pub fn parity_action(&self) -> Action {
-        if self.status() == Return::SelfDestruct {
+        if self.status() == InstructionResult::SelfDestruct {
             return Action::Suicide(Suicide {
                 address: self.trace.address,
                 // TODO deserialize from calldata here?

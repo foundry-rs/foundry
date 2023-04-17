@@ -23,12 +23,12 @@ use ethers::{
 use foundry_common::abi::IntoFunction;
 use hashbrown::HashMap;
 /// Reexport commonly used revm types
-pub use revm::primitives::{DatabaseRef, Env, SpecId};
-use revm::{
-    db::DatabaseCommit,
+pub use revm::primitives::{Env, SpecId};
+pub use revm::{
+    db::{DatabaseCommit, DatabaseRef},
     interpreter::{return_ok, CreateScheme, InstructionResult, Memory, Stack},
     primitives::{
-        Account, BlockEnv, Bytecode, Env, ExecutionResult, Output, ResultAndState, SpecId,
+        Account, BlockEnv, Bytecode, ExecutionResult, Output, ResultAndState,
         TransactTo, TxEnv, B160, U256 as rU256,
     },
 };
@@ -603,7 +603,7 @@ impl Executor {
                 caller: h160_to_b160(caller),
                 transact_to,
                 data,
-                value,
+                value: value.into(),
                 // As above, we set the gas price to 0.
                 gas_price: rU256::from(0),
                 gas_priority_fee: None,
@@ -705,7 +705,7 @@ pub struct CallResult<D: Detokenize> {
 #[derive(Debug)]
 pub struct RawCallResult {
     /// The status of the call
-    pub exit_reason: Return,
+    pub exit_reason: InstructionResult,
     /// Whether the call reverted or not
     pub reverted: bool,
     /// The raw result of the call
@@ -742,13 +742,13 @@ pub struct RawCallResult {
     /// The raw output of the execution
     pub out: Option<Output>,
     /// The chisel state
-    pub chisel_state: Option<(revm::Stack, revm::Memory, revm::Return)>,
+    pub chisel_state: Option<(Stack, Memory, InstructionResult)>,
 }
 
 impl Default for RawCallResult {
     fn default() -> Self {
         Self {
-            exit_reason: Return::Continue,
+            exit_reason: InstructionResult::Continue,
             reverted: false,
             result: Bytes::new(),
             gas_used: 0,

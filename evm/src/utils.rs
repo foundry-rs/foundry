@@ -9,8 +9,10 @@ use revm::{
     primitives::SpecId,
 };
 use std::collections::BTreeMap;
+
 /// Small helper function to convert [U256] into [H256].
 pub fn u256_to_h256_le(u: U256) -> H256 {
+    let mut h = H256::default();
     u.to_little_endian(h.as_mut());
     h
 }
@@ -156,7 +158,7 @@ pub fn apply_chain_and_block_specific_env_changes<T>(
                 // `l1BlockNumber` field
                 if let Some(l1_block_number) = block.other.get("l1BlockNumber").cloned() {
                     if let Ok(l1_block_number) = serde_json::from_value::<U256>(l1_block_number) {
-                        env.block.number = l1_block_number;
+                        env.block.number = l1_block_number.into();
                     }
                 }
             }

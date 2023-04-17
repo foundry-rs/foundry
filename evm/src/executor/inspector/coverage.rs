@@ -30,7 +30,7 @@ where
             ))
         });
 
-        Return::Continue
+        InstructionResult::Continue
     }
 
     fn step(
@@ -43,6 +43,6 @@ where
             .entry(b256_to_h256(interpreter.contract.bytecode.hash()))
             .and_modify(|map| map.hit(interpreter.program_counter()));
 
-        Return::Continue
+        InstructionResult::Continue
     }
 }

@@ -21,7 +21,7 @@ use revm::{
     precompile::{Precompiles, SpecId},
     primitives::{
         Account, AccountInfo, Bytecode, CreateScheme, Env, Log, ResultAndState, TransactTo, B160,
-        B256, KECCAK_EMPTY, U256 as rU256,
+        B256, KECCAK_EMPTY, U256 as rU256, ExecutionResult,
     },
     Database, DatabaseCommit, Inspector, JournaledState, EVM,
 };
@@ -684,8 +684,8 @@ impl Backend {
     ///
     /// We need to track these mainly to prevent issues when switching between different evms
     pub(crate) fn initialize(&mut self, env: &Env) {
-        self.set_caller(env.tx.caller);
-        self.set_spec_id(env.cfg.spec_id);
+        self.set_caller(b160_to_h160(env.tx.caller));
+        self.set_spec_id(SpecId::from_spec_id(env.cfg.spec_id));
 
         let test_contract = match env.tx.transact_to {
             TransactTo::Call(to) => to,
@@ -697,7 +697,7 @@ impl Backend {
                 revm::primitives::create2_address(env.tx.caller, h256_to_b256(code_hash), salt)
             }
         };
-        self.set_test_contract(test_contract);
+        self.set_test_contract(b160_to_h160(test_contract));
     }
 
     /// Executes the configured test call of the `env` without committing state changes
@@ -705,7 +705,7 @@ impl Backend {
         &mut self,
         env: &mut Env,
         mut inspector: INSP,
-    ) -> (ExecutionResult, Map<Address, Account>)
+    ) -> eyre::Result<ResultAndState>
     where
         INSP: Inspector<Self>,
     {
@@ -1065,7 +1065,7 @@ impl DatabaseExt for Backend {
                 for (addr, acc) in journaled_state.state.iter() {
                     if acc.is_touched {
                         merge_journaled_state_data(
-                            *addr,
+                            b160_to_h160(*addr),
                             journaled_state,
                             &mut active.journaled_state,
                         );

@@ -70,11 +70,11 @@ pub fn decode_console_log(log: &Log) -> Option<String> {
 pub fn decode_revert(
     err: &[u8],
     maybe_abi: Option<&Abi>,
-    status: Option<Return>,
+    status: Option<InstructionResult>,
 ) -> eyre::Result<String> {
     if err.len() < SELECTOR_LEN {
         if let Some(status) = status {
-            if !matches!(status, revm::return_ok!()) {
+            if !matches!(status, revm::interpreter::return_ok!()) {
                 return Ok(format!("EvmError: {status:?}"))
             }
         }

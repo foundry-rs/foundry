@@ -11,7 +11,7 @@ use revm::{
     Database, EVMData, Inspector,
 };
 
-use crate::utils::b160_to_h160;
+use crate::utils::{b160_to_h160, ru256_to_u256};
 
 /// An inspector that collects touched accounts and storage slots.
 #[derive(Default, Debug)]
@@ -59,7 +59,7 @@ where
         interpreter: &mut Interpreter,
         _data: &mut EVMData<'_, DB>,
         _is_static: bool,
-    ) -> Return {
+    ) -> InstructionResult {
         let pc = interpreter.program_counter();
         let op = interpreter.contract.bytecode.bytecode()[pc];
 
@@ -68,9 +68,9 @@ where
                 if let Ok(slot) = interpreter.stack().peek(0) {
                     let cur_contract = interpreter.contract.address;
                     self.access_list
-                        .entry(cur_contract)
+                        .entry(b160_to_h160(cur_contract))
                         .or_default()
-                        .insert(H256::from_uint(&slot));
+                        .insert(H256::from_uint(&ru256_to_u256(slot)));
                 }
             }
             opcode::EXTCODECOPY |
@@ -79,7 +79,7 @@ where
             opcode::BALANCE |
             opcode::SELFDESTRUCT => {
                 if let Ok(slot) = interpreter.stack().peek(0) {
-                    let addr: Address = H256::from_uint(&slot).into();
+                    let addr: Address = H256::from_uint(&ru256_to_u256(slot)).into();
                     if !self.excluded.contains(&addr) {
                         self.access_list.entry(addr).or_default();
                     }
@@ -87,7 +87,7 @@ where
             }
             opcode::DELEGATECALL | opcode::CALL | opcode::STATICCALL | opcode::CALLCODE => {
                 if let Ok(slot) = interpreter.stack().peek(1) {
-                    let addr: Address = H256::from_uint(&slot).into();
+                    let addr: Address = H256::from_uint(&ru256_to_u256(slot)).into();
                     if !self.excluded.contains(&addr) {
                         self.access_list.entry(addr).or_default();
                     }
@@ -96,6 +96,6 @@ where
             _ => (),
         }
 
-        Return::Continue
+        InstructionResult::Continue
     }
 }

@@ -10,7 +10,7 @@ use crate::{
         backend::DatabaseExt, inspector::cheatcodes::env::RecordedLogs, CHEATCODE_ADDRESS,
         HARDHAT_CONSOLE_ADDRESS,
     },
-    utils::{b160_to_h160, b256_to_h256, h160_to_b160},
+    utils::{b160_to_h160, b256_to_h256, ru256_to_u256, h160_to_b160},
 };
 use bytes::Bytes;
 use ethers::{
@@ -272,23 +272,23 @@ where
         _: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
         _: bool,
-    ) -> Return {
+    ) -> InstructionResult {
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
         // so we apply our actual block data with the correct fees and all.
         if let Some(block) = self.block.take() {
             data.env.block = block;
         }
         if let Some(gas_price) = self.gas_price.take() {
-            data.env.tx.gas_price = gas_price;
+            data.env.tx.gas_price = gas_price.into();
         }
 
-        Return::Continue
+        InstructionResult::Continue
     }
 
     fn step(
         &mut self,
         interpreter: &mut Interpreter,
-        _: &mut EVMData<'_, DB>,
+        data: &mut EVMData<'_, DB>,
         _: bool,
     ) -> InstructionResult {
         // reset gas if gas metering is turned off
@@ -357,7 +357,7 @@ where
                         .reads
                         .entry(b160_to_h160(interpreter.contract().address))
                         .or_insert_with(Vec::new)
-                        .push(key);
+                        .push(key.into());
                 }
                 opcode::SSTORE => {
                     let key = try_or_continue!(interpreter.stack().peek(0));
@@ -372,7 +372,7 @@ where
                         .writes
                         .entry(b160_to_h160(interpreter.contract().address))
                         .or_insert_with(Vec::new)
-                        .push(key);
+                        .push(key.into());
                 }
                 _ => (),
             }
@@ -400,7 +400,7 @@ where
 
                         opcode::MSTORE => {
                             // The offset of the mstore operation is at the top of the stack.
-                            let offset = try_or_continue!(interpreter.stack().peek(0)).as_u64();
+                            let offset = ru256_to_u256(try_or_continue!(interpreter.stack().peek(0))).as_u64();
 
                             // If none of the allowed ranges contain [offset, offset + 32), memory has been
                             // unexpectedly mutated.
@@ -408,18 +408,18 @@ where
                                 range.contains(&offset) && range.contains(&(offset + 31))
                             }) {
                                 revert_helper::disallowed_mem_write(offset, 32, interpreter, ranges);
-                                return Return::Revert
+                                return InstructionResult::Revert
                             }
                         }
                         opcode::MSTORE8 => {
                             // The offset of the mstore8 operation is at the top of the stack.
-                            let offset = try_or_continue!(interpreter.stack().peek(0)).as_u64();
+                            let offset = ru256_to_u256(try_or_continue!(interpreter.stack().peek(0))).as_u64();
 
                             // If none of the allowed ranges contain the offset, memory has been
                             // unexpectedly mutated.
                             if !ranges.iter().any(|range| range.contains(&offset)) {
                                 revert_helper::disallowed_mem_write(offset, 1, interpreter, ranges);
-                                return Return::Revert
+                                return InstructionResult::Revert
                             }
                         }
 
@@ -429,7 +429,7 @@ where
 
                         opcode::MLOAD => {
                             // The offset of the mload operation is at the top of the stack
-                            let offset = try_or_continue!(interpreter.stack().peek(0)).as_u64();
+                            let offset = ru256_to_u256(try_or_continue!(interpreter.stack().peek(0))).as_u64();
 
                             // If the offset being loaded is >= than the memory size, the
                             // memory is being expanded. If none of the allowed ranges contain
@@ -438,7 +438,7 @@ where
                                 range.contains(&offset) && range.contains(&(offset + 31))
                             }) {
                                 revert_helper::disallowed_mem_write(offset, 32, interpreter, ranges);
-                                return Return::Revert
+                                return InstructionResult::Revert
                             }
                         }
 
@@ -448,10 +448,10 @@ where
 
                         $(opcode::$opcode => {
                             // The destination offset of the operation is at the top of the stack.
-                            let dest_offset = try_or_continue!(interpreter.stack().peek($offset_depth)).as_u64();
+                            let dest_offset = ru256_to_u256(try_or_continue!(interpreter.stack().peek($offset_depth))).as_u64();
 
                             // The size of the data that will be copied is the third item on the stack.
-                            let size = try_or_continue!(interpreter.stack().peek($size_depth)).as_u64();
+                            let size = ru256_to_u256(try_or_continue!(interpreter.stack().peek($size_depth))).as_u64();
 
                             // If none of the allowed ranges contain [dest_offset, dest_offset + size),
                             // memory outside of the expected ranges has been touched. If the opcode
@@ -469,7 +469,7 @@ where
                             // that gives information about the allowed ranges and revert.
                             if fail_cond {
                                 revert_helper::disallowed_mem_write(dest_offset, size, interpreter, ranges);
-                                return Return::Revert
+                                return InstructionResult::Revert
                             }
                         })*
                         _ => ()
@@ -501,7 +501,7 @@ where
             ])
         }
 
-        Return::Continue
+        InstructionResult::Continue
     }
 
     fn log(&mut self, _: &mut EVMData<'_, DB>, address: &B160, topics: &[B256], data: &Bytes) {
@@ -632,7 +632,7 @@ where
                             .journaled_state
                             .load_account(h160_to_b160(broadcast.new_origin), data.db)
                         {
-                            return (Return::Revert, Gas::new(call.gas_limit), err.encode_string())
+                            return (InstructionResult::Revert, Gas::new(call.gas_limit), err.encode_string())
                         }
 
                         let is_fixed_gas_limit = check_if_fixed_gas_limit(data, call.gas_limit);
@@ -664,7 +664,7 @@ where
                         account.info.nonce += 1;
                     } else if broadcast.single_call {
                         return (
-                            Return::Revert,
+                            InstructionResult::Revert,
                             Gas::new(0),
                             "Staticcalls are not allowed after vm.broadcast. Either remove it, or use vm.startBroadcast instead."
                             .to_string()
@@ -675,9 +675,9 @@ where
                 }
             }
 
-            (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
+            (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
         } else {
-            (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
+            (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
         }
     }
 
@@ -686,7 +686,7 @@ where
         data: &mut EVMData<'_, DB>,
         call: &CallInputs,
         remaining_gas: Gas,
-        status: Return,
+        status: InstructionResult,
         retdata: Bytes,
         _: bool,
     ) -> (InstructionResult, Gas, Bytes) {
@@ -729,9 +729,9 @@ where
                 ) {
                     Err(retdata) => {
                         trace!(expected=?expected_revert, actual=%hex::encode(&retdata), ?status, "Expected revert mismatch");
-                        (Return::Revert, remaining_gas, retdata)
+                        (InstructionResult::Revert, remaining_gas, retdata)
                     }
-                    Ok((_, retdata)) => (Return::Return, remaining_gas, retdata),
+                    Ok((_, retdata)) => (InstructionResult::Return, remaining_gas, retdata),
                 }
             }
         }
@@ -744,7 +744,7 @@ where
             .all(|expected| expected.found)
         {
             return (
-                Return::Revert,
+                InstructionResult::Revert,
                 remaining_gas,
                 "Log != expected log".to_string().encode().into(),
             )
@@ -771,7 +771,7 @@ where
                 .flatten()
                 .join(" and ");
                 return (
-                    Return::Revert,
+                    InstructionResult::Revert,
                     remaining_gas,
                     format!("Expected a call to {address:?} with {expected_values}, but got none")
                         .encode()
@@ -782,7 +782,7 @@ where
             // Check if we have any leftover expected emits
             if !self.expected_emits.is_empty() {
                 return (
-                    Return::Revert,
+                    InstructionResult::Revert,
                     remaining_gas,
                     "Expected an emit, but no logs were emitted afterward"
                         .to_string()
@@ -794,7 +794,7 @@ where
 
         // if there's a revert and a previous call was diagnosed as fork related revert then we can
         // return a better error here
-        if status == Return::Revert {
+        if status == InstructionResult::Revert {
             if let Some(err) = self.fork_revert_diagnostic.take() {
                 return (status, remaining_gas, err.to_error_msg(self).encode().into())
             }
@@ -898,7 +898,7 @@ where
             }
         }
 
-        (Return::Continue, None, Gas::new(call.gas_limit), Bytes::new())
+        (InstructionResult::Continue, None, Gas::new(call.gas_limit), Bytes::new())
     }
 
     fn create_end(
@@ -949,6 +949,10 @@ where
                         retdata,
                     ),
                 }
+            }
+        }
+
+        (status, address, remaining_gas, retdata)
     }
 }
 /// Contains additional, test specific resources that should be kept for the duration of the test

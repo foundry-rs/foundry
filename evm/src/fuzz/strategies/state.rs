@@ -2,7 +2,7 @@ use super::fuzz_param_from_state;
 use crate::{
     executor::StateChangeset,
     fuzz::invariant::{ArtifactFilters, FuzzRunIdentifiedContracts},
-    utils::{self, b160_to_h160},
+    utils::{self, b160_to_h160, ru256_to_u256},
 };
 use bytes::Bytes;
 use ethers::{
@@ -20,12 +20,10 @@ use revm::{
     primitives::SpecId,
 };
 use std::{
-    collections::BTreeSet,
     io::Write,
-    ops::{Deref, DerefMut},
     sync::Arc,
 };
-use std::{io::Write, sync::Arc};
+
 
 /// A set of arbitrary 32 byte data from the VM used to generate values for the strategy.
 ///
@@ -100,12 +98,12 @@ pub fn build_initial_state<DB: DatabaseRef>(
     for (address, account) in db.accounts.iter() {
         let address: Address = (*address).into();
         // Insert basic account information
-        state.values_mut().insert(H256::from(*address).into());
+        state.values_mut().insert(H256::from(address).into());
 
         // Insert push bytes
         if config.include_push_bytes {
             if let Some(code) = &account.info.code {
-                if state.addresses_mut().insert(*address) {
+                if state.addresses_mut().insert(address) {
                     for push_byte in collect_push_bytes(code.bytes().clone()) {
                         state.values_mut().insert(push_byte);
                     }
@@ -118,8 +116,8 @@ pub fn build_initial_state<DB: DatabaseRef>(
             for (slot, value) in &account.storage {
                 let slot = (*slot).into();
                 let value = (*value).into();
-                state.insert(utils::u256_to_h256_be(slot).into());
-                state.insert(utils::u256_to_h256_be(value).into());
+                state.values_mut().insert(utils::u256_to_h256_be(slot).into());
+                state.values_mut().insert(utils::u256_to_h256_be(value).into());
             }
         }
     }
@@ -152,7 +150,7 @@ pub fn collect_state_from_call(
         {
             // Insert push bytes
             if let Some(code) = &account.info.code {
-                if state.addresses_mut().insert(*address) {
+                if state.addresses_mut().insert(b160_to_h160(*address)) {
                     for push_byte in collect_push_bytes(code.bytes().clone()) {
                         state.values_mut().insert(push_byte);
                     }
@@ -163,8 +161,10 @@ pub fn collect_state_from_call(
         if config.include_storage && state.state_values.len() < config.max_fuzz_dictionary_values {
             // Insert storage
             for (slot, value) in &account.storage {
-                state.values_mut().insert(utils::u256_to_h256_be(*slot).into());
-                state.values_mut().insert(utils::u256_to_h256_be(value.present_value()).into());
+                let slot = (*slot).into();
+                let value = ru256_to_u256(value.present_value());
+                state.values_mut().insert(utils::u256_to_h256_be(slot).into());
+                state.values_mut().insert(utils::u256_to_h256_be(value).into());
             }
         } else {
             return

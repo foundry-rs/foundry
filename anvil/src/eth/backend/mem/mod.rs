@@ -50,7 +50,7 @@ use ethers::{
     types::{
         transaction::eip2930::AccessList, Address, Block as EthersBlock, BlockId, Bytes,
         DefaultFrame, Filter, FilteredParams, GethDebugTracingOptions, GethTrace, Log, Trace,
-        Transaction, TransactionReceipt, H160,
+        Transaction, TransactionReceipt, H160, OtherFields,
     },
     utils::{get_contract_address, hex, keccak256, rlp},
 };
@@ -249,7 +249,7 @@ impl Backend {
                 // accounts concurrently by spawning the job to a new task
                 genesis_accounts_futures.push(tokio::task::spawn(async move {
                     let db = db.read().await;
-                    let info = db.basic(address)?.unwrap_or_default();
+                    let info = db.basic(address.into())?.unwrap_or_default();
                     Ok::<_, DatabaseError>((address, info))
                 }));
             }
@@ -829,13 +829,13 @@ impl Backend {
                     node_info!("    Gas used: {}", receipt.gas_used());
                     match info.exit {
                         return_ok!() => (),
-                        Return::OutOfFund => {
+                        InstructionResult::OutOfFund => {
                             node_info!("    Error: reverted due to running out of funds");
                         }
-                        Return::CallTooDeep => {
+                        InstructionResult::CallTooDeep => {
                             node_info!("    Error: reverted with call too deep");
                         }
-                        Return::Revert => {
+                        InstructionResult::Revert => {
                             if let Some(ref r) = info.out {
                                 if let Ok(reason) = decode_revert(r.as_ref(), None, None) {
                                     node_info!("    Error: reverted with '{}'", reason);
@@ -849,7 +849,7 @@ impl Backend {
                                 node_info!("    Error: reverted without a reason");
                             }
                         }
-                        Return::OutOfGas => {
+                        InstructionResult::OutOfGas => {
                             node_info!("    Error: ran out of gas");
                         }
                         reason => {
