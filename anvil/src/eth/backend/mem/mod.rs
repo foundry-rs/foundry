@@ -49,8 +49,8 @@ use ethers::{
     prelude::{BlockNumber, GethTraceFrame, TxHash, H256, U256, U64},
     types::{
         transaction::eip2930::AccessList, Address, Block as EthersBlock, BlockId, Bytes,
-        DefaultFrame, Filter, FilteredParams, GethDebugTracingOptions, GethTrace, Log, Trace,
-        Transaction, TransactionReceipt, H160, OtherFields,
+        DefaultFrame, Filter, FilteredParams, GethDebugTracingOptions, GethTrace, Log, OtherFields,
+        Trace, Transaction, TransactionReceipt, H160,
     },
     utils::{get_contract_address, hex, keccak256, rlp},
 };

@@ -13,8 +13,8 @@ use ethers::{
         U256,
     },
 };
-use foundry_common::get_http_provider;
 use forge::utils::h160_to_b160;
+use foundry_common::get_http_provider;
 use foundry_config::Config;
 use foundry_utils::{rpc, rpc::next_http_rpc_endpoint};
 use futures::StreamExt;

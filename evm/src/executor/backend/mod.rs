@@ -20,8 +20,8 @@ use revm::{
     db::{CacheDB, DatabaseRef},
     precompile::{Precompiles, SpecId},
     primitives::{
-        Account, AccountInfo, Bytecode, CreateScheme, Env, Log, ResultAndState, TransactTo, B160,
-        B256, KECCAK_EMPTY, U256 as rU256, ExecutionResult,
+        Account, AccountInfo, Bytecode, CreateScheme, Env, ExecutionResult, Log, ResultAndState,
+        TransactTo, B160, B256, KECCAK_EMPTY, U256 as rU256,
     },
     Database, DatabaseCommit, Inspector, JournaledState, EVM,
 };

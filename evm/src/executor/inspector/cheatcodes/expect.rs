@@ -367,28 +367,40 @@ pub fn apply<DB: DatabaseExt>(
             }
             state.mocked_calls.entry(inner.0).or_default().insert(
                 MockCallDataContext { calldata: inner.1.to_vec().into(), value: None },
-                MockCallReturnData { data: inner.2.to_vec().into(), ret_type: InstructionResult::Return },
+                MockCallReturnData {
+                    data: inner.2.to_vec().into(),
+                    ret_type: InstructionResult::Return,
+                },
             );
             Ok(Bytes::new())
         }
         HEVMCalls::MockCall1(inner) => {
             state.mocked_calls.entry(inner.0).or_default().insert(
                 MockCallDataContext { calldata: inner.2.to_vec().into(), value: Some(inner.1) },
-                MockCallReturnData { data: inner.3.to_vec().into(), ret_type: InstructionResult::Return },
+                MockCallReturnData {
+                    data: inner.3.to_vec().into(),
+                    ret_type: InstructionResult::Return,
+                },
             );
             Ok(Bytes::new())
         }
         HEVMCalls::MockCallRevert0(inner) => {
             state.mocked_calls.entry(inner.0).or_default().insert(
                 MockCallDataContext { calldata: inner.1.to_vec().into(), value: None },
-                MockCallReturnData { data: inner.2.to_vec().into(), ret_type: InstructionResult::Revert },
+                MockCallReturnData {
+                    data: inner.2.to_vec().into(),
+                    ret_type: InstructionResult::Revert,
+                },
             );
             Ok(Bytes::new())
         }
         HEVMCalls::MockCallRevert1(inner) => {
             state.mocked_calls.entry(inner.0).or_default().insert(
                 MockCallDataContext { calldata: inner.2.to_vec().into(), value: Some(inner.1) },
-                MockCallReturnData { data: inner.3.to_vec().into(), ret_type: InstructionResult::Revert },
+                MockCallReturnData {
+                    data: inner.3.to_vec().into(),
+                    ret_type: InstructionResult::Revert,
+                },
             );
             Ok(Bytes::new())
         }

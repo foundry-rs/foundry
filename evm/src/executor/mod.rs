@@ -28,8 +28,8 @@ pub use revm::{
     db::{DatabaseCommit, DatabaseRef},
     interpreter::{return_ok, CreateScheme, InstructionResult, Memory, Stack},
     primitives::{
-        Account, BlockEnv, Bytecode, ExecutionResult, Output, ResultAndState,
-        TransactTo, TxEnv, B160, U256 as rU256,
+        Account, BlockEnv, Bytecode, ExecutionResult, Output, ResultAndState, TransactTo, TxEnv,
+        B160, U256 as rU256,
     },
 };
 use std::collections::BTreeMap;

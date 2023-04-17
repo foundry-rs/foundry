@@ -1,7 +1,10 @@
 use super::Cheatcodes;
 use crate::{
     abi::HEVMCalls,
-    executor::backend::{error::{DatabaseError, DatabaseResult}, DatabaseExt},
+    executor::backend::{
+        error::{DatabaseError, DatabaseResult},
+        DatabaseExt,
+    },
     utils::{h160_to_b160, h256_to_u256_be, ru256_to_u256, u256_to_ru256},
 };
 use bytes::{BufMut, Bytes, BytesMut};
@@ -22,7 +25,7 @@ use revm::{
     primitives::{Account, TransactTo},
     Database, EVMData, JournaledState,
 };
-use std::{collections::VecDeque};
+use std::collections::VecDeque;
 use tracing::trace;
 
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";

@@ -10,7 +10,7 @@ use crate::{
         backend::DatabaseExt, inspector::cheatcodes::env::RecordedLogs, CHEATCODE_ADDRESS,
         HARDHAT_CONSOLE_ADDRESS,
     },
-    utils::{b160_to_h160, b256_to_h256, ru256_to_u256, h160_to_b160},
+    utils::{b160_to_h160, b256_to_h256, h160_to_b160, ru256_to_u256},
 };
 use bytes::Bytes;
 use ethers::{
@@ -632,7 +632,11 @@ where
                             .journaled_state
                             .load_account(h160_to_b160(broadcast.new_origin), data.db)
                         {
-                            return (InstructionResult::Revert, Gas::new(call.gas_limit), err.encode_string())
+                            return (
+                                InstructionResult::Revert,
+                                Gas::new(call.gas_limit),
+                                err.encode_string(),
+                            )
                         }
 
                         let is_fixed_gas_limit = check_if_fixed_gas_limit(data, call.gas_limit);
