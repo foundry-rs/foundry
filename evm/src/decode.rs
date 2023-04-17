@@ -74,7 +74,7 @@ pub fn decode_revert(
 ) -> eyre::Result<String> {
     if err.len() < SELECTOR_LEN {
         if let Some(status) = status {
-            if !matches!(status, revm::interpreter::return_ok!()) {
+            if !matches!(status, return_ok!()) {
                 return Ok(format!("EvmError: {status:?}"))
             }
         }

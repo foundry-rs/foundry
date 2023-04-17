@@ -3,7 +3,7 @@ use ethers::{
     utils::{get_contract_address, get_create2_address},
 };
 use revm::{
-    interpreter::{CreateInputs, InstructionResult},
+    interpreter::{CreateInputs},
     primitives::{CreateScheme, SpecId},
 };
 
