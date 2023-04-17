@@ -813,7 +813,7 @@ impl Backend {
             }
             trace!(tx=?tx.hash, "committing transaction");
 
-            commit_transaction(tx, env.clone(), journaled_state, fork, &fork_id, None);
+            commit_transaction(tx, env.clone(), journaled_state, fork, &fork_id, None)?;
         }
 
         Ok(None)
@@ -1139,7 +1139,7 @@ impl DatabaseExt for Backend {
         let fork = self.inner.get_fork_by_id_mut(id)?;
         let tx = fork.db.db.get_transaction(transaction)?;
 
-        commit_transaction(tx, env, journaled_state, fork, &fork_id, cheatcodes_inspector);
+        commit_transaction(tx, env, journaled_state, fork, &fork_id, cheatcodes_inspector)?;
 
         Ok(())
     }

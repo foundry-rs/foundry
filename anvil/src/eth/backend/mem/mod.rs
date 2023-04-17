@@ -1035,15 +1035,15 @@ impl Backend {
                     Ok(result_and_state) => result_and_state,
                     Err(e) => return Err(BlockchainError::EvmError(InstructionResult::FatalExternalError)),
                 };
-            let (exit_reason, gas_refunded, gas_used, out, logs) = match result_and_state.result {
-                ExecutionResult::Success { reason, gas_used, gas_refunded, logs, output } => {
-                    (eval_to_instruction_result(reason), gas_refunded, gas_used, Some(output), Some(logs))
+            let (exit_reason, gas_used, out, ) = match result_and_state.result {
+                ExecutionResult::Success { reason, gas_used, output, .. } => {
+                    (eval_to_instruction_result(reason), gas_used, Some(output), )
                 },
                 ExecutionResult::Revert { gas_used, .. } => {
-                    (InstructionResult::Revert, 0 as u64, gas_used, None, None)
+                    (InstructionResult::Revert, gas_used, None)
                 },
                 ExecutionResult::Halt { reason, gas_used } => {
-                    (halt_to_instruction_result(reason), 0 as u64, gas_used, None, None)
+                    (halt_to_instruction_result(reason), gas_used, None)
                 },
             };
             let res = inspector.tracer.unwrap_or_default().traces.geth_trace(gas_used.into(), opts);

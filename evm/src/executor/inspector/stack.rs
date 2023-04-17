@@ -39,6 +39,7 @@ pub struct InspectorData {
     pub traces: Option<CallTraceArena>,
     pub debug: Option<DebugArena>,
     pub coverage: Option<HitMaps>,
+    pub gas: Option<u64>,
     pub cheatcodes: Option<Cheatcodes>,
     pub script_wallets: Vec<LocalWallet>,
     pub chisel_state: Option<(revm::Stack, revm::Memory, revm::Return)>,
@@ -73,6 +74,7 @@ impl InspectorStack {
             traces: self.tracer.map(|tracer| tracer.traces),
             debug: self.debugger.map(|debugger| debugger.arena),
             coverage: self.coverage.map(|coverage| coverage.maps),
+            gas: self.gas.map(|gas| gas.borrow().gas_remaining()),
             script_wallets: self
                 .cheatcodes
                 .as_ref()

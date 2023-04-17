@@ -764,7 +764,7 @@ impl Default for RawCallResult {
             script_wallets: Vec::new(),
             env: Default::default(),
             cheatcodes: Default::default(),
-            out: None, // TODO: missing in revm
+            out: None,
             chisel_state: None,
         }
     }
@@ -783,16 +783,12 @@ fn convert_executed_result(
     result: ResultAndState,
 ) -> eyre::Result<RawCallResult> {
     let ResultAndState { result: exec_result, state: state_changeset } = result;
-    // need:
-    // exit_reason
-    // gas_refunded
-    // gas_used
-    // output
     let (exit_reason, gas_refunded, gas_used, out) = match exec_result {
         ExecutionResult::Success { reason, gas_used, gas_refunded, output, .. } => {
             (eval_to_instruction_result(reason), gas_refunded, gas_used, Some(output))
         }
         ExecutionResult::Revert { gas_used, .. } => {
+            // Need to fetch the unused gas
             (InstructionResult::Revert, 0 as u64, gas_used, None)
         }
         ExecutionResult::Halt { reason, gas_used } => {
@@ -811,6 +807,7 @@ fn convert_executed_result(
         logs,
         labels,
         traces,
+        gas,
         coverage,
         debug,
         cheatcodes,
@@ -818,6 +815,7 @@ fn convert_executed_result(
         chisel_state,
     } = inspector.collect_inspector_states();
 
+    let gas_refunded = gas.unwrap_or(gas_refunded);
     let transactions = match cheatcodes.as_ref() {
         Some(cheats) if !cheats.broadcastable_transactions.is_empty() => {
             Some(cheats.broadcastable_transactions.clone())
