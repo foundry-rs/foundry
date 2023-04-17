@@ -490,6 +490,10 @@ pub fn apply<DB: DatabaseExt>(
             }
             Bytes::new()
         }
+        HEVMCalls::StopMappingRecording(_) => {
+            state.mapping_slots = None;
+            Bytes::new()
+        }
         HEVMCalls::GetMappingLength(inner) => get_mapping_length(state, inner.0, inner.1.into()),
         HEVMCalls::GetMappingSlotAt(inner) => {
             get_mapping_slot_at(state, inner.0, inner.1.into(), inner.2)

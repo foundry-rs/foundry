@@ -62,5 +62,7 @@ contract RecordMappingTest is DSTest {
             assertEq(j, 10);
             assertEq(uint(cheats.load(address(target), leafSlot)), i * j, "value of nestedData[i][j] is incorrect");
         }
+        cheats.stopMappingRecording();
+        assertEq(uint(cheats.getMappingLength(address(target), dataSlot)), 0, "number of data is incorrect");
     }
 }
