@@ -151,25 +151,6 @@ pub fn format_tokens(tokens: &[Token]) -> impl Iterator<Item = String> + '_ {
     tokens.iter().map(format_token)
 }
 
-/// Formats a U256 as a string with the optional conversion to ether value
-pub fn format_uint_with_ether_conversion(num: &U256) -> String {
-    let eth = num.to_string().parse::<f32>().unwrap_or_default() / 1e18;
-
-    // skip printing the ether conversion if:
-    // - it is zero
-    // - it is less than 0.0001 ether
-    // - it is more than 1 million ether
-    if eth == 0f32 || eth.abs().lt(&0.000_1f32) || eth.abs().gt(&1_000_000f32) {
-        return num.to_string()
-    } else {
-        return format!(
-            "{} {}",
-            num.to_string(),
-            Paint::dimmed(Paint::default(format!("[{} ether]", eth)))
-        )
-    }
-}
-
 /// Gets pretty print strings for tokens
 pub fn format_token(param: &Token) -> String {
     match param {
@@ -177,7 +158,7 @@ pub fn format_token(param: &Token) -> String {
         Token::FixedBytes(bytes) => format!("0x{}", hex::encode(bytes)),
         Token::Bytes(bytes) => format!("0x{}", hex::encode(bytes)),
         Token::Int(num) => format!("{}", I256::from_raw(*num)),
-        Token::Uint(num) => format_uint_with_ether_conversion(num),
+        Token::Uint(num) => format_uint_with_exponential_hint(num),
         Token::Bool(b) => format!("{b}"),
         Token::String(s) => s.to_string(),
         Token::FixedArray(tokens) => {
@@ -193,6 +174,27 @@ pub fn format_token(param: &Token) -> String {
             format!("({string})")
         }
     }
+}
+
+/// Formats an integer as a string together with its exponential notation.
+pub fn format_uint_with_exponential_hint(num: &U256) -> String {
+    if num.lt(&U256::from(10_000)) {
+        return num.to_string()
+    }
+
+    let stringified = num.to_string();
+    let exponent = stringified.len() - 1;
+    let mut base = stringified.chars().take(4).collect::<String>();
+
+    base = base.trim_end_matches('0').to_string();
+
+    if base.len() > 1 {
+        base.insert(1, '.');
+    }
+
+    let hint = format!("{}", Paint::default(format!("[{}e{}]", base, exponent)).dimmed());
+
+    format!("{} {}", num, hint)
 }
 
 /// Helper trait for converting types to Functions. Helpful for allowing the `call`
