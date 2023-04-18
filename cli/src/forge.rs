@@ -83,14 +83,7 @@ fn main() -> eyre::Result<()> {
         Subcommands::Inspect(cmd) => cmd.run(),
         Subcommands::UploadSelectors(args) => utils::block_on(args.run()),
         Subcommands::Tree(cmd) => cmd.run(),
-        Subcommands::Geiger(cmd) => {
-            let check = cmd.check;
-            let n = cmd.run()?;
-            if check && n > 0 {
-                std::process::exit(n as i32);
-            }
-            Ok(())
-        }
+        Subcommands::Geiger(cmd) => cmd.run(),
         Subcommands::Doc(cmd) => cmd.run(),
     }
 }
