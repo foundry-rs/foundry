@@ -83,7 +83,7 @@ pub fn fuzz_executor<DB: DatabaseRef>(executor: &Executor) -> FuzzedExecutor {
         executor,
         proptest::test_runner::TestRunner::new(cfg),
         CALLER,
-        config::TEST_OPTS.fuzz,
+        config::test_opts().fuzz,
     )
 }
 
