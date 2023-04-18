@@ -177,7 +177,7 @@ pub fn format_token(param: &Token) -> String {
 }
 
 /// Formats an integer as a string together with its exponential notation.
-pub fn format_uint_with_exponential_hint(num: &U256) -> String {
+pub fn format_uint_with_exponential_hint(num: U256) -> String {
     if num.lt(&U256::from(10_000)) {
         return num.to_string()
     }
