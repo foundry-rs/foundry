@@ -1,8 +1,6 @@
 use super::{EtherscanSourceProvider, VerifyArgs};
 use ethers::{
-    etherscan::verify::CodeFormat,
-    prelude::artifacts::StandardJsonCompilerInput,
-    solc::{CompilerInput, Project},
+    etherscan::verify::CodeFormat, prelude::artifacts::StandardJsonCompilerInput, solc::Project,
 };
 use eyre::Context;
 use semver::Version;
