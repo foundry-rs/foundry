@@ -28,9 +28,8 @@ impl Cmd for RemoveArgs {
 
     fn run(self) -> eyre::Result<Self::Output> {
         let config = self.try_load_config_emit_warnings()?;
-        let prj_root = config.__root.0.clone();
         let git_root =
-            find_git_root_path(&prj_root).wrap_err("Unable to detect git root directory")?;
+            find_git_root_path(&config.__root.0).wrap_err("Unable to detect git root directory")?;
         let libs = config.install_lib_dir();
 
         for dep in &self.dependencies {
