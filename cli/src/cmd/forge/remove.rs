@@ -32,28 +32,12 @@ impl Cmd for RemoveArgs {
         let git_root =
             find_git_root_path(&prj_root).wrap_err("Unable to detect git root directory")?;
         let libs = config.install_lib_dir();
-        let libs_relative = libs
-            .strip_prefix(prj_root)
-            .wrap_err("Dependencies are not relative to project root")?;
-        let git_mod_libs = git_root.join(".git/modules").join(libs_relative);
 
-        self.dependencies.iter().try_for_each(|dep| -> eyre::Result<_> {
-            let target_dir: PathBuf =
-                if let Some(alias) = &dep.alias { alias } else { &dep.name }.into();
-
-            let mut git_mod_path = git_mod_libs.join(&target_dir);
-            let mut dep_path = libs.join(&target_dir);
-            // handle relative paths that start with the install dir, so we convert `lib/forge-std`
-            // to `forge-std`
+        for dep in &self.dependencies {
+            let name = dep.name();
+            let dep_path = libs.join(name);
             if !dep_path.exists() {
-                if let Ok(rel_target) = target_dir.strip_prefix(libs_relative) {
-                    dep_path = libs.join(rel_target);
-                    git_mod_path = git_mod_libs.join(rel_target);
-                }
-            }
-
-            if !dep_path.exists() {
-                eyre::bail!("{}: No such dependency", target_dir.display());
+                eyre::bail!("Could not find dependency {name:?} in {}", dep_path.display());
             }
 
             println!(
@@ -61,25 +45,12 @@ impl Cmd for RemoveArgs {
                 dep.name, dep.url, dep.tag
             );
 
-            // remove submodule entry from .git/config
             Command::new("git")
-                .args(["submodule", "deinit", "-f", &dep_path.display().to_string()])
+                .args(["rm", &dep_path.display().to_string()])
                 .current_dir(&git_root)
                 .exec()?;
+        }
 
-            // remove the submodule repository from .git/modules directory
-            Command::new("rm")
-                .args(["-rf", &git_mod_path.display().to_string()])
-                .current_dir(&git_root)
-                .exec()?;
-
-            // remove the leftover submodule directory
-            Command::new("git")
-                .args(["rm", "-f", &dep_path.display().to_string()])
-                .current_dir(&git_root)
-                .exec()?;
-
-            Ok(())
-        })
+        Ok(())
     }
 }
