@@ -125,8 +125,8 @@ impl FromStr for Dependency {
 
 impl Dependency {
     /// Returns the name of the dependency, prioritizing the alias if it exists.
-    pub fn name(&self) -> &String {
-        self.alias.as_ref().unwrap_or(&self.name)
+    pub fn name(&self) -> &str {
+        self.alias.as_deref().unwrap_or(self.name.as_str())
     }
 }
 
