@@ -10,32 +10,37 @@ use std::{
 };
 use yansi::Paint;
 
-/// Scan a single file for `unsafe` usage.
+/// Scan a single file for `unsafe` cheatcode usage.
 pub fn find_cheatcodes_in_file(path: &Path) -> Result<SolFileMetrics, ScanFileError> {
     let content = fs::read_to_string(path)?;
     let cheatcodes = find_cheatcodes_in_string(&content)
         .map_err(|diagnostic| ScanFileError::ParseSol(diagnostic, path.to_path_buf()))?;
-    Ok(SolFileMetrics { content, cheatcodes, file: path.to_path_buf() })
+    Ok(SolFileMetrics { contents: content, cheatcodes, file: path.to_path_buf() })
 }
 
-pub fn find_cheatcodes_in_string(src: &str) -> Result<CheatcodeCounter, Vec<Diagnostic>> {
+/// Scan a string for unsafe cheatcodes.
+pub fn find_cheatcodes_in_string(src: &str) -> Result<UnsafeCheatcodes, Vec<Diagnostic>> {
     let mut parsed = parse(src)?;
     let mut visitor = CheatcodeVisitor::default();
-    let _ = parsed.pt.visit(&mut visitor);
+    parsed.pt.visit(&mut visitor).unwrap();
     Ok(visitor.cheatcodes)
 }
 
-/// Scan result for a single `.sol` file.
+/// Scan result for a single Solidity file.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SolFileMetrics {
-    /// The sol file
+    /// The Solidity file
     pub file: PathBuf,
-    /// The file's content
-    pub content: String,
-    /// Cheatcode metrics.
-    pub cheatcodes: CheatcodeCounter,
+
+    /// The file's contents.
+    pub contents: String,
+
+    /// The unsafe cheatcodes found.
+    pub cheatcodes: UnsafeCheatcodes,
 }
 
+/// Formats the metrics for a single file using [`fmt::Display`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SolFileMetricsPrinter<'a, 'b> {
     pub metrics: &'a SolFileMetrics,
     pub root: &'b Path,
@@ -43,39 +48,34 @@ pub struct SolFileMetricsPrinter<'a, 'b> {
 
 impl<'a, 'b> fmt::Display for SolFileMetricsPrinter<'a, 'b> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let SolFileMetricsPrinter { metrics, root } = self;
+        let SolFileMetricsPrinter { metrics, root } = *self;
 
         let file = metrics.file.strip_prefix(root).unwrap_or(&metrics.file);
 
         macro_rules! print_unsafe_fn {
-            ($($name:literal => $field:ident),*) => {
-               $ (
-                    if !metrics.cheatcodes.$field.is_empty() {
-                        writeln!(f, "  {}  {}", Paint::red(metrics.cheatcodes.$field.len()), Paint::red($name))?;
+            ($($name:literal => $field:ident),*) => {$(
+                let $field = &metrics.cheatcodes.$field[..];
+                if !$field.is_empty() {
+                    writeln!(f, "  {}  {}", Paint::red(metrics.cheatcodes.$field.len()), Paint::red($name))?;
 
-                        let mut iter = metrics.cheatcodes.$field.iter().peekable();
-                        while let Some(loc) = iter.next() {
-                            let function_call = &metrics.content.as_bytes()[loc.start().. loc.end()];
-                            let (line, col) = offset_to_line_column(&metrics.content, loc.start());
-                            let pos = format!("  --> {}:{}:{}", file.display(),  line, col);
-                            writeln!(f,"{}", Paint::red(pos))?;
-                            let content = String::from_utf8_lossy(function_call);
-                            let mut lines = content.lines().peekable();
-                            while let Some(line) = lines.next() {
-                                writeln!(f, "      {}", Paint::red(line))?;
-                            }
+                    for &loc in $field {
+                        let content = &metrics.contents[loc.range()];
+                        let (line, col) = offset_to_line_column(&metrics.contents, loc.start());
+                        let pos = format!("  --> {}:{}:{}", file.display(),  line, col);
+                        writeln!(f,"{}", Paint::red(pos))?;
+                        for line in content.lines() {
+                            writeln!(f, "      {}", Paint::red(line))?;
                         }
                     }
-               )*
-
-            };
+                }
+               )*};
         }
 
-        if metrics.cheatcodes.has_unsafe() {
+        if !metrics.cheatcodes.is_empty() {
             writeln!(
                 f,
                 "{}    {}",
-                Paint::red(metrics.cheatcodes.count()),
+                Paint::red(metrics.cheatcodes.len()),
                 Paint::red(file.display())
             )?;
             print_unsafe_fn!(
@@ -99,7 +99,7 @@ impl<'a, 'b> fmt::Display for SolFileMetricsPrinter<'a, 'b> {
 
 /// Unsafe usage metrics collection.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct CheatcodeCounter {
+pub struct UnsafeCheatcodes {
     pub ffi: Vec<Loc>,
     pub read_file: Vec<Loc>,
     pub read_line: Vec<Loc>,
@@ -111,20 +111,14 @@ pub struct CheatcodeCounter {
     pub derive_key: Vec<Loc>,
 }
 
-impl CheatcodeCounter {
-    pub fn has_unsafe(&self) -> bool {
-        !self.ffi.is_empty() ||
-            !self.read_file.is_empty() ||
-            !self.read_line.is_empty() ||
-            !self.write_file.is_empty() ||
-            !self.write_line.is_empty() ||
-            !self.close_file.is_empty() ||
-            !self.set_env.is_empty() ||
-            !self.derive_key.is_empty() ||
-            !self.remove_file.is_empty()
+impl UnsafeCheatcodes {
+    /// Whether there are any unsafe calls.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
-    pub fn count(&self) -> usize {
+    /// The total number of unsafe calls.
+    pub fn len(&self) -> usize {
         self.ffi.len() +
             self.read_file.len() +
             self.read_line.len() +
@@ -154,7 +148,7 @@ mod tests {
 
         let count = find_cheatcodes_in_string(s).unwrap();
         assert_eq!(count.ffi.len(), 1);
-        assert!(count.has_unsafe());
+        assert!(count.is_empty());
     }
 
     #[test]
@@ -170,6 +164,6 @@ mod tests {
 
         let count = find_cheatcodes_in_string(s).unwrap();
         assert_eq!(count.ffi.len(), 1);
-        assert!(count.has_unsafe());
+        assert!(count.is_empty());
     }
 }
