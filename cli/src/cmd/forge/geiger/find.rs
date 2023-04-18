@@ -12,10 +12,10 @@ use yansi::Paint;
 
 /// Scan a single file for `unsafe` cheatcode usage.
 pub fn find_cheatcodes_in_file(path: &Path) -> Result<SolFileMetrics, ScanFileError> {
-    let content = fs::read_to_string(path)?;
-    let cheatcodes = find_cheatcodes_in_string(&content)
+    let contents = fs::read_to_string(path)?;
+    let cheatcodes = find_cheatcodes_in_string(&contents)
         .map_err(|diagnostic| ScanFileError::ParseSol(diagnostic, path.to_path_buf()))?;
-    Ok(SolFileMetrics { contents: content, cheatcodes, file: path.to_path_buf() })
+    Ok(SolFileMetrics { contents, cheatcodes, file: path.to_path_buf() })
 }
 
 /// Scan a string for unsafe cheatcodes.
