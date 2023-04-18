@@ -494,8 +494,10 @@ async fn create_fork(
 
     // we need to use the block number from the block because the env's number can be different on
     // some L2s (e.g. Arbitrum).
-    let number =
-        block.number.map(|num| num.as_u64()).unwrap_or_else(|| ru256_to_u256(meta.block_env.number).as_u64());
+    let number = block
+        .number
+        .map(|num| num.as_u64())
+        .unwrap_or_else(|| ru256_to_u256(meta.block_env.number).as_u64());
 
     // determine the cache path if caching is enabled
     let cache_path = if fork.enable_caching {
