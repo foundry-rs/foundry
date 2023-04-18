@@ -92,7 +92,7 @@ impl Visitor for CheatcodeVisitor {
             Expression::Not(_, expr) => {
                 expr.visit(self)?;
             }
-            Expression::Complement(_, expr) => {
+            Expression::BitwiseNot(_, expr) => {
                 expr.visit(self)?;
             }
             Expression::Delete(_, expr) => {

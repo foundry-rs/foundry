@@ -1,8 +1,6 @@
 use super::{EtherscanSourceProvider, VerifyArgs};
 use ethers::{
-    etherscan::verify::CodeFormat,
-    prelude::artifacts::StandardJsonCompilerInput,
-    solc::{CompilerInput, Project},
+    etherscan::verify::CodeFormat, prelude::artifacts::StandardJsonCompilerInput, solc::Project,
 };
 use eyre::Context;
 use semver::Version;
@@ -32,8 +30,8 @@ impl EtherscanSourceProvider for EtherscanStandardJsonSource {
             .map(|(f, libs)| (f.strip_prefix(project.root()).unwrap_or(&f).to_path_buf(), libs))
             .collect();
 
-        // TODO: make sanitization logic shared between types in ethers
-        let input: StandardJsonCompilerInput = CompilerInput::from(input).sanitized(version).into();
+        // remove all incompatible settings
+        input.settings.sanitize(version);
 
         let source =
             serde_json::to_string(&input).wrap_err("Failed to parse standard json input")?;

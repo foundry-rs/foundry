@@ -3,7 +3,7 @@ use once_cell::sync::Lazy;
 use solang_parser::pt::Parameter;
 use std::fmt::{self, Display, Write};
 
-use crate::{AsDoc, AsString, CommentTag, Comments, Markdown};
+use crate::{AsDoc, CommentTag, Comments, Markdown};
 
 /// Solidity language name.
 const SOLIDITY: &str = "solidity";
@@ -152,7 +152,7 @@ impl BufWriter {
 
             let row = [
                 Markdown::Code(&param_name.unwrap_or_else(|| "<none>".to_owned())).as_doc()?,
-                Markdown::Code(&param.ty.as_string()).as_doc()?,
+                Markdown::Code(&param.ty.to_string()).as_doc()?,
                 comment.unwrap_or_default().replace('\n', " "),
             ];
             self.write_piped(&row.join("|"))?;
