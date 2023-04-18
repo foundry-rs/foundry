@@ -116,4 +116,23 @@ mod tests {
         let m = median_sorted(&values);
         assert_eq!(m, 45);
     }
+
+    #[test]
+    fn test_format_to_exponential_notation() {
+        let value = 1234124124u64;
+
+        let formatted = to_exponential_notation(value, 4, false);
+        assert_eq!(formatted, "1.234e9");
+
+        let formatted = to_exponential_notation(value, 3, true);
+        assert_eq!(formatted, "1.23e9");
+
+        let value = 10000000u64;
+
+        let formatted = to_exponential_notation(value, 4, false);
+        assert_eq!(formatted, "1.000e7");
+
+        let formatted = to_exponential_notation(value, 3, true);
+        assert_eq!(formatted, "1e7");
+    }
 }
