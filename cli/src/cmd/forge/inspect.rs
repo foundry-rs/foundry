@@ -330,47 +330,47 @@ impl_value_enum! {
 
 impl From<ContractArtifactField> for ContractOutputSelection {
     fn from(field: ContractArtifactField) -> Self {
-        type CAF = ContractArtifactField;
+        type Caf = ContractArtifactField;
         match field {
-            CAF::Abi => Self::Abi,
-            CAF::Bytecode => Self::Evm(EvmOutputSelection::ByteCode(BytecodeOutputSelection::All)),
-            CAF::DeployedBytecode => Self::Evm(EvmOutputSelection::DeployedByteCode(
+            Caf::Abi => Self::Abi,
+            Caf::Bytecode => Self::Evm(EvmOutputSelection::ByteCode(BytecodeOutputSelection::All)),
+            Caf::DeployedBytecode => Self::Evm(EvmOutputSelection::DeployedByteCode(
                 DeployedBytecodeOutputSelection::All,
             )),
-            CAF::Assembly | CAF::AssemblyOptimized => Self::Evm(EvmOutputSelection::Assembly),
-            CAF::MethodIdentifiers => Self::Evm(EvmOutputSelection::MethodIdentifiers),
-            CAF::GasEstimates => Self::Evm(EvmOutputSelection::GasEstimates),
-            CAF::StorageLayout => Self::StorageLayout,
-            CAF::DevDoc => Self::DevDoc,
-            CAF::Ir => Self::Ir,
-            CAF::IrOptimized => Self::IrOptimized,
-            CAF::Metadata => Self::Metadata,
-            CAF::UserDoc => Self::UserDoc,
-            CAF::Ewasm => Self::Ewasm(EwasmOutputSelection::All),
-            CAF::Events => Self::Abi,
+            Caf::Assembly | Caf::AssemblyOptimized => Self::Evm(EvmOutputSelection::Assembly),
+            Caf::MethodIdentifiers => Self::Evm(EvmOutputSelection::MethodIdentifiers),
+            Caf::GasEstimates => Self::Evm(EvmOutputSelection::GasEstimates),
+            Caf::StorageLayout => Self::StorageLayout,
+            Caf::DevDoc => Self::DevDoc,
+            Caf::Ir => Self::Ir,
+            Caf::IrOptimized => Self::IrOptimized,
+            Caf::Metadata => Self::Metadata,
+            Caf::UserDoc => Self::UserDoc,
+            Caf::Ewasm => Self::Ewasm(EwasmOutputSelection::All),
+            Caf::Events => Self::Abi,
         }
     }
 }
 
 impl PartialEq<ContractOutputSelection> for ContractArtifactField {
     fn eq(&self, other: &ContractOutputSelection) -> bool {
-        type COS = ContractOutputSelection;
-        type EOS = EvmOutputSelection;
+        type Cos = ContractOutputSelection;
+        type Eos = EvmOutputSelection;
         matches!(
             (self, other),
-            (Self::Abi | Self::Events, COS::Abi) |
-                (Self::Bytecode, COS::Evm(EOS::ByteCode(_))) |
-                (Self::DeployedBytecode, COS::Evm(EOS::DeployedByteCode(_))) |
-                (Self::Assembly | Self::AssemblyOptimized, COS::Evm(EOS::Assembly)) |
-                (Self::MethodIdentifiers, COS::Evm(EOS::MethodIdentifiers)) |
-                (Self::GasEstimates, COS::Evm(EOS::GasEstimates)) |
-                (Self::StorageLayout, COS::StorageLayout) |
-                (Self::DevDoc, COS::DevDoc) |
-                (Self::Ir, COS::Ir) |
-                (Self::IrOptimized, COS::IrOptimized) |
-                (Self::Metadata, COS::Metadata) |
-                (Self::UserDoc, COS::UserDoc) |
-                (Self::Ewasm, COS::Ewasm(_))
+            (Self::Abi | Self::Events, Cos::Abi) |
+                (Self::Bytecode, Cos::Evm(Eos::ByteCode(_))) |
+                (Self::DeployedBytecode, Cos::Evm(Eos::DeployedByteCode(_))) |
+                (Self::Assembly | Self::AssemblyOptimized, Cos::Evm(Eos::Assembly)) |
+                (Self::MethodIdentifiers, Cos::Evm(Eos::MethodIdentifiers)) |
+                (Self::GasEstimates, Cos::Evm(Eos::GasEstimates)) |
+                (Self::StorageLayout, Cos::StorageLayout) |
+                (Self::DevDoc, Cos::DevDoc) |
+                (Self::Ir, Cos::Ir) |
+                (Self::IrOptimized, Cos::IrOptimized) |
+                (Self::Metadata, Cos::Metadata) |
+                (Self::UserDoc, Cos::UserDoc) |
+                (Self::Ewasm, Cos::Ewasm(_))
         )
     }
 }

@@ -57,14 +57,18 @@ fn main() -> eyre::Result<()> {
         Subcommands::Remappings(cmd) => cmd.run(),
         Subcommands::Init(cmd) => cmd.run(),
         Subcommands::Completions { shell } => {
-            Ok(generate(shell, &mut Opts::command(), "forge", &mut std::io::stdout()))
+            generate(shell, &mut Opts::command(), "forge", &mut std::io::stdout());
+            Ok(())
         }
-        Subcommands::GenerateFigSpec => Ok(clap_complete::generate(
-            clap_complete_fig::Fig,
-            &mut Opts::command(),
-            "forge",
-            &mut std::io::stdout(),
-        )),
+        Subcommands::GenerateFigSpec => {
+            clap_complete::generate(
+                clap_complete_fig::Fig,
+                &mut Opts::command(),
+                "forge",
+                &mut std::io::stdout(),
+            );
+            Ok(())
+        }
         Subcommands::Clean { root } => {
             let config = utils::load_config_with_root(root);
             config.project()?.cleanup()?;
