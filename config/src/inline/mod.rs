@@ -2,7 +2,10 @@ mod conf_parser;
 pub use conf_parser::{ConfParser, ConfParserError};
 use ethers_solc::{artifacts::Node, ProjectCompileOutput};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::Path,
+};
 
 /// Represents per-test configurations, declared inline
 /// as structured comments in Solidity test files. This allows
@@ -25,18 +28,20 @@ impl<T> InlineConfig<T>
 where
     T: ConfParser + 'static,
 {
-    /// Returns an inline configuration, if any, for `contract_name` and `fn_name`. <br>
-    /// - `contract_name` The name of the contract containing the annotated function. Note this the
-    ///   actual contract name, not the solidity file name.
+    /// Returns an inline configuration, if any, for `contract_id` and `fn_name`. <br>
+    /// - `contract_id` The identifier of the contract containing the annotated function. Note that
+    /// the contract id is a path relative to the project's root (i.e. someDirUnderRoot/Contract.t.sol:ContractName).
+    ///   
     /// - `fn_name` The name of the function annotated with an inline configuration.
-    pub fn get_config<S: Into<String>>(&self, contract_name: S, fn_name: S) -> Option<&T> {
-        self.configs.get(&(contract_name.into(), fn_name.into()))
+    pub fn get_config<S: Into<String>>(&self, contract_id: S, fn_name: S) -> Option<&T> {
+        self.configs.get(&(contract_id.into(), fn_name.into()))
     }
 }
 
-impl<'a, T> TryFrom<(&'a ProjectCompileOutput, &'a T)> for InlineConfig<T>
+impl<'a, T, P> TryFrom<(&'a ProjectCompileOutput, &'a T, &'a P)> for InlineConfig<T>
 where
     T: ConfParser + 'static,
+    P: AsRef<Path>,
 {
     type Error = ConfParserError;
 
@@ -47,16 +52,17 @@ where
     ///
     /// NOTE: `ProjectCompileOutput` is known to emit function comments, that we can try to parse
     /// at our convenience, to detect inline test configurations.
-    fn try_from(value: (&'a ProjectCompileOutput, &'a T)) -> Result<Self, Self::Error> {
+    fn try_from(value: (&'a ProjectCompileOutput, &'a T, &'a P)) -> Result<Self, Self::Error> {
         let mut configs: HashMap<(String, String), T> = HashMap::new();
-        let compile_output = value.0;
+        let compile_output = value.0.clone();
         let base_conf = value.1;
+        let root = value.2;
 
-        for artifact in compile_output.artifacts() {
+        for artifact in compile_output.with_stripped_file_prefixes(root).into_artifacts() {
             if let Some(ast) = artifact.1.ast.as_ref() {
-                let contract_name: String = artifact.0;
+                let contract_id: String = artifact.0.identifier();
                 for node in ast.nodes.iter() {
-                    try_apply(base_conf, &mut configs, &contract_name, node)?;
+                    try_apply(base_conf, &mut configs, &contract_id, node)?;
                 }
             }
         }
@@ -67,12 +73,12 @@ where
 
 /// Implements a DFS over a compiler output node and its children.
 /// If a configuration is found for a solidity function, it is added to
-/// `map` under the (contract name, function name) key.
+/// `map` under the (contract id, function name) key.
 /// This function may result in parsing errors (see [`ConfParserError`]).
 fn try_apply<T>(
     base_conf: &T,
     map: &mut HashMap<(String, String), T>,
-    contract_name: &str,
+    contract_id: &str,
     node: &Node,
 ) -> Result<(), ConfParserError>
 where
@@ -81,11 +87,11 @@ where
     for n in node.nodes.iter() {
         if let Some((fn_name, fn_docs)) = get_fn_data(n) {
             let inline_conf = base_conf.try_merge(fn_docs)?;
-            let key = (contract_name.into(), fn_name);
+            let key = (contract_id.into(), fn_name);
             map.insert(key, inline_conf);
         }
 
-        try_apply(base_conf, map, contract_name, n)?;
+        try_apply(base_conf, map, contract_id, n)?;
     }
     Ok(())
 }
@@ -95,7 +101,7 @@ fn get_fn_data(node: &Node) -> Option<(String, String)> {
         let fn_data = &node.other;
         let fn_name: String = get_fn_name(fn_data)?;
         let fn_docs: String = get_fn_docs(fn_data)?;
-        return Some((fn_name, fn_docs))
+        return Some((fn_name, fn_docs));
     }
     None
 }
@@ -110,7 +116,7 @@ fn get_fn_name(fn_data: &BTreeMap<String, Value>) -> Option<String> {
 fn get_fn_docs(fn_data: &BTreeMap<String, Value>) -> Option<String> {
     if let Value::Object(fn_docs) = fn_data.get("documentation")? {
         if let Value::String(comment) = fn_docs.get("text")? {
-            return Some(comment.into())
+            return Some(comment.into());
         }
     }
     None

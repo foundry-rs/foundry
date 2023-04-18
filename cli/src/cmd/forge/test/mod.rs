@@ -146,11 +146,13 @@ impl TestArgs {
             compiler.compile(&project)
         }?;
 
+        let project_root = &project.paths.root;
+        
         let test_options: TestOptions = TestOptionsBuilder::default()
             .fuzz(config.fuzz)
             .invariant(config.invariant)
             .compile_output(&output)
-            .build()?;
+            .build(project_root)?;
 
         // Determine print verbosity and executor verbosity
         let verbosity = evm_opts.verbosity;
@@ -170,7 +172,7 @@ impl TestArgs {
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_cheats_config(CheatsConfig::new(&config, &evm_opts))
             .with_test_options(test_options.clone())
-            .build(project.paths.root, output, env, evm_opts)?;
+            .build(project_root, output, env, evm_opts)?;
 
         if self.debug.is_some() {
             filter.args_mut().test_pattern = self.debug;

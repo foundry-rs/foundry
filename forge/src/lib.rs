@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use ethers::solc::ProjectCompileOutput;
 use foundry_config::{ConfParserError, FuzzConfig, InlineConfig, InvariantConfig};
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
@@ -97,7 +99,7 @@ impl TestOptionsBuilder {
         self
     }
 
-    pub fn build(self) -> Result<TestOptions, ConfParserError> {
+    pub fn build(self, root: impl AsRef<Path>) -> Result<TestOptions, ConfParserError> {
         let base_fuzz = self.fuzz.unwrap_or_default();
         let base_invariant = self.invariant.unwrap_or_default();
 
@@ -105,8 +107,12 @@ impl TestOptionsBuilder {
             Some(compile_output) => Ok(TestOptions {
                 fuzz: base_fuzz,
                 invariant: base_invariant,
-                inline_fuzz: InlineConfig::try_from((&compile_output, &base_fuzz))?,
-                inline_invariant: InlineConfig::try_from((&compile_output, &base_invariant))?,
+                inline_fuzz: InlineConfig::try_from((&compile_output, &base_fuzz, &root))?,
+                inline_invariant: InlineConfig::try_from((
+                    &compile_output,
+                    &base_invariant,
+                    &root,
+                ))?,
             }),
             None => Ok(TestOptions {
                 fuzz: base_fuzz,
