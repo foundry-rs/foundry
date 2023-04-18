@@ -20,7 +20,7 @@ pub struct Create2Args {
     #[clap(
         long,
         short,
-        required_unless_present_any = &["ends-with", "matching"],
+        required_unless_present_any = &["ends_with", "matching"],
         value_name = "HEX"
     )]
     starts_with: Option<String>,
