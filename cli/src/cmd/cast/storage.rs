@@ -32,18 +32,18 @@ const MIN_SOLC: Version = Version::new(0, 6, 5);
 /// CLI arguments for `cast storage`.
 #[derive(Debug, Clone, Parser)]
 pub struct StorageArgs {
-    /// The contract address
+    /// The contract address.
     #[clap(value_parser = NameOrAddress::from_str)]
     address: NameOrAddress,
 
-    /// The storage slot number
+    /// The storage slot number.
     #[clap(value_parser = parse_slot)]
     slot: Option<H256>,
 
-    /// The block height you want to query at
+    /// The block height to to query at.
     ///
-    /// Can also be the tags earliest, finalized, safe, latest, or pending
-    #[clap(long, short = 'B')]
+    /// Can also be the tags earliest, finalized, safe, latest, or pending.
+    #[clap(long, short)]
     block: Option<BlockId>,
 
     #[clap(flatten)]

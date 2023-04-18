@@ -11,21 +11,19 @@ pub const RETRY_VERIFY_ON_CREATE: RetryArgs = RetryArgs { retries: 15, delay: 5 
 #[derive(Debug, Clone, Copy, Parser)]
 #[clap(about = "Allows to use retry arguments for contract verification")] // override doc
 pub struct RetryArgs {
+    /// Number of attempts for retrying verification.
     #[clap(
         long,
-        help = "Number of attempts for retrying verification",
-        default_value = "5",
         value_parser = RangedU64ValueParser::<u32>::new().range(1..=10),
-        value_name = "RETRIES"
+        default_value = "5",
     )]
     pub retries: u32,
 
+    /// Optional delay to apply inbetween verification attempts, in seconds.
     #[clap(
         long,
-        help = "Optional delay to apply inbetween verification attempts in seconds.",
-        default_value = "5",
         value_parser = RangedU64ValueParser::<u32>::new().range(0..=30),
-        value_name = "DELAY"
+        default_value = "5",
     )]
     pub delay: u32,
 }

@@ -19,30 +19,22 @@ use ethers::{
 };
 use foundry_common::compile;
 use serde_json::{to_value, Value};
-use std::{fmt, str::FromStr};
+use std::fmt;
 use tracing::trace;
 
 /// CLI arguments for `forge inspect`.
 #[derive(Debug, Clone, Parser)]
 pub struct InspectArgs {
-    #[clap(
-        help = "The identifier of the contract to inspect in the form `(<path>:)?<contractname>`.",
-        value_name = "CONTRACT"
-    )]
+    /// The identifier of the contract to inspect in the form `(<path>:)?<contractname>`.
+    #[clap(value_name = "CONTRACT")]
     pub contract: ContractInfo,
 
-    #[clap(
-        value_name = "FIELD",
-        help = r#"The contract artifact field to inspect.
+    /// The contract artifact field to inspect.
+    #[clap(value_enum)]
+    pub field: ContractArtifactField,
 
-possible_values = ["abi", "b/bytes/bytecode", "deployedBytecode/deployed_bytecode/deployed-bytecode/deployedbytecode/deployed", "assembly/asm", "asmOptimized/assemblyOptimized/assemblyoptimized/assembly_optimized/asmopt/assembly-optimized/asmo/asm-optimized/asmoptimized/asm_optimized",
-"methods/methodidentifiers/methodIdentifiers/method_identifiers/method-identifiers/mi", "gasEstimates/gas/gas_estimates/gas-estimates/gasestimates",
-"storageLayout/storage_layout/storage-layout/storagelayout/storage", "devdoc/dev-doc/devDoc",
-"ir", "ir-optimized/irOptimized/iroptimized/iro/iropt", "metadata/meta", "userdoc/userDoc/user-doc", "ewasm/e-wasm", "events/ev"]"#
-    )]
-    pub field: ContractArtifactFields,
-
-    #[clap(long, help = "Pretty print the selected field, if supported.")]
+    /// Pretty print the selected field, if supported.
+    #[clap(long)]
     pub pretty: bool,
 
     /// All build arguments are supported
@@ -56,7 +48,7 @@ impl Cmd for InspectArgs {
     fn run(self) -> eyre::Result<Self::Output> {
         let InspectArgs { mut contract, field, build, pretty } = self;
 
-        trace!(target : "forge", ?field, ?contract, "running forge inspect");
+        trace!(target: "forge", ?field, ?contract, "running forge inspect");
 
         // Map field to ContractOutputSelection
         let mut cos = build.compiler.extra_output;
@@ -65,7 +57,7 @@ impl Cmd for InspectArgs {
         }
 
         // Run Optimized?
-        let optimized = if let ContractArtifactFields::AssemblyOptimized = field {
+        let optimized = if let ContractArtifactField::AssemblyOptimized = field {
             true
         } else {
             build.compiler.optimize
@@ -90,7 +82,7 @@ impl Cmd for InspectArgs {
         // Find the artifact
         let found_artifact = outcome.find_contract(&contract);
 
-        trace!(target : "forge", artifact=?found_artifact, input=?contract, "Found contract");
+        trace!(target: "forge", artifact=?found_artifact, input=?contract, "Found contract");
 
         // Unwrap the inner artifact
         let artifact = found_artifact.ok_or_else(|| {
@@ -99,28 +91,28 @@ impl Cmd for InspectArgs {
 
         // Match on ContractArtifactFields and Pretty Print
         match field {
-            ContractArtifactFields::Abi => {
+            ContractArtifactField::Abi => {
                 println!("{}", serde_json::to_string_pretty(&to_value(&artifact.abi)?)?);
             }
-            ContractArtifactFields::Bytecode => {
+            ContractArtifactField::Bytecode => {
                 let tval: Value = to_value(&artifact.bytecode)?;
                 println!(
                     "{}",
-                    tval.get("object").unwrap_or(&tval).clone().as_str().ok_or_else(
-                        || eyre::eyre!("Failed to extract artifact bytecode as a string")
-                    )?
+                    tval.get("object").unwrap_or(&tval).as_str().ok_or_else(|| eyre::eyre!(
+                        "Failed to extract artifact bytecode as a string"
+                    ))?
                 );
             }
-            ContractArtifactFields::DeployedBytecode => {
+            ContractArtifactField::DeployedBytecode => {
                 let tval: Value = to_value(&artifact.deployed_bytecode)?;
                 println!(
                     "{}",
-                    tval.get("object").unwrap_or(&tval).clone().as_str().ok_or_else(
-                        || eyre::eyre!("Failed to extract artifact deployed bytecode as a string")
-                    )?
+                    tval.get("object").unwrap_or(&tval).as_str().ok_or_else(|| eyre::eyre!(
+                        "Failed to extract artifact deployed bytecode as a string"
+                    ))?
                 );
             }
-            ContractArtifactFields::Assembly | ContractArtifactFields::AssemblyOptimized => {
+            ContractArtifactField::Assembly | ContractArtifactField::AssemblyOptimized => {
                 println!(
                     "{}",
                     to_value(&artifact.assembly)?.as_str().ok_or_else(|| eyre::eyre!(
@@ -128,22 +120,22 @@ impl Cmd for InspectArgs {
                     ))?
                 );
             }
-            ContractArtifactFields::MethodIdentifiers => {
+            ContractArtifactField::MethodIdentifiers => {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&to_value(&artifact.method_identifiers)?)?
                 );
             }
-            ContractArtifactFields::GasEstimates => {
+            ContractArtifactField::GasEstimates => {
                 println!("{}", serde_json::to_string_pretty(&to_value(&artifact.gas_estimates)?)?);
             }
-            ContractArtifactFields::StorageLayout => {
+            ContractArtifactField::StorageLayout => {
                 print_storage_layout(&artifact.storage_layout, pretty)?;
             }
-            ContractArtifactFields::DevDoc => {
+            ContractArtifactField::DevDoc => {
                 println!("{}", serde_json::to_string_pretty(&to_value(&artifact.devdoc)?)?);
             }
-            ContractArtifactFields::Ir => {
+            ContractArtifactField::Ir => {
                 println!(
                     "{}",
                     to_value(&artifact.ir)?
@@ -151,7 +143,7 @@ impl Cmd for InspectArgs {
                         .ok_or_else(|| eyre::eyre!("Failed to extract artifact ir as a string"))?
                 );
             }
-            ContractArtifactFields::IrOptimized => {
+            ContractArtifactField::IrOptimized => {
                 println!(
                     "{}",
                     to_value(&artifact.ir_optimized)?.as_str().ok_or_else(|| eyre::eyre!(
@@ -159,13 +151,13 @@ impl Cmd for InspectArgs {
                     ))?
                 );
             }
-            ContractArtifactFields::Metadata => {
+            ContractArtifactField::Metadata => {
                 println!("{}", serde_json::to_string_pretty(&to_value(&artifact.metadata)?)?);
             }
-            ContractArtifactFields::UserDoc => {
+            ContractArtifactField::UserDoc => {
                 println!("{}", serde_json::to_string_pretty(&to_value(&artifact.userdoc)?)?);
             }
-            ContractArtifactFields::Ewasm => {
+            ContractArtifactField::Ewasm => {
                 println!(
                     "{}",
                     to_value(&artifact.ewasm)?.as_str().ok_or_else(|| eyre::eyre!(
@@ -173,12 +165,11 @@ impl Cmd for InspectArgs {
                     ))?
                 );
             }
-            ContractArtifactFields::Events => {
+            ContractArtifactField::Events => {
                 let mut out = serde_json::Map::new();
-                if let Some(LosslessAbi { abi, .. }) = artifact.abi.as_ref() {
-                    let events: Vec<_> = abi.events.iter().flat_map(|(_, events)| events).collect();
+                if let Some(LosslessAbi { abi, .. }) = &artifact.abi {
                     // print the signature of all events including anonymous
-                    for ev in events.iter() {
+                    for ev in abi.events.iter().flat_map(|(_, events)| events) {
                         let types =
                             ev.inputs.iter().map(|p| p.kind.to_string()).collect::<Vec<_>>();
                         out.insert(
@@ -232,8 +223,8 @@ pub fn print_storage_layout(
 }
 
 /// Contract level output selection
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum ContractArtifactFields {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ContractArtifactField {
     Abi,
     Bytecode,
     DeployedBytecode,
@@ -251,107 +242,168 @@ pub enum ContractArtifactFields {
     Events,
 }
 
-// === impl ContractArtifactFields ===
+macro_rules! impl_value_enum {
+    (enum $name:ident { $($field:ident => $main:literal $(| $alias:literal)*),+ $(,)? }) => {
+        impl $name {
+            /// All the variants of this enum.
+            pub const ALL: &[Self] = &[$(Self::$field),+];
 
-impl ContractArtifactFields {
-    /// Returns true if this field is generated by default
-    pub fn is_default(&self) -> bool {
-        matches!(self, ContractArtifactFields::Bytecode | ContractArtifactFields::DeployedBytecode)
+            /// Returns the string representation of `self`.
+            #[inline]
+            pub const fn as_str(&self) -> &'static str {
+                match self {
+                    $(
+                        Self::$field => $main,
+                    )+
+                }
+            }
+
+            /// Returns all the aliases of `self`.
+            #[inline]
+            pub const fn aliases(&self) -> &'static [&'static str] {
+                match self {
+                    $(
+                        Self::$field => &[$($alias),*],
+                    )+
+                }
+            }
+        }
+
+        impl ::clap::ValueEnum for $name {
+            #[inline]
+            fn value_variants<'a>() -> &'a [Self] {
+                Self::ALL
+            }
+
+            #[inline]
+            fn to_possible_value(&self) -> Option<::clap::builder::PossibleValue> {
+                Some(::clap::builder::PossibleValue::new(Self::as_str(self)).aliases(Self::aliases(self)))
+            }
+
+            #[inline]
+            fn from_str(input: &str, ignore_case: bool) -> Result<Self, String> {
+                let _ = ignore_case;
+                <Self as ::std::str::FromStr>::from_str(input)
+            }
+        }
+
+        impl ::std::str::FromStr for $name {
+            type Err = String;
+
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                match s {
+                    $(
+                        $main $(| $alias)* => Ok(Self::$field),
+                    )+
+                    _ => Err(format!(concat!("Invalid ", stringify!($name), " value: {}"), s)),
+                }
+            }
+        }
+    };
+}
+
+impl_value_enum! {
+    enum ContractArtifactField {
+        Abi               => "abi",
+        Bytecode          => "bytecode" | "bytes" | "b",
+        DeployedBytecode  => "deployedBytecode" | "deployed_bytecode" | "deployed-bytecode"
+                             | "deployed" | "deployedbytecode",
+        Assembly          => "assembly" | "asm",
+        AssemblyOptimized => "assemblyOptimized" | "asmOptimized" | "assemblyoptimized"
+                             | "assembly_optimized" | "asmopt" | "assembly-optimized"
+                             | "asmo" | "asm-optimized" | "asmoptimized" | "asm_optimized",
+        MethodIdentifiers => "methodIdentifiers" | "methodidentifiers" | "methods"
+                             | "method_identifiers" | "method-identifiers" | "mi",
+        GasEstimates      => "gasEstimates" | "gas" | "gas_estimates" | "gas-estimates"
+                             | "gasestimates",
+        StorageLayout     => "storageLayout" | "storage_layout" | "storage-layout"
+                             | "storagelayout" | "storage",
+        DevDoc            => "devdoc" | "dev-doc" | "devDoc",
+        Ir                => "ir" | "iR" | "IR",
+        IrOptimized       => "irOptimized" | "ir-optimized" | "iroptimized" | "iro" | "iropt",
+        Metadata          => "metadata" | "meta",
+        UserDoc           => "userdoc" | "userDoc" | "user-doc",
+        Ewasm             => "ewasm" | "e-wasm",
+        Events            => "events" | "ev",
     }
 }
 
-impl From<ContractArtifactFields> for ContractOutputSelection {
-    fn from(field: ContractArtifactFields) -> Self {
+impl From<ContractArtifactField> for ContractOutputSelection {
+    fn from(field: ContractArtifactField) -> Self {
+        type CAF = ContractArtifactField;
         match field {
-            ContractArtifactFields::Abi => ContractOutputSelection::Abi,
-            ContractArtifactFields::Bytecode => ContractOutputSelection::Evm(
-                EvmOutputSelection::ByteCode(BytecodeOutputSelection::All),
-            ),
-            ContractArtifactFields::DeployedBytecode => ContractOutputSelection::Evm(
-                EvmOutputSelection::DeployedByteCode(DeployedBytecodeOutputSelection::All),
-            ),
-            ContractArtifactFields::Assembly | ContractArtifactFields::AssemblyOptimized => {
-                ContractOutputSelection::Evm(EvmOutputSelection::Assembly)
-            }
-            ContractArtifactFields::MethodIdentifiers => {
-                ContractOutputSelection::Evm(EvmOutputSelection::MethodIdentifiers)
-            }
-            ContractArtifactFields::GasEstimates => {
-                ContractOutputSelection::Evm(EvmOutputSelection::GasEstimates)
-            }
-            ContractArtifactFields::StorageLayout => ContractOutputSelection::StorageLayout,
-            ContractArtifactFields::DevDoc => ContractOutputSelection::DevDoc,
-            ContractArtifactFields::Ir => ContractOutputSelection::Ir,
-            ContractArtifactFields::IrOptimized => ContractOutputSelection::IrOptimized,
-            ContractArtifactFields::Metadata => ContractOutputSelection::Metadata,
-            ContractArtifactFields::UserDoc => ContractOutputSelection::UserDoc,
-            ContractArtifactFields::Ewasm => {
-                ContractOutputSelection::Ewasm(EwasmOutputSelection::All)
-            }
-            ContractArtifactFields::Events => ContractOutputSelection::Abi,
+            CAF::Abi => Self::Abi,
+            CAF::Bytecode => Self::Evm(EvmOutputSelection::ByteCode(BytecodeOutputSelection::All)),
+            CAF::DeployedBytecode => Self::Evm(EvmOutputSelection::DeployedByteCode(
+                DeployedBytecodeOutputSelection::All,
+            )),
+            CAF::Assembly | CAF::AssemblyOptimized => Self::Evm(EvmOutputSelection::Assembly),
+            CAF::MethodIdentifiers => Self::Evm(EvmOutputSelection::MethodIdentifiers),
+            CAF::GasEstimates => Self::Evm(EvmOutputSelection::GasEstimates),
+            CAF::StorageLayout => Self::StorageLayout,
+            CAF::DevDoc => Self::DevDoc,
+            CAF::Ir => Self::Ir,
+            CAF::IrOptimized => Self::IrOptimized,
+            CAF::Metadata => Self::Metadata,
+            CAF::UserDoc => Self::UserDoc,
+            CAF::Ewasm => Self::Ewasm(EwasmOutputSelection::All),
+            CAF::Events => Self::Abi,
         }
     }
 }
 
-impl PartialEq<ContractOutputSelection> for ContractArtifactFields {
+impl PartialEq<ContractOutputSelection> for ContractArtifactField {
     fn eq(&self, other: &ContractOutputSelection) -> bool {
-        self.to_string() == other.to_string()
+        type COS = ContractOutputSelection;
+        type EOS = EvmOutputSelection;
+        matches!(
+            (self, other),
+            (Self::Abi | Self::Events, COS::Abi) |
+                (Self::Bytecode, COS::Evm(EOS::ByteCode(_))) |
+                (Self::DeployedBytecode, COS::Evm(EOS::DeployedByteCode(_))) |
+                (Self::Assembly | Self::AssemblyOptimized, COS::Evm(EOS::Assembly)) |
+                (Self::MethodIdentifiers, COS::Evm(EOS::MethodIdentifiers)) |
+                (Self::GasEstimates, COS::Evm(EOS::GasEstimates)) |
+                (Self::StorageLayout, COS::StorageLayout) |
+                (Self::DevDoc, COS::DevDoc) |
+                (Self::Ir, COS::Ir) |
+                (Self::IrOptimized, COS::IrOptimized) |
+                (Self::Metadata, COS::Metadata) |
+                (Self::UserDoc, COS::UserDoc) |
+                (Self::Ewasm, COS::Ewasm(_))
+        )
     }
 }
 
-impl fmt::Display for ContractArtifactFields {
+impl fmt::Display for ContractArtifactField {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ContractArtifactFields::Abi => f.write_str("abi"),
-            ContractArtifactFields::Bytecode => f.write_str("bytecode"),
-            ContractArtifactFields::DeployedBytecode => f.write_str("deployedBytecode"),
-            ContractArtifactFields::Assembly => f.write_str("assembly"),
-            ContractArtifactFields::AssemblyOptimized => f.write_str("assemblyOptimized"),
-            ContractArtifactFields::MethodIdentifiers => f.write_str("methodIdentifiers"),
-            ContractArtifactFields::GasEstimates => f.write_str("gasEstimates"),
-            ContractArtifactFields::StorageLayout => f.write_str("storageLayout"),
-            ContractArtifactFields::DevDoc => f.write_str("devdoc"),
-            ContractArtifactFields::Ir => f.write_str("ir"),
-            ContractArtifactFields::IrOptimized => f.write_str("irOptimized"),
-            ContractArtifactFields::Metadata => f.write_str("metadata"),
-            ContractArtifactFields::UserDoc => f.write_str("userdoc"),
-            ContractArtifactFields::Ewasm => f.write_str("ewasm"),
-            ContractArtifactFields::Events => f.write_str("events"),
-        }
+        f.write_str(self.as_str())
     }
 }
 
-impl FromStr for ContractArtifactFields {
-    type Err = String;
+impl ContractArtifactField {
+    /// Returns true if this field is generated by default.
+    pub const fn is_default(&self) -> bool {
+        matches!(self, Self::Bytecode | Self::DeployedBytecode)
+    }
+}
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "abi" => Ok(ContractArtifactFields::Abi),
-            "b" | "bytes" | "bytecode" => Ok(ContractArtifactFields::Bytecode),
-            "deployedBytecode" | "deployed_bytecode" | "deployed-bytecode" | "deployed" |
-            "deployedbytecode" => Ok(ContractArtifactFields::DeployedBytecode),
-            "assembly" | "asm" => Ok(ContractArtifactFields::Assembly),
-            "asmOptimized" | "assemblyOptimized" | "assemblyoptimized" | "assembly_optimized" |
-            "asmopt" | "assembly-optimized" | "asmo" | "asm-optimized" | "asmoptimized" |
-            "asm_optimized" => Ok(ContractArtifactFields::AssemblyOptimized),
-            "methods" | "methodidentifiers" | "methodIdentifiers" | "method_identifiers" |
-            "method-identifiers" | "mi" => Ok(ContractArtifactFields::MethodIdentifiers),
-            "gasEstimates" | "gas" | "gas_estimates" | "gas-estimates" | "gasestimates" => {
-                Ok(ContractArtifactFields::GasEstimates)
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn contract_output_selection() {
+        for &field in ContractArtifactField::ALL {
+            let selection: ContractOutputSelection = field.into();
+            assert_eq!(field, selection);
+
+            let s = field.as_str();
+            assert_eq!(s, field.to_string());
+            assert_eq!(s.parse::<ContractArtifactField>().unwrap(), field);
+            for alias in field.aliases() {
+                assert_eq!(alias.parse::<ContractArtifactField>().unwrap(), field);
             }
-            "storageLayout" | "storage_layout" | "storage-layout" | "storagelayout" | "storage" => {
-                Ok(ContractArtifactFields::StorageLayout)
-            }
-            "devdoc" | "dev-doc" | "devDoc" => Ok(ContractArtifactFields::DevDoc),
-            "ir" | "iR" | "IR" => Ok(ContractArtifactFields::Ir),
-            "ir-optimized" | "irOptimized" | "iroptimized" | "iro" | "iropt" => {
-                Ok(ContractArtifactFields::IrOptimized)
-            }
-            "metadata" | "meta" => Ok(ContractArtifactFields::Metadata),
-            "userdoc" | "userDoc" | "user-doc" => Ok(ContractArtifactFields::UserDoc),
-            "ewasm" | "e-wasm" => Ok(ContractArtifactFields::Ewasm),
-            "events" | "ev" => Ok(ContractArtifactFields::Events),
-            _ => Err(format!("Unknown field: {s}")),
         }
     }
 }

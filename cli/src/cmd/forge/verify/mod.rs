@@ -22,21 +22,16 @@ mod sourcify;
 /// Verification provider arguments
 #[derive(Debug, Clone, Parser)]
 pub struct VerifierArgs {
+    /// The contract verification provider to use.
     #[clap(
         value_enum,
         long = "verifier",
         help_heading = "Verification provider",
-        help = "Contract verification provider to use `etherscan`, `sourcify` or `blockscout`",
         default_value = "etherscan"
     )]
     pub verifier: VerificationProviderType,
 
-    #[clap(
-        long,
-        env = "VERIFIER_URL",
-        help = "The verifier URL, if using a custom provider",
-        value_name = "VERIFIER_URL"
-    )]
+    #[clap(long, env = "VERIFIER_URL", help = "The verifier URL, if using a custom provider")]
     pub verifier_url: Option<String>,
 }
 
@@ -49,95 +44,74 @@ impl Default for VerifierArgs {
 /// CLI arguments for `forge verify`.
 #[derive(Debug, Clone, Parser)]
 pub struct VerifyArgs {
-    #[clap(help = "The address of the contract to verify.", value_name = "ADDRESS")]
+    /// The address of the contract to verify.
     pub address: Address,
 
-    #[clap(
-        help = "The contract identifier in the form `<path>:<contractname>`.",
-        value_name = "CONTRACT"
-    )]
+    /// The contract identifier in the form `<path>:<contractname>`.
     pub contract: ContractInfo,
 
+    /// The ABI-encoded constructor arguments.
     #[clap(
         long,
-        help = "The ABI-encoded constructor arguments.",
-        name = "constructor_args",
+        num_args(1..),
         conflicts_with = "constructor_args_path",
-        value_name = "ARGS"
+        value_name = "ARGS",
     )]
     pub constructor_args: Option<String>,
 
+    /// The path to a file containing the constructor arguments.
     #[clap(
         long,
-        help = "The path to a file containing the constructor arguments.",
         value_hint = ValueHint::FilePath,
-        name = "constructor_args_path",
-        conflicts_with = "constructor_args",
-        value_name = "FILE"
+        value_name = "PATH",
     )]
     pub constructor_args_path: Option<PathBuf>,
 
-    #[clap(
-        long,
-        help = "The compiler version used to build the smart contract.",
-        value_name = "VERSION"
-    )]
+    /// The `solc` version to use to build the smart contract.
+    #[clap(long, value_name = "VERSION")]
     pub compiler_version: Option<String>,
 
-    #[clap(
-        visible_alias = "optimizer-runs",
-        long,
-        help = "The number of optimization runs used to build the smart contract.",
-        value_name = "NUM"
-    )]
+    /// The number of optimization runs used to build the smart contract.
+    #[clap(long, visible_alias = "optimizer-runs", value_name = "NUM")]
     pub num_of_optimizations: Option<usize>,
 
     #[clap(flatten)]
     pub etherscan: EtherscanOpts,
 
-    #[clap(help = "Flatten the source code before verifying.", long = "flatten")]
+    /// Flatten the source code before verifying.
+    #[clap(long)]
     pub flatten: bool,
 
-    #[clap(
-        short,
-        long,
-        help = "Do not compile the flattened smart contract before verifying (if --flatten is passed)."
-    )]
+    /// Do not compile the flattened smart contract before verifying (if --flatten is passed).
+    #[clap(short, long)]
     pub force: bool,
 
-    #[clap(long, help = "Wait for verification result after submission")]
+    /// Wait for verification result after submission.
+    #[clap(long)]
     pub watch: bool,
 
     #[clap(flatten)]
     pub retry: RetryArgs,
 
-    #[clap(
-        help_heading = "Linker options",
-        help = "Set pre-linked libraries.",
-        long,
-        env = "DAPP_LIBRARIES",
-        value_name = "LIBRARIES"
-    )]
+    /// Set pre-linked libraries.
+    #[clap(long, help_heading = "Linker options", env = "DAPP_LIBRARIES")]
     pub libraries: Vec<String>,
 
-    #[clap(
-        help = "The project's root path.",
-        long_help = "The project's root path. By default, this is the root directory of the current Git repository, or the current working directory.",
-        long,
-        value_hint = ValueHint::DirPath,
-        value_name = "PATH"
-    )]
+    /// The project's root path.
+    ///
+    /// By default root of the Git repository, if in one,
+    /// or the current working directory.
+    #[clap(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     pub root: Option<PathBuf>,
 
     #[clap(flatten)]
     pub verifier: VerifierArgs,
 
-    #[clap(
-        help = "Prints the standard json compiler input.",
-        long,
-        long_help = "The standard json compiler input can be used to manually submit contract verification in the browser.",
-        conflicts_with = "flatten"
-    )]
+    /// Prints the standard json compiler input.
+    ///
+    /// The standard json compiler input can be used to manually submit contract verification in
+    /// the browser.
+    #[clap(long, conflicts_with = "flatten")]
     pub show_standard_json_input: bool,
 }
 

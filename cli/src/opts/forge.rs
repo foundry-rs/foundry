@@ -104,12 +104,11 @@ pub enum Subcommands {
     GenerateFigSpec,
     #[clap(visible_alias = "cl", about = "Remove the build artifacts and cache directories.")]
     Clean {
-        #[clap(
-            help = "The project's root path. Defaults to the current working directory.",
-            long,
-            value_hint = ValueHint::DirPath,
-            value_name = "PATH"
-        )]
+        /// The project's root path.
+        ///
+        /// By default root of the Git repository, if in one,
+        /// or the current working directory.
+        #[clap(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
         root: Option<PathBuf>,
     },
 

@@ -59,6 +59,22 @@ macro_rules! create_hw_wallets {
     };
 }
 
+/*
+Given a list of Rust struct fields and their attributes (example:
+```rust
+#[clap(long, help = "Does something.")]
+field: bool,
+```),
+create a new list of the same attributes, but with the `help = "<DOC_STRING>"` attribute
+replaced with a doc comment containing `DOC_STRING` (example:
+```rust
+/// Does something.
+#[clap(long)]
+field: bool,
+```
+). NOTE: I am asking you to convert the list yourself, not to create a function that does that.
+*/
+
 #[derive(Parser, Debug, Clone, Serialize, Default)]
 #[cfg_attr(not(doc), allow(missing_docs))]
 #[cfg_attr(
@@ -74,30 +90,31 @@ The wallet options can either be:
 "#
 )]
 pub struct MultiWallet {
+    /// Open an interactive prompt to enter your private key.
+    ///
+    /// Takes a value for the number of keys to enter.
     #[clap(
         long,
         short,
         help_heading = "Wallet options - raw",
-        help = "Open an interactive prompt to enter your private key. Takes a value for the number of keys to enter",
         default_value = "0",
         value_name = "NUM"
     )]
     pub interactives: u32,
 
+    /// Use the provided private keys.
     #[clap(
         long = "private-keys",
         help_heading = "Wallet options - raw",
-        help = "Use the provided private keys.",
         value_name = "RAW_PRIVATE_KEYS",
         value_parser = foundry_common::clap_helpers::strip_0x_prefix,
-        action = ArgAction::Append,
     )]
     pub private_keys: Option<Vec<String>>,
 
+    /// Use the provided private key.
     #[clap(
         long = "private-key",
         help_heading = "Wallet options - raw",
-        help = "Use the provided private key.",
         conflicts_with = "private_keys",
         value_name = "RAW_PRIVATE_KEY",
         value_parser = foundry_common::clap_helpers::strip_0x_prefix,
@@ -114,36 +131,36 @@ pub struct MultiWallet {
     )]
     pub mnemonics: Option<Vec<String>>,
 
+    /// Use a BIP39 passphrases for the mnemonic.
     #[clap(
         long = "mnemonic-passphrases",
         help_heading = "Wallet options - raw",
-        help = "Use a BIP39 passphrases for the mnemonic.",
         value_name = "PASSPHRASE",
         action = ArgAction::Append,
     )]
     pub mnemonic_passphrases: Option<Vec<String>>,
 
+    /// The wallet derivation path. Works with both --mnemonic-path and hardware wallets.
     #[clap(
         long = "mnemonic-derivation-paths",
         alias = "hd-paths",
         help_heading = "Wallet options - raw",
-        help = "The wallet derivation path. Works with both --mnemonic-path and hardware wallets.",
-        value_name = "PATHS",
-        action = ArgAction::Append,
+        value_name = "PATHS"
     )]
     pub hd_paths: Option<Vec<String>>,
 
+    /// Use the private key from the given mnemonic index. Used with --mnemonics.
     #[clap(
         long = "mnemonic-indexes",
         conflicts_with = "hd_paths",
+        requires = "mnemonic-paths",
         help_heading = "Wallet options - raw",
-        help = "Use the private key from the given mnemonic index. Used with --mnemonic-paths.",
         default_value = "0",
-        value_name = "INDEXES",
-        action = ArgAction::Append,
+        value_name = "INDEXES"
     )]
     pub mnemonic_indexes: Option<Vec<u32>>,
 
+    /// Use the keystore in the given folder or file.
     #[clap(
         env = "ETH_KEYSTORE",
         long = "keystore",

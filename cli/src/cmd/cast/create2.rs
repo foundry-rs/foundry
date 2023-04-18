@@ -16,55 +16,49 @@ use std::{str::FromStr, time::Instant};
 /// CLI arguments for `cast create2`.
 #[derive(Debug, Clone, Parser)]
 pub struct Create2Args {
+    /// Prefix for the contract address.
     #[clap(
         long,
         short,
-        help = "Prefix for the contract address.",
         required_unless_present_any = &["ends-with", "matching"],
         value_name = "HEX"
     )]
     starts_with: Option<String>,
-    #[clap(
-        long,
-        short,
-        help = "Suffix for the contract address.",
-        value_name = "HEX",
-        name = "ends-with"
-    )]
+
+    /// Suffix for the contract address.
+    #[clap(long, short, value_name = "HEX")]
     ends_with: Option<String>,
-    #[clap(long, short, help = "Sequence that the address has to match", value_name = "HEX")]
+
+    /// Sequence that the address has to match.
+    #[clap(long, short, value_name = "HEX")]
     matching: Option<String>,
+
+    /// Case sensitive matching.
     #[clap(short, long)]
     case_sensitive: bool,
+
+    /// Address of the contract deployer.
     #[clap(
         short,
         long,
-        help = "Address of the contract deployer.",
         default_value = "0x4e59b44847b379578588920ca78fbf26c0b4956c",
         value_name = "ADDRESS"
     )]
     deployer: Address,
-    #[clap(
-        short,
-        long,
-        help = "Init code of the contract to be deployed.",
-        value_name = "HEX",
-        default_value = ""
-    )]
+
+    /// Init code of the contract to be deployed.
+    #[clap(short, long, value_name = "HEX", default_value = "")]
     init_code: String,
-    #[clap(
-        alias = "ch",
-        long,
-        help = "Init code hash the contract to be deployed.",
-        value_name = "HEX"
-    )]
+
+    /// Init code hash of the contract to be deployed.
+    #[clap(alias = "ch", long, value_name = "HASH")]
     init_code_hash: Option<String>,
 }
 
 #[allow(dead_code)]
 pub struct Create2Output {
-    address: Address,
-    salt: U256,
+    pub address: Address,
+    pub salt: U256,
 }
 
 impl Cmd for Create2Args {

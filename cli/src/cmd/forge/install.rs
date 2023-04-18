@@ -49,13 +49,11 @@ pub struct InstallArgs {
     #[clap(flatten)]
     opts: DependencyInstallOpts,
 
-    #[clap(
-        help = "The project's root path.",
-        long_help = "The project's root path. By default, this is the root directory of the current Git repository, or the current working directory.",
-        long,
-        value_hint = ValueHint::DirPath,
-        value_name = "PATH"
-    )]
+    /// The project's root path.
+    ///
+    /// By default root of the Git repository, if in one,
+    /// or the current working directory.
+    #[clap(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     pub root: Option<PathBuf>,
 }
 

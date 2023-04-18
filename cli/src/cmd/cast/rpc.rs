@@ -26,7 +26,7 @@ pub struct RpcArgs {
     ///
     /// cast rpc eth_getBlockByNumber '["0x123", false]' --raw
     ///     => {"method": "eth_getBlockByNumber", "params": ["0x123", false] ... }
-    #[clap(short = 'w', long)]
+    #[clap(long, short = 'w')]
     raw: bool,
 
     #[clap(flatten)]

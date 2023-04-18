@@ -16,73 +16,48 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Parser, Serialize, Default)]
 #[clap(next_help_heading = "Project options")]
 pub struct ProjectPathsArgs {
-    #[clap(
-        help = "The project's root path.",
-        long_help = "The project's root path. By default, this is the root directory of the current Git repository, or the current working directory.",
-        long,
-        value_hint = ValueHint::DirPath,
-        value_name = "PATH"
-    )]
+    /// The project's root path.
+    ///
+    /// By default root of the Git repository, if in one,
+    /// or the current working directory.
+    #[clap(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     #[serde(skip)]
     pub root: Option<PathBuf>,
 
-    #[clap(
-        env = "DAPP_SRC",
-        help = "The contracts source directory.",
-        long,
-        short = 'C',
-        value_hint = ValueHint::DirPath,
-        value_name = "PATH"
-    )]
+    /// The contracts source directory.
+    #[clap(long, short, value_hint = ValueHint::DirPath, value_name = "PATH")]
     #[serde(rename = "src", skip_serializing_if = "Option::is_none")]
     pub contracts: Option<PathBuf>,
 
-    #[clap(help = "The project's remappings.", long, short = 'R', value_name = "REMAPPINGS")]
+    /// The project's remappings.
+    #[clap(long, short)]
     #[serde(skip)]
     pub remappings: Vec<Remapping>,
 
-    #[clap(
-        help = "The project's remappings from the environment.",
-        long = "remappings-env",
-        value_name = "ENV"
-    )]
+    /// The project's remappings from the environment.
+    #[clap(long, value_name = "ENV")]
     #[serde(skip)]
     pub remappings_env: Option<String>,
 
-    #[clap(
-        help = "The path to the compiler cache.",
-        long = "cache-path",
-        value_hint = ValueHint::DirPath,
-        value_name = "PATH"
-    )]
+    /// The path to the compiler cache.
+    #[clap(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_path: Option<PathBuf>,
 
-    #[clap(
-        help = "The path to the library folder.",
-        long,
-        value_hint = ValueHint::DirPath,
-        value_name = "PATH"
-    )]
+    /// The path to the library folder.
+    #[clap(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     #[serde(rename = "libs", skip_serializing_if = "Vec::is_empty")]
     pub lib_paths: Vec<PathBuf>,
 
-    #[clap(
-        help = "Use the Hardhat-style project layout.",
-        long_help = "This a convenience flag and is the same as passing `--contracts contracts --lib-paths node_modules`.",
-        long,
-        conflicts_with = "contracts",
-        visible_alias = "hh"
-    )]
+    /// Use the Hardhat-style project layout.
+    ///
+    /// This is the same as using: `--contracts contracts --lib-paths node_modules`.
+    #[clap(long, conflicts_with = "contracts", visible_alias = "hh")]
     #[serde(skip)]
     pub hardhat: bool,
 
-    #[clap(
-        help = "Path to the config file.",
-        long = "config-path",
-        value_hint = ValueHint::FilePath,
-        value_name = "FILE"
-    )]
+    /// Path to the config file.
+    #[clap(long, value_hint = ValueHint::FilePath, value_name = "FILE")]
     #[serde(skip)]
     pub config_path: Option<PathBuf>,
 }

@@ -123,6 +123,13 @@ impl FromStr for Dependency {
     }
 }
 
+impl Dependency {
+    /// Returns the name of the dependency, prioritizing the alias if it exists.
+    pub fn name(&self) -> &String {
+        self.alias.as_ref().unwrap_or(&self.name)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

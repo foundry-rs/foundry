@@ -69,19 +69,21 @@ pub struct SnapshotArgs {
     check: Option<Option<PathBuf>>,
 
     // Hidden because there is only one option
-    #[clap(help = "How to format the output.", long, hide(true))]
+    /// How to format the output.
+    #[clap(long, hide(true))]
     format: Option<Format>,
 
+    /// Output file for the snapshot.
     #[clap(
-        help = "Output file for the snapshot.",
-        default_value = ".gas-snapshot",
         long,
-        value_name = "SNAPSHOT_FILE"
+        default_value = ".gas-snapshot",
+        value_hint = ValueHint::FilePath,
+        value_name = "FILE",
     )]
     snap: PathBuf,
 
+    /// Tolerates gas deviations up to the specified percentage.
     #[clap(
-        help = "Tolerates gas deviations up to the specified percentage.",
         long,
         value_parser = RangedU64ValueParser::<u32>::new().range(0..100),
         value_name = "SNAPSHOT_THRESHOLD"

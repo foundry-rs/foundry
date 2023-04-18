@@ -6,7 +6,7 @@ use crate::cmd::{
     },
     Cmd, LoadConfig,
 };
-use clap::{ArgAction, Parser};
+use clap::Parser;
 use ethers::solc::{Project, ProjectCompileOutput};
 use foundry_common::{
     compile,
@@ -60,19 +60,20 @@ pub struct BuildArgs {
     #[serde(flatten)]
     pub args: CoreBuildArgs,
 
-    #[clap(help = "Print compiled contract names.", long = "names")]
+    /// Print compiled contract names.
+    #[clap(long = "names")]
     #[serde(skip)]
     pub names: bool,
 
-    #[clap(help = "Print compiled contract sizes.", long = "sizes")]
+    /// Print compiled contract sizes.
+    #[clap(long = "sizes")]
     #[serde(skip)]
     pub sizes: bool,
 
-    #[clap(
-        long,
-        num_args(1..),
-        action = ArgAction::Append,
-        help = "Skip building whose names contain SKIP. `test` and `script` are aliases for `.t.sol` and `.s.sol`. (this flag can be used multiple times)")]
+    /// Skip building files whose names contain the given filter.
+    ///
+    /// `test` and `script` are aliases for `.t.sol` and `.s.sol`.
+    #[clap(long)]
     #[serde(skip)]
     pub skip: Option<Vec<SkipBuildFilter>>,
 

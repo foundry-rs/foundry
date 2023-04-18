@@ -27,22 +27,16 @@ pub use multi_wallet::*;
 
 pub mod error;
 
+/// The wallet options can either be:
+/// 1. Ledger
+/// 2. Trezor
+/// 3. Mnemonic (via file path)
+/// 4. Keystore (via file path)
+/// 5. Private Key (cleartext in CLI)
+/// 6. Private Key (interactively via secure prompt)
+/// 7. AWS KMS
 #[derive(Parser, Debug, Default, Clone, Serialize)]
-#[cfg_attr(not(doc), allow(missing_docs))]
-#[cfg_attr(
-    doc,
-    doc = r#"
-The wallet options can either be:
-1. Ledger
-2. Trezor
-3. Mnemonic (via file path)
-4. Keystore (via file path)
-5. Private Key (cleartext in CLI)
-6. Private Key (interactively via secure prompt)
-7. AWS KMS
-"#
-)]
-#[clap(next_help_heading = "Wallet options")]
+#[clap(next_help_heading = "Wallet options", about = None, long_about = None)]
 pub struct Wallet {
     /// The sender account
     #[clap(

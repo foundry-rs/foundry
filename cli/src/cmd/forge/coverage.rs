@@ -6,7 +6,7 @@ use crate::{
     },
     utils::{self, p_println, STATIC_FUZZ_SEED},
 };
-use clap::{ArgAction, Parser, ValueEnum};
+use clap::{Parser, ValueEnum};
 use ethers::{
     abi::Address,
     prelude::{
@@ -39,13 +39,10 @@ foundry_config::impl_figment_convert!(CoverageArgs, opts, evm_opts);
 /// CLI arguments for `forge coverage`.
 #[derive(Debug, Clone, Parser)]
 pub struct CoverageArgs {
-    #[clap(
-        long,
-        value_enum,
-        action = ArgAction::Append,
-        default_value = "summary",
-        help = "The report type to use for coverage. This flag can be used multiple times."
-    )]
+    /// The report type to use for coverage.
+    ///
+    /// This flag can be used multiple times.
+    #[clap(long, value_enum, default_value = "summary")]
     report: Vec<CoverageReportKind>,
 
     #[clap(flatten)]

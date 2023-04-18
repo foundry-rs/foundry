@@ -19,22 +19,24 @@ pub type GeneratedWallet = (SigningKey, H160);
 /// CLI arguments for `cast wallet vanity`.
 #[derive(Debug, Clone, Parser)]
 pub struct VanityArgs {
+    /// Prefix for the vanity address.
     #[clap(
         long,
-        help = "Prefix for the vanity address.",
         required_unless_present = "ends_with",
-        value_parser = HexAddressValidator::default(),
+        value_parser = HexAddressValidator,
         value_name = "HEX"
     )]
     pub starts_with: Option<String>,
-    #[clap(long, help = "Suffix for the vanity address.", value_parser = HexAddressValidator::default(), value_name = "HEX")]
+
+    /// Suffix for the vanity address.
+    #[clap(long, value_parser = HexAddressValidator, value_name = "HEX")]
     pub ends_with: Option<String>,
-    #[clap(
-        long,
-        help = "Generate a vanity contract address created by the generated keypair with the specified nonce.",
-        value_name = "NONCE"
-    )]
-    pub nonce: Option<u64>, /* 2^64-1 is max possible nonce per https://eips.ethereum.org/EIPS/eip-2681 */
+
+    // 2^64-1 is max possible nonce per [eip-2681](https://eips.ethereum.org/EIPS/eip-2681).
+    /// Generate a vanity contract address created by the generated keypair with the specified
+    /// nonce.
+    #[clap(long)]
+    pub nonce: Option<u64>,
 }
 
 impl Cmd for VanityArgs {
@@ -283,7 +285,6 @@ impl VanityMatcher for RegexMatcher {
 
 /// Parse 40 byte addresses
 #[derive(Copy, Clone, Debug, Default)]
-#[non_exhaustive]
 pub struct HexAddressValidator;
 
 impl TypedValueParser for HexAddressValidator {

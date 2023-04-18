@@ -12,23 +12,19 @@ use std::str::FromStr;
 
 #[derive(Debug, Parser)]
 pub struct CallArgs {
-    #[clap(
-        help = "The destination of the transaction.", 
-        value_name = "TO",
-        value_parser = NameOrAddress::from_str
-    )]
+    /// The destination of the transaction.
+    #[clap(value_parser = NameOrAddress::from_str)]
     to: Option<NameOrAddress>,
 
-    #[clap(help = "The signature of the function to call.", value_name = "SIG")]
+    /// The signature of the function to call.
     sig: Option<String>,
 
-    #[clap(help = "The arguments of the function to call.", value_name = "ARGS")]
+    /// The arguments of the function to call.
     args: Vec<String>,
 
+    /// Data for the transaction.
     #[clap(
         long,
-        help = "Data for the transaction.",
-        value_name = "DATA",
         value_parser = foundry_common::clap_helpers::strip_0x_prefix,
         conflicts_with_all = &["sig", "args"]
     )]
@@ -40,41 +36,40 @@ pub struct CallArgs {
     #[clap(flatten)]
     eth: EthereumOpts,
 
-    #[clap(
-        long,
-        short,
-        help = "The block height you want to query at.",
-        long_help = "The block height you want to query at. Can also be the tags earliest, finalized, safe, latest, or pending.",
-        value_name = "BLOCK"
-    )]
+    /// The block height to to query at.
+    ///
+    /// Can also be the tags earliest, finalized, safe, latest, or pending.
+    #[clap(long, short)]
     block: Option<BlockId>,
 
+    /// Simulate a contract deployment.
     #[clap(subcommand)]
     command: Option<CallSubcommands>,
 }
 
 #[derive(Debug, Parser)]
 pub enum CallSubcommands {
-    #[clap(name = "--create", about = "Simulate a contract deployment.")]
+    #[clap(name = "--create")]
     Create {
-        #[clap(help = "Bytecode of contract.", value_name = "CODE")]
+        /// Bytecode of contract.
         code: String,
-        #[clap(help = "The signature of the constructor.", value_name = "SIG")]
-        sig: Option<String>,
-        #[clap(help = "Constructor arguments", value_name = "ARGS")]
-        args: Vec<String>,
-        #[clap(
-            long,
-            help = "Ether to send in the transaction.",
-            long_help = r#"Ether to send in the transaction, either specified in wei, or as a string with a unit type.
 
-Examples: 1ether, 10gwei, 0.01ether"#,
-            value_parser = parse_ether_value,
-            value_name = "VALUE"
-        )]
+        /// The signature of the constructor.
+        sig: Option<String>,
+
+        /// The arguments of the constructor.
+        args: Vec<String>,
+
+        /// Ether to send in the transaction.
+        ///
+        /// Either specified in wei, or as a string with a unit type.
+        ///
+        /// Examples: 1ether, 10gwei, 0.01ether
+        #[clap(long, value_parser = parse_ether_value)]
         value: Option<U256>,
     },
 }
+
 impl CallArgs {
     pub async fn run(self) -> eyre::Result<()> {
         let CallArgs { to, sig, args, data, tx, eth, command, block } = self;
