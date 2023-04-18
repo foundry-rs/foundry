@@ -42,16 +42,17 @@ impl ConfParser for InvariantConfig {
         format!("forge-config:{profile}.invariant.")
     }
 
-    fn parse<S: AsRef<str>>(text: S) -> Result<Option<Self>, ConfParserError>
+    fn try_merge<S: AsRef<str>>(&self, text: S) -> Result<Self, ConfParserError>
     where
         Self: Sized + 'static,
     {
         let vars: Vec<(String, String)> = Self::config_variables::<S>(text);
         if vars.is_empty() {
-            return Ok(None)
+            return Ok(*self)
         }
 
-        let mut conf = Self::default();
+        let mut conf = *self;
+
         for pair in vars {
             let key = pair.0;
             let value = pair.1;
@@ -63,13 +64,13 @@ impl ConfParser for InvariantConfig {
                 _ => Err(ConfParserError::InvalidConfigProperty(key.to_string()))?,
             }
         }
-        Ok(Some(conf))
+        Ok(conf)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{conf_parser::ConfParser, InvariantConfig};
+    use crate::{inline::ConfParser, InvariantConfig};
 
     #[test]
     fn parse_config_default_profile() -> eyre::Result<()> {
@@ -79,8 +80,8 @@ mod tests {
             forge-config: default.invariant.fail-on-revert = true
             forge-config: default.invariant.call-override = false
         "#;
-
-        let parsed = InvariantConfig::parse(conf)?.expect("Parsed config exists");
+        let base_conf: InvariantConfig = InvariantConfig::default();
+        let parsed: InvariantConfig = base_conf.try_merge(conf).expect("Valid config");
         assert_eq!(parsed.runs, 1024);
         assert_eq!(parsed.depth, 30);
         assert_eq!(parsed.fail_on_revert, true);
@@ -100,7 +101,8 @@ mod tests {
                 forge-config: ci.invariant.call-override = false
             "#;
 
-            let parsed = InvariantConfig::parse(conf).unwrap().expect("Parsed config exists");
+            let base_conf: InvariantConfig = InvariantConfig::default();
+            let parsed: InvariantConfig = base_conf.try_merge(conf).expect("Valid config");
             assert_eq!(parsed.runs, 1024);
             assert_eq!(parsed.depth, 30);
             assert_eq!(parsed.fail_on_revert, true);
@@ -112,7 +114,8 @@ mod tests {
     #[test]
     fn unrecognized_property() {
         let conf = "forge-config: default.invariant.unknownprop = 200";
-        if let Err(e) = InvariantConfig::parse(conf) {
+        let base_conf: InvariantConfig = InvariantConfig::default();
+        if let Err(e) = base_conf.try_merge(conf) {
             assert_eq!(e.to_string(), "'unknownprop' is not a valid config property");
         } else {
             assert!(false)

@@ -1,3 +1,5 @@
+use ethers::solc::ProjectCompileOutput;
+use foundry_config::{ConfParserError, FuzzConfig, InlineConfig, InvariantConfig};
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use tracing::trace;
 
@@ -24,12 +26,18 @@ pub mod result;
 pub use foundry_evm::*;
 
 /// Metadata on how to run fuzz/invariant tests
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct TestOptions {
-    /// The fuzz test configuration
-    pub fuzz: foundry_config::FuzzConfig,
-    /// The invariant test configuration
-    pub invariant: foundry_config::InvariantConfig,
+    /// The base "fuzz" test configuration. To be used as a fallback in case
+    /// no more specific configs are found for a given run.
+    pub fuzz: FuzzConfig,
+    /// The base "invariant" test configuration. To be used as a fallback in case
+    /// no more specific configs are found for a given run.
+    pub invariant: InvariantConfig,
+    /// Contains per-test specific "fuzz" configurations.
+    pub inline_fuzz: InlineConfig<FuzzConfig>,
+    /// Contains per-test specific "invariant" configurations.
+    pub inline_invariant: InlineConfig<InvariantConfig>,
 }
 
 impl TestOptions {
@@ -59,6 +67,53 @@ impl TestOptions {
         } else {
             trace!(target: "forge::test", "building stochastic fuzzer");
             TestRunner::new(cfg)
+        }
+    }
+}
+
+// TODO: Document this structure
+#[derive(Default)]
+pub struct TestOptionsBuilder {
+    fuzz: Option<FuzzConfig>,
+    invariant: Option<InvariantConfig>,
+    output: Option<ProjectCompileOutput>,
+}
+
+impl TestOptionsBuilder {
+    #[must_use = "A base 'fuzz' config must be provided"]
+    pub fn fuzz(mut self, conf: FuzzConfig) -> Self {
+        self.fuzz = Some(conf);
+        self
+    }
+
+    #[must_use = "A base 'invariant' config must be provided"]
+    pub fn invariant(mut self, conf: InvariantConfig) -> Self {
+        self.invariant = Some(conf);
+        self
+    }
+
+    pub fn compile_output(mut self, output: &ProjectCompileOutput) -> Self {
+        self.output = Some(output.clone());
+        self
+    }
+
+    pub fn build(self) -> Result<TestOptions, ConfParserError> {
+        let base_fuzz = self.fuzz.unwrap_or_default();
+        let base_invariant = self.invariant.unwrap_or_default();
+
+        match self.output {
+            Some(compile_output) => Ok(TestOptions {
+                fuzz: base_fuzz,
+                invariant: base_invariant,
+                inline_fuzz: InlineConfig::try_from((&compile_output, &base_fuzz))?,
+                inline_invariant: InlineConfig::try_from((&compile_output, &base_invariant))?,
+            }),
+            None => Ok(TestOptions {
+                fuzz: base_fuzz,
+                invariant: base_invariant,
+                inline_fuzz: InlineConfig::default(),
+                inline_invariant: InlineConfig::default(),
+            }),
         }
     }
 }

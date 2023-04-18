@@ -151,7 +151,7 @@ impl MultiContractRunner {
                     executor,
                     deploy_code.clone(),
                     libs,
-                    (filter, test_options),
+                    (filter, test_options.clone()),
                 )?;
 
                 tracing::trace!(contract= ?identifier, "executed all tests in contract");

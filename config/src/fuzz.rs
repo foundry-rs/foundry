@@ -46,16 +46,17 @@ impl ConfParser for FuzzConfig {
         format!("forge-config:{profile}.fuzz.")
     }
 
-    fn parse<S: AsRef<str>>(text: S) -> Result<Option<Self>, ConfParserError>
+    fn try_merge<S: AsRef<str>>(&self, text: S) -> Result<Self, ConfParserError>
     where
         Self: Sized + 'static,
     {
         let vars: Vec<(String, String)> = Self::config_variables::<S>(text);
         if vars.is_empty() {
-            return Ok(None)
+            return Ok(*self)
         }
 
-        let mut conf = Self::default();
+        let mut conf = *self;
+
         for pair in vars {
             let key = pair.0;
             let value = pair.1;
@@ -65,7 +66,7 @@ impl ConfParser for FuzzConfig {
                 _ => Err(ConfParserError::InvalidConfigProperty(key.to_string()))?,
             }
         }
-        Ok(Some(conf))
+        Ok(conf)
     }
 }
 
@@ -107,13 +108,14 @@ impl Default for FuzzDictionaryConfig {
 
 #[cfg(test)]
 mod tests {
-    use crate::{conf_parser::ConfParser, FuzzConfig};
+    use crate::{inline::ConfParser, FuzzConfig};
     use solang_parser::pt::Comment;
 
     #[test]
     fn parse_config_default_profile() -> eyre::Result<()> {
         let conf = "forge-config: default.fuzz.runs = 1024";
-        let parsed = FuzzConfig::parse(conf)?.expect("Parsed config exists");
+        let base_conf: FuzzConfig = FuzzConfig::default();
+        let parsed: FuzzConfig = base_conf.try_merge(conf).expect("Valid config");
         assert_eq!(parsed.runs, 1024);
         Ok(())
     }
@@ -126,7 +128,8 @@ mod tests {
                 forge-config: default.fuzz.runs = 1024
                 forge-config: ci.fuzz.runs = 2048"#;
 
-            let parsed = FuzzConfig::parse(conf).unwrap().expect("Parsed config exists");
+            let base_conf: FuzzConfig = FuzzConfig::default();
+            let parsed: FuzzConfig = base_conf.try_merge(conf).expect("Valid config");
             assert_eq!(parsed.runs, 2048);
             Ok(())
         });
@@ -135,7 +138,8 @@ mod tests {
     #[test]
     fn unrecognized_property() {
         let conf = "forge-config: default.fuzz.unknownprop = 200";
-        if let Err(e) = FuzzConfig::parse(conf) {
+        let base_config = FuzzConfig::default();
+        if let Err(e) = base_config.try_merge(conf) {
             assert_eq!(e.to_string(), "'unknownprop' is not a valid config property");
         } else {
             assert!(false)
@@ -161,7 +165,8 @@ mod tests {
         let comm = &comments[0];
         match comm {
             Comment::DocBlock(_, text) => {
-                let config = FuzzConfig::parse(text)?.expect("Valid config");
+                let base_config = FuzzConfig::default();
+                let config: FuzzConfig = base_config.try_merge(text).expect("Valid config");
                 assert_eq!(config.runs, 1023);
                 assert_eq!(config.max_test_rejects, 521);
             }

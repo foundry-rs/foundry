@@ -18,7 +18,7 @@ use forge::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
         CallTraceDecoderBuilder, TraceKind,
     },
-    MultiContractRunner, MultiContractRunnerBuilder, TestOptions,
+    MultiContractRunner, MultiContractRunnerBuilder, TestOptions, TestOptionsBuilder,
 };
 use foundry_common::{
     compile::{self, ProjectCompiler},
@@ -121,8 +121,6 @@ impl TestArgs {
         // Merge all configs
         let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
-        let test_options = TestOptions { fuzz: config.fuzz, invariant: config.invariant };
-
         let mut filter = self.filter(&config);
 
         trace!(target: "forge::test", ?filter, "using filter");
@@ -148,6 +146,12 @@ impl TestArgs {
             compiler.compile(&project)
         }?;
 
+        let test_options: TestOptions = TestOptionsBuilder::default()
+            .fuzz(config.fuzz)
+            .invariant(config.invariant)
+            .compile_output(&output)
+            .build()?;
+
         // Determine print verbosity and executor verbosity
         let verbosity = evm_opts.verbosity;
         if self.gas_report && evm_opts.verbosity < 3 {
@@ -165,7 +169,7 @@ impl TestArgs {
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_cheats_config(CheatsConfig::new(&config, &evm_opts))
-            .with_test_options(test_options)
+            .with_test_options(test_options.clone())
             .build(project.paths.root, output, env, evm_opts)?;
 
         if self.debug.is_some() {

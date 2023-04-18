@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, HashMap};
 /// `T` is the configuration type, and is bound to the [`ConfParser`] trait. Known
 /// implementations of [`ConfParser`] include [`FuzzConfig`](super::FuzzConfig) and
 /// [`InvariantConfig`](super::InvariantConfig))
+#[derive(Default, Debug, Clone)]
 pub struct InlineConfig<T>
 where
     T: ConfParser + 'static,
@@ -25,31 +26,37 @@ where
     T: ConfParser + 'static,
 {
     /// Returns an inline configuration, if any, for `contract_name` and `fn_name`. <br>
-    /// - `contract_name` The name of the contract containing the annotated function. Note this
-    ///   the actual contract name, not the solidity file name.
+    /// - `contract_name` The name of the contract containing the annotated function. Note this the
+    ///   actual contract name, not the solidity file name.
     /// - `fn_name` The name of the function annotated with an inline configuration.
     pub fn get_config<S: Into<String>>(&self, contract_name: S, fn_name: S) -> Option<&T> {
         self.configs.get(&(contract_name.into(), fn_name.into()))
     }
 }
 
-impl<'a, T> TryFrom<&'a ProjectCompileOutput> for InlineConfig<T>
+impl<'a, T> TryFrom<(&'a ProjectCompileOutput, &'a T)> for InlineConfig<T>
 where
     T: ConfParser + 'static,
 {
     type Error = ConfParserError;
 
-    /// Tries to detect inline configurations from the project compile output.
-    /// This object is known to emit function comments, that we can try to parse
-    /// at our convenience, to detect inline configurations.
-    fn try_from(output: &'a ProjectCompileOutput) -> Result<Self, Self::Error> {
+    /// Tries to create an instance of `Self`, detecting inline configurations from the project
+    /// compile output. The second item of the input tuple is used as a base configuration.
+    /// The aim is to inherit from "base" all the config parameters not explicitly derived from the
+    /// compile output.
+    ///
+    /// NOTE: `ProjectCompileOutput` is known to emit function comments, that we can try to parse
+    /// at our convenience, to detect inline test configurations.
+    fn try_from(value: (&'a ProjectCompileOutput, &'a T)) -> Result<Self, Self::Error> {
         let mut configs: HashMap<(String, String), T> = HashMap::new();
+        let compile_output = value.0;
+        let base_conf = value.1;
 
-        for artifact in output.artifacts() {
+        for artifact in compile_output.artifacts() {
             if let Some(ast) = artifact.1.ast.as_ref() {
                 let contract_name: String = artifact.0;
                 for node in ast.nodes.iter() {
-                    try_apply(&mut configs, &contract_name, node)?;
+                    try_apply(base_conf, &mut configs, &contract_name, node)?;
                 }
             }
         }
@@ -63,6 +70,7 @@ where
 /// `map` under the (contract name, function name) key.
 /// This function may result in parsing errors (see [`ConfParserError`]).
 fn try_apply<T>(
+    base_conf: &T,
     map: &mut HashMap<(String, String), T>,
     contract_name: &str,
     node: &Node,
@@ -72,13 +80,12 @@ where
 {
     for n in node.nodes.iter() {
         if let Some((fn_name, fn_docs)) = get_fn_data(n) {
-            if let Some(config) = T::parse(fn_docs)? {
-                let key = (contract_name.into(), fn_name);
-                map.insert(key, config);
-            }
+            let inline_conf = base_conf.try_merge(fn_docs)?;
+            let key = (contract_name.into(), fn_name);
+            map.insert(key, inline_conf);
         }
 
-        try_apply(map, contract_name, n)?;
+        try_apply(base_conf, map, contract_name, n)?;
     }
     Ok(())
 }
