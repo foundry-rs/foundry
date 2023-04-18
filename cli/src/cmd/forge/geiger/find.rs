@@ -148,7 +148,7 @@ mod tests {
 
         let count = find_cheatcodes_in_string(s).unwrap();
         assert_eq!(count.ffi.len(), 1);
-        assert!(count.is_empty());
+        assert!(!count.is_empty());
     }
 
     #[test]
@@ -164,6 +164,6 @@ mod tests {
 
         let count = find_cheatcodes_in_string(s).unwrap();
         assert_eq!(count.ffi.len(), 1);
-        assert!(count.is_empty());
+        assert!(!count.is_empty());
     }
 }
