@@ -1,7 +1,6 @@
-//! Visitor helpers to traverse the [solang](https://github.com/hyperledger-labs/solang) Solidity Parse Tree
+//! Visitor helpers to traverse the [solang Solidity Parse Tree](solang_parser::pt).
 
-use crate::solang_ext::*;
-use solang_parser::pt::*;
+use crate::solang_ext::pt::*;
 
 /// A trait that is invoked while traversing the Solidity Parse Tree.
 /// Each method of the [Visitor] trait is a hook that can be potentially overridden.
@@ -341,7 +340,7 @@ pub trait Visitor {
         _expr: &mut Option<&mut YulExpression>,
     ) -> Result<(), Self::Error>
     where
-        T: Visitable + LineOfCode,
+        T: Visitable + CodeLocation,
     {
         self.visit_source(loc)
     }
@@ -393,9 +392,9 @@ pub trait Visitor {
     }
 }
 
-/// All `solang::pt::*` types, such as [Statement](solang::pt::Statement) should implement the
-/// [Visitable] trait that accepts a trait [Visitor] implementation, which has various callback
-/// handles for Solidity Parse Tree nodes.
+/// All [`solang_parser::pt`] types, such as [Statement], should implement the [Visitable] trait
+/// that accepts a trait [Visitor] implementation, which has various callback handles for Solidity
+/// Parse Tree nodes.
 ///
 /// We want to take a `&mut self` to be able to implement some advanced features in the future such
 /// as modifying the Parse Tree before formatting it.
@@ -576,7 +575,7 @@ impl Visitable for Expression {
     where
         V: Visitor,
     {
-        v.visit_expr(LineOfCode::loc(self), self)
+        v.visit_expr(self.loc(), self)
     }
 }
 
