@@ -73,7 +73,7 @@ impl TestOptions {
     }
 }
 
-// TODO: Document this structure
+/// Builder utility to create a [`TestOptions`] instance.
 #[derive(Default)]
 pub struct TestOptionsBuilder {
     fuzz: Option<FuzzConfig>,
@@ -82,23 +82,35 @@ pub struct TestOptionsBuilder {
 }
 
 impl TestOptionsBuilder {
+
+    /// Sets a [`FuzzConfig`] to be used as base "fuzz" configuration.
     #[must_use = "A base 'fuzz' config must be provided"]
     pub fn fuzz(mut self, conf: FuzzConfig) -> Self {
         self.fuzz = Some(conf);
         self
     }
 
+    /// Sets a [`InvariantConfig`] to be used as base "invariant" configuration.
     #[must_use = "A base 'invariant' config must be provided"]
     pub fn invariant(mut self, conf: InvariantConfig) -> Self {
         self.invariant = Some(conf);
         self
     }
 
+    /// Sets a project compiler output instance. This is used to extract
+    /// inline test configurations that override `self.fuzz` and `self.invariant` 
+    /// specs when necessary.
     pub fn compile_output(mut self, output: &ProjectCompileOutput) -> Self {
         self.output = Some(output.clone());
         self
     }
 
+    /// Creates an instance of [`TestOptions`]. This takes care of creating "fuzz" and
+    /// "invariant" fallbacks, and extracting all inline test configs, if available.
+    /// 
+    /// `root` is a reference to the user's project root dir. This is essential
+    /// to determine the base path of generated contract identifiers. This is to provide correct
+    /// matchers for inline test configs.
     pub fn build(self, root: impl AsRef<Path>) -> Result<TestOptions, ConfParserError> {
         let base_fuzz = self.fuzz.unwrap_or_default();
         let base_invariant = self.invariant.unwrap_or_default();
