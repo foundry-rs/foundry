@@ -295,6 +295,12 @@ impl Backend {
         Ok(())
     }
 
+    /// If set to true will make every account impersonated
+    pub async fn auto_impersonate_account(&self, enabled: bool) -> DatabaseResult<()> {
+        self.cheats.set_auto_impersonate_account(enabled);
+        Ok(())
+    }
+
     /// Returns the configured fork, if any
     pub fn get_fork(&self) -> Option<&ClientFork> {
         self.fork.as_ref()
@@ -1162,7 +1168,12 @@ impl Backend {
             let to_block =
                 self.convert_block_number(filter.block_option.get_to_block().copied()).min(best);
             let from_block =
-                self.convert_block_number(filter.block_option.get_from_block().copied()).min(best);
+                self.convert_block_number(filter.block_option.get_from_block().copied());
+            if from_block > best {
+                // requested log range does not exist yet
+                return Ok(vec![])
+            }
+
             self.logs_for_range(&filter, from_block, to_block).await
         }
     }

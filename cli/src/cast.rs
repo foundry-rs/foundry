@@ -2,7 +2,6 @@ use cast::{Cast, SimpleCast, TxBuilder};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use ethers::{
-    abi::HumanReadableParser,
     core::types::{BlockId, BlockNumber::Latest, H256},
     providers::Middleware,
     types::Address,
@@ -24,6 +23,7 @@ use foundry_common::{
 };
 use foundry_config::Config;
 use rustc_hex::ToHex;
+use std::time::Instant;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -181,10 +181,19 @@ async fn main() -> eyre::Result<()> {
             let calldata = stdin::unwrap_line(calldata)?;
             println!("{}", pretty_calldata(&calldata, offline).await?);
         }
-        Subcommands::Sig { sig } => {
+        Subcommands::Sig { sig, optimize } => {
             let sig = stdin::unwrap_line(sig)?;
-            let selector = HumanReadableParser::parse_function(&sig)?.short_signature();
-            println!("0x{}", hex::encode(selector));
+            if optimize.is_none() {
+                println!("{}", SimpleCast::get_selector(&sig, None)?.0);
+            } else {
+                println!("Starting to optimize signature...");
+                let start_time = Instant::now();
+                let (selector, signature) = SimpleCast::get_selector(&sig, optimize)?;
+                let elapsed_time = start_time.elapsed();
+                println!("Successfully generated in {} seconds", elapsed_time.as_secs());
+                println!("Selector: {}", selector);
+                println!("Optimized signature: {}", signature);
+            }
         }
 
         // Blockchain & RPC queries

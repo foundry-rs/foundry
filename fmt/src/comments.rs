@@ -1,7 +1,4 @@
-use crate::{
-    inline_config::{InlineConfigItem, InvalidInlineConfigItem},
-    solang_ext::*,
-};
+use crate::inline_config::{InlineConfigItem, InvalidInlineConfigItem};
 use itertools::Itertools;
 use solang_parser::pt::*;
 use std::collections::VecDeque;

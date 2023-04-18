@@ -263,6 +263,9 @@ impl EthApi {
             EthRequest::StopImpersonatingAccount(addr) => {
                 self.anvil_stop_impersonating_account(addr).await.to_rpc_result()
             }
+            EthRequest::AutoImpersonateAccount(enable) => {
+                self.anvil_auto_impersonate_account(enable).await.to_rpc_result()
+            }
             EthRequest::GetAutoMine(()) => self.anvil_get_auto_mine().to_rpc_result(),
             EthRequest::Mine(blocks, interval) => {
                 self.anvil_mine(blocks, interval).await.to_rpc_result()
@@ -1348,6 +1351,15 @@ impl EthApi {
     pub async fn anvil_stop_impersonating_account(&self, address: Address) -> Result<()> {
         node_info!("anvil_stopImpersonatingAccount");
         self.backend.stop_impersonating(address).await?;
+        Ok(())
+    }
+
+    /// If set to true will make every account impersonated
+    ///
+    /// Handler for ETH RPC call: `anvil_autoImpersonateAccount`
+    pub async fn anvil_auto_impersonate_account(&self, enabled: bool) -> Result<()> {
+        node_info!("anvil_autoImpersonateAccount");
+        self.backend.auto_impersonate_account(enabled).await?;
         Ok(())
     }
 
