@@ -92,6 +92,7 @@ ethers::contract::abigen!(
             getCode(string)
             getDeployedCode(string)
             label(address,string)
+            getLabel(address)(string)
             assume(bool)
             setNonce(address,uint64)
             getNonce(address)
