@@ -34,6 +34,19 @@ contract InvariantInlineConf is DSTest {
     /// forge-config: default.invariant.fail-on-revert = false
     /// forge-config: default.invariant.call-override = true
     function invariant_neverFalse() public {
-        require(inv.flag1(), "false.");
+        require(true, "this is not going to revert");
+    }
+}
+
+contract InvariantInlineConf2 is DSTest {
+    InvariantBreaker inv;
+
+    function setUp() public {
+        inv = new InvariantBreaker();
+    }
+
+    /// forge-config: default.invariant.runs = 42
+    function invariant_neverFalse() public {
+        require(true, "this is not going to revert");
     }
 }

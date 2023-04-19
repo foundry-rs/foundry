@@ -46,13 +46,13 @@ impl ConfParser for FuzzConfig {
         format!("forge-config:{profile}.fuzz.")
     }
 
-    fn try_merge<S: AsRef<str>>(&self, text: S) -> Result<Self, ConfParserError>
+    fn try_merge<S: AsRef<str>>(&self, text: S) -> Result<Option<Self>, ConfParserError>
     where
         Self: Sized + 'static,
     {
         let vars: Vec<(String, String)> = Self::config_variables::<S>(text);
         if vars.is_empty() {
-            return Ok(*self)
+            return Ok(None)
         }
 
         let mut conf = *self;
@@ -66,7 +66,7 @@ impl ConfParser for FuzzConfig {
                 _ => Err(ConfParserError::InvalidConfigProperty(key.to_string()))?,
             }
         }
-        Ok(conf)
+        Ok(Some(conf))
     }
 }
 
@@ -112,12 +112,11 @@ mod tests {
     use solang_parser::pt::Comment;
 
     #[test]
-    fn parse_config_default_profile() -> eyre::Result<()> {
+    fn parse_config_default_profile() {
         let conf = "forge-config: default.fuzz.runs = 1024";
         let base_conf: FuzzConfig = FuzzConfig::default();
-        let parsed: FuzzConfig = base_conf.try_merge(conf).expect("Valid config");
+        let parsed: FuzzConfig = base_conf.try_merge(conf).unwrap().expect("Valid config");
         assert_eq!(parsed.runs, 1024);
-        Ok(())
     }
 
     #[test]
@@ -129,7 +128,7 @@ mod tests {
                 forge-config: ci.fuzz.runs = 2048"#;
 
             let base_conf: FuzzConfig = FuzzConfig::default();
-            let parsed: FuzzConfig = base_conf.try_merge(conf).expect("Valid config");
+            let parsed: FuzzConfig = base_conf.try_merge(conf).unwrap().expect("Valid config");
             assert_eq!(parsed.runs, 2048);
             Ok(())
         });
@@ -147,7 +146,7 @@ mod tests {
     }
 
     #[test]
-    fn e2e() -> eyre::Result<()> {
+    fn e2e() {
         use solang_parser::parse;
         let code = r#"
             contract FuzzTestContract {
@@ -166,7 +165,8 @@ mod tests {
         match comm {
             Comment::DocBlock(_, text) => {
                 let base_config = FuzzConfig::default();
-                let config: FuzzConfig = base_config.try_merge(text).expect("Valid config");
+                let config: FuzzConfig =
+                    base_config.try_merge(text).unwrap().expect("Valid config");
                 assert_eq!(config.runs, 1023);
                 assert_eq!(config.max_test_rejects, 521);
             }
@@ -174,6 +174,5 @@ mod tests {
                 assert!(false); // Force test to fail
             }
         }
-        Ok(())
     }
 }

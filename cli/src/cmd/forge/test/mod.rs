@@ -147,7 +147,7 @@ impl TestArgs {
         }?;
 
         let project_root = &project.paths.root;
-        
+
         let test_options: TestOptions = TestOptionsBuilder::default()
             .fuzz(config.fuzz)
             .invariant(config.invariant)

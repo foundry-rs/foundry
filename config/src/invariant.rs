@@ -42,13 +42,13 @@ impl ConfParser for InvariantConfig {
         format!("forge-config:{profile}.invariant.")
     }
 
-    fn try_merge<S: AsRef<str>>(&self, text: S) -> Result<Self, ConfParserError>
+    fn try_merge<S: AsRef<str>>(&self, text: S) -> Result<Option<Self>, ConfParserError>
     where
         Self: Sized + 'static,
     {
         let vars: Vec<(String, String)> = Self::config_variables::<S>(text);
         if vars.is_empty() {
-            return Ok(*self)
+            return Ok(None)
         }
 
         let mut conf = *self;
@@ -64,7 +64,7 @@ impl ConfParser for InvariantConfig {
                 _ => Err(ConfParserError::InvalidConfigProperty(key.to_string()))?,
             }
         }
-        Ok(conf)
+        Ok(Some(conf))
     }
 }
 
@@ -73,7 +73,7 @@ mod tests {
     use crate::{inline::ConfParser, InvariantConfig};
 
     #[test]
-    fn parse_config_default_profile() -> eyre::Result<()> {
+    fn parse_config_default_profile() {
         let conf = r#"
             forge-config: default.invariant.runs = 1024
             forge-config: default.invariant.depth = 30
@@ -81,13 +81,11 @@ mod tests {
             forge-config: default.invariant.call-override = false
         "#;
         let base_conf: InvariantConfig = InvariantConfig::default();
-        let parsed: InvariantConfig = base_conf.try_merge(conf).expect("Valid config");
+        let parsed: InvariantConfig = base_conf.try_merge(conf).unwrap().expect("Valid config");
         assert_eq!(parsed.runs, 1024);
         assert_eq!(parsed.depth, 30);
         assert_eq!(parsed.fail_on_revert, true);
         assert_eq!(parsed.call_override, false);
-
-        Ok(())
     }
 
     #[test]
@@ -102,7 +100,7 @@ mod tests {
             "#;
 
             let base_conf: InvariantConfig = InvariantConfig::default();
-            let parsed: InvariantConfig = base_conf.try_merge(conf).expect("Valid config");
+            let parsed: InvariantConfig = base_conf.try_merge(conf).unwrap().expect("Valid config");
             assert_eq!(parsed.runs, 1024);
             assert_eq!(parsed.depth, 30);
             assert_eq!(parsed.fail_on_revert, true);

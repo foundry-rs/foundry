@@ -30,8 +30,8 @@ where
 {
     /// Returns an inline configuration, if any, for `contract_id` and `fn_name`. <br>
     /// - `contract_id` The identifier of the contract containing the annotated function. Note that
-    /// the contract id is a path relative to the project's root (i.e. someDirUnderRoot/Contract.t.sol:ContractName).
-    ///   
+    /// contract id is a path relative to the project's root check `with_stripped_file_prefixes`
+    /// in [`ProjectCompileOutput`](ethers_solc::compile::output::ProjectCompileOutput)).
     /// - `fn_name` The name of the function annotated with an inline configuration.
     pub fn get_config<S: Into<String>>(&self, contract_id: S, fn_name: S) -> Option<&T> {
         self.configs.get(&(contract_id.into(), fn_name.into()))
@@ -46,9 +46,7 @@ where
     type Error = ConfParserError;
 
     /// Tries to create an instance of `Self`, detecting inline configurations from the project
-    /// compile output. The second item of the input tuple is used as a base configuration.
-    /// The aim is to inherit from "base" all the config parameters not explicitly derived from the
-    /// compile output.
+    /// compile output. The second item of the input tuple is used as a fallback configuration.
     ///
     /// NOTE: `ProjectCompileOutput` is known to emit function comments, that we can try to parse
     /// at our convenience, to detect inline test configurations.
@@ -61,7 +59,7 @@ where
         for artifact in compile_output.with_stripped_file_prefixes(root).into_artifacts() {
             if let Some(ast) = artifact.1.ast.as_ref() {
                 let contract_id: String = artifact.0.identifier();
-                for node in ast.nodes.iter() {
+                if let Some(node) = contract_root_node(&ast.nodes, &contract_id) {
                     try_apply(base_conf, &mut configs, &contract_id, node)?;
                 }
             }
@@ -69,6 +67,22 @@ where
 
         Ok(Self { configs })
     }
+}
+
+/// Given a list of nodes, find a "ContractDefinition" node that matches
+/// the provided contract_id.
+fn contract_root_node<'a>(nodes: &'a [Node], contract_id: &'a str) -> Option<&'a Node> {
+    for n in nodes.iter() {
+        if format!("{:?}", n.node_type) == *"ContractDefinition" {
+            let contract_data = &n.other;
+            if let Value::String(contract_name) = contract_data.get("name")? {
+                if contract_id.ends_with(contract_name) {
+                    return Some(n)
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Implements a DFS over a compiler output node and its children.
@@ -86,9 +100,11 @@ where
 {
     for n in node.nodes.iter() {
         if let Some((fn_name, fn_docs)) = get_fn_data(n) {
-            let inline_conf = base_conf.try_merge(fn_docs)?;
-            let key = (contract_id.into(), fn_name);
-            map.insert(key, inline_conf);
+            if let Some(conf) = base_conf.try_merge(fn_docs.clone())? {
+                // We found a config that applies for the pair contract_id, fn_name.
+                let key = (contract_id.into(), fn_name);
+                map.insert(key, conf);
+            }
         }
 
         try_apply(base_conf, map, contract_id, n)?;
@@ -101,7 +117,7 @@ fn get_fn_data(node: &Node) -> Option<(String, String)> {
         let fn_data = &node.other;
         let fn_name: String = get_fn_name(fn_data)?;
         let fn_docs: String = get_fn_docs(fn_data)?;
-        return Some((fn_name, fn_docs));
+        return Some((fn_name, fn_docs))
     }
     None
 }
@@ -116,7 +132,7 @@ fn get_fn_name(fn_data: &BTreeMap<String, Value>) -> Option<String> {
 fn get_fn_docs(fn_data: &BTreeMap<String, Value>) -> Option<String> {
     if let Value::Object(fn_docs) = fn_data.get("documentation")? {
         if let Value::String(comment) = fn_docs.get("text")? {
-            return Some(comment.into());
+            return Some(comment.into())
         }
     }
     None

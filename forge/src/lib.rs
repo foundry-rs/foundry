@@ -43,13 +43,13 @@ pub struct TestOptions {
 }
 
 impl TestOptions {
-    /// Returns a fuzz runner instance. Parameters are used to select tight scoped fuzz configs 
-    /// that apply for a contract-function pair. A fallback configuration is applied 
+    /// Returns a "fuzz" test runner instance. Parameters are used to select tight scoped fuzz configs
+    /// that apply for a contract-function pair. A fallback configuration is applied
     /// if no specific setup is found for a given input.
-    /// 
-    /// - `contract_id` is the name of the test contract.
+    ///
+    /// - `contract_id` is the id of the test contract, expressed as a relative path from the project root.
     /// - `test_fn` is the name of the test function declared inside the test contract.
-    pub fn fuzzer<S>(&self, contract_id: S, test_fn: S) -> TestRunner
+    pub fn fuzz_runner<S>(&self, contract_id: S, test_fn: S) -> TestRunner
     where
         S: Into<String>,
     {
@@ -57,11 +57,25 @@ impl TestOptions {
         self.fuzzer_with_cases(fuzz.runs)
     }
 
-    /// Returns a fuzz configuration setup. Parameters are used to select tight scoped fuzz configs 
-    /// that apply for a contract-function pair. A fallback configuration is applied 
+    /// Returns an "invariant" test runner instance. Parameters are used to select tight scoped fuzz configs
+    /// that apply for a contract-function pair. A fallback configuration is applied
     /// if no specific setup is found for a given input.
-    /// 
-    /// - `contract_id` is the name of the test contract.
+    ///
+    /// - `contract_id` is the id of the test contract, expressed as a relative path from the project root.
+    /// - `test_fn` is the name of the test function declared inside the test contract.
+    pub fn invariant_runner<S>(&self, contract_id: S, test_fn: S) -> TestRunner
+    where
+        S: Into<String>,
+    {
+        let invariant = self.invariant_config(contract_id, test_fn);
+        self.fuzzer_with_cases(invariant.runs)
+    }
+
+    /// Returns a "fuzz" configuration setup. Parameters are used to select tight scoped fuzz configs
+    /// that apply for a contract-function pair. A fallback configuration is applied
+    /// if no specific setup is found for a given input.
+    ///
+    /// - `contract_id` is the id of the test contract, expressed as a relative path from the project root.
     /// - `test_fn` is the name of the test function declared inside the test contract.
     pub fn fuzz_config<S>(&self, contract_id: S, test_fn: S) -> &FuzzConfig
     where
@@ -70,8 +84,17 @@ impl TestOptions {
         self.inline_fuzz.get_config(contract_id, test_fn).unwrap_or(&self.fuzz)
     }
 
-    pub fn invariant_fuzzer(&self) -> TestRunner {
-        self.fuzzer_with_cases(self.invariant.runs)
+    /// Returns an "invariant" configuration setup. Parameters are used to select tight scoped
+    /// invariant configs that apply for a contract-function pair. A fallback configuration is
+    /// applied if no specific setup is found for a given input.
+    ///
+    /// - `contract_id` is the id of the test contract, expressed as a relative path from the project root.
+    /// - `test_fn` is the name of the test function declared inside the test contract.
+    pub fn invariant_config<S>(&self, contract_id: S, test_fn: S) -> &InvariantConfig
+    where
+        S: Into<String>,
+    {
+        self.inline_invariant.get_config(contract_id, test_fn).unwrap_or(&self.invariant)
     }
 
     pub fn fuzzer_with_cases(&self, cases: u32) -> TestRunner {

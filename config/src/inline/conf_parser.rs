@@ -40,9 +40,10 @@ pub trait ConfParser {
     fn config_prefix() -> String;
 
     /// Returns
-    /// - An instance of `Self`, resulting from the merge of a text configuration into `self`
+    /// - `Some(Self)` in case some configurations are merged into self.
+    /// - `None` in case there are no configurations that can be applied to self.
     /// - `Err(ConfParserError)` in case of wrong configuration.
-    fn try_merge<S: AsRef<str>>(&self, text: S) -> Result<Self, ConfParserError>
+    fn try_merge<S: AsRef<str>>(&self, text: S) -> Result<Option<Self>, ConfParserError>
     where
         Self: Sized + 'static;
 
@@ -116,11 +117,11 @@ mod tests {
             "forge-config:default.fuzz.".to_string()
         }
 
-        fn try_merge<S: AsRef<str>>(&self, _text: S) -> Result<Self, ConfParserError>
+        fn try_merge<S: AsRef<str>>(&self, _text: S) -> Result<Option<Self>, ConfParserError>
         where
             Self: Sized + 'static,
         {
-            Ok(Self::default())
+            Ok(Some(Self::default()))
         }
     }
 }
