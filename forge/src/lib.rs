@@ -43,12 +43,35 @@ pub struct TestOptions {
 }
 
 impl TestOptions {
-    pub fn invariant_fuzzer(&self) -> TestRunner {
-        self.fuzzer_with_cases(self.invariant.runs)
+    /// Returns a fuzz runner instance. Parameters are used to select tight scoped fuzz configs 
+    /// that apply for a contract-function pair. A fallback configuration is applied 
+    /// if no specific setup is found for a given input.
+    /// 
+    /// - `contract_id` is the name of the test contract.
+    /// - `test_fn` is the name of the test function declared inside the test contract.
+    pub fn fuzzer<S>(&self, contract_id: S, test_fn: S) -> TestRunner
+    where
+        S: Into<String>,
+    {
+        let fuzz = self.fuzz_config(contract_id, test_fn);
+        self.fuzzer_with_cases(fuzz.runs)
     }
 
-    pub fn fuzzer(&self) -> TestRunner {
-        self.fuzzer_with_cases(self.fuzz.runs)
+    /// Returns a fuzz configuration setup. Parameters are used to select tight scoped fuzz configs 
+    /// that apply for a contract-function pair. A fallback configuration is applied 
+    /// if no specific setup is found for a given input.
+    /// 
+    /// - `contract_id` is the name of the test contract.
+    /// - `test_fn` is the name of the test function declared inside the test contract.
+    pub fn fuzz_config<S>(&self, contract_id: S, test_fn: S) -> &FuzzConfig
+    where
+        S: Into<String>,
+    {
+        self.inline_fuzz.get_config(contract_id, test_fn).unwrap_or(&self.fuzz)
+    }
+
+    pub fn invariant_fuzzer(&self) -> TestRunner {
+        self.fuzzer_with_cases(self.invariant.runs)
     }
 
     pub fn fuzzer_with_cases(&self, cases: u32) -> TestRunner {
@@ -82,7 +105,6 @@ pub struct TestOptionsBuilder {
 }
 
 impl TestOptionsBuilder {
-
     /// Sets a [`FuzzConfig`] to be used as base "fuzz" configuration.
     #[must_use = "A base 'fuzz' config must be provided"]
     pub fn fuzz(mut self, conf: FuzzConfig) -> Self {
@@ -98,7 +120,7 @@ impl TestOptionsBuilder {
     }
 
     /// Sets a project compiler output instance. This is used to extract
-    /// inline test configurations that override `self.fuzz` and `self.invariant` 
+    /// inline test configurations that override `self.fuzz` and `self.invariant`
     /// specs when necessary.
     pub fn compile_output(mut self, output: &ProjectCompileOutput) -> Self {
         self.output = Some(output.clone());
@@ -107,7 +129,7 @@ impl TestOptionsBuilder {
 
     /// Creates an instance of [`TestOptions`]. This takes care of creating "fuzz" and
     /// "invariant" fallbacks, and extracting all inline test configs, if available.
-    /// 
+    ///
     /// `root` is a reference to the user's project root dir. This is essential
     /// to determine the base path of generated contract identifiers. This is to provide correct
     /// matchers for inline test configs.

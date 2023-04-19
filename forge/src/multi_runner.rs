@@ -170,16 +170,15 @@ impl MultiContractRunner {
         Ok(results)
     }
 
-    // The _name field is unused because we only want it for tracing
     #[tracing::instrument(
         name = "contract",
         skip_all,
         err,
-        fields(name = %_name)
+        fields(name = %name)
     )]
     fn run_tests(
         &self,
-        _name: &str,
+        name: &str,
         contract: &Abi,
         executor: Executor,
         deploy_code: Bytes,
@@ -187,6 +186,7 @@ impl MultiContractRunner {
         (filter, test_options): (&impl TestFilter, TestOptions),
     ) -> Result<SuiteResult> {
         let runner = ContractRunner::new(
+            name,
             executor,
             contract,
             deploy_code,

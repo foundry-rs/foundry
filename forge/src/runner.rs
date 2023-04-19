@@ -32,9 +32,9 @@ use tracing::{error, trace};
 /// A type that executes all tests of a contract
 #[derive(Debug, Clone)]
 pub struct ContractRunner<'a> {
+    pub name: &'a str,
     /// The executor used by the runner.
     pub executor: Executor,
-
     /// Library contracts to be deployed before the test contract
     pub predeploy_libs: &'a [Bytes],
     /// The deployed contract's code
@@ -53,6 +53,7 @@ pub struct ContractRunner<'a> {
 impl<'a> ContractRunner<'a> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        name: &'a str,
         executor: Executor,
         contract: &'a Abi,
         code: Bytes,
@@ -62,6 +63,7 @@ impl<'a> ContractRunner<'a> {
         predeploy_libs: &'a [Bytes],
     ) -> Self {
         Self {
+            name,
             executor,
             contract,
             code,
@@ -282,12 +284,17 @@ impl<'a> ContractRunner<'a> {
                     .par_iter()
                     .flat_map(|(func, should_fail)| {
                         if func.is_fuzz_test() {
+                            let fn_name = &func.name;
+                            let runner = test_options.fuzzer(self.name, fn_name);
+                            let fuzz_config = test_options.fuzz_config(self.name, fn_name);
+
+                            
                             self.run_fuzz_test(
                                 func,
                                 *should_fail,
-                                test_options.fuzzer(),
+                                runner,
                                 setup.clone(),
-                                test_options.fuzz,
+                                *fuzz_config,
                             )
                         } else {
                             self.clone().run_test(func, *should_fail, setup.clone())
