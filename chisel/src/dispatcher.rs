@@ -398,7 +398,7 @@ impl ChiselDispatcher {
                         }
                         Err(e) => DispatchResult::CommandFailed(Self::make_error(format!(
                             "Invalid calldata: {}",
-                            e.to_string()
+                            e
                         ))),
                     }
                 } else {
