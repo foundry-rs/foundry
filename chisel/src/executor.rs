@@ -258,7 +258,7 @@ impl SessionSource {
 
         // Create a [ChiselRunner] with a default balance of [U256::MAX] and
         // the sender [Address::zero].
-        ChiselRunner::new(executor, U256::MAX, Address::zero())
+        ChiselRunner::new(executor, U256::MAX, Address::zero(), self.config.calldata.clone())
     }
 }
 
