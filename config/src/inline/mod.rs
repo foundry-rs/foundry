@@ -9,7 +9,7 @@ use std::{
 
 /// Represents per-test configurations, declared inline
 /// as structured comments in Solidity test files. This allows
-/// to create configs directly bound to solidity test.
+/// to create configs directly bound to a solidity test.
 /// `T` is the configuration type, and is bound to the [`ConfParser`] trait. Known
 /// implementations of [`ConfParser`] include [`FuzzConfig`](super::FuzzConfig) and
 /// [`InvariantConfig`](super::InvariantConfig))
@@ -19,8 +19,7 @@ where
     T: ConfParser + 'static,
 {
     /// Maps a (contract, test-function)
-    /// to a specific configuration provided by the user, in the
-    /// test function comments.
+    /// to a specific configuration provided by the user.
     configs: HashMap<(String, String), T>,
 }
 
@@ -46,10 +45,13 @@ where
     type Error = ConfParserError;
 
     /// Tries to create an instance of `Self`, detecting inline configurations from the project
-    /// compile output. The second item of the input tuple is used as a fallback configuration.
+    /// compile output.
     ///
-    /// NOTE: `ProjectCompileOutput` is known to emit function comments, that we can try to parse
-    /// at our convenience, to detect inline test configurations.
+    /// Param is a tuple, whose elements are:
+    /// 1. Solidity compiler output, essential to extract comments from compiled functions.
+    /// 2. A reference to a base configuration. This essentially works as a fallback.
+    /// 3. A root path to express contract base dirs. This is essential to match inline configs at
+    /// runtime.
     fn try_from(value: (&'a ProjectCompileOutput, &'a T, &'a P)) -> Result<Self, Self::Error> {
         let mut configs: HashMap<(String, String), T> = HashMap::new();
         let compile_output = value.0.clone();

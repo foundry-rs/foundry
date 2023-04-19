@@ -6,13 +6,13 @@ use regex::Regex;
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ConfParserError {
     /// An invalid configuration property has been provided.
-    /// The property cannot be mapped to the configutaion object
+    /// The property cannot be mapped to the configuration object
     #[error("'{0}' is not a valid config property")]
     InvalidConfigProperty(String),
-    /// An error occurred while tryin to parse an integer configuration value
+    /// An error occurred while trying to parse an integer configuration value
     #[error(transparent)]
     ParseIntError(#[from] ParseIntError),
-    /// An error occurred while tryin to parse a boolean configuration value
+    /// An error occurred while trying to parse a boolean configuration value
     #[error(transparent)]
     ParseBoolError(#[from] ParseBoolError),
 }
@@ -25,12 +25,12 @@ pub enum ConfParserError {
 ///
 /// ```solidity
 /// contract MyTest is Test {
-/// // forge-config: default.fuzz.runs = 100
-/// // forge-config: ci.fuzz.runs = 500
+/// /// forge-config: default.fuzz.runs = 100
+/// /// forge-config: ci.fuzz.runs = 500
 /// function test_SimpleFuzzTest(uint256 x) public {...}
 ///
-/// // forge-config: default.fuzz.runs = 500
-/// // forge-config: ci.fuzz.runs = 10000
+/// /// forge-config: default.fuzz.runs = 500
+/// /// forge-config: ci.fuzz.runs = 10000
 /// function test_ImportantFuzzTest(uint256 x) public {...}
 /// }
 /// ```
