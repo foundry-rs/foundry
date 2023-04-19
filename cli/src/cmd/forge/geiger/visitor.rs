@@ -1,4 +1,4 @@
-use crate::cmd::forge::geiger::find::CheatcodeCounter;
+use super::find::UnsafeCheatcodes;
 use forge_fmt::{Visitable, Visitor};
 use solang_parser::pt::{
     ContractDefinition, Expression, FunctionDefinition, IdentifierPath, Loc, Parameter, SourceUnit,
@@ -9,7 +9,7 @@ use std::convert::Infallible;
 /// a [`forge_fmt::Visitor` that scans for invocations of cheatcodes
 #[derive(Default)]
 pub struct CheatcodeVisitor {
-    pub cheatcodes: CheatcodeCounter,
+    pub cheatcodes: UnsafeCheatcodes,
 }
 
 impl Visitor for CheatcodeVisitor {
