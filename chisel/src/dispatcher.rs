@@ -386,7 +386,8 @@ impl ChiselDispatcher {
                         return DispatchResult::CommandSuccess(Some("Calldata cleared.".to_string()))
                     }
 
-                    let calldata = hex::decode(args[0].trim_matches(|c: char| c.is_whitespace() || c == '"'));
+                    let calldata =
+                        hex::decode(args[0].trim_matches(|c: char| c.is_whitespace() || c == '"'));
                     match calldata {
                         Ok(calldata) => {
                             session_source.config.calldata = Some(calldata);
@@ -395,9 +396,10 @@ impl ChiselDispatcher {
                                 Paint::yellow(&args[0])
                             )))
                         }
-                        Err(e) => {
-                            DispatchResult::CommandFailed(Self::make_error(format!("Invalid calldata: {}", e.to_string())))
-                        }
+                        Err(e) => DispatchResult::CommandFailed(Self::make_error(format!(
+                            "Invalid calldata: {}",
+                            e.to_string()
+                        ))),
                     }
                 } else {
                     DispatchResult::CommandFailed(Self::make_error("Session not present."))

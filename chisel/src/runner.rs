@@ -66,7 +66,12 @@ impl ChiselRunner {
     /// ### Returns
     ///
     /// A new [ChiselRunner]
-    pub fn new(executor: Executor, initial_balance: U256, sender: Address, input: Option<Vec<u8>>) -> Self {
+    pub fn new(
+        executor: Executor,
+        initial_balance: U256,
+        sender: Address,
+        input: Option<Vec<u8>>,
+    ) -> Self {
         Self { executor, initial_balance, sender, input }
     }
 
