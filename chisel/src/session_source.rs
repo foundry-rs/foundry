@@ -74,6 +74,8 @@ pub struct SessionSourceConfig {
     pub backend: Option<Backend>,
     /// Optionally enable traces for the REPL contract execution
     pub traces: bool,
+    /// Optionally set calldata for the REPL contract execution
+    pub calldata: Option<Vec<u8>>,
 }
 
 impl SessionSourceConfig {
