@@ -157,11 +157,18 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
     }
 
-    /// Casts the current `W` writer as a `String` reference. Should only be used for debugging.
+    /// Casts the current writer `w` as a `String` reference. Should only be used for debugging.
     #[allow(dead_code)]
     unsafe fn buf_contents(&self) -> &String {
+        *(&self.buf.w as *const W as *const &mut String)
+    }
+
+    /// Casts the current `W` writer or the current temp buffer as a `String` reference.
+    /// Should only be used for debugging.
+    #[allow(dead_code)]
+    unsafe fn temp_buf_contents(&self) -> &String {
         match &self.temp_bufs[..] {
-            [] => unsafe { *(&self.buf.w as *const W as *const &mut String) },
+            [] => self.buf_contents(),
             [.., buf] => &buf.w,
         }
     }
@@ -987,7 +994,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             let (unwritten_whitespace_loc, unwritten_whitespace) =
                 unwritten_whitespace(last_byte_written, loc.start());
             let ignore_whitespace = if self.inline_config.is_disabled(unwritten_whitespace_loc) {
-                trace!("Unwritten whitespace: {:?}", unwritten_whitespace);
+                trace!("Unwritten whitespace: {unwritten_whitespace:?}");
                 self.write_raw(unwritten_whitespace)?;
                 true
             } else {
@@ -1022,7 +1029,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                     trace!("Visiting {}", {
                         let n = std::any::type_name::<V>();
                         n.strip_prefix("solang_parser::pt::").unwrap_or(n)
-                    },);
+                    });
                     item.visit(self)?;
                 }
             }
@@ -1053,6 +1060,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                     .map(|w| w.strip_suffix('\r').unwrap_or(w))
                     .unwrap_or(unwritten_whitespace);
             }
+            trace!("Unwritten whitespace: {unwritten_whitespace:?}");
             self.write_raw(unwritten_whitespace)?;
         }
 
@@ -2310,26 +2318,15 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     #[instrument(name = "var_declaration", skip_all)]
-    fn visit_var_declaration(
-        &mut self,
-        var: &mut VariableDeclaration,
-        is_assignment: bool,
-    ) -> Result<()> {
+    fn visit_var_declaration(&mut self, var: &mut VariableDeclaration) -> Result<()> {
         return_source_if_disabled!(self, var.loc);
         self.grouped(|fmt| {
             var.ty.visit(fmt)?;
             if let Some(storage) = &var.storage {
-                write_chunk!(fmt, storage.loc().end(), "{}", storage)?;
+                write_chunk!(fmt, storage.loc().end(), "{storage}")?;
             }
             let var_name = var.name.safe_unwrap();
-            write_chunk!(
-                fmt,
-                var_name.loc.end(),
-                "{}{}",
-                var_name.name,
-                if is_assignment { " =" } else { "" }
-            )?;
-            Ok(())
+            write_chunk!(fmt, var_name.loc.end(), "{var_name}")
         })?;
         Ok(())
     }
@@ -2840,28 +2837,20 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         loc: Loc,
         declaration: &mut VariableDeclaration,
         expr: &mut Option<Expression>,
-        semicolon: bool,
     ) -> Result<()> {
-        if semicolon {
-            return_source_if_disabled!(self, loc, ';');
-        } else {
-            return_source_if_disabled!(self, loc);
-        }
+        return_source_if_disabled!(self, loc, ';');
 
-        let declaration = self.chunked(declaration.loc.start(), None, |fmt| {
-            fmt.visit_var_declaration(declaration, expr.is_some())
-        })?;
+        let declaration = self
+            .chunked(declaration.loc.start(), None, |fmt| fmt.visit_var_declaration(declaration))?;
         let multiline = declaration.content.contains('\n');
         self.write_chunk(&declaration)?;
 
-        expr.as_mut()
-            .map(|expr| self.indented_if(multiline, 1, |fmt| fmt.visit_assignment(expr)))
-            .transpose()?;
-
-        if semicolon {
-            self.write_semicolon()?;
+        if let Some(expr) = expr {
+            write!(self.buf(), " =")?;
+            self.indented_if(multiline, 1, |fmt| fmt.visit_assignment(expr))?;
         }
-        Ok(())
+
+        self.write_semicolon()
     }
 
     #[instrument(name = "for", skip_all)]
@@ -2881,43 +2870,31 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             SurroundingChunk::new(")", None, next_byte_end),
             |fmt, _| {
                 let mut write_for_loop_header = |fmt: &mut Self, multiline: bool| -> Result<()> {
-                    init.as_mut()
-                        .map(|stmt| {
-                            match **stmt {
-                                Statement::VariableDefinition(loc, ref mut decl, ref mut expr) => {
-                                    fmt.visit_var_definition_stmt(loc, decl, expr, false)
-                                }
-                                Statement::Expression(loc, ref mut expr) => {
-                                    fmt.visit_expr(loc, expr)
-                                }
-                                _ => stmt.visit(fmt), // unreachable
-                            }
-                        })
-                        .transpose()?;
+                    match init {
+                        Some(stmt) => stmt.visit(fmt),
+                        None => fmt.write_semicolon(),
+                    }?;
+                    if multiline {
+                        fmt.write_whitespace_separator(true)?;
+                    }
+
+                    cond.visit(fmt)?;
                     fmt.write_semicolon()?;
                     if multiline {
                         fmt.write_whitespace_separator(true)?;
                     }
-                    cond.as_mut().map(|expr| expr.visit(fmt)).transpose()?;
-                    fmt.write_semicolon()?;
-                    if multiline {
-                        fmt.write_whitespace_separator(true)?;
+
+                    // Don't write a semi after the update expression
+                    // This should be just an `Expression`, but it is parsed as a `Statement` for
+                    // some reason in solang-parser
+                    // See https://github.com/hyperledger/solang/issues/1283
+                    match update.as_deref_mut() {
+                        Some(Statement::Expression(loc, expr)) => fmt.visit_expr(*loc, expr),
+                        Some(stmt) => {
+                            unreachable!("Invalid Solidity for loop `update` expression: {stmt:?}")
+                        }
+                        _ => Ok(()),
                     }
-                    update
-                        .as_mut()
-                        .map(|stmt| {
-                            match **stmt {
-                                Statement::VariableDefinition(_, ref mut decl, ref mut expr) => {
-                                    fmt.visit_var_definition_stmt(loc, decl, expr, false)
-                                }
-                                Statement::Expression(loc, ref mut expr) => {
-                                    fmt.visit_expr(loc, expr)
-                                }
-                                _ => stmt.visit(fmt), // unreachable
-                            }
-                        })
-                        .transpose()?;
-                    Ok(())
                 };
                 let multiline = !fmt.try_on_single_line(|fmt| write_for_loop_header(fmt, false))?;
                 if multiline {
