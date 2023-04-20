@@ -2079,9 +2079,9 @@ dependencies = [
 
 [[package]]
 name = "ethers-solc"
-version = "2.0.2"
+version = "2.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "139542f51f4c405d0dd7e97c34232140a14e8744d1cf121777355567187259e4"
+checksum = "6e967e60bca8fc83d640a7aebd1492d625c43e86b88a5a5bb08b1019472d5d6b"
 dependencies = [
  "cfg-if",
  "dunce",
@@ -2350,6 +2350,8 @@ dependencies = [
  "solang-parser",
  "thiserror",
  "toml 0.7.3",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -5953,14 +5955,15 @@ dependencies = [
 
 [[package]]
 name = "solang-parser"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff87dae6cdccacdbf3b19e99b271083556e808de0f59c74a01482f64fdbc61fc"
+checksum = "8c5ead679f39243782be98c2689e592fc0fc9489ca2e47c9e027bd30f948df31"
 dependencies = [
  "itertools",
  "lalrpop",
  "lalrpop-util",
  "phf 0.11.1",
+ "thiserror",
  "unicode-xid",
 ]
 

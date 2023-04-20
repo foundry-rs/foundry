@@ -462,7 +462,7 @@ impl Type {
             pt::Expression::New(_, inner) |                 // new <inner>
             pt::Expression::UnaryPlus(_, inner) |           // +<inner>
             // ops
-            pt::Expression::Complement(_, inner) |          // ~<inner>
+            pt::Expression::BitwiseNot(_, inner) |          // ~<inner>
             pt::Expression::ArraySlice(_, inner, _, _) |    // <inner>[*start*:*end*]
             // assign ops
             pt::Expression::PreDecrement(_, inner) |        // --<inner>

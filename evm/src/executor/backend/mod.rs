@@ -558,7 +558,7 @@ impl Backend {
         if let Some(account) = current_state.state.get(&address) {
             let value = account
                 .storage
-                .get(&revm::primitives::U256::from(0))
+                .get(&revm::primitives::U256::ZERO)
                 .cloned()
                 .unwrap_or_default()
                 .present_value();
