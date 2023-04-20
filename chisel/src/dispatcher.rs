@@ -383,7 +383,7 @@ impl ChiselDispatcher {
                 if let Some(session_source) = self.session.session_source.as_mut() {
                     // remove empty space, double quotes, and 0x prefix
                     let arg = args
-                        .get(0)
+                        .first()
                         .map(|s| {
                             s.trim_matches(|c: char| c.is_whitespace() || c == '"' || c == '\'')
                         })
