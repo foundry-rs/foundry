@@ -83,6 +83,7 @@ async fn main() -> eyre::Result<()> {
         foundry_config: config,
         evm_opts,
         backend: None,
+        calldata: None,
     })?;
 
     // Check for chisel subcommands

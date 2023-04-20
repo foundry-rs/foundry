@@ -1,3 +1,4 @@
+use crate::opts::error::PrivateKeyError;
 use async_trait::async_trait;
 use cast::{AwsChainProvider, AwsClient, AwsHttpClient, AwsRegion, KmsClient};
 use clap::Parser;
@@ -22,7 +23,6 @@ use std::{
 use tracing::{instrument, trace};
 
 pub mod multi_wallet;
-use crate::opts::error::PrivateKeyError;
 pub use multi_wallet::*;
 
 pub mod error;
@@ -182,6 +182,17 @@ impl Wallet {
         }
     }
 
+    /// Tries to resolve a local wallet from the provided options.
+    #[track_caller]
+    fn try_resolve_local_wallet(&self) -> Result<Option<LocalWallet>> {
+        self.private_key()
+            .transpose()
+            .or_else(|| self.interactive().transpose())
+            .or_else(|| self.mnemonic().transpose())
+            .or_else(|| self.keystore().transpose())
+            .transpose()
+    }
+
     /// Returns a [Signer] corresponding to the provided private key, mnemonic or hardware signer.
     #[instrument(skip(self), level = "trace")]
     pub async fn signer(&self, chain_id: u64) -> eyre::Result<WalletSigner> {
@@ -219,13 +230,7 @@ impl Wallet {
         } else {
             trace!("finding local key");
 
-            let maybe_local = self
-                .private_key()
-                .transpose()
-                .or_else(|| self.interactive().transpose())
-                .or_else(|| self.mnemonic().transpose())
-                .or_else(|| self.keystore().transpose())
-                .transpose()?;
+            let maybe_local = self.try_resolve_local_wallet()?;
 
             let local = maybe_local
                 .ok_or_else(|| eyre::eyre!("\
@@ -254,34 +259,37 @@ pub trait WalletTrait {
         Ok(LocalWallet::from_str(private_key)?)
     }
 
+    #[track_caller]
     fn get_from_private_key(&self, private_key: &str) -> Result<LocalWallet> {
         let privk = private_key.trim().strip_prefix("0x").unwrap_or(private_key);
-        LocalWallet::from_str(privk).map_err(|err| {
-            // helper macro to check if pk was meant to be an env var, this usually happens if `$`
-            // is missing
-            macro_rules! bail_env_var {
-                ($private_key:ident) => {
+        match LocalWallet::from_str(privk) {
+            Ok(pk) => Ok(pk),
+            Err(err) => {
+                // helper closure to check if pk was meant to be an env var, this usually happens if
+                // `$` is missing
+                let ensure_not_env = |pk: &str| {
                     // check if pk was meant to be an env var
-                    if !$private_key.starts_with("0x") && std::env::var($private_key).is_ok() {
+                    if !pk.starts_with("0x") && std::env::var(pk).is_ok() {
                         // SAFETY: at this point we know the user actually wanted to use an env var
                         // and most likely forgot the `$` anchor, so the
                         // `private_key` here is an unresolved env var
-                        return PrivateKeyError::ExistsAsEnvVar($private_key.to_string()).into()
+                        return Err(PrivateKeyError::ExistsAsEnvVar(pk.to_string()))
                     }
+                    Ok(())
                 };
+                match err {
+                    WalletError::HexError(err) => {
+                        ensure_not_env(private_key)?;
+                        return Err(PrivateKeyError::InvalidHex(err).into())
+                    }
+                    WalletError::EcdsaError(_) => {
+                        ensure_not_env(private_key)?;
+                    }
+                    _ => {}
+                };
+                bail!("Failed to create wallet from private key: {err}")
             }
-            match err {
-                WalletError::HexError(err) => {
-                    bail_env_var!(private_key);
-                    return PrivateKeyError::InvalidHex(err).into()
-                }
-                WalletError::EcdsaError(_) => {
-                    bail_env_var!(private_key);
-                }
-                _ => {}
-            };
-            eyre!("Failed to create wallet from private key: {err}")
-        })
+        }
     }
 
     fn get_from_mnemonic(
