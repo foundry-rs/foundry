@@ -209,6 +209,10 @@ function literalTest() {
             hex"001122FF";
         0xc02aaa39b223Fe8D0A0e5C4F27ead9083c756Cc2;
     // forgefmt: disable-end
+
+    // forgefmt: disable-next-line
+    bytes memory bytecode = 
+        hex"ff";
 }
 
 function returnTest() {

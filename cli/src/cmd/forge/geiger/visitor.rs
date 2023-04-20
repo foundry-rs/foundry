@@ -260,17 +260,12 @@ impl Visitor for CheatcodeVisitor {
         _: Loc,
         declaration: &mut VariableDeclaration,
         expr: &mut Option<Expression>,
-        _semicolon: bool,
     ) -> Result<(), Self::Error> {
         declaration.visit(self)?;
         expr.visit(self)
     }
 
-    fn visit_var_declaration(
-        &mut self,
-        var: &mut VariableDeclaration,
-        _is_assignment: bool,
-    ) -> Result<(), Self::Error> {
+    fn visit_var_declaration(&mut self, var: &mut VariableDeclaration) -> Result<(), Self::Error> {
         var.ty.visit(self)
     }
 
