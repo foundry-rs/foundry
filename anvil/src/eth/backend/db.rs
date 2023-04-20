@@ -236,7 +236,7 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeHashDatabase for CacheDB<T> {
                 self.contracts.insert(acc.code_hash, code);
             }
             self.accounts.insert(
-                addr.into(),
+                addr,
                 DbAccount {
                     info: acc,
                     storage: storage.remove(&addr).unwrap_or_default(),

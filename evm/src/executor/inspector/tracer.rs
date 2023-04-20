@@ -179,7 +179,7 @@ where
 
     fn log(&mut self, _: &mut EVMData<'_, DB>, _: &B160, topics: &[B256], data: &Bytes) {
         let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
-        let topics: Vec<_> = topics.to_vec().into_iter().map(b256_to_h256).collect();
+        let topics: Vec<_> = topics.iter().copied().map(b256_to_h256).collect();
         node.ordering.push(LogCallOrder::Log(node.logs.len()));
         node.logs.push(RawOrDecodedLog::Raw(RawLog { topics, data: data.to_vec() }));
     }

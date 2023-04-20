@@ -510,7 +510,7 @@ where
             handle_expect_emit(
                 self,
                 RawLog {
-                    topics: topics.to_vec().into_iter().map(b256_to_h256).collect_vec(),
+                    topics: topics.iter().copied().map(b256_to_h256).collect_vec(),
                     data: data.to_vec(),
                 },
                 &b160_to_h160(*address),
@@ -522,11 +522,7 @@ where
             storage_recorded_logs.entries.push(Log {
                 emitter: b160_to_h160(*address),
                 inner: RawLog {
-                    topics: topics
-                        .to_vec()
-                        .into_iter()
-                        .map(|topic| b256_to_h256(topic))
-                        .collect_vec(),
+                    topics: topics.iter().copied().map(b256_to_h256).collect_vec(),
                     data: data.to_vec(),
                 },
             });

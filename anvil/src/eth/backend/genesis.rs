@@ -48,7 +48,7 @@ impl GenesisConfig {
     pub fn account_infos(&self) -> impl Iterator<Item = (Address, AccountInfo)> + '_ {
         self.accounts.iter().copied().map(|address| {
             let info = AccountInfo {
-                balance: self.balance.into(),
+                balance: self.balance,
                 code_hash: KECCAK_EMPTY,
                 // we set this to empty so `Database::code_by_hash` doesn't get called
                 code: Some(Default::default()),
@@ -133,7 +133,7 @@ impl<'a> DatabaseRef for AtGenesisStateDb<'a> {
     }
 
     fn block_hash(&self, number: U256) -> DatabaseResult<B256> {
-        self.db.block_hash(number).into()
+        self.db.block_hash(number)
     }
 }
 

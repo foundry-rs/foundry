@@ -677,7 +677,7 @@ impl DatabaseRef for SharedBackend {
             error!(target: "sharedbackend",?err, ?number, "Failed to send/recv `block_hash`");
             err
         }) {
-            Ok(val) => Ok(h256_to_b256(val).into()),
+            Ok(val) => Ok(h256_to_b256(val)),
             Err(err) => Err(err),
         }
     }

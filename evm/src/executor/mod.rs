@@ -789,10 +789,10 @@ fn convert_executed_result(
         }
         ExecutionResult::Revert { gas_used, .. } => {
             // Need to fetch the unused gas
-            (InstructionResult::Revert, 0 as u64, gas_used, None)
+            (InstructionResult::Revert, 0_u64, gas_used, None)
         }
         ExecutionResult::Halt { reason, gas_used } => {
-            (halt_to_instruction_result(reason), 0 as u64, gas_used, None)
+            (halt_to_instruction_result(reason), 0_u64, gas_used, None)
         }
     };
 

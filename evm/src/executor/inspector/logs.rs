@@ -50,7 +50,7 @@ where
     fn log(&mut self, _: &mut EVMData<'_, DB>, address: &B160, topics: &[B256], data: &Bytes) {
         self.logs.push(Log {
             address: b160_to_h160(*address),
-            topics: topics.to_vec().into_iter().map(b256_to_h256).collect(),
+            topics: topics.iter().copied().map(b256_to_h256).collect(),
             data: data.clone().into(),
             ..Default::default()
         });
