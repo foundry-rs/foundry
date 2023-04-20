@@ -652,7 +652,7 @@ impl DatabaseRef for SharedBackend {
     }
 
     fn code_by_hash(&self, hash: B256) -> Result<Bytecode, Self::Error> {
-        Err(DatabaseError::MissingCode(b256_to_h256(hash).into()))
+        Err(DatabaseError::MissingCode(b256_to_h256(hash)))
     }
 
     fn storage(&self, address: B160, index: rU256) -> Result<rU256, Self::Error> {

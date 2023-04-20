@@ -1100,10 +1100,7 @@ impl DatabaseExt for Backend {
         env.block.timestamp = block.timestamp.into();
         env.block.coinbase = h160_to_b160(block.author.unwrap_or_default());
         env.block.difficulty = block.difficulty.into();
-        env.block.prevrandao = match block.mix_hash {
-            Some(mix_hash) => Some(h256_to_b256(mix_hash)),
-            None => None,
-        };
+        env.block.prevrandao = block.mix_hash.map(h256_to_b256);
         env.block.basefee = block.base_fee_per_gas.unwrap_or_default().into();
         env.block.gas_limit = block.gas_limit.into();
         env.block.number = u256_to_ru256(block.number.unwrap_or(fork_block).as_u64().into());

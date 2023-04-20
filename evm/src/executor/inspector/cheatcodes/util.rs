@@ -49,10 +49,7 @@ pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction) {
     env.tx.caller = h160_to_b160(tx.from);
     env.tx.gas_limit = tx.gas.as_u64();
     env.tx.gas_price = tx.gas_price.unwrap_or_default().into();
-    env.tx.gas_priority_fee = match tx.max_priority_fee_per_gas {
-        Some(fee) => Some(fee.into()),
-        None => None,
-    };
+    env.tx.gas_priority_fee = tx.max_priority_fee_per_gas.map(Into::into);
     env.tx.nonce = Some(tx.nonce.as_u64());
     env.tx.access_list = tx
         .access_list

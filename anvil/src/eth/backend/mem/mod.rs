@@ -675,7 +675,7 @@ impl Backend {
         evm.database(&*db);
         let result_and_state = match evm.inspect_ref(&mut inspector) {
             Ok(res) => res,
-            Err(e) => return Err(BlockchainError::EvmError(InstructionResult::FatalExternalError)),
+            Err(_) => return Err(BlockchainError::EvmError(InstructionResult::FatalExternalError)),
         };
         let state = result_and_state.state;
         let state: hashbrown::HashMap<H160, Account> =
@@ -999,7 +999,7 @@ impl Backend {
         evm.database(state);
         let result_and_state = match evm.inspect_ref(&mut inspector) {
             Ok(result_and_state) => result_and_state,
-            Err(e) => return Err(BlockchainError::EvmError(InstructionResult::FatalExternalError)),
+            Err(_) => return Err(BlockchainError::EvmError(InstructionResult::FatalExternalError)),
         };
         let state = result_and_state.state;
         let state: hashbrown::HashMap<H160, Account> =
@@ -1033,7 +1033,7 @@ impl Backend {
             let result_and_state =
                 match evm.inspect_ref(&mut inspector) {
                     Ok(result_and_state) => result_and_state,
-                    Err(e) => return Err(BlockchainError::EvmError(InstructionResult::FatalExternalError)),
+                    Err(_) => return Err(BlockchainError::EvmError(InstructionResult::FatalExternalError)),
                 };
             let (exit_reason, gas_used, out, ) = match result_and_state.result {
                 ExecutionResult::Success { reason, gas_used, output, .. } => {
@@ -1083,7 +1083,7 @@ impl Backend {
         evm.database(state);
         let result_and_state = match evm.inspect_ref(&mut tracer) {
             Ok(result_and_state) => result_and_state,
-            Err(e) => return Err(BlockchainError::EvmError(InstructionResult::FatalExternalError)),
+            Err(_) => return Err(BlockchainError::EvmError(InstructionResult::FatalExternalError)),
         };
         let (exit_reason, gas_used, out) = match result_and_state.result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
