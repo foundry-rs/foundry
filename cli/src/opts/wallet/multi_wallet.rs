@@ -117,11 +117,7 @@ pub struct MultiWallet {
     pub mnemonics: Option<Vec<String>>,
 
     /// Use a BIP39 passphrases for the mnemonic.
-    #[clap(
-        long = "mnemonic-passphrases",
-        help_heading = "Wallet options - raw",
-        value_name = "PASSPHRASE"
-    )]
+    #[clap(long, help_heading = "Wallet options - raw", value_name = "PASSPHRASE")]
     pub mnemonic_passphrases: Option<Vec<String>>,
 
     /// The wallet derivation path.

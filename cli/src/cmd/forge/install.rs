@@ -43,7 +43,6 @@ pub struct InstallArgs {
     ///
     /// Target installation directory can be added via `<alias>=` suffix.
     /// The dependency will installed to `lib/<alias>`.
-    #[clap(value_name = "DEPENDENCIES")]
     dependencies: Vec<Dependency>,
 
     #[clap(flatten)]

@@ -66,11 +66,7 @@ pub struct Wallet {
     pub mnemonic: Option<String>,
 
     /// Use a BIP39 passphrase for the mnemonic.
-    #[clap(
-        long = "mnemonic-passphrase",
-        help_heading = "Wallet options - raw",
-        value_name = "PASSPHRASE"
-    )]
+    #[clap(long, help_heading = "Wallet options - raw", value_name = "PASSPHRASE")]
     pub mnemonic_passphrase: Option<String>,
 
     /// The wallet derivation path.
@@ -88,7 +84,7 @@ pub struct Wallet {
     ///
     /// Used with --mnemonic-path.
     #[clap(
-        long = "mnemonic-index",
+        long,
         conflicts_with = "hd_path",
         help_heading = "Wallet options - raw",
         default_value_t = 0,

@@ -17,10 +17,7 @@ pub struct SendTxArgs {
     /// The destination of the transaction.
     ///
     /// If not provided, you must use cast send --create.
-    #[clap(
-        value_parser = NameOrAddress::from_str,
-        value_name = "TO",
-    )]
+    #[clap(value_parser = NameOrAddress::from_str)]
     to: Option<NameOrAddress>,
 
     /// The signature of the function to call.
@@ -40,7 +37,7 @@ pub struct SendTxArgs {
     eth: EthereumOpts,
 
     /// The number of confirmations until the receipt is fetched.
-    #[clap(long, default_value = "1", value_name = "CONFIRMATIONS")]
+    #[clap(long, default_value = "1")]
     confirmations: usize,
 
     /// Print the transaction receipt as JSON.

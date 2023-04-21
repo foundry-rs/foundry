@@ -314,7 +314,7 @@ pub enum Subcommands {
     },
 
     /// Get information about a block.
-    #[clap(name = "block", visible_alias = "bl")]
+    #[clap(visible_alias = "bl")]
     Block {
         /// The block height to query at.
         ///
@@ -344,7 +344,7 @@ pub enum Subcommands {
     },
 
     /// Perform a call on an account without publishing a transaction.
-    #[clap(name = "call", visible_alias = "c")]
+    #[clap(visible_alias = "c")]
     Call(CallArgs),
 
     /// ABI-encode a function with arguments.
@@ -359,7 +359,6 @@ pub enum Subcommands {
     },
 
     /// Get the symbolic name of the current chain.
-    #[clap(name = "chain")]
     Chain {
         #[clap(flatten)]
         rpc: RpcOpts,
@@ -373,7 +372,7 @@ pub enum Subcommands {
     },
 
     /// Get the current client version.
-    #[clap(name = "client", visible_alias = "cl")]
+    #[clap(visible_alias = "cl")]
     Client {
         #[clap(flatten)]
         rpc: RpcOpts,
@@ -394,18 +393,18 @@ pub enum Subcommands {
     },
 
     /// Disassembles hex encoded bytecode into individual / human readable opcodes
-    #[clap(name = "disassemble", visible_alias = "da")]
+    #[clap(visible_alias = "da")]
     Disassemble {
         /// The hex encoded bytecode.
         bytecode: String,
     },
 
     /// Calculate the ENS namehash of a name.
-    #[clap(name = "namehash", visible_aliases = &["na", "nh"])]
+    #[clap(visible_aliases = &["na", "nh"])]
     Namehash { name: Option<String> },
 
     /// Get information about a transaction.
-    #[clap(name = "tx", visible_alias = "t")]
+    #[clap(visible_alias = "t")]
     Tx {
         /// The transaction hash.
         tx_hash: String,
@@ -422,7 +421,7 @@ pub enum Subcommands {
     },
 
     /// Get the transaction receipt for a transaction.
-    #[clap(name = "receipt", visible_alias = "re")]
+    #[clap(visible_alias = "re")]
     Receipt {
         /// The transaction hash.
         tx_hash: String,
@@ -465,7 +464,7 @@ pub enum Subcommands {
     },
 
     /// Estimate the gas cost of a transaction.
-    #[clap(name = "estimate", visible_alias = "e")]
+    #[clap(visible_alias = "e")]
     Estimate(EstimateArgs),
 
     /// Decode ABI-encoded input data.
@@ -507,7 +506,7 @@ pub enum Subcommands {
     },
 
     /// Compute the storage slot for an entry in a mapping.
-    #[clap(name = "index", visible_alias = "in")]
+    #[clap(visible_alias = "in")]
     Index {
         /// The mapping key type.
         key_type: String,
@@ -520,7 +519,7 @@ pub enum Subcommands {
     },
 
     /// Fetch the EIP-1967 implementation account
-    #[clap(name = "implementation", visible_alias = "impl")]
+    #[clap(visible_alias = "impl")]
     Implementation {
         /// The block height to query at.
         ///
@@ -537,7 +536,7 @@ pub enum Subcommands {
     },
 
     /// Fetch the EIP-1967 admin account
-    #[clap(name = "admin", visible_alias = "adm")]
+    #[clap(visible_alias = "adm")]
     Admin {
         /// The block height to query at.
         ///
@@ -607,7 +606,7 @@ pub enum Subcommands {
     },
 
     /// Get the timestamp of a block.
-    #[clap(name = "age", visible_alias = "a")]
+    #[clap(visible_alias = "a")]
     Age {
         /// The block height to query at.
         ///
@@ -619,7 +618,7 @@ pub enum Subcommands {
     },
 
     /// Get the balance of an account in wei.
-    #[clap(name = "balance", visible_alias = "b")]
+    #[clap(visible_alias = "b")]
     Balance {
         /// The block height to query at.
         ///
@@ -640,7 +639,7 @@ pub enum Subcommands {
     },
 
     /// Get the basefee of a block.
-    #[clap(name = "basefee", visible_aliases = &["ba", "fee"])]
+    #[clap(visible_aliases = &["ba", "fee"])]
     BaseFee {
         /// The block height to query at.
         ///
@@ -652,7 +651,7 @@ pub enum Subcommands {
     },
 
     /// Get the bytecode of a contract.
-    #[clap(name = "code", visible_alias = "co")]
+    #[clap(visible_alias = "co")]
     Code {
         /// The block height to query at.
         ///
@@ -687,7 +686,7 @@ pub enum Subcommands {
     },
 
     /// Hash arbitrary data using Keccak-256.
-    #[clap(name = "keccak", visible_alias = "k")]
+    #[clap(visible_alias = "k")]
     Keccak {
         /// The data to hash.
         data: Option<String>,
@@ -722,11 +721,11 @@ pub enum Subcommands {
     },
 
     /// Get the raw value of a contract's storage slot.
-    #[clap(name = "storage", visible_alias = "st")]
+    #[clap(visible_alias = "st")]
     Storage(StorageArgs),
 
     /// Generate a storage proof for a given storage slot.
-    #[clap(name = "proof", visible_alias = "pr")]
+    #[clap(visible_alias = "pr")]
     Proof {
         /// The contract address.
         #[clap(value_parser = NameOrAddress::from_str)]
@@ -747,7 +746,7 @@ pub enum Subcommands {
     },
 
     /// Get the nonce for an account.
-    #[clap(name = "nonce", visible_alias = "n")]
+    #[clap(visible_alias = "n")]
     Nonce {
         /// The block height to query at.
         ///
@@ -778,7 +777,7 @@ pub enum Subcommands {
     },
 
     /// Wallet management utilities.
-    #[clap(name = "wallet", visible_alias = "w")]
+    #[clap(visible_alias = "w")]
     Wallet {
         #[clap(subcommand)]
         command: WalletSubcommands,
@@ -787,15 +786,15 @@ pub enum Subcommands {
     /// Generate a Solidity interface from a given ABI.
     ///
     /// Currently does not support ABI encoder v2.
-    #[clap(name = "interface", visible_alias = "i")]
+    #[clap(visible_alias = "i")]
     Interface(InterfaceArgs),
 
     /// Generate a rust binding from a given ABI.
-    #[clap(name = "bind", visible_alias = "bi")]
+    #[clap(visible_alias = "bi")]
     Bind(BindArgs),
 
     /// Get the selector for a function.
-    #[clap(name = "sig", visible_alias = "si")]
+    #[clap(visible_alias = "si")]
     Sig {
         /// The function signature, e.g. transfer(address,uint256).
         sig: Option<String>,
@@ -805,7 +804,7 @@ pub enum Subcommands {
     },
 
     /// Generate a deterministic contract address using CREATE2.
-    #[clap(name = "create2", visible_alias = "c2")]
+    #[clap(visible_alias = "c2")]
     Create2(Create2Args),
 
     /// Get the block number closest to the provided timestamp.
@@ -824,11 +823,11 @@ pub enum Subcommands {
     GenerateFigSpec,
 
     /// Runs a published transaction in a local environment and prints the trace.
-    #[clap(name = "run", visible_alias = "r")]
+    #[clap(visible_alias = "r")]
     Run(RunArgs),
 
     /// Perform a raw JSON-RPC request.
-    #[clap(name = "rpc", visible_alias = "rp")]
+    #[clap(visible_alias = "rp")]
     Rpc(RpcArgs),
 
     /// Formats a string into bytes32 encoding.
@@ -845,6 +844,7 @@ pub enum Subcommands {
         bytes: Option<String>,
     },
 }
+
 /// CLI arguments for `cast --to-base`.
 #[derive(Debug, Parser)]
 pub struct ToBaseArgs {

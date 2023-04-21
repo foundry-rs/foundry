@@ -61,12 +61,12 @@ pub struct BuildArgs {
     pub args: CoreBuildArgs,
 
     /// Print compiled contract names.
-    #[clap(long = "names")]
+    #[clap(long)]
     #[serde(skip)]
     pub names: bool,
 
     /// Print compiled contract sizes.
-    #[clap(long = "sizes")]
+    #[clap(long)]
     #[serde(skip)]
     pub sizes: bool,
 

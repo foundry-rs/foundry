@@ -27,12 +27,13 @@ pub struct InitArgs {
     root: PathBuf,
 
     /// The template to start from.
-    #[clap(long, short, value_name = "TEMPLATE")]
+    #[clap(long, short)]
     template: Option<String>,
 
     /// Do not create a git repository.
     #[clap(long, conflicts_with = "template")]
     no_git: bool,
+
     /// Do not create an initial commit.
     #[clap(long, conflicts_with = "template")]
     no_commit: bool,

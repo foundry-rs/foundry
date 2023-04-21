@@ -27,7 +27,7 @@ pub struct RunArgs {
     tx_hash: String,
 
     /// Opens the transaction in the debugger.
-    #[clap(long, short = 'd')]
+    #[clap(long, short)]
     debug: bool,
 
     /// Print out opcode traces.

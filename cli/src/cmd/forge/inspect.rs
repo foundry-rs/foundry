@@ -26,7 +26,6 @@ use tracing::trace;
 #[derive(Debug, Clone, Parser)]
 pub struct InspectArgs {
     /// The identifier of the contract to inspect in the form `(<path>:)?<contractname>`.
-    #[clap(value_name = "CONTRACT")]
     pub contract: ContractInfo,
 
     /// The contract artifact field to inspect.
