@@ -695,7 +695,7 @@ mod tests {
     use foundry_common::get_http_provider;
     use foundry_config::Config;
     use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
-    const ENDPOINT: &str = "https://mainnet.infura.io/v3/c60b0bb42f8a4c6481ecd229eddaca27";
+    const ENDPOINT: &str = "https://mainnet.infura.io/v3/40bee2d557ed4b52908c3e62345a3d8b";
 
     #[test]
     fn shared_backend() {

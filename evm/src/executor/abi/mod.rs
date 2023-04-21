@@ -27,6 +27,7 @@ ethers::contract::abigen!(
             load(address,bytes32)(bytes32)
             ffi(string[])(bytes)
             setEnv(string,string)
+            breakpoint(string)
             envBool(string)(bool)
             envUint(string)(uint256)
             envInt(string)(int256)

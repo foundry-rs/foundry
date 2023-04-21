@@ -35,8 +35,9 @@ use forge::{
     CallKind,
 };
 use foundry_common::{
-    abi::format_token, evm::EvmArgs, shell, ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE,
-    SELECTOR_LEN,
+    abi::format_token,
+    evm::{Breakpoints, EvmArgs},
+    shell, ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_config::{figment, Config};
 use serde::{Deserialize, Serialize};
@@ -430,6 +431,7 @@ impl ScriptArgs {
         result: ScriptResult,
         project: Project,
         highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
+        breakpoints: Breakpoints,
     ) -> eyre::Result<()> {
         trace!(target: "script", "debugging script");
 
@@ -458,6 +460,7 @@ impl ScriptArgs {
                 .into_iter()
                 .map(|(id, _)| (id.name, sources.clone()))
                 .collect(),
+            breakpoints,
         )?;
         match tui.start().expect("Failed to start tui") {
             TUIExitReason::CharExit => Ok(()),

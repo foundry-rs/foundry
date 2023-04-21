@@ -20,7 +20,7 @@ use ethers::{
     signers::LocalWallet,
     types::Log,
 };
-use foundry_common::abi::IntoFunction;
+use foundry_common::{abi::IntoFunction, evm::Breakpoints};
 use hashbrown::HashMap;
 /// Reexport commonly used revm types
 pub use revm::primitives::{Env, SpecId};
@@ -699,6 +699,8 @@ pub struct CallResult<D: Detokenize> {
     pub script_wallets: Vec<LocalWallet>,
     /// The `revm::Env` after the call
     pub env: Env,
+    /// breakpoints
+    pub breakpoints: Breakpoints,
 }
 
 /// The result of a raw call.
@@ -869,6 +871,12 @@ fn convert_call_result<D: Detokenize>(
         ..
     } = call_result;
 
+    let breakpoints = if let Some(c) = call_result.cheatcodes {
+        c.breakpoints
+    } else {
+        std::collections::HashMap::new()
+    };
+
     match status {
         return_ok!() => {
             let result = decode_function_data(func, result, false)?;
@@ -887,6 +895,7 @@ fn convert_call_result<D: Detokenize>(
                 state_changeset,
                 script_wallets,
                 env,
+                breakpoints,
             })
         }
         _ => {

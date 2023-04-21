@@ -154,10 +154,11 @@ impl Cmd for FmtArgs {
 
                 solang_parser::parse(&output, 0).map_err(|diags| {
                     eyre::eyre!(
-                            "Failed to construct valid Solidity code for {}. Leaving source unchanged.\nDebug info: {:?}",
-                            input,
-                            diags
-                        )
+                        "Failed to construct valid Solidity code for {}. Leaving source unchanged.\n\
+                         Debug info: {:?}",
+                        input,
+                        diags,
+                    )
                 })?;
 
                 if self.check || matches!(input, Input::Stdin(_)) {
