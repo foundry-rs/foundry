@@ -197,9 +197,7 @@ fn add_breakpoint(state: &mut Cheatcodes, caller: Address, inner: &str) -> Resul
     let point = chars.next();
 
     let point = point.ok_or_else(|| {
-        std::convert::Into::<Bytes>::into(
-            "Please provide at least one char for the breakpoint".encode(),
-        )
+        Bytes::from("Please provide at least one char for the breakpoint".encode())
     })?;
 
     if chars.next().is_some() {
