@@ -22,12 +22,9 @@ use yansi::Paint;
 /// CLI arguments for `forge init`.
 #[derive(Debug, Clone, Parser)]
 pub struct InitArgs {
-    /// The project's root path.
-    ///
-    /// By default root of the Git repository, if in one,
-    /// or the current working directory.
-    #[clap(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
-    root: Option<PathBuf>,
+    /// The root directory of the new project.
+    #[clap(value_hint = ValueHint::DirPath, default_value = ".", value_name = "PATH")]
+    root: PathBuf,
 
     /// The template to start from.
     #[clap(long, short, value_name = "TEMPLATE")]
@@ -64,7 +61,6 @@ impl Cmd for InitArgs {
     fn run(self) -> eyre::Result<Self::Output> {
         let InitArgs { root, template, no_git, no_commit, quiet, offline, force, vscode } = self;
 
-        let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
         // create the root dir if it does not exist
         if !root.exists() {
             fs::create_dir_all(&root)?;

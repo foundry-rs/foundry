@@ -85,11 +85,10 @@ pub struct ScriptArgs {
     ///
     /// If multiple contracts exist in the same file you must specify the target contract with
     /// --target-contract.
-    #[clap(value_hint = ValueHint::FilePath, value_name = "PATH")]
+    #[clap(value_hint = ValueHint::FilePath)]
     pub path: String,
 
     /// Arguments to pass to the script function.
-    #[clap(value_name = "ARGS")]
     pub args: Vec<String>,
 
     /// The name of the contract you want to run.
@@ -101,7 +100,6 @@ pub struct ScriptArgs {
         long,
         short,
         default_value = "run()",
-        value_name = "SIGNATURE",
         value_parser = foundry_common::clap_helpers::strip_0x_prefix
     )]
     pub sig: String,
@@ -136,7 +134,7 @@ pub struct ScriptArgs {
     /// Send via `eth_sendTransaction` using the `--from` argument or `$ETH_FROM` as sender
     #[clap(
         long,
-        requires = "from",
+        requires = "sender",
         conflicts_with_all = &["private_key", "private_keys", "froms", "ledger", "trezor", "aws"],
     )]
     pub unlocked: bool,
@@ -854,14 +852,14 @@ mod tests {
         let root = temp.path();
 
         let config = r#"
-                [profile.default]
+            [profile.default]
 
-               [rpc_endpoints]
-                mumbai = "https://polygon-mumbai.g.alchemy.com/v2/${_EXTRACT_RPC_ALIAS}"
+            [rpc_endpoints]
+            mumbai = "https://polygon-mumbai.g.alchemy.com/v2/${_EXTRACT_RPC_ALIAS}"
 
-                [etherscan]
-                mumbai = { key = "${_POLYSCAN_API_KEY}", chain = 80001, url = "https://api-testnet.polygonscan.com/" }
-            "#;
+            [etherscan]
+            mumbai = { key = "${_POLYSCAN_API_KEY}", chain = 80001, url = "https://api-testnet.polygonscan.com/" }
+        "#;
 
         let toml_file = root.join(Config::FILE_NAME);
         fs::write(toml_file, config).unwrap();

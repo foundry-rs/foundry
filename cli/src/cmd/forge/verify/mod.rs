@@ -23,15 +23,11 @@ mod sourcify;
 #[derive(Debug, Clone, Parser)]
 pub struct VerifierArgs {
     /// The contract verification provider to use.
-    #[clap(
-        value_enum,
-        long = "verifier",
-        help_heading = "Verification provider",
-        default_value = "etherscan"
-    )]
+    #[clap(long, help_heading = "Verifier options", default_value = "etherscan", value_enum)]
     pub verifier: VerificationProviderType,
 
-    #[clap(long, env = "VERIFIER_URL", help = "The verifier URL, if using a custom provider")]
+    /// The verifier URL, if using a custom provider
+    #[clap(long, help_heading = "Verifier options", env = "VERIFIER_URL")]
     pub verifier_url: Option<String>,
 }
 
@@ -51,20 +47,11 @@ pub struct VerifyArgs {
     pub contract: ContractInfo,
 
     /// The ABI-encoded constructor arguments.
-    #[clap(
-        long,
-        num_args(1..),
-        conflicts_with = "constructor_args_path",
-        value_name = "ARGS",
-    )]
+    #[clap(long, conflicts_with = "constructor_args_path", value_name = "ARGS")]
     pub constructor_args: Option<String>,
 
     /// The path to a file containing the constructor arguments.
-    #[clap(
-        long,
-        value_hint = ValueHint::FilePath,
-        value_name = "PATH",
-    )]
+    #[clap(long, value_hint = ValueHint::FilePath, value_name = "PATH")]
     pub constructor_args_path: Option<PathBuf>,
 
     /// The `solc` version to use to build the smart contract.
@@ -187,13 +174,14 @@ impl VerifyArgs {
 /// Check verification status arguments
 #[derive(Debug, Clone, Parser)]
 pub struct VerifyCheckArgs {
-    #[clap(
-        help = "The verification ID. For Etherscan - Submission GUID. For Sourcify - Contract Address",
-        value_name = "ID"
-    )]
+    /// The verification ID.
+    ///
+    /// For Etherscan - Submission GUID.
+    ///
+    /// For Sourcify - Contract Address.
     id: String,
 
-    #[clap(flatten, help = "Allows to use retry arguments for contract verification")]
+    #[clap(flatten)]
     retry: RetryArgs,
 
     #[clap(flatten)]

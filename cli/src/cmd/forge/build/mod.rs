@@ -73,7 +73,7 @@ pub struct BuildArgs {
     /// Skip building files whose names contain the given filter.
     ///
     /// `test` and `script` are aliases for `.t.sol` and `.s.sol`.
-    #[clap(long)]
+    #[clap(long, num_args(1..))]
     #[serde(skip)]
     pub skip: Option<Vec<SkipBuildFilter>>,
 
