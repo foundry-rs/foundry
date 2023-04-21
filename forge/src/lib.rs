@@ -55,10 +55,10 @@ impl TestOptions {
             let mut bytes: [u8; 32] = [0; 32];
             fuzz_seed.to_big_endian(&mut bytes);
             let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &bytes);
-            proptest::test_runner::TestRunner::new_with_rng(cfg, rng)
+            TestRunner::new_with_rng(cfg, rng)
         } else {
             trace!(target: "forge::test", "building stochastic fuzzer");
-            proptest::test_runner::TestRunner::new(cfg)
+            TestRunner::new(cfg)
         }
     }
 }

@@ -62,7 +62,7 @@ pub const DEFAULT_IPC_ENDPOINT: &str = "/tmp/anvil.ipc";
 pub const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     " (",
-    env!("VERGEN_GIT_SHA_SHORT"),
+    env!("VERGEN_GIT_SHA"),
     " ",
     env!("VERGEN_BUILD_TIMESTAMP"),
     ")"
@@ -733,12 +733,10 @@ impl NodeConfig {
     /// Returns the path where the cache file should be stored
     ///
     /// See also [ Config::foundry_block_cache_file()]
-    pub fn block_cache_path(&self) -> Option<PathBuf> {
+    pub fn block_cache_path(&self, block: u64) -> Option<PathBuf> {
         if self.no_storage_caching || self.eth_rpc_url.is_none() {
             return None
         }
-        // cache only if block explicitly set
-        let block = self.fork_block_number?;
         let chain_id = self.get_chain_id();
 
         Config::foundry_block_cache_file(chain_id, block)
@@ -902,9 +900,9 @@ impl NodeConfig {
 
             let meta = BlockchainDbMeta::new(env.clone(), eth_rpc_url.clone());
             let block_chain_db = if self.fork_chain_id.is_some() {
-                BlockchainDb::new_skip_check(meta, self.block_cache_path())
+                BlockchainDb::new_skip_check(meta, self.block_cache_path(fork_block_number))
             } else {
-                BlockchainDb::new(meta, self.block_cache_path())
+                BlockchainDb::new(meta, self.block_cache_path(fork_block_number))
             };
 
             // This will spawn the background thread that will use the provider to fetch

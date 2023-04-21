@@ -122,55 +122,50 @@ impl MultiContractRunner {
     ) -> Result<BTreeMap<String, SuiteResult>> {
         tracing::trace!("start all tests");
 
+        // the db backend that serves all the data, each contract gets its own instance
         let db = Backend::spawn(self.fork.take());
 
-        let results =
-            // the db backend that serves all the data, each contract gets its own instance
+        let results = self
+            .contracts
+            .par_iter()
+            .filter(|(id, _)| {
+                filter.matches_path(id.source.to_string_lossy()) &&
+                    filter.matches_contract(&id.name)
+            })
+            .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
+            .map(|(id, (abi, deploy_code, libs))| {
+                let executor = ExecutorBuilder::default()
+                    .with_cheatcodes(self.cheats_config.clone())
+                    .with_config(self.env.clone())
+                    .with_spec(self.evm_spec)
+                    .with_gas_limit(self.evm_opts.gas_limit())
+                    .set_tracing(self.evm_opts.verbosity >= 3)
+                    .set_coverage(self.coverage)
+                    .build(db.clone());
+                let identifier = id.identifier();
+                tracing::trace!(contract= ?identifier, "start executing all tests in contract");
 
-             self
-                .contracts
-                .par_iter()
-                .filter(|(id, _)| {
-                    filter.matches_path(id.source.to_string_lossy()) &&
-                        filter.matches_contract(&id.name)
-                })
-                .filter(|(_, (abi, _, _))| {
-                    abi.functions().any(|func| filter.matches_test(&func.name))
-                })
-                .map(|(id, (abi, deploy_code, libs))| {
-                    let executor = ExecutorBuilder::default()
-                        .with_cheatcodes(self.cheats_config.clone())
-                        .with_config(self.env.clone())
-                        .with_spec(self.evm_spec)
-                        .with_gas_limit(self.evm_opts.gas_limit())
-                        .set_tracing(self.evm_opts.verbosity >= 3)
-                        .set_coverage(self.coverage)
-                        .build(db.clone());
-                    let identifier = id.identifier();
-                    tracing::trace!(contract= ?identifier, "start executing all tests in contract");
+                let result = self.run_tests(
+                    &identifier,
+                    abi,
+                    executor,
+                    deploy_code.clone(),
+                    libs,
+                    (filter, test_options),
+                )?;
 
-                    let result = self.run_tests(
-                        &identifier,
-                        abi,
-                        executor,
-                        deploy_code.clone(),
-                        libs,
-                        (filter, test_options),
-                    )?;
-
-                    tracing::trace!(contract= ?identifier, "executed all tests in contract");
-                    Ok((identifier, result))
-                })
-                .filter_map(Result::<_>::ok)
-                .filter(|(_, results)| !results.is_empty())
-                .map_with(stream_result, |stream_result, (name, result)| {
-                    if let Some(stream_result) = stream_result.as_ref() {
-                        stream_result.send((name.clone(), result.clone())).unwrap();
-                    }
-                    (name, result)
-                })
-                .collect::<BTreeMap<_, _>>()
-        ;
+                tracing::trace!(contract= ?identifier, "executed all tests in contract");
+                Ok((identifier, result))
+            })
+            .filter_map(Result::<_>::ok)
+            .filter(|(_, results)| !results.is_empty())
+            .map_with(stream_result, |stream_result, (name, result)| {
+                if let Some(stream_result) = stream_result.as_ref() {
+                    stream_result.send((name.clone(), result.clone())).unwrap();
+                }
+                (name, result)
+            })
+            .collect::<BTreeMap<_, _>>();
 
         Ok(results)
     }

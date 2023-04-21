@@ -34,7 +34,7 @@ impl SessionSource {
         // Recompile the project and ensure no errors occurred.
         let compiled = self.build()?;
         if let Some((_, contract)) =
-            compiled.compiler_output.contracts_into_iter().find(|(name, _)| name == "REPL")
+            compiled.clone().compiler_output.contracts_into_iter().find(|(name, _)| name == "REPL")
         {
             // These *should* never panic after a successful compilation.
             let bytecode = contract
@@ -258,7 +258,7 @@ impl SessionSource {
 
         // Create a [ChiselRunner] with a default balance of [U256::MAX] and
         // the sender [Address::zero].
-        ChiselRunner::new(executor, U256::MAX, Address::zero())
+        ChiselRunner::new(executor, U256::MAX, Address::zero(), self.config.calldata.clone())
     }
 }
 
@@ -461,7 +461,7 @@ impl Type {
             pt::Expression::New(_, inner) |                 // new <inner>
             pt::Expression::UnaryPlus(_, inner) |           // +<inner>
             // ops
-            pt::Expression::Complement(_, inner) |          // ~<inner>
+            pt::Expression::BitwiseNot(_, inner) |          // ~<inner>
             pt::Expression::ArraySlice(_, inner, _, _) |    // <inner>[*start*:*end*]
             // assign ops
             pt::Expression::PreDecrement(_, inner) |        // --<inner>

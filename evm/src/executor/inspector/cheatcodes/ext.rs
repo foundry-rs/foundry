@@ -1,10 +1,7 @@
 use crate::{
     abi::HEVMCalls,
     error,
-    executor::inspector::{
-        cheatcodes::{util, util::parse},
-        Cheatcodes,
-    },
+    executor::inspector::{cheatcodes::util, Cheatcodes},
 };
 use bytes::Bytes;
 use ethers::{
@@ -167,24 +164,22 @@ fn set_env(key: &str, val: &str) -> Result<Bytes, Bytes> {
 
 fn get_env(
     key: &str,
-    r#type: ParamType,
+    ty: ParamType,
     delim: Option<&str>,
     default: Option<String>,
 ) -> Result<Bytes, Bytes> {
-    let msg = format!("Failed to get environment variable `{key}` as type `{}`", &r#type);
-    let val = if let Some(value) = default {
-        env::var(key).unwrap_or(value)
+    let val = env::var(key).or_else(|e| {
+        default.ok_or_else(|| {
+            error::encode_error(format!(
+                "Failed to get environment variable `{key}` as type `{ty}`: {e}"
+            ))
+        })
+    })?;
+    if let Some(d) = delim {
+        util::parse_array(val.split(d).map(str::trim), &ty)
     } else {
-        env::var(key).map_err::<Bytes, _>(|e| error::encode_error(format!("{msg}: {e}")))?
-    };
-    let val = if let Some(d) = delim {
-        val.split(d).map(|v| v.trim().to_string()).collect()
-    } else {
-        vec![val]
-    };
-    let is_array: bool = delim.is_some();
-    util::value_to_abi(val, r#type, is_array)
-        .map_err(|e| error::encode_error(format!("{msg}: {e}")))
+        util::parse(&val, &ty)
+    }
 }
 
 fn project_root(state: &Cheatcodes) -> Result<Bytes, Bytes> {
@@ -410,6 +405,7 @@ fn parse_json(
     coerce: Option<ParamType>,
 ) -> Result<Bytes, Bytes> {
     let json = serde_json::from_str(json_str).map_err(error::encode_error)?;
+
     let values: Vec<&Value> =
         jsonpath_lib::select(&json, &canonicalize_json_key(key)).map_err(error::encode_error)?;
     // values is an array of items. Depending on the JsonPath key, they
@@ -421,13 +417,23 @@ fn parse_json(
                 "You can only coerce values or arrays, not JSON objects. The key '{key}' returns an object",
             )))
         }
-        let final_val = if let Some(array) = values[0].as_array() {
-            array.iter().map(|v| v.to_string().replace('\"', "")).collect::<Vec<String>>()
-        } else {
-            vec![values[0].to_string().replace('\"', "")]
+
+        if values.is_empty() {
+            return Err(error::encode_error(format!(
+                "No matching value or array found for key {key}",
+            )))
+        }
+
+        let to_string = |v: &Value| {
+            let mut s = v.to_string();
+            s.retain(|c: char| c != '"');
+            s
         };
-        let bytes = parse(final_val, coercion_type, values[0].is_array());
-        return bytes
+        return if let Some(array) = values[0].as_array() {
+            util::parse_array(array.iter().map(to_string), &coercion_type)
+        } else {
+            util::parse(&to_string(values[0]), &coercion_type)
+        }
     }
     let res = values
         .iter()

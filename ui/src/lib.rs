@@ -876,11 +876,11 @@ impl Tui {
                 let w = debug_steps[current_step].stack[stack_len - 1];
                 match op {
                     opcode::MLOAD => {
-                        word = Some(w.as_usize() / 32);
+                        word = Some(w.as_usize());
                         color = Some(Color::Cyan);
                     }
                     opcode::MSTORE => {
-                        word = Some(w.as_usize() / 32);
+                        word = Some(w.as_usize());
                         color = Some(Color::Red);
                     }
                     _ => {}
@@ -895,7 +895,7 @@ impl Tui {
             if let Instruction::OpCode(op) = debug_steps[prev_step].instruction {
                 if op == opcode::MSTORE {
                     let prev_top = debug_steps[prev_step].stack[stack_len - 1];
-                    word = Some(prev_top.as_usize() / 32);
+                    word = Some(prev_top.as_usize());
                     color = Some(Color::Green);
                 }
             }
@@ -912,11 +912,12 @@ impl Tui {
             .map(|(i, mem_word)| {
                 let words: Vec<Span> = mem_word
                     .iter()
-                    .map(|byte| {
+                    .enumerate()
+                    .map(|(j, byte)| {
                         Span::styled(
                             format!("{byte:02x} "),
                             if let (Some(w), Some(color)) = (word, color) {
-                                if i == w {
+                                if (i == w / 32 && j >= w % 32) || (i == w / 32 + 1 && j < w % 32) {
                                     Style::default().fg(color)
                                 } else if *byte == 0 {
                                     Style::default().add_modifier(Modifier::DIM)

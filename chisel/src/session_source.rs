@@ -11,11 +11,12 @@ use ethers_solc::{
 use eyre::Result;
 use forge::executor::{opts::EvmOpts, Backend};
 use forge_fmt::solang_ext::SafeUnwrap;
-use foundry_config::Config;
+use foundry_config::{Config, SolcReq};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use solang_parser::pt;
 use std::{collections::HashMap, fs, path::PathBuf};
+use yansi::Paint;
 
 /// Solidity source for the `Vm` interface in [forge-std](https://github.com/foundry-rs/forge-std)
 static VM_SOURCE: &str = include_str!("../../testdata/cheats/Cheats.sol");
@@ -73,6 +74,55 @@ pub struct SessionSourceConfig {
     pub backend: Option<Backend>,
     /// Optionally enable traces for the REPL contract execution
     pub traces: bool,
+    /// Optionally set calldata for the REPL contract execution
+    pub calldata: Option<Vec<u8>>,
+}
+
+impl SessionSourceConfig {
+    /// Returns the solc version to use
+    ///
+    /// Solc version precedence
+    /// - Foundry configuration / `--use` flag
+    /// - Latest installed version via SVM
+    /// - Default: Latest 0.8.17
+    pub(crate) fn solc(&self) -> Result<Solc> {
+        let solc_req = if let Some(solc_req) = self.foundry_config.solc.clone() {
+            solc_req
+        } else if let Some(version) = Solc::installed_versions().into_iter().max() {
+            SolcReq::Version(version.into())
+        } else {
+            if !self.foundry_config.offline {
+                print!("{}", Paint::green("No solidity versions installed! "));
+            }
+            // use default
+            SolcReq::Version("0.8.17".parse().unwrap())
+        };
+
+        match solc_req {
+            SolcReq::Version(version) => {
+                let v = version.to_string();
+                let mut solc = Solc::find_svm_installed_version(&v)?;
+                if solc.is_none() {
+                    if self.foundry_config.offline {
+                        eyre::bail!("can't install missing solc {version} in offline mode")
+                    }
+                    println!(
+                        "{}",
+                        Paint::green(format!("Installing solidity version {version}..."))
+                    );
+                    Solc::blocking_install(&version)?;
+                    solc = Solc::find_svm_installed_version(&v)?;
+                }
+                solc.ok_or_else(|| eyre::eyre!("Failed to install {version}"))
+            }
+            SolcReq::Local(solc) => {
+                if !solc.is_file() {
+                    eyre::bail!("`solc` {} does not exist", solc.display());
+                }
+                Ok(Solc::new(solc))
+            }
+        }
+    }
 }
 
 /// REPL Session Source wrapper
@@ -93,7 +143,7 @@ pub struct SessionSource {
     pub global_code: String,
     /// Top level solidity code
     ///
-    /// Typically, this is code seen above the contructor
+    /// Typically, this is code seen above the constructor
     pub top_level_code: String,
     /// Code existing within the "run()" function's scope
     pub run_code: String,
@@ -248,7 +298,25 @@ impl SessionSource {
         let mut sources = Sources::new();
         sources.insert(PathBuf::from("forge-std/Vm.sol"), Source::new(VM_SOURCE.to_owned()));
         sources.insert(self.file_name.clone(), Source::new(self.to_repl_source()));
-        CompilerInput::with_sources(sources).pop().unwrap()
+        // we only care about the solidity source, so we can safely unwrap
+        let mut compiler_input = CompilerInput::with_sources(sources)
+            .into_iter()
+            .next()
+            .expect("Solidity source not found");
+
+        // get all remappings from the config so libraries can be found, but remove the forge-std
+        // remapping
+        // NOTE(mattsse): perhaps the better solution is to not add the Vm.sol
+        // file
+        compiler_input.settings.remappings = self
+            .config
+            .foundry_config
+            .get_all_remappings()
+            .into_iter()
+            .filter(|remapping| !remapping.name.starts_with("forge-std"))
+            .collect();
+
+        compiler_input
     }
 
     /// Compiles the source using [solang_parser]

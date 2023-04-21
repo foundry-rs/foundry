@@ -8,9 +8,9 @@ repository = "https://github.com/foundry-rs/foundry"
 keywords = ["ethereum", "web3", "evm", "debugger"]
 
 [dependencies]
-crossterm = "0.22.1"
-tui = { version = "0.16.0", default-features = false, features = ["crossterm"] }
-eyre = "0.6.5"
+crossterm = "0.26"
+tui = { version = "0.19", default-features = false, features = ["crossterm"] }
+eyre = "0.6.8"
 hex = "0.4.3"
 ethers = { workspace = true }
 forge = { path = "../forge" }

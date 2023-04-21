@@ -10,6 +10,8 @@ pub mod dispatcher;
 /// Builtin Chisel commands
 pub mod cmd;
 
+pub mod history;
+
 /// Chisel Environment Module
 pub mod session;
 

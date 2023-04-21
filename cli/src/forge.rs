@@ -119,7 +119,11 @@ fn main() -> eyre::Result<()> {
             cmd.run()?;
         }
         Subcommands::Geiger(cmd) => {
-            cmd.run()?;
+            let check = cmd.check;
+            let n = cmd.run()?;
+            if check && n > 0 {
+                std::process::exit(n as i32);
+            }
         }
         Subcommands::Doc(cmd) => {
             cmd.run()?;

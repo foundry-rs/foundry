@@ -85,7 +85,7 @@ use crate::{
 use providers::*;
 
 mod fuzz;
-pub use fuzz::FuzzConfig;
+pub use fuzz::{FuzzConfig, FuzzDictionaryConfig};
 
 mod invariant;
 use crate::fs_permissions::PathPermission;
@@ -2891,7 +2891,7 @@ mod tests {
                 env_value
             );
 
-            let mut with_key = config.clone();
+            let mut with_key = config;
             with_key.etherscan_api_key = Some("via etherscan_api_key".to_string());
 
             assert_eq!(
@@ -3638,18 +3638,33 @@ mod tests {
             assert_ne!(config.invariant.runs, config.fuzz.runs);
             assert_eq!(config.invariant.runs, 420);
 
-            assert_ne!(config.fuzz.include_storage, invariant_default.include_storage);
-            assert_eq!(config.invariant.include_storage, config.fuzz.include_storage);
+            assert_ne!(
+                config.fuzz.dictionary.include_storage,
+                invariant_default.dictionary.include_storage
+            );
+            assert_eq!(
+                config.invariant.dictionary.include_storage,
+                config.fuzz.dictionary.include_storage
+            );
 
-            assert_ne!(config.fuzz.dictionary_weight, invariant_default.dictionary_weight);
-            assert_eq!(config.invariant.dictionary_weight, config.fuzz.dictionary_weight);
+            assert_ne!(
+                config.fuzz.dictionary.dictionary_weight,
+                invariant_default.dictionary.dictionary_weight
+            );
+            assert_eq!(
+                config.invariant.dictionary.dictionary_weight,
+                config.fuzz.dictionary.dictionary_weight
+            );
 
             jail.set_env("FOUNDRY_PROFILE", "ci");
             let ci_config = Config::load();
             assert_eq!(ci_config.fuzz.runs, 1);
             assert_eq!(ci_config.invariant.runs, 400);
-            assert_eq!(ci_config.fuzz.dictionary_weight, 5);
-            assert_eq!(ci_config.invariant.dictionary_weight, config.fuzz.dictionary_weight);
+            assert_eq!(ci_config.fuzz.dictionary.dictionary_weight, 5);
+            assert_eq!(
+                ci_config.invariant.dictionary.dictionary_weight,
+                config.fuzz.dictionary.dictionary_weight
+            );
 
             Ok(())
         })
@@ -4086,7 +4101,7 @@ mod tests {
 
             let config = Config::load();
             assert_eq!(config.fmt.line_length, 95);
-            assert_eq!(config.fuzz.dictionary_weight, 99);
+            assert_eq!(config.fuzz.dictionary.dictionary_weight, 99);
             assert_eq!(config.invariant.depth, 5);
 
             Ok(())

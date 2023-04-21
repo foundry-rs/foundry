@@ -16,36 +16,31 @@ foundry-config = { path = "../config" }
 foundry-utils = { path = "../utils" }
 
 # ethers
-ethers-solc = { workspace = true, default-features = false, features = ["async"] }
-ethers-core = { workspace = true, default-features = false }
+ethers-solc = { workspace = true, features = ["async"] }
+ethers-core = { workspace = true }
 
 # cli
-clap = { version = "3.0.10", features = [
-    "derive",
-    "env",
-    "unicode",
-    "wrap_help",
-] }
+clap = { version = "4.2", features = ["derive", "env", "unicode", "wrap_help"] }
 
 # tracing
 tracing = "0.1"
 
 # mdbook
-mdbook = { version = "0.4.25", default-features = false, features = ["search"] }
-warp = { version = "0.3.2", default-features = false, features = ["websocket"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-futures-util = "0.3.4"
+mdbook = { version = "0.4.28", default-features = false, features = ["search"] }
+warp = { version = "0.3", default-features = false, features = ["websocket"] }
+tokio = { version = "1.27", features = ["macros", "rt-multi-thread"] }
+futures-util = "0.3"
 
 # misc
-solang-parser = "=0.2.3"
+solang-parser = "=0.2.4"
 eyre = "0.6"
-thiserror = "1.0.30"
-rayon = "1.5.1"
-itertools = "0.10.3"
-toml = "0.5"
+thiserror = "1.0.40"
+rayon = "1.7"
+itertools = "0.10"
+toml = "0.7"
 auto_impl = "1"
 derive_more = "0.99"
-once_cell = "1.13"
+once_cell = "1.17"
 
 [dev-dependencies]
 assert_matches = "1.5.0"

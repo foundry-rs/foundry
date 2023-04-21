@@ -20,6 +20,20 @@ impl<DB> Inspector<DB> for Fuzzer
 where
     DB: Database,
 {
+    fn step(
+        &mut self,
+        interpreter: &mut Interpreter,
+        _: &mut EVMData<'_, DB>,
+        _is_static: bool,
+    ) -> Return {
+        // We only collect `stack` and `memory` data before and after calls.
+        if self.collect {
+            self.collect_data(interpreter);
+            self.collect = false;
+        }
+        Return::Continue
+    }
+
     fn call(
         &mut self,
         data: &mut EVMData<'_, DB>,
@@ -36,20 +50,6 @@ where
         self.collect = true;
 
         (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
-    }
-
-    fn step(
-        &mut self,
-        interpreter: &mut Interpreter,
-        _: &mut EVMData<'_, DB>,
-        _is_static: bool,
-    ) -> Return {
-        // We only collect `stack` and `memory` data before and after calls.
-        if self.collect {
-            self.collect_data(interpreter);
-            self.collect = false;
-        }
-        Return::Continue
     }
 
     fn call_end(
@@ -79,7 +79,7 @@ impl Fuzzer {
         let mut state = self.fuzz_state.write();
 
         for slot in interpreter.stack().data() {
-            state.insert(utils::u256_to_h256_be(*slot).into());
+            state.values_mut().insert(utils::u256_to_h256_be(*slot).into());
         }
 
         // TODO: disabled for now since it's flooding the dictionary
