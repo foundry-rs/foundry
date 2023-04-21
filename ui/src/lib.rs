@@ -13,8 +13,8 @@ use forge::{
     utils::{build_pc_ic_map, PCICMap},
     CallKind,
 };
-use revm::{interpreter::opcode, primitives::SpecId};
 use foundry_common::evm::Breakpoints;
+use revm::{interpreter::opcode, primitives::SpecId};
 use std::{
     cmp::{max, min},
     collections::{BTreeMap, HashMap, VecDeque},
