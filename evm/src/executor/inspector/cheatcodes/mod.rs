@@ -20,6 +20,7 @@ use ethers::{
         U256,
     },
 };
+use foundry_common::evm::Breakpoints;
 use itertools::Itertools;
 use revm::{
     opcode, BlockEnv, CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return,
@@ -165,6 +166,11 @@ pub struct Cheatcodes {
     /// CREATE / CREATE2 frames. This is needed to make gas meter pausing work correctly when
     /// paused and creating new contracts.
     pub gas_metering_create: Option<Option<revm::Gas>>,
+    /// current program counter
+    pub pc: usize,
+    /// Breakpoints supplied by the `vm.breakpoint("<char>")` cheatcode
+    /// char -> pc
+    pub breakpoints: Breakpoints,
 }
 
 impl Cheatcodes {
@@ -288,6 +294,8 @@ where
         data: &mut EVMData<'_, DB>,
         _: bool,
     ) -> Return {
+        self.pc = interpreter.program_counter();
+
         // reset gas if gas metering is turned off
         match self.gas_metering {
             Some(None) => {
