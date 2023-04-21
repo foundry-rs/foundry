@@ -129,7 +129,7 @@ pub struct NodeArgs {
     )]
     pub load_state: Option<SerializableState>,
 
-    #[clap(long, value_name = "PATH", visible_alias = "ipcpath")]
+    #[clap(long, help = IPC_HELP, value_name = "PATH", visible_alias = "ipcpath")]
     pub ipc: Option<Option<String>>,
 
     /// Don't keep full chain history.
