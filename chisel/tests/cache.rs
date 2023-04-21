@@ -43,6 +43,7 @@ fn test_write_session() {
         evm_opts: EvmOpts::default(),
         backend: None,
         traces: false,
+        calldata: None,
     })
     .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
 

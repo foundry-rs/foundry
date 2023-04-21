@@ -14,7 +14,7 @@ revm = { version = "2.3", default-features = false, features = [
     "memory_limit",
 ] }
 
-ethers-core = { workspace = true, default-features = false }
+ethers-core = { workspace = true }
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = { version = "1.0" }
 bytes = { version = "1.4" }

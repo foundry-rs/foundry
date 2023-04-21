@@ -22,8 +22,8 @@ cast = { path = "../cast" }
 ui = { path = "../ui" }
 
 # eth
-ethers = { workspace = true, default-features = false, features = ["rustls"] }
-solang-parser = "=0.2.3"
+ethers = { workspace = true, features = ["rustls"] }
+solang-parser = "=0.2.4"
 
 # cli
 clap = { version = "4.2", features = ["derive", "env", "unicode", "wrap_help"] }

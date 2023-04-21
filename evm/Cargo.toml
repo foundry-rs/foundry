@@ -16,7 +16,7 @@ foundry-macros = { path = "../macros" }
 serde_json = "1.0.95"
 serde = "1.0.159"
 hex = "0.4.3"
-ethers = { workspace = true, default-features = false, features = ["solc-full", "abigen"] }
+ethers = { workspace = true, features = ["solc-full", "abigen"] }
 jsonpath_lib = "0.3.0"
 
 # Error handling

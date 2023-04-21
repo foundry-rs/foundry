@@ -13,18 +13,20 @@ keywords = ["ethereum", "web3", "solidity", "linter"]
 foundry-config = { path = "../config" }
 
 # ethers
-ethers-core = { workspace = true, default-features = false }
+ethers-core = { workspace = true }
 
 # parser
-solang-parser = "=0.2.3"
+solang-parser = "=0.2.4"
 
 # misc
 semver = "1.0.17"
 itertools = "0.10.5"
 thiserror = "1.0.40"
 ariadne = "0.2"
+tracing = "0.1.37"
 
 [dev-dependencies]
 pretty_assertions = "1.3.0"
 itertools = "0.10.5"
 toml = "0.7"
+tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }

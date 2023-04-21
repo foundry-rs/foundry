@@ -828,6 +828,12 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
             value_name = "SIG"
         )]
         sig: Option<String>,
+
+        #[clap(
+            help = "Optimize signature to contain provided amount of leading zeroes in selector.",
+            value_name = "OPTIMIZE"
+        )]
+        optimize: Option<usize>,
     },
     #[clap(
         name = "create2",

@@ -14,17 +14,19 @@ foundry-config = { path = "./../config" }
 foundry-common = { path = "./../common" }
 
 futures = "0.3.27"
-ethers-etherscan = { workspace = true, default-features = false }
-ethers-contract = { workspace = true, default-features = false, features = ["abigen"] }
-ethers-core = { workspace = true, default-features = false }
-ethers-providers = { workspace = true, default-features = false }
-ethers-signers = { workspace = true, default-features = false }
+ethers-etherscan = { workspace = true }
+ethers-contract = { workspace = true, features = ["abigen"] }
+ethers-core = { workspace = true }
+ethers-providers = { workspace = true }
+ethers-signers = { workspace = true }
 eyre = "0.6.8"
 rustc-hex = "2.1.0"
 serde = "1.0.159"
 serde_json = "1.0.95"
 chrono = "0.4.24"
 hex = "0.4.3"
+num_cpus = "1.13.0"
+rayon = "1.5.1"
 
 # aws
 rusoto_core = { version = "0.48.0", default-features = false, optional = true }

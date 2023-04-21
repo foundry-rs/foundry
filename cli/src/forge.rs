@@ -32,7 +32,7 @@ fn main() -> eyre::Result<()> {
                 cmd.opts.args.silent,
                 cmd.json,
             ))?;
-            utils::block_on(cmd.run_script())?;
+            utils::block_on(cmd.run_script(Default::default()))?;
         }
         Subcommands::Coverage(cmd) => {
             cmd.run()?;
@@ -48,7 +48,7 @@ fn main() -> eyre::Result<()> {
             }
         }
         Subcommands::Debug(cmd) => {
-            utils::block_on(cmd.debug())?;
+            utils::block_on(cmd.debug(Default::default()))?;
         }
         Subcommands::VerifyContract(args) => {
             utils::block_on(args.run())?;
@@ -119,7 +119,11 @@ fn main() -> eyre::Result<()> {
             cmd.run()?;
         }
         Subcommands::Geiger(cmd) => {
-            cmd.run()?;
+            let check = cmd.check;
+            let n = cmd.run()?;
+            if check && n > 0 {
+                std::process::exit(n as i32);
+            }
         }
         Subcommands::Doc(cmd) => {
             cmd.run()?;

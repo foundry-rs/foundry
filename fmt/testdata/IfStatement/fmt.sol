@@ -104,9 +104,7 @@ contract IfStatement {
             execute();
         }
 
-        if (condition && ((condition || anotherLongCondition))) {
-            execute();
-        }
+        if (condition && ((condition || anotherLongCondition))) execute();
 
         // if statement
         if (condition) execute();
