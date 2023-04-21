@@ -22,21 +22,6 @@ use rustc_hex::ToHex;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
 
-/*
-For each field's `clap(help)` attribute:
-```rust
-#[clap(help = "<DOC>")]
-field: ...,
-```
-
-Create a new Rust struct with the same exact fields as the input, but with the
-`help` attribute removed, and replace with a doc comment, only if the
-`help` attribute exists, like so:
-```rust
-/// <doc>
-/// field: ...,
-*/
-
 /// CLI arguments for `forge create`.
 #[derive(Debug, Clone, Parser)]
 pub struct CreateArgs {
@@ -70,7 +55,7 @@ pub struct CreateArgs {
     eth: EthereumOpts,
 
     /// Print the deployment information as JSON.
-    #[clap(long = "json", help_heading = "Display options")]
+    #[clap(long, help_heading = "Display options")]
     json: bool,
 
     /// Verify contract after creation.

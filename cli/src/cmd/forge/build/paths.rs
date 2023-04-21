@@ -25,12 +25,12 @@ pub struct ProjectPathsArgs {
     pub root: Option<PathBuf>,
 
     /// The contracts source directory.
-    #[clap(long, short, value_hint = ValueHint::DirPath, value_name = "PATH")]
+    #[clap(long, short = 'C', value_hint = ValueHint::DirPath, value_name = "PATH")]
     #[serde(rename = "src", skip_serializing_if = "Option::is_none")]
     pub contracts: Option<PathBuf>,
 
     /// The project's remappings.
-    #[clap(long, short)]
+    #[clap(long, short = 'R')]
     #[serde(skip)]
     pub remappings: Vec<Remapping>,
 
