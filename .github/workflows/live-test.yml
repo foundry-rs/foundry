@@ -13,7 +13,7 @@ jobs:
         name: goerli live tests
         runs-on: ubuntu-latest
         env:
-            GOERLI_RPC_URL: https://goerli.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161
+            GOERLI_RPC_URL: https://goerli.infura.io/v3/40bee2d557ed4b52908c3e62345a3d8b
             ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
             TEST_PRIVATE_KEY: ${{ secrets.TEST_PRIVATE_KEY }}
         steps:
