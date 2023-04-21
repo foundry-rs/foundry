@@ -152,8 +152,8 @@ pub fn apply<DB: Database>(
             Ok(Bytes::new())
         }
         HEVMCalls::GetLabel(inner) => {
-            let label = String::from(state.labels.get(&inner.0).or(Some(&String::from(format!("unlabeled:{}", inner.0)))).unwrap());
-            Ok(Bytes::from(ethers::abi::encode(&[Token::String(label)])))
+            let label = state.labels.get(&inner.0).cloned().unwrap_or_else(|| format!("unlabeled:{}", inner.0));
+            Ok(ethers::abi::encode(&[Token::String(label)]).into())
         }
         HEVMCalls::ToString0(inner) => {
             Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
