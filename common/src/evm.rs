@@ -84,7 +84,7 @@ pub struct EvmArgs {
     pub sender: Option<Address>,
 
     /// Enable the FFI cheatcode.
-    #[clap(help = "Enables the FFI cheatcode.", long)]
+    #[clap(long)]
     #[serde(skip)]
     pub ffi: bool,
 

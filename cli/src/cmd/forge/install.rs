@@ -70,13 +70,16 @@ impl Cmd for InstallArgs {
 
 #[derive(Debug, Clone, Copy, Default, Parser)]
 pub struct DependencyInstallOpts {
-    #[clap(help = "Install without adding the dependency as a submodule.", long)]
+    /// Install without adding the dependency as a submodule.
+    #[clap(long)]
     pub no_git: bool,
 
-    #[clap(help = "Do not create a commit.", long)]
+    /// Do not create a commit.
+    #[clap(long)]
     pub no_commit: bool,
 
-    #[clap(help = "Do not print any messages.", short, long)]
+    /// Do not print any messages.
+    #[clap(short, long)]
     pub quiet: bool,
 }
 
