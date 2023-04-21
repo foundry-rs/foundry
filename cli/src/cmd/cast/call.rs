@@ -36,7 +36,7 @@ pub struct CallArgs {
     #[clap(flatten)]
     eth: EthereumOpts,
 
-    /// The block height to to query at.
+    /// The block height to query at.
     ///
     /// Can also be the tags earliest, finalized, safe, latest, or pending.
     #[clap(long, short)]
