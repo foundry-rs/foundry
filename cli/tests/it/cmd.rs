@@ -900,7 +900,7 @@ forgetest!(can_install_and_remove, |prj: TestProject, mut cmd: TestCommand| {
     };
 
     let remove = |cmd: &mut TestCommand, target: &str| {
-        cmd.forge_fuse().args(["remove", target]);
+        cmd.forge_fuse().args(["remove", "--force", target]);
         cmd.assert_non_empty_stdout();
         assert!(!forge_std.exists());
         assert!(!forge_std_mod.exists());

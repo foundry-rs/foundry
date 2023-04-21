@@ -30,6 +30,8 @@ pub struct ChiselRunner {
     pub initial_balance: U256,
     /// The sender
     pub sender: Address,
+    /// Input calldata appended to `RUN_SELECTOR`
+    pub input: Option<Vec<u8>>,
 }
 
 /// Represents the result of a Chisel REPL run
@@ -64,8 +66,13 @@ impl ChiselRunner {
     /// ### Returns
     ///
     /// A new [ChiselRunner]
-    pub fn new(executor: Executor, initial_balance: U256, sender: Address) -> Self {
-        Self { executor, initial_balance, sender }
+    pub fn new(
+        executor: Executor,
+        initial_balance: U256,
+        sender: Address,
+        input: Option<Vec<u8>>,
+    ) -> Self {
+        Self { executor, initial_balance, sender, input }
     }
 
     /// Run a contract as a REPL session
@@ -93,8 +100,14 @@ impl ChiselRunner {
         // Reset the sender's balance to the initial balance for calls.
         self.executor.set_balance(self.sender, self.initial_balance)?;
 
+        // Append the input to the `RUN_SELECTOR` to form the calldata
+        let mut calldata = RUN_SELECTOR.to_vec();
+        if let Some(mut input) = self.input.clone() {
+            calldata.append(&mut input);
+        }
+
         // Call the "run()" function of the REPL contract
-        let call_res = self.call(self.sender, address, Bytes::from(RUN_SELECTOR), 0.into(), true);
+        let call_res = self.call(self.sender, address, Bytes::from(calldata), 0.into(), true);
 
         call_res.map(|res| (address, res))
     }

@@ -174,10 +174,10 @@ impl TestArgs {
                     let results = runner.test(&filter, None, test_options)?;
 
                     // Get the result of the single test
-                    let (id, sig, test_kind, counterexample) = results.iter().map(|(id, SuiteResult{ test_results, .. })| {
+                    let (id, sig, test_kind, counterexample, breakpoints) = results.iter().map(|(id, SuiteResult{ test_results, .. })| {
                         let (sig, result) = test_results.iter().next().unwrap();
 
-                        (id.clone(), sig.clone(), result.kind.clone(), result.counterexample.clone())
+                        (id.clone(), sig.clone(), result.kind.clone(), result.counterexample.clone(), result.breakpoints.clone())
                     }).next().unwrap();
 
                     // Build debugger args if this is a fuzz test
@@ -204,7 +204,7 @@ impl TestArgs {
                         opts,
                         evm_opts: self.evm_opts,
                     };
-                    utils::block_on(debugger.debug())?;
+                    utils::block_on(debugger.debug(breakpoints))?;
 
                     Ok(TestOutcome::new(results, self.allow_failure))
                 }

@@ -238,6 +238,7 @@ fn run_debugger(
                 (id.name, sources)
             })
             .collect(),
+        Default::default(),
     )?;
     match tui.start().expect("Failed to start tui") {
         TUIExitReason::CharExit => Ok(()),

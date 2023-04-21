@@ -6866,6 +6866,7 @@ dependencies = [
  "ethers",
  "eyre",
  "forge",
+ "foundry-common",
  "hex",
  "revm",
  "tui",

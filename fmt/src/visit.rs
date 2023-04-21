@@ -120,21 +120,12 @@ pub trait Visitor {
         loc: Loc,
         _declaration: &mut VariableDeclaration,
         _expr: &mut Option<Expression>,
-        _semicolon: bool,
     ) -> Result<(), Self::Error> {
         self.visit_source(loc)?;
-        self.visit_stray_semicolon()?;
-
-        Ok(())
+        self.visit_stray_semicolon()
     }
 
-    /// Don't write semicolon at the end because variable declarations can appear in both
-    /// struct definition and function body as a statement
-    fn visit_var_declaration(
-        &mut self,
-        var: &mut VariableDeclaration,
-        _is_assignment: bool,
-    ) -> Result<(), Self::Error> {
+    fn visit_var_declaration(&mut self, var: &mut VariableDeclaration) -> Result<(), Self::Error> {
         self.visit_source(var.loc)
     }
 
@@ -539,7 +530,7 @@ impl Visitable for Statement {
                 v.visit_stray_semicolon()
             }
             Statement::VariableDefinition(loc, declaration, expr) => {
-                v.visit_var_definition_stmt(*loc, declaration, expr, true)
+                v.visit_var_definition_stmt(*loc, declaration, expr)
             }
             Statement::For(loc, init, cond, update, body) => {
                 v.visit_for(*loc, init, cond, update, body)
@@ -593,7 +584,7 @@ impl Visitable for VariableDeclaration {
     where
         V: Visitor,
     {
-        v.visit_var_declaration(self, false)
+        v.visit_var_declaration(self)
     }
 }
 

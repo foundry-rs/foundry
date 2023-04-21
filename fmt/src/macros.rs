@@ -90,6 +90,7 @@ macro_rules! return_source_if_disabled {
     ($self:expr, $loc:expr) => {{
         let loc = $loc;
         if $self.inline_config.is_disabled(loc) {
+            trace!("Returning because disabled: {loc:?}");
             return $self.visit_source(loc)
         }
     }};
@@ -98,6 +99,7 @@ macro_rules! return_source_if_disabled {
         let has_suffix = $self.extend_loc_until(&mut loc, $suffix);
         if $self.inline_config.is_disabled(loc) {
             $self.visit_source(loc)?;
+            trace!("Returning because disabled: {loc:?}");
             if !has_suffix {
                 write!($self.buf(), "{}", $suffix)?;
             }
