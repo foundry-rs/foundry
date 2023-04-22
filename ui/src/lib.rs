@@ -381,6 +381,12 @@ impl Tui {
             )
         ];
 
+        let text_output = Text::from(Span::styled(
+            "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end\n
+[t]: stack labels | [m]: memory decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll memory | ['<char>]: goto breakpoint",
+            Style::default().add_modifier(Modifier::DIM),
+        ));
+
         let paragraph = Paragraph::new(text_output)
             .block(block_controls)
             .alignment(Alignment::Center)
