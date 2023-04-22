@@ -2617,6 +2617,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "walkdir",
  "yansi",
 ]
 

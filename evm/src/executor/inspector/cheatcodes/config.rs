@@ -81,7 +81,7 @@ impl CheatsConfig {
 
     /// Returns an error if no access is granted to access `path`, See also [Self::is_path_allowed]
     ///
-    /// Returns the normalized version of `path`, see [`Self::normalized_path`]
+    /// Returns the normalized version of `path`, see [`CheatsConfig::normalized_path`]
     pub fn ensure_path_allowed(
         &self,
         path: impl AsRef<Path>,
