@@ -33,7 +33,8 @@ First run the command below to get `foundryup`, the Foundry toolchain installer:
 curl -L https://foundry.paradigm.xyz | bash
 ```
 
-If you do not want to use the redirect, feel free to manually download the foundryup installation script from [here](https://raw.githubusercontent.com/foundry-rs/foundry/master/foundryup/install).
+If you do not want to use the redirect, feel free to manually download the
+foundryup installation script from [here](./foundryup/install).
 
 Then, run `foundryup` in a new terminal session or after reloading your `PATH`.
 
@@ -71,8 +72,18 @@ docker pull ghcr.io/foundry-rs/foundry:latest
 ```
 
 For examples and guides on using this image, see the [Docker section](https://book.getfoundry.sh/tutorials/foundry-docker.html) in the book.
+
 ### Installing on Windows
- If you encounter issues installing Foundry on your machine, we recommend trying to use Windows Subsystem for Linux (WSL) as an alternative. WSL allows you to run Linux applications directly on Windows, which can help avoid some common installation problems. You can follow the instructions provided by Microsoft to install WSL on your Windows machine [WSL](https://learn.microsoft.com/en-us/windows/wsl/install)<br/>
+
+If you encounter issues installing Foundry on Windows, we recommend trying
+to use [Windows Subsystem for Linux][wsl] (WSL) as an alternative.
+WSL allows you to run Linux applications directly on Windows, which can help
+avoid some common installation problems.
+
+You can follow the instructions provided by Microsoft to install WSL on your
+Windows machine [here][wsl].
+
+[wsl]: https://learn.microsoft.com/en-us/windows/wsl/install
 
 ### Manual Download
 
