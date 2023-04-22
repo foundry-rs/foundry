@@ -53,7 +53,6 @@ pub struct AccessListArgs {
     to_json: bool,
 }
 
-
 impl AccessListArgs {
     pub async fn run(self) -> eyre::Result<()> {
         let AccessListArgs { to, sig, args, data, tx, eth, block, to_json } = self;
@@ -70,18 +69,16 @@ impl AccessListArgs {
             .gas_price(tx.gas_price)
             .priority_gas_price(tx.priority_gas_price)
             .nonce(tx.nonce);
-    
-            builder.value(tx.value);
+
+        builder.value(tx.value);
 
         if let Some(sig) = sig {
             builder.set_args(sig.as_str(), args).await?;
         }
         if let Some(data) = data {
             // Note: `sig+args` and `data` are mutually exclusive
-            builder.set_data(
-                hex::decode(data).wrap_err("Expected hex encoded function data")?,
-            );
-        }        
+            builder.set_data(hex::decode(data).wrap_err("Expected hex encoded function data")?);
+        }
 
         let builder_output = builder.peek();
         println!("{}", Cast::new(&provider).access_list(builder_output, block, to_json).await?);
