@@ -28,6 +28,7 @@ ethers::contract::abigen!(
             ffi(string[])(bytes)
             setEnv(string,string)
             breakpoint(string)
+            breakpoint(string,bool)
             envBool(string)(bool)
             envUint(string)(uint256)
             envInt(string)(int256)

@@ -70,7 +70,7 @@ fn broadcast(
     }
 
     if state.broadcast.is_some() {
-        return Err("You have an active broadcast already.".to_string().encode().into())
+        return Err("You have an active broadcast already.".to_string().encode().into());
     }
 
     state.broadcast = Some(broadcast);
@@ -89,7 +89,7 @@ fn broadcast_key(
     single_call: bool,
 ) -> Result<Bytes, Bytes> {
     if private_key.is_zero() {
-        return Err("Private key cannot be 0.".to_string().encode().into())
+        return Err("Private key cannot be 0.".to_string().encode().into());
     }
 
     if private_key >= U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()) {
@@ -121,7 +121,7 @@ fn prank(
     let prank = Prank { prank_caller, prank_origin, new_caller, new_origin, depth, single_call };
 
     if state.prank.is_some() {
-        return Err("You have an active prank already.".encode().into())
+        return Err("You have an active prank already.".encode().into());
     }
 
     if state.broadcast.is_some() {
@@ -192,7 +192,12 @@ fn get_recorded_logs(state: &mut Cheatcodes) -> Bytes {
 }
 
 /// Entry point of the breakpoint cheatcode. Adds the called breakpoint to the state.
-fn add_breakpoint(state: &mut Cheatcodes, caller: Address, inner: &str) -> Result<Bytes, Bytes> {
+fn add_breakpoint(
+    state: &mut Cheatcodes,
+    caller: Address,
+    inner: &str,
+    add: bool,
+) -> Result<Bytes, Bytes> {
     let mut chars = inner.chars();
     let point = chars.next();
 
@@ -201,15 +206,19 @@ fn add_breakpoint(state: &mut Cheatcodes, caller: Address, inner: &str) -> Resul
     })?;
 
     if chars.next().is_some() {
-        return Err("Please provide only one char for the breakpoint".encode().into())
+        return Err("Please provide only one char for the breakpoint".encode().into());
     }
 
     if !point.is_alphabetic() {
-        return Err("Only alphabetic chars are accepted".encode().into())
+        return Err("Only alphabetic chars are accepted".encode().into());
     }
 
     // add a breakpoint from the interpreter
-    state.breakpoints.insert(point, (caller, state.pc));
+    if add {
+        state.breakpoints.insert(point, (caller, state.pc));
+    } else {
+        state.breakpoints.remove(&point);
+    }
 
     Ok(Bytes::new())
 }
@@ -264,7 +273,8 @@ pub fn apply<DB: DatabaseExt>(
                 .map_err(|err| err.encode_string())?;
             val.encode().into()
         }
-        HEVMCalls::Breakpoint(inner) => add_breakpoint(state, caller, &inner.0)?,
+        HEVMCalls::Breakpoint0(inner) => add_breakpoint(state, caller, &inner.0, true)?,
+        HEVMCalls::Breakpoint1(inner) => add_breakpoint(state, caller, &inner.0, inner.1)?,
         HEVMCalls::Etch(inner) => {
             let code = inner.1.clone();
             trace!(address=?inner.0, code=?hex::encode(&code.0), "etch cheatcode");
@@ -375,7 +385,7 @@ pub fn apply<DB: DatabaseExt>(
         }
         HEVMCalls::ChainId(inner) => {
             if inner.0 > U256::from(u64::MAX) {
-                return Err("Chain ID must be less than 2^64".to_string().encode().into())
+                return Err("Chain ID must be less than 2^64".to_string().encode().into());
             }
             data.env.cfg.chain_id = inner.0;
             Bytes::new()
@@ -490,7 +500,7 @@ pub fn apply<DB: DatabaseExt>(
         }
         HEVMCalls::StopBroadcast(_) => {
             if state.broadcast.is_none() {
-                return Err("No broadcast in progress to stop".to_string().encode().into())
+                return Err("No broadcast in progress to stop".to_string().encode().into());
             }
             state.broadcast = None;
             Bytes::new()
