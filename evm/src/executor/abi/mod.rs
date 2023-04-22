@@ -260,16 +260,16 @@ pub use hardhat_console::HARDHATCONSOLE_ABI as HARDHAT_CONSOLE_ABI;
 
 /// If the input starts with a known `hardhat/console.log` `uint` selector, then this will replace
 /// it with the selector `abigen!` bindings expect.
-pub fn patch_hardhat_console_selector(mut input: Vec<u8>) -> Vec<u8> {
+pub fn patch_hardhat_console_selector(input: &mut [u8]) {
     if input.len() < 4 {
-        return input
+        return
     }
 
-    let selector = Selector::try_from(&input[..4]).unwrap();
-    if let Some(abigen_selector) = HARDHAT_CONSOLE_SELECTOR_PATCHES.get(&selector) {
-        input.splice(..4, *abigen_selector);
+    // SAFETY: length checked above; see [<[T]>::split_array_mut].
+    let selector = unsafe { &mut *(input.get_unchecked_mut(..4) as *mut [u8] as *mut [u8; 4]) };
+    if let Some(abigen_selector) = HARDHAT_CONSOLE_SELECTOR_PATCHES.get(selector) {
+        *selector = *abigen_selector;
     }
-    input
 }
 
 /// This contains a map with all the  `hardhat/console.log` log selectors that use `uint` or `int`
@@ -799,8 +799,9 @@ mod tests {
     #[test]
     fn hardhat_console_path_works() {
         for (hh, abigen) in HARDHAT_CONSOLE_SELECTOR_PATCHES.iter() {
-            let patched = patch_hardhat_console_selector(hh.to_vec());
-            assert_eq!(abigen.to_vec(), patched);
+            let mut hh = *hh;
+            patch_hardhat_console_selector(&mut hh);
+            assert_eq!(*abigen, hh);
         }
     }
 }
