@@ -23,7 +23,7 @@ pub struct LogCollector {
 }
 
 impl LogCollector {
-    fn hardhat_log(&mut self, input: Vec<u8>) -> (InstructionResult, Bytes) {
+    fn hardhat_log(&mut self, mut input: Vec<u8>) -> (InstructionResult, Bytes) {
         // Patch the Hardhat-style selectors
         patch_hardhat_console_selector(&mut input);
         let decoded = match HardhatConsoleCalls::decode(input) {
