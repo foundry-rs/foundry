@@ -50,7 +50,7 @@ impl DebugArgs {
             gas_estimate_multiplier: 130,
             opts: BuildArgs { args: self.opts, ..Default::default() },
             evm_opts: self.evm_opts,
-            debug: true,
+            debug: self.debug,
             retry: RETRY_VERIFY_ON_CREATE,
             ..Default::default()
         };
