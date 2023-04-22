@@ -18,9 +18,9 @@ pub struct LogCollector {
 }
 
 impl LogCollector {
-    fn hardhat_log(&mut self, input: Vec<u8>) -> (Return, Bytes) {
+    fn hardhat_log(&mut self, mut input: Vec<u8>) -> (Return, Bytes) {
         // Patch the Hardhat-style selectors
-        let input = patch_hardhat_console_selector(input.to_vec());
+        patch_hardhat_console_selector(&mut input);
         let decoded = match HardhatConsoleCalls::decode(input) {
             Ok(inner) => inner,
             Err(err) => {
@@ -77,10 +77,8 @@ const TOPIC: H256 = H256([
 /// Converts a call to Hardhat's `console.log` to a DSTest `log(string)` event.
 fn convert_hh_log_to_event(call: HardhatConsoleCalls) -> Log {
     // Convert the parameters of the call to their string representation using `ConsoleFmt`.
-    let data = {
-        let fmt = call.fmt(Default::default());
-        let token = Token::String(fmt);
-        ethers::abi::encode(&[token]).into()
-    };
+    let fmt = call.fmt(Default::default());
+    let token = Token::String(fmt);
+    let data = ethers::abi::encode(&[token]).into();
     Log { topics: vec![TOPIC], data, ..Default::default() }
 }
