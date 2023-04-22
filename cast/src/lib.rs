@@ -165,7 +165,7 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn access_list(
+    pub async fn access_list<'a>(
         &self,
         builder_output: TxBuilderPeekOutput<'_>,
         block: Option<BlockId>,

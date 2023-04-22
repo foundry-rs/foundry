@@ -1,4 +1,4 @@
-use cast::{Cast, SimpleCast, TxBuilder};
+use cast::{Cast, SimpleCast};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use ethers::{
@@ -197,18 +197,7 @@ async fn main() -> eyre::Result<()> {
         }
 
         // Blockchain & RPC queries
-        Subcommands::AccessList { address, sig, args, block, to_json, rpc } => {
-            let config = Config::from(&rpc);
-            let provider = utils::get_provider(&config)?;
-            let chain = utils::get_chain(config.chain_id, &provider).await?;
-
-            let mut builder =
-                TxBuilder::new(&provider, config.sender, Some(address), chain, false).await?;
-            builder.set_args(&sig, args).await?;
-            let builder_output = builder.peek();
-
-            println!("{}", Cast::new(&provider).access_list(builder_output, block, to_json).await?);
-        }
+        Subcommands::AccessList(cmd) => cmd.run().await?,
         Subcommands::Age { block, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;

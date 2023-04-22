@@ -1,7 +1,7 @@
 use super::{EtherscanOpts, RpcOpts};
 use crate::{
     cmd::cast::{
-        bind::BindArgs, call::CallArgs, create2::Create2Args, estimate::EstimateArgs,
+        access_list::AccessListArgs, bind::BindArgs, call::CallArgs, create2::Create2Args, estimate::EstimateArgs,
         find_block::FindBlockArgs, interface::InterfaceArgs, rpc::RpcArgs, run::RunArgs,
         send::SendTxArgs, storage::StorageArgs, wallet::WalletSubcommands,
     },
@@ -250,35 +250,7 @@ Examples:
     #[clap(name = "access-list")]
     #[clap(visible_aliases = &["ac", "acl"])]
     #[clap(about = "Create an access list for a transaction.")]
-    AccessList {
-        #[clap(
-            help = "The destination of the transaction.",
-            value_parser = NameOrAddress::from_str,
-            value_name = "ADDRESS"
-        )]
-        address: NameOrAddress,
-
-        #[clap(help = "The signature of the function to call.", value_name = "SIG")]
-        sig: String,
-
-        #[clap(help = "The arguments of the function to call.", value_name = "ARGS")]
-        args: Vec<String>,
-
-        #[clap(
-            long,
-            short = 'B',
-            help = "The block height you want to query at.",
-            long_help = "The block height you want to query at. Can also be the tags earliest, finalized, safe, latest, or pending.",
-            value_name = "BLOCK"
-        )]
-        block: Option<BlockId>,
-
-        #[clap(long = "json", short = 'j', help_heading = "Display options")]
-        to_json: bool,
-
-        #[clap(flatten)]
-        rpc: RpcOpts,
-    },
+    AccessList(AccessListArgs),
     #[clap(name = "block")]
     #[clap(visible_alias = "bl")]
     #[clap(about = "Get information about a block.")]
