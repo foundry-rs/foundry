@@ -27,7 +27,7 @@ use foundry_common::{
 };
 use foundry_config::{figment, Config};
 use regex::Regex;
-use std::{collections::BTreeMap, path::PathBuf, sync::mpsc::channel, thread, time::Duration};
+use std::{collections::{BTreeMap, HashMap}, path::PathBuf, sync::mpsc::channel, thread, time::Duration};
 use tracing::trace;
 use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
@@ -515,6 +515,7 @@ fn test(
         let mut gas_report = GasReport::new(config.gas_reports, config.gas_reports_ignore);
         let sig_identifier =
             SignaturesIdentifier::new(Config::foundry_cache_dir(), config.offline)?;
+        let precompiles: HashMap<_, _> = config.precompiles.into_iter().collect();
 
         for (contract_name, suite_result) in rx {
             let mut tests = suite_result.test_results.clone();
@@ -548,6 +549,7 @@ fn test(
                         .with_labels(result.labeled_addresses.clone())
                         .with_events(local_identifier.events())
                         .with_verbosity(verbosity)
+                        .with_precompiles(precompiles.clone())
                         .build();
 
                     // Signatures are of no value for gas reports

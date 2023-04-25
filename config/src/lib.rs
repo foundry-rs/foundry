@@ -3,6 +3,7 @@
 
 use crate::cache::StorageCachingConfig;
 use ethers_core::types::{Address, Chain::Mainnet, H160, H256, U256};
+use ethers_core::abi::Function;
 pub use ethers_solc::artifacts::OptimizerDetails;
 use ethers_solc::{
     artifacts::{
@@ -197,6 +198,9 @@ pub struct Config {
     pub model_checker: Option<ModelCheckerSettings>,
     /// verbosity to use
     pub verbosity: u8,
+    /// Information for decoding custom precompile calls
+    #[serde(default)]
+    pub precompiles: Vec<(Address, Function)>,
     /// url of the rpc server that should be used for any rpc calls
     pub eth_rpc_url: Option<String>,
     /// etherscan API key, or alias for an `EtherscanConfig` in `etherscan` table
@@ -1762,6 +1766,7 @@ impl Default for Config {
             eth_rpc_url: None,
             etherscan_api_key: None,
             verbosity: 0,
+            precompiles: vec![],
             remappings: vec![],
             auto_detect_remappings: true,
             libraries: vec![],

@@ -51,6 +51,12 @@ impl CallTraceDecoderBuilder {
         self
     }
 
+    /// Add information for decoding custom precompile calls.
+    pub fn with_precompiles(mut self, precompiles: HashMap<Address, Function>) -> Self {
+        self.decoder.precompiles = self.decoder.precompiles.into_iter().chain(precompiles).collect();
+        self
+    }
+
     /// Build the decoder.
     pub fn build(self) -> CallTraceDecoder {
         self.decoder
@@ -101,8 +107,6 @@ impl CallTraceDecoder {
             .collect::<BTreeMap<[u8; 4], Vec<Function>>>();
 
         Self {
-            // TODO: These are the Ethereum precompiles. We should add a way to support precompiles
-            // for other networks, too.
             precompiles: [
                 precompile(
                     1,
