@@ -86,7 +86,7 @@ casttest!(wallet_address_keystore_with_password_file, |_: TestProject, mut cmd: 
 });
 
 // tests that `cast wallet sign` outputs the expected signature
-casttest!(wallet_sign_correct_signature, |_: TestProject, mut cmd: TestCommand| {
+casttest!(cast_wallet_sign_utf8_data, |_: TestProject, mut cmd: TestCommand| {
     cmd.args([
         "wallet",
         "sign",
@@ -99,7 +99,7 @@ casttest!(wallet_sign_correct_signature, |_: TestProject, mut cmd: TestCommand| 
 });
 
 // tests that `cast wallet sign` outputs the expected signature, given a 0x-prefixed data
-casttest!(wallet_sign_correct_signature, |_: TestProject, mut cmd: TestCommand| {
+casttest!(cast_wallet_sign_hex_data, |_: TestProject, mut cmd: TestCommand| {
     cmd.args([
         "wallet",
         "sign",
