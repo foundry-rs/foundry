@@ -525,7 +525,7 @@ fn test(
         let mut stop_processing = false;
         for (contract_name, suite_result) in rx {
             if stop_processing {
-                break;
+                break
             }
 
             let mut tests = suite_result.test_results.clone();
@@ -543,7 +543,7 @@ fn test(
                 // If the test failed, we want to stop processing the rest of the tests
                 if fail_fast && !result.success {
                     stop_processing = true;
-                    break;
+                    break
                 }
 
                 // We only display logs at level 2 and above

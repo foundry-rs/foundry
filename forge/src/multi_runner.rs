@@ -16,8 +16,15 @@ use foundry_evm::{
 };
 use foundry_utils::PostLinkInput;
 use rayon::prelude::*;
-use std::{collections::BTreeMap, path::Path, sync::mpsc::Sender};
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::{
+    collections::BTreeMap,
+    path::Path,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::Sender,
+        Arc,
+    },
+};
 
 pub type DeployableContracts = BTreeMap<ArtifactId, (Abi, Bytes, Vec<Bytes>)>;
 
@@ -171,7 +178,7 @@ impl MultiContractRunner {
                             if should_report {
                                 tracing::error!(error = %err, "Error sending test result");
                             }
-                        },
+                        }
                     };
                 }
                 (name, result)
