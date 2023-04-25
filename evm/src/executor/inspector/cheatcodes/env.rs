@@ -79,6 +79,7 @@ fn broadcast(
 
 /// Sets up broadcasting from a script with the sender derived from `private_key`
 /// Adds this private key to `state`'s `script_wallets` vector to later be used for signing
+/// iff broadcast is successful
 fn broadcast_key(
     state: &mut Cheatcodes,
     private_key: U256,
@@ -104,9 +105,11 @@ fn broadcast_key(
 
     let new_origin = wallet.address();
 
-    state.script_wallets.push(wallet);
-
-    broadcast(state, new_origin, original_caller, original_origin, depth, single_call)
+    let result = broadcast(state, new_origin, original_caller, original_origin, depth, single_call);
+    if result.is_ok() {
+        state.script_wallets.push(wallet);
+    }
+    result
 }
 
 fn prank(
