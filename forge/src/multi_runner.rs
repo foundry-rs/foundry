@@ -17,6 +17,7 @@ use foundry_evm::{
 use foundry_utils::PostLinkInput;
 use rayon::prelude::*;
 use std::{collections::BTreeMap, path::Path, sync::mpsc::Sender};
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
 pub type DeployableContracts = BTreeMap<ArtifactId, (Abi, Bytes, Vec<Bytes>)>;
 
@@ -125,6 +126,8 @@ impl MultiContractRunner {
         // the db backend that serves all the data, each contract gets its own instance
         let db = Backend::spawn(self.fork.take());
 
+        let error_reported = Arc::new(AtomicBool::new(false));
+
         let results = self
             .contracts
             .par_iter()
@@ -161,7 +164,15 @@ impl MultiContractRunner {
             .filter(|(_, results)| !results.is_empty())
             .map_with(stream_result, |stream_result, (name, result)| {
                 if let Some(stream_result) = stream_result.as_ref() {
-                    stream_result.send((name.clone(), result.clone())).unwrap();
+                    match stream_result.send((name.clone(), result.clone())) {
+                        Ok(_) => (),
+                        Err(err) => {
+                            let should_report = !error_reported.swap(true, Ordering::Relaxed);
+                            if should_report {
+                                tracing::error!(error = %err, "Error sending test result");
+                            }
+                        },
+                    };
                 }
                 (name, result)
             })
