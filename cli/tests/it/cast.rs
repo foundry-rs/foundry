@@ -4,7 +4,7 @@ use clap::CommandFactory;
 use foundry_cli::opts::cast::Opts;
 use foundry_cli_test_utils::{
     casttest,
-    util::{TestCommand, TestProject},
+    util::{OutputExt, TestCommand, TestProject},
 };
 use foundry_utils::rpc::next_http_rpc_endpoint;
 use std::{io::Write, path::PathBuf};
@@ -354,4 +354,21 @@ casttest!(cast_receipt_revert_reason, |_: TestProject, mut cmd: TestCommand| {
     let output = cmd.stdout_lossy();
     assert!(output.contains("revertReason"));
     assert!(output.contains("Transaction too old"));
+});
+
+casttest!(cast_access_list, |_: TestProject, mut cmd: TestCommand| {
+    let rpc = next_http_rpc_endpoint();
+    cmd.args([
+        "access-list",
+        "0xbb2b8038a1640196fbe3e38816f3e67cba72d940",
+        "skim(address)",
+        "0xbb2b8038a1640196fbe3e38816f3e67cba72d940",
+        "--rpc-url",
+        rpc.as_str(),
+        "--gas-limit", // need to set this for alchemy.io to avoid "intrinsic gas too low" error
+        "100000",
+    ]);
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cast_access_list.stdout"),
+    );
 });

@@ -5,9 +5,12 @@ use crate::{
 };
 use cast::{Cast, TxBuilder};
 use clap::Parser;
-use ethers::types::{BlockId, NameOrAddress};
+use ethers::{
+    providers::Middleware,
+    types::{BlockId, NameOrAddress},
+};
 use eyre::WrapErr;
-use foundry_config::Config;
+use foundry_config::{Chain, Config};
 use std::str::FromStr;
 
 #[derive(Debug, Parser)]
@@ -62,26 +65,52 @@ impl AccessListArgs {
         let chain = utils::get_chain(config.chain_id, &provider).await?;
         let sender = eth.wallet.sender().await;
 
-        let mut builder = TxBuilder::new(&provider, sender, to, chain, tx.legacy).await?;
-        builder
-            .gas(tx.gas_limit)
-            .etherscan_api_key(config.get_etherscan_api_key(Some(chain)))
-            .gas_price(tx.gas_price)
-            .priority_gas_price(tx.priority_gas_price)
-            .nonce(tx.nonce);
-
-        builder.value(tx.value);
-
-        if let Some(sig) = sig {
-            builder.set_args(sig.as_str(), args).await?;
-        }
-        if let Some(data) = data {
-            // Note: `sig+args` and `data` are mutually exclusive
-            builder.set_data(hex::decode(data).wrap_err("Expected hex encoded function data")?);
-        }
-
-        let builder_output = builder.peek();
-        println!("{}", Cast::new(&provider).access_list(builder_output, block, to_json).await?);
+        let provider = utils::get_provider(&config)?;
+        access_list(&provider, sender, to, sig, args, data, tx, chain, block, to_json).await?;
         Ok(())
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn access_list<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
+    provider: M,
+    from: F,
+    to: Option<T>,
+    sig: Option<String>,
+    args: Vec<String>,
+    data: Option<String>,
+    tx: TransactionOpts,
+    chain: Chain,
+    block: Option<BlockId>,
+    to_json: bool,
+) -> eyre::Result<()>
+where
+    M::Error: 'static,
+{
+    let mut builder = TxBuilder::new(&provider, from, to, chain, tx.legacy).await?;
+    builder
+        .gas(tx.gas_limit)
+        .gas_price(tx.gas_price)
+        .priority_gas_price(tx.priority_gas_price)
+        .nonce(tx.nonce);
+
+    builder.value(tx.value);
+
+    if let Some(sig) = sig {
+        builder.set_args(sig.as_str(), args).await?;
+    }
+    if let Some(data) = data {
+        // Note: `sig+args` and `data` are mutually exclusive
+        builder.set_data(hex::decode(data).wrap_err("Expected hex encoded function data")?);
+    }
+
+    let builder_output = builder.peek();
+
+    let cast = Cast::new(&provider);
+
+    let access_list: String = cast.access_list(builder_output, block, to_json).await?;
+
+    println!("{}", access_list);
+
+    Ok(())
 }
