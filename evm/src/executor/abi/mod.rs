@@ -27,6 +27,7 @@ abigen!(
         ffi(string[])(bytes)
 
         breakpoint(string)
+        breakpoint(string,bool)
 
         roll(uint256)
         warp(uint256)
