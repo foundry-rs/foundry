@@ -58,7 +58,10 @@ pub enum WalletSubcommands {
     },
     #[clap(name = "sign", visible_alias = "s", about = "Sign a message.")]
     Sign {
-        #[clap(help = "message to sign", value_name = "MESSAGE")]
+        #[clap(
+            help = "message to sign. Messages starting with 0x are expected to be hex encoded, which get decoded before being signed",
+            value_name = "MESSAGE"
+        )]
         message: String,
         #[clap(flatten)]
         wallet: Wallet,
