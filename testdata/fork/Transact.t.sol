@@ -19,17 +19,17 @@ contract TransactOnForkTest is DSTest {
     event Transfer(address indexed from, address indexed to, uint256 value);
 
     function testTransact() public {
-        // A random block https://etherscan.io/block/15596646
-        uint256 fork = vm.createFork("rpcAlias", 15596646);
+        // A random block https://etherscan.io/block/15596645
+        uint256 fork = vm.createFork("rpcAlias", 15596645);
         vm.selectFork(fork);
-        // a random transfer transaction in the block: https://etherscan.io/tx/0xaba74f25a17cf0d95d1c6d0085d6c83fb8c5e773ffd2573b99a953256f989c89
+        // a random transfer transaction in the next block: https://etherscan.io/tx/0xaba74f25a17cf0d95d1c6d0085d6c83fb8c5e773ffd2573b99a953256f989c89
         bytes32 tx = 0xaba74f25a17cf0d95d1c6d0085d6c83fb8c5e773ffd2573b99a953256f989c89;
 
         address sender = address(0xa98218cdc4f63aCe91ddDdd24F7A580FD383865b);
         address recipient = address(0x0C124046Fa7202f98E4e251B50488e34416Fc306);
 
-        assertEq(sender.balance, 5764124000000000);
-        assertEq(recipient.balance, 3936000000000000);
+        assertEq(sender.balance, 10036124000000000);
+        assertEq(recipient.balance, 0);
 
         // transfer amount: 0.000336 Ether
         uint256 transferAmount = 3936000000000000;
