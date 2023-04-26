@@ -102,6 +102,34 @@ contract PrankTest is DSTest {
         );
     }
 
+    function testChangePrank(address sender0, address origin0, address sender1, address origin1) public {
+        address oldOrigin = tx.origin;
+
+        // Perform first prank
+        Victim victim = new Victim();
+        cheats.prank(sender0, origin0);
+        victim.assertCallerAndOrigin(
+            sender0, "msg.sender was not set during prank", origin0, "tx.origin was not set during prank"
+        );
+
+        // Change to second prank
+        cheats.startChangePrank(sender1, origin1);
+        victim.assertCallerAndOrigin(
+            sender1, "msg.sender was not set during prank", origin1, "tx.origin was not set during prank"
+        );
+
+        // Stop prank
+        cheats.stopPrank();
+
+        // Ensure we cleaned up correctly
+        victim.assertCallerAndOrigin(
+            address(this),
+            "msg.sender was not cleaned up in nested prank",
+            oldOrigin,
+            "tx.origin was not cleaned up in nested prank"
+        );
+    }
+
     function testPrankOrigin(address sender, address origin) public {
         address oldOrigin = tx.origin;
 
