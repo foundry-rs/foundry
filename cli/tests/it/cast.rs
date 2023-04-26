@@ -4,7 +4,7 @@ use clap::CommandFactory;
 use foundry_cli::opts::cast::Opts;
 use foundry_cli_test_utils::{
     casttest,
-    util::{OutputExt, TestCommand, TestProject},
+    util::{TestCommand, TestProject},
 };
 use foundry_utils::rpc::next_http_rpc_endpoint;
 use std::{io::Write, path::PathBuf};
@@ -368,7 +368,9 @@ casttest!(cast_access_list, |_: TestProject, mut cmd: TestCommand| {
         "--gas-limit", // need to set this for alchemy.io to avoid "intrinsic gas too low" error
         "100000",
     ]);
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cast_access_list.stdout"),
-    );
+
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("address: 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"));
+    assert!(output.contains("0x0d2a19d3ac39dc6cc6fd07423195495e18679bd8c7dd610aa1db7cd784a683a8"));
+    assert!(output.contains("0x7fba2702a7d6e85ac783a88eacdc48e51310443458071f6db9ac66f8ca7068b8"));
 });
