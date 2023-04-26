@@ -684,8 +684,8 @@ impl Backend {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
                 (eval_to_instruction_result(reason), gas_used, Some(output), Some(logs))
             }
-            ExecutionResult::Revert { gas_used, .. } => {
-                (InstructionResult::Revert, gas_used, None, None)
+            ExecutionResult::Revert { gas_used, output } => {
+                (InstructionResult::Revert, gas_used, Some(Output::Call(output)), None)
             }
             ExecutionResult::Halt { reason, gas_used } => {
                 (halt_to_instruction_result(reason), gas_used, None, None)
@@ -1008,7 +1008,7 @@ impl Backend {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
                 (eval_to_instruction_result(reason), gas_used, Some(output))
             }
-            ExecutionResult::Revert { gas_used, .. } => (InstructionResult::Revert, gas_used, None),
+            ExecutionResult::Revert { gas_used, output} => (InstructionResult::Revert, gas_used, Some(Output::Call(output))),
             ExecutionResult::Halt { reason, gas_used } => {
                 (halt_to_instruction_result(reason), gas_used, None)
             }
@@ -1039,8 +1039,8 @@ impl Backend {
                 ExecutionResult::Success { reason, gas_used, output, .. } => {
                     (eval_to_instruction_result(reason), gas_used, Some(output), )
                 },
-                ExecutionResult::Revert { gas_used, .. } => {
-                    (InstructionResult::Revert, gas_used, None)
+                ExecutionResult::Revert { gas_used, output} => {
+                    (InstructionResult::Revert, gas_used, Some(Output::Call(output)))
                 },
                 ExecutionResult::Halt { reason, gas_used } => {
                     (halt_to_instruction_result(reason), gas_used, None)
@@ -1089,7 +1089,7 @@ impl Backend {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
                 (eval_to_instruction_result(reason), gas_used, Some(output))
             }
-            ExecutionResult::Revert { gas_used, .. } => (InstructionResult::Revert, gas_used, None),
+            ExecutionResult::Revert { gas_used, output } => (InstructionResult::Revert, gas_used, Some(Output::Call(output))),
             ExecutionResult::Halt { reason, gas_used } => {
                 (halt_to_instruction_result(reason), gas_used, None)
             }
