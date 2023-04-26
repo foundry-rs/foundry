@@ -366,7 +366,7 @@ impl Tui {
         let block_controls = Block::default();
         let dim = Style::default().add_modifier(Modifier::DIM);
 
-        let text_output = vec![
+        let _text_output = vec![
             Spans::from(
                 Span::styled(
                     "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end",
