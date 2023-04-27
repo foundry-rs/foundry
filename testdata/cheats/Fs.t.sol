@@ -12,7 +12,7 @@ contract FsTest is DSTest {
     bytes constant FOUNDRY_WRITE_ERR = "The path \"/etc/hosts\" is not allowed to be accessed for write operations.";
 
     function assertEntry(Cheats.DirEntry memory entry, uint64 depth, bool dir) private {
-        assertEq(entry.error_, "");
+        assertEq(entry.errorMessage, "");
         assertEq(entry.depth, depth);
         assertEq(entry.isDir, dir);
         assertEq(entry.isSymlink, false);
@@ -137,39 +137,35 @@ contract FsTest is DSTest {
     }
 
     function testReadDir() public {
-        // TODO: Allocation overflow
-        // string memory path = "../testdata/fixtures/Dir";
+        string memory path = "../testdata/fixtures/Dir";
 
-        // {
-        //     Cheats.DirEntry[] memory entries = cheats.readDir(path);
-        //     assertEq(entries.length, 2);
-        //     assertEntry(entries[0], 1, true);
-        //     assertEntry(entries[1], 1, false);
+        {
+            Cheats.DirEntry[] memory entries = cheats.readDir(path);
+            assertEq(entries.length, 2);
+            assertEntry(entries[0], 1, false);
+            assertEntry(entries[1], 1, true);
 
-        //     {
-        //         Cheats.DirEntry[] memory entries2 = cheats.readDir(path, 1);
-        //         assertEq(entries2.length, 2);
-        //         assertEq(entries[0].path, entries2[0].path);
-        //         assertEq(entries[1].path, entries2[1].path);
-        //     }
+            Cheats.DirEntry[] memory entries2 = cheats.readDir(path, 1);
+            assertEq(entries2.length, 2);
+            assertEq(entries[0].path, entries2[0].path);
+            assertEq(entries[1].path, entries2[1].path);
 
-        //     string memory contents = cheats.readFile(entries[1].path);
-        //     assertEq(contents, unicode"Wow! 😀\n");
-        // }
+            string memory contents = cheats.readFile(entries[0].path);
+            assertEq(contents, unicode"Wow! 😀\n");
+        }
 
-        // {
-        //     Cheats.DirEntry[] memory entries = cheats.readDir(path, 2);
-        //     assertEq(entries.length, 4);
-        //     assertEntry(entries[2], 2, true);
-        //     assertEntry(entries[3], 2, false);
-        // }
+        {
+            Cheats.DirEntry[] memory entries = cheats.readDir(path, 2);
+            assertEq(entries.length, 4);
+            assertEntry(entries[2], 2, false);
+            assertEntry(entries[3], 2, true);
+        }
 
-        // {
-        //     Cheats.DirEntry[] memory entries = cheats.readDir(path, 3);
-        //     assertEq(entries.length, 6);
-        //     assertEntry(entries[4], 3, true);
-        //     assertEntry(entries[5], 3, false);
-        // }
+        {
+            Cheats.DirEntry[] memory entries = cheats.readDir(path, 3);
+            assertEq(entries.length, 5);
+            assertEntry(entries[4], 3, true);
+        }
 
         cheats.expectRevert(FOUNDRY_READ_DIR_ERR);
         cheats.readDir("/etc");

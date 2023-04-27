@@ -17,7 +17,7 @@ interface Cheats {
 
     // Used in readDir
     struct DirEntry {
-        string error_;
+        string errorMessage;
         string path;
         uint64 depth;
         bool isDir;

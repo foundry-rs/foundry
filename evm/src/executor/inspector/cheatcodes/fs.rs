@@ -4,7 +4,7 @@ use crate::{
     executor::inspector::Cheatcodes,
 };
 use bytes::Bytes;
-use ethers::abi::{self, AbiEncode, Token};
+use ethers::abi::{self, AbiEncode, Token, Tokenize};
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
 use std::{
@@ -194,32 +194,26 @@ fn read_dir(
         .max_depth(max_depth.try_into().map_err(error::encode_error)?)
         .follow_links(follow_links)
         .into_iter()
-        .map(|entry| match entry {
-            Ok(entry) => {
-                let entry = DirEntry {
-                    error: String::new(),
+        .map(|entry| {
+            let entry = match entry {
+                Ok(entry) => DirEntry {
+                    error_message: String::new(),
                     path: entry.path().display().to_string(),
                     depth: entry.depth() as u64,
                     is_dir: entry.file_type().is_dir(),
                     is_symlink: entry.path_is_symlink(),
-                };
-                eprintln!("OK {:?}", entry);
-                Token::Bytes(entry.encode())
-            }
-            Err(e) => {
-                let entry = DirEntry {
-                    error: e.to_string(),
+                },
+                Err(e) => DirEntry {
+                    error_message: e.to_string(),
                     path: e.path().map(|p| p.display().to_string()).unwrap_or_default(),
                     depth: e.depth() as u64,
                     is_dir: false,
                     is_symlink: false,
-                };
-                eprintln!("ERR {:?}", entry);
-                Token::Bytes(entry.encode())
-            }
+                },
+            };
+            Token::Tuple(entry.into_tokens())
         })
         .collect();
-    eprintln!("GOT {} ENTRIES", paths.len());
     Ok(abi::encode(&[Token::Array(paths)]).into())
 }
 
