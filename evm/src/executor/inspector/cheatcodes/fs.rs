@@ -193,6 +193,9 @@ fn read_dir(
         .min_depth(1)
         .max_depth(max_depth.try_into().map_err(error::encode_error)?)
         .follow_links(follow_links)
+        .contents_first(false)
+        .same_file_system(true)
+        .sort_by_file_name()
         .into_iter()
         .map(|entry| {
             let entry = match entry {
