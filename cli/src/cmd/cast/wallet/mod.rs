@@ -58,6 +58,9 @@ pub enum WalletSubcommands {
     #[clap(visible_alias = "s")]
     Sign {
         /// The message to sign.
+        ///
+        /// Messages starting with 0x are expected to be hex encoded,
+        /// which get decoded before being signed.
         message: String,
 
         #[clap(flatten)]
@@ -125,8 +128,15 @@ impl WalletSubcommands {
             }
             WalletSubcommands::Sign { message, wallet } => {
                 let wallet = wallet.signer(0).await?;
-                let sig = wallet.sign_message(message).await?;
-                println!("Signature: 0x{sig}");
+                let sig = match message.strip_prefix("0x") {
+                    Some(data) => {
+                        let data_bytes: Vec<u8> =
+                            hex::decode(data).wrap_err("Could not decode 0x-prefixed string.")?;
+                        wallet.sign_message(data_bytes).await?
+                    }
+                    None => wallet.sign_message(message).await?,
+                };
+                println!("0x{sig}");
             }
             WalletSubcommands::Verify { message, signature, address } => {
                 match signature.verify(message, address) {

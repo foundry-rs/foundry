@@ -146,6 +146,7 @@ impl Tui {
         draw_memory: &mut DrawMemory,
         stack_labels: bool,
         mem_utf: bool,
+        help: bool,
     ) {
         let total_size = f.size();
         if total_size.width < 225 {
@@ -163,6 +164,7 @@ impl Tui {
                 draw_memory,
                 stack_labels,
                 mem_utf,
+                help,
             );
         } else {
             Tui::square_layout(
@@ -179,6 +181,7 @@ impl Tui {
                 draw_memory,
                 stack_labels,
                 mem_utf,
+                help,
             );
         }
     }
@@ -198,11 +201,16 @@ impl Tui {
         draw_memory: &mut DrawMemory,
         stack_labels: bool,
         mem_utf: bool,
+        help: bool,
     ) {
         let total_size = f.size();
+        let h_height = if help { 4 } else { 0 };
+
         if let [app, footer] = Layout::default()
+            .constraints(
+                [Constraint::Ratio(100 - h_height, 100), Constraint::Ratio(h_height, 100)].as_ref(),
+            )
             .direction(Direction::Vertical)
-            .constraints([Constraint::Ratio(98, 100), Constraint::Ratio(2, 100)].as_ref())
             .split(total_size)[..]
         {
             if let [op_pane, stack_pane, memory_pane, src_pane] = Layout::default()
@@ -218,7 +226,9 @@ impl Tui {
                 )
                 .split(app)[..]
             {
-                Tui::draw_footer(f, footer);
+                if help {
+                    Tui::draw_footer(f, footer);
+                }
                 Tui::draw_src(
                     f,
                     address,
@@ -253,7 +263,7 @@ impl Tui {
             }
         } else {
             panic!("unable to create footer / app")
-        }
+        };
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -271,14 +281,18 @@ impl Tui {
         draw_memory: &mut DrawMemory,
         stack_labels: bool,
         mem_utf: bool,
+        help: bool,
     ) {
         let total_size = f.size();
+        let h_height = if help { 4 } else { 0 };
 
         // split in 2 vertically
 
         if let [app, footer] = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Ratio(98, 100), Constraint::Ratio(2, 100)].as_ref())
+            .constraints(
+                [Constraint::Ratio(100 - h_height, 100), Constraint::Ratio(h_height, 100)].as_ref(),
+            )
             .split(total_size)[..]
         {
             if let [left_pane, right_pane] = Layout::default()
@@ -297,7 +311,9 @@ impl Tui {
                         .constraints([Constraint::Ratio(1, 4), Constraint::Ratio(3, 4)].as_ref())
                         .split(right_pane)[..]
                     {
-                        Tui::draw_footer(f, footer);
+                        if help {
+                            Tui::draw_footer(f, footer)
+                        };
                         Tui::draw_src(
                             f,
                             address,
@@ -348,15 +364,34 @@ impl Tui {
 
     fn draw_footer<B: Backend>(f: &mut Frame<B>, area: Rect) {
         let block_controls = Block::default();
+        let dim = Style::default().add_modifier(Modifier::DIM);
+
+        let _text_output = vec![
+            Spans::from(
+                Span::styled(
+                    "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end",
+                    dim,
+                ),
+            ),
+            Spans::from(
+                Span::styled(
+                    "[t]: stack labels | [m]: memory decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll memory | ['<char>]: goto breakpoint | [h] close help",
+                    dim,
+                )
+            )
+        ];
 
         let text_output = Text::from(Span::styled(
-            "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end | [t]: toggle stack labels | [m]: toggle memory decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll memory",
-            Style::default().add_modifier(Modifier::DIM)
+            "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end\n
+[t]: stack labels | [m]: memory decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll memory | ['<char>]: goto breakpoint",
+            Style::default().add_modifier(Modifier::DIM),
         ));
+
         let paragraph = Paragraph::new(text_output)
             .block(block_controls)
             .alignment(Alignment::Center)
             .wrap(Wrap { trim: false });
+
         f.render_widget(paragraph, area);
     }
 
@@ -1017,6 +1052,7 @@ impl Ui for Tui {
 
         let mut stack_labels = false;
         let mut mem_utf = false;
+        let mut help = false;
         // UI thread that manages drawing
         loop {
             if last_index != draw_memory.inner_call_index {
@@ -1211,6 +1247,10 @@ impl Ui for Tui {
                         KeyCode::Char('m') => {
                             mem_utf = !mem_utf;
                         }
+                        // toggle help notice
+                        KeyCode::Char('h') => {
+                            help = !help;
+                        }
                         KeyCode::Char(other) => match other {
                             '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '\'' => {
                                 self.key_buffer.push(other);
@@ -1273,6 +1313,7 @@ impl Ui for Tui {
                     &mut draw_memory,
                     stack_labels,
                     mem_utf,
+                    help,
                 )
             })?;
         }
