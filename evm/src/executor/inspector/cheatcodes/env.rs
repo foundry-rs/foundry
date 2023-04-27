@@ -193,7 +193,12 @@ fn get_recorded_logs(state: &mut Cheatcodes) -> Bytes {
 }
 
 /// Entry point of the breakpoint cheatcode. Adds the called breakpoint to the state.
-fn add_breakpoint(state: &mut Cheatcodes, caller: Address, inner: &str) -> Result<Bytes, Bytes> {
+fn add_breakpoint(
+    state: &mut Cheatcodes,
+    caller: Address,
+    inner: &str,
+    add: bool,
+) -> Result<Bytes, Bytes> {
     let mut chars = inner.chars();
     let point = chars.next();
 
@@ -210,7 +215,11 @@ fn add_breakpoint(state: &mut Cheatcodes, caller: Address, inner: &str) -> Resul
     }
 
     // add a breakpoint from the interpreter
-    state.breakpoints.insert(point, (caller, state.pc));
+    if add {
+        state.breakpoints.insert(point, (caller, state.pc));
+    } else {
+        state.breakpoints.remove(&point);
+    }
 
     Ok(Bytes::new())
 }
@@ -270,7 +279,8 @@ pub fn apply<DB: DatabaseExt>(
                 .map_err(|err| err.encode_string())?;
             ru256_to_u256(val).encode().into()
         }
-        HEVMCalls::Breakpoint(inner) => add_breakpoint(state, caller, &inner.0)?,
+        HEVMCalls::Breakpoint0(inner) => add_breakpoint(state, caller, &inner.0, true)?,
+        HEVMCalls::Breakpoint1(inner) => add_breakpoint(state, caller, &inner.0, inner.1)?,
         HEVMCalls::Etch(inner) => {
             let code = inner.1.clone();
             trace!(address=?inner.0, code=?hex::encode(&code.0), "etch cheatcode");
@@ -337,6 +347,9 @@ pub fn apply<DB: DatabaseExt>(
             false,
         )?,
         HEVMCalls::StopPrank(_) => {
+            if state.prank.is_none() {
+                return Err("No prank in progress to stop".to_string().encode().into())
+            }
             state.prank = None;
             Bytes::new()
         }
