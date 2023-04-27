@@ -120,10 +120,6 @@ fn prank(
 ) -> Result<Bytes, Bytes> {
     let prank = Prank { prank_caller, prank_origin, new_caller, new_origin, depth, single_call };
 
-    if state.prank.is_some() {
-        return Err("You have an active prank already.".encode().into())
-    }
-
     if state.broadcast.is_some() {
         return Err("You cannot `prank` for a broadcasted transaction. Pass the desired tx.origin into the broadcast cheatcode call".encode().into());
     }
@@ -329,22 +325,6 @@ pub fn apply<DB: DatabaseExt>(
             data.journaled_state.depth(),
             false,
         )?,
-        HEVMCalls::StartChangePrank(inner) => {
-            if state.prank.is_some() {
-                // stop existing prank
-                state.prank = None;
-            }
-            // start new prank
-            prank(
-                state,
-                caller,
-                data.env.tx.caller,
-                inner.0,
-                Some(inner.1),
-                data.journaled_state.depth(),
-                false,
-            )?
-        }
         HEVMCalls::StopPrank(_) => {
             state.prank = None;
             Bytes::new()

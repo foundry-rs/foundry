@@ -76,7 +76,6 @@ abigen!(
         prank(address,address)
         startPrank(address)
         startPrank(address,address)
-        startChangePrank(address,address)
         stopPrank()
 
         deal(address,uint256)
