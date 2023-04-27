@@ -1,10 +1,7 @@
 //! commonly used calculations
 
 use ethers_core::types::U256;
-use std::{
-    fmt::Display,
-    ops::{Add, Div},
-};
+use std::ops::{Add, Div};
 
 /// Returns the mean of the slice
 #[inline]
@@ -53,10 +50,7 @@ where
 ///     10000000 -> 1e7
 /// ```
 #[inline]
-pub fn to_exponential_notation<T>(value: T, precision: usize, trim_end_zeros: bool) -> String
-where
-    T: Into<U256> + Display,
-{
+pub fn to_exponential_notation(value: U256, precision: usize, trim_end_zeros: bool) -> String {
     let stringified = value.to_string();
     let exponent = stringified.len() - 1;
     let mut mantissa = stringified.chars().take(precision).collect::<String>();
@@ -121,18 +115,18 @@ mod tests {
     fn test_format_to_exponential_notation() {
         let value = 1234124124u64;
 
-        let formatted = to_exponential_notation(value, 4, false);
+        let formatted = to_exponential_notation(value.into(), 4, false);
         assert_eq!(formatted, "1.234e9");
 
-        let formatted = to_exponential_notation(value, 3, true);
+        let formatted = to_exponential_notation(value.into(), 3, true);
         assert_eq!(formatted, "1.23e9");
 
         let value = 10000000u64;
 
-        let formatted = to_exponential_notation(value, 4, false);
+        let formatted = to_exponential_notation(value.into(), 4, false);
         assert_eq!(formatted, "1.000e7");
 
-        let formatted = to_exponential_notation(value, 3, true);
+        let formatted = to_exponential_notation(value.into(), 3, true);
         assert_eq!(formatted, "1e7");
     }
 }
