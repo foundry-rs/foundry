@@ -136,7 +136,7 @@ pub enum Subcommands {
 
     #[clap(
         visible_alias = "up",
-        about = "Uploads abi of given contract to https://sig.eth.samczsun.com function selector database."
+        about = "Uploads abi of given contract to https://openchain.xyz function selector database."
     )]
     UploadSelectors(UploadSelectorsArgs),
 

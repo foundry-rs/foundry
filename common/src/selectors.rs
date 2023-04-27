@@ -15,8 +15,8 @@ use std::{
 };
 use tracing::warn;
 
-static SELECTOR_DATABASE_URL: &str = "https://sig.eth.samczsun.com/api/v1/signatures";
-static SELECTOR_IMPORT_URL: &str = "https://sig.eth.samczsun.com/api/v1/import";
+static SELECTOR_DATABASE_URL: &str = "https://api.openchain.xyz/signature-database/v1/lookup";
+static SELECTOR_IMPORT_URL: &str = "https://api.openchain.xyz/signature-database/v1/import";
 
 /// The standard request timeout for API requests
 const REQ_TIMEOUT: Duration = Duration::from_secs(15);
@@ -24,7 +24,7 @@ const REQ_TIMEOUT: Duration = Duration::from_secs(15);
 /// How many request can time out before we decide this is a spurious connection
 const MAX_TIMEDOUT_REQ: usize = 4usize;
 
-/// A client that can request API data from `https://sig.eth.samczsun.com/api`
+/// A client that can request API data from `https://api.openchain.xyz/`
 #[derive(Debug, Clone)]
 pub struct SignEthClient {
     inner: reqwest::Client,
@@ -453,7 +453,7 @@ impl SelectorImportResponse {
             .iter()
             .for_each(|(k, v)| println!("Duplicated: Event {k}: {v}"));
 
-        println!("Selectors successfully uploaded to https://sig.eth.samczsun.com");
+        println!("Selectors successfully uploaded to https://openchain.xyz");
     }
 }
 

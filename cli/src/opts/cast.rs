@@ -554,7 +554,7 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
     #[clap(name = "4byte")]
     #[clap(visible_aliases = &["4", "4b"])]
     #[clap(
-        about = "Get the function signatures for the given selector from https://sig.eth.samczsun.com."
+        about = "Get the function signatures for the given selector from https://openchain.xyz."
     )]
     FourByte {
         #[clap(help = "The function selector.", value_name = "SELECTOR")]
@@ -562,16 +562,14 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
     },
     #[clap(name = "4byte-decode")]
     #[clap(visible_aliases = &["4d", "4bd"])]
-    #[clap(about = "Decode ABI-encoded calldata using https://sig.eth.samczsun.com.")]
+    #[clap(about = "Decode ABI-encoded calldata using https://openchain.xyz.")]
     FourByteDecode {
         #[clap(help = "The ABI-encoded calldata.", value_name = "CALLDATA")]
         calldata: Option<String>,
     },
     #[clap(name = "4byte-event")]
     #[clap(visible_aliases = &["4e", "4be"])]
-    #[clap(
-        about = "Get the event signature for a given topic 0 from https://sig.eth.samczsun.com."
-    )]
+    #[clap(about = "Get the event signature for a given topic 0 from https://openchain.xyz.")]
     FourByteEvent {
         #[clap(help = "Topic 0", value_name = "TOPIC_0")]
         topic: Option<String>,
@@ -579,8 +577,8 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
     #[clap(name = "upload-signature")]
     #[clap(visible_aliases = &["ups"])]
     #[clap(
-        about = "Upload the given signatures to https://sig.eth.samczsun.com.",
-        long_about = r#"Upload the given signatures to https://sig.eth.samczsun.com.
+        about = "Upload the given signatures to https://openchain.xyz.",
+        long_about = r#"Upload the given signatures to https://openchain.xyz.
 
 Examples:
 - cast upload-signature "transfer(address,uint256)"
@@ -600,12 +598,12 @@ Examples:
         about = "Pretty print calldata.",
         long_about = r#"Pretty print calldata.
 
-Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline is passed."#
+Tries to decode the calldata using https://openchain.xyz unless --offline is passed."#
     )]
     PrettyCalldata {
         #[clap(help = "The calldata.", value_name = "CALLDATA")]
         calldata: Option<String>,
-        #[clap(long, short, help = "Skip the https://sig.eth.samczsun.com lookup.")]
+        #[clap(long, short, help = "Skip the https://openchain.xyz lookup.")]
         offline: bool,
     },
     #[clap(name = "age")]
