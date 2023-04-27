@@ -13,6 +13,7 @@ use ethers::{
     signers::{LocalWallet, Signer},
     types::{Address, Signature},
 };
+use eyre::Context;
 
 /// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
