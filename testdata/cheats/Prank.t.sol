@@ -143,7 +143,7 @@ contract PrankTest is DSTest {
             address(this), "msg.sender was not cleaned up", oldOrigin, "tx.origin invariant failed"
         );
     }
-    
+
     function testPrank0AfterPrank1(address sender, address origin) public {
         // Perform the prank
         address oldOrigin = tx.origin;
