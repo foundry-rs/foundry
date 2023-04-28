@@ -742,21 +742,35 @@ where
                 for (expected, actual_count) in expecteds {
                     let ExpectedCallData { calldata, gas, min_gas, value, count } = expected;
                     let calldata = ethers::types::Bytes::from(calldata.clone());
-                    if *count != *actual_count {
-                        let expected_values = [
-                            Some(format!("data {calldata}")),
-                            value.map(|v| format!("value {v}")),
-                            gas.map(|g| format!("gas {g}")),
-                            min_gas.map(|g| format!("minimum gas {g}")),
-                        ]
-                        .into_iter()
-                        .flatten()
-                        .join(" and ");
+                    let expected_values = [
+                        Some(format!("data {calldata}")),
+                        value.map(|v| format!("value {v}")),
+                        gas.map(|g| format!("gas {g}")),
+                        min_gas.map(|g| format!("minimum gas {g}")),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .join(" and ");
+                    if count.is_none() {
+                        if *actual_count == 0 {
+                            return (
+                                Return::Revert,
+                                remaining_gas,
+                                format!("Expected at least one call to {address:?} with {expected_values}, but got none")
+                                    .encode()
+                                    .into(),
+                            )
+                        }
+                    } else if *count != Some(*actual_count) {
                         return (
                             Return::Revert,
                             remaining_gas,
                             format!(
-                                "Expected call to {address:?} with {expected_values} to be called {count} time(s), but was called {actual_count} time(s)"
+                                "Expected call to {:?} with {} to be made {} time(s), but was called {} time(s)",
+                                address,
+                                expected_values,
+                                count.unwrap(),
+                                actual_count,
                             )
                             .encode()
                             .into(),

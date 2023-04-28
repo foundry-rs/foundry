@@ -211,7 +211,7 @@ pub struct ExpectedCallData {
     /// The expected *minimum* gas supplied to the call
     pub min_gas: Option<u64>,
     /// The number of times the call is expected to be made
-    pub count: u64,
+    pub count: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -301,7 +301,7 @@ pub fn apply<DB: DatabaseExt>(
                     value: None,
                     gas: None,
                     min_gas: None,
-                    count: 1,
+                    count: None,
                 },
                 0,
             ));
@@ -314,7 +314,7 @@ pub fn apply<DB: DatabaseExt>(
                     value: None,
                     gas: None,
                     min_gas: None,
-                    count: inner.2,
+                    count: Some(inner.2),
                 },
                 0,
             ));
@@ -327,7 +327,7 @@ pub fn apply<DB: DatabaseExt>(
                     value: Some(inner.1),
                     gas: None,
                     min_gas: None,
-                    count: 1,
+                    count: None,
                 },
                 0,
             ));
@@ -340,7 +340,7 @@ pub fn apply<DB: DatabaseExt>(
                     value: Some(inner.1),
                     gas: None,
                     min_gas: None,
-                    count: inner.3,
+                    count: Some(inner.3),
                 },
                 0,
             ));
@@ -359,7 +359,7 @@ pub fn apply<DB: DatabaseExt>(
                     value: Some(value),
                     gas: Some(inner.2 + positive_value_cost_stipend),
                     min_gas: None,
-                    count: 1,
+                    count: None,
                 },
                 0,
             ));
@@ -374,7 +374,7 @@ pub fn apply<DB: DatabaseExt>(
                     value: Some(value),
                     gas: Some(inner.2 + positive_value_cost_stipend),
                     min_gas: None,
-                    count: inner.4,
+                    count: Some(inner.4),
                 },
                 0,
             ));
@@ -393,7 +393,7 @@ pub fn apply<DB: DatabaseExt>(
                     value: Some(value),
                     gas: None,
                     min_gas: Some(inner.2 + positive_value_cost_stipend),
-                    count: 1,
+                    count: None,
                 },
                 0,
             ));
@@ -408,7 +408,7 @@ pub fn apply<DB: DatabaseExt>(
                     value: Some(value),
                     gas: None,
                     min_gas: Some(inner.2 + positive_value_cost_stipend),
-                    count: inner.4,
+                    count: Some(inner.4),
                 },
                 0,
             ));
