@@ -775,7 +775,7 @@ where
                     if count.is_none() {
                         if *actual_count == 0 {
                             return (
-                                Return::Revert,
+                                InstructionResult::Revert,
                                 remaining_gas,
                                 format!("Expected at least one call to {address:?} with {expected_values}, but got none")
                                     .encode()
