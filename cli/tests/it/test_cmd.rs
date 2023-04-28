@@ -293,19 +293,20 @@ contract ContractTest is DSTest {
 
 // checks that we can test forge std successfully
 // `forgetest_init!` will install with `forge-std` under `lib/forge-std`
-forgetest_init!(
-    #[serial_test::serial]
-    can_test_forge_std,
-    |prj: TestProject, mut cmd: TestCommand| {
-        let forge_std_dir = prj.root().join("lib/forge-std");
-        // execute in subdir
-        cmd.cmd().current_dir(forge_std_dir);
-        cmd.args(["test", "--root", "."]);
-        let stdout = cmd.stdout();
-        assert!(stdout.contains("[PASS]"), "No tests passed:\n{stdout}");
-        assert!(!stdout.contains("[FAIL]"), "Tests failed :\n{stdout}");
-    }
-);
+// Note: Commented out until we get better forge-std RPCs
+// forgetest_init!(
+//     #[serial_test::serial]
+//     can_test_forge_std,
+//     |prj: TestProject, mut cmd: TestCommand| {
+//         let forge_std_dir = prj.root().join("lib/forge-std");
+//         // execute in subdir
+//         cmd.cmd().current_dir(forge_std_dir);
+//         cmd.args(["test", "--root", "."]);
+//         let stdout = cmd.stdout();
+//         assert!(stdout.contains("[PASS]"), "No tests passed:\n{stdout}");
+//         assert!(!stdout.contains("[FAIL]"), "Tests failed :\n{stdout}");
+//     }
+// );
 
 // tests that libraries are handled correctly in multiforking mode
 forgetest_init!(can_use_libs_in_multi_fork, |prj: TestProject, mut cmd: TestCommand| {
