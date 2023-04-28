@@ -55,6 +55,13 @@ contract ExpectCallTest is DSTest {
         target.add(1, 2);
     }
 
+    function testExpectMultipleCallsWithData() public {
+        Contract target = new Contract();
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
+        target.add(1, 2);
+        target.add(1, 2);
+    }
+
     function testFailExpectCallWithData() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
