@@ -37,7 +37,7 @@ pub enum ConfParserError {
 pub trait ConfParser {
     /// Returns a prefix that is common to all valid configuration lines.
     /// That helps the parser to extract correct values out of a text.
-    /// 
+    ///
     /// An example prefix would be `forge-config:default.fuzz.`.
     fn config_prefix() -> String;
 
