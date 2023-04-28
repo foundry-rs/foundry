@@ -65,7 +65,15 @@ impl Prank {
         depth: u64,
         single_call: bool,
     ) -> Prank {
-        Prank { prank_caller, prank_origin, new_caller, new_origin, depth, single_call, used: false }
+        Prank {
+            prank_caller,
+            prank_origin,
+            new_caller,
+            new_origin,
+            depth,
+            single_call,
+            used: false,
+        }
     }
 
     /// Apply the prank by setting `used` to true iff it is false
@@ -73,10 +81,7 @@ impl Prank {
         if self.used {
             self.clone()
         } else {
-            Prank {
-                used: true,
-                ..self.clone()
-            }
+            Prank { used: true, ..self.clone() }
         }
     }
 }
@@ -147,9 +152,11 @@ fn prank(
 ) -> Result<Bytes, Bytes> {
     let prank = Prank::new(prank_caller, prank_origin, new_caller, new_origin, depth, single_call);
 
-    if let Some(Prank { used, ..}) = state.prank {
+    if let Some(Prank { used, .. }) = state.prank {
         if !used {
-            return Err("You cannot overwrite `prank` until it is applied at least once".encode().into());
+            return Err("You cannot overwrite `prank` until it is applied at least once"
+                .encode()
+                .into())
         }
     }
 
