@@ -766,7 +766,11 @@ where
                             Return::Revert,
                             remaining_gas,
                             format!(
-                                "Expected call to {address:?} with {expected_values} to be made {count:?} time(s), but was called {actual_count} time(s)"
+                                "Expected call to {:?} with {} to be made {} time(s), but was called {} time(s)",
+                                address,
+                                expected_values,
+                                count.unwrap(),
+                                actual_count,
                             )
                             .encode()
                             .into(),
