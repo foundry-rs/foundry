@@ -522,12 +522,7 @@ fn test(
         let sig_identifier =
             SignaturesIdentifier::new(Config::foundry_cache_dir(), config.offline)?;
 
-        let mut stop_processing = false;
-        for (contract_name, suite_result) in rx {
-            if stop_processing {
-                break
-            }
-
+        'outer: for (contract_name, suite_result) in rx {
             let mut tests = suite_result.test_results.clone();
             println!();
             for warning in suite_result.warnings.iter() {
