@@ -16,14 +16,7 @@ use foundry_evm::{
 };
 use foundry_utils::PostLinkInput;
 use rayon::prelude::*;
-use std::{
-    collections::BTreeMap,
-    path::Path,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        mpsc::Sender,
-    },
-};
+use std::{collections::BTreeMap, path::Path, sync::mpsc::Sender};
 
 pub type DeployableContracts = BTreeMap<ArtifactId, (Abi, Bytes, Vec<Bytes>)>;
 
@@ -131,8 +124,6 @@ impl MultiContractRunner {
 
         // the db backend that serves all the data, each contract gets its own instance
         let db = Backend::spawn(self.fork.take());
-
-        let error_reported = AtomicBool::new(false);
 
         let results = self
             .contracts
