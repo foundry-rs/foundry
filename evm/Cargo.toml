@@ -54,6 +54,7 @@ url = "2.3.1"
 auto_impl = "1.0.1"
 itertools = "0.10.5"
 ordered-float = "3.6.0"
+walkdir = "2.3.3"
 
 # Coverage
 semver = "1.0.17"

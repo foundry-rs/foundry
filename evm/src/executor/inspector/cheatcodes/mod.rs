@@ -51,6 +51,8 @@ pub use expect::{
 mod ext;
 /// Fork related cheatcodes
 mod fork;
+/// File-system related cheatcodes
+mod fs;
 /// Cheatcodes that configure the fuzzer
 mod fuzz;
 /// Snapshot related cheatcodes
@@ -207,7 +209,8 @@ impl Cheatcodes {
             .or_else(|| util::apply(self, data, &decoded))
             .or_else(|| expect::apply(self, data, &decoded))
             .or_else(|| fuzz::apply(data, &decoded))
-            .or_else(|| ext::apply(self, self.config.ffi, &decoded))
+            .or_else(|| ext::apply(self, &decoded))
+            .or_else(|| fs::apply(self, &decoded))
             .or_else(|| snapshot::apply(self, data, &decoded))
             .or_else(|| fork::apply(self, data, &decoded))
             .ok_or_else(|| "Cheatcode was unhandled. This is a bug.".to_string().encode())?
