@@ -15,7 +15,7 @@ use crate::{
         },
         FuzzCase, FuzzedCases,
     },
-    utils::get_function,
+    utils::{get_function, h160_to_b160},
     CALLER,
 };
 use ethers::{
@@ -31,7 +31,7 @@ use proptest::{
     strategy::{BoxedStrategy, Strategy, ValueTree},
     test_runner::{TestCaseError, TestRunner},
 };
-use revm::DatabaseCommit;
+use revm::{primitives::B160, DatabaseCommit};
 use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
 use tracing::warn;
 
@@ -521,7 +521,7 @@ impl<'a> InvariantExecutor<'a> {
 /// before inserting it into the dictionary. Otherwise, we flood the dictionary with
 /// randomly generated addresses.
 fn collect_data(
-    state_changeset: &mut HashMap<Address, revm::Account>,
+    state_changeset: &mut HashMap<B160, revm::primitives::Account>,
     sender: &Address,
     call_result: &RawCallResult,
     fuzz_state: EvmFuzzState,
@@ -529,7 +529,8 @@ fn collect_data(
 ) {
     // Verify it has no code.
     let mut has_code = false;
-    if let Some(Some(code)) = state_changeset.get(sender).map(|account| account.info.code.as_ref())
+    if let Some(Some(code)) =
+        state_changeset.get(&h160_to_b160(*sender)).map(|account| account.info.code.as_ref())
     {
         has_code = !code.is_empty();
     }
@@ -537,14 +538,14 @@ fn collect_data(
     // We keep the nonce changes to apply later.
     let mut sender_changeset = None;
     if !has_code {
-        sender_changeset = state_changeset.remove(sender);
+        sender_changeset = state_changeset.remove(&h160_to_b160(*sender));
     }
 
     collect_state_from_call(&call_result.logs, &*state_changeset, fuzz_state, config);
 
     // Re-add changes
     if let Some(changed) = sender_changeset {
-        state_changeset.insert(*sender, changed);
+        state_changeset.insert(h160_to_b160(*sender), changed);
     }
 }
 

@@ -55,6 +55,13 @@ contract ExpectCallTest is DSTest {
         target.add(1, 2);
     }
 
+    function testExpectMultipleCallsWithData() public {
+        Contract target = new Contract();
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
+        target.add(1, 2);
+        target.add(1, 2);
+    }
+
     function testFailExpectCallWithData() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
@@ -158,6 +165,150 @@ contract ExpectCallTest is DSTest {
         NestedContract target = new NestedContract(inner);
 
         cheats.expectCallMinGas(address(inner), 0, 50_001, abi.encodeWithSelector(inner.add.selector, 1, 1));
+        target.addHardGasLimit();
+    }
+}
+
+contract ExpectCallCountTest is DSTest {
+    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+
+    function testExpectCallCountWithData() public {
+        Contract target = new Contract();
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2), 3);
+        target.add(1, 2);
+        target.add(1, 2);
+        target.add(1, 2);
+    }
+
+    function testExpectZeroCallCountAssert() public {
+        Contract target = new Contract();
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2), 0);
+        target.add(3, 3);
+    }
+
+    function testFailExpectCallCountWithWrongCount() public {
+        Contract target = new Contract();
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2), 2);
+        target.add(1, 2);
+    }
+
+    function testExpectCountInnerCall() public {
+        Contract inner = new Contract();
+        NestedContract target = new NestedContract(inner);
+
+        cheats.expectCall(address(inner), abi.encodeWithSelector(inner.numberB.selector), 1);
+        target.sum();
+    }
+
+    function testFailExpectCountInnerCall() public {
+        Contract inner = new Contract();
+        NestedContract target = new NestedContract(inner);
+
+        cheats.expectCall(address(inner), abi.encodeWithSelector(inner.numberB.selector), 1);
+
+        // this function does not call inner
+        target.hello();
+    }
+
+    function testExpectCountInnerAndOuterCalls() public {
+        Contract inner = new Contract();
+        NestedContract target = new NestedContract(inner);
+
+        cheats.expectCall(address(inner), abi.encodeWithSelector(inner.numberB.selector), 2);
+        inner.numberB();
+        target.sum();
+    }
+
+    function testExpectCallCountWithValue() public {
+        Contract target = new Contract();
+        cheats.expectCall(address(target), 1, abi.encodeWithSelector(target.pay.selector, 2), 1);
+        target.pay{value: 1}(2);
+    }
+
+    function testExpectZeroCallCountValue() public {
+        Contract target = new Contract();
+        cheats.expectCall(address(target), 1, abi.encodeWithSelector(target.pay.selector, 2), 0);
+        target.pay{value: 2}(2);
+    }
+
+    function testFailExpectCallCountValue() public {
+        Contract target = new Contract();
+        cheats.expectCall(address(target), 1, abi.encodeWithSelector(target.pay.selector, 2), 1);
+        target.pay{value: 2}(2);
+    }
+
+    function testExpectCallCountWithValueWithoutParameters() public {
+        Contract target = new Contract();
+        cheats.expectCall(address(target), 3, abi.encodeWithSelector(target.pay.selector), 3);
+        target.pay{value: 3}(100);
+        target.pay{value: 3}(100);
+        target.pay{value: 3}(100);
+    }
+
+    function testExpectCallCountWithValueAndGas() public {
+        Contract inner = new Contract();
+        NestedContract target = new NestedContract(inner);
+
+        cheats.expectCall(address(inner), 1, 50_000, abi.encodeWithSelector(inner.pay.selector, 1), 2);
+        target.forwardPay{value: 1}();
+        target.forwardPay{value: 1}();
+    }
+
+    function testExpectCallCountWithNoValueAndGas() public {
+        Contract inner = new Contract();
+        NestedContract target = new NestedContract(inner);
+
+        cheats.expectCall(address(inner), 0, 50_000, abi.encodeWithSelector(inner.add.selector, 1, 1), 1);
+        target.addHardGasLimit();
+    }
+
+    function testExpectZeroCallCountWithNoValueAndWrongGas() public {
+        Contract inner = new Contract();
+        NestedContract target = new NestedContract(inner);
+
+        cheats.expectCall(address(inner), 0, 25_000, abi.encodeWithSelector(inner.add.selector, 1, 1), 0);
+        target.addHardGasLimit();
+    }
+
+    function testFailExpectCallCountWithNoValueAndWrongGas() public {
+        Contract inner = new Contract();
+        NestedContract target = new NestedContract(inner);
+
+        cheats.expectCall(address(inner), 0, 25_000, abi.encodeWithSelector(inner.add.selector, 1, 1), 2);
+        target.addHardGasLimit();
+        target.addHardGasLimit();
+    }
+
+    function testExpectCallCountWithValueAndMinGas() public {
+        Contract inner = new Contract();
+        NestedContract target = new NestedContract(inner);
+
+        cheats.expectCallMinGas(address(inner), 1, 50_000, abi.encodeWithSelector(inner.pay.selector, 1), 1);
+        target.forwardPay{value: 1}();
+    }
+
+    function testExpectCallCountWithNoValueAndMinGas() public {
+        Contract inner = new Contract();
+        NestedContract target = new NestedContract(inner);
+
+        cheats.expectCallMinGas(address(inner), 0, 25_000, abi.encodeWithSelector(inner.add.selector, 1, 1), 2);
+        target.addHardGasLimit();
+        target.addHardGasLimit();
+    }
+
+    function testExpectCallZeroCountWithNoValueAndWrongMinGas() public {
+        Contract inner = new Contract();
+        NestedContract target = new NestedContract(inner);
+
+        cheats.expectCallMinGas(address(inner), 0, 50_001, abi.encodeWithSelector(inner.add.selector, 1, 1), 0);
+        target.addHardGasLimit();
+    }
+
+    function testFailExpectCallCountWithNoValueAndWrongMinGas() public {
+        Contract inner = new Contract();
+        NestedContract target = new NestedContract(inner);
+
+        cheats.expectCallMinGas(address(inner), 0, 50_001, abi.encodeWithSelector(inner.add.selector, 1, 1), 1);
         target.addHardGasLimit();
     }
 }

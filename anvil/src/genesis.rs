@@ -1,10 +1,13 @@
 //! Bindings for geth's `genesis.json` format
-use crate::revm::AccountInfo;
+use crate::revm::primitives::AccountInfo;
 use ethers::{
     signers::LocalWallet,
     types::{serde_helpers::*, Address, Bytes, H256, U256},
 };
-use forge::revm::{Bytecode, Env, KECCAK_EMPTY};
+use forge::{
+    revm::primitives::{Bytecode, Env, KECCAK_EMPTY, U256 as rU256},
+    utils::h160_to_b160,
+};
 use foundry_common::errors::FsPathError;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -83,22 +86,22 @@ impl Genesis {
     /// Applies all settings to the given `env`
     pub fn apply(&self, env: &mut Env) {
         if let Some(chain_id) = self.chain_id() {
-            env.cfg.chain_id = chain_id.into();
+            env.cfg.chain_id = rU256::from(chain_id);
         }
         if let Some(timestamp) = self.timestamp {
-            env.block.timestamp = timestamp.into();
+            env.block.timestamp = rU256::from(timestamp);
         }
         if let Some(base_fee) = self.base_fee_per_gas {
-            env.block.basefee = base_fee;
+            env.block.basefee = base_fee.into();
         }
         if let Some(number) = self.number {
-            env.block.number = number.into();
+            env.block.number = rU256::from(number);
         }
         if let Some(coinbase) = self.coinbase {
-            env.block.coinbase = coinbase;
+            env.block.coinbase = h160_to_b160(coinbase);
         }
-        env.block.difficulty = self.difficulty.into();
-        env.block.gas_limit = self.gas_limit.into();
+        env.block.difficulty = rU256::from(self.difficulty);
+        env.block.gas_limit = rU256::from(self.gas_limit);
     }
 
     /// Returns all private keys from the genesis accounts, if they exist
@@ -141,7 +144,7 @@ impl From<GenesisAccount> for AccountInfo {
         let GenesisAccount { code, balance, nonce, .. } = acc;
         let code = code.map(|code| Bytecode::new_raw(code.to_vec().into()));
         AccountInfo {
-            balance,
+            balance: balance.into(),
             nonce: nonce.unwrap_or_default(),
             code_hash: code.as_ref().map(|code| code.hash()).unwrap_or(KECCAK_EMPTY),
             code,
