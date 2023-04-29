@@ -607,10 +607,10 @@ where
                         data.env.tx.caller = h160_to_b160(new_origin);
                         prank_applied = true;
                     }
-                    // If prank applied, then update the prank state accordingly
-                    // iff it has changed (after the first time applied)
+
+                    // If prank applied for first time, then update
                     if prank_applied {
-                        if let Some(applied_prank) = prank.apply() {
+                        if let Some(applied_prank) = prank.first_time_applied() {
                             self.prank = Some(applied_prank);
                         }
                     }
