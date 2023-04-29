@@ -2,7 +2,7 @@ use super::fuzz_param_from_state;
 use crate::{
     executor::StateChangeset,
     fuzz::invariant::{ArtifactFilters, FuzzRunIdentifiedContracts},
-    utils::{self},
+    utils::{self, b160_to_h160, ru256_to_u256},
 };
 use bytes::Bytes;
 use ethers::{
@@ -16,7 +16,8 @@ use parking_lot::RwLock;
 use proptest::prelude::{BoxedStrategy, Strategy};
 use revm::{
     db::{CacheDB, DatabaseRef},
-    opcode, spec_opcode_gas, SpecId,
+    interpreter::opcode::{self, spec_opcode_gas},
+    primitives::SpecId,
 };
 use std::{io::Write, sync::Arc};
 
@@ -91,13 +92,14 @@ pub fn build_initial_state<DB: DatabaseRef>(
     let mut state = FuzzDictionary::default();
 
     for (address, account) in db.accounts.iter() {
+        let address: Address = (*address).into();
         // Insert basic account information
-        state.values_mut().insert(H256::from(*address).into());
+        state.values_mut().insert(H256::from(address).into());
 
         // Insert push bytes
         if config.include_push_bytes {
             if let Some(code) = &account.info.code {
-                if state.addresses_mut().insert(*address) {
+                if state.addresses_mut().insert(address) {
                     for push_byte in collect_push_bytes(code.bytes().clone()) {
                         state.values_mut().insert(push_byte);
                     }
@@ -108,8 +110,10 @@ pub fn build_initial_state<DB: DatabaseRef>(
         if config.include_storage {
             // Insert storage
             for (slot, value) in &account.storage {
-                state.values_mut().insert(utils::u256_to_h256_be(*slot).into());
-                state.values_mut().insert(utils::u256_to_h256_be(*value).into());
+                let slot = (*slot).into();
+                let value = (*value).into();
+                state.values_mut().insert(utils::u256_to_h256_be(slot).into());
+                state.values_mut().insert(utils::u256_to_h256_be(value).into());
             }
         }
     }
@@ -136,13 +140,13 @@ pub fn collect_state_from_call(
 
     for (address, account) in state_changeset {
         // Insert basic account information
-        state.values_mut().insert(H256::from(*address).into());
+        state.values_mut().insert(H256::from(b160_to_h160(*address)).into());
 
         if config.include_push_bytes && state.addresses.len() < config.max_fuzz_dictionary_addresses
         {
             // Insert push bytes
             if let Some(code) = &account.info.code {
-                if state.addresses_mut().insert(*address) {
+                if state.addresses_mut().insert(b160_to_h160(*address)) {
                     for push_byte in collect_push_bytes(code.bytes().clone()) {
                         state.values_mut().insert(push_byte);
                     }
@@ -153,8 +157,10 @@ pub fn collect_state_from_call(
         if config.include_storage && state.state_values.len() < config.max_fuzz_dictionary_values {
             // Insert storage
             for (slot, value) in &account.storage {
-                state.values_mut().insert(utils::u256_to_h256_be(*slot).into());
-                state.values_mut().insert(utils::u256_to_h256_be(value.present_value()).into());
+                let slot = (*slot).into();
+                let value = ru256_to_u256(value.present_value());
+                state.values_mut().insert(utils::u256_to_h256_be(slot).into());
+                state.values_mut().insert(utils::u256_to_h256_be(value).into());
             }
         } else {
             return
@@ -227,7 +233,7 @@ pub fn collect_created_contracts(
     let mut writable_targeted = targeted_contracts.lock();
 
     for (address, account) in state_changeset {
-        if !setup_contracts.contains_key(address) {
+        if !setup_contracts.contains_key(&b160_to_h160(*address)) {
             if let (true, Some(code)) = (&account.is_touched, &account.info.code) {
                 if !code.is_empty() {
                     if let Some((artifact, (abi, _))) = project_contracts.find_by_code(code.bytes())
@@ -235,9 +241,11 @@ pub fn collect_created_contracts(
                         if let Some(functions) =
                             artifact_filters.get_targeted_functions(artifact, abi)?
                         {
-                            created_contracts.push(*address);
-                            writable_targeted
-                                .insert(*address, (artifact.name.clone(), abi.clone(), functions));
+                            created_contracts.push(b160_to_h160(*address));
+                            writable_targeted.insert(
+                                b160_to_h160(*address),
+                                (artifact.name.clone(), abi.clone(), functions),
+                            );
                         }
                     }
                 }

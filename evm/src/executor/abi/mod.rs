@@ -27,6 +27,7 @@ abigen!(
         ffi(string[])(bytes)
 
         breakpoint(string)
+        breakpoint(string,bool)
 
         roll(uint256)
         warp(uint256)
@@ -101,9 +102,13 @@ abigen!(
         clearMockedCalls()
 
         expectCall(address,bytes)
+        expectCall(address,bytes,uint64)
         expectCall(address,uint256,bytes)
+        expectCall(address,uint256,bytes,uint64)
         expectCall(address,uint256,uint64,bytes)
+        expectCall(address,uint256,uint64,bytes,uint64)
         expectCallMinGas(address,uint256,uint64,bytes)
+        expectCallMinGas(address,uint256,uint64,bytes,uint64)
         expectSafeMemory(uint64,uint64)
         expectSafeMemoryCall(uint64,uint64)
 

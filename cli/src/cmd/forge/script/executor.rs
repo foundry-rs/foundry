@@ -18,6 +18,7 @@ use ethers::{
 };
 use forge::{
     executor::{inspector::CheatsConfig, Backend, ExecutorBuilder},
+    revm::primitives::U256 as rU256,
     trace::{CallTraceDecoder, Traces},
     CallKind,
 };
@@ -179,7 +180,7 @@ impl ScriptArgs {
 
                     // Simulate mining the transaction if the user passes `--slow`.
                     if self.slow {
-                        runner.executor.env_mut().block.number += U256::one();
+                        runner.executor.env_mut().block.number += rU256::from(1);
                     }
 
                     let is_fixed_gas_limit = tx.gas.is_some();

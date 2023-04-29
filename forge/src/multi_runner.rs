@@ -10,12 +10,13 @@ use foundry_common::{ContractsByArtifact, TestFunctionExt};
 use foundry_evm::{
     executor::{
         backend::Backend, fork::CreateFork, inspector::CheatsConfig, opts::EvmOpts, Executor,
-        ExecutorBuilder, SpecId,
+        ExecutorBuilder,
     },
     revm,
 };
 use foundry_utils::PostLinkInput;
 use rayon::prelude::*;
+use revm::primitives::SpecId;
 use std::{collections::BTreeMap, path::Path, sync::mpsc::Sender};
 
 pub type DeployableContracts = BTreeMap<ArtifactId, (Abi, Bytes, Vec<Bytes>)>;
@@ -31,7 +32,7 @@ pub struct MultiContractRunner {
     /// The EVM instance used in the test runner
     pub evm_opts: EvmOpts,
     /// The configured evm
-    pub env: revm::Env,
+    pub env: revm::primitives::Env,
     /// The EVM spec
     pub evm_spec: SpecId,
     /// All known errors, used for decoding reverts
@@ -226,7 +227,7 @@ impl MultiContractRunnerBuilder {
         self,
         root: impl AsRef<Path>,
         output: ProjectCompileOutput<A>,
-        env: revm::Env,
+        env: revm::primitives::Env,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner>
     where
