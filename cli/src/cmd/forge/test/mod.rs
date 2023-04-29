@@ -542,8 +542,7 @@ fn test(
 
                 // If the test failed, we want to stop processing the rest of the tests
                 if fail_fast && !result.success {
-                    stop_processing = true;
-                    break
+                    break 'outer
                 }
 
                 // We only display logs at level 2 and above
