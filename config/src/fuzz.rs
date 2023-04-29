@@ -4,7 +4,7 @@ use ethers_core::types::U256;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    inline::{ConfParser, ConfParserError},
+    inline::{InlineConfigParser, InlineConfigParserError},
     Config,
 };
 
@@ -40,13 +40,13 @@ impl Default for FuzzConfig {
     }
 }
 
-impl ConfParser for FuzzConfig {
+impl InlineConfigParser for FuzzConfig {
     fn config_prefix() -> String {
         let profile = Config::selected_profile().to_string();
         format!("forge-config:{profile}.fuzz.")
     }
 
-    fn try_merge<S: AsRef<str>>(&self, text: S) -> Result<Option<Self>, ConfParserError>
+    fn try_merge<S: AsRef<str>>(&self, text: S) -> Result<Option<Self>, InlineConfigParserError>
     where
         Self: Sized + 'static,
     {
@@ -63,7 +63,7 @@ impl ConfParser for FuzzConfig {
             match key.as_str() {
                 "runs" => conf.runs = value.parse()?,
                 "max-test-rejects" => conf.max_test_rejects = value.parse()?,
-                _ => Err(ConfParserError::InvalidConfigProperty(key.to_string()))?,
+                _ => Err(InlineConfigParserError::InvalidConfigProperty(key.to_string()))?,
             }
         }
         Ok(Some(conf))
@@ -108,7 +108,7 @@ impl Default for FuzzDictionaryConfig {
 
 #[cfg(test)]
 mod tests {
-    use crate::{inline::ConfParser, FuzzConfig};
+    use crate::{inline::InlineConfigParser, FuzzConfig};
     use solang_parser::pt::Comment;
 
     #[test]

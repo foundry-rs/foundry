@@ -2,9 +2,9 @@ use std::{num::ParseIntError, str::ParseBoolError};
 
 use regex::Regex;
 
-/// Errors returned by the [`ConfParser`] trait.
+/// Errors returned by the [`InlineConfigParser`] trait.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConfParserError {
+pub enum InlineConfigParserError {
     /// An invalid configuration property has been provided.
     /// The property cannot be mapped to the configuration object
     #[error("'{0}' is not a valid config property")]
@@ -34,7 +34,7 @@ pub enum ConfParserError {
 /// function test_ImportantFuzzTest(uint256 x) public {...}
 /// }
 /// ```
-pub trait ConfParser {
+pub trait InlineConfigParser {
     /// Returns a prefix that is common to all valid configuration lines.
     /// That helps the parser to extract correct values out of a text.
     ///
@@ -44,8 +44,8 @@ pub trait ConfParser {
     /// Returns
     /// - `Some(Self)` in case some configurations are merged into self.
     /// - `None` in case there are no configurations that can be applied to self.
-    /// - `Err(ConfParserError)` in case of wrong configuration.
-    fn try_merge<S: AsRef<str>>(&self, text: S) -> Result<Option<Self>, ConfParserError>
+    /// - `Err(InlineConfigParserError)` in case of wrong configuration.
+    fn try_merge<S: AsRef<str>>(&self, text: S) -> Result<Option<Self>, InlineConfigParserError>
     where
         Self: Sized + 'static;
 
@@ -83,7 +83,7 @@ fn remove_whitespaces(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ConfParser, ConfParserError};
+    use super::{InlineConfigParser, InlineConfigParserError};
 
     #[test]
     fn config_variables() {
@@ -114,12 +114,15 @@ mod tests {
 
     #[derive(Default)]
     struct TestParser;
-    impl ConfParser for TestParser {
+    impl InlineConfigParser for TestParser {
         fn config_prefix() -> String {
             "forge-config:default.fuzz.".to_string()
         }
 
-        fn try_merge<S: AsRef<str>>(&self, _text: S) -> Result<Option<Self>, ConfParserError>
+        fn try_merge<S: AsRef<str>>(
+            &self,
+            _text: S,
+        ) -> Result<Option<Self>, InlineConfigParserError>
         where
             Self: Sized + 'static,
         {

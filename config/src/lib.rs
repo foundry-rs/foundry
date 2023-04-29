@@ -93,7 +93,7 @@ pub use invariant::InvariantConfig;
 use providers::remappings::RemappingsProvider;
 
 mod inline;
-pub use inline::{ConfParserError, InlineConfig};
+pub use inline::{InlineConfig, InlineConfigParserError};
 
 /// Foundry configuration
 ///

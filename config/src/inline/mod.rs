@@ -1,5 +1,5 @@
 mod conf_parser;
-pub use conf_parser::{ConfParser, ConfParserError};
+pub use conf_parser::{InlineConfigParser, InlineConfigParserError};
 use ethers_solc::{artifacts::Node, ProjectCompileOutput};
 use serde_json::Value;
 use std::{
@@ -10,13 +10,13 @@ use std::{
 /// Represents per-test configurations, declared inline
 /// as structured comments in Solidity test files. This allows
 /// to create configs directly bound to a solidity test.
-/// `T` is the configuration type, and is bound to the [`ConfParser`] trait. Known
-/// implementations of [`ConfParser`] include [`FuzzConfig`](super::FuzzConfig) and
+/// `T` is the configuration type, and is bound to the [`InlineConfigParser`] trait. Known
+/// implementations of [`InlineConfigParser`] include [`FuzzConfig`](super::FuzzConfig) and
 /// [`InvariantConfig`](super::InvariantConfig))
 #[derive(Default, Debug, Clone)]
 pub struct InlineConfig<T>
 where
-    T: ConfParser + 'static,
+    T: InlineConfigParser + 'static,
 {
     /// Maps a (contract, test-function)
     /// to a specific configuration provided by the user.
@@ -25,7 +25,7 @@ where
 
 impl<T> InlineConfig<T>
 where
-    T: ConfParser + 'static,
+    T: InlineConfigParser + 'static,
 {
     /// Returns an inline configuration, if any, for `contract_id` and `fn_name`. <br>
     /// - `contract_id` The identifier of the contract containing the annotated function. Note that
@@ -39,10 +39,10 @@ where
 
 impl<'a, T, P> TryFrom<(&'a ProjectCompileOutput, &'a T, &'a P)> for InlineConfig<T>
 where
-    T: ConfParser + 'static,
+    T: InlineConfigParser + 'static,
     P: AsRef<Path>,
 {
-    type Error = ConfParserError;
+    type Error = InlineConfigParserError;
 
     /// Tries to create an instance of `Self`, detecting inline configurations from the project
     /// compile output.
@@ -90,15 +90,15 @@ fn contract_root_node<'a>(nodes: &'a [Node], contract_id: &'a str) -> Option<&'a
 /// Implements a DFS over a compiler output node and its children.
 /// If a configuration is found for a solidity function, it is added to
 /// `map` under the (contract id, function name) key.
-/// This function may result in parsing errors (see [`ConfParserError`]).
+/// This function may result in parsing errors (see [`InlineConfigParserError`]).
 fn try_apply<T>(
     base_conf: &T,
     map: &mut HashMap<(String, String), T>,
     contract_id: &str,
     node: &Node,
-) -> Result<(), ConfParserError>
+) -> Result<(), InlineConfigParserError>
 where
-    T: ConfParser + 'static,
+    T: InlineConfigParser + 'static,
 {
     for n in node.nodes.iter() {
         if let Some((fn_name, fn_docs)) = get_fn_data(n) {

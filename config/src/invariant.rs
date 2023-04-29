@@ -2,7 +2,7 @@
 
 use crate::{
     fuzz::FuzzDictionaryConfig,
-    inline::{ConfParser, ConfParserError},
+    inline::{InlineConfigParser, InlineConfigParserError},
     Config,
 };
 use serde::{Deserialize, Serialize};
@@ -36,13 +36,13 @@ impl Default for InvariantConfig {
     }
 }
 
-impl ConfParser for InvariantConfig {
+impl InlineConfigParser for InvariantConfig {
     fn config_prefix() -> String {
         let profile = Config::selected_profile().to_string();
         format!("forge-config:{profile}.invariant.")
     }
 
-    fn try_merge<S: AsRef<str>>(&self, text: S) -> Result<Option<Self>, ConfParserError>
+    fn try_merge<S: AsRef<str>>(&self, text: S) -> Result<Option<Self>, InlineConfigParserError>
     where
         Self: Sized + 'static,
     {
@@ -61,7 +61,7 @@ impl ConfParser for InvariantConfig {
                 "depth" => conf.depth = value.parse()?,
                 "fail-on-revert" => conf.fail_on_revert = value.parse()?,
                 "call-override" => conf.call_override = value.parse()?,
-                _ => Err(ConfParserError::InvalidConfigProperty(key.to_string()))?,
+                _ => Err(InlineConfigParserError::InvalidConfigProperty(key.to_string()))?,
             }
         }
         Ok(Some(conf))
@@ -70,7 +70,7 @@ impl ConfParser for InvariantConfig {
 
 #[cfg(test)]
 mod tests {
-    use crate::{inline::ConfParser, InvariantConfig};
+    use crate::{inline::InlineConfigParser, InvariantConfig};
 
     #[test]
     fn parse_config_default_profile() {
