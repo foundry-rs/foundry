@@ -22,7 +22,6 @@ use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::Sender,
-        Arc,
     },
 };
 
@@ -133,7 +132,7 @@ impl MultiContractRunner {
         // the db backend that serves all the data, each contract gets its own instance
         let db = Backend::spawn(self.fork.take());
 
-        let error_reported = Arc::new(AtomicBool::new(false));
+        let error_reported = AtomicBool::new(false);
 
         let results = self
             .contracts
@@ -171,15 +170,7 @@ impl MultiContractRunner {
             .filter(|(_, results)| !results.is_empty())
             .map_with(stream_result, |stream_result, (name, result)| {
                 if let Some(stream_result) = stream_result.as_ref() {
-                    match stream_result.send((name.clone(), result.clone())) {
-                        Ok(_) => (),
-                        Err(err) => {
-                            let should_report = !error_reported.swap(true, Ordering::Relaxed);
-                            if should_report {
-                                tracing::error!(error = %err, "Error sending test result");
-                            }
-                        }
-                    };
+                    let _ = stream_result.send((name.clone(), result.clone()));
                 }
                 (name, result)
             })
