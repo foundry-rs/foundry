@@ -8,7 +8,7 @@ use ethers::{
     utils::format_units,
 };
 use eyre::Result;
-use forge::executor::SpecId;
+use forge::revm::primitives::SpecId;
 use foundry_config::{Chain, Config};
 use std::{
     future::Future,

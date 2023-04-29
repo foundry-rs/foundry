@@ -12,7 +12,7 @@ use ethers::{
     types::{Bytes, SignatureError, U256},
 };
 use foundry_common::SELECTOR_LEN;
-use foundry_evm::{executor::backend::DatabaseError, revm::Return};
+use foundry_evm::{executor::backend::DatabaseError, revm::interpreter::InstructionResult};
 use serde::Serialize;
 use tracing::error;
 
@@ -51,7 +51,7 @@ pub enum BlockchainError {
     #[error(transparent)]
     ForkProvider(#[from] ProviderError),
     #[error("EVM error {0:?}")]
-    EvmError(Return),
+    EvmError(InstructionResult),
     #[error("Invalid url {0:?}")]
     InvalidUrl(String),
     #[error("Internal error: {0:?}")]

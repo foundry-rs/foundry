@@ -3,13 +3,18 @@ use crate::{
     abi::HEVMCalls,
     error::{SolError, ERROR_PREFIX, REVERT_PREFIX},
     executor::backend::DatabaseExt,
+    utils::h160_to_b160,
 };
 use bytes::Bytes;
 use ethers::{
     abi::{AbiDecode, AbiEncode, RawLog},
     types::{Address, H160, U256},
 };
-use revm::{return_ok, Bytecode, EVMData, Return};
+use revm::{
+    interpreter::{return_ok, InstructionResult},
+    primitives::Bytecode,
+    EVMData,
+};
 use std::cmp::Ordering;
 use tracing::{instrument, trace};
 
@@ -53,7 +58,7 @@ fn expect_revert(
 pub fn handle_expect_revert(
     is_create: bool,
     expected_revert: Option<&Bytes>,
-    status: Return,
+    status: InstructionResult,
     retdata: Bytes,
 ) -> Result<(Option<Address>, Bytes), Bytes> {
     trace!("handle expect revert");
@@ -210,6 +215,8 @@ pub struct ExpectedCallData {
     pub gas: Option<u64>,
     /// The expected *minimum* gas supplied to the call
     pub min_gas: Option<u64>,
+    /// The number of times the call is expected to be made
+    pub count: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -223,7 +230,7 @@ pub struct MockCallDataContext {
 #[derive(Clone, Debug)]
 pub struct MockCallReturnData {
     /// The return type for the mocked call
-    pub ret_type: Return,
+    pub ret_type: InstructionResult,
     /// Return data or error
     pub data: Bytes,
 }
@@ -293,56 +300,128 @@ pub fn apply<DB: DatabaseExt>(
             Ok(Bytes::new())
         }
         HEVMCalls::ExpectCall0(inner) => {
-            state.expected_calls.entry(inner.0).or_default().push(ExpectedCallData {
-                calldata: inner.1.to_vec().into(),
-                value: None,
-                gas: None,
-                min_gas: None,
-            });
+            state.expected_calls.entry(inner.0).or_default().push((
+                ExpectedCallData {
+                    calldata: inner.1.to_vec().into(),
+                    value: None,
+                    gas: None,
+                    min_gas: None,
+                    count: None,
+                },
+                0,
+            ));
             Ok(Bytes::new())
         }
         HEVMCalls::ExpectCall1(inner) => {
-            state.expected_calls.entry(inner.0).or_default().push(ExpectedCallData {
-                calldata: inner.2.to_vec().into(),
-                value: Some(inner.1),
-                gas: None,
-                min_gas: None,
-            });
+            state.expected_calls.entry(inner.0).or_default().push((
+                ExpectedCallData {
+                    calldata: inner.1.to_vec().into(),
+                    value: None,
+                    gas: None,
+                    min_gas: None,
+                    count: Some(inner.2),
+                },
+                0,
+            ));
             Ok(Bytes::new())
         }
         HEVMCalls::ExpectCall2(inner) => {
-            let value = inner.1;
-
-            // If the value of the transaction is non-zero, the EVM adds a call stipend of 2300 gas
-            // to ensure that the basic fallback function can be called.
-            let positive_value_cost_stipend = if value > U256::zero() { 2300 } else { 0 };
-
-            state.expected_calls.entry(inner.0).or_default().push(ExpectedCallData {
-                calldata: inner.3.to_vec().into(),
-                value: Some(value),
-                gas: Some(inner.2 + positive_value_cost_stipend),
-                min_gas: None,
-            });
+            state.expected_calls.entry(inner.0).or_default().push((
+                ExpectedCallData {
+                    calldata: inner.2.to_vec().into(),
+                    value: Some(inner.1),
+                    gas: None,
+                    min_gas: None,
+                    count: None,
+                },
+                0,
+            ));
             Ok(Bytes::new())
         }
-        HEVMCalls::ExpectCallMinGas(inner) => {
+        HEVMCalls::ExpectCall3(inner) => {
+            state.expected_calls.entry(inner.0).or_default().push((
+                ExpectedCallData {
+                    calldata: inner.2.to_vec().into(),
+                    value: Some(inner.1),
+                    gas: None,
+                    min_gas: None,
+                    count: Some(inner.3),
+                },
+                0,
+            ));
+            Ok(Bytes::new())
+        }
+        HEVMCalls::ExpectCall4(inner) => {
             let value = inner.1;
 
             // If the value of the transaction is non-zero, the EVM adds a call stipend of 2300 gas
             // to ensure that the basic fallback function can be called.
             let positive_value_cost_stipend = if value > U256::zero() { 2300 } else { 0 };
 
-            state.expected_calls.entry(inner.0).or_default().push(ExpectedCallData {
-                calldata: inner.3.to_vec().into(),
-                value: Some(value),
-                gas: None,
-                min_gas: Some(inner.2 + positive_value_cost_stipend),
-            });
+            state.expected_calls.entry(inner.0).or_default().push((
+                ExpectedCallData {
+                    calldata: inner.3.to_vec().into(),
+                    value: Some(value),
+                    gas: Some(inner.2 + positive_value_cost_stipend),
+                    min_gas: None,
+                    count: None,
+                },
+                0,
+            ));
+            Ok(Bytes::new())
+        }
+        HEVMCalls::ExpectCall5(inner) => {
+            let value = inner.1;
+            let positive_value_cost_stipend = if value > U256::zero() { 2300 } else { 0 };
+            state.expected_calls.entry(inner.0).or_default().push((
+                ExpectedCallData {
+                    calldata: inner.3.to_vec().into(),
+                    value: Some(value),
+                    gas: Some(inner.2 + positive_value_cost_stipend),
+                    min_gas: None,
+                    count: Some(inner.4),
+                },
+                0,
+            ));
+            Ok(Bytes::new())
+        }
+        HEVMCalls::ExpectCallMinGas0(inner) => {
+            let value = inner.1;
+
+            // If the value of the transaction is non-zero, the EVM adds a call stipend of 2300 gas
+            // to ensure that the basic fallback function can be called.
+            let positive_value_cost_stipend = if value > U256::zero() { 2300 } else { 0 };
+
+            state.expected_calls.entry(inner.0).or_default().push((
+                ExpectedCallData {
+                    calldata: inner.3.to_vec().into(),
+                    value: Some(value),
+                    gas: None,
+                    min_gas: Some(inner.2 + positive_value_cost_stipend),
+                    count: None,
+                },
+                0,
+            ));
+            Ok(Bytes::new())
+        }
+        HEVMCalls::ExpectCallMinGas1(inner) => {
+            let value = inner.1;
+            let positive_value_cost_stipend = if value > U256::zero() { 2300 } else { 0 };
+            state.expected_calls.entry(inner.0).or_default().push((
+                ExpectedCallData {
+                    calldata: inner.3.to_vec().into(),
+                    value: Some(value),
+                    gas: None,
+                    min_gas: Some(inner.2 + positive_value_cost_stipend),
+                    count: Some(inner.4),
+                },
+                0,
+            ));
             Ok(Bytes::new())
         }
         HEVMCalls::MockCall0(inner) => {
             // TODO: Does this increase gas usage?
-            if let Err(err) = data.journaled_state.load_account(inner.0, data.db) {
+            if let Err(err) = data.journaled_state.load_account(h160_to_b160(inner.0), data.db) {
                 return Some(Err(err.encode_string()))
             }
 
@@ -350,7 +429,7 @@ pub fn apply<DB: DatabaseExt>(
             // check Solidity might perform.
             if data
                 .journaled_state
-                .account(inner.0)
+                .account(h160_to_b160(inner.0))
                 .info
                 .code
                 .as_ref()
@@ -358,32 +437,44 @@ pub fn apply<DB: DatabaseExt>(
                 .unwrap_or(true)
             {
                 let code = Bytecode::new_raw(Bytes::from_static(&[0u8])).to_checked();
-                data.journaled_state.set_code(inner.0, code);
+                data.journaled_state.set_code(h160_to_b160(inner.0), code);
             }
             state.mocked_calls.entry(inner.0).or_default().insert(
                 MockCallDataContext { calldata: inner.1.to_vec().into(), value: None },
-                MockCallReturnData { data: inner.2.to_vec().into(), ret_type: Return::Return },
+                MockCallReturnData {
+                    data: inner.2.to_vec().into(),
+                    ret_type: InstructionResult::Return,
+                },
             );
             Ok(Bytes::new())
         }
         HEVMCalls::MockCall1(inner) => {
             state.mocked_calls.entry(inner.0).or_default().insert(
                 MockCallDataContext { calldata: inner.2.to_vec().into(), value: Some(inner.1) },
-                MockCallReturnData { data: inner.3.to_vec().into(), ret_type: Return::Return },
+                MockCallReturnData {
+                    data: inner.3.to_vec().into(),
+                    ret_type: InstructionResult::Return,
+                },
             );
             Ok(Bytes::new())
         }
         HEVMCalls::MockCallRevert0(inner) => {
             state.mocked_calls.entry(inner.0).or_default().insert(
                 MockCallDataContext { calldata: inner.1.to_vec().into(), value: None },
-                MockCallReturnData { data: inner.2.to_vec().into(), ret_type: Return::Revert },
+                MockCallReturnData {
+                    data: inner.2.to_vec().into(),
+                    ret_type: InstructionResult::Revert,
+                },
             );
             Ok(Bytes::new())
         }
         HEVMCalls::MockCallRevert1(inner) => {
             state.mocked_calls.entry(inner.0).or_default().insert(
                 MockCallDataContext { calldata: inner.2.to_vec().into(), value: Some(inner.1) },
-                MockCallReturnData { data: inner.3.to_vec().into(), ret_type: Return::Revert },
+                MockCallReturnData {
+                    data: inner.3.to_vec().into(),
+                    ret_type: InstructionResult::Revert,
+                },
             );
             Ok(Bytes::new())
         }

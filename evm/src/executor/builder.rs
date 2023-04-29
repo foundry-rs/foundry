@@ -7,7 +7,7 @@ use crate::{
     fuzz::{invariant::RandomCallGenerator, strategies::EvmFuzzState},
 };
 use ethers::types::U256;
-use revm::{Env, SpecId};
+use revm::primitives::{Env, SpecId};
 
 /// The builder that allows to configure an evm [`Executor`] which a stack of optional
 /// [`revm::Inspector`]s, such as [`Cheatcodes`]
@@ -29,7 +29,7 @@ impl ExecutorBuilder {
     #[must_use]
     pub fn with_cheatcodes(mut self, config: CheatsConfig) -> Self {
         self.inspector_config.cheatcodes =
-            Some(Cheatcodes::new(self.env.block.clone(), self.env.tx.gas_price, config));
+            Some(Cheatcodes::new(self.env.block.clone(), self.env.tx.gas_price.into(), config));
         self
     }
 
@@ -92,7 +92,7 @@ impl ExecutorBuilder {
     #[must_use]
     pub fn with_config(mut self, env: Env) -> Self {
         self.inspector_config.block = env.block.clone();
-        self.inspector_config.gas_price = env.tx.gas_price;
+        self.inspector_config.gas_price = env.tx.gas_price.into();
         self.env = env;
         self
     }
@@ -106,7 +106,7 @@ impl ExecutorBuilder {
 
     /// Builds the executor as configured.
     pub fn build(self, db: Backend) -> Executor {
-        let gas_limit = self.gas_limit.unwrap_or(self.env.block.gas_limit);
+        let gas_limit = self.gas_limit.unwrap_or(self.env.block.gas_limit.into());
         Executor::new(db, self.env, self.inspector_config, gas_limit)
     }
 }

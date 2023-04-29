@@ -23,7 +23,7 @@ use forge::{
     },
     executor::{inspector::CheatsConfig, opts::EvmOpts},
     result::SuiteResult,
-    revm::SpecId,
+    revm::primitives::SpecId,
     utils::{build_ic_pc_map, ICPCMap},
     MultiContractRunnerBuilder, TestOptions,
 };

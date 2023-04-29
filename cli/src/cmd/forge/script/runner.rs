@@ -3,7 +3,7 @@ use cast::executor::ExecutionErr;
 use ethers::types::{Address, Bytes, NameOrAddress, U256};
 use forge::{
     executor::{CallResult, DeployResult, EvmError, Executor, RawCallResult},
-    revm::{return_ok, Return},
+    revm::interpreter::{return_ok, InstructionResult},
     trace::{TraceKind, Traces},
     CALLER,
 };
@@ -339,10 +339,9 @@ impl ScriptRunner {
                 self.executor.env_mut().tx.gas_limit = mid_gas_limit;
                 let res = self.executor.call_raw(from, to, calldata.0.clone(), value)?;
                 match res.exit_reason {
-                    Return::Revert |
-                    Return::OutOfGas |
-                    Return::LackOfFundForGasLimit |
-                    Return::OutOfFund => {
+                    InstructionResult::Revert |
+                    InstructionResult::OutOfGas |
+                    InstructionResult::OutOfFund => {
                         lowest_gas_limit = mid_gas_limit;
                     }
                     _ => {

@@ -17,21 +17,30 @@ use ethers::{
     types::{Bloom, H256, U256},
     utils::rlp,
 };
-use forge::revm::ExecutionResult;
+use forge::{
+    revm::primitives::ExecutionResult,
+    utils::{
+        b160_to_h160, eval_to_instruction_result, h160_to_b160, halt_to_instruction_result,
+        ru256_to_u256,
+    },
+};
 use foundry_evm::{
     executor::backend::DatabaseError,
     revm,
-    revm::{BlockEnv, CfgEnv, Env, Return, SpecId, TransactOut},
+    revm::{
+        interpreter::InstructionResult,
+        primitives::{BlockEnv, CfgEnv, Env, Output, SpecId},
+    },
     trace::{node::CallTraceNode, CallTraceArena},
 };
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 use tracing::{trace, warn};
 
 /// Represents an executed transaction (transacted on the DB)
 pub struct ExecutedTransaction {
     transaction: Arc<PoolTransaction>,
-    exit_reason: Return,
-    out: TransactOut,
+    exit_reason: InstructionResult,
+    out: Option<Output>,
     gas_used: u64,
     logs: Vec<Log>,
     traces: Vec<CallTraceNode>,
@@ -48,7 +57,7 @@ impl ExecutedTransaction {
         let logs = self.logs.clone();
 
         // successful return see [Return]
-        let status_code = u8::from(self.exit_reason as u8 <= Return::SelfDestruct as u8);
+        let status_code = u8::from(self.exit_reason as u8 <= InstructionResult::SelfDestruct as u8);
         match &self.transaction.pending_transaction.transaction.transaction {
             TypedTransaction::Legacy(_) => TypedReceipt::Legacy(EIP658Receipt {
                 status_code,
@@ -115,7 +124,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
         let block_number = self.block_env.number;
         let difficulty = self.block_env.difficulty;
         let beneficiary = self.block_env.coinbase;
-        let timestamp = self.block_env.timestamp.as_u64();
+        let timestamp = ru256_to_u256(self.block_env.timestamp).as_u64();
         let base_fee = if (self.cfg_env.spec_id as u8) >= (SpecId::LONDON as u8) {
             Some(self.block_env.basefee)
         } else {
@@ -145,7 +154,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
             let ExecutedTransaction { transaction, logs, out, traces, exit_reason: exit, .. } = tx;
             logs_bloom(logs.clone(), &mut bloom);
 
-            let contract_address = if let TransactOut::Create(_, contract_address) = out {
+            let contract_address = if let Some(Output::Create(_, contract_address)) = out {
                 trace!(target: "backend", "New contract deployed: at {:?}", contract_address);
                 contract_address
             } else {
@@ -158,14 +167,14 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                 transaction_index,
                 from: *transaction.pending_transaction.sender(),
                 to: transaction.pending_transaction.transaction.to().copied(),
-                contract_address,
+                contract_address: contract_address.map(b160_to_h160),
                 logs,
                 logs_bloom: *receipt.logs_bloom(),
                 traces: CallTraceArena { arena: traces },
                 exit,
                 out: match out {
-                    TransactOut::Call(b) => Some(b.into()),
-                    TransactOut::Create(b, _) => Some(b.into()),
+                    Some(Output::Call(b)) => Some(b.into()),
+                    Some(Output::Create(b, _)) => Some(b.into()),
                     _ => None,
                 },
             };
@@ -180,19 +189,19 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
 
         let partial_header = PartialHeader {
             parent_hash,
-            beneficiary,
+            beneficiary: b160_to_h160(beneficiary),
             state_root: self.db.maybe_state_root().unwrap_or_default(),
             receipts_root,
             logs_bloom: bloom,
-            difficulty,
-            number: block_number,
-            gas_limit,
+            difficulty: difficulty.into(),
+            number: block_number.into(),
+            gas_limit: gas_limit.into(),
             gas_used: cumulative_gas_used,
             timestamp,
             extra_data: Default::default(),
             mix_hash: Default::default(),
             nonce: Default::default(),
-            base_fee,
+            base_fee: base_fee.map(|x| x.into()),
         };
 
         let block = Block::new(partial_header, transactions.clone(), ommers);
@@ -225,14 +234,14 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
     fn next(&mut self) -> Option<Self::Item> {
         let transaction = self.pending.next()?;
         let sender = *transaction.pending_transaction.sender();
-        let account = match self.db.basic(sender).map(|acc| acc.unwrap_or_default()) {
+        let account = match self.db.basic(h160_to_b160(sender)).map(|acc| acc.unwrap_or_default()) {
             Ok(account) => account,
             Err(err) => return Some(TransactionExecutionOutcome::DatabaseError(transaction, err)),
         };
         let env = self.env_for(&transaction.pending_transaction);
         // check that we comply with the block's gas limit
         let max_gas = self.gas_used.saturating_add(U256::from(env.tx.gas_limit));
-        if max_gas > env.block.gas_limit {
+        if max_gas > env.block.gas_limit.into() {
             return Some(TransactionExecutionOutcome::Exhausted(transaction))
         }
 
@@ -258,11 +267,31 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
 
         trace!(target: "backend", "[{:?}] executing", transaction.hash());
         // transact and commit the transaction
-        let ExecutionResult { exit_reason, out, gas_used, logs, .. } =
-            evm.inspect_commit(&mut inspector);
+        let exec_result = match evm.inspect_commit(&mut inspector) {
+            Ok(exec_result) => exec_result,
+            Err(err) => {
+                warn!(target: "backend", "[{:?}] failed to execute: {:?}", transaction.hash(), err);
+                return Some(TransactionExecutionOutcome::DatabaseError(
+                    transaction,
+                    DatabaseError::TransactionNotFound(H256::from_str("0x").unwrap()),
+                ))
+            }
+        };
         inspector.print_logs();
 
-        if exit_reason == Return::OutOfGas {
+        let (exit_reason, gas_used, out, logs) = match exec_result {
+            ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
+                (eval_to_instruction_result(reason), gas_used, Some(output), Some(logs))
+            }
+            ExecutionResult::Revert { gas_used, output } => {
+                (InstructionResult::Revert, gas_used, Some(Output::Call(output)), None)
+            }
+            ExecutionResult::Halt { reason, gas_used } => {
+                (halt_to_instruction_result(reason), gas_used, None, None)
+            }
+        };
+
+        if exit_reason == InstructionResult::OutOfGas {
             // this currently useful for debugging estimations
             warn!(target: "backend", "[{:?}] executed with out of gas", transaction.hash())
         }
@@ -278,7 +307,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
             exit_reason,
             out,
             gas_used,
-            logs: logs.into_iter().map(Into::into).collect(),
+            logs: logs.unwrap_or_default().into_iter().map(Into::into).collect(),
             traces: inspector.tracer.unwrap_or_default().traces.arena,
         };
 

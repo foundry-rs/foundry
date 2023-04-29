@@ -252,7 +252,7 @@ fn parse_json(
         if values.iter().any(|value| value.is_object()) {
             return Err(error::encode_error(format!(
                 "You can only coerce values or arrays, not JSON objects. The key '{key}' returns an object",
-            )))
+            )));
         }
 
         if values.is_empty() {
