@@ -1,6 +1,9 @@
 mod conf_parser;
 pub use conf_parser::{InlineConfigParser, InlineConfigParserError};
-use ethers_solc::{artifacts::Node, ProjectCompileOutput};
+use ethers_solc::{
+    artifacts::{ast::NodeType, Node},
+    ProjectCompileOutput,
+};
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -75,7 +78,7 @@ where
 /// the provided contract_id.
 fn contract_root_node<'a>(nodes: &'a [Node], contract_id: &'a str) -> Option<&'a Node> {
     for n in nodes.iter() {
-        if format!("{:?}", n.node_type) == *"ContractDefinition" {
+        if let NodeType::ContractDefinition = n.node_type {
             let contract_data = &n.other;
             if let Value::String(contract_name) = contract_data.get("name")? {
                 if contract_id.ends_with(contract_name) {
@@ -115,12 +118,13 @@ where
 }
 
 fn get_fn_data(node: &Node) -> Option<(String, String)> {
-    if format!("{:?}", node.node_type) == *"FunctionDefinition" {
+    if let NodeType::FunctionDefinition = node.node_type {
         let fn_data = &node.other;
         let fn_name: String = get_fn_name(fn_data)?;
         let fn_docs: String = get_fn_docs(fn_data)?;
         return Some((fn_name, fn_docs))
     }
+
     None
 }
 
