@@ -608,8 +608,11 @@ where
                         prank_applied = true;
                     }
                     // If prank applied, then update the prank state accordingly
+                    // iff it has changed (after the first time applied)
                     if prank_applied {
-                        self.prank = Some(prank.apply());
+                        if let Some(applied_prank) = prank.apply() {
+                            self.prank = Some(applied_prank);
+                        }
                     }
                 }
             }

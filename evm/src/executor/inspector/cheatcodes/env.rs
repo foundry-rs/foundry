@@ -78,11 +78,12 @@ impl Prank {
     }
 
     /// Apply the prank by setting `used` to true iff it is false
-    pub fn apply(&self) -> Self {
+    /// Only returns self in the case it is updated
+    pub fn apply(&self) -> Option<Self> {
         if self.used {
-            self.clone()
+            None
         } else {
-            Prank { used: true, ..self.clone() }
+            Some(Prank { used: true, ..self.clone() })
         }
     }
 }
