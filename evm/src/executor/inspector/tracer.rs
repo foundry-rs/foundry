@@ -273,6 +273,7 @@ where
         gas: Gas,
         retdata: Bytes,
     ) -> (InstructionResult, Option<B160>, Gas, Bytes) {
+        let success = matches!(status, return_ok!());
         let code = match address {
             Some(address) => data
                 .journaled_state
@@ -286,7 +287,7 @@ where
         self.fill_trace(
             status,
             gas_used(data.env.cfg.spec_id, gas.spend(), gas.refunded() as u64),
-            code,
+            if success { code } else { retdata.to_vec() },
             address.map(b160_to_h160),
         );
 
