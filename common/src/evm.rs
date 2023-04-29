@@ -39,7 +39,7 @@ pub type Breakpoints = HashMap<char, (Address, usize)>;
 /// # }
 /// ```
 #[derive(Debug, Clone, Default, Parser, Serialize)]
-#[clap(next_help_heading = "EVM options", about = None)] // override doc
+#[clap(next_help_heading = "EVM options", about = None, long_about = None)] // override doc
 pub struct EvmArgs {
     /// Fetch state over a remote endpoint instead of starting from an empty state.
     ///
@@ -84,7 +84,7 @@ pub struct EvmArgs {
     pub sender: Option<Address>,
 
     /// Enable the FFI cheatcode.
-    #[clap(help = "Enables the FFI cheatcode.", long)]
+    #[clap(long)]
     #[serde(skip)]
     pub ffi: bool,
 
@@ -110,8 +110,7 @@ pub struct EvmArgs {
     ///
     /// default value: 330
     ///
-    /// See --fork-url.
-    /// See also, https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups
+    /// See also --fork-url and https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups
     #[clap(
         long,
         requires = "fork_url",
@@ -123,15 +122,11 @@ pub struct EvmArgs {
 
     /// Disables rate limiting for this node's provider.
     ///
-    /// default value: false
-    ///
-    /// See --fork-url.
-    /// See also, https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups
+    /// See also --fork-url and https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups
     #[clap(
         long,
         requires = "fork_url",
         value_name = "NO_RATE_LIMITS",
-        help = "Disables rate limiting for this node provider.",
         help_heading = "Fork config",
         visible_alias = "no-rate-limit"
     )]

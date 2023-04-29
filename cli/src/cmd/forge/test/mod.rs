@@ -97,21 +97,18 @@ pub struct TestArgs {
     #[clap(long, short, help_heading = "Display options")]
     list: bool,
 
-    #[clap(
-        long,
-        help = "Set seed used to generate randomness during your fuzz runs",
-        value_parser =  utils::parse_u256
-    )]
+    /// Set seed used to generate randomness during your fuzz runs.
+    #[clap(long, value_parser = utils::parse_u256)]
     pub fuzz_seed: Option<U256>,
 }
 
 impl TestArgs {
-    /// Returns the flattened [`CoreBuildArgs`]
+    /// Returns the flattened [`CoreBuildArgs`].
     pub fn build_args(&self) -> &CoreBuildArgs {
         &self.opts
     }
 
-    /// Executes all the tests in the project
+    /// Executes all the tests in the project.
     ///
     /// This will trigger the build process first. On success all test contracts that match the
     /// configured filter will be executed
@@ -233,7 +230,7 @@ impl TestArgs {
         }
     }
 
-    /// Returns the flattened [`FilterArgs`] arguments merged with [`Config`]
+    /// Returns the flattened [`FilterArgs`] arguments merged with [`Config`].
     pub fn filter(&self, config: &Config) -> ProjectPathsAwareFilter {
         self.filter.merge_with_config(config)
     }

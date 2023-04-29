@@ -197,7 +197,7 @@ async fn main() -> eyre::Result<()> {
         }
 
         // Blockchain & RPC queries
-        Subcommands::AccessList { address, sig, args, block, to_json, rpc } => {
+        Subcommands::AccessList { address, sig, args, block, json, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let chain = utils::get_chain(config.chain_id, &provider).await?;
@@ -207,7 +207,7 @@ async fn main() -> eyre::Result<()> {
             builder.set_args(&sig, args).await?;
             let builder_output = builder.peek();
 
-            println!("{}", Cast::new(&provider).access_list(builder_output, block, to_json).await?);
+            println!("{}", Cast::new(&provider).access_list(builder_output, block, json).await?);
         }
         Subcommands::Age { block, rpc } => {
             let config = Config::from(&rpc);
@@ -217,11 +217,11 @@ async fn main() -> eyre::Result<()> {
                 Cast::new(provider).age(block.unwrap_or(BlockId::Number(Latest))).await?
             );
         }
-        Subcommands::Balance { block, who, to_ether, rpc } => {
+        Subcommands::Balance { block, who, ether, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let value = Cast::new(provider).balance(who, block).await?;
-            if to_ether {
+            if ether {
                 println!("{}", SimpleCast::from_wei(&value.to_string(), "eth")?);
             } else {
                 println!("{value}");
@@ -235,13 +235,13 @@ async fn main() -> eyre::Result<()> {
                 Cast::new(provider).base_fee(block.unwrap_or(BlockId::Number(Latest))).await?
             );
         }
-        Subcommands::Block { block, full, field, to_json, rpc } => {
+        Subcommands::Block { block, full, field, json, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             println!(
                 "{}",
                 Cast::new(provider)
-                    .block(block.unwrap_or(BlockId::Number(Latest)), full, field, to_json)
+                    .block(block.unwrap_or(BlockId::Number(Latest)), full, field, json)
                     .await?
             );
         }
@@ -332,22 +332,22 @@ async fn main() -> eyre::Result<()> {
                 println!("{}", serde_json::json!(receipt));
             }
         }
-        Subcommands::Receipt { tx_hash, field, to_json, cast_async, confirmations, rpc } => {
+        Subcommands::Receipt { tx_hash, field, json, cast_async, confirmations, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             println!(
                 "{}",
                 Cast::new(provider)
-                    .receipt(tx_hash, field, confirmations, cast_async, to_json)
+                    .receipt(tx_hash, field, confirmations, cast_async, json)
                     .await?
             );
         }
         Subcommands::Run(cmd) => cmd.run().await?,
         Subcommands::SendTx(cmd) => cmd.run().await?,
-        Subcommands::Tx { tx_hash, field, to_json, rpc } => {
+        Subcommands::Tx { tx_hash, field, json, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(&provider).transaction(tx_hash, field, to_json).await?)
+            println!("{}", Cast::new(&provider).transaction(tx_hash, field, json).await?)
         }
 
         // 4Byte
