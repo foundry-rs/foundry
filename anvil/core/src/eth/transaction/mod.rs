@@ -2,7 +2,7 @@
 
 use crate::eth::{
     receipt::Log,
-    utils::{enveloped, to_access_list},
+    utils::{enveloped, to_revm_access_list},
 };
 use ethers_core::{
     types::{
@@ -15,7 +15,10 @@ use ethers_core::{
     },
 };
 use foundry_evm::trace::CallTraceArena;
-use revm::{CreateScheme, Return, TransactTo, TxEnv};
+use revm::{
+    interpreter::InstructionResult,
+    primitives::{CreateScheme, TransactTo, TxEnv},
+};
 use std::ops::Deref;
 
 /// compatibility with `ethers-rs` types
@@ -1177,7 +1180,7 @@ impl PendingTransaction {
     pub fn to_revm_tx_env(&self) -> TxEnv {
         fn transact_to(kind: &TransactionKind) -> TransactTo {
             match kind {
-                TransactionKind::Call(c) => TransactTo::Call(*c),
+                TransactionKind::Call(c) => TransactTo::Call((*c).into()),
                 TransactionKind::Create => TransactTo::Create(CreateScheme::Create),
             }
         }
@@ -1188,13 +1191,13 @@ impl PendingTransaction {
                 let chain_id = tx.chain_id();
                 let LegacyTransaction { nonce, gas_price, gas_limit, value, kind, input, .. } = tx;
                 TxEnv {
-                    caller,
+                    caller: caller.into(),
                     transact_to: transact_to(kind),
                     data: input.0.clone(),
                     chain_id,
                     nonce: Some(nonce.as_u64()),
-                    value: *value,
-                    gas_price: *gas_price,
+                    value: (*value).into(),
+                    gas_price: (*gas_price).into(),
                     gas_priority_fee: None,
                     gas_limit: gas_limit.as_u64(),
                     access_list: vec![],
@@ -1213,16 +1216,16 @@ impl PendingTransaction {
                     ..
                 } = tx;
                 TxEnv {
-                    caller,
+                    caller: caller.into(),
                     transact_to: transact_to(kind),
                     data: input.0.clone(),
                     chain_id: Some(*chain_id),
                     nonce: Some(nonce.as_u64()),
-                    value: *value,
-                    gas_price: *gas_price,
+                    value: (*value).into(),
+                    gas_price: (*gas_price).into(),
                     gas_priority_fee: None,
                     gas_limit: gas_limit.as_u64(),
-                    access_list: to_access_list(access_list.0.clone()),
+                    access_list: to_revm_access_list(access_list.0.clone()),
                 }
             }
             TypedTransaction::EIP1559(tx) => {
@@ -1239,16 +1242,16 @@ impl PendingTransaction {
                     ..
                 } = tx;
                 TxEnv {
-                    caller,
+                    caller: caller.into(),
                     transact_to: transact_to(kind),
                     data: input.0.clone(),
                     chain_id: Some(*chain_id),
                     nonce: Some(nonce.as_u64()),
-                    value: *value,
-                    gas_price: *max_fee_per_gas,
-                    gas_priority_fee: Some(*max_priority_fee_per_gas),
+                    value: (*value).into(),
+                    gas_price: (*max_fee_per_gas).into(),
+                    gas_priority_fee: Some((*max_priority_fee_per_gas).into()),
                     gas_limit: gas_limit.as_u64(),
-                    access_list: to_access_list(access_list.0.clone()),
+                    access_list: to_revm_access_list(access_list.0.clone()),
                 }
             }
         }
@@ -1266,7 +1269,7 @@ pub struct TransactionInfo {
     pub logs: Vec<Log>,
     pub logs_bloom: Bloom,
     pub traces: CallTraceArena,
-    pub exit: Return,
+    pub exit: InstructionResult,
     pub out: Option<Bytes>,
 }
 

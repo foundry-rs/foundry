@@ -23,7 +23,7 @@ use crate::{
     },
     filter::{EthFilter, Filters, LogsFilter},
     mem::transaction_build,
-    revm::TransactOut,
+    revm::primitives::Output,
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
 use anvil_core::{
@@ -55,11 +55,11 @@ use ethers::{
     },
     utils::rlp,
 };
-use forge::{executor::DatabaseRef, revm::BlockEnv};
+use forge::{executor::DatabaseRef, revm::primitives::BlockEnv};
 use foundry_common::ProviderBuilder;
 use foundry_evm::{
     executor::backend::DatabaseError,
-    revm::{return_ok, return_revert, Return},
+    revm::interpreter::{return_ok, return_revert, InstructionResult},
 };
 use futures::channel::mpsc::Receiver;
 use parking_lot::RwLock;
@@ -1990,7 +1990,7 @@ impl EthApi {
 
         // get the highest possible gas limit, either the request's set value or the currently
         // configured gas limit
-        let mut highest_gas_limit = request.gas.unwrap_or(block_env.gas_limit);
+        let mut highest_gas_limit = request.gas.unwrap_or(block_env.gas_limit.into());
 
         // check with the funds of the sender
         if let Some(from) = request.from {
@@ -2029,7 +2029,7 @@ impl EthApi {
             return_ok!() => {
                 // succeeded
             }
-            Return::OutOfGas | Return::LackOfFundForGasLimit | Return::OutOfFund => {
+            InstructionResult::OutOfGas | InstructionResult::OutOfFund => {
                 return Err(InvalidTransactionError::OutOfGas(gas_limit).into())
             }
             // need to check if the revert was due to lack of gas or unrelated reason
@@ -2098,10 +2098,9 @@ impl EthApi {
                     }
                     last_highest_gas_limit = highest_gas_limit;
                 }
-                Return::Revert |
-                Return::OutOfGas |
-                Return::LackOfFundForGasLimit |
-                Return::OutOfFund => {
+                InstructionResult::Revert |
+                InstructionResult::OutOfGas |
+                InstructionResult::OutOfFund => {
                     lowest_gas_limit = mid_gas_limit;
                 }
                 reason => {
@@ -2339,16 +2338,16 @@ fn required_marker(provided_nonce: U256, on_chain_nonce: U256, from: Address) ->
     }
 }
 
-fn convert_transact_out(out: &TransactOut) -> Bytes {
+fn convert_transact_out(out: &Option<Output>) -> Bytes {
     match out {
-        TransactOut::None => Default::default(),
-        TransactOut::Call(out) => out.to_vec().into(),
-        TransactOut::Create(out, _) => out.to_vec().into(),
+        None => Default::default(),
+        Some(Output::Call(out)) => out.to_vec().into(),
+        Some(Output::Create(out, _)) => out.to_vec().into(),
     }
 }
 
 /// Returns an error if the `exit` code is _not_ ok
-fn ensure_return_ok(exit: Return, out: &TransactOut) -> Result<Bytes> {
+fn ensure_return_ok(exit: InstructionResult, out: &Option<Output>) -> Result<Bytes> {
     let out = convert_transact_out(out);
     match exit {
         return_ok!() => Ok(out),

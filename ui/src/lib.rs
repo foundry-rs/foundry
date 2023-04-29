@@ -14,7 +14,7 @@ use forge::{
     CallKind,
 };
 use foundry_common::evm::Breakpoints;
-use revm::{opcode, SpecId};
+use revm::{interpreter::opcode, primitives::SpecId};
 use std::{
     cmp::{max, min},
     collections::{BTreeMap, HashMap, VecDeque},

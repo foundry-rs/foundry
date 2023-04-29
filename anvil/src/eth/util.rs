@@ -1,10 +1,14 @@
-use ethers::abi::Address;
-use forge::revm::SpecId;
-use foundry_evm::revm::precompiles::Precompiles;
+use ethers::{abi::Address, types::H160};
+use forge::revm::primitives::SpecId;
+use foundry_evm::revm::precompile::Precompiles;
 use std::fmt;
 
 pub fn get_precompiles_for(spec_id: SpecId) -> Vec<Address> {
-    Precompiles::new(spec_id.to_precompile_id()).addresses().into_iter().copied().collect()
+    Precompiles::new(to_precompile_id(spec_id))
+        .addresses()
+        .into_iter()
+        .map(|item| H160::from_slice(item))
+        .collect()
 }
 
 /// wrapper type that displays byte as hex
@@ -52,5 +56,28 @@ impl<'a> fmt::Debug for HexDisplay<'a> {
             f.write_fmt(format_args!("{byte:02x}"))?;
         }
         Ok(())
+    }
+}
+
+pub fn to_precompile_id(spec_id: SpecId) -> forge::revm::precompile::SpecId {
+    match spec_id {
+        SpecId::FRONTIER |
+        SpecId::FRONTIER_THAWING |
+        SpecId::HOMESTEAD |
+        SpecId::DAO_FORK |
+        SpecId::TANGERINE |
+        SpecId::SPURIOUS_DRAGON => forge::revm::precompile::SpecId::HOMESTEAD,
+        SpecId::BYZANTIUM | SpecId::CONSTANTINOPLE | SpecId::PETERSBURG => {
+            forge::revm::precompile::SpecId::BYZANTIUM
+        }
+        SpecId::ISTANBUL | SpecId::MUIR_GLACIER => forge::revm::precompile::SpecId::ISTANBUL,
+        SpecId::BERLIN |
+        SpecId::LONDON |
+        SpecId::ARROW_GLACIER |
+        SpecId::GRAY_GLACIER |
+        SpecId::MERGE |
+        SpecId::SHANGHAI |
+        SpecId::CANCUN |
+        SpecId::LATEST => forge::revm::precompile::SpecId::BERLIN,
     }
 }
