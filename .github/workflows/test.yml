@@ -128,7 +128,7 @@ jobs:
                 job:
                     - name: forge-std-test
                       filter: "test(~forge_std)"
-                partition: [1, 2]
+                partition: [1, 1]
         env:
             ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
         steps:
@@ -167,7 +167,7 @@ jobs:
             matrix:
                 job:
                     - name: non-forking
-                      filter: "!test(~fork) & !test(~live) & !test(~issue)"
+                      filter: "!test(~fork) & !test(~live) & !test(~issue) & !test(~forge_std)"
                     - name: forking
                       filter: "test(~fork) & !test(~live)"
                 partition: [1, 2]
