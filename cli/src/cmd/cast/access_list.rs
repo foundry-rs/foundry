@@ -13,24 +13,27 @@ use eyre::WrapErr;
 use foundry_config::{Chain, Config};
 use std::str::FromStr;
 
+/// CLI arguments for `cast access-list`.
 #[derive(Debug, Parser)]
 pub struct AccessListArgs {
+    /// The destination of the transaction.
     #[clap(
-        help = "The destination of the transaction.", 
         value_name = "TO",
         value_parser = NameOrAddress::from_str
     )]
     to: Option<NameOrAddress>,
 
-    #[clap(help = "The signature of the function to call.", value_name = "SIG")]
+    /// The signature of the function to call.
+    #[clap(value_name = "SIG")]
     sig: Option<String>,
 
-    #[clap(help = "The arguments of the function to call.", value_name = "ARGS")]
+    /// The arguments of the function to call.
+    #[clap(value_name = "ARGS")]
     args: Vec<String>,
 
+    /// The data for the transaction.
     #[clap(
         long,
-        help = "Data for the transaction.",
         value_name = "DATA",
         value_parser = foundry_common::clap_helpers::strip_0x_prefix,
         conflicts_with_all = &["sig", "args"]
@@ -43,22 +46,20 @@ pub struct AccessListArgs {
     #[clap(flatten)]
     eth: EthereumOpts,
 
-    #[clap(
-        long,
-        short,
-        help = "The block height you want to query at.",
-        long_help = "The block height you want to query at. Can also be the tags earliest, finalized, safe, latest, or pending.",
-        value_name = "BLOCK"
-    )]
+    /// The block height to query at.
+    ///
+    /// Can also be the tags earliest, finalized, safe, latest, or pending.
+    #[clap(long, short = 'B')]
     block: Option<BlockId>,
 
-    #[clap(long = "json", short = 'j', help_heading = "Display options")]
-    to_json: bool,
+    /// Print the access list as JSON.
+    #[clap(long, short, help_heading = "Display options")]
+    json: bool,
 }
 
 impl AccessListArgs {
     pub async fn run(self) -> eyre::Result<()> {
-        let AccessListArgs { to, sig, args, data, tx, eth, block, to_json } = self;
+        let AccessListArgs { to, sig, args, data, tx, eth, block, json: to_json } = self;
 
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;

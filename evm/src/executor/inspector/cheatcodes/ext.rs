@@ -15,16 +15,9 @@ use hex::FromHex;
 use jsonpath_lib;
 use serde::Deserialize;
 use serde_json::Value;
-use std::{
-    collections::BTreeMap,
-    env,
-    io::{BufRead, BufReader, Write},
-    path::Path,
-    process::Command,
-    str::FromStr,
-    time::UNIX_EPOCH,
-};
+use std::{collections::BTreeMap, env, path::Path, process::Command, str::FromStr};
 use tracing::{error, trace};
+
 /// Invokes a `Command` with the given args and returns the abi encoded response
 ///
 /// If the output of the command is valid hex, it returns the hex decoded value
@@ -182,162 +175,6 @@ fn get_env(
     }
 }
 
-fn project_root(state: &Cheatcodes) -> Result<Bytes, Bytes> {
-    let root = state.config.root.display().to_string();
-
-    Ok(abi::encode(&[Token::String(root)]).into())
-}
-
-fn read_file(state: &Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
-    let path =
-        state.config.ensure_path_allowed(&path, FsAccessKind::Read).map_err(error::encode_error)?;
-
-    let data = fs::read_to_string(path).map_err(error::encode_error)?;
-
-    Ok(abi::encode(&[Token::String(data)]).into())
-}
-
-fn read_file_binary(state: &Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
-    let path =
-        state.config.ensure_path_allowed(&path, FsAccessKind::Read).map_err(error::encode_error)?;
-
-    let data = fs::read(path).map_err(error::encode_error)?;
-
-    Ok(abi::encode(&[Token::Bytes(data)]).into())
-}
-
-fn read_line(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
-    let path =
-        state.config.ensure_path_allowed(&path, FsAccessKind::Read).map_err(error::encode_error)?;
-
-    // Get reader for previously opened file to continue reading OR initialize new reader
-    let reader = state
-        .context
-        .opened_read_files
-        .entry(path.clone())
-        .or_insert(BufReader::new(fs::open(path).map_err(error::encode_error)?));
-
-    let mut line: String = String::new();
-    reader.read_line(&mut line).map_err(error::encode_error)?;
-
-    // Remove trailing newline character, preserving others for cases where it may be important
-    if line.ends_with('\n') {
-        line.pop();
-        if line.ends_with('\r') {
-            line.pop();
-        }
-    }
-
-    Ok(abi::encode(&[Token::String(line)]).into())
-}
-
-/// Writes the content to the file
-///
-/// This function will create a file if it does not exist, and will entirely replace its contents if
-/// it does.
-///
-/// Caution: writing files is only allowed if the targeted path is allowed, (inside `<root>/` by
-/// default)
-fn write_file(
-    state: &Cheatcodes,
-    path: impl AsRef<Path>,
-    content: impl AsRef<[u8]>,
-) -> Result<Bytes, Bytes> {
-    let path = state
-        .config
-        .ensure_path_allowed(&path, FsAccessKind::Write)
-        .map_err(error::encode_error)?;
-    // write access to foundry.toml is not allowed
-    state.config.ensure_not_foundry_toml(&path).map_err(error::encode_error)?;
-
-    if state.fs_commit {
-        fs::write(path, content.as_ref()).map_err(error::encode_error)?;
-    }
-
-    Ok(Bytes::new())
-}
-
-/// Writes a single line to the file
-///
-/// This will create a file if it does not exist but append the `line` if it does
-fn write_line(state: &Cheatcodes, path: impl AsRef<Path>, line: &str) -> Result<Bytes, Bytes> {
-    let path = state
-        .config
-        .ensure_path_allowed(&path, FsAccessKind::Write)
-        .map_err(error::encode_error)?;
-    state.config.ensure_not_foundry_toml(&path).map_err(error::encode_error)?;
-
-    if state.fs_commit {
-        let mut file = std::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(path)
-            .map_err(error::encode_error)?;
-
-        writeln!(file, "{line}").map_err(error::encode_error)?;
-    }
-
-    Ok(Bytes::new())
-}
-
-fn close_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
-    let path =
-        state.config.ensure_path_allowed(&path, FsAccessKind::Read).map_err(error::encode_error)?;
-
-    state.context.opened_read_files.remove(&path);
-
-    Ok(Bytes::new())
-}
-
-/// Removes a file from the filesystem.
-///
-/// Only files inside `<root>/` can be removed, `foundry.toml` excluded.
-///
-/// This will return an error if the path points to a directory, or the file does not exist
-fn remove_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
-    let path = state
-        .config
-        .ensure_path_allowed(&path, FsAccessKind::Write)
-        .map_err(error::encode_error)?;
-    state.config.ensure_not_foundry_toml(&path).map_err(error::encode_error)?;
-
-    // also remove from the set if opened previously
-    state.context.opened_read_files.remove(&path);
-
-    if state.fs_commit {
-        fs::remove_file(&path).map_err(error::encode_error)?;
-    }
-
-    Ok(Bytes::new())
-}
-
-/// Gets the metadata of a file/directory
-///
-/// This will return an error if no file/directory is found, or if the target path isn't allowed
-fn fs_metadata(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
-    let path =
-        state.config.ensure_path_allowed(&path, FsAccessKind::Read).map_err(error::encode_error)?;
-
-    let metadata = path.metadata().map_err(error::encode_error)?;
-
-    // These fields not available on all platforms; default to 0
-    let [modified, accessed, created] =
-        [metadata.modified(), metadata.accessed(), metadata.created()].map(|time| {
-            time.unwrap_or(UNIX_EPOCH).duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
-        });
-
-    let metadata = (
-        metadata.is_dir(),
-        metadata.is_symlink(),
-        metadata.len(),
-        metadata.permissions().readonly(),
-        modified,
-        accessed,
-        created,
-    );
-    Ok(metadata.encode().into())
-}
-
 /// Converts a serde_json::Value to an abi::Token
 /// The function is designed to run recursively, so that in case of an object
 /// it will call itself to convert each of it's value and encode the whole as a
@@ -451,6 +288,7 @@ fn parse_json(
     };
     Ok(abi_encoded.into())
 }
+
 /// Serializes a key:value pair to a specific object. By calling this function multiple times,
 /// the user can serialize multiple KV pairs to the same object. The value can be of any type, even
 /// a new object in itself. The function will return
@@ -478,6 +316,7 @@ fn serialize_json(
         .map_err(|err| error::encode_error(format!("Failed to stringify hashmap: {err}")))?;
     Ok(abi::encode(&[Token::String(stringified)]).into())
 }
+
 /// Converts an array to it's stringified version, adding the appropriate quotes around it's
 /// ellements. This is to signify that the elements of the array are string themselves.
 fn array_str_to_str<T: UIfmt>(array: &Vec<T>) -> String {
@@ -542,21 +381,17 @@ fn write_json(
         json
     })
     .map_err(error::encode_error)?;
-    write_file(_state, path, json_string)?;
+    super::fs::write_file(_state, path, json_string)?;
     Ok(Bytes::new())
 }
 
-pub fn apply(
-    state: &mut Cheatcodes,
-    ffi_enabled: bool,
-    call: &HEVMCalls,
-) -> Option<Result<Bytes, Bytes>> {
+pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result<Bytes, Bytes>> {
     Some(match call {
         HEVMCalls::Ffi(inner) => {
-            if !ffi_enabled {
-                Err(error::encode_error("FFI disabled: run again with `--ffi` if you want to allow tests to call external scripts."))
-            } else {
+            if state.config.ffi {
                 ffi(state, &inner.0)
+            } else {
+                Err(error::encode_error("FFI disabled: run again with `--ffi` if you want to allow tests to call external scripts."))
             }
         }
         HEVMCalls::GetCode(inner) => get_code(state, &inner.0),
@@ -641,16 +476,6 @@ pub fn apply(
             Some(inner.2.iter().map(hex::encode).collect::<Vec<_>>().join(&inner.1)),
         ),
 
-        HEVMCalls::ProjectRoot(_) => project_root(state),
-        HEVMCalls::ReadFile(inner) => read_file(state, &inner.0),
-        HEVMCalls::ReadFileBinary(inner) => read_file_binary(state, &inner.0),
-        HEVMCalls::ReadLine(inner) => read_line(state, &inner.0),
-        HEVMCalls::WriteFile(inner) => write_file(state, &inner.0, &inner.1),
-        HEVMCalls::WriteFileBinary(inner) => write_file(state, &inner.0, &inner.1),
-        HEVMCalls::WriteLine(inner) => write_line(state, &inner.0, &inner.1),
-        HEVMCalls::CloseFile(inner) => close_file(state, &inner.0),
-        HEVMCalls::RemoveFile(inner) => remove_file(state, &inner.0),
-        HEVMCalls::FsMetadata(inner) => fs_metadata(state, &inner.0),
         // If no key argument is passed, return the whole JSON object.
         // "$" is the JSONPath key for the root of the object
         HEVMCalls::ParseJson0(inner) => parse_json(state, &inner.0, "$", None),

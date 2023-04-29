@@ -25,30 +25,31 @@ use yansi::Paint;
 /// CLI arguments for `cast run`.
 #[derive(Debug, Clone, Parser)]
 pub struct RunArgs {
-    #[clap(help = "The transaction hash.", value_name = "TXHASH")]
+    /// The transaction hash.
     tx_hash: String,
 
-    #[clap(long, short = 'd', help = "Debugs the transaction.")]
+    /// Opens the transaction in the debugger.
+    #[clap(long, short)]
     debug: bool,
 
-    #[clap(long, short = 't', help = "Print out opcode traces.")]
+    /// Print out opcode traces.
+    #[clap(long, short)]
     trace_printer: bool,
 
-    #[clap(
-        long,
-        short = 'q',
-        help = "Executes the transaction only with the state from the previous block. May result in different results than the live execution!"
-    )]
+    /// Executes the transaction only with the state from the previous block.
+    ///
+    /// May result in different results than the live execution!
+    #[clap(long, short)]
     quick: bool,
 
-    #[clap(long, short = 'v', help = "Prints full address")]
+    /// Prints the full address of the contract.
+    #[clap(long, short)]
     verbose: bool,
 
-    #[clap(
-        long,
-        help = "Labels address in the trace. 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045:vitalik.eth",
-        value_name = "LABEL"
-    )]
+    /// Label addresses in the trace.
+    ///
+    /// Example: 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045:vitalik.eth
+    #[clap(long, short)]
     label: Vec<String>,
 
     #[clap(flatten)]

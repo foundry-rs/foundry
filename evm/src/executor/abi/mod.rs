@@ -20,6 +20,7 @@ abigen!(
     "[
         struct Log { bytes32[] topics; bytes data; }
         struct Rpc { string name; string url; }
+        struct DirEntry { string errorMessage; string path; uint64 depth; bool isDir; bool isSymlink; }
         struct FsMetadata { bool isDir; bool isSymlink; uint256 length; bool readOnly; uint256 modified; uint256 accessed; uint256 created; }
 
         allowCheatcodes(address)
@@ -139,6 +140,12 @@ abigen!(
         writeLine(string,string)
         closeFile(string)
         removeFile(string)
+        createDir(string, bool)
+        removeDir(string, bool)
+        readDir(string)(DirEntry[])
+        readDir(string, uint64)(DirEntry[])
+        readDir(string, uint64, bool)(DirEntry[])
+        readLink(string)(string)
         fsMetadata(string)(FsMetadata)
 
         toString(bytes)
