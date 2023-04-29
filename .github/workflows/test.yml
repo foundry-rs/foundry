@@ -99,11 +99,50 @@ jobs:
             - name: Download archives
               uses: actions/download-artifact@v3
               with:
-                  name: issue-repro-tests
+                  name: integration-tests
 
             - name: Forge RPC cache
               uses: actions/cache@v3
-              if: matrix.job.name != 'non-forking'
+              if: matrix.job.name != 'issue-repros'
+              with:
+                  path: "$HOME/.foundry/cache"
+                  key: rpc-cache-${{ hashFiles('cli/tests/rpc-cache-keyfile') }}
+            - name: Setup git config
+              run: |
+                  git config --global user.name "GitHub Actions Bot"
+                  git config --global user.email "<>"
+
+            - name: cargo nextest
+              run: |
+                # see https://github.com/foundry-rs/foundry/pull/3959
+                export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib"
+                cargo nextest run --partition count:${{ matrix.partition }}/2 --retries 3 --archive-file nextest-integration.tar.zst -E '${{ matrix.job.filter }}'
+
+    forge-std-tests:
+        name: forge std tests / ${{ matrix.job.name }}
+        runs-on: ubuntu-latest
+        needs: build-tests
+        strategy:
+            matrix:
+                job:
+                    - name: forge-std-test
+                      filter: "test(~forge_std)"
+        env:
+            ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
+        steps:
+            - name: Checkout sources
+              uses: actions/checkout@v2
+            - name: Install nextest
+              uses: taiki-e/install-action@nextest
+            - uses: dtolnay/rust-toolchain@stable
+            - name: Download archives
+              uses: actions/download-artifact@v3
+              with:
+                  name: integration-tests
+
+            - name: Forge RPC cache
+              uses: actions/cache@v3
+              if: matrix.job.name != 'forge-std-test'
               with:
                   path: "$HOME/.foundry/cache"
                   key: rpc-cache-${{ hashFiles('cli/tests/rpc-cache-keyfile') }}
