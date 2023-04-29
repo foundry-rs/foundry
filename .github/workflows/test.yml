@@ -128,7 +128,6 @@ jobs:
                 job:
                     - name: forge-std-test
                       filter: "test(~forge_std)"
-                partition: [1, 1]
         env:
             ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
         steps:
@@ -157,7 +156,7 @@ jobs:
               run: |
                 # see https://github.com/foundry-rs/foundry/pull/3959
                 export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib"
-                cargo nextest run --partition count:${{ matrix.partition }}/2 --retries 3 --archive-file nextest-integration.tar.zst -E '${{ matrix.job.filter }}'
+                cargo nextest run --retries 3 --archive-file nextest-integration.tar.zst -E '${{ matrix.job.filter }}'
 
     integration:
         name: integration tests / ${{ matrix.job.name }}
