@@ -88,6 +88,7 @@ jobs:
                 job:
                     - name: issue-repros
                       filter: "test(~issue)"
+                partition: [1, 2]
         env:
             ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
         steps:
@@ -127,6 +128,7 @@ jobs:
                 job:
                     - name: forge-std-test
                       filter: "test(~forge_std)"
+                partition: [1, 2]
         env:
             ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
         steps:
