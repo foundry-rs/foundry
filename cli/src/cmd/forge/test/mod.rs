@@ -80,8 +80,8 @@ pub struct TestArgs {
     #[clap(long, short, help_heading = "Display options")]
     json: bool,
 
-    /// Exit tests after first failure
-    #[clap(long, help = "Stops running tests after the first failure")]
+    /// Stop running tests after the first failure
+    #[clap(long)]
     pub fail_fast: bool,
 
     #[clap(flatten)]
