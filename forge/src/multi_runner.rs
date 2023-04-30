@@ -309,7 +309,7 @@ impl MultiContractRunnerBuilder {
             known_contracts,
             evm_opts,
             env,
-            evm_spec: self.evm_spec.unwrap_or(SpecId::LONDON),
+            evm_spec: self.evm_spec.unwrap_or(SpecId::SHANGHAI),
             sender: self.sender,
             errors: Some(execution_info.2),
             source_paths,
