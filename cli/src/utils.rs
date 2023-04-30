@@ -3,12 +3,10 @@ use ethers::{
     abi::token::{LenientTokenizer, Tokenizer},
     prelude::TransactionReceipt,
     providers::Middleware,
-    solc::EvmVersion,
     types::U256,
     utils::format_units,
 };
 use eyre::Result;
-use forge::revm::primitives::SpecId;
 use foundry_config::{Chain, Config};
 use std::{
     future::Future,
@@ -83,17 +81,6 @@ pub fn subscriber() {
         .with(ErrorLayer::default())
         .with(tracing_subscriber::fmt::layer())
         .init()
-}
-
-pub fn evm_spec(evm: &EvmVersion) -> SpecId {
-    match evm {
-        EvmVersion::Istanbul => SpecId::ISTANBUL,
-        EvmVersion::Berlin => SpecId::BERLIN,
-        EvmVersion::London => SpecId::LONDON,
-        EvmVersion::Paris => SpecId::MERGE,
-        EvmVersion::Shanghai => SpecId::SHANGHAI,
-        _ => panic!("Unsupported EVM version"),
-    }
 }
 
 /// parse a hex str or decimal str as U256

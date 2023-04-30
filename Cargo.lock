@@ -2415,6 +2415,7 @@ dependencies = [
  "foundry-cli-test-utils",
  "foundry-common",
  "foundry-config",
+ "foundry-evm",
  "foundry-utils",
  "futures",
  "globset",
