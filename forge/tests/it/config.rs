@@ -271,12 +271,13 @@ pub fn assert_multiple(
 }
 
 /// Converts an `EvmVersion` into a `SpecId`
-/// TODO: add Paris & Shanghai once ethers bumps.
 pub fn evm_spec(evm: &EvmVersion) -> SpecId {
     match evm {
         EvmVersion::Istanbul => SpecId::ISTANBUL,
         EvmVersion::Berlin => SpecId::BERLIN,
         EvmVersion::London => SpecId::LONDON,
+        EvmVersion::Paris => SpecId::MERGE,
+        EvmVersion::Shanghai => SpecId::SHANGHAI,
         _ => panic!("Unsupported EVM version"),
     }
 }

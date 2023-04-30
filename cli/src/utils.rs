@@ -90,6 +90,8 @@ pub fn evm_spec(evm: &EvmVersion) -> SpecId {
         EvmVersion::Istanbul => SpecId::ISTANBUL,
         EvmVersion::Berlin => SpecId::BERLIN,
         EvmVersion::London => SpecId::LONDON,
+        EvmVersion::Paris => SpecId::MERGE,
+        EvmVersion::Shanghai => SpecId::SHANGHAI,
         _ => panic!("Unsupported EVM version"),
     }
 }
