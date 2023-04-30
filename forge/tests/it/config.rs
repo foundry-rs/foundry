@@ -3,12 +3,15 @@
 use crate::test_helpers::{
     filter::Filter, COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT,
 };
+use ethers::solc::EvmVersion;
 use forge::{result::SuiteResult, MultiContractRunner, MultiContractRunnerBuilder, TestOptions};
 use foundry_config::{
     fs_permissions::PathPermission, Config, FsPermissions, FuzzConfig, FuzzDictionaryConfig,
     InvariantConfig, RpcEndpoint, RpcEndpoints,
 };
-use foundry_evm::{decode::decode_console_logs, executor::inspector::CheatsConfig};
+use foundry_evm::{
+    decode::decode_console_logs, executor::inspector::CheatsConfig, revm::primitives::SpecId,
+};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -151,6 +154,7 @@ pub fn runner_with_config(mut config: Config) -> MultiContractRunner {
     base_runner()
         .with_cheats_config(CheatsConfig::new(&config, &EVM_OPTS))
         .sender(config.sender)
+        .evm_spec(evm_spec(&config.evm_version))
         .build(
             &PROJECT.paths.root,
             (*COMPILED).clone(),
@@ -263,5 +267,16 @@ pub fn assert_multiple(
                 );
             }
         }
+    }
+}
+
+/// Converts an `EvmVersion` into a `SpecId`
+/// TODO: add Paris & Shanghai once ethers bumps.
+pub fn evm_spec(evm: &EvmVersion) -> SpecId {
+    match evm {
+        EvmVersion::Istanbul => SpecId::ISTANBUL,
+        EvmVersion::Berlin => SpecId::BERLIN,
+        EvmVersion::London => SpecId::LONDON,
+        _ => panic!("Unsupported EVM version"),
     }
 }
