@@ -15,6 +15,7 @@ use ethers::{
         artifacts::{ContractBytecodeSome, Libraries},
         ArtifactId, Bytes, Project,
     },
+    providers::{Http, Middleware},
     signers::LocalWallet,
     solc::contracts::ArtifactContracts,
     types::{
@@ -698,6 +699,19 @@ impl ScriptConfig {
     /// Returns the script target contract
     fn target_contract(&self) -> &ArtifactId {
         self.target_contract.as_ref().expect("should exist after building")
+    }
+
+    /// Checks if the RPCs used point to Ethereum Mainnet.
+    /// If not, warns the user that Shanghai is not supported.
+    async fn check_shanghai_support(&self) -> eyre::Result<()> {
+        for rpc in &self.total_rpcs {
+            let provider = ethers::providers::Provider::<Http>::try_from(rpc)?;
+            let chain_id = provider.get_chainid().await?;
+            if chain_id != U256::one() {
+                shell::println(format!("Shanghai is only supported on Ethereum Mainnet (Chain ID 1). This RPC uses chain id {} therefore contracts using PUSH0 will not work.", chain_id))?;
+            }
+        }
+        Ok(())
     }
 }
 
