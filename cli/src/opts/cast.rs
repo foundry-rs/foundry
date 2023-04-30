@@ -1,9 +1,9 @@
 use super::{EtherscanOpts, RpcOpts};
 use crate::{
     cmd::cast::{
-        bind::BindArgs, call::CallArgs, create2::Create2Args, estimate::EstimateArgs,
-        find_block::FindBlockArgs, interface::InterfaceArgs, rpc::RpcArgs, run::RunArgs,
-        send::SendTxArgs, storage::StorageArgs, wallet::WalletSubcommands,
+        access_list::AccessListArgs, bind::BindArgs, call::CallArgs, create2::Create2Args,
+        estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, rpc::RpcArgs,
+        run::RunArgs, send::SendTxArgs, storage::StorageArgs, wallet::WalletSubcommands,
     },
     utils::parse_u256,
 };
@@ -285,34 +285,9 @@ pub enum Subcommands {
         #[clap(value_name = "BASE")]
         base_out: Option<String>,
     },
-
     /// Create an access list for a transaction.
     #[clap(name = "access-list", visible_aliases = &["ac", "acl"])]
-    AccessList {
-        /// The destination of the transaction.
-        #[clap(value_parser = NameOrAddress::from_str)]
-        address: NameOrAddress,
-
-        /// The signature of the function to call.
-        sig: String,
-
-        /// The arguments of the function to call.
-        args: Vec<String>,
-
-        /// The block height to query at.
-        ///
-        /// Can also be the tags earliest, finalized, safe, latest, or pending.
-        #[clap(long, short = 'B')]
-        block: Option<BlockId>,
-
-        /// Print the access list as JSON.
-        #[clap(long, short, help_heading = "Display options")]
-        json: bool,
-
-        #[clap(flatten)]
-        rpc: RpcOpts,
-    },
-
+    AccessList(AccessListArgs),
     /// Get information about a block.
     #[clap(visible_alias = "bl")]
     Block {
