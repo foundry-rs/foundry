@@ -39,7 +39,11 @@ interface Cheats {
     function warp(uint256) external;
 
     // Set block.difficulty (newDifficulty)
+    // No longer works from Paris onwards.
     function difficulty(uint256) external;
+
+    // Set block.prevrandao (newPrevrandao)
+    function prevrandao(bytes32) external;
 
     // Set block.height (newHeight)
     function roll(uint256) external;

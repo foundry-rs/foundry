@@ -22,7 +22,7 @@ use ethers::{
     types::{Address, U256},
 };
 use foundry_config::Config;
-use revm::{primitives::Bytecode, Database, EVMData};
+use revm::{primitives::{Bytecode, B256}, Database, EVMData};
 use tracing::trace;
 
 #[derive(Clone, Debug, Default)]
@@ -237,6 +237,10 @@ pub fn apply<DB: DatabaseExt>(
         }
         HEVMCalls::Difficulty(inner) => {
             data.env.block.difficulty = inner.0.into();
+            Bytes::new()
+        }
+        HEVMCalls::Prevrandao(inner) => {
+            data.env.block.prevrandao = Some(B256::from(inner.0));
             Bytes::new()
         }
         HEVMCalls::Roll(inner) => {
