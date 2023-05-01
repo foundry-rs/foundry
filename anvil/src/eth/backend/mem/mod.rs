@@ -999,7 +999,9 @@ impl Backend {
         evm.database(state);
         let result_and_state = match evm.inspect_ref(&mut inspector) {
             Ok(result_and_state) => result_and_state,
-            Err(_) => return Err(BlockchainError::EvmError(InstructionResult::FatalExternalError)),
+            Err(_) => {
+                return Err(BlockchainError::InvalidTransaction(InvalidTransactionError::GasTooHigh))
+            }
         };
         let state = result_and_state.state;
         let state: hashbrown::HashMap<H160, Account> =

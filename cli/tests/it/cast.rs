@@ -381,3 +381,22 @@ casttest!(cast_receipt_revert_reason, |_: TestProject, mut cmd: TestCommand| {
     assert!(output.contains("revertReason"));
     assert!(output.contains("Transaction too old"));
 });
+
+casttest!(cast_access_list, |_: TestProject, mut cmd: TestCommand| {
+    let rpc = next_http_rpc_endpoint();
+    cmd.args([
+        "access-list",
+        "0xbb2b8038a1640196fbe3e38816f3e67cba72d940",
+        "skim(address)",
+        "0xbb2b8038a1640196fbe3e38816f3e67cba72d940",
+        "--rpc-url",
+        rpc.as_str(),
+        "--gas-limit", // need to set this for alchemy.io to avoid "intrinsic gas too low" error
+        "100000",
+    ]);
+
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("address: 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"));
+    assert!(output.contains("0x0d2a19d3ac39dc6cc6fd07423195495e18679bd8c7dd610aa1db7cd784a683a8"));
+    assert!(output.contains("0x7fba2702a7d6e85ac783a88eacdc48e51310443458071f6db9ac66f8ca7068b8"));
+});
