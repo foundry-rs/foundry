@@ -22,7 +22,10 @@ use ethers::{
     types::{Address, U256},
 };
 use foundry_config::Config;
-use revm::{primitives::{Bytecode, B256}, Database, EVMData};
+use revm::{
+    primitives::{Bytecode, B256},
+    Database, EVMData,
+};
 use tracing::trace;
 
 #[derive(Clone, Debug, Default)]
