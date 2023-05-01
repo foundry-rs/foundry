@@ -2076,40 +2076,61 @@ impl EthApi {
 
         let mut last_highest_gas_limit = highest_gas_limit;
 
+        // Binary search for the ideal gas limit
         while (highest_gas_limit - lowest_gas_limit) > U256::one() {
             request.gas = Some(mid_gas_limit);
-            let (exit, _, _gas, _) = self.backend.call_with_state(
+            match self.backend.call_with_state(
                 &state,
                 request.clone(),
                 fees.clone(),
                 block_env.clone(),
-            )?;
-            match exit {
-                return_ok!() => {
-                    highest_gas_limit = mid_gas_limit;
-                    // if last two successful estimations only vary by 10%, we consider this to
-                    // sufficiently accurate
-                    const ACCURACY: u64 = 10;
-                    if (last_highest_gas_limit - highest_gas_limit) * ACCURACY /
-                        last_highest_gas_limit <
-                        U256::one()
-                    {
-                        return Ok(highest_gas_limit)
+            ) {
+                Ok((exit, _, _gas, _)) => {
+                    match exit {
+                        return_ok!() => {
+                            highest_gas_limit = mid_gas_limit;
+                            // if last two successful estimations only vary by 10%, we consider this
+                            // to sufficiently accurate
+                            const ACCURACY: u64 = 10;
+                            if (last_highest_gas_limit - highest_gas_limit) * ACCURACY /
+                                last_highest_gas_limit <
+                                U256::one()
+                            {
+                                return Ok(highest_gas_limit)
+                            }
+                            last_highest_gas_limit = highest_gas_limit;
+                        }
+                        InstructionResult::Revert |
+                        InstructionResult::OutOfGas |
+                        InstructionResult::OutOfFund => {
+                            lowest_gas_limit = mid_gas_limit;
+                        }
+                        reason => {
+                            warn!(target: "node", "estimation failed due to {:?}", reason);
+                            return Err(BlockchainError::EvmError(reason))
+                        }
                     }
-                    last_highest_gas_limit = highest_gas_limit;
+                    // new midpoint
+                    mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
                 }
-                InstructionResult::Revert |
-                InstructionResult::OutOfGas |
-                InstructionResult::OutOfFund => {
-                    lowest_gas_limit = mid_gas_limit;
+                Err(reason) => {
+                    match reason {
+                        // We need to treat REVM reverting due to gas too high just like
+                        // revert/OOG/OOF (see above)
+                        BlockchainError::InvalidTransaction(
+                            InvalidTransactionError::GasTooHigh,
+                        ) => {
+                            lowest_gas_limit = mid_gas_limit;
+                        }
+                        _ => {
+                            warn!(target: "node", "estimation failed due to {:?}", reason);
+                            return Err(reason)
+                        }
+                    };
+                    // new midpoint
+                    mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
                 }
-                reason => {
-                    warn!(target: "node", "estimation failed due to {:?}", reason);
-                    return Err(BlockchainError::EvmError(reason))
-                }
-            }
-            // new midpoint
-            mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
+            };
         }
 
         trace!(target : "node", "Estimated Gas for call {:?}", highest_gas_limit);
