@@ -10,6 +10,9 @@ use std::{
     path::Path,
 };
 
+/// Represents a (test-contract, test-function) pair
+type InlineConfigKey = (String, String);
+
 /// Represents per-test configurations, declared inline
 /// as structured comments in Solidity test files. This allows
 /// to create configs directly bound to a solidity test.
@@ -21,9 +24,9 @@ pub struct InlineConfig<T>
 where
     T: InlineConfigParser + 'static,
 {
-    /// Maps a (contract, test-function)
+    /// Maps a (test-contract, test-function) pair
     /// to a specific configuration provided by the user.
-    configs: HashMap<(String, String), T>,
+    configs: HashMap<InlineConfigKey, T>,
 }
 
 impl<T> InlineConfig<T>
