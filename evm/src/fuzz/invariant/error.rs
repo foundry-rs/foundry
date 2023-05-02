@@ -28,6 +28,7 @@ pub struct InvariantFuzzError {
     pub func: Option<ethers::prelude::Bytes>,
     /// Inner fuzzing Sequence coming from overriding calls.
     pub inner_sequence: Vec<Option<BasicTxDetails>>,
+    pub shrink: bool,
 }
 
 impl InvariantFuzzError {
@@ -37,6 +38,7 @@ impl InvariantFuzzError {
         calldata: &[BasicTxDetails],
         call_result: RawCallResult,
         inner_sequence: &[Option<BasicTxDetails>],
+        try_shrinking: bool,
     ) -> Self {
         let mut func = None;
         let origin: String;
@@ -77,6 +79,7 @@ impl InvariantFuzzError {
             addr: invariant_contract.address,
             func,
             inner_sequence: inner_sequence.to_vec(),
+            shrink: try_shrinking,
         }
     }
 
@@ -90,13 +93,17 @@ impl InvariantFuzzError {
         traces: &mut Traces,
     ) -> Result<Option<CounterExample>> {
         let mut counterexample_sequence = vec![];
-        let calls = match self.test_error {
+        let _calls = match self.test_error {
             // Don't use at the moment.
             TestError::Abort(_) => return Ok(None),
-            TestError::Fail(_, ref calls) => calls,
+            TestError::Fail(_, ref _calls) => _calls,
         };
 
-        let calls = self.try_shrinking(calls, &executor);
+        if self.shrink {
+            let _calls = self.try_shrinking(_calls, &executor);
+        } else {
+            trace!(target: "forge::test", "Shrinking disabled.");
+        }
 
         // We want traces for a failed case.
         executor.set_tracing(true);
@@ -104,7 +111,7 @@ impl InvariantFuzzError {
         set_up_inner_replay(&mut executor, &self.inner_sequence);
 
         // Replay each call from the sequence until we break the invariant.
-        for (sender, (addr, bytes)) in calls.iter() {
+        for (sender, (addr, bytes)) in _calls.iter() {
             let call_result = executor
                 .call_raw_committing(*sender, *addr, bytes.0.clone(), 0.into())
                 .expect("bad call to evm");

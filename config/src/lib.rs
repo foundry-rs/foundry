@@ -3374,6 +3374,7 @@ mod tests {
                 depth = 15
                 fail_on_revert = false
                 call_override = false
+                try_shrinking = true
             "#,
             )?;
 

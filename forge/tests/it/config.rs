@@ -118,6 +118,7 @@ pub static TEST_OPTS: TestOptions = TestOptions {
             max_fuzz_dictionary_addresses: 10_000,
             max_fuzz_dictionary_values: 10_000,
         },
+        try_shrinking: false,
     },
 };
 

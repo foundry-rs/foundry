@@ -187,6 +187,7 @@ impl<'a> InvariantExecutor<'a> {
                         &inputs,
                         &mut failures.borrow_mut(),
                         self.config.fail_on_revert,
+                        self.config.try_shrinking,
                     );
 
                     if !can_continue {
@@ -558,6 +559,7 @@ fn can_continue(
     calldata: &[BasicTxDetails],
     failures: &mut InvariantFailures,
     fail_on_revert: bool,
+    try_shrinking: bool,
 ) -> (bool, Option<BTreeMap<String, RawCallResult>>) {
     let mut call_results = None;
     if !call_result.reverted {
@@ -571,8 +573,14 @@ fn can_continue(
         // The user might want to stop all execution if a revert happens to
         // better bound their testing space.
         if fail_on_revert {
-            let error =
-                InvariantFuzzError::new(invariant_contract, None, calldata, call_result, &[]);
+            let error = InvariantFuzzError::new(
+                invariant_contract,
+                None,
+                calldata,
+                call_result,
+                &[],
+                try_shrinking,
+            );
 
             failures.revert_reason = Some(error.revert_reason.clone());
 

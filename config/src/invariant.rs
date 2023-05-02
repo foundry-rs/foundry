@@ -18,6 +18,8 @@ pub struct InvariantConfig {
     /// The fuzz dictionary configuration
     #[serde(flatten)]
     pub dictionary: FuzzDictionaryConfig,
+    /// Attempt to shrink the failure case to its smallest sequence of calls
+    pub try_shrinking: bool,
 }
 
 impl Default for InvariantConfig {
@@ -28,6 +30,7 @@ impl Default for InvariantConfig {
             fail_on_revert: false,
             call_override: false,
             dictionary: FuzzDictionaryConfig { dictionary_weight: 80, ..Default::default() },
+            try_shrinking: true,
         }
     }
 }

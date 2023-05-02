@@ -95,6 +95,7 @@ pub fn assert_invariants(
                         calldata,
                         call_result,
                         &inner_sequence,
+                        true,
                     )),
                 );
                 found_case = true;
