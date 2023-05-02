@@ -41,6 +41,7 @@ use foundry_common::{
     shell, ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_config::{figment, Config};
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
@@ -75,6 +76,18 @@ mod verify;
 
 use crate::cmd::retry::RetryArgs;
 pub use transaction::TransactionWithMetadata;
+
+/// List of Chain IDs that support Shanghai.
+static SHANGHAI_ENABLED_CHAINS: Lazy<Vec<U256>> = Lazy::new(|| {
+    vec![
+        // Ethereum Mainnet
+        U256::one(),
+        // Goerli
+        U256::from(5),
+        // Sepolia
+        U256::from(11155111),
+    ]
+});
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(ScriptArgs, opts, evm_opts);
@@ -701,14 +714,17 @@ impl ScriptConfig {
         self.target_contract.as_ref().expect("should exist after building")
     }
 
-    /// Checks if the RPCs used point to Ethereum Mainnet.
-    /// If not, warns the user that Shanghai is not supported.
+    /// Checks if the RPCs used point to chains that support EIP-3855.
+    /// If not, warns the user.
     async fn check_shanghai_support(&self) -> eyre::Result<()> {
         for rpc in &self.total_rpcs {
             let provider = ethers::providers::Provider::<Http>::try_from(rpc)?;
             let chain_id = provider.get_chainid().await?;
-            if chain_id != U256::one() {
-                shell::println(format!("Shanghai is only supported on Ethereum Mainnet (Chain ID 1). This RPC uses chain id {} therefore contracts using PUSH0 will not work.", chain_id))?;
+            if !SHANGHAI_ENABLED_CHAINS.contains(&chain_id) {
+                shell::println(format!("EIP-3855 is not supported on this chain ID ({}). Contracts deployed with a Solidity version higher than 0.8.20 might not work properly.", chain_id))?;
+                shell::println(
+                    "For more information, please see https://eips.ethereum.org/EIPS/eip-3855"
+                )?;
             }
         }
         Ok(())
