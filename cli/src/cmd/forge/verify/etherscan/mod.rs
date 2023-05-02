@@ -14,6 +14,7 @@ use ethers::{
         verify::{CodeFormat, VerifyContract},
         Client,
     },
+    prelude::errors::EtherscanError,
     solc::{artifacts::CompactContract, cache::CacheEntry, Project, Solc},
 };
 use eyre::{eyre, Context};
@@ -63,6 +64,16 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
     async fn verify(&mut self, args: VerifyArgs) -> eyre::Result<()> {
         let (etherscan, verify_args) = self.prepare_request(&args).await?;
+
+        if self.is_contract_verified(&etherscan, &verify_args).await? {
+            println!(
+                "\nContract [{}] {:?} is already verified. Skipping verification.",
+                verify_args.contract_name,
+                SimpleCast::to_checksum_address(&verify_args.address)
+            );
+
+            return Ok(());
+        }
 
         trace!(target : "forge::verify", ?verify_args,  "submitting verification request");
 
@@ -122,7 +133,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     verifier: args.verifier,
                 };
                 // return check_args.run().await
-                return self.check(check_args).await
+                return self.check(check_args).await;
             }
         } else {
             println!("Contract source code already verified");
@@ -157,16 +168,16 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     );
 
                     if resp.result == "Pending in queue" {
-                        return Err(eyre!("Verification is still pending...",))
+                        return Err(eyre!("Verification is still pending...",));
                     }
 
                     if resp.result == "Unable to verify" {
-                        return Err(eyre!("Unable to verify.",))
+                        return Err(eyre!("Unable to verify.",));
                     }
 
                     if resp.result == "Already Verified" {
                         println!("Contract source code already verified");
-                        return Ok(())
+                        return Ok(());
                     }
 
                     if resp.status == "0" {
@@ -205,7 +216,7 @@ impl EtherscanVerificationProvider {
         contract_name: &str,
     ) -> eyre::Result<&(PathBuf, CacheEntry, CompactContract)> {
         if let Some(ref entry) = self.cached_entry {
-            return Ok(entry)
+            return Ok(entry);
         }
 
         let cache = project.read_cache_file()?;
@@ -229,6 +240,24 @@ impl EtherscanVerificationProvider {
         let verify_args = self.create_verify_request(args, Some(config)).await?;
 
         Ok((etherscan, verify_args))
+    }
+
+    /// Queries the etherscan API to verify if the contract is already verified.
+    async fn is_contract_verified(
+        &self,
+        etherscan: &Client,
+        verify_contract: &VerifyContract,
+    ) -> eyre::Result<bool> {
+        let check = etherscan.contract_abi(verify_contract.address).await;
+
+        if let Err(err) = check {
+            match err {
+                EtherscanError::ContractCodeNotVerified(_) => return Ok(false),
+                error => return Err(error.into()),
+            }
+        }
+
+        Ok(true)
     }
 
     /// Create an etherscan client
@@ -339,7 +368,7 @@ impl EtherscanVerificationProvider {
         project: &Project,
     ) -> eyre::Result<Version> {
         if let Some(ref version) = args.compiler_version {
-            return Ok(version.trim_start_matches('v').parse()?)
+            return Ok(version.trim_start_matches('v').parse()?);
         }
 
         if let Some(ref solc) = config.solc {
@@ -347,7 +376,7 @@ impl EtherscanVerificationProvider {
                 SolcReq::Version(version) => return Ok(version.to_owned()),
                 SolcReq::Local(solc) => {
                     if solc.is_file() {
-                        return Ok(Solc::new(solc).version()?)
+                        return Ok(Solc::new(solc).version()?);
                     }
                 }
             }
@@ -363,7 +392,7 @@ impl EtherscanVerificationProvider {
                 Some(cap) => BuildMetadata::new(cap.name("commit").unwrap().as_str())?,
                 _ => BuildMetadata::EMPTY,
             };
-            return Ok(version)
+            return Ok(version);
         }
 
         if artifacts.is_empty() {
@@ -405,7 +434,7 @@ impl EtherscanVerificationProvider {
                 &read_constructor_args_file(constructor_args_path.to_path_buf())?,
             )?
             .to_hex::<String>();
-            return Ok(Some(encoded_args[8..].into()))
+            return Ok(Some(encoded_args[8..].into()));
         }
 
         Ok(args.constructor_args.clone())
