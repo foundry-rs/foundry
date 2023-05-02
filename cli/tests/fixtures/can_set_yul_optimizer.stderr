@@ -1,6 +1,6 @@
 Error: 
 Compiler run failed
-error[6553]: SyntaxError: The msize instruction cannot be used when the Yul optimizer is activated because it can change its semantics. Either disable the Yul optimizer or do not use the instruction.
+Error (6553): SyntaxError: The msize instruction cannot be used when the Yul optimizer is activated because it can change its semantics. Either disable the Yul optimizer or do not use the instruction.
  --> src/Foo.sol:6:8:
   |
 6 |        assembly {
