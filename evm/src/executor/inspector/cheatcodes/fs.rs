@@ -1,10 +1,9 @@
-use crate::{
-    abi::{DirEntry, FsMetadata, HEVMCalls},
-    error,
-    executor::inspector::Cheatcodes,
+use super::{Cheatcodes, Result};
+use crate::abi::{DirEntry, FsMetadata, HEVMCalls};
+use ethers::{
+    abi::{self, AbiEncode, Token, Tokenize},
+    types::Bytes,
 };
-use bytes::Bytes;
-use ethers::abi::{self, AbiEncode, Token, Tokenize};
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
 use std::{
@@ -14,43 +13,35 @@ use std::{
 };
 use walkdir::WalkDir;
 
-fn project_root(state: &Cheatcodes) -> Result<Bytes, Bytes> {
+fn project_root(state: &Cheatcodes) -> Result {
     let root = state.config.root.display().to_string();
-
     Ok(abi::encode(&[Token::String(root)]).into())
 }
 
-fn read_file(state: &Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
-    let path =
-        state.config.ensure_path_allowed(path, FsAccessKind::Read).map_err(error::encode_error)?;
-
-    let data = fs::read_to_string(path).map_err(error::encode_error)?;
-
+fn read_file(state: &Cheatcodes, path: impl AsRef<Path>) -> Result {
+    let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
+    let data = fs::read_to_string(path)?;
     Ok(abi::encode(&[Token::String(data)]).into())
 }
 
-fn read_file_binary(state: &Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
-    let path =
-        state.config.ensure_path_allowed(path, FsAccessKind::Read).map_err(error::encode_error)?;
-
-    let data = fs::read(path).map_err(error::encode_error)?;
-
+fn read_file_binary(state: &Cheatcodes, path: impl AsRef<Path>) -> Result {
+    let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
+    let data = fs::read(path)?;
     Ok(abi::encode(&[Token::Bytes(data)]).into())
 }
 
-fn read_line(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
-    let path =
-        state.config.ensure_path_allowed(path, FsAccessKind::Read).map_err(error::encode_error)?;
+fn read_line(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result {
+    let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
     // Get reader for previously opened file to continue reading OR initialize new reader
     let reader = state
         .context
         .opened_read_files
         .entry(path.clone())
-        .or_insert(BufReader::new(fs::open(path).map_err(error::encode_error)?));
+        .or_insert(BufReader::new(fs::open(path)?));
 
     let mut line: String = String::new();
-    reader.read_line(&mut line).map_err(error::encode_error)?;
+    reader.read_line(&mut line)?;
 
     // Remove trailing newline character, preserving others for cases where it may be important
     if line.ends_with('\n') {
@@ -74,14 +65,13 @@ pub(super) fn write_file(
     state: &Cheatcodes,
     path: impl AsRef<Path>,
     content: impl AsRef<[u8]>,
-) -> Result<Bytes, Bytes> {
-    let path =
-        state.config.ensure_path_allowed(path, FsAccessKind::Write).map_err(error::encode_error)?;
+) -> Result {
+    let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
     // write access to foundry.toml is not allowed
-    state.config.ensure_not_foundry_toml(&path).map_err(error::encode_error)?;
+    state.config.ensure_not_foundry_toml(&path)?;
 
     if state.fs_commit {
-        fs::write(path, content.as_ref()).map_err(error::encode_error)?;
+        fs::write(path, content.as_ref())?;
     }
 
     Ok(Bytes::new())
@@ -90,27 +80,21 @@ pub(super) fn write_file(
 /// Writes a single line to the file.
 ///
 /// This will create a file if it does not exist, and append the `line` if it does.
-fn write_line(state: &Cheatcodes, path: impl AsRef<Path>, line: &str) -> Result<Bytes, Bytes> {
-    let path =
-        state.config.ensure_path_allowed(path, FsAccessKind::Write).map_err(error::encode_error)?;
-    state.config.ensure_not_foundry_toml(&path).map_err(error::encode_error)?;
+fn write_line(state: &Cheatcodes, path: impl AsRef<Path>, line: &str) -> Result {
+    let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
+    state.config.ensure_not_foundry_toml(&path)?;
 
     if state.fs_commit {
-        let mut file = std::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(path)
-            .map_err(error::encode_error)?;
+        let mut file = std::fs::OpenOptions::new().append(true).create(true).open(path)?;
 
-        writeln!(file, "{line}").map_err(error::encode_error)?;
+        writeln!(file, "{line}")?;
     }
 
     Ok(Bytes::new())
 }
 
-fn close_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
-    let path =
-        state.config.ensure_path_allowed(path, FsAccessKind::Read).map_err(error::encode_error)?;
+fn close_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result {
+    let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
     state.context.opened_read_files.remove(&path);
 
@@ -122,16 +106,15 @@ fn close_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, B
 /// Only files inside `<root>/` can be removed, `foundry.toml` excluded.
 ///
 /// This will return an error if the path points to a directory, or the file does not exist
-fn remove_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
-    let path =
-        state.config.ensure_path_allowed(path, FsAccessKind::Write).map_err(error::encode_error)?;
-    state.config.ensure_not_foundry_toml(&path).map_err(error::encode_error)?;
+fn remove_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result {
+    let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
+    state.config.ensure_not_foundry_toml(&path)?;
 
     // also remove from the set if opened previously
     state.context.opened_read_files.remove(&path);
 
     if state.fs_commit {
-        fs::remove_file(&path).map_err(error::encode_error)?;
+        fs::remove_file(&path)?;
     }
 
     Ok(Bytes::new())
@@ -149,12 +132,10 @@ fn remove_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, 
 /// - User lacks permissions to modify `path`.
 /// - A parent of the given path doesn't exist and `recursive` is false.
 /// - `path` already exists and `recursive` is false.
-fn create_dir(state: &Cheatcodes, path: impl AsRef<Path>, recursive: bool) -> Result<Bytes, Bytes> {
-    let path =
-        state.config.ensure_path_allowed(path, FsAccessKind::Write).map_err(error::encode_error)?;
-    if recursive { fs::create_dir_all(path) } else { fs::create_dir(path) }
-        .map(|()| Bytes::new())
-        .map_err(error::encode_error)
+fn create_dir(state: &Cheatcodes, path: impl AsRef<Path>, recursive: bool) -> Result {
+    let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
+    if recursive { fs::create_dir_all(path) } else { fs::create_dir(path) }?;
+    Ok(Bytes::new())
 }
 
 /// Removes a directory at the provided path.
@@ -170,12 +151,10 @@ fn create_dir(state: &Cheatcodes, path: impl AsRef<Path>, recursive: bool) -> Re
 /// - `path` isn't a directory.
 /// - User lacks permissions to modify `path`.
 /// - The directory is not empty and `recursive` is false.
-fn remove_dir(state: &Cheatcodes, path: impl AsRef<Path>, recursive: bool) -> Result<Bytes, Bytes> {
-    let path =
-        state.config.ensure_path_allowed(path, FsAccessKind::Write).map_err(error::encode_error)?;
-    if recursive { fs::remove_dir_all(path) } else { fs::remove_dir(path) }
-        .map(|()| Bytes::new())
-        .map_err(error::encode_error)
+fn remove_dir(state: &Cheatcodes, path: impl AsRef<Path>, recursive: bool) -> Result {
+    let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
+    if recursive { fs::remove_dir_all(path) } else { fs::remove_dir(path) }?;
+    Ok(Bytes::new())
 }
 
 /// Reads the directory at the given path recursively, up to `max_depth`.
@@ -186,12 +165,11 @@ fn read_dir(
     path: impl AsRef<Path>,
     max_depth: u64,
     follow_links: bool,
-) -> Result<Bytes, Bytes> {
-    let root =
-        state.config.ensure_path_allowed(path, FsAccessKind::Read).map_err(error::encode_error)?;
+) -> Result {
+    let root = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
     let paths: Vec<Token> = WalkDir::new(root)
         .min_depth(1)
-        .max_depth(max_depth.try_into().map_err(error::encode_error)?)
+        .max_depth(max_depth.try_into()?)
         .follow_links(follow_links)
         .contents_first(false)
         .same_file_system(true)
@@ -229,11 +207,10 @@ fn read_dir(
 ///
 /// - `path` is not a symbolic link.
 /// - `path` does not exist.
-fn read_link(state: &Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
-    let path =
-        state.config.ensure_path_allowed(path, FsAccessKind::Read).map_err(error::encode_error)?;
+fn read_link(state: &Cheatcodes, path: impl AsRef<Path>) -> Result {
+    let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
-    let target = fs::read_link(path).map_err(error::encode_error)?;
+    let target = fs::read_link(path)?;
 
     Ok(abi::encode(&[Token::String(target.display().to_string())]).into())
 }
@@ -241,11 +218,10 @@ fn read_link(state: &Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes>
 /// Gets the metadata of a file/directory
 ///
 /// This will return an error if no file/directory is found, or if the target path isn't allowed
-fn fs_metadata(state: &Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
-    let path =
-        state.config.ensure_path_allowed(path, FsAccessKind::Read).map_err(error::encode_error)?;
+fn fs_metadata(state: &Cheatcodes, path: impl AsRef<Path>) -> Result {
+    let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
-    let metadata = path.metadata().map_err(error::encode_error)?;
+    let metadata = path.metadata()?;
 
     // These fields not available on all platforms; default to 0
     let [modified, accessed, created] =
@@ -265,7 +241,7 @@ fn fs_metadata(state: &Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Byte
     Ok(metadata.encode().into())
 }
 
-pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result<Bytes, Bytes>> {
+pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result> {
     let res = match call {
         HEVMCalls::ProjectRoot(_) => project_root(state),
         HEVMCalls::ReadFile(inner) => read_file(state, &inner.0),
