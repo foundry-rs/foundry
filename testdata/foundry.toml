@@ -1,6 +1,5 @@
 [profile.default]
 auto_detect_solc = true
-solc = '0.8.19'
 block_base_fee_per_gas = 0
 block_coinbase = '0x0000000000000000000000000000000000000000'
 block_difficulty = 0
