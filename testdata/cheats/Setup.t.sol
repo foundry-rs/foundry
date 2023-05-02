@@ -29,7 +29,7 @@ contract CheatsSetupTest is DSTest {
         assertEq(block.timestamp, 10, "block timestamp was not persisted from setup");
         assertEq(block.number, 100, "block number was not persisted from setup");
         assertEq(block.basefee, 1000, "basefee was not persisted from setup");
-        assertEq(block.prevrandao, 10000, "difficulty was not persisted from setup");
+        assertEq(block.prevrandao, 10000, "prevrandao was not persisted from setup");
         assertEq(block.chainid, 99, "chainid was not persisted from setup");
         victim.assertSender(address(1337));
     }
