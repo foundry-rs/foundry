@@ -66,7 +66,6 @@ impl AccessListArgs {
         let chain = utils::get_chain(config.chain_id, &provider).await?;
         let sender = eth.wallet.sender().await;
 
-        let provider = utils::get_provider(&config)?;
         access_list(&provider, sender, to, sig, args, data, tx, chain, block, to_json).await?;
         Ok(())
     }
