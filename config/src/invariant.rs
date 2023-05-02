@@ -57,10 +57,26 @@ impl InlineConfigParser for InvariantConfig {
             let key = pair.0;
             let value = pair.1;
             match key.as_str() {
-                "runs" => conf.runs = value.parse()?,
-                "depth" => conf.depth = value.parse()?,
-                "fail-on-revert" => conf.fail_on_revert = value.parse()?,
-                "call-override" => conf.call_override = value.parse()?,
+                "runs" => {
+                    conf.runs = value
+                        .parse()
+                        .map_err(|_| InlineConfigParserError::ParseIntError(key, value))?
+                }
+                "depth" => {
+                    conf.depth = value
+                        .parse()
+                        .map_err(|_| InlineConfigParserError::ParseIntError(key, value))?
+                }
+                "fail-on-revert" => {
+                    conf.fail_on_revert = value
+                        .parse()
+                        .map_err(|_| InlineConfigParserError::ParseBoolError(key, value))?
+                }
+                "call-override" => {
+                    conf.call_override = value
+                        .parse()
+                        .map_err(|_| InlineConfigParserError::ParseBoolError(key, value))?
+                }
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key.to_string()))?,
             }
         }

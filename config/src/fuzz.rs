@@ -61,9 +61,17 @@ impl InlineConfigParser for FuzzConfig {
             let key = pair.0;
             let value = pair.1;
             match key.as_str() {
-                "runs" => conf.runs = value.parse()?,
-                "max-test-rejects" => conf.max_test_rejects = value.parse()?,
-                _ => Err(InlineConfigParserError::InvalidConfigProperty(key.to_string()))?,
+                "runs" => {
+                    conf.runs = value
+                        .parse()
+                        .map_err(|_| InlineConfigParserError::ParseIntError(key, value))?
+                }
+                "max-test-rejects" => {
+                    conf.max_test_rejects = value
+                        .parse()
+                        .map_err(|_| InlineConfigParserError::ParseIntError(key, value))?
+                }
+                _ => Err(InlineConfigParserError::InvalidConfigProperty(key))?,
             }
         }
         Ok(Some(conf))

@@ -1,5 +1,3 @@
-use std::{num::ParseIntError, str::ParseBoolError};
-
 use regex::Regex;
 
 /// Errors returned by the [`InlineConfigParser`] trait.
@@ -10,11 +8,11 @@ pub enum InlineConfigParserError {
     #[error("'{0}' is not a valid config property")]
     InvalidConfigProperty(String),
     /// An error occurred while trying to parse an integer configuration value
-    #[error(transparent)]
-    ParseIntError(#[from] ParseIntError),
+    #[error("Unable to parse config key '{0}' = '{1}' into an integer value")]
+    ParseIntError(String, String),
     /// An error occurred while trying to parse a boolean configuration value
-    #[error(transparent)]
-    ParseBoolError(#[from] ParseBoolError),
+    #[error("Unable to parse config key '{0}' = '{1}' into a boolean value")]
+    ParseBoolError(String, String),
 }
 
 /// This trait is intended to parse configurations from

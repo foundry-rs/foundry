@@ -174,3 +174,23 @@ fn get_fn_docs(fn_data: &BTreeMap<String, Value>) -> Option<(String, String)> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use std::num::ParseIntError;
+
+    use crate::InlineConfigError;
+
+    use super::InlineConfigParserError;
+
+    #[test]
+    fn inline_config_error() {
+        let source =
+            InlineConfigParserError::ParseBoolError("key".into(), "invalid-bool-value".into());
+        let line = "dir/TestContract.t.sol:FuzzContract:10:12:111".to_string();
+        let error = InlineConfigError { line: line.clone(), source: source.clone() };
+
+        let expected = format!("Inline config error detected at {line} {source}");
+        assert_eq!(error.to_string(), expected);
+    }
+}
