@@ -2,7 +2,9 @@ use crate::{
     error::SolError,
     executor::backend::{error::NoCheatcodeAccessError, DatabaseError},
 };
-use ethers::{prelude::k256::ecdsa::signature::Error as SignatureError, types::Bytes};
+use ethers::{
+    abi::AbiEncode, prelude::k256::ecdsa::signature::Error as SignatureError, types::Bytes,
+};
 use foundry_common::errors::FsPathError;
 use foundry_config::UnresolvedEnvVarError;
 use std::{borrow::Cow, fmt::Arguments};
@@ -106,6 +108,9 @@ pub enum Error {
     JsonPath(#[from] jsonpath_lib::JsonPathError),
 
     #[error(transparent)]
+    Hex(#[from] hex::FromHexError),
+
+    #[error(transparent)]
     Utf8(#[from] std::str::Utf8Error),
 
     #[error(transparent)]
@@ -120,6 +125,10 @@ pub enum Error {
     /// Custom error.
     #[error("{0}")]
     Custom(Cow<'static, str>),
+
+    /// Custom bytes. Will not get encoded with the error prefix.
+    #[error("{}", hex::encode(_0))] // ignored in SolError implementation
+    CustomBytes(Cow<'static, [u8]>),
 }
 
 impl Error {
@@ -135,6 +144,11 @@ impl Error {
             None => Cow::Owned(std::fmt::format(args)),
         };
         Self::Custom(cow)
+    }
+
+    /// Creates a new error with the given bytes.
+    pub fn custom_bytes(bytes: impl Into<Cow<'static, [u8]>>) -> Self {
+        Self::CustomBytes(bytes.into())
     }
 }
 
@@ -156,4 +170,25 @@ impl From<&'static str> for Error {
     }
 }
 
-impl SolError for Error {}
+impl SolError for Error {
+    fn encode_error(&self) -> Bytes {
+        match self {
+            Self::CustomBytes(cow) => cow_to_bytes(cow),
+            e => crate::error::encode_error(e),
+        }
+    }
+
+    fn encode_string(&self) -> Bytes {
+        match self {
+            Self::CustomBytes(cow) => cow_to_bytes(cow),
+            e => e.to_string().encode().into(),
+        }
+    }
+}
+
+fn cow_to_bytes(cow: &Cow<'static, [u8]>) -> Bytes {
+    match cow {
+        Cow::Borrowed(bytes) => Bytes::from_static(bytes),
+        Cow::Owned(s) => Bytes(s.clone().into()),
+    }
+}

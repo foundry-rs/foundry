@@ -2,7 +2,7 @@
 use proptest::test_runner::Reason;
 
 /// Magic return code for the `assume` cheatcode
-pub const ASSUME_MAGIC_RETURN_CODE: &str = "FOUNDRY::ASSUME";
+pub const ASSUME_MAGIC_RETURN_CODE: &[u8] = b"FOUNDRY::ASSUME";
 
 /// Possible errors when running fuzz tests
 #[derive(Debug, thiserror::Error)]

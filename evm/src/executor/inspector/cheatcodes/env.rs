@@ -325,8 +325,14 @@ pub fn apply<DB: DatabaseExt>(
                 inner.0,
                 |account| -> Result {
                     // nonce must increment only
-                    ensure!(account.info.nonce >= inner.1, "Nonce lower than account's current nonce. Please provide a nonce higher than {}", account.info.nonce);
-                    account.info.nonce = inner.1;
+                    let current = account.info.nonce;
+                    let new = inner.1;
+                    ensure!(
+                        new >= current,
+                        "New nonce ({new}) must be strictly equal to or higher than the \
+                         account's current nonce ({current})."
+                    );
+                    account.info.nonce = new;
                     Ok(Bytes::new())
                 },
             )??

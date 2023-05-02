@@ -64,9 +64,11 @@ pub fn apply<DB: DatabaseExt>(
             data.db.remove_persistent_accounts(acc.0.clone());
             Ok(Bytes::new())
         }
-        HEVMCalls::ActiveFork(_) => {
-            data.db.active_fork_id().map(empty).ok_or_else(|| err!("No active fork"))
-        }
+        HEVMCalls::ActiveFork(_) => data
+            .db
+            .active_fork_id()
+            .map(|id| id.encode().into())
+            .ok_or_else(|| err!("No active fork")),
         HEVMCalls::RollFork0(fork) => data
             .db
             .roll_fork(None, fork.0, data.env, &mut data.journaled_state)

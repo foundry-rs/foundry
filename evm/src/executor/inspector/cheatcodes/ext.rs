@@ -40,7 +40,7 @@ fn ffi(state: &Cheatcodes, args: &[String]) -> Result {
     let output = String::from_utf8(output.stdout)?;
     let trimmed = output.trim();
     if let Ok(hex) = hex::decode(trimmed.strip_prefix("0x").unwrap_or(trimmed)) {
-        Ok(hex.encode().into())
+        Ok(abi::encode(&[Token::Bytes(hex)]).into())
     } else {
         Ok(trimmed.encode().into())
     }
@@ -164,33 +164,35 @@ fn get_env(key: &str, ty: ParamType, delim: Option<&str>, default: Option<String
 /// it will call itself to convert each of it's value and encode the whole as a
 /// Tuple
 fn value_to_token(value: &Value) -> Result<Token> {
-    match *value {
+    match value {
         Value::Null => Ok(Token::FixedBytes(vec![0; 32])),
-        Value::Bool(boolean) => Ok(Token::Bool(boolean)),
-        Value::Array(ref array) => {
+        Value::Bool(boolean) => Ok(Token::Bool(*boolean)),
+        Value::Array(array) => {
             let values = array.iter().map(value_to_token).collect::<Result<Vec<_>>>()?;
             Ok(Token::Array(values))
         }
-        Value::Object(ref object) => {
-            let values = object.values().map(value_to_token).collect::<Result<Vec<_>>>()?;
-            Ok(Token::Array(values))
+        value @ Value::Object(_) => {
+            // See: [#3647](https://github.com/foundry-rs/foundry/pull/3647)
+            let ordered_object: BTreeMap<String, Value> =
+                serde_json::from_value(value.clone()).unwrap();
+            let values = ordered_object.values().map(value_to_token).collect::<Result<Vec<_>>>()?;
+            Ok(Token::Tuple(values))
         }
-        Value::Number(ref number) => {
-            if let Some(u) = number.as_u64() {
-                Ok(Token::Uint(u.into()))
-            } else if let Some(i) = number.as_i64() {
-                Ok(Token::Int(i.into()))
-            } else if let Some(f) = number.as_f64() {
+        Value::Number(number) => {
+            if let Some(f) = number.as_f64() {
                 if f.fract() == 0.0 {
-                    Ok(Token::Uint((f as u64).into()))
-                } else {
-                    Err(err!("Floats are not supported: {f}"))
+                    let s = number.to_string();
+                    if let Ok(n) = U256::from_dec_str(&s) {
+                        return Ok(Token::Uint(n))
+                    }
+                    if let Ok(n) = I256::from_dec_str(&s) {
+                        return Ok(Token::Int(n.into_raw()))
+                    }
                 }
-            } else {
-                unreachable!()
             }
+            Err(err!("Unsupported value: {number:?}"))
         }
-        Value::String(ref string) => {
+        Value::String(string) => {
             if let Some(val) = string.strip_prefix("0x") {
                 // If it can decoded as an address, it's an address
                 if let Ok(addr) = H160::from_str(string) {
