@@ -1720,7 +1720,7 @@ impl Default for Config {
             allow_paths: vec![],
             include_paths: vec![],
             force: false,
-            evm_version: EvmVersion::Shanghai,
+            evm_version: Default::default(),
             gas_reports: vec!["*".to_string()],
             gas_reports_ignore: vec![],
             solc: None,
