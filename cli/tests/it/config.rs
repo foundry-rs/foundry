@@ -348,7 +348,7 @@ contract Foo {
 
     assert!(cmd.stdout_lossy().ends_with(
         "
-Compiler run successful
+Compiler run successful!
 ",
     ));
 });
