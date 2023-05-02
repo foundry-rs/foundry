@@ -14,7 +14,7 @@ use std::{
 /// errors [`InlineConfigParserError`], enriching them with context information
 /// reporting the misconfigured line.
 #[derive(thiserror::Error, Debug)]
-#[error("Inline config error detected at {line} {source}")]
+#[error("Inline config Error detected at {line} {source}")]
 pub struct InlineConfigError {
     /// Specifies the misconfigured line. This is something of the form
     /// `dir/TestContract.t.sol:FuzzContract:10:12:111`
@@ -177,11 +177,8 @@ fn get_fn_docs(fn_data: &BTreeMap<String, Value>) -> Option<(String, String)> {
 
 #[cfg(test)]
 mod tests {
-    use std::num::ParseIntError;
-
-    use crate::InlineConfigError;
-
     use super::InlineConfigParserError;
+    use crate::InlineConfigError;
 
     #[test]
     fn inline_config_error() {
@@ -190,7 +187,7 @@ mod tests {
         let line = "dir/TestContract.t.sol:FuzzContract:10:12:111".to_string();
         let error = InlineConfigError { line: line.clone(), source: source.clone() };
 
-        let expected = format!("Inline config error detected at {line} {source}");
+        let expected = format!("Inline config Error detected at {line} {source}");
         assert_eq!(error.to_string(), expected);
     }
 }

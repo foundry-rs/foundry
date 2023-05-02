@@ -5,13 +5,13 @@ use regex::Regex;
 pub enum InlineConfigParserError {
     /// An invalid configuration property has been provided.
     /// The property cannot be mapped to the configuration object
-    #[error("'{0}' is not a valid config property")]
+    #[error("'{0}' is not an Invalid config property")]
     InvalidConfigProperty(String),
     /// An error occurred while trying to parse an integer configuration value
-    #[error("Unable to parse config key '{0}' = '{1}' into an integer value")]
+    #[error("Invalid config value for key '{0}'. Unable to parse '{1}' into an integer value")]
     ParseIntError(String, String),
     /// An error occurred while trying to parse a boolean configuration value
-    #[error("Unable to parse config key '{0}' = '{1}' into a boolean value")]
+    #[error("Invalid config value for key '{0}'. Unable to parse '{1}' into a boolean value")]
     ParseBoolError(String, String),
 }
 
