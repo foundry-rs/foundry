@@ -721,10 +721,12 @@ impl ScriptConfig {
             let provider = ethers::providers::Provider::<Http>::try_from(rpc)?;
             let chain_id = provider.get_chainid().await?;
             if !SHANGHAI_ENABLED_CHAINS.contains(&chain_id) {
-                shell::println(format!("EIP-3855 is not supported on this chain ID ({}). Contracts deployed with a Solidity version equal or higher than 0.8.20 might not work properly.", chain_id))?;
+                shell::println("EIP-3855 is not supported in one or more of the RPCs used.")?;
+                shell::println("Contracts deployed with a Solidity version equal or higher than 0.8.20 might not work properly.")?;
                 shell::println(
                     "For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
                 )?;
+                return Ok(())
             }
         }
         Ok(())
