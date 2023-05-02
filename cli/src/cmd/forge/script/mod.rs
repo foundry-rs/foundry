@@ -19,8 +19,8 @@ use ethers::{
     signers::LocalWallet,
     solc::contracts::ArtifactContracts,
     types::{
-        transaction::eip2718::TypedTransaction, Address, Log, NameOrAddress, TransactionRequest,
-        U256,
+        transaction::eip2718::TypedTransaction, Address, Chain, Log, NameOrAddress,
+        TransactionRequest, U256,
     },
 };
 use eyre::{ContextCompat, WrapErr};
@@ -78,14 +78,14 @@ use crate::cmd::retry::RetryArgs;
 pub use transaction::TransactionWithMetadata;
 
 /// List of Chain IDs that support Shanghai.
-static SHANGHAI_ENABLED_CHAINS: Lazy<Vec<U256>> = Lazy::new(|| {
+static SHANGHAI_ENABLED_CHAINS: Lazy<Vec<Chain>> = Lazy::new(|| {
     vec![
         // Ethereum Mainnet
-        U256::one(),
+        Chain::Mainnet,
         // Goerli
-        U256::from(5),
+        Chain::Goerli,
         // Sepolia
-        U256::from(11155111),
+        Chain::Sepolia,
     ]
 });
 
@@ -720,12 +720,18 @@ impl ScriptConfig {
         for rpc in &self.total_rpcs {
             let provider = ethers::providers::Provider::<Http>::try_from(rpc)?;
             let chain_id = provider.get_chainid().await?;
-            if !SHANGHAI_ENABLED_CHAINS.contains(&chain_id) {
-                shell::println("EIP-3855 is not supported in one or more of the RPCs used.")?;
-                shell::println("Contracts deployed with a Solidity version equal or higher than 0.8.20 might not work properly.")?;
-                shell::println(
-                    "For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
-                )?;
+            if !SHANGHAI_ENABLED_CHAINS.contains(&chain_id.try_into()?) {
+                shell::println(format!(
+                    "{}",
+                    Paint::yellow("EIP-3855 is not supported in one or more of the RPCs used.")
+                ))?;
+                shell::println(format!("{}", Paint::yellow("Contracts deployed with a Solidity version equal or higher than 0.8.20 might not work properly.")))?;
+                shell::println(format!(
+                    "{}",
+                    Paint::yellow(
+                        "For more information, please see https://eips.ethereum.org/EIPS/eip-3855"
+                    )
+                ))?;
                 return Ok(())
             }
         }
