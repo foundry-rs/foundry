@@ -518,6 +518,7 @@ contract Greeter {
     cmd.arg("build");
 
     let output = cmd.stdout_lossy();
+    dbg!(&output);
     assert!(output.contains(
         "
 Compiler run successful (with warnings)
