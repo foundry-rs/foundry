@@ -186,9 +186,10 @@ impl SolError for Error {
     }
 }
 
+#[allow(clippy::ptr_arg)] // need to match on the Cow.
 fn cow_to_bytes(cow: &Cow<'static, [u8]>) -> Bytes {
     match cow {
-        Cow::Borrowed(bytes) => Bytes::from_static(bytes),
-        Cow::Owned(s) => Bytes(s.clone().into()),
+        Cow::Borrowed(slice) => Bytes::from_static(slice),
+        Cow::Owned(vec) => Bytes(vec.clone().into()),
     }
 }
