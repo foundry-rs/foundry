@@ -10,6 +10,18 @@ use std::{
     path::Path,
 };
 
+/// Wrapper error struct that catches config parsing
+/// errors [`InlineConfigParserError`], enriching them with context information
+/// reporting the misconfigured line.
+#[derive(thiserror::Error, Debug)]
+#[error("Inline config error detected at {line} {source}")]
+pub struct InlineConfigError {
+    /// Specifies the misconfigured line. This is something of the form
+    /// `dir/TestContract.t.sol:FuzzContract:10:12:111`
+    line: String,
+    source: InlineConfigParserError,
+}
+
 /// Represents a (test-contract, test-function) pair
 type InlineConfigKey = (String, String);
 
@@ -48,7 +60,7 @@ where
     T: InlineConfigParser + 'static,
     P: AsRef<Path>,
 {
-    type Error = InlineConfigParserError;
+    type Error = InlineConfigError;
 
     /// Tries to create an instance of `Self`, detecting inline configurations from the project
     /// compile output.
@@ -102,16 +114,24 @@ fn try_apply<T>(
     map: &mut HashMap<(String, String), T>,
     contract_id: &str,
     node: &Node,
-) -> Result<(), InlineConfigParserError>
+) -> Result<(), InlineConfigError>
 where
     T: InlineConfigParser + 'static,
 {
     for n in node.nodes.iter() {
-        if let Some((fn_name, fn_docs)) = get_fn_data(n) {
-            if let Some(conf) = base_conf.try_merge(fn_docs.clone())? {
-                // We found a config that applies for the pair contract_id, fn_name.
-                let key = (contract_id.into(), fn_name);
-                map.insert(key, conf);
+        if let Some((fn_name, fn_docs, docs_src_line)) = get_fn_data(n) {
+            match base_conf.try_merge(fn_docs.clone()) {
+                Ok(Some(conf)) => {
+                    // We found a config that applies for the pair contract_id, fn_name.
+                    let key: InlineConfigKey = (contract_id.into(), fn_name);
+                    map.insert(key, conf);
+                }
+                Err(e) => {
+                    // We add context information to the error, to specify the misconfigured line
+                    let line = format!("{contract_id}:{fn_name}:{docs_src_line}");
+                    Err(InlineConfigError { line, source: e })?
+                }
+                _ => { /* No inline config found, do nothing */ }
             }
         }
 
@@ -120,12 +140,12 @@ where
     Ok(())
 }
 
-fn get_fn_data(node: &Node) -> Option<(String, String)> {
+fn get_fn_data(node: &Node) -> Option<(String, String, String)> {
     if let NodeType::FunctionDefinition = node.node_type {
         let fn_data = &node.other;
         let fn_name: String = get_fn_name(fn_data)?;
-        let fn_docs: String = get_fn_docs(fn_data)?;
-        return Some((fn_name, fn_docs))
+        let (fn_docs, docs_src_line): (String, String) = get_fn_docs(fn_data)?;
+        return Some((fn_name, fn_docs, docs_src_line))
     }
 
     None
@@ -138,10 +158,18 @@ fn get_fn_name(fn_data: &BTreeMap<String, Value>) -> Option<String> {
     }
 }
 
-fn get_fn_docs(fn_data: &BTreeMap<String, Value>) -> Option<String> {
+/// Inspects compiler output for a test function and returns:
+/// - `Some((String, String))` in case the function has natspec comments. First item is a textual
+///   natspec representation, the second item is the natspec src line, in the form "raw:col:length".
+/// - `None` in case the function has not natspec comments.
+fn get_fn_docs(fn_data: &BTreeMap<String, Value>) -> Option<(String, String)> {
     if let Value::Object(fn_docs) = fn_data.get("documentation")? {
         if let Value::String(comment) = fn_docs.get("text")? {
-            return Some(comment.into())
+            let src_line = fn_docs
+                .get("src")
+                .map(Value::to_string)
+                .unwrap_or(String::from("<no-src-line-available>"));
+            return Some((comment.into(), src_line))
         }
     }
     None

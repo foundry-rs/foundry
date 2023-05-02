@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use ethers::solc::ProjectCompileOutput;
-use foundry_config::{FuzzConfig, InlineConfig, InlineConfigParserError, InvariantConfig};
+use foundry_config::{FuzzConfig, InlineConfig, InlineConfigError, InvariantConfig};
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use tracing::trace;
 
@@ -160,7 +160,7 @@ impl TestOptionsBuilder {
     /// `root` is a reference to the user's project root dir. This is essential
     /// to determine the base path of generated contract identifiers. This is to provide correct
     /// matchers for inline test configs.
-    pub fn build(self, root: impl AsRef<Path>) -> Result<TestOptions, InlineConfigParserError> {
+    pub fn build(self, root: impl AsRef<Path>) -> Result<TestOptions, InlineConfigError> {
         let base_fuzz = self.fuzz.unwrap_or_default();
         let base_invariant = self.invariant.unwrap_or_default();
 
