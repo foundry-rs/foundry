@@ -80,7 +80,7 @@ mod tests {
             // Inline config defined in testdata/inline/FuzzInlineConf.t.sol
             let contract_name = "inline/FuzzInlineConf.t.sol:FuzzInlineConf";
             let function_name = "testInlineConfFuzz";
-            let inline_config: &FuzzConfig = conf.get_config(contract_name, function_name).unwrap();
+            let inline_config: &FuzzConfig = conf.get(contract_name, function_name).unwrap();
             assert_eq!(inline_config.runs, 1024);
             assert_eq!(inline_config.max_test_rejects, 500);
         }
@@ -97,8 +97,7 @@ mod tests {
             // Inline config defined in testdata/inline/InvariantInlineConf.t.sol
             let contract_name = "inline/InvariantInlineConf.t.sol:InvariantInlineConf";
             let function_name = "invariant_neverFalse";
-            let inline_config: &InvariantConfig =
-                conf.get_config(contract_name, function_name).unwrap();
+            let inline_config: &InvariantConfig = conf.get(contract_name, function_name).unwrap();
             assert_eq!(inline_config.runs, 333);
             assert_eq!(inline_config.depth, 32);
             assert_eq!(inline_config.fail_on_revert, false);

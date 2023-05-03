@@ -2,8 +2,7 @@
 
 use crate::{
     fuzz::FuzzDictionaryConfig,
-    inline::{InlineConfigParser, InlineConfigParserError},
-    Config,
+    inline::{InlineConfigParser, InlineConfigParserError, INLINE_CONFIG_INVARIANT_KEY},
 };
 use serde::{Deserialize, Serialize};
 
@@ -37,16 +36,13 @@ impl Default for InvariantConfig {
 }
 
 impl InlineConfigParser for InvariantConfig {
-    fn config_prefix() -> String {
-        let profile = Config::selected_profile().to_string();
-        format!("forge-config:{profile}.invariant.")
+    fn config_key() -> String {
+        INLINE_CONFIG_INVARIANT_KEY.into()
     }
 
-    fn try_merge<S: AsRef<str>>(&self, text: S) -> Result<Option<Self>, InlineConfigParserError>
-    where
-        Self: Sized + 'static,
-    {
-        let vars: Vec<(String, String)> = Self::config_variables::<S>(text);
+    fn try_merge(&self, configs: &[String]) -> Result<Option<Self>, InlineConfigParserError> {
+        let vars: Vec<(String, String)> = Self::config_variables(configs);
+
         if vars.is_empty() {
             return Ok(None)
         }
@@ -57,26 +53,10 @@ impl InlineConfigParser for InvariantConfig {
             let key = pair.0;
             let value = pair.1;
             match key.as_str() {
-                "runs" => {
-                    conf.runs = value
-                        .parse()
-                        .map_err(|_| InlineConfigParserError::ParseIntError(key, value))?
-                }
-                "depth" => {
-                    conf.depth = value
-                        .parse()
-                        .map_err(|_| InlineConfigParserError::ParseIntError(key, value))?
-                }
-                "fail-on-revert" => {
-                    conf.fail_on_revert = value
-                        .parse()
-                        .map_err(|_| InlineConfigParserError::ParseBoolError(key, value))?
-                }
-                "call-override" => {
-                    conf.call_override = value
-                        .parse()
-                        .map_err(|_| InlineConfigParserError::ParseBoolError(key, value))?
-                }
+                "runs" => conf.runs = Self::parse_u32(key, value)?,
+                "depth" => conf.depth = Self::parse_u32(key, value)?,
+                "fail-on-revert" => conf.fail_on_revert = Self::parse_bool(key, value)?,
+                "call-override" => conf.call_override = Self::parse_bool(key, value)?,
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key.to_string()))?,
             }
         }

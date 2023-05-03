@@ -3,10 +3,7 @@
 use ethers_core::types::U256;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    inline::{InlineConfigParser, InlineConfigParserError},
-    Config,
-};
+use crate::inline::{InlineConfigParser, InlineConfigParserError, INLINE_CONFIG_FUZZ_KEY};
 
 /// Contains for fuzz testing
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,16 +38,13 @@ impl Default for FuzzConfig {
 }
 
 impl InlineConfigParser for FuzzConfig {
-    fn config_prefix() -> String {
-        let profile = Config::selected_profile().to_string();
-        format!("forge-config:{profile}.fuzz.")
+    fn config_key() -> String {
+        INLINE_CONFIG_FUZZ_KEY.into()
     }
 
-    fn try_merge<S: AsRef<str>>(&self, text: S) -> Result<Option<Self>, InlineConfigParserError>
-    where
-        Self: Sized + 'static,
-    {
-        let vars: Vec<(String, String)> = Self::config_variables::<S>(text);
+    fn try_merge(&self, configs: &[String]) -> Result<Option<Self>, InlineConfigParserError> {
+        let vars: Vec<(String, String)> = Self::config_variables(configs);
+
         if vars.is_empty() {
             return Ok(None)
         }
@@ -61,16 +55,8 @@ impl InlineConfigParser for FuzzConfig {
             let key = pair.0;
             let value = pair.1;
             match key.as_str() {
-                "runs" => {
-                    conf.runs = value
-                        .parse()
-                        .map_err(|_| InlineConfigParserError::ParseIntError(key, value))?
-                }
-                "max-test-rejects" => {
-                    conf.max_test_rejects = value
-                        .parse()
-                        .map_err(|_| InlineConfigParserError::ParseIntError(key, value))?
-                }
+                "runs" => conf.runs = Self::parse_u32(key, value)?,
+                "max-test-rejects" => conf.max_test_rejects = Self::parse_u32(key, value)?,
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key))?,
             }
         }
