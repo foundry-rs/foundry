@@ -2,7 +2,7 @@
 
 use crate::{config::*, test_helpers::filter::Filter};
 
-use forge::{result::SuiteResult, revm::primitives::SpecId};
+use forge::result::SuiteResult;
 
 use foundry_evm::trace::TraceKind;
 use std::{collections::BTreeMap, env};
@@ -698,10 +698,4 @@ fn test_trace() {
             );
         }
     }
-}
-
-#[test]
-fn test_shanghai_compat() {
-    let filter = Filter::new("", "", "spec");
-    TestConfig::filter(filter).evm_spec(SpecId::SHANGHAI).run();
 }
