@@ -3,7 +3,6 @@
 use crate::test_helpers::{
     filter::Filter, COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT,
 };
-use ethers::solc::EvmVersion;
 use forge::{result::SuiteResult, MultiContractRunner, MultiContractRunnerBuilder, TestOptions};
 use foundry_config::{
     fs_permissions::PathPermission, Config, FsPermissions, FuzzConfig, FuzzDictionaryConfig,
@@ -271,17 +270,5 @@ pub fn assert_multiple(
                 );
             }
         }
-    }
-}
-
-/// Converts an `EvmVersion` into a `SpecId`
-pub fn evm_spec(evm: &EvmVersion) -> SpecId {
-    match evm {
-        EvmVersion::Istanbul => SpecId::ISTANBUL,
-        EvmVersion::Berlin => SpecId::BERLIN,
-        EvmVersion::London => SpecId::LONDON,
-        EvmVersion::Paris => SpecId::MERGE,
-        EvmVersion::Shanghai => SpecId::SHANGHAI,
-        _ => panic!("Unsupported EVM version"),
     }
 }
