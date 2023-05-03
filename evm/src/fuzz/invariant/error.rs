@@ -28,6 +28,7 @@ pub struct InvariantFuzzError {
     pub func: Option<ethers::prelude::Bytes>,
     /// Inner fuzzing Sequence coming from overriding calls.
     pub inner_sequence: Vec<Option<BasicTxDetails>>,
+    /// Shrink the failed test case to the smallest sequence.
     pub shrink: bool,
 }
 
