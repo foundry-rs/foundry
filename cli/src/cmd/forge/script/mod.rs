@@ -77,17 +77,15 @@ mod verify;
 use crate::cmd::retry::RetryArgs;
 pub use transaction::TransactionWithMetadata;
 
-/// List of Chain IDs that support Shanghai.
-static SHANGHAI_ENABLED_CHAINS: Lazy<Vec<Chain>> = Lazy::new(|| {
-    vec![
-        // Ethereum Mainnet
-        Chain::Mainnet,
-        // Goerli
-        Chain::Goerli,
-        // Sepolia
-        Chain::Sepolia,
-    ]
-});
+/// List of Chains that support Shanghai.
+static SHANGHAI_ENABLED_CHAINS: &[Chain] = &[
+    // Ethereum Mainnet
+    Chain::Mainnet,
+    // Goerli
+    Chain::Goerli,
+    // Sepolia
+    Chain::Sepolia,
+];
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(ScriptArgs, opts, evm_opts);
@@ -721,17 +719,11 @@ impl ScriptConfig {
             let provider = ethers::providers::Provider::<Http>::try_from(rpc)?;
             let chain_id = provider.get_chainid().await?;
             if !SHANGHAI_ENABLED_CHAINS.contains(&chain_id.try_into()?) {
-                shell::println(format!(
-                    "{}",
-                    Paint::yellow("EIP-3855 is not supported in one or more of the RPCs used.")
-                ))?;
-                shell::println(format!("{}", Paint::yellow("Contracts deployed with a Solidity version equal or higher than 0.8.20 might not work properly.")))?;
-                shell::println(format!(
-                    "{}",
-                    Paint::yellow(
-                        "For more information, please see https://eips.ethereum.org/EIPS/eip-3855"
-                    )
-                ))?;
+                let msg = "\
+EIP-3855 is not supported in one or more of the RPCs used.
+Contracts deployed with a Solidity version equal or higher than 0.8.20 might not work properly.
+For more information, please see https://eips.ethereum.org/EIPS/eip-3855";
+                shell::println(Paint::yellow(msg))?;
                 return Ok(())
             }
         }
