@@ -178,17 +178,19 @@ impl RunArgs {
                         debug: run_debug.unwrap_or_default(),
                         gas_used,
                     },
-                    Err(EvmError::Execution(inner)) => match *inner {
-                        ExecutionErr { reverted, gas_used, traces, debug: run_debug, .. } => {
-                            RunResult {
-                                success: !reverted,
-                                traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
-                                debug: run_debug.unwrap_or_default(),
-                                gas_used,
-                            }
+                    Err(EvmError::Execution(inner)) => {
+                        let ExecutionErr { reverted, gas_used, traces, debug: run_debug, .. } =
+                            *inner;
+                        RunResult {
+                            success: !reverted,
+                            traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
+                            debug: run_debug.unwrap_or_default(),
+                            gas_used,
                         }
-                    },
-                    Err(err) => panic!("unexpected error when running create transaction: {:?}", err),
+                    }
+                    Err(err) => {
+                        panic!("unexpected error when running create transaction: {:?}", err)
+                    }
                 }
             }
         };
