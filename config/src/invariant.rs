@@ -41,15 +41,15 @@ impl InlineConfigParser for InvariantConfig {
     }
 
     fn try_merge(&self, configs: &[String]) -> Result<Option<Self>, InlineConfigParserError> {
-        let vars: Vec<(String, String)> = Self::config_variables(configs);
+        let overrides: Vec<(String, String)> = Self::overrides(configs);
 
-        if vars.is_empty() {
+        if overrides.is_empty() {
             return Ok(None)
         }
 
         let mut conf = *self;
 
-        for pair in vars {
+        for pair in overrides {
             let key = pair.0;
             let value = pair.1;
             match key.as_str() {
@@ -104,13 +104,13 @@ mod tests {
     }
 
     #[test]
-    fn config_variables() {
+    fn override_detection() {
         let configs = &[
             "forge-config: default.fuzz.runs = 42424242".to_string(),
             "forge-config: ci.fuzz.runs = 666666".to_string(),
             "forge-config: default.invariant.runs = 2".to_string(),
         ];
-        let variables = InvariantConfig::config_variables(configs);
+        let variables = InvariantConfig::overrides(configs);
         assert_eq!(
             variables,
             vec![("runs".into(), "2".into())]

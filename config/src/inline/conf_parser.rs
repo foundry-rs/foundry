@@ -102,7 +102,7 @@ where
     ///     ("depth", "500"),
     ///  ];
     /// ```
-    fn config_variables(config_lines: &[String]) -> Vec<(String, String)> {
+    fn overrides(config_lines: &[String]) -> Vec<(String, String)> {
         let mut result: Vec<(String, String)> = vec![];
         let config_key = Self::config_key();
         let profile = ".*";
