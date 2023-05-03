@@ -46,7 +46,7 @@ impl NatSpec {
 
     /// Returns a string describing the natspec
     /// context, for debugging purposes 🐞 <br>
-    /// i.e. `dir/TestContract.t.sol:FuzzContract:10:12:111`
+    /// i.e. `dir/TestContract.t.sol:FuzzContract:test_myFunction:10:12:111`
     pub fn debug_context(&self) -> String {
         format!("{}:{}:{}", self.contract, self.function, self.line)
     }
@@ -127,4 +127,53 @@ fn get_fn_docs(fn_data: &BTreeMap<String, Value>) -> Option<(String, String)> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::NatSpec;
+
+    #[test]
+    fn config_lines() {
+        let natspec = natspec();
+        let config_lines = natspec.config_lines();
+        assert_eq!(
+            config_lines,
+            vec![
+                "forge-config:default.fuzz.runs=600".to_string(),
+                "forge-config:ci.fuzz.runs=500".to_string(),
+                "forge-config:default.invariant.runs=1".to_string()
+            ]
+        )
+    }
+
+   #[test]
+    fn config_lines_with_prefix() {
+        use super::INLINE_CONFIG_PREFIX;
+        let natspec = natspec();
+        let prefix = format!("{INLINE_CONFIG_PREFIX}:default");
+        let config_lines = natspec.config_lines_with_prefix(prefix);
+        assert_eq!(
+            config_lines,
+            vec![
+                "forge-config:default.fuzz.runs=600".to_string(),
+                "forge-config:default.invariant.runs=1".to_string()
+            ]
+        )
+    }
+
+    fn natspec() -> NatSpec {
+        let conf = r#"
+        forge-config: default.fuzz.runs = 600 
+        forge-config: ci.fuzz.runs = 500 
+        forge-config: default.invariant.runs = 1
+        "#;
+
+        NatSpec {
+            contract: "dir/TestContract.t.sol:FuzzContract".to_string(),
+            function: "test_myFunction".to_string(),
+            line: "10:12:111".to_string(),
+            docs: conf.to_string(),
+        }
+    }
 }

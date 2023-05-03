@@ -5,7 +5,7 @@ use std::collections::HashMap;
 mod natspec;
 pub use natspec::NatSpec;
 
-const INLINE_CONFIG_PREFIX: &str = "forge-config:";
+const INLINE_CONFIG_PREFIX: &str = "forge-config";
 pub const INLINE_CONFIG_FUZZ_KEY: &str = "fuzz";
 pub const INLINE_CONFIG_INVARIANT_KEY: &str = "invariant";
 
