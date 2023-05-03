@@ -189,7 +189,7 @@ impl RunArgs {
                         }
                     }
                     Err(err) => {
-                        panic!("unexpected error when running create transaction: {:?}", err)
+                        eyre::bail!("unexpected error when running create transaction: {:?}", err)
                     }
                 }
             }
