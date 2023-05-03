@@ -35,6 +35,7 @@ pub mod error;
 /// 5. Private Key (cleartext in CLI)
 /// 6. Private Key (interactively via secure prompt)
 /// 7. AWS KMS
+/// 8. Remote (Local node that holds keys or an RPC that holds keys).
 #[derive(Parser, Debug, Default, Clone, Serialize)]
 #[clap(next_help_heading = "Wallet options", about = None, long_about = None)]
 pub struct Wallet {
@@ -133,8 +134,14 @@ pub struct Wallet {
     pub trezor: bool,
 
     /// Use AWS Key Management Service.
-    #[clap(long, help_heading = "Wallet options - remote")]
+    #[clap(long, help_heading = "Wallet options - AWS KMS")]
     pub aws: bool,
+
+    /// Enable remote signing.
+    /// Useful when using a local node or an RPC that has keys able to sign the transaction.
+    /// This will allow the tx to fallback to eth_sendTransaction.
+    #[clap(long, short, help_heading = "Wallet options - Remote node signing")]
+    pub remote: bool,
 }
 
 impl Wallet {
@@ -178,6 +185,10 @@ impl Wallet {
         } else {
             self.from.unwrap_or_else(Address::zero)
         }
+    }
+
+    pub fn local_signer_selected(&self) -> bool {
+        return !self.remote
     }
 
     /// Tries to resolve a local wallet from the provided options.

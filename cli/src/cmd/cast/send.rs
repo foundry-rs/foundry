@@ -87,6 +87,7 @@ impl SendTxArgs {
         let chain = utils::get_chain(config.chain_id, &provider).await?;
         let api_key = config.get_etherscan_api_key(Some(chain));
         let mut sig = sig.unwrap_or_default();
+        let local_signer_selected = eth.wallet.local_signer_selected();
 
         if let Ok(signer) = eth.wallet.signer(chain.id()).await {
             let from = signer.address();
@@ -138,7 +139,23 @@ impl SendTxArgs {
                 to_json,
             )
             .await
-        } else if config.sender != Config::DEFAULT_SENDER {
+        // A different sender was specified with a local signing option, but there's no signer.
+        // This means that there's not enough information to sign locally.
+        } else if config.sender != Config::DEFAULT_SENDER && local_signer_selected {
+            Err(eyre::eyre!(
+                "\
+                    A local signing method was provided, but Cast can't seem to find or use the signer.\n
+                    Depending on the signing method provided, please make sure that either:\n
+                    - You have a valid keystore or mnemonic path pointing to the keystore file, with the correct password.\n
+                    - Your ledger is connected and unlocked with the correct app open and no other wallet apps open.\n
+                    - Your AWS information is set up correctly.
+                "
+            ))
+        }
+        // A different sender was specified from the default and the remote flag was
+        // used. This means that the user is using either a local node or a remote RPC
+        // that has the keys necessary to sign the transaction.
+        else if config.sender != Config::DEFAULT_SENDER && !local_signer_selected {
             // Checking if signer isn't the default value
             // 00a329c0648769A73afAc7F9381E08FB43dBEA72.
             if resend {
