@@ -41,7 +41,7 @@ use foundry_common::{
     shell, ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_config::{figment, Config};
-use once_cell::sync::Lazy;
+use futures::future;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
@@ -715,17 +715,27 @@ impl ScriptConfig {
     /// Checks if the RPCs used point to chains that support EIP-3855.
     /// If not, warns the user.
     async fn check_shanghai_support(&self) -> eyre::Result<()> {
-        for rpc in &self.total_rpcs {
-            let provider = ethers::providers::Provider::<Http>::try_from(rpc)?;
-            let chain_id = provider.get_chainid().await?;
-            if !SHANGHAI_ENABLED_CHAINS.contains(&chain_id.try_into()?) {
-                let msg = "\
+        let res2 = self.total_rpcs.iter().map(|rpc| async move {
+            if let Ok(provider) = ethers::providers::Provider::<Http>::try_from(rpc) {
+                match provider.get_chainid().await {
+                    Ok(chain_id) => match TryInto::<Chain>::try_into(chain_id) {
+                        Ok(chain) => return SHANGHAI_ENABLED_CHAINS.contains(&chain),
+                        Err(_) => return false,
+                    },
+                    Err(_) => return false,
+                }
+            }
+            false
+        });
+
+        let chain_ids_supported = future::join_all(res2).await;
+
+        if chain_ids_supported.contains(&false) {
+            let msg = "\
 EIP-3855 is not supported in one or more of the RPCs used.
 Contracts deployed with a Solidity version equal or higher than 0.8.20 might not work properly.
 For more information, please see https://eips.ethereum.org/EIPS/eip-3855";
-                shell::println(Paint::yellow(msg))?;
-                return Ok(())
-            }
+            shell::println(Paint::yellow(msg))?;
         }
         Ok(())
     }
