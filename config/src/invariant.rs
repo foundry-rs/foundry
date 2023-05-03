@@ -69,50 +69,51 @@ mod tests {
     use crate::{inline::InlineConfigParser, InvariantConfig};
 
     #[test]
-    fn parse_config_default_profile() {
-        let conf = r#"
-            forge-config: default.invariant.runs = 1024
-            forge-config: default.invariant.depth = 30
-            forge-config: default.invariant.fail-on-revert = true
-            forge-config: default.invariant.call-override = false
-        "#;
-        let base_conf: InvariantConfig = InvariantConfig::default();
-        let parsed: InvariantConfig = base_conf.try_merge(conf).unwrap().expect("Valid config");
-        assert_eq!(parsed.runs, 1024);
-        assert_eq!(parsed.depth, 30);
-        assert_eq!(parsed.fail_on_revert, true);
-        assert_eq!(parsed.call_override, false);
-    }
-
-    #[test]
-    fn parse_config_ci_profile() {
-        figment::Jail::expect_with(|jail| {
-            jail.set_env("FOUNDRY_PROFILE", "ci");
-            let conf = r#"
-                forge-config: ci.invariant.runs = 1024
-                forge-config: ci.invariant.depth = 30
-                forge-config: ci.invariant.fail-on-revert = true
-                forge-config: ci.invariant.call-override = false
-            "#;
-
-            let base_conf: InvariantConfig = InvariantConfig::default();
-            let parsed: InvariantConfig = base_conf.try_merge(conf).unwrap().expect("Valid config");
-            assert_eq!(parsed.runs, 1024);
-            assert_eq!(parsed.depth, 30);
-            assert_eq!(parsed.fail_on_revert, true);
-            assert_eq!(parsed.call_override, false);
-            Ok(())
-        });
-    }
-
-    #[test]
     fn unrecognized_property() {
-        let conf = "forge-config: default.invariant.unknownprop = 200";
-        let base_conf: InvariantConfig = InvariantConfig::default();
-        if let Err(e) = base_conf.try_merge(conf) {
-            assert_eq!(e.to_string(), "'unknownprop' is not a valid config property");
+        let configs = &["forge-config: default.invariant.unknownprop = 200".to_string()];
+        let base_config = InvariantConfig::default();
+        if let Err(e) = base_config.try_merge(configs) {
+            assert_eq!(e.to_string(), "'unknownprop' is an Invalid config property");
         } else {
             assert!(false)
         }
+    }
+
+    #[test]
+    fn successful_merge() {
+        let configs = &["forge-config: default.invariant.runs = 42424242".to_string()];
+        let base_config = InvariantConfig::default();
+        let merged: InvariantConfig = base_config.try_merge(configs).expect("No errors").unwrap();
+        assert_eq!(merged.runs, 42424242);
+    }
+
+    #[test]
+    fn merge_is_none() {
+        let empty_config = &[];
+        let base_config = InvariantConfig::default();
+        let merged = base_config.try_merge(empty_config).expect("No errors");
+        assert!(merged.is_none());
+    }
+
+    #[test]
+    fn merge_is_none_unrelated_property() {
+        let unrelated_configs = &["forge-config: default.fuzz.runs = 2".to_string()];
+        let base_config = InvariantConfig::default();
+        let merged = base_config.try_merge(unrelated_configs).expect("No errors");
+        assert!(merged.is_none());
+    }
+
+    #[test]
+    fn config_variables() {
+        let configs = &[
+            "forge-config: default.fuzz.runs = 42424242".to_string(),
+            "forge-config: ci.fuzz.runs = 666666".to_string(),
+            "forge-config: default.invariant.runs = 2".to_string(),
+        ];
+        let variables = InvariantConfig::config_variables(configs);
+        assert_eq!(
+            variables,
+            vec![("runs".into(), "2".into())]
+        );
     }
 }

@@ -46,7 +46,7 @@ impl InlineConfigParser for FuzzConfig {
         let vars: Vec<(String, String)> = Self::config_variables(configs);
 
         if vars.is_empty() {
-            return Ok(None)
+            return Ok(None);
         }
 
         let mut conf = *self;
@@ -103,70 +103,53 @@ impl Default for FuzzDictionaryConfig {
 #[cfg(test)]
 mod tests {
     use crate::{inline::InlineConfigParser, FuzzConfig};
-    use solang_parser::pt::Comment;
-
-    #[test]
-    fn parse_config_default_profile() {
-        let conf = "forge-config: default.fuzz.runs = 1024";
-        let base_conf: FuzzConfig = FuzzConfig::default();
-        let parsed: FuzzConfig = base_conf.try_merge(conf).unwrap().expect("Valid config");
-        assert_eq!(parsed.runs, 1024);
-    }
-
-    #[test]
-    fn parse_config_ci_profile() {
-        figment::Jail::expect_with(|jail| {
-            jail.set_env("FOUNDRY_PROFILE", "ci");
-            let conf = r#"
-                forge-config: default.fuzz.runs = 1024
-                forge-config: ci.fuzz.runs = 2048"#;
-
-            let base_conf: FuzzConfig = FuzzConfig::default();
-            let parsed: FuzzConfig = base_conf.try_merge(conf).unwrap().expect("Valid config");
-            assert_eq!(parsed.runs, 2048);
-            Ok(())
-        });
-    }
 
     #[test]
     fn unrecognized_property() {
-        let conf = "forge-config: default.fuzz.unknownprop = 200";
+        let configs = &["forge-config: default.fuzz.unknownprop = 200".to_string()];
         let base_config = FuzzConfig::default();
-        if let Err(e) = base_config.try_merge(conf) {
-            assert_eq!(e.to_string(), "'unknownprop' is not a valid config property");
+        if let Err(e) = base_config.try_merge(configs) {
+            assert_eq!(e.to_string(), "'unknownprop' is an Invalid config property");
         } else {
             assert!(false)
         }
     }
 
     #[test]
-    fn e2e() {
-        use solang_parser::parse;
-        let code = r#"
-            contract FuzzTestContract {
-                /**
-                 * forge-config: default.fuzz.runs = 1023
-                 * forge-config: default.fuzz.max-test-rejects = 521
-                 */
-                function testFuzz(string name) public returns (string) {
-                    return name;
-                }
-            }
-        "#;
+    fn successful_merge() {
+        let configs = &["forge-config: default.fuzz.runs = 42424242".to_string()];
+        let base_config = FuzzConfig::default();
+        let merged: FuzzConfig = base_config.try_merge(configs).expect("No errors").unwrap();
+        assert_eq!(merged.runs, 42424242);
+    }
 
-        let (_, comments) = parse(code, 0).expect("Valid code");
-        let comm = &comments[0];
-        match comm {
-            Comment::DocBlock(_, text) => {
-                let base_config = FuzzConfig::default();
-                let config: FuzzConfig =
-                    base_config.try_merge(text).unwrap().expect("Valid config");
-                assert_eq!(config.runs, 1023);
-                assert_eq!(config.max_test_rejects, 521);
-            }
-            _ => {
-                assert!(false); // Force test to fail
-            }
-        }
+    #[test]
+    fn merge_is_none() {
+        let empty_config = &[];
+        let base_config = FuzzConfig::default();
+        let merged = base_config.try_merge(empty_config).expect("No errors");
+        assert!(merged.is_none());
+    }
+
+    #[test]
+    fn merge_is_none_unrelated_property() {
+        let unrelated_configs = &["forge-config: default.invariant.runs = 2".to_string()];
+        let base_config = FuzzConfig::default();
+        let merged = base_config.try_merge(unrelated_configs).expect("No errors");
+        assert!(merged.is_none());
+    }
+
+    #[test]
+    fn config_variables() {
+        let configs = &[
+            "forge-config: default.fuzz.runs = 42424242".to_string(),
+            "forge-config: ci.fuzz.runs = 666666".to_string(),
+            "forge-config: default.invariant.runs = 2".to_string(),
+        ];
+        let variables = FuzzConfig::config_variables(configs);
+        assert_eq!(
+            variables,
+            vec![("runs".into(), "42424242".into()), ("runs".into(), "666666".into())]
+        );
     }
 }

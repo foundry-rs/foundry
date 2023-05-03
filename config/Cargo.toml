@@ -47,4 +47,3 @@ path-slash = "0.2.1"
 pretty_assertions = "1.3.0"
 figment = { version = "0.10", features = ["test"] }
 tempfile = "3.5"
-solang-parser = "0.2.3"

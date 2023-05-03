@@ -2,14 +2,14 @@ use regex::Regex;
 
 use crate::{InlineConfigError, NatSpec};
 
-use super::remove_whitespaces;
+use super::{remove_whitespaces, INLINE_CONFIG_PREFIX};
 
 /// Errors returned by the [`InlineConfigParser`] trait.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum InlineConfigParserError {
     /// An invalid configuration property has been provided.
     /// The property cannot be mapped to the configuration object
-    #[error("'{0}' is not an Invalid config property")]
+    #[error("'{0}' is an Invalid config property")]
     InvalidConfigProperty(String),
     /// An error occurred while trying to parse an integer configuration value
     #[error("Invalid config value for key '{0}'. Unable to parse '{1}' into an integer value")]
@@ -104,13 +104,15 @@ where
     /// ```
     fn config_variables(config_lines: &[String]) -> Vec<(String, String)> {
         let mut result: Vec<(String, String)> = vec![];
-        let prefix = Self::config_key();
-        let pattern = format!("^.*{prefix}");
-        let re = Regex::new(&pattern).unwrap();
+        let config_key = Self::config_key();
+        let profile = ".*";
+        let prefix = format!("^{INLINE_CONFIG_PREFIX}:{profile}{config_key}\\.");
+        let re = Regex::new(&prefix).unwrap();
 
         config_lines
             .iter()
             .map(|l| remove_whitespaces(l))
+            .filter(|l| re.is_match(l))
             .map(|l| re.replace(&l, "").to_string())
             .for_each(|line| {
                 let key_value = line.split('=').collect::<Vec<&str>>(); // i.e. "['runs', '500']"
