@@ -715,7 +715,7 @@ impl ScriptConfig {
     /// Checks if the RPCs used point to chains that support EIP-3855.
     /// If not, warns the user.
     async fn check_shanghai_support(&self) -> eyre::Result<()> {
-        let chain_ids= self.total_rpcs.iter().map(|rpc| async move {
+        let chain_ids = self.total_rpcs.iter().map(|rpc| async move {
             if let Ok(provider) = ethers::providers::Provider::<Http>::try_from(rpc) {
                 match provider.get_chainid().await {
                     Ok(chain_id) => match TryInto::<Chain>::try_into(chain_id) {
@@ -728,7 +728,8 @@ impl ScriptConfig {
             false
         });
 
-        let chain_ids_supported = future::join_all(chain_ids).await.into_iter().any(|result| result);
+        let chain_ids_supported =
+            future::join_all(chain_ids).await.into_iter().any(|result| result);
 
         // At least one chain ID unsupported.
         if !chain_ids_supported {
