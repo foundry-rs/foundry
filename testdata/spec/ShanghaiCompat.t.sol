@@ -7,7 +7,7 @@ import "../cheats/Cheats.sol";
 contract ShanghaiCompat is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
 
-    function test_push0() public {
+    function testPush0() public {
         address target = address(uint160(uint256(0xc4f3)));
 
         bytes memory bytecode = hex"365f5f37365ff3";

@@ -702,6 +702,6 @@ fn test_trace() {
 
 #[test]
 fn test_shanghai_compat() {
-    let filter = Filter::new("", "ShanghaiCompat", "");
+    let filter = Filter::new("", "", "spec");
     TestConfig::filter(filter).evm_spec(SpecId::SHANGHAI).run();
 }
