@@ -40,6 +40,11 @@ impl TestConfig {
         Self { filter, ..Default::default() }
     }
 
+    pub fn evm_spec(mut self, spec: SpecId) -> Self {
+        self.runner.evm_spec = spec;
+        self
+    }
+
     pub fn should_fail(self) -> Self {
         self.set_should_fail(true)
     }
