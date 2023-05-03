@@ -187,7 +187,7 @@ impl<'a> InvariantExecutor<'a> {
                         &inputs,
                         &mut failures.borrow_mut(),
                         self.config.fail_on_revert,
-                        self.config.try_shrinking,
+                        self.config.shrink_sequence,
                     );
 
                     if !can_continue {
@@ -559,7 +559,7 @@ fn can_continue(
     calldata: &[BasicTxDetails],
     failures: &mut InvariantFailures,
     fail_on_revert: bool,
-    try_shrinking: bool,
+    shrink_sequence: bool,
 ) -> (bool, Option<BTreeMap<String, RawCallResult>>) {
     let mut call_results = None;
     if !call_result.reverted {
@@ -579,7 +579,7 @@ fn can_continue(
                 calldata,
                 call_result,
                 &[],
-                try_shrinking,
+                shrink_sequence,
             );
 
             failures.revert_reason = Some(error.revert_reason.clone());

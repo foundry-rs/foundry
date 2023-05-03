@@ -39,7 +39,7 @@ impl InvariantFuzzError {
         calldata: &[BasicTxDetails],
         call_result: RawCallResult,
         inner_sequence: &[Option<BasicTxDetails>],
-        try_shrinking: bool,
+        shrink_sequence: bool,
     ) -> Self {
         let mut func = None;
         let origin: String;
@@ -80,7 +80,7 @@ impl InvariantFuzzError {
             addr: invariant_contract.address,
             func,
             inner_sequence: inner_sequence.to_vec(),
-            shrink: try_shrinking,
+            shrink: shrink_sequence,
         }
     }
 
