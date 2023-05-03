@@ -715,7 +715,7 @@ impl ScriptConfig {
     /// Checks if the RPCs used point to chains that support EIP-3855.
     /// If not, warns the user.
     async fn check_shanghai_support(&self) -> eyre::Result<()> {
-        let res2 = self.total_rpcs.iter().map(|rpc| async move {
+        let chain_ids= self.total_rpcs.iter().map(|rpc| async move {
             if let Ok(provider) = ethers::providers::Provider::<Http>::try_from(rpc) {
                 match provider.get_chainid().await {
                     Ok(chain_id) => match TryInto::<Chain>::try_into(chain_id) {
@@ -728,9 +728,10 @@ impl ScriptConfig {
             false
         });
 
-        let chain_ids_supported = future::join_all(res2).await;
+        let chain_ids_supported = future::join_all(chain_ids).await.into_iter().any(|result| result);
 
-        if chain_ids_supported.contains(&false) {
+        // At least one chain ID unsupported.
+        if !chain_ids_supported {
             let msg = "\
 EIP-3855 is not supported in one or more of the RPCs used.
 Contracts deployed with a Solidity version equal or higher than 0.8.20 might not work properly.
