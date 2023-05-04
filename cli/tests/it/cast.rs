@@ -85,30 +85,66 @@ casttest!(wallet_address_keystore_with_password_file, |_: TestProject, mut cmd: 
     assert!(out.contains("0xeC554aeAFE75601AaAb43Bd4621A22284dB566C2"));
 });
 
-// tests that `cast wallet sign` outputs the expected signature
-casttest!(cast_wallet_sign_utf8_data, |_: TestProject, mut cmd: TestCommand| {
+// tests that `cast wallet sign message` outputs the expected signature
+casttest!(cast_wallet_sign_message_utf8_data, |_: TestProject, mut cmd: TestCommand| {
     cmd.args([
         "wallet",
         "sign",
         "--private-key",
         "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "message",
         "test",
     ]);
     let output = cmd.stdout_lossy();
     assert_eq!(output.trim(), "0xfe28833983d6faa0715c7e8c3873c725ddab6fa5bf84d40e780676e463e6bea20fc6aea97dc273a98eb26b0914e224c8dd5c615ceaab69ddddcf9b0ae3de0e371c");
 });
 
-// tests that `cast wallet sign` outputs the expected signature, given a 0x-prefixed data
-casttest!(cast_wallet_sign_hex_data, |_: TestProject, mut cmd: TestCommand| {
+// tests that `cast wallet sign message` outputs the expected signature, given a 0x-prefixed data
+casttest!(cast_wallet_sign_message_hex_data, |_: TestProject, mut cmd: TestCommand| {
     cmd.args([
         "wallet",
         "sign",
         "--private-key",
         "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "message",
         "0x0000000000000000000000000000000000000000000000000000000000000000",
     ]);
     let output = cmd.stdout_lossy();
     assert_eq!(output.trim(), "0x23a42ca5616ee730ff3735890c32fc7b9491a9f633faca9434797f2c845f5abf4d9ba23bd7edb8577acebaa3644dc5a4995296db420522bb40060f1693c33c9b1c");
+});
+
+// tests that `cast wallet sign typed-data` outputs the expected signature, given a JSON string
+casttest!(cast_wallet_sign_typed_data_string, |_: TestProject, mut cmd: TestCommand| {
+    cmd.args([
+        "wallet",
+        "sign",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "typed-data",
+        "{\"types\": {\"EIP712Domain\": [{\"name\": \"name\",\"type\": \"string\"},{\"name\": \"version\",\"type\": \"string\"},{\"name\": \"chainId\",\"type\": \"uint256\"},{\"name\": \"verifyingContract\",\"type\": \"address\"}],\"Message\": [{\"name\": \"data\",\"type\": \"string\"}]},\"primaryType\": \"Message\",\"domain\": {\"name\": \"example.metamask.io\",\"version\": \"1\",\"chainId\": \"1\",\"verifyingContract\": \"0x0000000000000000000000000000000000000000\"},\"message\": {\"data\": \"Hello!\"}}",
+    ]);
+    let output = cmd.stdout_lossy();
+    assert_eq!(output.trim(), "0x06c18bdc8163219fddc9afaf5a0550e381326474bb757c86dc32317040cf384e07a2c72ce66c1a0626b6750ca9b6c035bf6f03e7ed67ae2d1134171e9085c0b51b");
+});
+
+// tests that `cast wallet sign typed-data` outputs the expected signature, given a JSON file
+casttest!(cast_wallet_sign_typed_data_file, |_: TestProject, mut cmd: TestCommand| {
+    cmd.args([
+        "wallet",
+        "sign",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "typed-data",
+        "-f",
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/sign_typed_data.json")
+            .into_os_string()
+            .into_string()
+            .unwrap()
+            .as_str(),
+    ]);
+    let output = cmd.stdout_lossy();
+    assert_eq!(output.trim(), "0x06c18bdc8163219fddc9afaf5a0550e381326474bb757c86dc32317040cf384e07a2c72ce66c1a0626b6750ca9b6c035bf6f03e7ed67ae2d1134171e9085c0b51b");
 });
 
 // tests that `cast estimate` is working correctly.
