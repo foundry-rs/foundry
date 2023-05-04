@@ -3,7 +3,7 @@ mod backend;
 use super::opts::EvmOpts;
 pub use backend::{BackendHandler, SharedBackend};
 
-use revm::Env;
+use revm::primitives::Env;
 
 mod init;
 pub use init::environment;

@@ -25,29 +25,23 @@ use std::{path::PathBuf, sync::Arc};
 /// CLI arguments for `forge create`.
 #[derive(Debug, Clone, Parser)]
 pub struct CreateArgs {
-    #[clap(
-        help = "The contract identifier in the form `<path>:<contractname>`.",
-        value_name = "CONTRACT"
-    )]
+    /// The contract identifier in the form `<path>:<contractname>`.
     contract: ContractInfo,
 
+    /// The constructor arguments.
     #[clap(
         long,
         num_args(1..),
-        help = "The constructor arguments.",
-        name = "constructor_args",
         conflicts_with = "constructor_args_path",
-        value_name = "ARGS"
+        value_name = "ARGS",
     )]
     constructor_args: Vec<String>,
 
+    /// The path to a file containing the constructor arguments.
     #[clap(
         long,
-        help = "The path to a file containing the constructor arguments.",
         value_hint = ValueHint::FilePath,
-        name = "constructor_args_path",
-        conflicts_with = "constructor_args",
-        value_name = "FILE"
+        value_name = "PATH",
     )]
     constructor_args_path: Option<PathBuf>,
 
@@ -60,21 +54,16 @@ pub struct CreateArgs {
     #[clap(flatten)]
     eth: EthereumOpts,
 
-    #[clap(
-        long = "json",
-        help_heading = "Display options",
-        help = "Print the deployment information as JSON."
-    )]
+    /// Print the deployment information as JSON.
+    #[clap(long, help_heading = "Display options")]
     json: bool,
 
-    #[clap(long, help = "Verify contract after creation.")]
+    /// Verify contract after creation.
+    #[clap(long)]
     verify: bool,
 
-    #[clap(
-        long,
-        help = "Send via `eth_sendTransaction` using the `--from` argument or `$ETH_FROM` as sender",
-        requires = "from"
-    )]
+    /// Send via `eth_sendTransaction` using the `--from` argument or `$ETH_FROM` as sender
+    #[clap(long, requires = "from")]
     unlocked: bool,
 
     #[clap(flatten)]

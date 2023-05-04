@@ -27,38 +27,32 @@ pub use multi_wallet::*;
 
 pub mod error;
 
+/// The wallet options can either be:
+/// 1. Ledger
+/// 2. Trezor
+/// 3. Mnemonic (via file path)
+/// 4. Keystore (via file path)
+/// 5. Private Key (cleartext in CLI)
+/// 6. Private Key (interactively via secure prompt)
+/// 7. AWS KMS
 #[derive(Parser, Debug, Default, Clone, Serialize)]
-#[cfg_attr(not(doc), allow(missing_docs))]
-#[cfg_attr(
-    doc,
-    doc = r#"
-The wallet options can either be:
-1. Ledger
-2. Trezor
-3. Mnemonic (via file path)
-4. Keystore (via file path)
-5. Private Key (cleartext in CLI)
-6. Private Key (interactively via secure prompt)
-7. AWS KMS
-"#
-)]
-#[clap(next_help_heading = "Wallet options")]
+#[clap(next_help_heading = "Wallet options", about = None, long_about = None)]
 pub struct Wallet {
-    /// The sender account
+    /// The sender account.
     #[clap(
-        short,
         long,
+        short,
         help_heading = "Wallet options - raw",
         value_name = "ADDRESS",
         env = "ETH_FROM"
     )]
     pub from: Option<Address>,
 
-    /// Open an interactive prompt to enter your private key
+    /// Open an interactive prompt to enter your private key.
     #[clap(long, short, help_heading = "Wallet options - raw")]
     pub interactive: bool,
 
-    /// Use the provided private key
+    /// Use the provided private key.
     #[clap(
         long,
         help_heading = "Wallet options - raw",
@@ -67,19 +61,17 @@ pub struct Wallet {
     )]
     pub private_key: Option<String>,
 
-    /// Use the mnemonic phrase of mnemonic file at the specified path
+    /// Use the mnemonic phrase of mnemonic file at the specified path.
     #[clap(long, alias = "mnemonic-path", help_heading = "Wallet options - raw")]
     pub mnemonic: Option<String>,
 
-    /// Use a BIP39 passphrase for the mnemonic
-    #[clap(
-        long = "mnemonic-passphrase",
-        help_heading = "Wallet options - raw",
-        value_name = "PASSPHRASE"
-    )]
+    /// Use a BIP39 passphrase for the mnemonic.
+    #[clap(long, help_heading = "Wallet options - raw", value_name = "PASSPHRASE")]
     pub mnemonic_passphrase: Option<String>,
 
-    /// The wallet derivation path. Works with both --mnemonic-path and hardware wallets
+    /// The wallet derivation path.
+    ///
+    /// Works with both --mnemonic-path and hardware wallets.
     #[clap(
         long = "mnemonic-derivation-path",
         alias = "hd-path",
@@ -88,9 +80,11 @@ pub struct Wallet {
     )]
     pub hd_path: Option<String>,
 
-    /// Use the private key from the given mnemonic index. Used with --mnemonic-path.
+    /// Use the private key from the given mnemonic index.
+    ///
+    /// Used with --mnemonic-path.
     #[clap(
-        long = "mnemonic-index",
+        long,
         conflicts_with = "hd_path",
         help_heading = "Wallet options - raw",
         default_value_t = 0,
@@ -98,7 +92,7 @@ pub struct Wallet {
     )]
     pub mnemonic_index: u32,
 
-    /// Use the keystore in the given folder or file
+    /// Use the keystore in the given folder or file.
     #[clap(
         long = "keystore",
         help_heading = "Wallet options - keystore",
@@ -107,7 +101,9 @@ pub struct Wallet {
     )]
     pub keystore_path: Option<String>,
 
-    /// The keystore password. Used with --keystore
+    /// The keystore password.
+    ///
+    /// Used with --keystore.
     #[clap(
         long = "password",
         help_heading = "Wallet options - keystore",
@@ -116,7 +112,9 @@ pub struct Wallet {
     )]
     pub keystore_password: Option<String>,
 
-    /// The keystore password file path. Used with --keystore.
+    /// The keystore password file path.
+    ///
+    /// Used with --keystore.
     #[clap(
         long = "password-file",
         help_heading = "Wallet options - keystore",
@@ -126,16 +124,16 @@ pub struct Wallet {
     )]
     pub keystore_password_file: Option<String>,
 
-    /// Use a Ledger hardware wallet
-    #[clap(short, long, help_heading = "Wallet options - hardware wallet")]
+    /// Use a Ledger hardware wallet.
+    #[clap(long, short, help_heading = "Wallet options - hardware wallet")]
     pub ledger: bool,
 
-    /// Use a Trezor hardware wallet
-    #[clap(short, long = "trezor", help_heading = "Wallet options - hardware wallet")]
+    /// Use a Trezor hardware wallet.
+    #[clap(long, short, help_heading = "Wallet options - hardware wallet")]
     pub trezor: bool,
 
-    /// Use AWS Key Management Service
-    #[clap(long = "aws", help_heading = "Wallet options - remote")]
+    /// Use AWS Key Management Service.
+    #[clap(long, help_heading = "Wallet options - remote")]
     pub aws: bool,
 }
 

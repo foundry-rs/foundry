@@ -16,11 +16,11 @@ const FLASHBOTS_URL: &str = "https://rpc.flashbots.net";
 
 #[derive(Clone, Debug, Default, Parser)]
 pub struct RpcOpts {
-    /// The RPC endpoint
+    /// The RPC endpoint.
     #[clap(short = 'r', long = "rpc-url", env = "ETH_RPC_URL")]
     pub url: Option<String>,
 
-    /// Use the Flashbots RPC URL (https://rpc.flashbots.net)
+    /// Use the Flashbots RPC URL (https://rpc.flashbots.net).
     #[clap(long)]
     pub flashbots: bool,
 }

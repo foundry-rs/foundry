@@ -1,5 +1,5 @@
 use ethers_core::types::{H256, U256, U64};
-use revm::SpecId;
+use revm::primitives::SpecId;
 
 #[cfg(feature = "serde")]
 use serde::{de::Error, Deserializer, Serializer};

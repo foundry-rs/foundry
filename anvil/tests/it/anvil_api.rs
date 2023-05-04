@@ -14,7 +14,7 @@ use ethers::{
     },
     utils::hex,
 };
-use forge::revm::SpecId;
+use forge::revm::primitives::SpecId;
 use std::{
     str::FromStr,
     sync::Arc,

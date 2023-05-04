@@ -40,118 +40,120 @@ pub struct Opts {
 )]
 #[allow(clippy::large_enum_variant)]
 pub enum Subcommands {
-    #[clap(visible_alias = "t", about = "Run the project's tests.")]
+    /// Run the project's tests.
+    #[clap(visible_alias = "t")]
     Test(test::TestArgs),
 
-    #[clap(
-        about = "Run a smart contract as a script, building transactions that can be sent onchain."
-    )]
+    /// Run a smart contract as a script, building transactions that can be sent onchain.
     Script(ScriptArgs),
 
-    #[clap(about = "Generate coverage reports.")]
+    /// Generate coverage reports.
     Coverage(coverage::CoverageArgs),
 
-    #[clap(alias = "bi", about = "Generate Rust bindings for smart contracts.")]
+    /// Generate Rust bindings for smart contracts.
+    #[clap(alias = "bi")]
     Bind(BindArgs),
 
-    #[clap(visible_aliases = ["b", "compile"], about = "Build the project's smart contracts.")]
+    /// Build the project's smart contracts.
+    #[clap(visible_aliases = ["b", "compile"])]
     Build(BuildArgs),
 
-    #[clap(visible_alias = "d", about = "Debugs a single smart contract as a script.")]
+    /// Debugs a single smart contract as a script.
+    #[clap(visible_alias = "d")]
     Debug(DebugArgs),
 
-    #[clap(
-        visible_alias = "u",
-        about = "Update one or multiple dependencies.",
-        long_about = "Update one or multiple dependencies. If no arguments are provided, then all dependencies are updated."
-    )]
+    /// Update one or multiple dependencies.
+    ///
+    /// If no arguments are provided, then all dependencies are updated.
+    #[clap(visible_alias = "u")]
     Update(update::UpdateArgs),
 
-    #[clap(
-        visible_alias = "i",
-        about = "Install one or multiple dependencies.",
-        long_about = "Install one or multiple dependencies. If no arguments are provided, then existing dependencies will be installed."
-    )]
+    /// Install one or multiple dependencies.
+    ///
+    /// If no arguments are provided, then existing dependencies will be installed.
+    #[clap(visible_alias = "i")]
     Install(InstallArgs),
 
-    #[clap(visible_alias = "rm", about = "Remove one or multiple dependencies.")]
+    /// Remove one or multiple dependencies.
+    #[clap(visible_alias = "rm")]
     Remove(RemoveArgs),
 
-    #[clap(
-        visible_alias = "re",
-        about = "Get the automatically inferred remappings for the project."
-    )]
+    /// Get the automatically inferred remappings for the project.
+    #[clap(visible_alias = "re")]
     Remappings(RemappingArgs),
 
-    #[clap(visible_alias = "v", about = "Verify smart contracts on Etherscan.")]
+    /// Verify smart contracts on Etherscan.
+    #[clap(visible_alias = "v")]
     VerifyContract(VerifyArgs),
 
-    #[clap(visible_alias = "vc", about = "Check verification status on Etherscan.")]
+    /// Check verification status on Etherscan.
+    #[clap(visible_alias = "vc")]
     VerifyCheck(VerifyCheckArgs),
 
-    #[clap(visible_alias = "c", about = "Deploy a smart contract.")]
+    /// Deploy a smart contract.
+    #[clap(visible_alias = "c")]
     Create(CreateArgs),
 
-    #[clap(about = "Create a new Forge project.")]
+    /// Create a new Forge project.
     Init(InitArgs),
 
-    #[clap(visible_alias = "com", about = "Generate shell completions script.")]
+    /// Generate shell completions script.
+    #[clap(visible_alias = "com")]
     Completions {
         #[clap(value_enum)]
         shell: clap_complete::Shell,
     },
-    #[clap(visible_alias = "fig", about = "Generate Fig autocompletion spec.")]
+
+    /// Generate Fig autocompletion spec.
+    #[clap(visible_alias = "fig")]
     GenerateFigSpec,
-    #[clap(visible_alias = "cl", about = "Remove the build artifacts and cache directories.")]
+
+    /// Remove the build artifacts and cache directories.
+    #[clap(visible_alias = "cl")]
     Clean {
-        #[clap(
-            help = "The project's root path. Defaults to the current working directory.",
-            long,
-            value_hint = ValueHint::DirPath,
-            value_name = "PATH"
-        )]
+        /// The project's root path.
+        ///
+        /// By default root of the Git repository, if in one,
+        /// or the current working directory.
+        #[clap(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
         root: Option<PathBuf>,
     },
 
-    #[clap(about = "Manage the Foundry cache.")]
+    /// Manage the Foundry cache.
     Cache(CacheArgs),
 
-    #[clap(visible_alias = "s", about = "Create a snapshot of each test's gas usage.")]
+    /// Create a snapshot of each test's gas usage.
+    #[clap(visible_alias = "s")]
     Snapshot(snapshot::SnapshotArgs),
 
-    #[clap(visible_alias = "co", about = "Display the current config.")]
+    /// Display the current config.
+    #[clap(visible_alias = "co")]
     Config(config::ConfigArgs),
 
-    #[clap(
-        visible_alias = "f",
-        about = "Flatten a source file and all of its imports into one file."
-    )]
+    /// Flatten a source file and all of its imports into one file.
+    #[clap(visible_alias = "f")]
     Flatten(flatten::FlattenArgs),
 
-    #[clap(about = "Formats Solidity source files.")]
+    /// Format Solidity source files.
     Fmt(FmtArgs),
 
-    #[clap(visible_alias = "in", about = "Get specialized information about a smart contract.")]
+    /// Get specialized information about a smart contract.
+    #[clap(visible_alias = "in")]
     Inspect(inspect::InspectArgs),
 
-    #[clap(
-        visible_alias = "up",
-        about = "Uploads abi of given contract to https://sig.eth.samczsun.com function selector database."
-    )]
+    /// Uploads abi of given contract to the https://sig.eth.samczsun.com
+    /// function selector database.
+    #[clap(visible_alias = "up")]
     UploadSelectors(UploadSelectorsArgs),
 
-    #[clap(
-        visible_alias = "tr",
-        about = "Display a tree visualization of the project's dependency graph."
-    )]
+    /// Display a tree visualization of the project's dependency graph.
+    #[clap(visible_alias = "tr")]
     Tree(tree::TreeArgs),
 
-    #[clap(
-        about = "Detects usage of unsafe cheat codes in a foundry project and its dependencies."
-    )]
+    /// Detects usage of unsafe cheat codes in a project and its dependencies.
     Geiger(geiger::GeigerArgs),
 
-    #[clap(about = "Generate documentation for the project.")]
+    /// Generate documentation for the project.
     Doc(DocArgs),
 }
 
@@ -162,15 +164,18 @@ pub enum Subcommands {
 #[derive(Default, Debug, Clone, Parser, Serialize)]
 #[clap(next_help_heading = "Compiler options")]
 pub struct CompilerArgs {
-    #[clap(help = "The target EVM version.", long, value_name = "VERSION")]
+    /// The target EVM version.
+    #[clap(long, value_name = "VERSION")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evm_version: Option<EvmVersion>,
 
-    #[clap(help = "Activate the Solidity optimizer.", long)]
+    /// Activate the Solidity optimizer.
+    #[clap(long)]
     #[serde(skip)]
     pub optimize: bool,
 
-    #[clap(help = "The number of optimizer runs.", long, value_name = "RUNS")]
+    /// The number of optimizer runs.
+    #[clap(long, value_name = "RUNS")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub optimizer_runs: Option<usize>,
 

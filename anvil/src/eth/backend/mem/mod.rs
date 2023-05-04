@@ -23,7 +23,10 @@ use crate::{
         inspector::Inspector,
         storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
     },
-    revm::{db::DatabaseRef, AccountInfo},
+    revm::{
+        db::DatabaseRef,
+        primitives::{AccountInfo, U256 as rU256},
+    },
 };
 use anvil_core::{
     eth::{
@@ -36,7 +39,7 @@ use anvil_core::{
             TransactionInfo, TypedTransaction,
         },
         trie::RefTrieDB,
-        utils::to_access_list,
+        utils::to_revm_access_list,
     },
     types::{Forking, Index},
 };
@@ -47,21 +50,29 @@ use ethers::{
     types::{
         transaction::eip2930::AccessList, Address, Block as EthersBlock, BlockId, Bytes,
         DefaultFrame, Filter, FilteredParams, GethDebugTracingOptions, GethTrace, Log, OtherFields,
-        Trace, Transaction, TransactionReceipt,
+        Trace, Transaction, TransactionReceipt, H160,
     },
     utils::{get_contract_address, hex, keccak256, rlp},
 };
 use forge::{
     executor::inspector::AccessListTracer,
-    revm::{return_ok, BlockEnv, ExecutionResult, Return},
+    hashbrown,
+    revm::{
+        interpreter::{return_ok, InstructionResult},
+        primitives::{BlockEnv, ExecutionResult},
+    },
+    utils::{
+        eval_to_instruction_result, h256_to_b256, halt_to_instruction_result, ru256_to_u256,
+        u256_to_ru256,
+    },
 };
 use foundry_evm::{
     decode::decode_revert,
     executor::backend::{DatabaseError, DatabaseResult},
     revm,
     revm::{
-        db::CacheDB, Account, CreateScheme, Env, SpecId, TransactOut, TransactTo, TxEnv,
-        KECCAK_EMPTY,
+        db::CacheDB,
+        primitives::{Account, CreateScheme, Env, Output, SpecId, TransactTo, TxEnv, KECCAK_EMPTY},
     },
     utils::u256_to_h256_be,
 };
@@ -238,7 +249,7 @@ impl Backend {
                 // accounts concurrently by spawning the job to a new task
                 genesis_accounts_futures.push(tokio::task::spawn(async move {
                     let db = db.read().await;
-                    let info = db.basic(address)?.unwrap_or_default();
+                    let info = db.basic(address.into())?.unwrap_or_default();
                     Ok::<_, DatabaseError>((address, info))
                 }));
             }
@@ -313,7 +324,7 @@ impl Backend {
 
     /// Returns the `AccountInfo` from the database
     pub async fn get_account(&self, address: Address) -> DatabaseResult<AccountInfo> {
-        Ok(self.db.read().await.basic(address)?.unwrap_or_default())
+        Ok(self.db.read().await.basic(address.into())?.unwrap_or_default())
     }
 
     /// Whether we're forked off some remote client
@@ -340,21 +351,21 @@ impl Backend {
             // update all settings related to the forked block
             {
                 let mut env = self.env.write();
-                env.cfg.chain_id = fork.chain_id().into();
+                env.cfg.chain_id = rU256::from(fork.chain_id());
 
                 env.block = BlockEnv {
-                    number: fork_block_number.into(),
-                    timestamp: fork_block.timestamp,
-                    gas_limit: fork_block.gas_limit,
-                    difficulty: fork_block.difficulty,
-                    prevrandao: fork_block.mix_hash,
+                    number: rU256::from(fork_block_number),
+                    timestamp: fork_block.timestamp.into(),
+                    gas_limit: fork_block.gas_limit.into(),
+                    difficulty: fork_block.difficulty.into(),
+                    prevrandao: fork_block.mix_hash.map(h256_to_b256),
                     // Keep previous `coinbase` and `basefee` value
                     coinbase: env.block.coinbase,
                     basefee: env.block.basefee,
                 };
 
-                self.time.reset(env.block.timestamp.as_u64());
-                self.fees.set_base_fee(env.block.basefee);
+                self.time.reset(ru256_to_u256(env.block.timestamp).as_u64());
+                self.fees.set_base_fee(env.block.basefee.into());
 
                 // also reset the total difficulty
                 self.blockchain.storage.write().total_difficulty = fork.total_difficulty();
@@ -425,22 +436,22 @@ impl Backend {
     /// Sets the block number
     pub fn set_block_number(&self, number: U256) {
         let mut env = self.env.write();
-        env.block.number = number;
+        env.block.number = number.into();
     }
 
     /// Returns the client coinbase address.
     pub fn coinbase(&self) -> Address {
-        self.env.read().block.coinbase
+        self.env.read().block.coinbase.into()
     }
 
     /// Returns the client coinbase address.
     pub fn chain_id(&self) -> U256 {
-        self.env.read().cfg.chain_id
+        self.env.read().cfg.chain_id.into()
     }
 
     /// Returns balance of the given account.
     pub async fn current_balance(&self, address: Address) -> DatabaseResult<U256> {
-        Ok(self.get_account(address).await?.balance)
+        Ok(self.get_account(address).await?.balance.into())
     }
 
     /// Returns balance of the given account.
@@ -450,7 +461,7 @@ impl Backend {
 
     /// Sets the coinbase address
     pub fn set_coinbase(&self, address: Address) {
-        self.env.write().block.coinbase = address;
+        self.env.write().block.coinbase = address.into();
     }
 
     /// Sets the nonce of the given address
@@ -511,12 +522,12 @@ impl Backend {
 
     /// Returns the block gas limit
     pub fn gas_limit(&self) -> U256 {
-        self.env().read().block.gas_limit
+        self.env().read().block.gas_limit.into()
     }
 
     /// Sets the block gas limit
     pub fn set_gas_limit(&self, gas_limit: U256) {
-        self.env().write().block.gas_limit = gas_limit;
+        self.env().write().block.gas_limit = gas_limit.into();
     }
 
     /// Returns the current base fee
@@ -640,9 +651,9 @@ impl Backend {
     fn next_env(&self) -> Env {
         let mut env = self.env.read().clone();
         // increase block number for this block
-        env.block.number = env.block.number.saturating_add(U256::one());
-        env.block.basefee = self.base_fee();
-        env.block.timestamp = self.time.current_call_timestamp().into();
+        env.block.number = env.block.number.saturating_add(rU256::from(1));
+        env.block.basefee = self.base_fee().into();
+        env.block.timestamp = rU256::from(self.time.current_call_timestamp());
         env
     }
 
@@ -650,7 +661,10 @@ impl Backend {
     pub async fn inspect_tx(
         &self,
         tx: Arc<PoolTransaction>,
-    ) -> (Return, TransactOut, u64, State, Vec<revm::Log>) {
+    ) -> Result<
+        (InstructionResult, Option<Output>, u64, State, Vec<revm::primitives::Log>),
+        BlockchainError,
+    > {
         let mut env = self.next_env();
         env.tx = tx.pending_transaction.to_revm_tx_env();
         let db = self.db.read().await;
@@ -659,10 +673,28 @@ impl Backend {
         let mut evm = revm::EVM::new();
         evm.env = env;
         evm.database(&*db);
-        let (ExecutionResult { exit_reason, out, gas_used, logs, .. }, state) =
-            evm.inspect_ref(&mut inspector);
+        let result_and_state = match evm.inspect_ref(&mut inspector) {
+            Ok(res) => res,
+            Err(_) => return Err(BlockchainError::EvmError(InstructionResult::FatalExternalError)),
+        };
+        let state = result_and_state.state;
+        let state: hashbrown::HashMap<H160, Account> =
+            state.into_iter().map(|kv| (kv.0.into(), kv.1)).collect();
+        let (exit_reason, gas_used, out, logs) = match result_and_state.result {
+            ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
+                (eval_to_instruction_result(reason), gas_used, Some(output), Some(logs))
+            }
+            ExecutionResult::Revert { gas_used, output } => {
+                (InstructionResult::Revert, gas_used, Some(Output::Call(output)), None)
+            }
+            ExecutionResult::Halt { reason, gas_used } => {
+                (halt_to_instruction_result(reason), gas_used, None, None)
+            }
+        };
+
         inspector.print_logs();
-        (exit_reason, out, gas_used, state, logs)
+
+        Ok((exit_reason, out, gas_used, state, logs.unwrap_or_default()))
     }
 
     /// Creates the pending block
@@ -728,9 +760,9 @@ impl Backend {
 
             let mut env = self.env.read().clone();
             // increase block number for this block
-            env.block.number = env.block.number.saturating_add(U256::one());
-            env.block.basefee = current_base_fee;
-            env.block.timestamp = self.time.next_timestamp().into();
+            env.block.number = env.block.number.saturating_add(rU256::from(1));
+            env.block.basefee = current_base_fee.into();
+            env.block.timestamp = rU256::from(self.time.next_timestamp());
 
             let best_hash = self.blockchain.storage.read().best_hash;
 
@@ -766,7 +798,7 @@ impl Backend {
             let BlockInfo { block, transactions, receipts } = block;
 
             let header = block.header.clone();
-            let block_number: U64 = env.block.number.as_u64().into();
+            let block_number: U64 = ru256_to_u256(env.block.number).as_u64().into();
 
             trace!(
                 target: "backend",
@@ -797,13 +829,13 @@ impl Backend {
                     node_info!("    Gas used: {}", receipt.gas_used());
                     match info.exit {
                         return_ok!() => (),
-                        Return::OutOfFund => {
+                        InstructionResult::OutOfFund => {
                             node_info!("    Error: reverted due to running out of funds");
                         }
-                        Return::CallTooDeep => {
+                        InstructionResult::CallTooDeep => {
                             node_info!("    Error: reverted with call too deep");
                         }
-                        Return::Revert => {
+                        InstructionResult::Revert => {
                             if let Some(ref r) = info.out {
                                 if let Ok(reason) = decode_revert(r.as_ref(), None, None) {
                                     node_info!("    Error: reverted with '{}'", reason);
@@ -817,7 +849,7 @@ impl Backend {
                                 node_info!("    Error: reverted without a reason");
                             }
                         }
-                        Return::OutOfGas => {
+                        InstructionResult::OutOfGas => {
                             node_info!("    Error: ran out of gas");
                         }
                         reason => {
@@ -853,7 +885,7 @@ impl Backend {
             }
 
             // we intentionally set the difficulty to `0` for newer blocks
-            env.block.difficulty = U256::zero();
+            env.block.difficulty = rU256::from(0);
 
             // update env with new values
             *self.env.write() = env;
@@ -894,9 +926,9 @@ impl Backend {
         fee_details: FeeDetails,
         block_request: Option<BlockRequest>,
         overrides: Option<StateOverride>,
-    ) -> Result<(Return, TransactOut, u64, State), BlockchainError> {
+    ) -> Result<(InstructionResult, Option<Output>, u64, State), BlockchainError> {
         self.with_database_at(block_request, |state, block| {
-            let block_number = block.number.as_u64();
+            let block_number = ru256_to_u256(block.number).as_u64();
             let (exit, out, gas, state) = match overrides {
                 None => self.call_with_state(state, request, fee_details, block),
                 Some(overrides) => {
@@ -919,7 +951,7 @@ impl Backend {
 
         let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = fee_details;
 
-        let gas_limit = gas.unwrap_or(block_env.gas_limit);
+        let gas_limit = gas.unwrap_or(block_env.gas_limit.into());
         let mut env = self.env.read().clone();
         env.block = block_env;
         // we want to disable this in eth_call, since this is common practice used by other node
@@ -927,26 +959,26 @@ impl Backend {
         env.cfg.disable_block_gas_limit = true;
 
         if let Some(base) = max_fee_per_gas {
-            env.block.basefee = base;
+            env.block.basefee = base.into();
         }
 
         let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| self.gas_price());
         let caller = from.unwrap_or_default();
 
         env.tx = TxEnv {
-            caller,
+            caller: caller.into(),
             gas_limit: gas_limit.as_u64(),
-            gas_price,
-            gas_priority_fee: max_priority_fee_per_gas,
+            gas_price: gas_price.into(),
+            gas_priority_fee: max_priority_fee_per_gas.map(u256_to_ru256),
             transact_to: match to {
-                Some(addr) => TransactTo::Call(addr),
+                Some(addr) => TransactTo::Call(addr.into()),
                 None => TransactTo::Create(CreateScheme::Create),
             },
-            value: value.unwrap_or_default(),
+            value: value.unwrap_or_default().into(),
             data: data.unwrap_or_default().to_vec().into(),
             chain_id: None,
             nonce: nonce.map(|n| n.as_u64()),
-            access_list: to_access_list(access_list.unwrap_or_default()),
+            access_list: to_revm_access_list(access_list.unwrap_or_default()),
         };
         env
     }
@@ -957,7 +989,7 @@ impl Backend {
         request: EthTransactionRequest,
         fee_details: FeeDetails,
         block_env: BlockEnv,
-    ) -> Result<(Return, TransactOut, u64, State), BlockchainError>
+    ) -> Result<(InstructionResult, Option<Output>, u64, State), BlockchainError>
     where
         D: DatabaseRef<Error = DatabaseError>,
     {
@@ -965,8 +997,26 @@ impl Backend {
         let mut evm = revm::EVM::new();
         evm.env = self.build_call_env(request, fee_details, block_env);
         evm.database(state);
-        let (ExecutionResult { exit_reason, out, gas_used, .. }, state) =
-            evm.inspect_ref(&mut inspector);
+        let result_and_state = match evm.inspect_ref(&mut inspector) {
+            Ok(result_and_state) => result_and_state,
+            Err(_) => {
+                return Err(BlockchainError::InvalidTransaction(InvalidTransactionError::GasTooHigh))
+            }
+        };
+        let state = result_and_state.state;
+        let state: hashbrown::HashMap<H160, Account> =
+            state.into_iter().map(|kv| (kv.0.into(), kv.1)).collect();
+        let (exit_reason, gas_used, out) = match result_and_state.result {
+            ExecutionResult::Success { reason, gas_used, output, .. } => {
+                (eval_to_instruction_result(reason), gas_used, Some(output))
+            }
+            ExecutionResult::Revert { gas_used, output } => {
+                (InstructionResult::Revert, gas_used, Some(Output::Call(output)))
+            }
+            ExecutionResult::Halt { reason, gas_used } => {
+                (halt_to_instruction_result(reason), gas_used, None)
+            }
+        };
         inspector.print_logs();
         Ok((exit_reason, out, gas_used, state))
     }
@@ -984,8 +1034,22 @@ impl Backend {
             let mut evm = revm::EVM::new();
             evm.env = self.build_call_env(request, fee_details, block);
             evm.database(state);
-            let (ExecutionResult { exit_reason, out, gas_used, .. }, _) =
-                evm.inspect_ref(&mut inspector);
+            let result_and_state =
+                match evm.inspect_ref(&mut inspector) {
+                    Ok(result_and_state) => result_and_state,
+                    Err(_) => return Err(BlockchainError::EvmError(InstructionResult::FatalExternalError)),
+                };
+            let (exit_reason, gas_used, out, ) = match result_and_state.result {
+                ExecutionResult::Success { reason, gas_used, output, .. } => {
+                    (eval_to_instruction_result(reason), gas_used, Some(output), )
+                },
+                ExecutionResult::Revert { gas_used, output} => {
+                    (InstructionResult::Revert, gas_used, Some(Output::Call(output)))
+                },
+                ExecutionResult::Halt { reason, gas_used } => {
+                    (halt_to_instruction_result(reason), gas_used, None)
+                },
+            };
             let res = inspector.tracer.unwrap_or_default().traces.geth_trace(gas_used.into(), opts);
             trace!(target: "backend", "trace call return {:?} out: {:?} gas {} on block {}", exit_reason, out, gas_used, block_number);
             Ok(res)
@@ -999,7 +1063,7 @@ impl Backend {
         request: EthTransactionRequest,
         fee_details: FeeDetails,
         block_env: BlockEnv,
-    ) -> Result<(Return, TransactOut, u64, AccessList), BlockchainError>
+    ) -> Result<(InstructionResult, Option<Output>, u64, AccessList), BlockchainError>
     where
         D: DatabaseRef<Error = DatabaseError>,
     {
@@ -1007,7 +1071,7 @@ impl Backend {
         let to = if let Some(to) = request.to {
             to
         } else {
-            let nonce = state.basic(from)?.unwrap_or_default().nonce;
+            let nonce = state.basic(from.into())?.unwrap_or_default().nonce;
             get_contract_address(from, nonce)
         };
 
@@ -1021,7 +1085,21 @@ impl Backend {
         let mut evm = revm::EVM::new();
         evm.env = self.build_call_env(request, fee_details, block_env);
         evm.database(state);
-        let (ExecutionResult { exit_reason, out, gas_used, .. }, _) = evm.inspect_ref(&mut tracer);
+        let result_and_state = match evm.inspect_ref(&mut tracer) {
+            Ok(result_and_state) => result_and_state,
+            Err(_) => return Err(BlockchainError::EvmError(InstructionResult::FatalExternalError)),
+        };
+        let (exit_reason, gas_used, out) = match result_and_state.result {
+            ExecutionResult::Success { reason, gas_used, output, .. } => {
+                (eval_to_instruction_result(reason), gas_used, Some(output))
+            }
+            ExecutionResult::Revert { gas_used, output } => {
+                (InstructionResult::Revert, gas_used, Some(Output::Call(output)))
+            }
+            ExecutionResult::Halt { reason, gas_used } => {
+                (halt_to_instruction_result(reason), gas_used, None)
+            }
+        };
         let access_list = tracer.access_list();
         Ok((exit_reason, out, gas_used, access_list))
     }
@@ -1430,13 +1508,13 @@ impl Backend {
                     .with_pending_block(pool_transactions, |state, block| {
                         let block = block.block;
                         let block = BlockEnv {
-                            number: block.header.number,
-                            coinbase: block.header.beneficiary,
-                            timestamp: block.header.timestamp.into(),
-                            difficulty: block.header.difficulty,
-                            prevrandao: Some(block.header.mix_hash),
-                            basefee: block.header.base_fee_per_gas.unwrap_or_default(),
-                            gas_limit: block.header.gas_limit,
+                            number: block.header.number.into(),
+                            coinbase: block.header.beneficiary.into(),
+                            timestamp: rU256::from(block.header.timestamp),
+                            difficulty: block.header.difficulty.into(),
+                            prevrandao: Some(block.header.mix_hash.into()),
+                            basefee: block.header.base_fee_per_gas.unwrap_or_default().into(),
+                            gas_limit: block.header.gas_limit.into(),
                         };
                         f(state, block)
                     })
@@ -1448,7 +1526,7 @@ impl Backend {
         };
         let block_number: U256 = self.convert_block_number(block_number).into();
 
-        if block_number < self.env.read().block.number {
+        if block_number < self.env.read().block.number.into() {
             {
                 let mut states = self.states.write();
 
@@ -1457,13 +1535,13 @@ impl Backend {
                     .and_then(|block| Some((states.get(&block.header.hash())?, block)))
                 {
                     let block = BlockEnv {
-                        number: block.header.number,
-                        coinbase: block.header.beneficiary,
-                        timestamp: block.header.timestamp.into(),
-                        difficulty: block.header.difficulty,
-                        prevrandao: Some(block.header.mix_hash),
-                        basefee: block.header.base_fee_per_gas.unwrap_or_default(),
-                        gas_limit: block.header.gas_limit,
+                        number: block.header.number.into(),
+                        coinbase: block.header.beneficiary.into(),
+                        timestamp: rU256::from(block.header.timestamp),
+                        difficulty: block.header.difficulty.into(),
+                        prevrandao: Some(block.header.mix_hash).map(Into::into),
+                        basefee: block.header.base_fee_per_gas.unwrap_or_default().into(),
+                        gas_limit: block.header.gas_limit.into(),
                     };
                     return Ok(f(Box::new(state), block))
                 }
@@ -1480,10 +1558,10 @@ impl Backend {
                     let db = self.db.read().await;
                     let gen_db = self.genesis.state_db_at_genesis(Box::new(&*db));
 
-                    block.number = block_number;
-                    block.timestamp = fork.timestamp().into();
-                    block.difficulty = fork.total_difficulty();
-                    block.basefee = fork.base_fee().unwrap_or_default();
+                    block.number = block_number.into();
+                    block.timestamp = rU256::from(fork.timestamp());
+                    block.difficulty = fork.total_difficulty().into();
+                    block.basefee = fork.base_fee().unwrap_or_default().into();
 
                     return Ok(f(Box::new(&gen_db), block))
                 }
@@ -1491,7 +1569,7 @@ impl Backend {
 
             warn!(target: "backend", "Not historic state found for block={}", block_number);
             return Err(BlockchainError::BlockOutOfRange(
-                self.env.read().block.number.as_u64(),
+                ru256_to_u256(self.env.read().block.number).as_u64(),
                 block_number.as_u64(),
             ))
         }
@@ -1509,8 +1587,8 @@ impl Backend {
     ) -> Result<H256, BlockchainError> {
         self.with_database_at(block_request, |db, _| {
             trace!(target: "backend", "get storage for {:?} at {:?}", address, index);
-            let val = db.storage(address, index)?;
-            Ok(u256_to_h256_be(val))
+            let val = db.storage(address.into(), index.into())?;
+            Ok(u256_to_h256_be(ru256_to_u256(val)))
         })
         .await?
     }
@@ -1536,7 +1614,7 @@ impl Backend {
         D: DatabaseRef<Error = DatabaseError>,
     {
         trace!(target: "backend", "get code for {:?}", address);
-        let account = state.basic(address)?.unwrap_or_default();
+        let account = state.basic(address.into())?.unwrap_or_default();
         if account.code_hash == KECCAK_EMPTY {
             // if the code hash is `KECCAK_EMPTY`, we check no further
             return Ok(Default::default())
@@ -1570,7 +1648,7 @@ impl Backend {
         D: DatabaseRef<Error = DatabaseError>,
     {
         trace!(target: "backend", "get balance for {:?}", address);
-        Ok(state.basic(address)?.unwrap_or_default().balance)
+        Ok(state.basic(address.into())?.unwrap_or_default().balance.into())
     }
 
     /// Returns the nonce of the address
@@ -1593,7 +1671,7 @@ impl Backend {
         };
         self.with_database_at(final_block_request, |db, _| {
             trace!(target: "backend", "get nonce for {:?}", address);
-            Ok(db.basic(address)?.unwrap_or_default().nonce.into())
+            Ok(db.basic(address.into())?.unwrap_or_default().nonce.into())
         })
         .await?
     }
@@ -2036,7 +2114,7 @@ impl TransactionValidator for Backend {
             return Err(InvalidTransactionError::GasTooLow)
         }
 
-        if tx.gas_limit() > env.block.gas_limit {
+        if tx.gas_limit() > env.block.gas_limit.into() {
             warn!(target: "backend", "[{:?}] gas too high", tx.hash());
             return Err(InvalidTransactionError::GasTooHigh)
         }
@@ -2049,7 +2127,7 @@ impl TransactionValidator for Backend {
         }
 
         if (env.cfg.spec_id as u8) >= (SpecId::LONDON as u8) {
-            if tx.gas_price() < env.block.basefee {
+            if tx.gas_price() < env.block.basefee.into() {
                 warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.block.basefee);
                 return Err(InvalidTransactionError::FeeTooLow)
             }
@@ -2073,7 +2151,7 @@ impl TransactionValidator for Backend {
             InvalidTransactionError::Payment
         })?;
 
-        if account.balance < req_funds {
+        if account.balance < req_funds.into() {
             warn!(target: "backend", "[{:?}] insufficient allowance={}, required={} account={:?}", tx.hash(), account.balance, req_funds, *pending.sender());
             return Err(InvalidTransactionError::Payment)
         }

@@ -14,42 +14,38 @@ use std::str::FromStr;
 /// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
 pub struct SendTxArgs {
-    #[clap(
-        help = "The destination of the transaction. If not provided, you must use cast send --create.",
-        value_parser = NameOrAddress::from_str,
-        value_name = "TO",
-    )]
+    /// The destination of the transaction.
+    ///
+    /// If not provided, you must use cast send --create.
+    #[clap(value_parser = NameOrAddress::from_str)]
     to: Option<NameOrAddress>,
-    #[clap(help = "The signature of the function to call.", value_name = "SIG")]
+
+    /// The signature of the function to call.
     sig: Option<String>,
-    #[clap(help = "The arguments of the function to call.", value_name = "ARGS")]
+
+    /// The arguments of the function to call.
     args: Vec<String>,
-    #[clap(
-        long = "async",
-        env = "CAST_ASYNC",
-        name = "async",
-        alias = "cast-async",
-        help = "Only print the transaction hash and exit immediately."
-    )]
+
+    /// Only print the transaction hash and exit immediately.
+    #[clap(name = "async", long = "async", alias = "cast-async", env = "CAST_ASYNC")]
     cast_async: bool,
+
     #[clap(flatten)]
     tx: TransactionOpts,
+
     #[clap(flatten)]
     eth: EthereumOpts,
-    #[clap(
-        long,
-        help = "The number of confirmations until the receipt is fetched.",
-        default_value = "1",
-        value_name = "CONFIRMATIONS"
-    )]
+
+    /// The number of confirmations until the receipt is fetched.
+    #[clap(long, default_value = "1")]
     confirmations: usize,
-    #[clap(long = "json", short = 'j', help_heading = "Display options")]
-    to_json: bool,
-    #[clap(
-        long = "resend",
-        help = "Reuse the latest nonce for the sender account.",
-        conflicts_with = "nonce"
-    )]
+
+    /// Print the transaction receipt as JSON.
+    #[clap(long, short, help_heading = "Display options")]
+    json: bool,
+
+    /// Reuse the latest nonce for the sender account.
+    #[clap(long, conflicts_with = "nonce")]
     resend: bool,
 
     #[clap(subcommand)]
@@ -58,13 +54,16 @@ pub struct SendTxArgs {
 
 #[derive(Debug, Parser)]
 pub enum SendTxSubcommands {
-    #[clap(name = "--create", about = "Use to deploy raw contract bytecode")]
+    /// Use to deploy raw contract bytecode.
+    #[clap(name = "--create")]
     Create {
-        #[clap(help = "Bytecode of contract.", value_name = "CODE")]
+        /// The bytecode of the contract to deploy.
         code: String,
-        #[clap(help = "The signature of the function to call.", value_name = "SIG")]
+
+        /// The signature of the function to call.
         sig: Option<String>,
-        #[clap(help = "The arguments of the function to call.", value_name = "ARGS")]
+
+        /// The arguments of the function to call.
         args: Vec<String>,
     },
 }
@@ -79,7 +78,7 @@ impl SendTxArgs {
             mut args,
             mut tx,
             confirmations,
-            to_json,
+            json: to_json,
             resend,
             command,
         } = self;

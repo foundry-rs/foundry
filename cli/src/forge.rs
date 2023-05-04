@@ -20,10 +20,10 @@ fn main() -> eyre::Result<()> {
     match opts.sub {
         Subcommands::Test(cmd) => {
             if cmd.is_watch() {
-                utils::block_on(watch::watch_test(cmd))?;
+                utils::block_on(watch::watch_test(cmd))
             } else {
                 let outcome = cmd.run()?;
-                outcome.ensure_ok()?;
+                outcome.ensure_ok()
             }
         }
         Subcommands::Script(cmd) => {
@@ -32,103 +32,69 @@ fn main() -> eyre::Result<()> {
                 cmd.opts.args.silent,
                 cmd.json,
             ))?;
-            utils::block_on(cmd.run_script(Default::default()))?;
+            utils::block_on(cmd.run_script(Default::default()))
         }
-        Subcommands::Coverage(cmd) => {
-            cmd.run()?;
-        }
-        Subcommands::Bind(cmd) => {
-            cmd.run()?;
-        }
+        Subcommands::Coverage(cmd) => cmd.run(),
+        Subcommands::Bind(cmd) => cmd.run(),
         Subcommands::Build(cmd) => {
             if cmd.is_watch() {
-                utils::block_on(watch::watch_build(cmd))?;
+                utils::block_on(watch::watch_build(cmd))
             } else {
-                cmd.run()?;
+                cmd.run().map(|_| ())
             }
         }
-        Subcommands::Debug(cmd) => {
-            utils::block_on(cmd.debug(Default::default()))?;
-        }
-        Subcommands::VerifyContract(args) => {
-            utils::block_on(args.run())?;
-        }
-        Subcommands::VerifyCheck(args) => {
-            utils::block_on(args.run())?;
-        }
+        Subcommands::Debug(cmd) => utils::block_on(cmd.debug(Default::default())),
+        Subcommands::VerifyContract(args) => utils::block_on(args.run()),
+        Subcommands::VerifyCheck(args) => utils::block_on(args.run()),
         Subcommands::Cache(cmd) => match cmd.sub {
-            CacheSubcommands::Clean(cmd) => {
-                cmd.run()?;
-            }
-            CacheSubcommands::Ls(cmd) => {
-                cmd.run()?;
-            }
+            CacheSubcommands::Clean(cmd) => cmd.run(),
+            CacheSubcommands::Ls(cmd) => cmd.run(),
         },
-        Subcommands::Create(cmd) => {
-            utils::block_on(cmd.run())?;
-        }
-        Subcommands::Update(cmd) => cmd.run()?,
-        Subcommands::Install(cmd) => {
-            cmd.run()?;
-        }
-        Subcommands::Remove(cmd) => {
-            cmd.run()?;
-        }
-        Subcommands::Remappings(cmd) => {
-            cmd.run()?;
-        }
-        Subcommands::Init(cmd) => {
-            cmd.run()?;
-        }
+        Subcommands::Create(cmd) => utils::block_on(cmd.run()),
+        Subcommands::Update(cmd) => cmd.run(),
+        Subcommands::Install(cmd) => cmd.run(),
+        Subcommands::Remove(cmd) => cmd.run(),
+        Subcommands::Remappings(cmd) => cmd.run(),
+        Subcommands::Init(cmd) => cmd.run(),
         Subcommands::Completions { shell } => {
-            generate(shell, &mut Opts::command(), "forge", &mut std::io::stdout())
+            generate(shell, &mut Opts::command(), "forge", &mut std::io::stdout());
+            Ok(())
         }
-        Subcommands::GenerateFigSpec => clap_complete::generate(
-            clap_complete_fig::Fig,
-            &mut Opts::command(),
-            "forge",
-            &mut std::io::stdout(),
-        ),
+        Subcommands::GenerateFigSpec => {
+            clap_complete::generate(
+                clap_complete_fig::Fig,
+                &mut Opts::command(),
+                "forge",
+                &mut std::io::stdout(),
+            );
+            Ok(())
+        }
         Subcommands::Clean { root } => {
             let config = utils::load_config_with_root(root);
             config.project()?.cleanup()?;
+            Ok(())
         }
         Subcommands::Snapshot(cmd) => {
             if cmd.is_watch() {
-                utils::block_on(watch::watch_snapshot(cmd))?;
+                utils::block_on(watch::watch_snapshot(cmd))
             } else {
-                cmd.run()?;
+                cmd.run()
             }
         }
-        Subcommands::Fmt(cmd) => {
-            cmd.run()?;
-        }
-        Subcommands::Config(cmd) => {
-            cmd.run()?;
-        }
-        Subcommands::Flatten(cmd) => {
-            cmd.run()?;
-        }
-        Subcommands::Inspect(cmd) => {
-            cmd.run()?;
-        }
-        Subcommands::UploadSelectors(args) => {
-            utils::block_on(args.run())?;
-        }
-        Subcommands::Tree(cmd) => {
-            cmd.run()?;
-        }
+        Subcommands::Fmt(cmd) => cmd.run(),
+        Subcommands::Config(cmd) => cmd.run(),
+        Subcommands::Flatten(cmd) => cmd.run(),
+        Subcommands::Inspect(cmd) => cmd.run(),
+        Subcommands::UploadSelectors(args) => utils::block_on(args.run()),
+        Subcommands::Tree(cmd) => cmd.run(),
         Subcommands::Geiger(cmd) => {
             let check = cmd.check;
             let n = cmd.run()?;
             if check && n > 0 {
                 std::process::exit(n as i32);
             }
+            Ok(())
         }
-        Subcommands::Doc(cmd) => {
-            cmd.run()?;
-        }
+        Subcommands::Doc(cmd) => cmd.run(),
     }
-
-    Ok(())
 }

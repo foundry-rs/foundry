@@ -20,6 +20,7 @@ abigen!(
     "[
         struct Log { bytes32[] topics; bytes data; }
         struct Rpc { string name; string url; }
+        struct DirEntry { string errorMessage; string path; uint64 depth; bool isDir; bool isSymlink; }
         struct FsMetadata { bool isDir; bool isSymlink; uint256 length; bool readOnly; uint256 modified; uint256 accessed; uint256 created; }
 
         allowCheatcodes(address)
@@ -27,6 +28,7 @@ abigen!(
         ffi(string[])(bytes)
 
         breakpoint(string)
+        breakpoint(string,bool)
 
         roll(uint256)
         warp(uint256)
@@ -101,9 +103,13 @@ abigen!(
         clearMockedCalls()
 
         expectCall(address,bytes)
+        expectCall(address,bytes,uint64)
         expectCall(address,uint256,bytes)
+        expectCall(address,uint256,bytes,uint64)
         expectCall(address,uint256,uint64,bytes)
+        expectCall(address,uint256,uint64,bytes,uint64)
         expectCallMinGas(address,uint256,uint64,bytes)
+        expectCallMinGas(address,uint256,uint64,bytes,uint64)
         expectSafeMemory(uint64,uint64)
         expectSafeMemoryCall(uint64,uint64)
 
@@ -134,6 +140,12 @@ abigen!(
         writeLine(string,string)
         closeFile(string)
         removeFile(string)
+        createDir(string, bool)
+        removeDir(string, bool)
+        readDir(string)(DirEntry[])
+        readDir(string, uint64)(DirEntry[])
+        readDir(string, uint64, bool)(DirEntry[])
+        readLink(string)(string)
         fsMetadata(string)(FsMetadata)
 
         toString(bytes)
