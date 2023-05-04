@@ -25,7 +25,7 @@ use foundry_common::{
     evm::EvmArgs,
     get_contract_name, get_file_name,
 };
-use foundry_config::{figment, Config};
+use foundry_config::{figment, get_available_profiles, Config};
 use regex::Regex;
 use std::{collections::BTreeMap, path::PathBuf, sync::mpsc::channel, thread, time::Duration};
 use tracing::trace;
@@ -147,11 +147,14 @@ impl TestArgs {
         }?;
 
         let project_root = &project.paths.root;
+        let toml = config.get_config_path();
+        let profiles = get_available_profiles(toml)?;
 
         let test_options: TestOptions = TestOptionsBuilder::default()
             .fuzz(config.fuzz)
             .invariant(config.invariant)
             .compile_output(&output)
+            .profiles(profiles)
             .build(project_root)?;
 
         // Determine print verbosity and executor verbosity

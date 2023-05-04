@@ -9,6 +9,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
+use toml_edit::{Document, Item};
 
 /// Loads the config for the current project workspace
 pub fn load_config() -> Config {
@@ -168,6 +169,38 @@ pub(crate) fn get_dir_remapping(dir: impl AsRef<Path>) -> Option<Remapping> {
     }
 }
 
+/// Returns all available `profile` keys in a given `.toml` file
+///
+/// i.e. The toml below would return would return `["default", "ci", "local"]`
+/// ```toml
+/// [profile.default]
+/// ...
+/// [profile.ci]
+/// ...
+/// [profile.local]
+/// ```
+pub fn get_available_profiles(toml_path: impl AsRef<Path>) -> eyre::Result<Vec<String>> {
+    let doc = toml(toml_path)?;
+    let mut result = vec![Config::DEFAULT_PROFILE.to_string()];
+
+    if let Some(Item::Table(profiles)) = doc.as_table().get(Config::PROFILE_SECTION) {
+        for (_, (profile, _)) in profiles.iter().enumerate() {
+            let p = profile.to_string();
+            if !result.contains(&p) {
+                result.push(p);
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+fn toml(path: impl AsRef<Path>) -> eyre::Result<Document> {
+    let path = path.as_ref().to_owned();
+    let doc: Document = std::fs::read_to_string(path)?.parse()?;
+    Ok(doc)
+}
+
 /// Deserialize stringified percent. The value must be between 0 and 100 inclusive.
 pub(crate) fn deserialize_stringified_percent<'de, D>(deserializer: D) -> Result<u32, D::Error>
 where
@@ -208,4 +241,43 @@ where
         }
     };
     Ok(num)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use crate::get_available_profiles;
+
+    #[test]
+    fn get_profiles_from_toml() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [foo.baz]
+                libs = ['node_modules', 'lib']
+
+                [profile.default]
+                libs = ['node_modules', 'lib']
+
+                [profile.ci]
+                libs = ['node_modules', 'lib']
+
+                [profile.local]
+                libs = ['node_modules', 'lib']
+            "#,
+            )?;
+
+            let path = Path::new("./foundry.toml");
+            let profiles = get_available_profiles(path).unwrap();
+
+            assert_eq!(
+                profiles,
+                vec!["default".to_string(), "ci".to_string(), "local".to_string()]
+            );
+
+            Ok(())
+        });
+    }
 }
