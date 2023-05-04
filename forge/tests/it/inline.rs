@@ -87,16 +87,18 @@ mod tests {
     }
 
     #[test]
-    fn build_test_options_invalid_profile() {
+    fn build_test_options_just_one_valid_profile() {
         let root = &PROJECT.paths.root;
-        let profiles = vec!["profile-sheldon-cooper".to_string()];
+        let valid_profiles = vec!["profile-sheldon-cooper".to_string()];
         let build_result = TestOptionsBuilder::default()
             .fuzz(FuzzConfig::default())
             .invariant(InvariantConfig::default())
             .compile_output(&COMPILED)
-            .profiles(profiles)
+            .profiles(valid_profiles)
             .build(root);
 
+        // We expect an error, since COMPILED contains in-line
+        // per-test configs for "default" and "ci" profiles
         assert!(build_result.is_err());
     }
 
