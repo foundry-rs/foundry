@@ -135,7 +135,7 @@ impl WalletSubcommands {
                                 wallet.sign_message(data_bytes).await?
                             }
                             None => wallet.sign_message(message).await?,
-                        }
+                        };
                         println!("0x{sig}");
                     }
                     Some(SignType::TypedData { from_file, data }) => {
@@ -149,7 +149,7 @@ impl WalletSubcommands {
                             serde_json::from_str(&data)?
                         };
                         let sig = wallet.sign_typed_data(&typed_data).await?;
-                        println!("Signature: 0x{sig}");
+                        println!("0x{sig}");
                     }
                     None => {
                         println!("No subcommand provided. Please provide a subcommand for the type of data to sign.")
