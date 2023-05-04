@@ -11,6 +11,9 @@ pub enum InlineConfigParserError {
     /// The property cannot be mapped to the configuration object
     #[error("'{0}' is an Invalid config property")]
     InvalidConfigProperty(String),
+    /// An invalid profile has been provided
+    #[error("'{0}' specifies an Invalid profile. Available profiles are {1}")]
+    InvalidProfile(String, String),
     /// An error occurred while trying to parse an integer configuration value
     #[error("Invalid config value for key '{0}'. Unable to parse '{1}' into an integer value")]
     ParseIntError(String, String),
@@ -65,7 +68,7 @@ where
     /// /// forge-config: ci.fuzz.runs = 10
     /// ```
     /// would validate the whole `invariant` configuration.
-    fn validate(natspec: &NatSpec) -> Result<(), InlineConfigError> {
+    fn validate_configs(natspec: &NatSpec) -> Result<(), InlineConfigError> {
         let config_key = Self::config_key();
 
         let configs = natspec
@@ -125,14 +128,78 @@ where
 
         result
     }
+}
 
-    /// Tries to parse a `u32` from `value`
-    fn parse_u32(key: String, value: String) -> Result<u32, InlineConfigParserError> {
-        value.parse().map_err(|_| InlineConfigParserError::ParseIntError(key, value))
+/// Checks that each configuration line specified in `natspec`, contains at least one
+/// of `profiles`.
+///
+/// i.e. Given available profiles
+/// ```rust
+/// let _profiles = vec!["ci", "default"];
+/// ```
+/// A configuration like `forge-config: ciii.invariant.depth = 1` would result
+/// in an error.
+pub fn validate_profiles(natspec: &NatSpec, profiles: &[String]) -> Result<(), InlineConfigError> {
+    for config in natspec.config_lines() {
+        if !profiles.iter().any(|p| config.starts_with(&format!("{INLINE_CONFIG_PREFIX}:{p}."))) {
+            let err_line: String = natspec.debug_context();
+            let profiles = format!("{profiles:?}");
+            Err(InlineConfigError {
+                source: InlineConfigParserError::InvalidProfile(config, profiles),
+                line: err_line,
+            })?
+        }
+    }
+    Ok(())
+}
+
+/// Tries to parse a `u32` from `value`
+pub fn parse_u32(key: String, value: String) -> Result<u32, InlineConfigParserError> {
+    value.parse().map_err(|_| InlineConfigParserError::ParseIntError(key, value))
+}
+
+/// Tries to parse a `bool` from `value`
+pub fn parse_bool(key: String, value: String) -> Result<bool, InlineConfigParserError> {
+    value.parse().map_err(|_| InlineConfigParserError::ParseBoolError(key, value))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{inline::conf_parser::validate_profiles, NatSpec};
+
+    #[test]
+    fn validate_profiles_error() {
+        let profiles = ["ci".to_string(), "default".to_string()];
+        let natspec = NatSpec {
+            contract: Default::default(),
+            function: Default::default(),
+            line: Default::default(),
+            docs: r#"
+            forge-config: ciii.invariant.depth = 1 
+            forge-config: default.invariant.depth = 1
+            "#
+            .into(),
+        };
+
+        let result = validate_profiles(&natspec, &profiles);
+        assert!(result.is_err());
     }
 
-    /// Tries to parse a `bool` from `value`
-    fn parse_bool(key: String, value: String) -> Result<bool, InlineConfigParserError> {
-        value.parse().map_err(|_| InlineConfigParserError::ParseBoolError(key, value))
+    #[test]
+    fn validate_profiles_success() {
+        let profiles = ["ci".to_string(), "default".to_string()];
+        let natspec = NatSpec {
+            contract: Default::default(),
+            function: Default::default(),
+            line: Default::default(),
+            docs: r#"
+            forge-config: ci.invariant.depth = 1 
+            forge-config: default.invariant.depth = 1
+            "#
+            .into(),
+        };
+
+        let result = validate_profiles(&natspec, &profiles);
+        assert!(result.is_ok());
     }
 }

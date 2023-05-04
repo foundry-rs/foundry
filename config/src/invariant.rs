@@ -2,7 +2,10 @@
 
 use crate::{
     fuzz::FuzzDictionaryConfig,
-    inline::{InlineConfigParser, InlineConfigParserError, INLINE_CONFIG_INVARIANT_KEY},
+    inline::{
+        parse_bool, parse_u32, InlineConfigParser, InlineConfigParserError,
+        INLINE_CONFIG_INVARIANT_KEY,
+    },
 };
 use serde::{Deserialize, Serialize};
 
@@ -53,10 +56,10 @@ impl InlineConfigParser for InvariantConfig {
             let key = pair.0;
             let value = pair.1;
             match key.as_str() {
-                "runs" => conf.runs = Self::parse_u32(key, value)?,
-                "depth" => conf.depth = Self::parse_u32(key, value)?,
-                "fail-on-revert" => conf.fail_on_revert = Self::parse_bool(key, value)?,
-                "call-override" => conf.call_override = Self::parse_bool(key, value)?,
+                "runs" => conf.runs = parse_u32(key, value)?,
+                "depth" => conf.depth = parse_u32(key, value)?,
+                "fail-on-revert" => conf.fail_on_revert = parse_bool(key, value)?,
+                "call-override" => conf.call_override = parse_bool(key, value)?,
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key.to_string()))?,
             }
         }
@@ -111,9 +114,6 @@ mod tests {
             "forge-config: default.invariant.runs = 2".to_string(),
         ];
         let variables = InvariantConfig::overrides(configs);
-        assert_eq!(
-            variables,
-            vec![("runs".into(), "2".into())]
-        );
+        assert_eq!(variables, vec![("runs".into(), "2".into())]);
     }
 }

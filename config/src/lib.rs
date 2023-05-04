@@ -93,7 +93,7 @@ pub use invariant::InvariantConfig;
 use providers::remappings::RemappingsProvider;
 
 mod inline;
-pub use inline::{InlineConfig, InlineConfigError, InlineConfigParser, NatSpec};
+pub use inline::{validate_profiles, InlineConfig, InlineConfigError, InlineConfigParser, NatSpec};
 
 /// Foundry configuration
 ///

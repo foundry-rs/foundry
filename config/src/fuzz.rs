@@ -3,7 +3,9 @@
 use ethers_core::types::U256;
 use serde::{Deserialize, Serialize};
 
-use crate::inline::{InlineConfigParser, InlineConfigParserError, INLINE_CONFIG_FUZZ_KEY};
+use crate::inline::{
+    parse_u32, InlineConfigParser, InlineConfigParserError, INLINE_CONFIG_FUZZ_KEY,
+};
 
 /// Contains for fuzz testing
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,7 +48,7 @@ impl InlineConfigParser for FuzzConfig {
         let overrides: Vec<(String, String)> = Self::overrides(configs);
 
         if overrides.is_empty() {
-            return Ok(None);
+            return Ok(None)
         }
 
         let mut conf = *self;
@@ -55,8 +57,8 @@ impl InlineConfigParser for FuzzConfig {
             let key = pair.0;
             let value = pair.1;
             match key.as_str() {
-                "runs" => conf.runs = Self::parse_u32(key, value)?,
-                "max-test-rejects" => conf.max_test_rejects = Self::parse_u32(key, value)?,
+                "runs" => conf.runs = parse_u32(key, value)?,
+                "max-test-rejects" => conf.max_test_rejects = parse_u32(key, value)?,
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key))?,
             }
         }
