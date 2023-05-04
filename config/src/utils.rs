@@ -245,9 +245,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use crate::get_available_profiles;
+    use std::path::Path;
 
     #[test]
     fn get_profiles_from_toml() {
