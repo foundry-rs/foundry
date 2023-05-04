@@ -5,14 +5,16 @@ use crate::{
 use bytes::Bytes;
 use ethers::{
     abi::{AbiDecode, Token},
-    types::{Log, H256},
+    types::{Log, H256, U256},
 };
 use foundry_macros::ConsoleFmt;
 use revm::{
-    interpreter::{CallInputs, Gas, InstructionResult},
+    interpreter::{CallInputs, Gas, InstructionResult, Interpreter},
     primitives::{B160, B256},
     Database, EVMData, Inspector,
 };
+use std::fmt::Write;
+use yansi::Paint;
 
 /// An inspector that collects logs during execution.
 ///
@@ -20,6 +22,10 @@ use revm::{
 #[derive(Debug, Clone, Default)]
 pub struct LogCollector {
     pub logs: Vec<Log>,
+
+    /// Current's call memory
+    /// used for `console.logMemory`
+    pub memory: Vec<u8>,
 }
 
 impl LogCollector {
@@ -36,8 +42,26 @@ impl LogCollector {
             }
         };
 
-        // Convert it to a DS-style `emit log(string)` event
-        self.logs.push(convert_hh_log_to_event(decoded));
+        if let HardhatConsoleCalls::LogMemory(inner) = &decoded {
+            println!("inner {inner:?}");
+            match format_log_memory(&self.memory, inner.start, inner.end, inner.pretty_print) {
+                Ok(formatted_memory) => {
+                    let token = Token::String(formatted_memory);
+                    let data = ethers::abi::encode(&[token]).into();
+                    self.logs.push(Log { topics: vec![TOPIC], data, ..Default::default() });
+                }
+                Err(err) => {
+                    return (
+                        InstructionResult::Revert,
+                        ethers::abi::encode(&[Token::String(format!("Error logMemory: {err}"))])
+                            .into(),
+                    )
+                }
+            };
+        } else {
+            // Convert it to a DS-style `emit log(string)` event
+            self.logs.push(convert_hh_log_to_event(decoded));
+        }
 
         (InstructionResult::Continue, Bytes::new())
     }
@@ -47,6 +71,16 @@ impl<DB> Inspector<DB> for LogCollector
 where
     DB: Database,
 {
+    fn step(
+        &mut self,
+        interpreter: &mut Interpreter,
+        _: &mut EVMData<'_, DB>,
+        _: bool,
+    ) -> InstructionResult {
+        self.memory = interpreter.memory.data().clone();
+        InstructionResult::Continue
+    }
+
     fn log(&mut self, _: &mut EVMData<'_, DB>, address: &B160, topics: &[B256], data: &Bytes) {
         self.logs.push(Log {
             address: b160_to_h160(*address),
@@ -86,4 +120,81 @@ fn convert_hh_log_to_event(call: HardhatConsoleCalls) -> Log {
     let token = Token::String(fmt);
     let data = ethers::abi::encode(&[token]).into();
     Log { topics: vec![TOPIC], data, ..Default::default() }
+}
+
+fn check_log_memory_inputs(
+    start: U256,
+    end: U256,
+    memory_length: u32,
+) -> Result<(u32, u32), String> {
+    let start = u32::try_from(start).map_err(|err| format!("start parameter: {}", err))?;
+    let end = u32::try_from(end).map_err(|err| format!("end parameter: {}", err))?;
+    if start > end {
+        return Err(format!("invalid parameters: start ({}) must be <= end ({})", start, end))
+    }
+    if end > memory_length - 1 {
+        return Err(format!(
+            "invalid parameters: end ({}). Max memory offset: {}",
+            end,
+            memory_length - 1
+        ))
+    }
+    Ok((start, end))
+}
+
+fn format_log_memory(
+    mem: &Vec<u8>,
+    start: U256,
+    end: U256,
+    pretty_print: bool,
+) -> Result<String, String> {
+    let (start, end) = check_log_memory_inputs(start, end, mem.len() as u32)?;
+
+    let memory_start = start - (start % 32);
+    let memory_end = end + (31 - end % 32);
+
+    let mem =
+        &mem[(memory_start as usize)..=(memory_end as usize)].chunks(32).collect::<Vec<&[u8]>>();
+
+    let mut formatted_mem = vec![];
+
+    for (i_chunk, chunk) in mem.iter().enumerate() {
+        let mut s = String::new();
+
+        write!(
+            &mut s,
+            "[{:#04x}:{:#04x}] ",
+            (memory_start as usize) + i_chunk * 32,
+            (memory_start as usize) + (i_chunk + 1) * 32
+        )
+        .map_err(|err| err.to_string())?;
+
+        for (i_value, value) in chunk.iter().enumerate() {
+            let i = (i_chunk * 32 + i_value) as u32;
+            let requested_range = (start - memory_start)..=(end - memory_start);
+
+            let value = if requested_range.contains(&i) {
+                Paint::yellow(value).bold()
+            } else {
+                Paint::new(value)
+            };
+
+            write!(&mut s, "{:02x?}", value).map_err(|err| err.to_string())?;
+            if pretty_print {
+                write!(&mut s, " ").map_err(|err| err.to_string())?;
+            }
+        }
+
+        formatted_mem.push(s);
+    }
+
+    let header = (0..32).map(|x| format!("{:>2?}", x)).collect::<Vec<String>>().join(" ");
+    let formatted_mem = formatted_mem.iter().fold(String::new(), |acc, s| acc + s + "\n");
+
+    let mem_as_string = if pretty_print {
+        format!("            {}\n{}", header, formatted_mem)
+    } else {
+        formatted_mem
+    };
+    Ok(format!("LogMemory:\n{}", mem_as_string))
 }

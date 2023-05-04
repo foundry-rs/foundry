@@ -1528,4 +1528,8 @@ library console {
     function log(address p0, address p1, address p2, address p3) internal view {
         _sendLogPayload(abi.encodeWithSignature("log(address,address,address,address)", p0, p1, p2, p3));
     }
+
+    function logMemory(uint256 start, uint256 end, bool prettyPrint) internal view {
+        _sendLogPayload(abi.encodeWithSignature("logMemory(uint256,uint256,bool)", start, end, prettyPrint));
+    }
 }
