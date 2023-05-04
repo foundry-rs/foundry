@@ -719,24 +719,33 @@ impl ScriptConfig {
             if let Ok(provider) = ethers::providers::Provider::<Http>::try_from(rpc) {
                 match provider.get_chainid().await {
                     Ok(chain_id) => match TryInto::<Chain>::try_into(chain_id) {
-                        Ok(chain) => return SHANGHAI_ENABLED_CHAINS.contains(&chain),
-                        Err(_) => return false,
+                        Ok(chain) => return Some((SHANGHAI_ENABLED_CHAINS.contains(&chain), chain)),
+                        Err(_) => return None,
                     },
-                    Err(_) => return false,
+                    Err(_) => return None,
                 }
             }
-            false
+            None
         });
 
-        let chain_ids_supported =
-            future::join_all(chain_ids).await.into_iter().any(|result| result);
+        let chain_ids: Vec<_> = future::join_all(chain_ids).await.into_iter().flatten().collect();
 
-        // At least one chain ID unsupported.
-        if !chain_ids_supported {
-            let msg = "\
-EIP-3855 is not supported in one or more of the RPCs used.
+        let chain_id_unsupported = chain_ids.iter().any(|(supported, _)| !supported);
+
+        // At least one chain ID is unsupported, therefore we print the message.
+        if chain_id_unsupported {
+            let msg = format!(
+                r#"
+EIP-3855 is not supported in one or more of the RPCs used: {}.
 Contracts deployed with a Solidity version equal or higher than 0.8.20 might not work properly.
-For more information, please see https://eips.ethereum.org/EIPS/eip-3855";
+For more information, please see https://eips.ethereum.org/EIPS/eip-3855"#,
+                chain_ids
+                    .iter()
+                    .filter(|(supported, _)| !supported)
+                    .map(|(_, chain)| format!("{}", *chain as u64))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
             shell::println(Paint::yellow(msg))?;
         }
         Ok(())
