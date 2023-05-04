@@ -153,7 +153,8 @@ where
     ) -> (InstructionResult, Option<B160>, Gas, Bytes) {
         // TODO: Does this increase gas cost?
         if let Err(err) = data.journaled_state.load_account(call.caller, data.db) {
-            return (InstructionResult::Revert, None, Gas::new(call.gas_limit), err.encode_string())
+            let gas = Gas::new(call.gas_limit);
+            return (InstructionResult::Revert, None, gas, err.encode_string().0)
         }
 
         let nonce = data.journaled_state.account(call.caller).info.nonce;
