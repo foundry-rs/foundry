@@ -202,7 +202,7 @@ impl Wallet {
                 None => LedgerHDPath::LedgerLive(self.mnemonic_index as usize),
             };
             let ledger = Ledger::new(derivation, chain_id).await.wrap_err_with(|| {
-r#"
+                r#"
 Could not connect to Ledger device.
 Make sure it's connected and unlocked, with no other desktop wallet apps open.
 "#
@@ -217,7 +217,7 @@ Make sure it's connected and unlocked, with no other desktop wallet apps open.
 
             // cached to ~/.ethers-rs/trezor/cache/trezor.session
             let trezor = Trezor::new(derivation, chain_id, None).await.wrap_err_with(|| {
-r#"
+                r#"
 Could not connect to Trezor device.
 Make sure it's connected and unlocked, with no other conflicting desktop wallet apps open."#
             })?;
@@ -239,8 +239,9 @@ Make sure it's connected and unlocked, with no other conflicting desktop wallet 
 
             let maybe_local = self.try_resolve_local_wallet()?;
 
-            let local = maybe_local
-                .ok_or_else(|| eyre::eyre!(r#"
+            let local = maybe_local.ok_or_else(|| {
+                eyre::eyre!(
+                    r#"
 Error accessing local wallet. Did you set a private key, mnemonic or keystore?
 Run `cast send --help` or `forge create --help` and use the corresponding CLI
 flag to set your key via:
@@ -248,7 +249,9 @@ flag to set your key via:
 Alternatively, if you're using a local node with unlocked accounts,
 use the --unlocked flag and either set the `ETH_FROM` environment variable to the address
 of the unlocked account you want to use, or provide the --from flag with the address directly.
-                "#))?;
+                "#
+                )
+            })?;
 
             Ok(WalletSigner::Local(local.with_chain_id(chain_id)))
         }
