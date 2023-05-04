@@ -8,7 +8,7 @@ mod tests {
         result::{SuiteResult, TestKind, TestResult},
         TestOptions, TestOptionsBuilder,
     };
-    use foundry_config::{FuzzConfig, InlineConfig, InvariantConfig};
+    use foundry_config::{FuzzConfig, InvariantConfig};
 
     #[test]
     fn inline_config_run_fuzz() {
@@ -71,38 +71,33 @@ mod tests {
             }
         }
     }
+
     #[test]
-    fn inline_fuzz_config() {
+    fn build_test_options() {
         let root = &PROJECT.paths.root;
-        let compiled = COMPILED.clone();
-        let base_fuzz = FuzzConfig::default();
-        if let Ok(conf) = InlineConfig::<FuzzConfig>::try_from((&compiled, &base_fuzz, root)) {
-            // Inline config defined in testdata/inline/FuzzInlineConf.t.sol
-            let contract_name = "inline/FuzzInlineConf.t.sol:FuzzInlineConf";
-            let function_name = "testInlineConfFuzz";
-            let inline_config: &FuzzConfig = conf.get(contract_name, function_name).unwrap();
-            assert_eq!(inline_config.runs, 1024);
-            assert_eq!(inline_config.max_test_rejects, 500);
-        }
+        let profiles = vec!["default".to_string(), "ci".to_string()];
+        let build_result = TestOptionsBuilder::default()
+            .fuzz(FuzzConfig::default())
+            .invariant(InvariantConfig::default())
+            .compile_output(&COMPILED)
+            .profiles(profiles)
+            .build(root);
+
+        assert!(build_result.is_ok());
     }
 
     #[test]
-    fn inline_invariant_config() {
+    fn build_test_options_invalid_profile() {
         let root = &PROJECT.paths.root;
-        let compiled = COMPILED.clone();
-        let base_invariant = InvariantConfig::default();
-        if let Ok(conf) =
-            InlineConfig::<InvariantConfig>::try_from((&compiled, &base_invariant, root))
-        {
-            // Inline config defined in testdata/inline/InvariantInlineConf.t.sol
-            let contract_name = "inline/InvariantInlineConf.t.sol:InvariantInlineConf";
-            let function_name = "invariant_neverFalse";
-            let inline_config: &InvariantConfig = conf.get(contract_name, function_name).unwrap();
-            assert_eq!(inline_config.runs, 333);
-            assert_eq!(inline_config.depth, 32);
-            assert_eq!(inline_config.fail_on_revert, false);
-            assert_eq!(inline_config.call_override, true);
-        }
+        let profiles = vec!["profile-sheldon-cooper".to_string()];
+        let build_result = TestOptionsBuilder::default()
+            .fuzz(FuzzConfig::default())
+            .invariant(InvariantConfig::default())
+            .compile_output(&COMPILED)
+            .profiles(profiles)
+            .build(root);
+
+        assert!(build_result.is_err());
     }
 
     fn test_options() -> TestOptions {
