@@ -162,7 +162,7 @@ impl MultiContractRunner {
             .filter(|(_, results)| !results.is_empty())
             .map_with(stream_result, |stream_result, (name, result)| {
                 if let Some(stream_result) = stream_result.as_ref() {
-                    stream_result.send((name.clone(), result.clone())).unwrap();
+                    let _ = stream_result.send((name.clone(), result.clone()));
                 }
                 (name, result)
             })
