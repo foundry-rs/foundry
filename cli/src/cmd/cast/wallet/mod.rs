@@ -4,16 +4,17 @@ pub mod vanity;
 
 use crate::{
     cmd::{cast::wallet::vanity::VanityArgs, Cmd},
-    opts::Wallet,
+    opts::{Wallet, SignType}
 };
 use cast::SimpleCast;
 use clap::Parser;
 use ethers::{
     core::rand::thread_rng,
     signers::{LocalWallet, Signer},
-    types::{Address, Signature},
+    types::{transaction::eip712::TypedData, Address, Signature},
 };
 use eyre::Context;
+use std::{fs::File, io::BufReader};
 
 /// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
@@ -56,10 +57,10 @@ pub enum WalletSubcommands {
         #[clap(flatten)]
         wallet: Wallet,
     },
-    #[clap(name = "sign", visible_alias = "s", about = "Sign a message.")]
+    #[clap(name = "sign", visible_alias = "s", about = "Sign payloads with your wallet.")]
     Sign {
-        #[clap(help = "message to sign", value_name = "MESSAGE")]
-        message: String,
+        #[clap(subcommand)]
+        command: Option<SignType>,
         #[clap(flatten)]
         wallet: Wallet,
     },
@@ -118,10 +119,30 @@ impl WalletSubcommands {
                 let addr = wallet.address();
                 println!("{}", SimpleCast::to_checksum_address(&addr));
             }
-            WalletSubcommands::Sign { message, wallet } => {
+            WalletSubcommands::Sign { command, wallet } => {
                 let wallet = wallet.signer(0).await?;
-                let sig = wallet.sign_message(message).await?;
-                println!("Signature: 0x{sig}");
+                match command {
+                    Some(SignType::Message { message }) => {
+                        let sig = wallet.sign_message(message).await?;
+                        println!("Signature: 0x{sig}");
+                    }
+                    Some(SignType::TypedData { from_file, data }) => {
+                        let typed_data: TypedData = if from_file {
+                            // data is a file name, read json from file
+                            let file = File::open(&data)?;
+                            let reader = BufReader::new(file);
+                            serde_json::from_reader(reader)?
+                        } else {
+                            // data is a json string
+                            serde_json::from_str(&data)?
+                        };
+                        let sig = wallet.sign_typed_data(&typed_data).await?;
+                        println!("Signature: 0x{sig}");
+                    }
+                    None => {
+                        println!("No subcommand provided. Please provide a subcommand for the type of data to sign.")
+                    }
+                }
             }
             WalletSubcommands::Verify { message, signature, address } => {
                 let pubkey: Address = address.parse().wrap_err("Invalid address")?;
