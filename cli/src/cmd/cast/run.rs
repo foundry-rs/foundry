@@ -1,5 +1,8 @@
 use crate::{init_progress, opts::RpcOpts, update_progress, utils};
-use cast::trace::{identifier::SignaturesIdentifier, CallTraceDecoder, Traces};
+use cast::{
+    executor::{EvmError, ExecutionErr},
+    trace::{identifier::SignaturesIdentifier, CallTraceDecoder, Traces},
+};
 use clap::Parser;
 use ethers::{
     abi::Address,
@@ -168,14 +171,26 @@ impl RunArgs {
                 }
             } else {
                 trace!(tx=?tx.hash, "executing create transaction");
-                let DeployResult { gas_used, traces, debug: run_debug, .. }: DeployResult =
-                    executor.deploy_with_env(env, None).unwrap();
-
-                RunResult {
-                    success: true,
-                    traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
-                    debug: run_debug.unwrap_or_default(),
-                    gas_used,
+                match executor.deploy_with_env(env, None) {
+                    Ok(DeployResult { gas_used, traces, debug: run_debug, .. }) => RunResult {
+                        success: true,
+                        traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
+                        debug: run_debug.unwrap_or_default(),
+                        gas_used,
+                    },
+                    Err(EvmError::Execution(inner)) => {
+                        let ExecutionErr { reverted, gas_used, traces, debug: run_debug, .. } =
+                            *inner;
+                        RunResult {
+                            success: !reverted,
+                            traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
+                            debug: run_debug.unwrap_or_default(),
+                            gas_used,
+                        }
+                    }
+                    Err(err) => {
+                        eyre::bail!("unexpected error when running create transaction: {:?}", err)
+                    }
                 }
             }
         };

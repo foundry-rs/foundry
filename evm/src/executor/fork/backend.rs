@@ -723,10 +723,10 @@ mod tests {
         assert_eq!(account.nonce, mem_acc.nonce);
         let slots = db.storage().read().get(&address).unwrap().clone();
         assert_eq!(slots.len(), 1);
-        assert_eq!(slots.get(&idx).copied().unwrap(), value.into());
+        assert_eq!(slots.get(&idx).copied().unwrap(), value);
 
         let num = rU256::from(10u64);
-        let hash = backend.block_hash(num.into()).unwrap();
+        let hash = backend.block_hash(num).unwrap();
         let mem_hash = *db.block_hashes().read().get(&num).unwrap();
         assert_eq!(hash, mem_hash);
 

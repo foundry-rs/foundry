@@ -73,6 +73,7 @@ fn get_empty_session_source() -> SessionSource {
             evm_opts: EvmOpts::default(),
             backend: None,
             traces: false,
+            calldata: None,
         },
     )
 }

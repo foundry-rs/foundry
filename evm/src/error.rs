@@ -1,15 +1,17 @@
 //! error handling and support
 
-use bytes::Bytes;
-use ethers::abi::AbiEncode;
+use ethers::{abi::AbiEncode, types::Bytes};
 use std::fmt::Display;
 
-// keccak(Error(string)) "08c379a0"
-pub static REVERT_PREFIX: [u8; 4] = [8, 195, 121, 160];
+/// Solidity revert prefix.
+///
+/// `keccak256("Error(String)")[..4] == 0x08c379a0`
+pub const REVERT_PREFIX: [u8; 4] = [8, 195, 121, 160];
 
-/// Custom error prefix
-/// keccak(CheatCodeError) "0bc44503"
-pub static ERROR_PREFIX: [u8; 4] = [11, 196, 69, 3];
+/// Custom Cheatcode error prefix.
+///
+/// `keccak256("CheatCodeError")[..4] == 0x0bc44503`
+pub const ERROR_PREFIX: [u8; 4] = [11, 196, 69, 3];
 
 /// An extension trait for `std::error::Error` that can abi-encode itself
 pub trait SolError: std::error::Error {

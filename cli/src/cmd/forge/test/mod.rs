@@ -81,6 +81,10 @@ pub struct TestArgs {
     #[clap(long, short, help_heading = "Display options")]
     json: bool,
 
+    /// Stop running tests after the first failure
+    #[clap(long)]
+    pub fail_fast: bool,
+
     #[clap(flatten)]
     evm_opts: EvmArgs,
 
@@ -227,6 +231,7 @@ impl TestArgs {
                 self.allow_failure,
                 test_options,
                 self.gas_report,
+                self.fail_fast,
             )
         }
     }
@@ -470,6 +475,7 @@ fn test(
     allow_failure: bool,
     test_options: TestOptions,
     gas_reporting: bool,
+    fail_fast: bool,
 ) -> eyre::Result<TestOutcome> {
     trace!(target: "forge::test", "running all tests");
     if runner.count_filtered_tests(&filter) == 0 {
@@ -514,7 +520,7 @@ fn test(
         let sig_identifier =
             SignaturesIdentifier::new(Config::foundry_cache_dir(), config.offline)?;
 
-        for (contract_name, suite_result) in rx {
+        'outer: for (contract_name, suite_result) in rx {
             let mut tests = suite_result.test_results.clone();
             println!();
             for warning in suite_result.warnings.iter() {
@@ -526,6 +532,11 @@ fn test(
             }
             for (name, result) in &mut tests {
                 short_test_result(name, result);
+
+                // If the test failed, we want to stop processing the rest of the tests
+                if fail_fast && !result.success {
+                    break 'outer
+                }
 
                 // We only display logs at level 2 and above
                 if verbosity >= 2 {

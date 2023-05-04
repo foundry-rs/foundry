@@ -38,25 +38,25 @@ pub fn h256_to_u256_le(storage: H256) -> U256 {
 /// Small helper function to convert revm's [B160] into ethers's [H160].
 #[inline]
 pub fn b160_to_h160(b: revm::primitives::B160) -> ethers::types::H160 {
-    ethers::types::H160::from_slice(&b.to_fixed_bytes())
+    ethers::types::H160(b.0)
 }
 
 /// Small helper function to convert ethers's [H160] into revm's [B160].
 #[inline]
 pub fn h160_to_b160(h: ethers::types::H160) -> revm::primitives::B160 {
-    revm::primitives::B160::from_slice(&h.to_fixed_bytes())
+    revm::primitives::B160(h.0)
 }
 
 /// Small helper function to convert revm's [B256] into ethers's [H256].
 #[inline]
 pub fn b256_to_h256(b: revm::primitives::B256) -> ethers::types::H256 {
-    ethers::types::H256::from_slice(&b.to_fixed_bytes())
+    ethers::types::H256(b.0)
 }
 
 /// Small helper function to convert ether's [H256] into revm's [B256].
 #[inline]
 pub fn h256_to_b256(h: ethers::types::H256) -> revm::primitives::B256 {
-    revm::primitives::B256::from_slice(&h.to_fixed_bytes())
+    revm::primitives::B256(h.0)
 }
 
 /// Small helper function to convert ether's [U256] into revm's [U256].
@@ -70,7 +70,7 @@ pub fn u256_to_ru256(u: ethers::types::U256) -> revm::primitives::U256 {
 /// Small helper function to convert revm's [U256] into ethers's [U256].
 #[inline]
 pub fn ru256_to_u256(u: revm::primitives::U256) -> ethers::types::U256 {
-    ethers::types::U256::from_little_endian(u.as_le_slice())
+    ethers::types::U256::from_little_endian(&u.as_le_bytes())
 }
 
 /// Small helper function to convert an Eval into an InstructionResult
