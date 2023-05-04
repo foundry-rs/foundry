@@ -1,7 +1,10 @@
 use std::path::Path;
 
 use ethers::solc::ProjectCompileOutput;
-use foundry_config::{FuzzConfig, InlineConfig, InlineConfigError, InvariantConfig};
+use foundry_config::{
+    validate_profiles, Config, FuzzConfig, InlineConfig, InlineConfigError, InlineConfigParser,
+    InvariantConfig, NatSpec,
+};
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use tracing::trace;
 
@@ -84,7 +87,7 @@ impl TestOptions {
     where
         S: Into<String>,
     {
-        self.inline_fuzz.get_config(contract_id, test_fn).unwrap_or(&self.fuzz)
+        self.inline_fuzz.get(contract_id, test_fn).unwrap_or(&self.fuzz)
     }
 
     /// Returns an "invariant" configuration setup. Parameters are used to select tight scoped
@@ -98,7 +101,7 @@ impl TestOptions {
     where
         S: Into<String>,
     {
-        self.inline_invariant.get_config(contract_id, test_fn).unwrap_or(&self.invariant)
+        self.inline_invariant.get(contract_id, test_fn).unwrap_or(&self.invariant)
     }
 
     pub fn fuzzer_with_cases(&self, cases: u32) -> TestRunner {
@@ -123,11 +126,70 @@ impl TestOptions {
     }
 }
 
+impl<'a, P> TryFrom<(&'a ProjectCompileOutput, &'a P, Vec<String>, FuzzConfig, InvariantConfig)>
+    for TestOptions
+where
+    P: AsRef<Path>,
+{
+    type Error = InlineConfigError;
+
+    /// Tries to create an instance of `Self`, detecting inline configurations from the project
+    /// compile output.
+    ///
+    /// Param is a tuple, whose elements are:
+    /// 1. Solidity compiler output, essential to extract natspec test configs.
+    /// 2. Root path to express contract base dirs. This is essential to match inline configs at
+    /// runtime. 3. List of available configuration profiles
+    /// 4. Reference to a fuzz base configuration.
+    /// 5. Reference to an invariant base configuration.
+    fn try_from(
+        value: (&'a ProjectCompileOutput, &'a P, Vec<String>, FuzzConfig, InvariantConfig),
+    ) -> Result<Self, Self::Error> {
+        let output = value.0;
+        let root = value.1;
+        let profiles = &value.2;
+        let base_fuzz: FuzzConfig = value.3;
+        let base_invariant: InvariantConfig = value.4;
+
+        let natspecs: Vec<NatSpec> = NatSpec::parse(output, root);
+        let mut inline_invariant = InlineConfig::<InvariantConfig>::default();
+        let mut inline_fuzz = InlineConfig::<FuzzConfig>::default();
+
+        for natspec in natspecs {
+            // Perform general validation
+            validate_profiles(&natspec, profiles)?;
+            FuzzConfig::validate_configs(&natspec)?;
+            InvariantConfig::validate_configs(&natspec)?;
+
+            // Apply in-line configurations for the current profile
+            let configs: Vec<String> = natspec.current_profile_configs();
+            let c: &str = &natspec.contract;
+            let f: &str = &natspec.function;
+            let line: String = natspec.debug_context();
+
+            match base_fuzz.try_merge(&configs) {
+                Ok(Some(conf)) => inline_fuzz.insert(c, f, conf),
+                Err(e) => Err(InlineConfigError { line: line.clone(), source: e })?,
+                _ => { /* No inline config found, do nothing */ }
+            }
+
+            match base_invariant.try_merge(&configs) {
+                Ok(Some(conf)) => inline_invariant.insert(c, f, conf),
+                Err(e) => Err(InlineConfigError { line: line.clone(), source: e })?,
+                _ => { /* No inline config found, do nothing */ }
+            }
+        }
+
+        Ok(Self { fuzz: base_fuzz, invariant: base_invariant, inline_fuzz, inline_invariant })
+    }
+}
+
 /// Builder utility to create a [`TestOptions`] instance.
 #[derive(Default)]
 pub struct TestOptionsBuilder {
     fuzz: Option<FuzzConfig>,
     invariant: Option<InvariantConfig>,
+    profiles: Option<Vec<String>>,
     output: Option<ProjectCompileOutput>,
 }
 
@@ -146,6 +208,13 @@ impl TestOptionsBuilder {
         self
     }
 
+    /// Sets available configuration profiles. Profiles are useful to validate existing in-line
+    /// configurations. This argument is necessary in case a `compile_output`is provided.
+    pub fn profiles(mut self, p: Vec<String>) -> Self {
+        self.profiles = Some(p);
+        self
+    }
+
     /// Sets a project compiler output instance. This is used to extract
     /// inline test configurations that override `self.fuzz` and `self.invariant`
     /// specs when necessary.
@@ -161,20 +230,19 @@ impl TestOptionsBuilder {
     /// to determine the base path of generated contract identifiers. This is to provide correct
     /// matchers for inline test configs.
     pub fn build(self, root: impl AsRef<Path>) -> Result<TestOptions, InlineConfigError> {
+        let default_profiles = vec![Config::selected_profile().into()];
+        let profiles: Vec<String> = self.profiles.unwrap_or(default_profiles);
         let base_fuzz = self.fuzz.unwrap_or_default();
         let base_invariant = self.invariant.unwrap_or_default();
 
         match self.output {
-            Some(compile_output) => Ok(TestOptions {
-                fuzz: base_fuzz,
-                invariant: base_invariant,
-                inline_fuzz: InlineConfig::try_from((&compile_output, &base_fuzz, &root))?,
-                inline_invariant: InlineConfig::try_from((
-                    &compile_output,
-                    &base_invariant,
-                    &root,
-                ))?,
-            }),
+            Some(compile_output) => Ok(TestOptions::try_from((
+                &compile_output,
+                &root,
+                profiles,
+                base_fuzz,
+                base_invariant,
+            ))?),
             None => Ok(TestOptions {
                 fuzz: base_fuzz,
                 invariant: base_invariant,
