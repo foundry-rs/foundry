@@ -94,14 +94,14 @@ impl InvariantFuzzError {
         traces: &mut Traces,
     ) -> Result<Option<CounterExample>> {
         let mut counterexample_sequence = vec![];
-        let _calls = match self.test_error {
+        let calls = match self.test_error {
             // Don't use at the moment.
             TestError::Abort(_) => return Ok(None),
-            TestError::Fail(_, ref _calls) => _calls,
+            TestError::Fail(_, ref calls) => calls,
         };
 
         if self.shrink {
-            let _calls = self.try_shrinking(_calls, &executor);
+            let _ = self.try_shrinking(calls, &executor);
         } else {
             trace!(target: "forge::test", "Shrinking disabled.");
         }
@@ -112,7 +112,7 @@ impl InvariantFuzzError {
         set_up_inner_replay(&mut executor, &self.inner_sequence);
 
         // Replay each call from the sequence until we break the invariant.
-        for (sender, (addr, bytes)) in _calls.iter() {
+        for (sender, (addr, bytes)) in calls.iter() {
             let call_result = executor
                 .call_raw_committing(*sender, *addr, bytes.0.clone(), 0.into())
                 .expect("bad call to evm");
