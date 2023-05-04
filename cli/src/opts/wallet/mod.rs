@@ -1,3 +1,4 @@
+use crate::opts::error::PrivateKeyError;
 use async_trait::async_trait;
 use cast::{AwsChainProvider, AwsClient, AwsHttpClient, AwsRegion, KmsClient};
 use clap::Parser;
@@ -22,43 +23,36 @@ use std::{
 use tracing::{instrument, trace};
 
 pub mod multi_wallet;
-use crate::opts::error::PrivateKeyError;
 pub use multi_wallet::*;
 
 pub mod error;
 
+/// The wallet options can either be:
+/// 1. Ledger
+/// 2. Trezor
+/// 3. Mnemonic (via file path)
+/// 4. Keystore (via file path)
+/// 5. Private Key (cleartext in CLI)
+/// 6. Private Key (interactively via secure prompt)
+/// 7. AWS KMS
 #[derive(Parser, Debug, Default, Clone, Serialize)]
-#[cfg_attr(not(doc), allow(missing_docs))]
-#[cfg_attr(
-    doc,
-    doc = r#"
-The wallet options can either be:
-1. Ledger
-2. Trezor
-3. Mnemonic (via file path)
-4. Keystore (via file path)
-5. Private Key (cleartext in CLI)
-6. Private Key (interactively via secure prompt)
-7. AWS KMS
-"#
-)]
-#[clap(next_help_heading = "Wallet options")]
+#[clap(next_help_heading = "Wallet options", about = None, long_about = None)]
 pub struct Wallet {
-    /// The sender account
+    /// The sender account.
     #[clap(
-        short,
         long,
+        short,
         help_heading = "Wallet options - raw",
         value_name = "ADDRESS",
         env = "ETH_FROM"
     )]
     pub from: Option<Address>,
 
-    /// Open an interactive prompt to enter your private key
+    /// Open an interactive prompt to enter your private key.
     #[clap(long, short, help_heading = "Wallet options - raw")]
     pub interactive: bool,
 
-    /// Use the provided private key
+    /// Use the provided private key.
     #[clap(
         long,
         help_heading = "Wallet options - raw",
@@ -67,19 +61,17 @@ pub struct Wallet {
     )]
     pub private_key: Option<String>,
 
-    /// Use the mnemonic phrase of mnemonic file at the specified path
+    /// Use the mnemonic phrase of mnemonic file at the specified path.
     #[clap(long, alias = "mnemonic-path", help_heading = "Wallet options - raw")]
     pub mnemonic: Option<String>,
 
-    /// Use a BIP39 passphrase for the mnemonic
-    #[clap(
-        long = "mnemonic-passphrase",
-        help_heading = "Wallet options - raw",
-        value_name = "PASSPHRASE"
-    )]
+    /// Use a BIP39 passphrase for the mnemonic.
+    #[clap(long, help_heading = "Wallet options - raw", value_name = "PASSPHRASE")]
     pub mnemonic_passphrase: Option<String>,
 
-    /// The wallet derivation path. Works with both --mnemonic-path and hardware wallets
+    /// The wallet derivation path.
+    ///
+    /// Works with both --mnemonic-path and hardware wallets.
     #[clap(
         long = "mnemonic-derivation-path",
         alias = "hd-path",
@@ -88,9 +80,11 @@ pub struct Wallet {
     )]
     pub hd_path: Option<String>,
 
-    /// Use the private key from the given mnemonic index. Used with --mnemonic-path.
+    /// Use the private key from the given mnemonic index.
+    ///
+    /// Used with --mnemonic-path.
     #[clap(
-        long = "mnemonic-index",
+        long,
         conflicts_with = "hd_path",
         help_heading = "Wallet options - raw",
         default_value_t = 0,
@@ -98,7 +92,7 @@ pub struct Wallet {
     )]
     pub mnemonic_index: u32,
 
-    /// Use the keystore in the given folder or file
+    /// Use the keystore in the given folder or file.
     #[clap(
         long = "keystore",
         help_heading = "Wallet options - keystore",
@@ -107,7 +101,9 @@ pub struct Wallet {
     )]
     pub keystore_path: Option<String>,
 
-    /// The keystore password. Used with --keystore
+    /// The keystore password.
+    ///
+    /// Used with --keystore.
     #[clap(
         long = "password",
         help_heading = "Wallet options - keystore",
@@ -116,7 +112,9 @@ pub struct Wallet {
     )]
     pub keystore_password: Option<String>,
 
-    /// The keystore password file path. Used with --keystore.
+    /// The keystore password file path.
+    ///
+    /// Used with --keystore.
     #[clap(
         long = "password-file",
         help_heading = "Wallet options - keystore",
@@ -126,16 +124,16 @@ pub struct Wallet {
     )]
     pub keystore_password_file: Option<String>,
 
-    /// Use a Ledger hardware wallet
-    #[clap(short, long, help_heading = "Wallet options - hardware wallet")]
+    /// Use a Ledger hardware wallet.
+    #[clap(long, short, help_heading = "Wallet options - hardware wallet")]
     pub ledger: bool,
 
-    /// Use a Trezor hardware wallet
-    #[clap(short, long = "trezor", help_heading = "Wallet options - hardware wallet")]
+    /// Use a Trezor hardware wallet.
+    #[clap(long, short, help_heading = "Wallet options - hardware wallet")]
     pub trezor: bool,
 
-    /// Use AWS Key Management Service
-    #[clap(long = "aws", help_heading = "Wallet options - remote")]
+    /// Use AWS Key Management Service.
+    #[clap(long, help_heading = "Wallet options - remote")]
     pub aws: bool,
 }
 
@@ -182,6 +180,17 @@ impl Wallet {
         }
     }
 
+    /// Tries to resolve a local wallet from the provided options.
+    #[track_caller]
+    fn try_resolve_local_wallet(&self) -> Result<Option<LocalWallet>> {
+        self.private_key()
+            .transpose()
+            .or_else(|| self.interactive().transpose())
+            .or_else(|| self.mnemonic().transpose())
+            .or_else(|| self.keystore().transpose())
+            .transpose()
+    }
+
     /// Returns a [Signer] corresponding to the provided private key, mnemonic or hardware signer.
     #[instrument(skip(self), level = "trace")]
     pub async fn signer(&self, chain_id: u64) -> eyre::Result<WalletSigner> {
@@ -219,13 +228,7 @@ impl Wallet {
         } else {
             trace!("finding local key");
 
-            let maybe_local = self
-                .private_key()
-                .transpose()
-                .or_else(|| self.interactive().transpose())
-                .or_else(|| self.mnemonic().transpose())
-                .or_else(|| self.keystore().transpose())
-                .transpose()?;
+            let maybe_local = self.try_resolve_local_wallet()?;
 
             let local = maybe_local
                 .ok_or_else(|| eyre::eyre!("\
@@ -254,34 +257,37 @@ pub trait WalletTrait {
         Ok(LocalWallet::from_str(private_key)?)
     }
 
+    #[track_caller]
     fn get_from_private_key(&self, private_key: &str) -> Result<LocalWallet> {
         let privk = private_key.trim().strip_prefix("0x").unwrap_or(private_key);
-        LocalWallet::from_str(privk).map_err(|err| {
-            // helper macro to check if pk was meant to be an env var, this usually happens if `$`
-            // is missing
-            macro_rules! bail_env_var {
-                ($private_key:ident) => {
+        match LocalWallet::from_str(privk) {
+            Ok(pk) => Ok(pk),
+            Err(err) => {
+                // helper closure to check if pk was meant to be an env var, this usually happens if
+                // `$` is missing
+                let ensure_not_env = |pk: &str| {
                     // check if pk was meant to be an env var
-                    if !$private_key.starts_with("0x") && std::env::var($private_key).is_ok() {
+                    if !pk.starts_with("0x") && std::env::var(pk).is_ok() {
                         // SAFETY: at this point we know the user actually wanted to use an env var
                         // and most likely forgot the `$` anchor, so the
                         // `private_key` here is an unresolved env var
-                        return PrivateKeyError::ExistsAsEnvVar($private_key.to_string()).into()
+                        return Err(PrivateKeyError::ExistsAsEnvVar(pk.to_string()))
                     }
+                    Ok(())
                 };
+                match err {
+                    WalletError::HexError(err) => {
+                        ensure_not_env(private_key)?;
+                        return Err(PrivateKeyError::InvalidHex(err).into())
+                    }
+                    WalletError::EcdsaError(_) => {
+                        ensure_not_env(private_key)?;
+                    }
+                    _ => {}
+                };
+                bail!("Failed to create wallet from private key: {err}")
             }
-            match err {
-                WalletError::HexError(err) => {
-                    bail_env_var!(private_key);
-                    return PrivateKeyError::InvalidHex(err).into()
-                }
-                WalletError::EcdsaError(_) => {
-                    bail_env_var!(private_key);
-                }
-                _ => {}
-            };
-            eyre!("Failed to create wallet from private key: {err}")
-        })
+        }
     }
 
     fn get_from_mnemonic(

@@ -2,6 +2,7 @@
 
 use crate::Address;
 use ethers::prelude::Log;
+use foundry_common::evm::Breakpoints;
 use foundry_evm::{
     coverage::HitMaps,
     fuzz::{CounterExample, FuzzCase},
@@ -90,6 +91,9 @@ pub struct TestResult {
 
     /// Labeled addresses
     pub labeled_addresses: BTreeMap<Address, String>,
+
+    /// pc breakpoint char map
+    pub breakpoints: Breakpoints,
 }
 
 impl TestResult {

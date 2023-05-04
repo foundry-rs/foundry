@@ -13,17 +13,12 @@ use foundry_common::{
 /// CLI arguments for `forge upload-selectors`.
 #[derive(Debug, Clone, Parser)]
 pub struct UploadSelectorsArgs {
-    #[clap(
-        help = "The name of the contract to upload selectors for.",
-        required_unless_present = "all"
-    )]
+    /// The name of the contract to upload selectors for.
+    #[clap(required_unless_present = "all")]
     pub contract: Option<String>,
 
-    #[clap(
-        long,
-        help = "Upload selectors for all contracts in the project.",
-        required_unless_present = "contract"
-    )]
+    /// Upload selectors for all contracts in the project.
+    #[clap(long, required_unless_present = "contract")]
     pub all: bool,
 
     #[clap(flatten)]

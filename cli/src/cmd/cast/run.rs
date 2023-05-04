@@ -1,5 +1,8 @@
 use crate::{init_progress, opts::RpcOpts, update_progress, utils};
-use cast::trace::{identifier::SignaturesIdentifier, CallTraceDecoder, Traces};
+use cast::{
+    executor::{EvmError, ExecutionErr},
+    trace::{identifier::SignaturesIdentifier, CallTraceDecoder, Traces},
+};
 use clap::Parser;
 use ethers::{
     abi::Address,
@@ -12,7 +15,9 @@ use forge::{
         inspector::cheatcodes::util::configure_tx_env, opts::EvmOpts, Backend, DeployResult,
         ExecutorBuilder, RawCallResult,
     },
+    revm::primitives::U256 as rU256,
     trace::{identifier::EtherscanIdentifier, CallTraceDecoderBuilder, TraceKind},
+    utils::h256_to_b256,
 };
 use foundry_config::{find_project_root_path, Config};
 use std::{collections::BTreeMap, str::FromStr};
@@ -23,30 +28,31 @@ use yansi::Paint;
 /// CLI arguments for `cast run`.
 #[derive(Debug, Clone, Parser)]
 pub struct RunArgs {
-    #[clap(help = "The transaction hash.", value_name = "TXHASH")]
+    /// The transaction hash.
     tx_hash: String,
 
-    #[clap(long, short = 'd', help = "Debugs the transaction.")]
+    /// Opens the transaction in the debugger.
+    #[clap(long, short)]
     debug: bool,
 
-    #[clap(long, short = 't', help = "Print out opcode traces.")]
+    /// Print out opcode traces.
+    #[clap(long, short)]
     trace_printer: bool,
 
-    #[clap(
-        long,
-        short = 'q',
-        help = "Executes the transaction only with the state from the previous block. May result in different results than the live execution!"
-    )]
+    /// Executes the transaction only with the state from the previous block.
+    ///
+    /// May result in different results than the live execution!
+    #[clap(long, short)]
     quick: bool,
 
-    #[clap(long, short = 'v', help = "Prints full address")]
+    /// Prints the full address of the contract.
+    #[clap(long, short)]
     verbose: bool,
 
-    #[clap(
-        long,
-        help = "Labels address in the trace. 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045:vitalik.eth",
-        value_name = "LABEL"
-    )]
+    /// Label addresses in the trace.
+    ///
+    /// Example: 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045:vitalik.eth
+    #[clap(long, short)]
     label: Vec<String>,
 
     #[clap(flatten)]
@@ -93,16 +99,16 @@ impl RunArgs {
         let mut executor = builder.build(db);
 
         let mut env = executor.env().clone();
-        env.block.number = tx_block_number.into();
+        env.block.number = rU256::from(tx_block_number);
 
         let block = provider.get_block_with_txs(tx_block_number).await?;
         if let Some(ref block) = block {
-            env.block.timestamp = block.timestamp;
-            env.block.coinbase = block.author.unwrap_or_default();
-            env.block.difficulty = block.difficulty;
-            env.block.prevrandao = block.mix_hash;
-            env.block.basefee = block.base_fee_per_gas.unwrap_or_default();
-            env.block.gas_limit = block.gas_limit;
+            env.block.timestamp = block.timestamp.into();
+            env.block.coinbase = block.author.unwrap_or_default().into();
+            env.block.difficulty = block.difficulty.into();
+            env.block.prevrandao = block.mix_hash.map(h256_to_b256);
+            env.block.basefee = block.base_fee_per_gas.unwrap_or_default().into();
+            env.block.gas_limit = block.gas_limit.into();
         }
 
         // Set the state to the moment right before the transaction
@@ -165,14 +171,26 @@ impl RunArgs {
                 }
             } else {
                 trace!(tx=?tx.hash, "executing create transaction");
-                let DeployResult { gas_used, traces, debug: run_debug, .. }: DeployResult =
-                    executor.deploy_with_env(env, None).unwrap();
-
-                RunResult {
-                    success: true,
-                    traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
-                    debug: run_debug.unwrap_or_default(),
-                    gas_used,
+                match executor.deploy_with_env(env, None) {
+                    Ok(DeployResult { gas_used, traces, debug: run_debug, .. }) => RunResult {
+                        success: true,
+                        traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
+                        debug: run_debug.unwrap_or_default(),
+                        gas_used,
+                    },
+                    Err(EvmError::Execution(inner)) => {
+                        let ExecutionErr { reverted, gas_used, traces, debug: run_debug, .. } =
+                            *inner;
+                        RunResult {
+                            success: !reverted,
+                            traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
+                            debug: run_debug.unwrap_or_default(),
+                            gas_used,
+                        }
+                    }
+                    Err(err) => {
+                        eyre::bail!("unexpected error when running create transaction: {:?}", err)
+                    }
                 }
             }
         };
@@ -237,6 +255,7 @@ fn run_debugger(
                 (id.name, sources)
             })
             .collect(),
+        Default::default(),
     )?;
     match tui.start().expect("Failed to start tui") {
         TUIExitReason::CharExit => Ok(()),

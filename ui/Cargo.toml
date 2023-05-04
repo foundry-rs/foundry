@@ -14,4 +14,5 @@ eyre = "0.6.8"
 hex = "0.4.3"
 ethers = { workspace = true }
 forge = { path = "../forge" }
-revm = { version = "2.3", features = ["std", "k256", "with-serde"] }
+revm = { version = "3.1.1", features = ["std", "serde"] }
+foundry-common = { path = "../common" }

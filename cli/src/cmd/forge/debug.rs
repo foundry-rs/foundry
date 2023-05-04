@@ -1,7 +1,7 @@
 use super::{build::BuildArgs, script::ScriptArgs};
 use crate::cmd::{forge::build::CoreBuildArgs, retry::RETRY_VERIFY_ON_CREATE};
 use clap::{Parser, ValueHint};
-use foundry_common::evm::EvmArgs;
+use foundry_common::evm::{Breakpoints, EvmArgs};
 use std::path::PathBuf;
 
 // Loads project's figment and merges the build cli arguments into it
@@ -14,11 +14,10 @@ pub struct DebugArgs {
     ///
     /// If multiple contracts exist in the same file you must specify the target contract with
     /// --target-contract.
-    #[clap(value_hint = ValueHint::FilePath, value_name = "PATH")]
+    #[clap(value_hint = ValueHint::FilePath)]
     pub path: PathBuf,
 
     /// Arguments to pass to the script function.
-    #[clap(value_name = "ARGS")]
     pub args: Vec<String>,
 
     /// The name of the contract you want to run.
@@ -41,7 +40,7 @@ pub struct DebugArgs {
 }
 
 impl DebugArgs {
-    pub async fn debug(self) -> eyre::Result<()> {
+    pub async fn debug(self, breakpoints: Breakpoints) -> eyre::Result<()> {
         let script = ScriptArgs {
             path: self.path.to_str().expect("Invalid path string.").to_string(),
             args: self.args,
@@ -54,6 +53,6 @@ impl DebugArgs {
             retry: RETRY_VERIFY_ON_CREATE,
             ..Default::default()
         };
-        script.run_script().await
+        script.run_script(breakpoints).await
     }
 }

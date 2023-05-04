@@ -15,6 +15,15 @@ interface Cheats {
         string url;
     }
 
+    // Used in readDir
+    struct DirEntry {
+        string errorMessage;
+        string path;
+        uint64 depth;
+        bool isDir;
+        bool isSymlink;
+    }
+
     // Used in fsMetadata
     struct FsMetadata {
         bool isDir;
@@ -208,14 +217,27 @@ interface Cheats {
     // Calldata can either be strict or a partial match
     function expectCall(address, bytes calldata) external;
 
+    // Expect given number of calls to an address with the specified calldata.
+    // Calldata can either be strict or a partial match
+    function expectCall(address, bytes calldata, uint64) external;
+
     // Expect a call to an address with the specified msg.value and calldata
     function expectCall(address, uint256, bytes calldata) external;
+
+    // Expect a given number of calls to an address with the specified msg.value and calldata
+    function expectCall(address, uint256, bytes calldata, uint64) external;
 
     // Expect a call to an address with the specified msg.value, gas, and calldata.
     function expectCall(address, uint256, uint64, bytes calldata) external;
 
+    // Expect a given number of calls to an address with the specified msg.value, gas, and calldata.
+    function expectCall(address, uint256, uint64, bytes calldata, uint64) external;
+
     // Expect a call to an address with the specified msg.value and calldata, and a *minimum* amount of gas.
     function expectCallMinGas(address, uint256, uint64, bytes calldata) external;
+
+    // Expect a given number of calls to an address with the specified msg.value and calldata, and a *minimum* amount of gas.
+    function expectCallMinGas(address, uint256, uint64, bytes calldata, uint64) external;
 
     // Only allows memory writes to offsets [0x00, 0x60) ∪ [min, max) in the current subcontext. If any other
     // memory is written to, the test will fail.
@@ -267,43 +289,89 @@ interface Cheats {
     // Stops collecting onchain transactions
     function stopBroadcast() external;
 
-    // Reads the entire content of file to string. Path is relative to the project root. (path) => (data)
-    function readFile(string calldata) external returns (string memory);
-
-    // Reads the entire content of file as binary. Path is relative to the project root. (path) => (data)
-    function readFileBinary(string calldata) external returns (bytes memory);
-
     // Get the path of the current project root
     function projectRoot() external returns (string memory);
 
-    // Get the metadata for a file/directory
-    function fsMetadata(string calldata) external returns (FsMetadata memory);
+    // Reads the entire content of file to string. Path is relative to the project root.
+    // (path) => (data)
+    function readFile(string calldata) external returns (string memory);
 
-    // Reads next line of file to string, (path) => (line)
+    // Reads the entire content of file as binary. Path is relative to the project root.
+    // (path) => (data)
+    function readFileBinary(string calldata) external returns (bytes memory);
+
+    // Reads next line of file to string.
+    // (path) => (line)
     function readLine(string calldata) external returns (string memory);
 
     // Writes data to file, creating a file if it does not exist, and entirely replacing its contents if it does.
-    // Path is relative to the project root. (path, data) => ()
+    // `path` is relative to the project root.
+    // (path, data) => ()
     function writeFile(string calldata, string calldata) external;
 
     // Writes binary data to a file, creating a file if it does not exist, and entirely replacing its contents if it does.
-    // Path is relative to the project root. (path, data) => ()
+    // `path` is relative to the project root.
+    // (path, data) => ()
     function writeFileBinary(string calldata, bytes calldata) external;
 
     // Writes line to file, creating a file if it does not exist.
-    // Path is relative to the project root. (path, data) => ()
+    // `path` is relative to the project root.
+    // (path, data) => ()
     function writeLine(string calldata, string calldata) external;
 
     // Closes file for reading, resetting the offset and allowing to read it from beginning with readLine.
-    // Path is relative to the project root. (path) => ()
+    // `path` is relative to the project root.
+    // (path) => ()
     function closeFile(string calldata) external;
 
-    // Removes file. This cheatcode will revert in the following situations, but is not limited to just these cases:
-    // - Path points to a directory.
+    // Removes a file from the filesystem.
+    // This cheatcode will revert in the following situations, but is not limited to just these cases:
+    // - `path` points to a directory.
     // - The file doesn't exist.
     // - The user lacks permissions to remove the file.
-    // Path is relative to the project root. (path) => ()
+    // `path` is relative to the project root.
+    // (path) => ()
     function removeFile(string calldata) external;
+
+    // Creates a new, empty directory at the provided path.
+    // This cheatcode will revert in the following situations, but is not limited to just these cases:
+    // - User lacks permissions to modify `path`.
+    // - A parent of the given path doesn't exist and `recursive` is false.
+    // - `path` already exists and `recursive` is false.
+    // `path` is relative to the project root.
+    // (path, recursive) => ()
+    function createDir(string calldata, bool) external;
+
+    // Removes a directory at the provided path.
+    // This cheatcode will revert in the following situations, but is not limited to just these cases:
+    // - `path` doesn't exist.
+    // - `path` isn't a directory.
+    // - User lacks permissions to modify `path`.
+    // - The directory is not empty and `recursive` is false.
+    // `path` is relative to the project root.
+    // (path, recursive) => ()
+    function removeDir(string calldata, bool) external;
+
+    // Reads the directory at the given path recursively, up to `max_depth`.
+    // `max_depth` defaults to 1, meaning only the direct children of the given directory will be returned.
+    // Follows symbolic links if `follow_links` is true.
+    // (path) => (entries)
+    function readDir(string calldata) external returns (DirEntry[] memory);
+    // (path, max_depth) => (entries)
+    function readDir(string calldata, uint64) external returns (DirEntry[] memory);
+    // (path, max_depth, follow_links) => (entries)
+    function readDir(string calldata, uint64, bool) external returns (DirEntry[] memory);
+
+    // Reads a symbolic link, returning the path that the link points to.
+    // This cheatcode will revert in the following situations, but is not limited to just these cases:
+    // - `path` is not a symbolic link.
+    // - `path` does not exist.
+    // (link_path) => (path)
+    function readLink(string calldata) external returns (string memory);
+
+    // Given a path, query the file system to get information about a file, directory, etc.
+    // (path) => (metadata)
+    function fsMetadata(string calldata) external returns (FsMetadata memory);
 
     function toString(address) external returns (string memory);
 

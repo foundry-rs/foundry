@@ -40,7 +40,7 @@ comfy-table = "6.1"
 reqwest = { version = "0.11.16", default-features = false, features = [
     "json",
     "rustls",
-    "rustls-native-certs",
+    "rustls-tls-native-roots",
 ] }
 dotenvy = "0.15"
 dialoguer = { version = "0.10", default-features = false }

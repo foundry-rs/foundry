@@ -52,10 +52,19 @@ pub struct ChiselParser {
 pub enum ChiselParserSub {
     /// List all cached sessions
     List,
+
     /// Load a cached session
-    Load { id: String },
+    Load {
+        /// The ID of the session to load.
+        id: String,
+    },
+
     /// View the source of a cached session
-    View { id: String },
+    View {
+        /// The ID of the session to load.
+        id: String,
+    },
+
     /// Clear all cached chisel sessions from the cache directory
     ClearCache,
 }
@@ -83,6 +92,7 @@ async fn main() -> eyre::Result<()> {
         foundry_config: config,
         evm_opts,
         backend: None,
+        calldata: None,
     })?;
 
     // Check for chisel subcommands

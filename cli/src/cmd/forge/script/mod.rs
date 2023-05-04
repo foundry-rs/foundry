@@ -35,8 +35,9 @@ use forge::{
     CallKind,
 };
 use foundry_common::{
-    abi::format_token, evm::EvmArgs, shell, ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE,
-    SELECTOR_LEN,
+    abi::format_token,
+    evm::{Breakpoints, EvmArgs},
+    shell, ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_config::{figment, Config};
 use serde::{Deserialize, Serialize};
@@ -84,11 +85,10 @@ pub struct ScriptArgs {
     ///
     /// If multiple contracts exist in the same file you must specify the target contract with
     /// --target-contract.
-    #[clap(value_hint = ValueHint::FilePath, value_name = "PATH")]
+    #[clap(value_hint = ValueHint::FilePath)]
     pub path: String,
 
     /// Arguments to pass to the script function.
-    #[clap(value_name = "ARGS")]
     pub args: Vec<String>,
 
     /// The name of the contract you want to run.
@@ -100,30 +100,26 @@ pub struct ScriptArgs {
         long,
         short,
         default_value = "run()",
-        value_name = "SIGNATURE",
         value_parser = foundry_common::clap_helpers::strip_0x_prefix
     )]
     pub sig: String,
 
-    #[clap(
-        long,
-        help = "Use legacy transactions instead of EIP1559 ones. this is auto-enabled for common networks without EIP1559."
-    )]
+    /// Use legacy transactions instead of EIP1559 ones.
+    ///
+    /// This is auto-enabled for common networks without EIP1559.
+    #[clap(long)]
     pub legacy: bool,
 
-    #[clap(long, help = "Broadcasts the transactions.")]
+    /// Broadcasts the transactions.
+    #[clap(long)]
     pub broadcast: bool,
 
-    #[clap(long, help = "Skips on-chain simulation")]
+    /// Skips on-chain simulation.
+    #[clap(long)]
     pub skip_simulation: bool,
 
-    #[clap(
-        long,
-        short,
-        default_value = "130",
-        value_name = "GAS_ESTIMATE_MULTIPLIER",
-        help = "Relative percentage to multiply gas estimates by"
-    )]
+    /// Relative percentage to multiply gas estimates by.
+    #[clap(long, short, default_value = "130")]
     pub gas_estimate_multiplier: u64,
 
     #[clap(flatten)]
@@ -135,11 +131,11 @@ pub struct ScriptArgs {
     #[clap(flatten)]
     pub evm_opts: EvmArgs,
 
+    /// Send via `eth_sendTransaction` using the `--from` argument or `$ETH_FROM` as sender
     #[clap(
         long,
-        help = "Send via `eth_sendTransaction` using the `--sender` argument or `$ETH_FROM` as sender",
         requires = "sender",
-        conflicts_with_all = &["private_key", "private_keys", "froms", "ledger", "trezor", "aws"]
+        conflicts_with_all = &["private_key", "private_keys", "froms", "ledger", "trezor", "aws"],
     )]
     pub unlocked: bool,
 
@@ -152,43 +148,42 @@ pub struct ScriptArgs {
     #[clap(long)]
     pub resume: bool,
 
-    #[clap(
-        long,
-        help = "If present, --resume or --verify will be assumed to be a multi chain deployment."
-    )]
+    /// If present, --resume or --verify will be assumed to be a multi chain deployment.
+    #[clap(long)]
     pub multi: bool,
 
-    #[clap(long, help = "Open the script in the debugger. Takes precedence over broadcast.")]
+    /// Open the script in the debugger.
+    ///
+    /// Takes precedence over broadcast.
+    #[clap(long)]
     pub debug: bool,
 
-    #[clap(
-        long,
-        help = "Makes sure a transaction is sent, only after its previous one has been confirmed and succeeded."
-    )]
+    /// Makes sure a transaction is sent,
+    /// only after its previous one has been confirmed and succeeded.
+    #[clap(long)]
     pub slow: bool,
 
     /// The Etherscan (or equivalent) API key
     #[clap(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
     pub etherscan_api_key: Option<String>,
 
-    #[clap(
-        long,
-        help = "If it finds a matching broadcast log, it tries to verify every contract found in the receipts."
-    )]
+    /// Verifies all the contracts found in the receipts of a script, if any.
+    #[clap(long)]
     pub verify: bool,
 
     #[clap(flatten)]
     pub verifier: super::verify::VerifierArgs,
 
-    #[clap(long, help = "Output results in JSON format.")]
+    /// Output results in JSON format.
+    #[clap(long)]
     pub json: bool,
 
+    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.
     #[clap(
         long,
-        help = "Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.",
         env = "ETH_GAS_PRICE",
         value_parser = parse_ether_value,
-        value_name = "PRICE"
+        value_name = "PRICE",
     )]
     pub with_gas_price: Option<U256>,
 
@@ -430,6 +425,7 @@ impl ScriptArgs {
         result: ScriptResult,
         project: Project,
         highlevel_known_contracts: ArtifactContracts<ContractBytecodeSome>,
+        breakpoints: Breakpoints,
     ) -> eyre::Result<()> {
         trace!(target: "script", "debugging script");
 
@@ -458,6 +454,7 @@ impl ScriptArgs {
                 .into_iter()
                 .map(|(id, _)| (id.name, sources.clone()))
                 .collect(),
+            breakpoints,
         )?;
         match tui.start().expect("Failed to start tui") {
             TUIExitReason::CharExit => Ok(()),
@@ -855,14 +852,14 @@ mod tests {
         let root = temp.path();
 
         let config = r#"
-                [profile.default]
+            [profile.default]
 
-               [rpc_endpoints]
-                mumbai = "https://polygon-mumbai.g.alchemy.com/v2/${_EXTRACT_RPC_ALIAS}"
+            [rpc_endpoints]
+            mumbai = "https://polygon-mumbai.g.alchemy.com/v2/${_EXTRACT_RPC_ALIAS}"
 
-                [etherscan]
-                mumbai = { key = "${_POLYSCAN_API_KEY}", chain = 80001, url = "https://api-testnet.polygonscan.com/" }
-            "#;
+            [etherscan]
+            mumbai = { key = "${_POLYSCAN_API_KEY}", chain = 80001, url = "https://api-testnet.polygonscan.com/" }
+        "#;
 
         let toml_file = root.join(Config::FILE_NAME);
         fs::write(toml_file, config).unwrap();
