@@ -540,12 +540,18 @@ pub struct KeystoreFile {
     next_display_order = None
 )]
 pub enum SignType {
-    #[clap(name = "message", about = "Sign a message. The message will be prefixed with the Ethereum Signed Message header and hashed before signing.")]
+    #[clap(
+        name = "message",
+        about = "Sign a message. The message will be prefixed with the Ethereum Signed Message header and hashed before signing."
+    )]
     Message {
         #[clap(value_name = "MESSAGE")]
         message: String,
     },
-    #[clap(name = "typed-data", about = "Sign typed data. The data will be combined and hashed using the EIP712 specification before signing. The data should be formatted as JSON.")]
+    #[clap(
+        name = "typed-data",
+        about = "Sign typed data. The data will be combined and hashed using the EIP712 specification before signing. The data should be formatted as JSON."
+    )]
     TypedData {
         #[clap(short = 'f')]
         from_file: bool,

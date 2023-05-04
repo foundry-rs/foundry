@@ -4,7 +4,7 @@ pub mod vanity;
 
 use crate::{
     cmd::{cast::wallet::vanity::VanityArgs, Cmd},
-    opts::{Wallet, SignType}
+    opts::{SignType, Wallet},
 };
 use cast::SimpleCast;
 use clap::Parser;
@@ -130,8 +130,8 @@ impl WalletSubcommands {
                     Some(SignType::Message { message }) => {
                         let sig = match message.strip_prefix("0x") {
                             Some(data) => {
-                                let data_bytes: Vec<u8> =
-                                    hex::decode(data).wrap_err("Could not decode 0x-prefixed string.")?;
+                                let data_bytes: Vec<u8> = hex::decode(data)
+                                    .wrap_err("Could not decode 0x-prefixed string.")?;
                                 wallet.sign_message(data_bytes).await?
                             }
                             None => wallet.sign_message(message).await?,
