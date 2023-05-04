@@ -6,7 +6,7 @@ use ethers_solc::{
 };
 use serde_json::Value;
 
-use super::{remove_whitespaces, INLINE_CONFIG_PREFIX};
+use super::{remove_whitespaces, INLINE_CONFIG_PREFIX, INLINE_CONFIG_PREFIX_SELECTED_PROFILE};
 
 /// Convenient struct to hold in-line per-test configurations
 pub struct NatSpec {
@@ -49,6 +49,12 @@ impl NatSpec {
     /// i.e. `dir/TestContract.t.sol:FuzzContract:test_myFunction:10:12:111`
     pub fn debug_context(&self) -> String {
         format!("{}:{}:{}", self.contract, self.function, self.line)
+    }
+
+    /// Returns a list of configuration lines that match the current profile
+    pub fn current_profile_configs(&self) -> Vec<String> {
+        let prefix: &str = INLINE_CONFIG_PREFIX_SELECTED_PROFILE.as_ref();
+        self.config_lines_with_prefix(prefix)
     }
 
     /// Returns a list of configuration lines that match a specific string prefix
@@ -119,11 +125,13 @@ fn get_fn_name(fn_data: &BTreeMap<String, Value>) -> Option<String> {
 fn get_fn_docs(fn_data: &BTreeMap<String, Value>) -> Option<(String, String)> {
     if let Value::Object(fn_docs) = fn_data.get("documentation")? {
         if let Value::String(comment) = fn_docs.get("text")? {
-            let src_line = fn_docs
-                .get("src")
-                .map(Value::to_string)
-                .unwrap_or(String::from("<no-src-line-available>"));
-            return Some((comment.into(), src_line))
+            if comment.contains(INLINE_CONFIG_PREFIX) {
+                let src_line = fn_docs
+                    .get("src")
+                    .map(Value::to_string)
+                    .unwrap_or(String::from("<no-src-line-available>"));
+                return Some((comment.into(), src_line))
+            }
         }
     }
     None
@@ -147,7 +155,21 @@ mod tests {
         )
     }
 
-   #[test]
+    #[test]
+    fn current_profile_configs() {
+        let natspec = natspec();
+        let config_lines = natspec.current_profile_configs();
+
+        assert_eq!(
+            config_lines,
+            vec![
+                "forge-config:default.fuzz.runs=600".to_string(),
+                "forge-config:default.invariant.runs=1".to_string()
+            ]
+        );
+    }
+
+    #[test]
     fn config_lines_with_prefix() {
         use super::INLINE_CONFIG_PREFIX;
         let natspec = natspec();
