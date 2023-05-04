@@ -202,11 +202,10 @@ impl Wallet {
                 None => LedgerHDPath::LedgerLive(self.mnemonic_index as usize),
             };
             let ledger = Ledger::new(derivation, chain_id).await.wrap_err_with(|| {
-                "\
-            Could not connect to Ledger device.\n\
-            Make sure it's connected and unlocked, with no other desktop wallet apps open.\
-            "
-                .to_string()
+r#"
+Could not connect to Ledger device.
+Make sure it's connected and unlocked, with no other desktop wallet apps open.
+"#
             })?;
 
             Ok(WalletSigner::Ledger(ledger))
@@ -217,7 +216,11 @@ impl Wallet {
             };
 
             // cached to ~/.ethers-rs/trezor/cache/trezor.session
-            let trezor = Trezor::new(derivation, chain_id, None).await?;
+            let trezor = Trezor::new(derivation, chain_id, None).await.wrap_err_with(|| {
+r#"
+Could not connect to Trezor device.
+Make sure it's connected and unlocked, with no other conflicting desktop wallet apps open."#
+            })?;
 
             Ok(WalletSigner::Trezor(trezor))
         } else if self.aws {
@@ -237,16 +240,15 @@ impl Wallet {
             let maybe_local = self.try_resolve_local_wallet()?;
 
             let local = maybe_local
-                .ok_or_else(|| eyre::eyre!("\
-                    Error accessing local wallet. Did you set a private key, mnemonic or keystore?\n\
-                    Run `cast send --help` or `forge create --help` and use the corresponding CLI\n\
-                    flag to set your key via:\n\
-                    --private-key, --mnemonic-path, --aws, --interactive, --trezor or --ledger.\n\
-                    \n\
-                    Alternatively, if you're using a local node with unlocked accounts,\n\
-                    use the --unlocked flag and either set the `ETH_FROM` environment variable to the address\n\
-                    of the unlocked account you want to use, or provide the --from flag with the address directly.\
-                "))?;
+                .ok_or_else(|| eyre::eyre!(r#"
+Error accessing local wallet. Did you set a private key, mnemonic or keystore?
+Run `cast send --help` or `forge create --help` and use the corresponding CLI
+flag to set your key via:
+--private-key, --mnemonic-path, --aws, --interactive, --trezor or --ledger.
+Alternatively, if you're using a local node with unlocked accounts,
+use the --unlocked flag and either set the `ETH_FROM` environment variable to the address
+of the unlocked account you want to use, or provide the --from flag with the address directly.
+                "#))?;
 
             Ok(WalletSigner::Local(local.with_chain_id(chain_id)))
         }

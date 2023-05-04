@@ -111,8 +111,6 @@ impl SendTxArgs {
         // This should be the only way this RPC method is used as it requires a local node
         // or remote RPC with unlocked accounts.
         if unlocked {
-            // Checking if signer isn't the default value
-            // 00a329c0648769A73afAc7F9381E08FB43dBEA72.
             if resend {
                 tx.nonce = Some(provider.get_transaction_count(config.sender, None).await?);
             }
@@ -144,12 +142,14 @@ impl SendTxArgs {
             // user-specified --from
             if let Some(specified_from) = eth.wallet.from {
                 if specified_from != from {
-                    eyre::bail!("\
-                        The specified sender via CLI/env vars does not match the sender configured via\n\
-                        the hardware wallet's HD Path.\n\
-                        Please use the `--hd-path <PATH>` parameter to specify the BIP32 Path which\n\
-                        corresponds to the sender, or let foundry automatically detect it by not specifying any sender address.\n\
-                    ")
+                    eyre::bail!(
+r#"
+The specified sender via CLI/env vars does not match the sender configured via
+the hardware wallet's HD Path.
+Please use the `--hd-path <PATH>` parameter to specify the BIP32 Path which
+corresponds to the sender, or let foundry automatically detect it by not specifying any sender address.
+"#
+                    )
                 }
             }
 
