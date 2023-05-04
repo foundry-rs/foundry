@@ -736,7 +736,8 @@ impl ScriptConfig {
         if chain_id_unsupported {
             let msg = format!(
                 r#"
-EIP-3855 is not supported in one or more of the RPCs used: {}.
+EIP-3855 is not supported in one or more of the RPCs used.
+Unsupported Chain IDs: {}.
 Contracts deployed with a Solidity version equal or higher than 0.8.20 might not work properly.
 For more information, please see https://eips.ethereum.org/EIPS/eip-3855"#,
                 chain_ids
