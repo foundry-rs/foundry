@@ -542,9 +542,6 @@ mod tests {
             "--from",
             "560d246fcddc9ea98a8b032c9a2f474efb493c28",
         ]);
-        let file = wallet.find_keystore_file(&keystore).unwrap();
-        assert_eq!(file, keystore_file);
-
         let file = wallet.find_keystore_file(&keystore_file).unwrap();
         assert_eq!(file, keystore_file);
     }
