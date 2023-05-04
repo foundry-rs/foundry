@@ -50,6 +50,10 @@ pub struct SendTxArgs {
 
     #[clap(subcommand)]
     command: Option<SendTxSubcommands>,
+
+    /// Send via `eth_sendTransaction using the `--from` argument or $ETH_FROM as sender
+    #[clap(long, requires = "from")]
+    unlocked: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -81,15 +85,59 @@ impl SendTxArgs {
             json: to_json,
             resend,
             command,
+            unlocked,
         } = self;
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
         let chain = utils::get_chain(config.chain_id, &provider).await?;
         let api_key = config.get_etherscan_api_key(Some(chain));
         let mut sig = sig.unwrap_or_default();
-        let local_signer_selected = eth.wallet.local_signer_selected();
 
-        if let Ok(signer) = eth.wallet.signer(chain.id()).await {
+        let code = if let Some(SendTxSubcommands::Create {
+            code,
+            sig: constructor_sig,
+            args: constructor_args,
+        }) = command
+        {
+            sig = constructor_sig.unwrap_or_default();
+            args = constructor_args;
+            Some(code)
+        } else {
+            None
+        };
+
+        // Case 1:
+        // Default to sending via eth_sendTransaction if the --unlocked flag is passed.
+        // This should be the only way this RPC method is used as it requires a local node
+        // or remote RPC with unlocked accounts.
+        if unlocked {
+            // Checking if signer isn't the default value
+            // 00a329c0648769A73afAc7F9381E08FB43dBEA72.
+            if resend {
+                tx.nonce = Some(provider.get_transaction_count(config.sender, None).await?);
+            }
+
+            cast_send(
+                provider,
+                config.sender,
+                to,
+                code,
+                (sig, args),
+                tx,
+                chain,
+                api_key,
+                cast_async,
+                confirmations,
+                to_json,
+            )
+            .await
+        // Case 2:
+        // An option to use a local signer was provided.
+        // If we cannot successfully instanciate a local signer, then we will assume we don't have
+        // enough information to sign and we must bail.
+        } else {
+            // Retrieve the signer, and bail if it can't be constructed.
+            let signer = eth.wallet.signer(chain.id()).await?;
             let from = signer.address();
 
             // prevent misconfigured hwlib from sending a transaction that defies
@@ -100,8 +148,7 @@ impl SendTxArgs {
                         The specified sender via CLI/env vars does not match the sender configured via\n\
                         the hardware wallet's HD Path.\n\
                         Please use the `--hd-path <PATH>` parameter to specify the BIP32 Path which\n\
-                        corresponds to the sender.\n\
-                        This will be automatically detected in the future: https://github.com/foundry-rs/foundry/issues/2289\
+                        corresponds to the sender, or let foundry automatically detect it by not specifying any sender address.\n\
                     ")
                 }
             }
@@ -109,19 +156,6 @@ impl SendTxArgs {
             if resend {
                 tx.nonce = Some(provider.get_transaction_count(from, None).await?);
             }
-
-            let code = if let Some(SendTxSubcommands::Create {
-                code,
-                sig: constructor_sig,
-                args: constructor_args,
-            }) = command
-            {
-                sig = constructor_sig.unwrap_or_default();
-                args = constructor_args;
-                Some(code)
-            } else {
-                None
-            };
 
             let provider = provider.with_signer(signer);
 
@@ -139,63 +173,6 @@ impl SendTxArgs {
                 to_json,
             )
             .await
-        // A different sender was specified with a local signing option, but there's no signer.
-        // This means that there's not enough information to sign locally.
-        } else if config.sender != Config::DEFAULT_SENDER && local_signer_selected {
-            Err(eyre::eyre!(
-                "\
-                    A local signing method was provided, but Cast can't seem to find or use the signer.\n
-                    Depending on the signing method provided, please make sure that either:\n
-                    - You have a valid keystore or mnemonic path pointing to the keystore file, with the correct password.\n
-                    - Your ledger is connected and unlocked with the correct app open and no other wallet apps open.\n
-                    - Your AWS information is set up correctly.
-                "
-            ))
-        }
-        // A different sender was specified from the default and the remote flag was
-        // used. This means that the user is using either a local node or a remote RPC
-        // that has the keys necessary to sign the transaction.
-        else if config.sender != Config::DEFAULT_SENDER && !local_signer_selected {
-            // Checking if signer isn't the default value
-            // 00a329c0648769A73afAc7F9381E08FB43dBEA72.
-            if resend {
-                tx.nonce = Some(provider.get_transaction_count(config.sender, None).await?);
-            }
-
-            let code = if let Some(SendTxSubcommands::Create {
-                code,
-                sig: constructor_sig,
-                args: constructor_args,
-            }) = command
-            {
-                sig = constructor_sig.unwrap_or_default();
-                args = constructor_args;
-                Some(code)
-            } else {
-                None
-            };
-
-            cast_send(
-                provider,
-                config.sender,
-                to,
-                code,
-                (sig, args),
-                tx,
-                chain,
-                api_key,
-                cast_async,
-                confirmations,
-                to_json,
-            )
-            .await
-        } else {
-            Err(eyre::eyre!(
-                "\
-                    No wallet or sender address provided. Consider passing it via the --from flag or\n\
-                    setting the ETH_FROM env variable or setting in foundry.toml\
-                "
-            ))
         }
     }
 }
