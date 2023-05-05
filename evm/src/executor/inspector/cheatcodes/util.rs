@@ -160,6 +160,14 @@ pub fn apply<DB: Database>(
             state.labels.insert(inner.0, inner.1.clone());
             Ok(Default::default())
         }
+        HEVMCalls::GetLabel(inner) => {
+            let label = state
+                .labels
+                .get(&inner.0)
+                .cloned()
+                .unwrap_or_else(|| format!("unlabeled:{:?}", inner.0));
+            Ok(ethers::abi::encode(&[Token::String(label)]).into())
+        }
         HEVMCalls::ToString0(inner) => {
             Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
         }

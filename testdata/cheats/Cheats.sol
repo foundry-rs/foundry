@@ -256,6 +256,9 @@ interface Cheats {
     // Labels an address in call traces
     function label(address, string calldata) external;
 
+    // Retrieves a label by its address.
+    function getLabel(address) external returns (string memory);
+
     // If the condition is false, discard this run's fuzz inputs and generate new ones
     function assume(bool) external;
 
