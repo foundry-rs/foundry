@@ -675,7 +675,7 @@ impl Backend {
         evm.database(&*db);
         let result_and_state = match evm.inspect_ref(&mut inspector) {
             Ok(res) => res,
-            Err(_) => return Err(BlockchainError::EvmError(InstructionResult::FatalExternalError)),
+            Err(e) => return Err(e.into()),
         };
         let state = result_and_state.state;
         let state: hashbrown::HashMap<H160, Account> =
@@ -1037,7 +1037,7 @@ impl Backend {
             let result_and_state =
                 match evm.inspect_ref(&mut inspector) {
                     Ok(result_and_state) => result_and_state,
-                    Err(_) => return Err(BlockchainError::EvmError(InstructionResult::FatalExternalError)),
+                    Err(e) => return Err(e.into()),
                 };
             let (exit_reason, gas_used, out, ) = match result_and_state.result {
                 ExecutionResult::Success { reason, gas_used, output, .. } => {
@@ -1087,7 +1087,7 @@ impl Backend {
         evm.database(state);
         let result_and_state = match evm.inspect_ref(&mut tracer) {
             Ok(result_and_state) => result_and_state,
-            Err(_) => return Err(BlockchainError::EvmError(InstructionResult::FatalExternalError)),
+            Err(e) => return Err(e.into()),
         };
         let (exit_reason, gas_used, out) = match result_and_state.result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
@@ -2120,7 +2120,8 @@ impl TransactionValidator for Backend {
         }
 
         // check nonce
-        let nonce: u64 = (*tx.nonce()).try_into().map_err(|_| InvalidTransactionError::NonceMax)?;
+        let nonce: u64 =
+            (*tx.nonce()).try_into().map_err(|_| InvalidTransactionError::NonceMaxValue)?;
         if nonce < account.nonce {
             warn!(target: "backend", "[{:?}] nonce too low", tx.hash());
             return Err(InvalidTransactionError::NonceTooLow)
@@ -2129,7 +2130,7 @@ impl TransactionValidator for Backend {
         if (env.cfg.spec_id as u8) >= (SpecId::LONDON as u8) {
             if tx.gas_price() < env.block.basefee.into() {
                 warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.block.basefee);
-                return Err(InvalidTransactionError::FeeTooLow)
+                return Err(InvalidTransactionError::FeeCapTooLow)
             }
 
             if let (Some(max_priority_fee_per_gas), Some(max_fee_per_gas)) =
@@ -2148,12 +2149,12 @@ impl TransactionValidator for Backend {
         let req_funds = max_cost.checked_add(value).ok_or_else(|| {
             warn!(target: "backend", "[{:?}] cost too high",
             tx.hash());
-            InvalidTransactionError::Payment
+            InvalidTransactionError::InsufficientFunds
         })?;
 
         if account.balance < req_funds.into() {
             warn!(target: "backend", "[{:?}] insufficient allowance={}, required={} account={:?}", tx.hash(), account.balance, req_funds, *pending.sender());
-            return Err(InvalidTransactionError::Payment)
+            return Err(InvalidTransactionError::InsufficientFunds)
         }
         Ok(())
     }
