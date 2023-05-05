@@ -109,23 +109,21 @@ fn prank(
 }
 
 fn read_prank(prank: &Option<Prank>) -> Bytes {
-    if let Some(prank) = prank {
-        abi::encode(&[
-            Token::Bool(true),
+    let is_prank_active = prank.is_some();
+
+    let data = if let Some(prank) = prank {
+        [
+            Token::Bool(is_prank_active),
             Token::Address(prank.new_caller),
             Token::Address(prank.new_origin.unwrap_or_default()),
-        ])
-        .into()
+        ]
     } else {
         let zero_address = H160::default();
 
-        abi::encode(&[
-            Token::Bool(false),
-            Token::Address(zero_address),
-            Token::Address(zero_address),
-        ])
-        .into()
-    }
+        [Token::Bool(is_prank_active), Token::Address(zero_address), Token::Address(zero_address)]
+    };
+
+    abi::encode(&data).into()
 }
 
 #[derive(Clone, Debug, Default)]
