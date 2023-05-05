@@ -96,7 +96,7 @@ contract ReadPrankTest is DSTest {
         Target target = new Target();
         cheats.startPrank(sender);
 
-        for (uint i = 0; i < 5; i++) {
+        for (uint256 i = 0; i < 5; i++) {
             // Act
             target.consumePrank();
             (bool isActive, address newSender, address newOrigin) = cheats
@@ -117,7 +117,7 @@ contract ReadPrankTest is DSTest {
         Target target = new Target();
         cheats.startPrank(sender, origin);
 
-        for (uint i = 0; i < 5; i++) {
+        for (uint256 i = 0; i < 5; i++) {
             // Act
             target.consumePrank();
             (bool isActive, address newSender, address newOrigin) = cheats
