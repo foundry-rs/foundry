@@ -152,6 +152,9 @@ interface Cheats {
     // Resets subsequent calls' msg.sender to be `address(this)`
     function stopPrank() external;
 
+    // Reads the current prank from state
+    function readPrank() external returns (bool, address, address);
+
     // Sets an address' balance, (who, newBalance)
     function deal(address, uint256) external;
 
