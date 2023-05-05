@@ -2033,7 +2033,14 @@ impl EthApi {
             // if price or limit was included in the request then we can execute the request
             // again with the block's gas limit to check if revert is gas related or not
             if request.gas.is_some() || request.gas_price.is_some() {
-                return Err(map_out_of_gas_err(request, state, self.backend.clone(), block_env, fees, gas_limit))
+                return Err(map_out_of_gas_err(
+                    request,
+                    state,
+                    self.backend.clone(),
+                    block_env,
+                    fees,
+                    gas_limit,
+                ))
             }
         }
 
@@ -2050,7 +2057,14 @@ impl EthApi {
                 // if price or limit was included in the request then we can execute the request
                 // again with the max gas limit to check if revert is gas related or not
                 return if request.gas.is_some() || request.gas_price.is_some() {
-                    Err(map_out_of_gas_err(request, state, self.backend.clone(), block_env, fees, gas_limit))
+                    Err(map_out_of_gas_err(
+                        request,
+                        state,
+                        self.backend.clone(),
+                        block_env,
+                        fees,
+                        gas_limit,
+                    ))
                 } else {
                     // the transaction did fail due to lack of gas from the user
                     Err(InvalidTransactionError::Revert(Some(convert_transact_out(&out))).into())
@@ -2097,13 +2111,16 @@ impl EthApi {
 
             match ethres {
                 Ok((exit, _, _gas, _)) => match exit {
-                    // If the transaction succeeded, we can set a ceiling for the highest gas limit at the current
-                    // midpoint, as spending any more gas would make no sense (as the TX would still succeed).
+                    // If the transaction succeeded, we can set a ceiling for the highest gas limit
+                    // at the current midpoint, as spending any more gas would
+                    // make no sense (as the TX would still succeed).
                     return_ok!() => {
                         highest_gas_limit = mid_gas_limit;
                     }
-                    // If the transaction failed due to lack of gas, we can set a floor for the lowest gas limit at the current
-                    // midpoint, as spending any less gas would make no sense (as the TX would still revert due to lack of gas).
+                    // If the transaction failed due to lack of gas, we can set a floor for the
+                    // lowest gas limit at the current midpoint, as spending any
+                    // less gas would make no sense (as the TX would still revert due to lack of
+                    // gas).
                     InstructionResult::Revert |
                     InstructionResult::OutOfGas |
                     InstructionResult::OutOfFund => {
@@ -2115,7 +2132,8 @@ impl EthApi {
                         return Err(BlockchainError::EvmError(reason))
                     }
                 },
-                // We've already checked for the exceptional GasTooHigh case above, so this is a real error.
+                // We've already checked for the exceptional GasTooHigh case above, so this is a
+                // real error.
                 Err(reason) => {
                     warn!(target: "node", "estimation failed due to {:?}", reason);
                     return Err(reason)
@@ -2377,31 +2395,30 @@ fn map_out_of_gas_err<D>(
     state: D,
     backend: Arc<backend::mem::Backend>,
     block_env: BlockEnv,
-    fees: FeeDetails, 
+    fees: FeeDetails,
     gas_limit: U256,
-) -> BlockchainError where 
-D: DatabaseRef<Error = DatabaseError>
- {
+) -> BlockchainError
+where
+    D: DatabaseRef<Error = DatabaseError>,
+{
     request.gas = Some(backend.gas_limit());
-    let (exit, out, _, _) =
-        match backend.call_with_state(&state, request, fees, block_env) {
-            Ok(res) => res,
-            Err(err) => return err,
-        };
+    let (exit, out, _, _) = match backend.call_with_state(&state, request, fees, block_env) {
+        Ok(res) => res,
+        Err(err) => return err,
+    };
     match exit {
         return_ok!() => {
             // transaction succeeded by manually increasing the gas limit to
             // highest, which means the caller lacks funds to pay for the tx
-            return InvalidTransactionError::BasicOutOfGas(gas_limit).into()
+            InvalidTransactionError::BasicOutOfGas(gas_limit).into()
         }
         return_revert!() => {
             // reverted again after bumping the limit
-            return InvalidTransactionError::Revert(Some(convert_transact_out(&out)))
-                .into()
+            InvalidTransactionError::Revert(Some(convert_transact_out(&out))).into()
         }
         reason => {
             warn!(target: "node", "estimation failed due to {:?}", reason);
-            return BlockchainError::EvmError(reason)
+            BlockchainError::EvmError(reason)
         }
     }
 }

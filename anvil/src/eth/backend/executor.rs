@@ -33,7 +33,7 @@ use foundry_evm::{
     },
     trace::{node::CallTraceNode, CallTraceArena},
 };
-use std::{str::FromStr, sync::Arc};
+use std::sync::Arc;
 use tracing::{trace, warn};
 
 /// Represents an executed transaction (transacted on the DB)
