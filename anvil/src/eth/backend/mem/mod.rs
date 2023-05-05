@@ -94,6 +94,8 @@ pub mod storage;
 
 // Gas per transaction not creating a contract.
 pub const MIN_TRANSACTION_GAS: U256 = U256([21_000, 0, 0, 0]);
+// Gas per transaction creating a contract.
+pub const MIN_CREATE_GAS: U256 = U256([53_000, 0, 0, 0]);
 
 pub type State = foundry_evm::HashMap<Address, Account>;
 
