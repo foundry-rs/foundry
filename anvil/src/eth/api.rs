@@ -1959,6 +1959,9 @@ impl EthApi {
             .await?
     }
 
+    /// Estimates the gas usage of the `request` with the state.
+    ///
+    /// This will execute the [EthTransactionRequest] and find the best gas limit via binary search
     fn do_estimate_gas_with_state<D>(
         &self,
         mut request: EthTransactionRequest,
@@ -1999,7 +2002,7 @@ impl EthApi {
                 let mut available_funds = self.backend.get_balance_with_state(&state, from)?;
                 if let Some(value) = request.value {
                     if value > available_funds {
-                        return Err(InvalidTransactionError::Payment.into())
+                        return Err(InvalidTransactionError::InsufficientFunds.into())
                     }
                     // safe: value < available_funds
                     available_funds -= value;
@@ -2030,7 +2033,7 @@ impl EthApi {
                 // succeeded
             }
             InstructionResult::OutOfGas | InstructionResult::OutOfFund => {
-                return Err(InvalidTransactionError::OutOfGas(gas_limit).into())
+                return Err(InvalidTransactionError::BasicOutOfGas(gas_limit).into())
             }
             // need to check if the revert was due to lack of gas or unrelated reason
             return_revert!() => {
@@ -2043,7 +2046,7 @@ impl EthApi {
                     match exit {
                         return_ok!() => {
                             // transaction succeeded by manually increasing the gas limit to highest
-                            Err(InvalidTransactionError::OutOfGas(gas_limit).into())
+                            Err(InvalidTransactionError::BasicOutOfGas(gas_limit).into())
                         }
                         return_revert!() => {
                             Err(InvalidTransactionError::Revert(Some(convert_transact_out(&out)))
