@@ -2,7 +2,9 @@ use crate::{
     eth::{
         backend,
         backend::{
-            db::SerializableState, mem::MIN_TRANSACTION_GAS, notifications::NewBlockNotifications,
+            db::SerializableState,
+            mem::{MIN_CREATE_GAS, MIN_TRANSACTION_GAS},
+            notifications::NewBlockNotifications,
             validate::TransactionValidator,
         },
         error::{
@@ -32,8 +34,8 @@ use anvil_core::{
         proof::AccountProof,
         state::StateOverride,
         transaction::{
-            EthTransactionRequest, LegacyTransaction, PendingTransaction, TypedTransaction,
-            TypedTransactionRequest,
+            EthTransactionRequest, LegacyTransaction, PendingTransaction, TransactionKind,
+            TypedTransaction, TypedTransactionRequest,
         },
         EthRequest,
     },
@@ -2081,7 +2083,8 @@ impl EthApi {
         // possible range NOTE: this is the gas the transaction used, which is less than the
         // transaction requires to succeed
         let gas: U256 = gas.into();
-        let mut lowest_gas_limit = MIN_TRANSACTION_GAS;
+        // Get the starting lowest gas needed depending on the transaction kind.
+        let mut lowest_gas_limit = determine_base_gas_by_kind(request.clone());
 
         // pick a point that's close to the estimated gas
         let mut mid_gas_limit = std::cmp::min(gas * 3, (highest_gas_limit + lowest_gas_limit) / 2);
@@ -2420,5 +2423,29 @@ where
             warn!(target: "node", "estimation failed due to {:?}", reason);
             BlockchainError::EvmError(reason)
         }
+    }
+}
+
+/// Determines the minimum gas needed for a transaction depending on the transaction kind.
+#[inline]
+fn determine_base_gas_by_kind(request: EthTransactionRequest) -> U256 {
+    match request.into_typed_request() {
+        Some(request) => match request {
+            TypedTransactionRequest::Legacy(req) => match req.kind {
+                TransactionKind::Call(_) => MIN_TRANSACTION_GAS,
+                TransactionKind::Create => MIN_CREATE_GAS,
+            },
+            TypedTransactionRequest::EIP1559(req) => match req.kind {
+                TransactionKind::Call(_) => MIN_TRANSACTION_GAS,
+                TransactionKind::Create => MIN_CREATE_GAS,
+            },
+            TypedTransactionRequest::EIP2930(req) => match req.kind {
+                TransactionKind::Call(_) => MIN_TRANSACTION_GAS,
+                TransactionKind::Create => MIN_CREATE_GAS,
+            },
+        },
+        // Tighten the gas limit upwards if we don't know the transaction type to avoid deployments
+        // failing.
+        _ => MIN_CREATE_GAS,
     }
 }
