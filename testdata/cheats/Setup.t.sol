@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.0;
+pragma solidity >=0.8.18;
 
 import "ds-test/test.sol";
 import "./Cheats.sol";
@@ -21,7 +21,7 @@ contract CheatsSetupTest is DSTest {
         cheats.chainId(99);
         cheats.roll(100);
         cheats.fee(1000);
-        cheats.difficulty(10000);
+        cheats.prevrandao(bytes32(uint256(10000)));
         cheats.startPrank(address(1337));
     }
 
@@ -29,7 +29,7 @@ contract CheatsSetupTest is DSTest {
         assertEq(block.timestamp, 10, "block timestamp was not persisted from setup");
         assertEq(block.number, 100, "block number was not persisted from setup");
         assertEq(block.basefee, 1000, "basefee was not persisted from setup");
-        assertEq(block.difficulty, 10000, "difficulty was not persisted from setup");
+        assertEq(block.prevrandao, 10000, "prevrandao was not persisted from setup");
         assertEq(block.chainid, 99, "chainid was not persisted from setup");
         victim.assertSender(address(1337));
     }

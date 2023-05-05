@@ -1442,6 +1442,7 @@ impl Backend {
             nonce: Some(nonce),
             base_fee_per_gas,
             other: Default::default(),
+            ..Default::default()
         }
     }
 

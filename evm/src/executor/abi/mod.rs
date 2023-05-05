@@ -33,6 +33,7 @@ abigen!(
         roll(uint256)
         warp(uint256)
         difficulty(uint256)
+        prevrandao(bytes32)
         fee(uint256)
         coinbase(address)
         store(address,bytes32,bytes32)

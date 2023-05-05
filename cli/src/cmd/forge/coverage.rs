@@ -4,7 +4,7 @@ use crate::{
         forge::{build::CoreBuildArgs, install, test::FilterArgs},
         Cmd, LoadConfig,
     },
-    utils::{self, p_println, STATIC_FUZZ_SEED},
+    utils::{p_println, STATIC_FUZZ_SEED},
 };
 use clap::{Parser, ValueEnum};
 use ethers::{
@@ -29,6 +29,7 @@ use forge::{
 };
 use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs};
 use foundry_config::Config;
+use foundry_evm::utils::evm_spec;
 use semver::Version;
 use std::{collections::HashMap, sync::mpsc::channel, thread};
 use tracing::trace;
@@ -266,7 +267,7 @@ impl CoverageArgs {
         let root = project.paths.root;
 
         // Build the contract runner
-        let evm_spec = utils::evm_spec(&config.evm_version);
+        let evm_spec = evm_spec(&config.evm_version);
         let env = evm_opts.evm_env_blocking()?;
         let mut runner = MultiContractRunnerBuilder::default()
             .initial_balance(evm_opts.initial_balance)

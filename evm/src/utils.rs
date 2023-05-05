@@ -1,6 +1,7 @@
 use ethers::{
     abi::{Abi, FixedBytes, Function},
     prelude::{H256, U256},
+    solc::EvmVersion,
     types::{Block, Chain},
 };
 use eyre::ContextCompat;
@@ -133,6 +134,18 @@ pub fn halt_to_instruction_result(
         }
         revm::primitives::Halt::OutOfFund => revm::interpreter::InstructionResult::OutOfFund,
         revm::primitives::Halt::CallTooDeep => revm::interpreter::InstructionResult::CallTooDeep,
+    }
+}
+
+/// Converts an `EvmVersion` into a `SpecId`
+pub fn evm_spec(evm: &EvmVersion) -> SpecId {
+    match evm {
+        EvmVersion::Istanbul => SpecId::ISTANBUL,
+        EvmVersion::Berlin => SpecId::BERLIN,
+        EvmVersion::London => SpecId::LONDON,
+        EvmVersion::Paris => SpecId::MERGE,
+        EvmVersion::Shanghai => SpecId::SHANGHAI,
+        _ => panic!("Unsupported EVM version"),
     }
 }
 
