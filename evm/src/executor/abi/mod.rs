@@ -76,6 +76,7 @@ abigen!(
 
         prank(address)
         prank(address,address)
+        readPrank()(bool,address,address)
         startPrank(address)
         startPrank(address,address)
         stopPrank()
