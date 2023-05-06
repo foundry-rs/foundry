@@ -146,6 +146,8 @@ impl TestArgs {
             compiler.compile(&project)
         }?;
 
+        // Create test options from general project settings
+        // and compiler output
         let project_root = &project.paths.root;
         let toml = config.get_config_path();
         let profiles = get_available_profiles(toml)?;
