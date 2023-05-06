@@ -99,7 +99,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_is_none_unrelated_property() {
+    fn can_merge_unrelated_properties_into_config() {
         let unrelated_configs = &["forge-config: default.fuzz.runs = 2".to_string()];
         let base_config = InvariantConfig::default();
         let merged = base_config.try_merge(unrelated_configs).expect("No errors");
