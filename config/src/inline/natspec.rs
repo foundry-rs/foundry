@@ -100,6 +100,13 @@ fn apply(natspecs: &mut Vec<NatSpec>, contract: &str, node: &Node) {
     }
 }
 
+/// Given a compilation output node, if it is a function definition
+/// that also contains a natspec then return a tuple of:
+/// - Function name
+/// - Natspec text
+/// - Natspec position with format "row:col:length"
+/// 
+/// Return None otherwise.
 fn get_fn_data(node: &Node) -> Option<(String, String, String)> {
     if let NodeType::FunctionDefinition = node.node_type {
         let fn_data = &node.other;
@@ -111,6 +118,7 @@ fn get_fn_data(node: &Node) -> Option<(String, String, String)> {
     None
 }
 
+/// Given a dictionary of function data returns the name of the function.
 fn get_fn_name(fn_data: &BTreeMap<String, Value>) -> Option<String> {
     match fn_data.get("name")? {
         Value::String(fn_name) => Some(fn_name.into()),
