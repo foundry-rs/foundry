@@ -180,7 +180,7 @@ pub(crate) fn get_dir_remapping(dir: impl AsRef<Path>) -> Option<Remapping> {
 /// [profile.local]
 /// ```
 pub fn get_available_profiles(toml_path: impl AsRef<Path>) -> eyre::Result<Vec<String>> {
-    let doc = toml(toml_path)?;
+    let doc = read_toml(toml_path)?;
     let mut result = vec![Config::DEFAULT_PROFILE.to_string()];
 
     if let Some(Item::Table(profiles)) = doc.as_table().get(Config::PROFILE_SECTION) {
@@ -195,7 +195,9 @@ pub fn get_available_profiles(toml_path: impl AsRef<Path>) -> eyre::Result<Vec<S
     Ok(result)
 }
 
-fn toml(path: impl AsRef<Path>) -> eyre::Result<Document> {
+/// Returns a [`toml_edit::Document`] loaded from the provided `path`.
+/// Can raise an error in case of I/O or parsing errors.
+fn read_toml(path: impl AsRef<Path>) -> eyre::Result<Document> {
     let path = path.as_ref().to_owned();
     let doc: Document = std::fs::read_to_string(path)?.parse()?;
     Ok(doc)
