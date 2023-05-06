@@ -13,11 +13,11 @@ use ethers::{
     types::transaction::eip2718::TypedTransaction,
 };
 use eyre::{ContextCompat, WrapErr};
-use foundry_common::{fs, shell, SELECTOR_LEN};
+use foundry_common::{fs, shell, RpcUrl, SELECTOR_LEN};
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     io::BufWriter,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -36,13 +36,35 @@ pub struct ScriptSequence {
     pub receipts: Vec<TransactionReceipt>,
     pub libraries: Vec<String>,
     pub pending: Vec<TxHash>,
+    #[serde(skip)]
     pub path: PathBuf,
+    #[serde(skip)]
+    pub sensitive_path: PathBuf,
     pub returns: HashMap<String, NestedValue>,
     pub timestamp: u64,
     pub chain: u64,
     /// If `True`, the sequence belongs to a `MultiChainSequence` and won't save to disk as usual.
     pub multi: bool,
     pub commit: Option<String>,
+}
+
+/// Sensitive info from the script sequence which is saved into the cache folder
+#[derive(Deserialize, Serialize, Clone, Default)]
+pub struct ScriptSequenceSensitive {
+    pub transactions_to_rpc: BTreeMap<TxHash, Option<RpcUrl>>,
+}
+
+impl From<ScriptSequence> for ScriptSequenceSensitive {
+    fn from(sequence: ScriptSequence) -> Self {
+        ScriptSequenceSensitive {
+            transactions_to_rpc: sequence
+                .transactions
+                .iter()
+                .filter(|tx| tx.hash.is_some())
+                .map(|tx| (tx.hash.unwrap(), tx.rpc.clone()))
+                .collect(),
+        }
+    }
 }
 
 impl ScriptSequence {
@@ -64,6 +86,9 @@ impl ScriptSequence {
             chain,
             broadcasted && !is_multi,
         )?;
+
+        let sensitive_path = ScriptSequence::get_sensitive_path(&config.cache_path, sig);
+
         let commit = get_commit_hash(&config.__root.0);
 
         Ok(ScriptSequence {
@@ -72,6 +97,7 @@ impl ScriptSequence {
             receipts: vec![],
             pending: vec![],
             path,
+            sensitive_path,
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .expect("Wrong system time.")
@@ -92,8 +118,28 @@ impl ScriptSequence {
         broadcasted: bool,
     ) -> eyre::Result<Self> {
         let path = ScriptSequence::get_path(&config.broadcast, sig, target, chain_id, broadcasted)?;
-        ethers::solc::utils::read_json_file(path)
-            .wrap_err(format!("Deployment not found for chain `{chain_id}`."))
+        let sensitive_path = ScriptSequence::get_sensitive_path(&config.cache_path, sig);
+        let mut script_sequence: Self = ethers::solc::utils::read_json_file(path)
+            .wrap_err(format!("Deployment not found for chain `{chain_id}`."))?;
+
+        let script_sequence_sensitive: ScriptSequenceSensitive =
+            ethers::solc::utils::read_json_file(sensitive_path).wrap_err(format!(
+                "Deployment's sensitive details not found for chain `{chain_id}`."
+            ))?;
+
+        script_sequence.transactions = script_sequence
+            .transactions
+            .iter()
+            .map(|tx| {
+                let tx = TransactionWithMetadata {
+                    rpc: script_sequence_sensitive.transactions_to_rpc[&tx.hash.unwrap()].clone(),
+                    ..tx.clone()
+                };
+                tx
+            })
+            .collect();
+
+        Ok(script_sequence)
     }
 
     /// Saves the transactions as file if it's a standalone deployment.
@@ -101,15 +147,36 @@ impl ScriptSequence {
         if !self.multi && !self.transactions.is_empty() {
             self.timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
             let path = self.path.to_string_lossy();
+            let sensitive_path = self.sensitive_path.to_string_lossy();
+            let timestamp = self.timestamp;
+
+            // broadcast folder writes
             //../run-latest.json
             serde_json::to_writer_pretty(BufWriter::new(fs::create_file(&self.path)?), &self)?;
             //../run-[timestamp].json
             serde_json::to_writer_pretty(
                 BufWriter::new(fs::create_file(
-                    path.replace("latest.json", &format!("{}.json", self.timestamp)),
+                    path.replace("latest.json", &format!("{}.json", timestamp)),
                 )?),
                 &self,
             )?;
+
+            let script_sequence_sensitive: ScriptSequenceSensitive = self.clone().into();
+
+            // cache folder writes
+            //../run-latest.json
+            serde_json::to_writer_pretty(
+                BufWriter::new(fs::create_file(&self.sensitive_path)?),
+                &script_sequence_sensitive,
+            )?;
+            //../run-[timestamp].json
+            serde_json::to_writer_pretty(
+                BufWriter::new(fs::create_file(
+                    sensitive_path.replace("latest.json", &format!("{}.json", timestamp)),
+                )?),
+                &script_sequence_sensitive,
+            )?;
+
             shell::println(format!("\nTransactions saved to: {path}\n"))?;
         }
 
@@ -147,7 +214,7 @@ impl ScriptSequence {
             .collect();
     }
 
-    /// Saves to ./broadcast/contract_filename/sig[-timestamp].json
+    /// Saves to ./broadcast/contract_filename/[sig]-[timestamp].json
     pub fn get_path(
         out: &Path,
         sig: &str,
@@ -170,6 +237,14 @@ impl ScriptSequence {
 
         out.push(format!("{filename}-latest.json"));
         Ok(out)
+    }
+
+    /// Saves to ./cache/[sig]-[timestamp].json
+    pub fn get_sensitive_path(out: &Path, sig: &str) -> PathBuf {
+        let mut out = out.to_path_buf();
+        let filename = sig_to_file_name(sig);
+        out.push(format!("{filename}-latest.json"));
+        out
     }
 
     /// Given the broadcast log, it matches transactions with receipts, and tries to verify any

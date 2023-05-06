@@ -687,7 +687,6 @@ forgetest_async!(fail_broadcast_staticcall, |prj: TestProject, cmd: TestCommand|
 });
 
 forgetest_async!(
-    #[ignore]
     check_broadcast_log,
     |prj: TestProject, cmd: TestCommand| async move {
         let (api, handle) = spawn(NodeConfig::test()).await;
@@ -701,8 +700,7 @@ forgetest_async!(
         tester
             .load_private_keys(vec![0])
             .await
-            .add_sig("BroadcastTestLog", "run()")
-            .slow()
+            .add_sig("BroadcastTestSetup", "run()")
             .simulate(ScriptOutcome::OkSimulation)
             .broadcast(ScriptOutcome::OkBroadcast)
             .assert_nonce_increment(vec![(0, 7)])
