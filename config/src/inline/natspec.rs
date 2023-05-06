@@ -81,7 +81,7 @@ fn contract_root_node<'a>(nodes: &'a [Node], contract_id: &'a str) -> Option<&'a
             let contract_data = &n.other;
             if let Value::String(contract_name) = contract_data.get("name")? {
                 if contract_id.ends_with(contract_name) {
-                    return Some(n)
+                    return Some(n);
                 }
             }
         }
@@ -105,7 +105,7 @@ fn get_fn_data(node: &Node) -> Option<(String, String, String)> {
         let fn_data = &node.other;
         let fn_name: String = get_fn_name(fn_data)?;
         let (fn_docs, docs_src_line): (String, String) = get_fn_docs(fn_data)?;
-        return Some((fn_name, fn_docs, docs_src_line))
+        return Some((fn_name, fn_docs, docs_src_line));
     }
 
     None
@@ -130,7 +130,7 @@ fn get_fn_docs(fn_data: &BTreeMap<String, Value>) -> Option<(String, String)> {
                     .get("src")
                     .map(Value::to_string)
                     .unwrap_or(String::from("<no-src-line-available>"));
-                return Some((comment.into(), src_line))
+                return Some((comment.into(), src_line));
             }
         }
     }
@@ -139,7 +139,9 @@ fn get_fn_docs(fn_data: &BTreeMap<String, Value>) -> Option<(String, String)> {
 
 #[cfg(test)]
 mod tests {
-    use crate::NatSpec;
+    use crate::{inline::natspec::get_fn_docs, NatSpec};
+    use serde_json::{json, Value};
+    use std::collections::BTreeMap;
 
     #[test]
     fn config_lines() {
@@ -182,6 +184,15 @@ mod tests {
                 "forge-config:default.invariant.runs=1".to_string()
             ]
         )
+    }
+
+    #[test]
+    fn can_handle_unavailable_src_line_with_fallback() {
+        let mut fn_data: BTreeMap<String, Value> = BTreeMap::new();
+        let doc_withouth_src_field = json!({ "text":  "forge-config:default.fuzz.runs=600" });
+        fn_data.insert("documentation".into(), doc_withouth_src_field);
+        let (_, src_line) = get_fn_docs(&fn_data).expect("Some docs");
+        assert_eq!(src_line, "<no-src-line-available>".to_string());
     }
 
     fn natspec() -> NatSpec {

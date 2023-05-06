@@ -1,6 +1,7 @@
 mod conf_parser;
 pub use conf_parser::{
-    parse_config_bool, parse_config_u32, validate_profiles, InlineConfigParser, InlineConfigParserError,
+    parse_config_bool, parse_config_u32, validate_profiles, InlineConfigParser,
+    InlineConfigParserError,
 };
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -70,8 +71,7 @@ mod tests {
 
     #[test]
     fn can_format_inline_config_errors() {
-        let source =
-            InlineConfigParserError::ParseBool("key".into(), "invalid-bool-value".into());
+        let source = InlineConfigParserError::ParseBool("key".into(), "invalid-bool-value".into());
         let line = "dir/TestContract.t.sol:FuzzContract:10:12:111".to_string();
         let error = InlineConfigError { line: line.clone(), source: source.clone() };
 
