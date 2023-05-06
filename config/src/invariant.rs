@@ -50,20 +50,21 @@ impl InlineConfigParser for InvariantConfig {
             return Ok(None)
         }
 
-        let mut conf = *self;
+        // self is Copy. We clone it with dereference.
+        let mut conf_clone = *self;
 
         for pair in overrides {
             let key = pair.0;
             let value = pair.1;
             match key.as_str() {
-                "runs" => conf.runs = parse_config_u32(key, value)?,
-                "depth" => conf.depth = parse_config_u32(key, value)?,
-                "fail-on-revert" => conf.fail_on_revert = parse_config_bool(key, value)?,
-                "call-override" => conf.call_override = parse_config_bool(key, value)?,
+                "runs" => conf_clone.runs = parse_config_u32(key, value)?,
+                "depth" => conf_clone.depth = parse_config_u32(key, value)?,
+                "fail-on-revert" => conf_clone.fail_on_revert = parse_config_bool(key, value)?,
+                "call-override" => conf_clone.call_override = parse_config_bool(key, value)?,
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key.to_string()))?,
             }
         }
-        Ok(Some(conf))
+        Ok(Some(conf_clone))
     }
 }
 

@@ -51,18 +51,19 @@ impl InlineConfigParser for FuzzConfig {
             return Ok(None)
         }
 
-        let mut conf = *self;
+        // self is Copy. We clone it with dereference.
+        let mut conf_clone = *self;
 
         for pair in overrides {
             let key = pair.0;
             let value = pair.1;
             match key.as_str() {
-                "runs" => conf.runs = parse_config_u32(key, value)?,
-                "max-test-rejects" => conf.max_test_rejects = parse_config_u32(key, value)?,
+                "runs" => conf_clone.runs = parse_config_u32(key, value)?,
+                "max-test-rejects" => conf_clone.max_test_rejects = parse_config_u32(key, value)?,
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key))?,
             }
         }
-        Ok(Some(conf))
+        Ok(Some(conf_clone))
     }
 }
 
