@@ -130,8 +130,7 @@ where
     }
 }
 
-/// Checks that each configuration line specified in `natspec`, contains at least one
-/// of `profiles`.
+/// Checks if all configuration lines specified in `natspec` use a valid profile.
 ///
 /// i.e. Given available profiles
 /// ```rust
