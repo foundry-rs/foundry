@@ -169,7 +169,7 @@ mod tests {
     use crate::{inline::conf_parser::validate_profiles, NatSpec};
 
     #[test]
-    fn validate_profiles_error() {
+    fn can_reject_invalid_profiles() {
         let profiles = ["ci".to_string(), "default".to_string()];
         let natspec = NatSpec {
             contract: Default::default(),
