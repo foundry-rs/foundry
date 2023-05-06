@@ -118,7 +118,7 @@ fn get_fn_name(fn_data: &BTreeMap<String, Value>) -> Option<String> {
     }
 }
 
-/// Inspects Solc compiler output for documentation comments:
+/// Inspects Solc compiler output for documentation comments. Returns:
 /// - `Some((String, String))` in case the function has natspec comments. First item is a textual
 ///   natspec representation, the second item is the natspec src line, in the form "raw:col:length".
 /// - `None` in case the function has not natspec comments.
