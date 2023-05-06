@@ -69,7 +69,7 @@ mod tests {
     use crate::InlineConfigError;
 
     #[test]
-    fn inline_config_error() {
+    fn can_format_inline_config_errors() {
         let source =
             InlineConfigParserError::ParseBool("key".into(), "invalid-bool-value".into());
         let line = "dir/TestContract.t.sol:FuzzContract:10:12:111".to_string();
