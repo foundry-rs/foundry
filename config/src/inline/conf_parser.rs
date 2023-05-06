@@ -187,7 +187,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_profiles_success() {
+    fn can_accept_valid_profiles() {
         let profiles = ["ci".to_string(), "default".to_string()];
         let natspec = NatSpec {
             contract: Default::default(),
