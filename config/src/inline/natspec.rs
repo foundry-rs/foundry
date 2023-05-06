@@ -45,7 +45,7 @@ impl NatSpec {
     }
 
     /// Returns a string describing the natspec
-    /// context, for debugging purposes 🐞 <br>
+    /// context, for debugging purposes 🐞
     /// i.e. `dir/TestContract.t.sol:FuzzContract:test_myFunction:10:12:111`
     pub fn debug_context(&self) -> String {
         format!("{}:{}:{}", self.contract, self.function, self.line)
