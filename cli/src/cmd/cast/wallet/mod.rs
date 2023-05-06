@@ -129,18 +129,11 @@ impl WalletSubcommands {
             }
             WalletSubcommands::Sign { message, wallet } => {
                 let wallet = wallet.signer(0).await?;
-                let sig = match message.strip_prefix("0x") {
-                    Some(data) => {
-                        let data_bytes: Vec<u8> =
-                            hex::decode(data).wrap_err("Could not decode 0x-prefixed string.")?;
-                        wallet.sign_message(data_bytes).await?
-                    }
-                    None => wallet.sign_message(message).await?,
-                };
+                let sig = wallet.sign_message(Self::hex_str_to_bytes(&message)?).await?;
                 println!("0x{sig}");
             }
             WalletSubcommands::Verify { message, signature, address } => {
-                match signature.verify(message, address) {
+                match signature.verify(Self::hex_str_to_bytes(&message)?, address) {
                     Ok(_) => {
                         println!("Validation succeeded. Address {address} signed this message.")
                     }
@@ -152,5 +145,12 @@ impl WalletSubcommands {
         };
 
         Ok(())
+    }
+
+    fn hex_str_to_bytes(s: &str) -> eyre::Result<Vec<u8>> {
+        Ok(match s.strip_prefix("0x") {
+            Some(data) => hex::decode(data).wrap_err("Could not decode 0x-prefixed string.")?,
+            None => s.as_bytes().to_vec(),
+        })
     }
 }
