@@ -4,7 +4,7 @@ use ethers_core::types::U256;
 use serde::{Deserialize, Serialize};
 
 use crate::inline::{
-    parse_u32, InlineConfigParser, InlineConfigParserError, INLINE_CONFIG_FUZZ_KEY,
+    parse_config_u32, InlineConfigParser, InlineConfigParserError, INLINE_CONFIG_FUZZ_KEY,
 };
 
 /// Contains for fuzz testing
@@ -45,7 +45,7 @@ impl InlineConfigParser for FuzzConfig {
     }
 
     fn try_merge(&self, configs: &[String]) -> Result<Option<Self>, InlineConfigParserError> {
-        let overrides: Vec<(String, String)> = Self::overrides(configs);
+        let overrides: Vec<(String, String)> = Self::get_config_overrides(configs);
 
         if overrides.is_empty() {
             return Ok(None)
@@ -57,8 +57,8 @@ impl InlineConfigParser for FuzzConfig {
             let key = pair.0;
             let value = pair.1;
             match key.as_str() {
-                "runs" => conf.runs = parse_u32(key, value)?,
-                "max-test-rejects" => conf.max_test_rejects = parse_u32(key, value)?,
+                "runs" => conf.runs = parse_config_u32(key, value)?,
+                "max-test-rejects" => conf.max_test_rejects = parse_config_u32(key, value)?,
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key))?,
             }
         }
@@ -148,7 +148,7 @@ mod tests {
             "forge-config: ci.fuzz.runs = 666666".to_string(),
             "forge-config: default.invariant.runs = 2".to_string(),
         ];
-        let variables = FuzzConfig::overrides(configs);
+        let variables = FuzzConfig::get_config_overrides(configs);
         assert_eq!(
             variables,
             vec![("runs".into(), "42424242".into()), ("runs".into(), "666666".into())]

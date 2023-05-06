@@ -3,7 +3,7 @@
 use crate::{
     fuzz::FuzzDictionaryConfig,
     inline::{
-        parse_bool, parse_u32, InlineConfigParser, InlineConfigParserError,
+        parse_config_bool, parse_config_u32, InlineConfigParser, InlineConfigParserError,
         INLINE_CONFIG_INVARIANT_KEY,
     },
 };
@@ -44,7 +44,7 @@ impl InlineConfigParser for InvariantConfig {
     }
 
     fn try_merge(&self, configs: &[String]) -> Result<Option<Self>, InlineConfigParserError> {
-        let overrides: Vec<(String, String)> = Self::overrides(configs);
+        let overrides: Vec<(String, String)> = Self::get_config_overrides(configs);
 
         if overrides.is_empty() {
             return Ok(None)
@@ -56,10 +56,10 @@ impl InlineConfigParser for InvariantConfig {
             let key = pair.0;
             let value = pair.1;
             match key.as_str() {
-                "runs" => conf.runs = parse_u32(key, value)?,
-                "depth" => conf.depth = parse_u32(key, value)?,
-                "fail-on-revert" => conf.fail_on_revert = parse_bool(key, value)?,
-                "call-override" => conf.call_override = parse_bool(key, value)?,
+                "runs" => conf.runs = parse_config_u32(key, value)?,
+                "depth" => conf.depth = parse_config_u32(key, value)?,
+                "fail-on-revert" => conf.fail_on_revert = parse_config_bool(key, value)?,
+                "call-override" => conf.call_override = parse_config_bool(key, value)?,
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key.to_string()))?,
             }
         }
@@ -113,7 +113,7 @@ mod tests {
             "forge-config: ci.fuzz.runs = 666666".to_string(),
             "forge-config: default.invariant.runs = 2".to_string(),
         ];
-        let variables = InvariantConfig::overrides(configs);
+        let variables = InvariantConfig::get_config_overrides(configs);
         assert_eq!(variables, vec![("runs".into(), "2".into())]);
     }
 }

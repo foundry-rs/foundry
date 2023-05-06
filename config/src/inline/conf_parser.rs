@@ -16,10 +16,10 @@ pub enum InlineConfigParserError {
     InvalidProfile(String, String),
     /// An error occurred while trying to parse an integer configuration value
     #[error("Invalid config value for key '{0}'. Unable to parse '{1}' into an integer value")]
-    ParseIntError(String, String),
+    ParseInt(String, String),
     /// An error occurred while trying to parse a boolean configuration value
     #[error("Invalid config value for key '{0}'. Unable to parse '{1}' into a boolean value")]
-    ParseBoolError(String, String),
+    ParseBool(String, String),
 }
 
 /// This trait is intended to parse configurations from
@@ -105,7 +105,7 @@ where
     ///     ("depth", "500"),
     ///  ];
     /// ```
-    fn overrides(config_lines: &[String]) -> Vec<(String, String)> {
+    fn get_config_overrides(config_lines: &[String]) -> Vec<(String, String)> {
         let mut result: Vec<(String, String)> = vec![];
         let config_key = Self::config_key();
         let profile = ".*";
@@ -152,14 +152,16 @@ pub fn validate_profiles(natspec: &NatSpec, profiles: &[String]) -> Result<(), I
     Ok(())
 }
 
-/// Tries to parse a `u32` from `value`
-pub fn parse_u32(key: String, value: String) -> Result<u32, InlineConfigParserError> {
-    value.parse().map_err(|_| InlineConfigParserError::ParseIntError(key, value))
+/// Tries to parse a `u32` from `value`. The `key` argument is used to give details
+/// in the case of an error.
+pub fn parse_config_u32(key: String, value: String) -> Result<u32, InlineConfigParserError> {
+    value.parse().map_err(|_| InlineConfigParserError::ParseInt(key, value))
 }
 
-/// Tries to parse a `bool` from `value`
-pub fn parse_bool(key: String, value: String) -> Result<bool, InlineConfigParserError> {
-    value.parse().map_err(|_| InlineConfigParserError::ParseBoolError(key, value))
+/// Tries to parse a `bool` from `value`. The `key` argument is used to give details
+/// in the case of an error.
+pub fn parse_config_bool(key: String, value: String) -> Result<bool, InlineConfigParserError> {
+    value.parse().map_err(|_| InlineConfigParserError::ParseBool(key, value))
 }
 
 #[cfg(test)]
