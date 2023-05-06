@@ -57,7 +57,7 @@ where
     /// - `Err(InlineConfigParserError)` in case of wrong configuration.
     fn try_merge(&self, configs: &[String]) -> Result<Option<Self>, InlineConfigParserError>;
 
-    /// Validates all configurations contained in a natspec, that apply
+    /// Validates all configurations contained in a natspec that apply
     /// to the current configuration key.
     ///
     /// i.e. Given the `invariant` config key and a natspec comment of the form,
