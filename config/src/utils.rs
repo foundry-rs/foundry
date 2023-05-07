@@ -180,8 +180,13 @@ pub(crate) fn get_dir_remapping(dir: impl AsRef<Path>) -> Option<Remapping> {
 /// [profile.local]
 /// ```
 pub fn get_available_profiles(toml_path: impl AsRef<Path>) -> eyre::Result<Vec<String>> {
-    let doc = read_toml(toml_path)?;
     let mut result = vec![Config::DEFAULT_PROFILE.to_string()];
+
+    if !toml_path.as_ref().exists() {
+        return Ok(result)
+    }
+
+    let doc = read_toml(toml_path)?;
 
     if let Some(Item::Table(profiles)) = doc.as_table().get(Config::PROFILE_SECTION) {
         for (_, (profile, _)) in profiles.iter().enumerate() {
