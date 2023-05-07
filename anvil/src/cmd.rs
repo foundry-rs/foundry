@@ -92,7 +92,7 @@ pub struct NodeArgs {
     #[clap(long, value_name = "PATH", value_parser = Genesis::parse)]
     pub init: Option<Genesis>,
 
-    /// This is an alias for bot --load-state and --dump-state.
+    /// This is an alias for both --load-state and --dump-state.
     ///
     /// It initializes the chain with the state stored at the file, if it exists, and dumps the
     /// chain's state on exit.
