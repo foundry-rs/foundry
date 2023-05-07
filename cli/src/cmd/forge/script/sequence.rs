@@ -133,17 +133,11 @@ impl ScriptSequence {
                 "Deployment's sensitive details not found for chain `{chain_id}`."
             ))?;
 
-        script_sequence.transactions = script_sequence
-            .transactions
-            .iter()
-            .map(|tx| {
-                let tx = TransactionWithMetadata {
-                    rpc: script_sequence_sensitive.transactions_to_rpc[&tx.hash.unwrap()].clone(),
-                    ..tx.clone()
-                };
-                tx
-            })
-            .collect();
+        script_sequence.transactions.iter_mut().for_each(|tx| {
+            if tx.hash.is_some() {
+                tx.rpc = script_sequence_sensitive.transactions_to_rpc[&tx.hash.unwrap()].clone()
+            }
+        });
 
         Ok(script_sequence)
     }
