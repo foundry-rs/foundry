@@ -77,7 +77,7 @@ mod tests {
         let configs = &["forge-config: default.invariant.unknownprop = 200".to_string()];
         let base_config = InvariantConfig::default();
         if let Err(e) = base_config.try_merge(configs) {
-            assert_eq!(e.to_string(), "'unknownprop' is an Invalid config property");
+            assert_eq!(e.to_string(), "'unknownprop' is an invalid config property");
         } else {
             assert!(false)
         }
