@@ -10,7 +10,7 @@ use crate::{
 use ethers::{
     abi::{self, AbiEncode, RawLog, Token, Tokenizable, Tokenize},
     signers::{LocalWallet, Signer},
-    types::{Address, Bytes, H160, U256},
+    types::{Address, Bytes, U256},
 };
 use foundry_config::Config;
 use revm::{primitives::Bytecode, Database, EVMData};
@@ -108,19 +108,21 @@ fn prank(
     Ok(Bytes::new())
 }
 
-fn read_prank(prank: &Option<Prank>) -> Bytes {
+fn read_prank(prank: &Option<Prank>, default_sender: Address) -> Bytes {
     let is_prank_active = prank.is_some();
 
     let data = if let Some(prank) = prank {
         [
             Token::Bool(is_prank_active),
             Token::Address(prank.new_caller),
-            Token::Address(prank.new_origin.unwrap_or_default()),
+            Token::Address(prank.new_origin.unwrap_or(default_sender)),
         ]
     } else {
-        let zero_address = H160::default();
-
-        [Token::Bool(is_prank_active), Token::Address(zero_address), Token::Address(zero_address)]
+        [
+            Token::Bool(is_prank_active),
+            Token::Address(default_sender),
+            Token::Address(default_sender),
+        ]
     };
 
     abi::encode(&data).into()
@@ -326,7 +328,7 @@ pub fn apply<DB: DatabaseExt>(
             state.prank = None;
             Bytes::new()
         }
-        HEVMCalls::ReadPrank(_) => read_prank(&state.prank),
+        HEVMCalls::ReadPrank(_) => read_prank(&state.prank, b160_to_h160(data.env.tx.caller)),
         HEVMCalls::Record(_) => {
             start_record(state);
             Bytes::new()
