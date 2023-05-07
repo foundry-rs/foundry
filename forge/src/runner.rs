@@ -26,7 +26,10 @@ use foundry_evm::{
 };
 use proptest::test_runner::{TestError, TestRunner};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use std::{collections::BTreeMap, time::Instant};
+use std::{
+    collections::{BTreeMap, HashMap},
+    time::Instant,
+};
 use tracing::{error, trace};
 
 /// A type that executes all tests of a contract
@@ -228,6 +231,8 @@ impl<'a> ContractRunner<'a> {
                         traces: vec![],
                         coverage: None,
                         labeled_addresses: BTreeMap::new(),
+                        // TODO-f: get the breakpoints here
+                        breakpoints: Default::default(),
                     },
                 )]
                 .into(),
@@ -262,6 +267,7 @@ impl<'a> ContractRunner<'a> {
                         traces: setup.traces,
                         coverage: None,
                         labeled_addresses: setup.labeled_addresses,
+                        breakpoints: Default::default(),
                     },
                 )]
                 .into(),
@@ -377,51 +383,78 @@ impl<'a> ContractRunner<'a> {
 
         // Run unit test
         let start = Instant::now();
-        let (reverted, reason, gas, stipend, execution_traces, coverage, state_changeset) =
-            match self.executor.execute_test::<(), _, _>(
-                self.sender,
-                address,
-                func.clone(),
-                (),
-                0.into(),
-                self.errors,
-            ) {
-                Ok(CallResult {
+        let (
+            reverted,
+            reason,
+            gas,
+            stipend,
+            execution_traces,
+            coverage,
+            state_changeset,
+            breakpoints,
+        ) = match self.executor.execute_test::<(), _, _>(
+            self.sender,
+            address,
+            func.clone(),
+            (),
+            0.into(),
+            self.errors,
+        ) {
+            Ok(CallResult {
+                reverted,
+                gas_used: gas,
+                stipend,
+                logs: execution_logs,
+                traces: execution_trace,
+                coverage,
+                labels: new_labels,
+                state_changeset,
+                breakpoints,
+                ..
+            }) => {
+                labeled_addresses.extend(new_labels);
+                logs.extend(execution_logs);
+                (
                     reverted,
+                    None,
+                    gas,
+                    stipend,
+                    execution_trace,
+                    coverage,
+                    state_changeset,
+                    breakpoints,
+                )
+            }
+            Err(EvmError::Execution(err)) => {
+                let ExecutionErr {
+                    reverted,
+                    reason,
                     gas_used: gas,
                     stipend,
                     logs: execution_logs,
                     traces: execution_trace,
-                    coverage,
                     labels: new_labels,
                     state_changeset,
                     ..
-                }) => {
-                    labeled_addresses.extend(new_labels);
-                    logs.extend(execution_logs);
-                    (reverted, None, gas, stipend, execution_trace, coverage, state_changeset)
-                }
-                Err(EvmError::Execution(err)) => {
-                    let ExecutionErr {
-                        reverted,
-                        reason,
-                        gas_used: gas,
-                        stipend,
-                        logs: execution_logs,
-                        traces: execution_trace,
-                        labels: new_labels,
-                        state_changeset,
-                        ..
-                    } = *err;
-                    labeled_addresses.extend(new_labels);
-                    logs.extend(execution_logs);
-                    (reverted, Some(reason), gas, stipend, execution_trace, None, state_changeset)
-                }
-                Err(err) => {
-                    error!(?err);
-                    return Err(err.into())
-                }
-            };
+                } = *err;
+                labeled_addresses.extend(new_labels);
+                logs.extend(execution_logs);
+                (
+                    reverted,
+                    Some(reason),
+                    gas,
+                    stipend,
+                    execution_trace,
+                    None,
+                    state_changeset,
+                    HashMap::new(),
+                )
+            }
+            Err(err) => {
+                error!(?err);
+                return Err(err.into())
+            }
+        };
         traces.extend(execution_traces.map(|traces| (TraceKind::Execution, traces)).into_iter());
 
         let success = self.executor.is_success(
@@ -448,6 +481,7 @@ impl<'a> ContractRunner<'a> {
             traces,
             coverage,
             labeled_addresses,
+            breakpoints,
         })
     }
 
@@ -542,6 +576,7 @@ impl<'a> ContractRunner<'a> {
                         coverage: None, // todo?
                         traces,
                         labeled_addresses: labeled_addresses.clone(),
+                        breakpoints: Default::default(),
                     })
                 })
                 .collect::<Result<Vec<TestResult>>>()
@@ -598,6 +633,7 @@ impl<'a> ContractRunner<'a> {
             traces,
             coverage: result.coverage,
             labeled_addresses,
+            breakpoints: Default::default(),
         })
     }
 }

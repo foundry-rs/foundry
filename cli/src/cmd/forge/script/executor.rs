@@ -1,15 +1,12 @@
 use super::*;
-use crate::{
-    cmd::{
-        ensure_clean_constructor,
-        forge::script::{
-            artifacts::ArtifactInfo,
-            runner::SimulationStage,
-            transaction::{AdditionalContract, TransactionWithMetadata},
-        },
-        needs_setup,
+use crate::cmd::{
+    ensure_clean_constructor,
+    forge::script::{
+        artifacts::ArtifactInfo,
+        runner::SimulationStage,
+        transaction::{AdditionalContract, TransactionWithMetadata},
     },
-    utils,
+    needs_setup,
 };
 use cast::executor::inspector::cheatcodes::util::BroadcastableTransactions;
 use ethers::{
@@ -18,10 +15,12 @@ use ethers::{
 };
 use forge::{
     executor::{inspector::CheatsConfig, Backend, ExecutorBuilder},
+    revm::primitives::U256 as rU256,
     trace::{CallTraceDecoder, Traces},
     CallKind,
 };
 use foundry_common::{shell, RpcUrl};
+use foundry_evm::utils::evm_spec;
 use futures::future::join_all;
 use parking_lot::RwLock;
 use std::{collections::VecDeque, sync::Arc};
@@ -179,7 +178,7 @@ impl ScriptArgs {
 
                     // Simulate mining the transaction if the user passes `--slow`.
                     if self.slow {
-                        runner.executor.env_mut().block.number += U256::one();
+                        runner.executor.env_mut().block.number += rU256::from(1);
                     }
 
                     let is_fixed_gas_limit = tx.gas.is_some();
@@ -305,7 +304,7 @@ impl ScriptArgs {
 
         let mut builder = ExecutorBuilder::default()
             .with_config(env)
-            .with_spec(utils::evm_spec(&script_config.config.evm_version))
+            .with_spec(evm_spec(&script_config.config.evm_version))
             .with_gas_limit(script_config.evm_opts.gas_limit())
             // We need it enabled to decode contract names: local or external.
             .set_tracing(true);

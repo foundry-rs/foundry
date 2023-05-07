@@ -31,158 +31,114 @@ pub struct NodeArgs {
     #[clap(flatten)]
     pub evm_opts: AnvilEvmArgs,
 
-    #[clap(
-        long,
-        short,
-        help = "Port number to listen on.",
-        default_value = "8545",
-        value_name = "NUM"
-    )]
+    /// Port number to listen on.
+    #[clap(long, short, default_value = "8545", value_name = "NUM")]
     pub port: u16,
 
-    #[clap(
-        long,
-        short,
-        help = "Number of dev accounts to generate and configure.",
-        default_value = "10",
-        value_name = "NUM"
-    )]
+    /// Number of dev accounts to generate and configure.
+    #[clap(long, short, default_value = "10", value_name = "NUM")]
     pub accounts: u64,
 
-    #[clap(
-        long,
-        help = "The balance of every dev account in Ether.",
-        default_value = "10000",
-        value_name = "NUM"
-    )]
+    /// The balance of every dev account in Ether.
+    #[clap(long, default_value = "10000", value_name = "NUM")]
     pub balance: u64,
 
-    #[clap(long, help = "The timestamp of the genesis block", value_name = "NUM")]
+    /// The timestamp of the genesis block.
+    #[clap(long, value_name = "NUM")]
     pub timestamp: Option<u64>,
 
-    #[clap(
-        long,
-        short,
-        help = "BIP39 mnemonic phrase used for generating accounts",
-        value_name = "MNEMONIC"
-    )]
+    /// BIP39 mnemonic phrase used for generating accounts.
+    #[clap(long, short)]
     pub mnemonic: Option<String>,
 
-    #[clap(
-        long,
-        help = "Sets the derivation path of the child key to be derived. [default: m/44'/60'/0'/0/]",
-        value_name = "DERIVATION_PATH"
-    )]
+    /// Sets the derivation path of the child key to be derived.
+    ///
+    /// [default: m/44'/60'/0'/0/]
+    #[clap(long)]
     pub derivation_path: Option<String>,
 
     #[clap(flatten)]
     pub server_config: ServerConfig,
 
-    #[clap(long, help = "Don't print anything on startup and don't print logs")]
+    /// Don't print anything on startup and don't print logs
+    #[clap(long)]
     pub silent: bool,
 
-    #[clap(long, help = "The EVM hardfork to use.", value_name = "HARDFORK", value_parser = Hardfork::from_str)]
+    /// The EVM hardfork to use.
+    #[clap(long, value_parser = Hardfork::from_str)]
     pub hardfork: Option<Hardfork>,
 
-    #[clap(
-        short,
-        long,
-        visible_alias = "blockTime",
-        help = "Block time in seconds for interval mining.",
-        name = "block-time",
-        value_name = "SECONDS"
-    )]
+    /// Block time in seconds for interval mining.
+    #[clap(short, long, visible_alias = "blockTime", name = "block-time", value_name = "SECONDS")]
     pub block_time: Option<u64>,
 
-    #[clap(
-        long,
-        help = "Writes output of `anvil` as json to user-specified file",
-        value_name = "OUT_FILE"
-    )]
+    /// Writes output of `anvil` as json to user-specified file.
+    #[clap(long, value_name = "OUT_FILE")]
     pub config_out: Option<String>,
 
-    #[clap(
-        long,
-        visible_alias = "no-mine",
-        help = "Disable auto and interval mining, and mine on demand instead.",
-        conflicts_with = "block-time"
-    )]
+    /// Disable auto and interval mining, and mine on demand instead.
+    #[clap(long, visible_alias = "no-mine", conflicts_with = "block-time")]
     pub no_mining: bool,
 
-    #[clap(
-        long,
-        help = "The host the server will listen on",
-        value_name = "IP_ADDR",
-        env = "ANVIL_IP_ADDR",
-        help_heading = "Server options"
-    )]
+    /// The host the server will listen on.
+    #[clap(long, value_name = "IP_ADDR", env = "ANVIL_IP_ADDR", help_heading = "Server options")]
     pub host: Option<IpAddr>,
 
-    #[clap(
-        long,
-        help = "How transactions are sorted in the mempool",
-        default_value = "fees",
-        value_name = "ORDER"
-    )]
+    /// How transactions are sorted in the mempool.
+    #[clap(long, default_value = "fees")]
     pub order: TransactionOrder,
 
-    #[clap(
-        long,
-        help = "Initialize the genesis block with the given `genesis.json` file.",
-        value_name = "PATH",
-        value_parser = Genesis::parse
-    )]
+    /// Initialize the genesis block with the given `genesis.json` file.
+    #[clap(long, value_name = "PATH", value_parser = Genesis::parse)]
     pub init: Option<Genesis>,
 
+    /// This is an alias for both --load-state and --dump-state.
+    ///
+    /// It initializes the chain with the state stored at the file, if it exists, and dumps the
+    /// chain's state on exit.
     #[clap(
         long,
-        help = "This is an alias for bot --load-state and --dump-state. It initializes the chain with the state stored at the file, if it exists, and dumps the chain's state on exit",
         value_name = "PATH",
         value_parser = StateFile::parse,
-        conflicts_with_all = &["init", "dump_state", "load_state"]
+        conflicts_with_all = &[
+            "init",
+            "dump_state",
+            "load_state"
+        ]
     )]
     pub state: Option<StateFile>,
 
-    #[clap(
-        short,
-        long,
-        help = "Interval in seconds at which the status is to be dumped to disk. See --state and --dump-state",
-        value_name = "SECONDS"
-    )]
+    /// Interval in seconds at which the status is to be dumped to disk.
+    ///
+    /// See --state and --dump-state
+    #[clap(short, long, value_name = "SECONDS")]
     pub state_interval: Option<u64>,
 
-    #[clap(
-        long,
-        help = "Dump the state of chain on exit to the given file. If the value is a directory, the state will be written to `<VALUE>/state.json`.",
-        value_name = "PATH",
-        conflicts_with = "init"
-    )]
+    /// Dump the state of chain on exit to the given file.
+    ///
+    /// If the value is a directory, the state will be written to `<VALUE>/state.json`.
+    #[clap(long, value_name = "PATH", conflicts_with = "init")]
     pub dump_state: Option<PathBuf>,
 
+    /// Initialize the chain from a previously saved state snapshot.
     #[clap(
         long,
-        help = "Initialize the chain from a previously saved state snapshot.",
         value_name = "PATH",
         value_parser = SerializableState::parse,
         conflicts_with = "init"
     )]
     pub load_state: Option<SerializableState>,
 
-    #[clap(
-        long,
-        help = IPC_HELP,
-        value_name = "PATH",
-        visible_alias = "ipcpath"
-    )]
+    #[clap(long, help = IPC_HELP, value_name = "PATH", visible_alias = "ipcpath")]
     pub ipc: Option<Option<String>>,
 
-    #[clap(
-        long,
-        help = "Don't keep full chain history. If a number argument is specified, at most this number of states is kept in memory."
-    )]
+    /// Don't keep full chain history.
+    /// If a number argument is specified, at most this number of states is kept in memory.
+    #[clap(long)]
     pub prune_history: Option<Option<usize>>,
 
-    #[clap(long, help = "Number of blocks with transactions to keep in memory.")]
+    /// Number of blocks with transactions to keep in memory.
+    #[clap(long)]
     pub transaction_block_keeper: Option<usize>,
 }
 
@@ -429,7 +385,6 @@ pub struct AnvilEvmArgs {
         long,
         requires = "fork_url",
         value_name = "NO_RATE_LIMITS",
-        help = "Disables rate limiting for this node provider.",
         help_heading = "Fork config",
         visible_alias = "no-rpc-rate-limit"
     )]
@@ -446,12 +401,7 @@ pub struct AnvilEvmArgs {
     pub no_storage_caching: bool,
 
     /// The block gas limit.
-    #[clap(
-        long,
-        value_name = "GAS_LIMIT",
-        alias = "block-gas-limit",
-        help_heading = "Environment config"
-    )]
+    #[clap(long, alias = "block-gas-limit", help_heading = "Environment config")]
     pub gas_limit: Option<u64>,
 
     /// Disable the `call.gas_limit <= block.gas_limit` constraint.
@@ -470,7 +420,7 @@ pub struct AnvilEvmArgs {
     pub code_size_limit: Option<usize>,
 
     /// The gas price.
-    #[clap(long, value_name = "GAS_PRICE", help_heading = "Environment config")]
+    #[clap(long, help_heading = "Environment config")]
     pub gas_price: Option<u64>,
 
     /// The base fee in a block.
@@ -483,14 +433,11 @@ pub struct AnvilEvmArgs {
     pub block_base_fee_per_gas: Option<u64>,
 
     /// The chain ID.
-    #[clap(long, alias = "chain", value_name = "CHAIN_ID", help_heading = "Environment config")]
+    #[clap(long, alias = "chain", help_heading = "Environment config")]
     pub chain_id: Option<Chain>,
 
-    #[clap(
-        long,
-        help = "Enable steps tracing used for debug calls returning geth-style traces",
-        visible_alias = "tracing"
-    )]
+    /// Enable steps tracing used for debug calls returning geth-style traces
+    #[clap(long, visible_alias = "tracing")]
     pub steps_tracing: bool,
 }
 

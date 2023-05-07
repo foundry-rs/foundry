@@ -6,35 +6,38 @@ use std::{path::PathBuf, process::Command};
 
 #[derive(Debug, Clone, Parser)]
 pub struct DocArgs {
-    #[clap(
-        help = "The project's root path.",
-        long_help = "The project's root path. By default, this is the root directory of the current Git repository, or the current working directory.",
-        long,
-        value_hint = ValueHint::DirPath,
-        value_name = "PATH"
-    )]
-    root: Option<PathBuf>,
+    /// The project's root path.
+    ///
+    /// By default root of the Git repository, if in one,
+    /// or the current working directory.
+    #[clap(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
+    pub root: Option<PathBuf>,
 
+    /// The doc's output path.
+    ///
+    /// By default, it is the `docs/` in project root.
     #[clap(
-        help = "The doc's output path.",
-        long_help = "The output path for the generated mdbook. By default, it is the `docs/` in project root.",
-        long = "out",
+        long,
         short,
         value_hint = ValueHint::DirPath,
-        value_name = "PATH"
+        value_name = "PATH",
     )]
     out: Option<PathBuf>,
 
-    #[clap(help = "Build the `mdbook` from generated files.", long, short)]
+    /// Build the `mdbook` from generated files.
+    #[clap(long, short)]
     build: bool,
 
-    #[clap(help = "Serve the documentation.", long, short)]
+    /// Serve the documentation.
+    #[clap(long, short)]
     serve: bool,
 
-    #[clap(help = "Hostname for serving documentation.", long, requires = "serve")]
+    /// Hostname for serving documentation.
+    #[clap(long, requires = "serve")]
     hostname: Option<String>,
 
-    #[clap(help = "Port for serving documentation.", long, short, requires = "serve")]
+    /// Port for serving documentation.
+    #[clap(long, short, requires = "serve")]
     port: Option<usize>,
 }
 

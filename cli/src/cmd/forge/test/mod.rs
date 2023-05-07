@@ -39,6 +39,7 @@ use foundry_config::figment::{
     value::{Dict, Map},
     Metadata, Profile, Provider,
 };
+use foundry_evm::utils::evm_spec;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
@@ -80,6 +81,10 @@ pub struct TestArgs {
     #[clap(long, short, help_heading = "Display options")]
     json: bool,
 
+    /// Stop running tests after the first failure
+    #[clap(long)]
+    pub fail_fast: bool,
+
     #[clap(flatten)]
     evm_opts: EvmArgs,
 
@@ -97,21 +102,18 @@ pub struct TestArgs {
     #[clap(long, short, help_heading = "Display options")]
     list: bool,
 
-    #[clap(
-        long,
-        help = "Set seed used to generate randomness during your fuzz runs",
-        value_parser =  utils::parse_u256
-    )]
+    /// Set seed used to generate randomness during your fuzz runs.
+    #[clap(long, value_parser = utils::parse_u256)]
     pub fuzz_seed: Option<U256>,
 }
 
 impl TestArgs {
-    /// Returns the flattened [`CoreBuildArgs`]
+    /// Returns the flattened [`CoreBuildArgs`].
     pub fn build_args(&self) -> &CoreBuildArgs {
         &self.opts
     }
 
-    /// Executes all the tests in the project
+    /// Executes all the tests in the project.
     ///
     /// This will trigger the build process first. On success all test contracts that match the
     /// configured filter will be executed
@@ -168,7 +170,7 @@ impl TestArgs {
         let env = evm_opts.evm_env_blocking()?;
 
         // Prepare the test builder
-        let evm_spec = utils::evm_spec(&config.evm_version);
+        let evm_spec = evm_spec(&config.evm_version);
 
         let mut runner = MultiContractRunnerBuilder::default()
             .initial_balance(evm_opts.initial_balance)
@@ -188,10 +190,10 @@ impl TestArgs {
                     let results = runner.test(&filter, None, test_options)?;
 
                     // Get the result of the single test
-                    let (id, sig, test_kind, counterexample) = results.iter().map(|(id, SuiteResult{ test_results, .. })| {
+                    let (id, sig, test_kind, counterexample, breakpoints) = results.iter().map(|(id, SuiteResult{ test_results, .. })| {
                         let (sig, result) = test_results.iter().next().unwrap();
 
-                        (id.clone(), sig.clone(), result.kind.clone(), result.counterexample.clone())
+                        (id.clone(), sig.clone(), result.kind.clone(), result.counterexample.clone(), result.breakpoints.clone())
                     }).next().unwrap();
 
                     // Build debugger args if this is a fuzz test
@@ -218,7 +220,7 @@ impl TestArgs {
                         opts,
                         evm_opts: self.evm_opts,
                     };
-                    utils::block_on(debugger.debug())?;
+                    utils::block_on(debugger.debug(breakpoints))?;
 
                     Ok(TestOutcome::new(results, self.allow_failure))
                 }
@@ -240,11 +242,12 @@ impl TestArgs {
                 self.allow_failure,
                 test_options,
                 self.gas_report,
+                self.fail_fast,
             )
         }
     }
 
-    /// Returns the flattened [`FilterArgs`] arguments merged with [`Config`]
+    /// Returns the flattened [`FilterArgs`] arguments merged with [`Config`].
     pub fn filter(&self, config: &Config) -> ProjectPathsAwareFilter {
         self.filter.merge_with_config(config)
     }
@@ -483,6 +486,7 @@ fn test(
     allow_failure: bool,
     test_options: TestOptions,
     gas_reporting: bool,
+    fail_fast: bool,
 ) -> eyre::Result<TestOutcome> {
     trace!(target: "forge::test", "running all tests");
     if runner.count_filtered_tests(&filter) == 0 {
@@ -527,7 +531,7 @@ fn test(
         let sig_identifier =
             SignaturesIdentifier::new(Config::foundry_cache_dir(), config.offline)?;
 
-        for (contract_name, suite_result) in rx {
+        'outer: for (contract_name, suite_result) in rx {
             let mut tests = suite_result.test_results.clone();
             println!();
             for warning in suite_result.warnings.iter() {
@@ -539,6 +543,11 @@ fn test(
             }
             for (name, result) in &mut tests {
                 short_test_result(name, result);
+
+                // If the test failed, we want to stop processing the rest of the tests
+                if fail_fast && !result.success {
+                    break 'outer
+                }
 
                 // We only display logs at level 2 and above
                 if verbosity >= 2 {

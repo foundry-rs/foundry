@@ -37,14 +37,14 @@ reqwest = { version = "0.11", default-features = false, features = ["rustls"] }
 # misc
 clap = { version = "4.2", features = ["derive", "env", "wrap_help"] }
 rustyline = "11.0"
-solang-parser = "=0.2.3"
+solang-parser = "=0.2.4"
 yansi = "0.5"
 strum = { version = "0.24.1", features = ["derive"] }
 serde = "1.0.159"
 serde_json = { version = "1.0.95", features = ["raw_value"] }
 semver = "1.0.17"
 bytes = "1.4"
-revm = "2.3"
+revm = "3.1.1"
 eyre = "0.6"
 dirs = "5.0"
 time = { version = "0.3.20", features = ["formatting"] }

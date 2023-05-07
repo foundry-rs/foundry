@@ -36,6 +36,8 @@ pub enum ChiselCommand {
     Fork,
     /// Enable / disable traces for the current session
     Traces,
+    /// Set calldata (`msg.data`) for the current session (appended after function selector)
+    Calldata,
     /// Dump the raw memory
     MemDump,
     /// Dump the raw stack
@@ -69,6 +71,7 @@ impl FromStr for ChiselCommand {
             "clearcache" | "cc" => Ok(ChiselCommand::ClearCache),
             "fork" | "f" => Ok(ChiselCommand::Fork),
             "traces" | "t" => Ok(ChiselCommand::Traces),
+            "calldata" | "cd" => Ok(ChiselCommand::Calldata),
             "memdump" | "md" => Ok(ChiselCommand::MemDump),
             "stackdump" | "sd" => Ok(ChiselCommand::StackDump),
             "export" | "ex" => Ok(ChiselCommand::Export),
@@ -132,6 +135,7 @@ impl From<ChiselCommand> for CmdDescriptor {
             // Environment
             ChiselCommand::Fork => (&["fork <url>", "f <url>"], "Fork an RPC for the current session. Supply 0 arguments to return to a local network", CmdCategory::Env),
             ChiselCommand::Traces => (&["traces", "t"], "Enable / disable traces for the current session", CmdCategory::Env),
+            ChiselCommand::Calldata => (&["calldata [data]", "cd [data]"], "Set calldata (`msg.data`) for the current session (appended after function selector). Clears it if no argument provided.", CmdCategory::Env),
             // Debug
             ChiselCommand::MemDump => (&["memdump", "md"], "Dump the raw memory of the current state", CmdCategory::Debug),
             ChiselCommand::StackDump => (&["stackdump", "sd"], "Dump the raw stack of the current state", CmdCategory::Debug),

@@ -2,7 +2,9 @@ use crate::{
     eth::{
         backend,
         backend::{
-            db::SerializableState, mem::MIN_TRANSACTION_GAS, notifications::NewBlockNotifications,
+            db::SerializableState,
+            mem::{MIN_CREATE_GAS, MIN_TRANSACTION_GAS},
+            notifications::NewBlockNotifications,
             validate::TransactionValidator,
         },
         error::{
@@ -23,7 +25,7 @@ use crate::{
     },
     filter::{EthFilter, Filters, LogsFilter},
     mem::transaction_build,
-    revm::TransactOut,
+    revm::primitives::Output,
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
 use anvil_core::{
@@ -32,8 +34,8 @@ use anvil_core::{
         proof::AccountProof,
         state::StateOverride,
         transaction::{
-            EthTransactionRequest, LegacyTransaction, PendingTransaction, TypedTransaction,
-            TypedTransactionRequest,
+            EthTransactionRequest, LegacyTransaction, PendingTransaction, TransactionKind,
+            TypedTransaction, TypedTransactionRequest,
         },
         EthRequest,
     },
@@ -55,11 +57,11 @@ use ethers::{
     },
     utils::rlp,
 };
-use forge::{executor::DatabaseRef, revm::BlockEnv};
+use forge::{executor::DatabaseRef, revm::primitives::BlockEnv};
 use foundry_common::ProviderBuilder;
 use foundry_evm::{
     executor::backend::DatabaseError,
-    revm::{return_ok, return_revert, Return},
+    revm::interpreter::{return_ok, return_revert, InstructionResult},
 };
 use futures::channel::mpsc::Receiver;
 use parking_lot::RwLock;
@@ -262,6 +264,9 @@ impl EthApi {
             }
             EthRequest::StopImpersonatingAccount(addr) => {
                 self.anvil_stop_impersonating_account(addr).await.to_rpc_result()
+            }
+            EthRequest::AutoImpersonateAccount(enable) => {
+                self.anvil_auto_impersonate_account(enable).await.to_rpc_result()
             }
             EthRequest::GetAutoMine(()) => self.anvil_get_auto_mine().to_rpc_result(),
             EthRequest::Mine(blocks, interval) => {
@@ -1351,6 +1356,15 @@ impl EthApi {
         Ok(())
     }
 
+    /// If set to true will make every account impersonated
+    ///
+    /// Handler for ETH RPC call: `anvil_autoImpersonateAccount`
+    pub async fn anvil_auto_impersonate_account(&self, enabled: bool) -> Result<()> {
+        node_info!("anvil_autoImpersonateAccount");
+        self.backend.auto_impersonate_account(enabled).await?;
+        Ok(())
+    }
+
     /// Returns true if auto mining is enabled, and false.
     ///
     /// Handler for ETH RPC call: `anvil_getAutomine`
@@ -1947,6 +1961,9 @@ impl EthApi {
             .await?
     }
 
+    /// Estimates the gas usage of the `request` with the state.
+    ///
+    /// This will execute the [EthTransactionRequest] and find the best gas limit via binary search
     fn do_estimate_gas_with_state<D>(
         &self,
         mut request: EthTransactionRequest,
@@ -1978,7 +1995,7 @@ impl EthApi {
 
         // get the highest possible gas limit, either the request's set value or the currently
         // configured gas limit
-        let mut highest_gas_limit = request.gas.unwrap_or(block_env.gas_limit);
+        let mut highest_gas_limit = request.gas.unwrap_or(block_env.gas_limit.into());
 
         // check with the funds of the sender
         if let Some(from) = request.from {
@@ -1987,7 +2004,7 @@ impl EthApi {
                 let mut available_funds = self.backend.get_balance_with_state(&state, from)?;
                 if let Some(value) = request.value {
                     if value > available_funds {
-                        return Err(InvalidTransactionError::Payment.into())
+                        return Err(InvalidTransactionError::InsufficientFunds.into())
                     }
                     // safe: value < available_funds
                     available_funds -= value;
@@ -2007,41 +2024,49 @@ impl EthApi {
         call_to_estimate.gas = Some(gas_limit);
 
         // execute the call without writing to db
-        let (exit, out, gas, _) = self.backend.call_with_state(
-            &state,
-            call_to_estimate,
-            fees.clone(),
-            block_env.clone(),
-        )?;
+        let ethres =
+            self.backend.call_with_state(&state, call_to_estimate, fees.clone(), block_env.clone());
+
+        // Exceptional case: init used too much gas, we need to increase the gas limit and try
+        // again
+        if let Err(BlockchainError::InvalidTransaction(InvalidTransactionError::GasTooHigh)) =
+            ethres
+        {
+            // if price or limit was included in the request then we can execute the request
+            // again with the block's gas limit to check if revert is gas related or not
+            if request.gas.is_some() || request.gas_price.is_some() {
+                return Err(map_out_of_gas_err(
+                    request,
+                    state,
+                    self.backend.clone(),
+                    block_env,
+                    fees,
+                    gas_limit,
+                ))
+            }
+        }
+
+        let (exit, out, gas, _) = ethres?;
         match exit {
             return_ok!() => {
                 // succeeded
             }
-            Return::OutOfGas | Return::LackOfFundForGasLimit | Return::OutOfFund => {
-                return Err(InvalidTransactionError::OutOfGas(gas_limit).into())
+            InstructionResult::OutOfGas | InstructionResult::OutOfFund => {
+                return Err(InvalidTransactionError::BasicOutOfGas(gas_limit).into())
             }
             // need to check if the revert was due to lack of gas or unrelated reason
             return_revert!() => {
                 // if price or limit was included in the request then we can execute the request
                 // again with the max gas limit to check if revert is gas related or not
                 return if request.gas.is_some() || request.gas_price.is_some() {
-                    request.gas = Some(self.backend.gas_limit());
-                    let (exit, out, _, _) =
-                        self.backend.call_with_state(&state, request, fees, block_env)?;
-                    match exit {
-                        return_ok!() => {
-                            // transaction succeeded by manually increasing the gas limit to highest
-                            Err(InvalidTransactionError::OutOfGas(gas_limit).into())
-                        }
-                        return_revert!() => {
-                            Err(InvalidTransactionError::Revert(Some(convert_transact_out(&out)))
-                                .into())
-                        }
-                        reason => {
-                            warn!(target: "node", "estimation failed due to {:?}", reason);
-                            Err(BlockchainError::EvmError(reason))
-                        }
-                    }
+                    Err(map_out_of_gas_err(
+                        request,
+                        state,
+                        self.backend.clone(),
+                        block_env,
+                        fees,
+                        gas_limit,
+                    ))
                 } else {
                     // the transaction did fail due to lack of gas from the user
                     Err(InvalidTransactionError::Revert(Some(convert_transact_out(&out))).into())
@@ -2053,48 +2078,68 @@ impl EthApi {
             }
         }
 
-        // at this point we know the call succeeded but want to find the best gas, so we do a binary
-        // search over the possible range
-
+        // at this point we know the call succeeded but want to find the _best_ (lowest) gas the
+        // transaction succeeds with. we find this by doing a binary search over the
+        // possible range NOTE: this is the gas the transaction used, which is less than the
+        // transaction requires to succeed
         let gas: U256 = gas.into();
-        let mut lowest_gas_limit = MIN_TRANSACTION_GAS;
+        // Get the starting lowest gas needed depending on the transaction kind.
+        let mut lowest_gas_limit = determine_base_gas_by_kind(request.clone());
 
         // pick a point that's close to the estimated gas
         let mut mid_gas_limit = std::cmp::min(gas * 3, (highest_gas_limit + lowest_gas_limit) / 2);
 
-        let mut last_highest_gas_limit = highest_gas_limit;
-
+        // Binary search for the ideal gas limit
         while (highest_gas_limit - lowest_gas_limit) > U256::one() {
             request.gas = Some(mid_gas_limit);
-            let (exit, _, _gas, _) = self.backend.call_with_state(
+            let ethres = self.backend.call_with_state(
                 &state,
                 request.clone(),
                 fees.clone(),
                 block_env.clone(),
-            )?;
-            match exit {
-                return_ok!() => {
-                    highest_gas_limit = mid_gas_limit;
-                    // if last two successful estimations only vary by 10%, we consider this to
-                    // sufficiently accurate
-                    const ACCURACY: u64 = 10;
-                    if (last_highest_gas_limit - highest_gas_limit) * ACCURACY /
-                        last_highest_gas_limit <
-                        U256::one()
-                    {
-                        return Ok(highest_gas_limit)
+            );
+
+            // Exceptional case: init used too much gas, we need to increase the gas limit and try
+            // again
+            if let Err(BlockchainError::InvalidTransaction(InvalidTransactionError::GasTooHigh)) =
+                ethres
+            {
+                // increase the lowest gas limit
+                lowest_gas_limit = mid_gas_limit;
+
+                // new midpoint
+                mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
+                continue
+            }
+
+            match ethres {
+                Ok((exit, _, _gas, _)) => match exit {
+                    // If the transaction succeeded, we can set a ceiling for the highest gas limit
+                    // at the current midpoint, as spending any more gas would
+                    // make no sense (as the TX would still succeed).
+                    return_ok!() => {
+                        highest_gas_limit = mid_gas_limit;
                     }
-                    last_highest_gas_limit = highest_gas_limit;
-                }
-                Return::Revert |
-                Return::OutOfGas |
-                Return::LackOfFundForGasLimit |
-                Return::OutOfFund => {
-                    lowest_gas_limit = mid_gas_limit;
-                }
-                reason => {
+                    // If the transaction failed due to lack of gas, we can set a floor for the
+                    // lowest gas limit at the current midpoint, as spending any
+                    // less gas would make no sense (as the TX would still revert due to lack of
+                    // gas).
+                    InstructionResult::Revert |
+                    InstructionResult::OutOfGas |
+                    InstructionResult::OutOfFund => {
+                        lowest_gas_limit = mid_gas_limit;
+                    }
+                    // The tx failed for some other reason.
+                    reason => {
+                        warn!(target: "node", "estimation failed due to {:?}", reason);
+                        return Err(BlockchainError::EvmError(reason))
+                    }
+                },
+                // We've already checked for the exceptional GasTooHigh case above, so this is a
+                // real error.
+                Err(reason) => {
                     warn!(target: "node", "estimation failed due to {:?}", reason);
-                    return Err(BlockchainError::EvmError(reason))
+                    return Err(reason)
                 }
             }
             // new midpoint
@@ -2327,20 +2372,80 @@ fn required_marker(provided_nonce: U256, on_chain_nonce: U256, from: Address) ->
     }
 }
 
-fn convert_transact_out(out: &TransactOut) -> Bytes {
+fn convert_transact_out(out: &Option<Output>) -> Bytes {
     match out {
-        TransactOut::None => Default::default(),
-        TransactOut::Call(out) => out.to_vec().into(),
-        TransactOut::Create(out, _) => out.to_vec().into(),
+        None => Default::default(),
+        Some(Output::Call(out)) => out.to_vec().into(),
+        Some(Output::Create(out, _)) => out.to_vec().into(),
     }
 }
 
 /// Returns an error if the `exit` code is _not_ ok
-fn ensure_return_ok(exit: Return, out: &TransactOut) -> Result<Bytes> {
+fn ensure_return_ok(exit: InstructionResult, out: &Option<Output>) -> Result<Bytes> {
     let out = convert_transact_out(out);
     match exit {
         return_ok!() => Ok(out),
         return_revert!() => Err(InvalidTransactionError::Revert(Some(out)).into()),
         reason => Err(BlockchainError::EvmError(reason)),
+    }
+}
+
+/// Executes the requests again after an out of gas error to check if the error is gas related or
+/// not
+#[inline]
+fn map_out_of_gas_err<D>(
+    mut request: EthTransactionRequest,
+    state: D,
+    backend: Arc<backend::mem::Backend>,
+    block_env: BlockEnv,
+    fees: FeeDetails,
+    gas_limit: U256,
+) -> BlockchainError
+where
+    D: DatabaseRef<Error = DatabaseError>,
+{
+    request.gas = Some(backend.gas_limit());
+    let (exit, out, _, _) = match backend.call_with_state(&state, request, fees, block_env) {
+        Ok(res) => res,
+        Err(err) => return err,
+    };
+    match exit {
+        return_ok!() => {
+            // transaction succeeded by manually increasing the gas limit to
+            // highest, which means the caller lacks funds to pay for the tx
+            InvalidTransactionError::BasicOutOfGas(gas_limit).into()
+        }
+        return_revert!() => {
+            // reverted again after bumping the limit
+            InvalidTransactionError::Revert(Some(convert_transact_out(&out))).into()
+        }
+        reason => {
+            warn!(target: "node", "estimation failed due to {:?}", reason);
+            BlockchainError::EvmError(reason)
+        }
+    }
+}
+
+/// Determines the minimum gas needed for a transaction depending on the transaction kind.
+#[inline]
+fn determine_base_gas_by_kind(request: EthTransactionRequest) -> U256 {
+    match request.into_typed_request() {
+        Some(request) => match request {
+            TypedTransactionRequest::Legacy(req) => match req.kind {
+                TransactionKind::Call(_) => MIN_TRANSACTION_GAS,
+                TransactionKind::Create => MIN_CREATE_GAS,
+            },
+            TypedTransactionRequest::EIP1559(req) => match req.kind {
+                TransactionKind::Call(_) => MIN_TRANSACTION_GAS,
+                TransactionKind::Create => MIN_CREATE_GAS,
+            },
+            TypedTransactionRequest::EIP2930(req) => match req.kind {
+                TransactionKind::Call(_) => MIN_TRANSACTION_GAS,
+                TransactionKind::Create => MIN_CREATE_GAS,
+            },
+        },
+        // Tighten the gas limit upwards if we don't know the transaction type to avoid deployments
+        // failing.
+        _ => MIN_CREATE_GAS,
     }
 }

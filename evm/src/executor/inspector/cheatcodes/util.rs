@@ -1,11 +1,11 @@
-use super::Cheatcodes;
+use super::{ensure, err, Cheatcodes, Result};
 use crate::{
     abi::HEVMCalls,
     executor::backend::{
         error::{DatabaseError, DatabaseResult},
         DatabaseExt,
     },
-    utils::h256_to_u256_be,
+    utils::{h160_to_b160, h256_to_u256_be, ru256_to_u256, u256_to_ru256},
 };
 use bytes::{BufMut, Bytes, BytesMut};
 use ethers::{
@@ -20,7 +20,11 @@ use ethers::{
     utils,
 };
 use foundry_common::{fmt::*, RpcUrl};
-use revm::{Account, CreateInputs, Database, EVMData, JournaledState, TransactTo};
+use revm::{
+    interpreter::CreateInputs,
+    primitives::{Account, TransactTo},
+    Database, EVMData, JournaledState,
+};
 use std::collections::VecDeque;
 use tracing::trace;
 
@@ -41,11 +45,11 @@ pub struct BroadcastableTransaction {
 pub type BroadcastableTransactions = VecDeque<BroadcastableTransaction>;
 
 /// Configures the env for the transaction
-pub fn configure_tx_env(env: &mut revm::Env, tx: &Transaction) {
-    env.tx.caller = tx.from;
+pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction) {
+    env.tx.caller = h160_to_b160(tx.from);
     env.tx.gas_limit = tx.gas.as_u64();
-    env.tx.gas_price = tx.gas_price.unwrap_or_default();
-    env.tx.gas_priority_fee = tx.max_priority_fee_per_gas;
+    env.tx.gas_price = tx.gas_price.unwrap_or_default().into();
+    env.tx.gas_priority_fee = tx.max_priority_fee_per_gas.map(Into::into);
     env.tx.nonce = Some(tx.nonce.as_u64());
     env.tx.access_list = tx
         .access_list
@@ -53,11 +57,17 @@ pub fn configure_tx_env(env: &mut revm::Env, tx: &Transaction) {
         .unwrap_or_default()
         .0
         .into_iter()
-        .map(|item| (item.address, item.storage_keys.into_iter().map(h256_to_u256_be).collect()))
+        .map(|item| {
+            (
+                h160_to_b160(item.address),
+                item.storage_keys.into_iter().map(h256_to_u256_be).map(u256_to_ru256).collect(),
+            )
+        })
         .collect();
-    env.tx.value = tx.value;
+    env.tx.value = tx.value.into();
     env.tx.data = tx.input.0.clone();
-    env.tx.transact_to = tx.to.map(TransactTo::Call).unwrap_or_else(TransactTo::create)
+    env.tx.transact_to =
+        tx.to.map(h160_to_b160).map(TransactTo::Call).unwrap_or_else(TransactTo::create)
 }
 
 /// Applies the given function `f` to the `revm::Account` belonging to the `addr`
@@ -72,25 +82,26 @@ pub fn with_journaled_account<F, R, DB: Database>(
 where
     F: FnMut(&mut Account) -> R,
 {
+    let addr = h160_to_b160(addr);
     journaled_state.load_account(addr, db)?;
     journaled_state.touch(&addr);
     let account = journaled_state.state.get_mut(&addr).expect("account loaded;");
     Ok(f(account))
 }
 
-fn addr(private_key: U256) -> Result<Bytes, Bytes> {
+fn addr(private_key: U256) -> Result {
     let key = parse_private_key(private_key)?;
     let addr = utils::secret_key_to_address(&key);
     Ok(addr.encode().into())
 }
 
-fn sign(private_key: U256, digest: H256, chain_id: U256) -> Result<Bytes, Bytes> {
+fn sign(private_key: U256, digest: H256, chain_id: U256) -> Result {
     let key = parse_private_key(private_key)?;
     let wallet = LocalWallet::from(key).with_chain_id(chain_id.as_u64());
 
     // The `ecrecover` precompile does not use EIP-155
-    let sig = wallet.sign_hash(digest).map_err(|err| err.to_string().encode())?;
-    let recovered = sig.recover(digest).map_err(|err| err.to_string().encode())?;
+    let sig = wallet.sign_hash(digest)?;
+    let recovered = sig.recover(digest)?;
 
     assert_eq!(recovered, wallet.address());
 
@@ -102,23 +113,21 @@ fn sign(private_key: U256, digest: H256, chain_id: U256) -> Result<Bytes, Bytes>
     Ok((sig.v, r_bytes, s_bytes).encode().into())
 }
 
-fn derive_key(mnemonic: &str, path: &str, index: u32) -> Result<Bytes, Bytes> {
+fn derive_key(mnemonic: &str, path: &str, index: u32) -> Result {
     let derivation_path =
         if path.ends_with('/') { format!("{path}{index}") } else { format!("{path}/{index}") };
 
     let wallet = MnemonicBuilder::<English>::default()
         .phrase(mnemonic)
-        .derivation_path(&derivation_path)
-        .map_err(|err| err.to_string().encode())?
-        .build()
-        .map_err(|err| err.to_string().encode())?;
+        .derivation_path(&derivation_path)?
+        .build()?;
 
     let private_key = U256::from_big_endian(wallet.signer().to_bytes().as_slice());
 
     Ok(private_key.encode().into())
 }
 
-fn remember_key(state: &mut Cheatcodes, private_key: U256, chain_id: U256) -> Result<Bytes, Bytes> {
+fn remember_key(state: &mut Cheatcodes, private_key: U256, chain_id: U256) -> Result {
     let key = parse_private_key(private_key)?;
     let wallet = LocalWallet::from(key).with_chain_id(chain_id.as_u64());
     let address = wallet.address();
@@ -128,28 +137,36 @@ fn remember_key(state: &mut Cheatcodes, private_key: U256, chain_id: U256) -> Re
     Ok(address.encode().into())
 }
 
-pub fn parse(s: &str, ty: &ParamType) -> Result<Bytes, Bytes> {
+pub fn parse(s: &str, ty: &ParamType) -> Result {
     parse_token(s, ty)
         .map(|token| abi::encode(&[token]).into())
-        .map_err(|e| format!("Failed to parse `{s}` as type `{ty}`: {e}").encode().into())
+        .map_err(|e| err!("Failed to parse `{s}` as type `{ty}`: {e}"))
 }
 
 pub fn apply<DB: Database>(
     state: &mut Cheatcodes,
     data: &mut EVMData<'_, DB>,
     call: &HEVMCalls,
-) -> Option<Result<Bytes, Bytes>> {
+) -> Option<Result> {
     Some(match call {
         HEVMCalls::Addr(inner) => addr(inner.0),
-        HEVMCalls::Sign(inner) => sign(inner.0, inner.1.into(), data.env.cfg.chain_id),
+        HEVMCalls::Sign(inner) => sign(inner.0, inner.1.into(), data.env.cfg.chain_id.into()),
         HEVMCalls::DeriveKey0(inner) => {
             derive_key(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1)
         }
         HEVMCalls::DeriveKey1(inner) => derive_key(&inner.0, &inner.1, inner.2),
-        HEVMCalls::RememberKey(inner) => remember_key(state, inner.0, data.env.cfg.chain_id),
+        HEVMCalls::RememberKey(inner) => remember_key(state, inner.0, data.env.cfg.chain_id.into()),
         HEVMCalls::Label(inner) => {
             state.labels.insert(inner.0, inner.1.clone());
-            Ok(Bytes::new())
+            Ok(Default::default())
+        }
+        HEVMCalls::GetLabel(inner) => {
+            let label = state
+                .labels
+                .get(&inner.0)
+                .cloned()
+                .unwrap_or_else(|| format!("unlabeled:{:?}", inner.0));
+            Ok(ethers::abi::encode(&[Token::String(label)]).into())
         }
         HEVMCalls::ToString0(inner) => {
             Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
@@ -188,17 +205,18 @@ pub fn process_create<DB>(
 where
     DB: Database<Error = DatabaseError>,
 {
+    let broadcast_sender = h160_to_b160(broadcast_sender);
     match call.scheme {
-        revm::CreateScheme::Create => {
+        revm::primitives::CreateScheme::Create => {
             call.caller = broadcast_sender;
 
             Ok((bytecode, None, data.journaled_state.account(broadcast_sender).info.nonce))
         }
-        revm::CreateScheme::Create2 { salt } => {
+        revm::primitives::CreateScheme::Create2 { salt } => {
             // Sanity checks for our CREATE2 deployer
-            data.journaled_state.load_account(DEFAULT_CREATE2_DEPLOYER, data.db)?;
+            data.journaled_state.load_account(h160_to_b160(DEFAULT_CREATE2_DEPLOYER), data.db)?;
 
-            let info = &data.journaled_state.account(DEFAULT_CREATE2_DEPLOYER).info;
+            let info = &data.journaled_state.account(h160_to_b160(DEFAULT_CREATE2_DEPLOYER)).info;
             match &info.code {
                 Some(code) => {
                     if code.is_empty() {
@@ -215,7 +233,7 @@ where
                 }
             }
 
-            call.caller = DEFAULT_CREATE2_DEPLOYER;
+            call.caller = h160_to_b160(DEFAULT_CREATE2_DEPLOYER);
 
             // We have to increment the nonce of the user address, since this create2 will be done
             // by the create2_deployer
@@ -225,6 +243,7 @@ where
 
             // Proxy deployer requires the data to be on the following format `salt.init_code`
             let mut calldata = BytesMut::with_capacity(32 + bytecode.len());
+            let salt = ru256_to_u256(salt);
             let mut salt_bytes = [0u8; 32];
             salt.to_big_endian(&mut salt_bytes);
             calldata.put_slice(&salt_bytes);
@@ -235,7 +254,7 @@ where
     }
 }
 
-pub fn parse_array<I, T>(values: I, ty: &ParamType) -> Result<Bytes, Bytes>
+pub fn parse_array<I, T>(values: I, ty: &ParamType) -> Result
 where
     I: IntoIterator<Item = T>,
     T: AsRef<str>,
@@ -302,19 +321,16 @@ fn parse_bytes(s: &str) -> Result<Vec<u8>, String> {
     hex::decode(s.strip_prefix("0x").unwrap_or(s)).map_err(|e| e.to_string())
 }
 
-pub fn parse_private_key(private_key: U256) -> Result<SigningKey, Bytes> {
-    if private_key.is_zero() {
-        return Err("Private key cannot be 0.".to_string().encode().into())
-    }
-
-    if private_key >= U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()) {
-        return Err("Private key must be less than 115792089237316195423570985008687907852837564279074904382605163141518161494337 (the secp256k1 curve order).".to_string().encode().into());
-    }
-
+pub fn parse_private_key(private_key: U256) -> Result<SigningKey> {
+    ensure!(!private_key.is_zero(), "Private key cannot be 0.");
+    ensure!(
+        private_key < U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()),
+        "Private key must be less than the secp256k1 curve order \
+        (115792089237316195423570985008687907852837564279074904382605163141518161494337).",
+    );
     let mut bytes: [u8; 32] = [0; 32];
     private_key.to_big_endian(&mut bytes);
-
-    SigningKey::from_bytes((&bytes).into()).map_err(|err| err.to_string().encode().into())
+    SigningKey::from_bytes((&bytes).into()).map_err(Into::into)
 }
 
 // Determines if the gas limit on a given call was manually set in the script and should therefore
@@ -327,8 +343,8 @@ pub fn check_if_fixed_gas_limit<DB: DatabaseExt>(
     // time of the call, which should be rather close to configured gas limit.
     // TODO: Find a way to reliably make this determination. (for example by
     // generating it in the compilation or evm simulation process)
-    U256::from(data.env.tx.gas_limit) > data.env.block.gas_limit &&
-        U256::from(call_gas_limit) <= data.env.block.gas_limit
+    U256::from(data.env.tx.gas_limit) > data.env.block.gas_limit.into() &&
+        U256::from(call_gas_limit) <= data.env.block.gas_limit.into()
         // Transfers in forge scripts seem to be estimated at 2300 by revm leading to "Intrinsic
         // gas too low" failure when simulated on chain
         && call_gas_limit > 2300

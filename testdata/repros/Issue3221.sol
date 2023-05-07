@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.0;
+pragma solidity >=0.8.18;
 
 import "ds-test/test.sol";
 import "../cheats/Cheats.sol";
@@ -11,7 +11,7 @@ contract Issue3221Test is DSTest {
     uint256 fork2;
 
     function setUp() public {
-        fork1 = vm.createFork("https://goerli.infura.io/v3/16a8be88795540b9b3903d8de0f7baa5", 7475589);
+        fork1 = vm.createFork("https://goerli.infura.io/v3/b1d3925804e74152b316ca7da97060d3", 7475589);
         fork2 = vm.createFork("https://api.avax-test.network/ext/bc/C/rpc", 12880747);
     }
 

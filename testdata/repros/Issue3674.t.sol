@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.0;
+pragma solidity >=0.8.18;
 
 import "ds-test/test.sol";
 import "../cheats/Cheats.sol";
@@ -9,7 +9,7 @@ contract Issue3674Test is DSTest {
     Cheats constant vm = Cheats(HEVM_ADDRESS);
 
     function testNonceCreateSelect() public {
-        vm.createSelectFork("https://goerli.infura.io/v3/f4a0bdad42674adab5fc0ac077ffab2b");
+        vm.createSelectFork("https://goerli.infura.io/v3/b9794ad1ddf84dfb8c34d6bb5dca2001");
 
         vm.createSelectFork("https://api.avax-test.network/ext/bc/C/rpc");
         assert(vm.getNonce(msg.sender) > 0x17);

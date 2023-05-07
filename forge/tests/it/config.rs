@@ -8,7 +8,9 @@ use foundry_config::{
     fs_permissions::PathPermission, Config, FsPermissions, FuzzConfig, FuzzDictionaryConfig,
     InvariantConfig, RpcEndpoint, RpcEndpoints,
 };
-use foundry_evm::{decode::decode_console_logs, executor::inspector::CheatsConfig};
+use foundry_evm::{
+    decode::decode_console_logs, executor::inspector::CheatsConfig, revm::primitives::SpecId,
+};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -35,6 +37,11 @@ impl TestConfig {
 
     pub fn filter(filter: Filter) -> Self {
         Self { filter, ..Default::default() }
+    }
+
+    pub fn evm_spec(mut self, spec: SpecId) -> Self {
+        self.runner.evm_spec = spec;
+        self
     }
 
     pub fn should_fail(self) -> Self {
