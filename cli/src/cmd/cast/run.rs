@@ -198,20 +198,16 @@ impl RunArgs {
         let mut etherscan_identifier =
             EtherscanIdentifier::new(&config, evm_opts.get_remote_chain_id())?;
 
-        let labeled_addresses: BTreeMap<Address, String> = self
-            .label
-            .iter()
-            .filter_map(|label_str| {
-                let mut iter = label_str.split(':');
+        let labeled_addresses = self.label.iter().filter_map(|label_str| {
+            let mut iter = label_str.split(':');
 
-                if let Some(addr) = iter.next() {
-                    if let (Ok(address), Some(label)) = (Address::from_str(addr), iter.next()) {
-                        return Some((address, label.to_string()))
-                    }
+            if let Some(addr) = iter.next() {
+                if let (Ok(address), Some(label)) = (Address::from_str(addr), iter.next()) {
+                    return Some((address, label.to_string()))
                 }
-                None
-            })
-            .collect();
+            }
+            None
+        });
 
         let mut decoder = CallTraceDecoderBuilder::new().with_labels(labeled_addresses).build();
 

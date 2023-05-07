@@ -555,7 +555,7 @@ fn test(
                     // Identify addresses in each trace
                     let mut decoder = CallTraceDecoderBuilder::new()
                         .with_labels(result.labeled_addresses.clone())
-                        .with_events(local_identifier.events())
+                        .with_events(local_identifier.events().cloned())
                         .with_verbosity(verbosity)
                         .build();
 
