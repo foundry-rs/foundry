@@ -54,8 +54,8 @@ pub struct ScriptSequenceSensitive {
     pub transactions_to_rpc: BTreeMap<TxHash, Option<RpcUrl>>,
 }
 
-impl From<ScriptSequence> for ScriptSequenceSensitive {
-    fn from(sequence: ScriptSequence) -> Self {
+impl From<&mut ScriptSequence> for ScriptSequenceSensitive {
+    fn from(sequence: &mut ScriptSequence) -> Self {
         ScriptSequenceSensitive {
             transactions_to_rpc: sequence
                 .transactions
@@ -146,9 +146,11 @@ impl ScriptSequence {
     pub fn save(&mut self) -> eyre::Result<()> {
         if !self.multi && !self.transactions.is_empty() {
             self.timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+
+            let script_sequence_sensitive: ScriptSequenceSensitive = self.into();
+
             let path = self.path.to_string_lossy();
             let sensitive_path = self.sensitive_path.to_string_lossy();
-            let timestamp = self.timestamp;
 
             // broadcast folder writes
             //../run-latest.json
@@ -156,12 +158,10 @@ impl ScriptSequence {
             //../run-[timestamp].json
             serde_json::to_writer_pretty(
                 BufWriter::new(fs::create_file(
-                    path.replace("latest.json", &format!("{}.json", timestamp)),
+                    path.replace("latest.json", &format!("{}.json", self.timestamp)),
                 )?),
                 &self,
             )?;
-
-            let script_sequence_sensitive: ScriptSequenceSensitive = self.clone().into();
 
             // cache folder writes
             //../run-latest.json
@@ -172,7 +172,7 @@ impl ScriptSequence {
             //../run-[timestamp].json
             serde_json::to_writer_pretty(
                 BufWriter::new(fs::create_file(
-                    sensitive_path.replace("latest.json", &format!("{}.json", timestamp)),
+                    sensitive_path.replace("latest.json", &format!("{}.json", self.timestamp)),
                 )?),
                 &script_sequence_sensitive,
             )?;

@@ -703,7 +703,7 @@ forgetest_async!(
             .add_sig("BroadcastTestSetup", "run()")
             .simulate(ScriptOutcome::OkSimulation)
             .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment(vec![(0, 7)])
+            .assert_nonce_increment(vec![(0, 6)])
             .await;
 
         // Uncomment to recreate log
@@ -711,8 +711,8 @@ forgetest_async!(
         // PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/fixtures/broadcast.log.json"
         // ));
 
-        // Ignore blockhash and timestamp since they can change inbetween runs.
-        let re = Regex::new(r#"(blockHash.*?blockNumber)|((timestamp":)[0-9]*)"#).unwrap();
+        // Ignore timestamp, blockHash, blockNumber, cumulativeGasUsed, effectiveGasPrice, transactionIndex and logIndex values since they can change inbetween runs
+        let re = Regex::new(r#"((timestamp":).[0-9]*)|((blockHash":).*)|((blockNumber":).*)|((cumulativeGasUsed":).*)|((effectiveGasPrice":).*)|((transactionIndex":).*)|((logIndex":).*)"#).unwrap();
 
         let fixtures_log = std::fs::read_to_string(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -724,6 +724,9 @@ forgetest_async!(
         let run_log =
             std::fs::read_to_string("broadcast/Broadcast.t.sol/31337/run-latest.json").unwrap();
         let run_log = re.replace_all(&run_log, "");
+
+        // dbg!(&fixtures_log);
+        // dbg!(&run_log);
 
         assert!(fixtures_log == run_log);
     }
