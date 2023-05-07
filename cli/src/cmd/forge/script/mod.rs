@@ -15,11 +15,12 @@ use ethers::{
         artifacts::{ContractBytecodeSome, Libraries},
         ArtifactId, Bytes, Project,
     },
+    providers::{Http, Middleware},
     signers::LocalWallet,
     solc::contracts::ArtifactContracts,
     types::{
-        transaction::eip2718::TypedTransaction, Address, Log, NameOrAddress, TransactionRequest,
-        U256,
+        transaction::eip2718::TypedTransaction, Address, Chain, Log, NameOrAddress,
+        TransactionRequest, U256,
     },
 };
 use eyre::{ContextCompat, WrapErr};
@@ -40,6 +41,7 @@ use foundry_common::{
     shell, ContractsByArtifact, RpcUrl, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_config::{figment, Config};
+use futures::future;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
@@ -74,6 +76,16 @@ mod verify;
 
 use crate::cmd::retry::RetryArgs;
 pub use transaction::TransactionWithMetadata;
+
+/// List of Chains that support Shanghai.
+static SHANGHAI_ENABLED_CHAINS: &[Chain] = &[
+    // Ethereum Mainnet
+    Chain::Mainnet,
+    // Goerli
+    Chain::Goerli,
+    // Sepolia
+    Chain::Sepolia,
+];
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(ScriptArgs, opts, evm_opts);
@@ -698,6 +710,46 @@ impl ScriptConfig {
     /// Returns the script target contract
     fn target_contract(&self) -> &ArtifactId {
         self.target_contract.as_ref().expect("should exist after building")
+    }
+
+    /// Checks if the RPCs used point to chains that support EIP-3855.
+    /// If not, warns the user.
+    async fn check_shanghai_support(&self) -> eyre::Result<()> {
+        let chain_ids = self.total_rpcs.iter().map(|rpc| async move {
+            if let Ok(provider) = ethers::providers::Provider::<Http>::try_from(rpc) {
+                match provider.get_chainid().await {
+                    Ok(chain_id) => match TryInto::<Chain>::try_into(chain_id) {
+                        Ok(chain) => return Some((SHANGHAI_ENABLED_CHAINS.contains(&chain), chain)),
+                        Err(_) => return None,
+                    },
+                    Err(_) => return None,
+                }
+            }
+            None
+        });
+
+        let chain_ids: Vec<_> = future::join_all(chain_ids).await.into_iter().flatten().collect();
+
+        let chain_id_unsupported = chain_ids.iter().any(|(supported, _)| !supported);
+
+        // At least one chain ID is unsupported, therefore we print the message.
+        if chain_id_unsupported {
+            let msg = format!(
+                r#"
+EIP-3855 is not supported in one or more of the RPCs used.
+Unsupported Chain IDs: {}.
+Contracts deployed with a Solidity version equal or higher than 0.8.20 might not work properly.
+For more information, please see https://eips.ethereum.org/EIPS/eip-3855"#,
+                chain_ids
+                    .iter()
+                    .filter(|(supported, _)| !supported)
+                    .map(|(_, chain)| format!("{}", *chain as u64))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            shell::println(Paint::yellow(msg))?;
+        }
+        Ok(())
     }
 }
 

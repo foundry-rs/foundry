@@ -39,6 +39,7 @@ use foundry_config::figment::{
     value::{Dict, Map},
     Metadata, Profile, Provider,
 };
+use foundry_evm::utils::evm_spec;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
@@ -158,7 +159,7 @@ impl TestArgs {
         let env = evm_opts.evm_env_blocking()?;
 
         // Prepare the test builder
-        let evm_spec = utils::evm_spec(&config.evm_version);
+        let evm_spec = evm_spec(&config.evm_version);
 
         let mut runner = MultiContractRunnerBuilder::default()
             .initial_balance(evm_opts.initial_balance)

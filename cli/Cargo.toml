@@ -18,6 +18,7 @@ foundry-utils = { path = "../utils" }
 forge = { path = "../forge" }
 foundry-config = { path = "../config" }
 foundry-common = { path = "../common" }
+foundry-evm = { path = "../evm" }
 cast = { path = "../cast" }
 ui = { path = "../ui" }
 

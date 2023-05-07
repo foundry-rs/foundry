@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.0;
+pragma solidity >=0.8.18;
 
 interface Cheats {
     // This allows us to getRecordedLogs()
@@ -39,7 +39,11 @@ interface Cheats {
     function warp(uint256) external;
 
     // Set block.difficulty (newDifficulty)
+    // No longer works from Paris onwards.
     function difficulty(uint256) external;
+
+    // Set block.prevrandao (newPrevrandao)
+    function prevrandao(bytes32) external;
 
     // Set block.height (newHeight)
     function roll(uint256) external;

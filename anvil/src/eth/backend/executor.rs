@@ -18,7 +18,7 @@ use ethers::{
     utils::rlp,
 };
 use forge::{
-    revm::primitives::ExecutionResult,
+    revm::primitives::{EVMError, ExecutionResult},
     utils::{
         b160_to_h160, eval_to_instruction_result, h160_to_b160, halt_to_instruction_result,
         ru256_to_u256,
@@ -33,7 +33,7 @@ use foundry_evm::{
     },
     trace::{node::CallTraceNode, CallTraceArena},
 };
-use std::{str::FromStr, sync::Arc};
+use std::sync::Arc;
 use tracing::{trace, warn};
 
 /// Represents an executed transaction (transacted on the DB)
@@ -271,10 +271,19 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
             Ok(exec_result) => exec_result,
             Err(err) => {
                 warn!(target: "backend", "[{:?}] failed to execute: {:?}", transaction.hash(), err);
-                return Some(TransactionExecutionOutcome::DatabaseError(
-                    transaction,
-                    DatabaseError::TransactionNotFound(H256::from_str("0x").unwrap()),
-                ))
+                match err {
+                    EVMError::Database(err) => {
+                        return Some(TransactionExecutionOutcome::DatabaseError(transaction, err))
+                    }
+                    EVMError::Transaction(err) => {
+                        return Some(TransactionExecutionOutcome::Invalid(transaction, err.into()))
+                    }
+                    // This will correspond to prevrandao not set, and it should never happen.
+                    // If it does, it's a bug.
+                    e => {
+                        panic!("Failed to execute transaction. This is a bug.\n {:?}", e)
+                    }
+                }
             }
         };
         inspector.print_logs();
