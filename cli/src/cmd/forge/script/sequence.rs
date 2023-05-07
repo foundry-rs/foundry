@@ -79,15 +79,14 @@ impl ScriptSequence {
     ) -> eyre::Result<Self> {
         let chain = config.chain_id.unwrap_or_default().id();
 
-        let path = ScriptSequence::get_path(
+        let (path, sensitive_path) = ScriptSequence::get_paths(
             &config.broadcast,
+            &config.cache_path,
             sig,
             target,
             chain,
             broadcasted && !is_multi,
         )?;
-
-        let sensitive_path = ScriptSequence::get_sensitive_path(&config.cache_path, sig);
 
         let commit = get_commit_hash(&config.__root.0);
 
@@ -117,8 +116,15 @@ impl ScriptSequence {
         chain_id: u64,
         broadcasted: bool,
     ) -> eyre::Result<Self> {
-        let path = ScriptSequence::get_path(&config.broadcast, sig, target, chain_id, broadcasted)?;
-        let sensitive_path = ScriptSequence::get_sensitive_path(&config.cache_path, sig);
+        let (path, sensitive_path) = ScriptSequence::get_paths(
+            &config.broadcast,
+            &config.cache_path,
+            sig,
+            target,
+            chain_id,
+            broadcasted,
+        )?;
+
         let mut script_sequence: Self = ethers::solc::utils::read_json_file(path)
             .wrap_err(format!("Deployment not found for chain `{chain_id}`."))?;
 
@@ -214,37 +220,41 @@ impl ScriptSequence {
             .collect();
     }
 
-    /// Saves to ./broadcast/contract_filename/[sig]-[timestamp].json
-    pub fn get_path(
-        out: &Path,
+    /// Gets paths in the formats
+    /// ./broadcast/[contract_filename]/[chain_id]/[sig]-[timestamp].json and
+    /// ./cache/[contract_filename]/[chain_id]/[sig]-[timestamp].json
+    pub fn get_paths(
+        broadcast: &Path,
+        cache: &Path,
         sig: &str,
         target: &ArtifactId,
         chain_id: u64,
         broadcasted: bool,
-    ) -> eyre::Result<PathBuf> {
-        let mut out = out.to_path_buf();
+    ) -> eyre::Result<(PathBuf, PathBuf)> {
+        let mut broadcast = broadcast.to_path_buf();
+        let mut cache = cache.to_path_buf();
+        let mut common = PathBuf::new();
+
         let target_fname = target.source.file_name().wrap_err("No filename.")?;
-        out.push(target_fname);
-        out.push(chain_id.to_string());
+        common.push(target_fname);
+        common.push(chain_id.to_string());
         if !broadcasted {
-            out.push(DRY_RUN_DIR);
+            common.push(DRY_RUN_DIR);
         }
 
-        fs::create_dir_all(&out)?;
+        broadcast.push(common.clone());
+        cache.push(common);
+
+        fs::create_dir_all(&broadcast)?;
+        fs::create_dir_all(&cache)?;
 
         // TODO: ideally we want the name of the function here if sig is calldata
         let filename = sig_to_file_name(sig);
 
-        out.push(format!("{filename}-latest.json"));
-        Ok(out)
-    }
+        broadcast.push(format!("{filename}-latest.json"));
+        cache.push(format!("{filename}-latest.json"));
 
-    /// Saves to ./cache/[sig]-[timestamp].json
-    pub fn get_sensitive_path(out: &Path, sig: &str) -> PathBuf {
-        let mut out = out.to_path_buf();
-        let filename = sig_to_file_name(sig);
-        out.push(format!("{filename}-latest.json"));
-        out
+        Ok((broadcast, cache))
     }
 
     /// Given the broadcast log, it matches transactions with receipts, and tries to verify any
