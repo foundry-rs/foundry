@@ -705,9 +705,10 @@ forgetest_async!(check_broadcast_log, |prj: TestProject, cmd: TestCommand| async
         .await;
 
     // Uncomment to recreate the broadcast log
-    // std::fs::copy("broadcast/Broadcast.t.sol/31337/run-latest.json",
-    // PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/fixtures/broadcast.log.json"
-    // ));
+    // std::fs::copy(
+    //     "broadcast/Broadcast.t.sol/31337/run-latest.json",
+    //     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/fixtures/broadcast.log.json"
+    // ), );
 
     // Check broadcast logs
     // Ignore timestamp, blockHash, blockNumber, cumulativeGasUsed, effectiveGasPrice,
@@ -727,9 +728,11 @@ forgetest_async!(check_broadcast_log, |prj: TestProject, cmd: TestCommand| async
     assert!(fixtures_log == run_log);
 
     // Uncomment to recreate the sensitive log
-    // std::fs::copy("cache/Broadcast.t.sol/31337/run-latest.json",
-    // PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/fixtures/broadcast.sensitive.log.
-    // json" ));
+    // std::fs::copy(
+    //     "cache/Broadcast.t.sol/31337/run-latest.json",
+    //     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    //         .join("../testdata/fixtures/broadcast.sensitive.log.json"),
+    // );
 
     // Check sensitive logs
     // Ignore port number since it can change inbetween runs

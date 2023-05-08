@@ -13,11 +13,11 @@ use ethers::{
     types::transaction::eip2718::TypedTransaction,
 };
 use eyre::{ContextCompat, WrapErr};
-use foundry_common::{fs, shell, RpcUrl, SELECTOR_LEN};
+use foundry_common::{fs, shell, SELECTOR_LEN};
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{HashMap, VecDeque},
     io::BufWriter,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -48,20 +48,24 @@ pub struct ScriptSequence {
     pub commit: Option<String>,
 }
 
+#[derive(Deserialize, Serialize, Clone, Default)]
+pub struct TransactionWithMetadataSensitive {
+    pub rpc: Option<String>,
+}
+
 /// Sensitive info from the script sequence which is saved into the cache folder
 #[derive(Deserialize, Serialize, Clone, Default)]
 pub struct ScriptSequenceSensitive {
-    pub transactions_to_rpc: BTreeMap<TxHash, Option<RpcUrl>>,
+    pub transactions: VecDeque<TransactionWithMetadataSensitive>,
 }
 
 impl From<&mut ScriptSequence> for ScriptSequenceSensitive {
     fn from(sequence: &mut ScriptSequence) -> Self {
         ScriptSequenceSensitive {
-            transactions_to_rpc: sequence
+            transactions: sequence
                 .transactions
                 .iter()
-                .filter(|tx| tx.hash.is_some())
-                .map(|tx| (tx.hash.unwrap(), tx.rpc.clone()))
+                .map(|tx| TransactionWithMetadataSensitive { rpc: tx.rpc.clone() })
                 .collect(),
         }
     }
@@ -125,19 +129,22 @@ impl ScriptSequence {
             broadcasted,
         )?;
 
-        let mut script_sequence: Self = ethers::solc::utils::read_json_file(path)
+        let mut script_sequence: Self = ethers::solc::utils::read_json_file(&path)
             .wrap_err(format!("Deployment not found for chain `{chain_id}`."))?;
 
         let script_sequence_sensitive: ScriptSequenceSensitive =
-            ethers::solc::utils::read_json_file(sensitive_path).wrap_err(format!(
+            ethers::solc::utils::read_json_file(&sensitive_path).wrap_err(format!(
                 "Deployment's sensitive details not found for chain `{chain_id}`."
             ))?;
 
-        script_sequence.transactions.iter_mut().for_each(|tx| {
-            if tx.hash.is_some() {
-                tx.rpc = script_sequence_sensitive.transactions_to_rpc[&tx.hash.unwrap()].clone()
-            }
-        });
+        script_sequence
+            .transactions
+            .iter_mut()
+            .enumerate()
+            .for_each(|(i, tx)| tx.rpc = script_sequence_sensitive.transactions[i].rpc.clone());
+
+        script_sequence.path = path;
+        script_sequence.sensitive_path = sensitive_path;
 
         Ok(script_sequence)
     }
