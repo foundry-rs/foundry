@@ -325,7 +325,7 @@ impl CoverageArgs {
                 CoverageReportKind::Lcov => {
                     LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?).report(&report)
                 }
-                CoverageReportKind::Debug => DebugReporter::default().report(&report),
+                CoverageReportKind::Debug => DebugReporter.report(&report),
             }?;
         }
         Ok(())
