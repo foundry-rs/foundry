@@ -84,7 +84,7 @@ impl SessionSourceConfig {
     /// Solc version precedence
     /// - Foundry configuration / `--use` flag
     /// - Latest installed version via SVM
-    /// - Default: Latest 0.8.17
+    /// - Default: Latest 0.8.19
     pub(crate) fn solc(&self) -> Result<Solc> {
         let solc_req = if let Some(solc_req) = self.foundry_config.solc.clone() {
             solc_req
@@ -95,7 +95,7 @@ impl SessionSourceConfig {
                 print!("{}", Paint::green("No solidity versions installed! "));
             }
             // use default
-            SolcReq::Version("0.8.17".parse().unwrap())
+            SolcReq::Version("0.8.19".parse().unwrap())
         };
 
         match solc_req {
