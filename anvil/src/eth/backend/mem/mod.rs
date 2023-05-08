@@ -1443,8 +1443,6 @@ impl Backend {
             mix_hash: Some(mix_hash),
             nonce: Some(nonce),
             base_fee_per_gas,
-            withdrawals_root: None,
-            withdrawals: None,
             other: Default::default(),
             ..Default::default()
         }
