@@ -14,7 +14,7 @@ use ethers::{
 };
 use foundry_config::Config;
 use revm::{
-    primitives::{Bytecode, B256},
+    primitives::{Bytecode, SpecId, B256},
     Database, EVMData,
 };
 use std::collections::BTreeMap;
@@ -204,10 +204,18 @@ pub fn apply<DB: DatabaseExt>(
             Bytes::new()
         }
         HEVMCalls::Difficulty(inner) => {
+            ensure!(
+                data.env.cfg.spec_id < SpecId::MERGE,
+                "Difficulty is not supported after the Paris hard fork. Please use vm.prevrandao instead. For more information, please see https://eips.ethereum.org/EIPS/eip-4399"
+            );
             data.env.block.difficulty = inner.0.into();
             Bytes::new()
         }
         HEVMCalls::Prevrandao(inner) => {
+            ensure!(
+                data.env.cfg.spec_id >= SpecId::MERGE,
+                "Prevrandao is not supported before the Paris hard fork. Please use vm.difficulty instead. For more information, please see https://eips.ethereum.org/EIPS/eip-4399"
+            );
             data.env.block.prevrandao = Some(B256::from(inner.0));
             Bytes::new()
         }
