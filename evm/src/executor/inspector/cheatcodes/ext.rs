@@ -1,5 +1,8 @@
 use super::{bail, ensure, err, Cheatcodes, Result};
-use crate::{abi::HEVMCalls, executor::inspector::cheatcodes::util};
+use crate::{
+    abi::{FfiResult, HEVMCalls},
+    executor::inspector::cheatcodes::util,
+};
 use ethers::{
     abi::{self, AbiEncode, JsonAbi, ParamType, Token},
     prelude::artifacts::CompactContractBytecode,
@@ -44,6 +47,52 @@ fn ffi(state: &Cheatcodes, args: &[String]) -> Result {
     } else {
         Ok(trimmed.encode().into())
     }
+}
+
+/// Invokes a `Command` with the given args and returns the exit code, stdout, and stderr.
+///
+/// If stdout or stderr are valid hex, it returns the hex decoded value.
+fn try_ffi(state: &Cheatcodes, args: &[String]) -> Result {
+    if args.is_empty() || args[0].is_empty() {
+        bail!("Can't execute empty command");
+    }
+    let mut cmd = Command::new(&args[0]);
+    if args.len() > 1 {
+        cmd.args(&args[1..]);
+    }
+
+    trace!(?args, "invoking try_ffi");
+
+    let output = cmd
+        .current_dir(&state.config.root)
+        .output()
+        .map_err(|err| err!("Failed to execute command: {err}"))?;
+
+    let exit_code = output.status.code().unwrap_or(1);
+
+    let trimmed_stdout = String::from_utf8(output.stdout)?;
+    let trimmed_stdout = trimmed_stdout.trim();
+
+    let encoded_stdout: Bytes =
+        if let Ok(hex) = hex::decode(trimmed_stdout.strip_prefix("0x").unwrap_or(trimmed_stdout)) {
+            abi::encode(&[Token::Bytes(hex)]).into()
+        } else {
+            trimmed_stdout.encode().into()
+        };
+
+    let trimmed_stderr = String::from_utf8(output.stderr)?;
+    let trimmed_stderr = trimmed_stderr.trim();
+
+    let encoded_stderr: Bytes =
+        if let Ok(hex) = hex::decode(trimmed_stderr.strip_prefix("0x").unwrap_or(trimmed_stderr)) {
+            abi::encode(&[Token::Bytes(hex)]).into()
+        } else {
+            trimmed_stderr.encode().into()
+        };
+
+    let ffi_result = FfiResult { exit_code, stdout: encoded_stdout, stderr: encoded_stderr };
+
+    Ok(ffi_result.encode().into())
 }
 
 /// An enum which unifies the deserialization of Hardhat-style artifacts with Forge-style artifacts
@@ -368,6 +417,13 @@ pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result> {
         HEVMCalls::Ffi(inner) => {
             if state.config.ffi {
                 ffi(state, &inner.0)
+            } else {
+                Err(err!("FFI disabled: run again with `--ffi` if you want to allow tests to call external scripts."))
+            }
+        }
+        HEVMCalls::TryFfi(inner) => {
+            if state.config.ffi {
+                try_ffi(state, &inner.0)
             } else {
                 Err(err!("FFI disabled: run again with `--ffi` if you want to allow tests to call external scripts."))
             }
