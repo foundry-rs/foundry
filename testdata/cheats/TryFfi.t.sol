@@ -24,8 +24,7 @@ contract TryFfiTest is DSTest {
         string[] memory inputs = new string[](3);
         inputs[0] = "bash";
         inputs[1] = "-c";
-        inputs[2] =
-            "ls foo";
+        inputs[2] = "ls foo";
 
         Cheats.FfiResult memory f = cheats.tryFfi(inputs);
         // assert(f.exit_code != 0);
