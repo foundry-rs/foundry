@@ -11,6 +11,9 @@ use ethers_core::{
 use ethers_etherscan::{contract::ContractMetadata, errors::EtherscanError, Client};
 use eyre::{ContextCompat, Result, WrapErr};
 use std::{future::Future, pin::Pin, str::FromStr};
+use yansi::Paint;
+
+use crate::calc::to_exponential_notation;
 
 /// Given a function and a vector of string arguments, it proceeds to convert the args to ethabi
 /// Tokens and then ABI encode them.
@@ -157,7 +160,7 @@ pub fn format_token(param: &Token) -> String {
         Token::FixedBytes(bytes) => format!("0x{}", hex::encode(bytes)),
         Token::Bytes(bytes) => format!("0x{}", hex::encode(bytes)),
         Token::Int(num) => format!("{}", I256::from_raw(*num)),
-        Token::Uint(num) => num.to_string(),
+        Token::Uint(num) => format_uint_with_exponential_notation_hint(*num),
         Token::Bool(b) => format!("{b}"),
         Token::String(s) => s.to_string(),
         Token::FixedArray(tokens) => {
@@ -173,6 +176,28 @@ pub fn format_token(param: &Token) -> String {
             format!("({string})")
         }
     }
+}
+
+/// Formats a U256 number to string, adding an exponential notation _hint_ if it
+/// is larger than `10_000`, with a precision of `4` figures, and trimming the
+/// trailing zeros.
+///
+/// Examples:
+///
+/// ```text
+///   0 -> "0"
+///   1234 -> "1234"
+///   1234567890 -> "1234567890 [1.234e9]"
+///   1000000000000000000 -> "1000000000000000000 [1e18]"
+///   10000000000000000000000 -> "10000000000000000000000 [1e22]"
+/// ```
+pub fn format_uint_with_exponential_notation_hint(num: U256) -> String {
+    if num.lt(&U256::from(10_000)) {
+        return num.to_string()
+    }
+
+    let exp = to_exponential_notation(num, 4, true);
+    format!("{} {}", num, Paint::default(format!("[{}]", exp)).dimmed())
 }
 
 /// Helper trait for converting types to Functions. Helpful for allowing the `call`
