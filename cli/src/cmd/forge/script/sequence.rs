@@ -48,24 +48,25 @@ pub struct ScriptSequence {
     pub commit: Option<String>,
 }
 
+/// Sensitive values from the transactions in a script sequence
 #[derive(Deserialize, Serialize, Clone, Default)]
-pub struct TransactionWithMetadataSensitive {
+pub struct SensitiveTransactionMetadata {
     pub rpc: Option<String>,
 }
 
 /// Sensitive info from the script sequence which is saved into the cache folder
 #[derive(Deserialize, Serialize, Clone, Default)]
-pub struct ScriptSequenceSensitive {
-    pub transactions: VecDeque<TransactionWithMetadataSensitive>,
+pub struct SensitiveScriptSequence {
+    pub transactions: VecDeque<SensitiveTransactionMetadata>,
 }
 
-impl From<&mut ScriptSequence> for ScriptSequenceSensitive {
+impl From<&mut ScriptSequence> for SensitiveScriptSequence {
     fn from(sequence: &mut ScriptSequence) -> Self {
-        ScriptSequenceSensitive {
+        SensitiveScriptSequence {
             transactions: sequence
                 .transactions
                 .iter()
-                .map(|tx| TransactionWithMetadataSensitive { rpc: tx.rpc.clone() })
+                .map(|tx| SensitiveTransactionMetadata { rpc: tx.rpc.clone() })
                 .collect(),
         }
     }
@@ -132,7 +133,7 @@ impl ScriptSequence {
         let mut script_sequence: Self = ethers::solc::utils::read_json_file(&path)
             .wrap_err(format!("Deployment not found for chain `{chain_id}`."))?;
 
-        let script_sequence_sensitive: ScriptSequenceSensitive =
+        let sensitive_script_sequence: SensitiveScriptSequence =
             ethers::solc::utils::read_json_file(&sensitive_path).wrap_err(format!(
                 "Deployment's sensitive details not found for chain `{chain_id}`."
             ))?;
@@ -141,7 +142,7 @@ impl ScriptSequence {
             .transactions
             .iter_mut()
             .enumerate()
-            .for_each(|(i, tx)| tx.rpc = script_sequence_sensitive.transactions[i].rpc.clone());
+            .for_each(|(i, tx)| tx.rpc = sensitive_script_sequence.transactions[i].rpc.clone());
 
         script_sequence.path = path;
         script_sequence.sensitive_path = sensitive_path;
@@ -154,7 +155,7 @@ impl ScriptSequence {
         if !self.multi && !self.transactions.is_empty() {
             self.timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
-            let script_sequence_sensitive: ScriptSequenceSensitive = self.into();
+            let sensitive_script_sequence: SensitiveScriptSequence = self.into();
 
             let path = self.path.to_string_lossy();
             let sensitive_path = self.sensitive_path.to_string_lossy();
@@ -174,17 +175,18 @@ impl ScriptSequence {
             //../run-latest.json
             serde_json::to_writer_pretty(
                 BufWriter::new(fs::create_file(&self.sensitive_path)?),
-                &script_sequence_sensitive,
+                &sensitive_script_sequence,
             )?;
             //../run-[timestamp].json
             serde_json::to_writer_pretty(
                 BufWriter::new(fs::create_file(
                     sensitive_path.replace("latest.json", &format!("{}.json", self.timestamp)),
                 )?),
-                &script_sequence_sensitive,
+                &sensitive_script_sequence,
             )?;
 
             shell::println(format!("\nTransactions saved to: {path}\n"))?;
+            shell::println(format!("Sensitive values saved to: {sensitive_path}\n"))?;
         }
 
         Ok(())
