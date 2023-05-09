@@ -134,10 +134,12 @@ fn get_fn_docs(fn_data: &BTreeMap<String, Value>) -> Option<(String, String)> {
     if let Value::Object(fn_docs) = fn_data.get("documentation")? {
         if let Value::String(comment) = fn_docs.get("text")? {
             if comment.contains(INLINE_CONFIG_PREFIX) {
-                let src_line = fn_docs
+                let mut src_line = fn_docs
                     .get("src")
-                    .map(Value::to_string)
+                    .map(|src| src.to_string())
                     .unwrap_or(String::from("<no-src-line-available>"));
+
+                src_line.retain(|c| c != '"');
                 return Some((comment.into(), src_line))
             }
         }
@@ -201,6 +203,15 @@ mod tests {
         fn_data.insert("documentation".into(), doc_withouth_src_field);
         let (_, src_line) = get_fn_docs(&fn_data).expect("Some docs");
         assert_eq!(src_line, "<no-src-line-available>".to_string());
+    }
+
+    #[test]
+    fn can_handle_available_src_line() {
+        let mut fn_data: BTreeMap<String, Value> = BTreeMap::new();
+        let doc_withouth_src_field = json!({ "text":  "forge-config:default.fuzz.runs=600", "src": "73:21:12" });
+        fn_data.insert("documentation".into(), doc_withouth_src_field);
+        let (_, src_line) = get_fn_docs(&fn_data).expect("Some docs");
+        assert_eq!(src_line, "73:21:12".to_string());
     }
 
     fn natspec() -> NatSpec {
