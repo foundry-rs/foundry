@@ -7,9 +7,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 // List of general purpose infura keys to rotate through
 static INFURA_KEYS: Lazy<Vec<&'static str>> = Lazy::new(|| {
     let mut keys = vec![
-        "16a8be88795540b9b3903d8de0f7baa5",
-        "f4a0bdad42674adab5fc0ac077ffab2b",
-        "5c812e02193c4ba793f8c214317582bd",
+        // "16a8be88795540b9b3903d8de0f7baa5",
+        // "f4a0bdad42674adab5fc0ac077ffab2b",
+        // "5c812e02193c4ba793f8c214317582bd",
     ];
 
     keys.shuffle(&mut rand::thread_rng());

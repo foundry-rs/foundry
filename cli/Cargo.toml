@@ -18,12 +18,13 @@ foundry-utils = { path = "../utils" }
 forge = { path = "../forge" }
 foundry-config = { path = "../config" }
 foundry-common = { path = "../common" }
+foundry-evm = { path = "../evm" }
 cast = { path = "../cast" }
 ui = { path = "../ui" }
 
 # eth
 ethers = { workspace = true, features = ["rustls"] }
-solang-parser = "=0.2.3"
+solang-parser = "=0.2.4"
 
 # cli
 clap = { version = "4.2", features = ["derive", "env", "unicode", "wrap_help"] }
@@ -40,7 +41,7 @@ comfy-table = "6.1"
 reqwest = { version = "0.11.16", default-features = false, features = [
     "json",
     "rustls",
-    "rustls-native-certs",
+    "rustls-tls-native-roots",
 ] }
 dotenvy = "0.15"
 dialoguer = { version = "0.10", default-features = false }

@@ -16,6 +16,7 @@ use eyre::{Result, WrapErr};
 use forge::{
     decode::decode_console_logs,
     executor::{inspector::CheatsConfig, Backend, ExecutorBuilder},
+    utils::ru256_to_u256,
 };
 use solang_parser::pt::{self, CodeLocation};
 use yansi::Paint;
@@ -185,7 +186,7 @@ impl SessionSource {
 
         // the file compiled correctly, thus the last stack item must be the memory offset of
         // the `bytes memory inspectoor` value
-        let mut offset = stack.data().last().unwrap().as_usize();
+        let mut offset = ru256_to_u256(*stack.data().last().unwrap()).as_usize();
         let mem = memory.data();
         let len = U256::from(&mem[offset..offset + 32]).as_usize();
         offset += 32;
@@ -251,14 +252,14 @@ impl SessionSource {
             .with_config(env)
             .with_chisel_state(final_pc)
             .set_tracing(true)
-            .with_spec(foundry_cli::utils::evm_spec(&self.config.foundry_config.evm_version))
+            .with_spec(foundry_evm::utils::evm_spec(&self.config.foundry_config.evm_version))
             .with_gas_limit(self.config.evm_opts.gas_limit())
             .with_cheatcodes(CheatsConfig::new(&self.config.foundry_config, &self.config.evm_opts))
             .build(backend);
 
         // Create a [ChiselRunner] with a default balance of [U256::MAX] and
         // the sender [Address::zero].
-        ChiselRunner::new(executor, U256::MAX, Address::zero())
+        ChiselRunner::new(executor, U256::MAX, Address::zero(), self.config.calldata.clone())
     }
 }
 
@@ -461,7 +462,7 @@ impl Type {
             pt::Expression::New(_, inner) |                 // new <inner>
             pt::Expression::UnaryPlus(_, inner) |           // +<inner>
             // ops
-            pt::Expression::Complement(_, inner) |          // ~<inner>
+            pt::Expression::BitwiseNot(_, inner) |          // ~<inner>
             pt::Expression::ArraySlice(_, inner, _, _) |    // <inner>[*start*:*end*]
             // assign ops
             pt::Expression::PreDecrement(_, inner) |        // --<inner>

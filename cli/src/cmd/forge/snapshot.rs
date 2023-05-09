@@ -69,19 +69,21 @@ pub struct SnapshotArgs {
     check: Option<Option<PathBuf>>,
 
     // Hidden because there is only one option
-    #[clap(help = "How to format the output.", long, hide(true))]
+    /// How to format the output.
+    #[clap(long, hide(true))]
     format: Option<Format>,
 
+    /// Output file for the snapshot.
     #[clap(
-        help = "Output file for the snapshot.",
-        default_value = ".gas-snapshot",
         long,
-        value_name = "SNAPSHOT_FILE"
+        default_value = ".gas-snapshot",
+        value_hint = ValueHint::FilePath,
+        value_name = "FILE",
     )]
     snap: PathBuf,
 
+    /// Tolerates gas deviations up to the specified percentage.
     #[clap(
-        help = "Tolerates gas deviations up to the specified percentage.",
         long,
         value_parser = RangedU64ValueParser::<u32>::new().range(0..100),
         value_name = "SNAPSHOT_THRESHOLD"
@@ -157,21 +159,20 @@ impl FromStr for Format {
 /// Additional filters that can be applied on the test results
 #[derive(Debug, Clone, Parser, Default)]
 struct SnapshotConfig {
-    #[clap(help = "Sort results by gas used (ascending).", long)]
+    /// Sort results by gas used (ascending).
+    #[clap(long)]
     asc: bool,
-    #[clap(help = "Sort results by gas used (descending).", conflicts_with = "asc", long)]
+
+    /// Sort results by gas used (descending).
+    #[clap(conflicts_with = "asc", long)]
     desc: bool,
-    #[clap(
-        help = "Only include tests that used more gas that the given amount.",
-        long,
-        value_name = "MIN_GAS"
-    )]
+
+    /// Only include tests that used more gas that the given amount.
+    #[clap(long, value_name = "MIN_GAS")]
     min: Option<u64>,
-    #[clap(
-        help = "Only include tests that used less gas that the given amount.",
-        long,
-        value_name = "MAX_GAS"
-    )]
+
+    /// Only include tests that used less gas that the given amount.
+    #[clap(long, value_name = "MAX_GAS")]
     max: Option<u64>,
 }
 

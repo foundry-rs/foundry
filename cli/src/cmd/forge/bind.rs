@@ -1,19 +1,11 @@
-use crate::cmd::utils::{Cmd, LoadConfig};
-
-use crate::cmd::forge::build::CoreBuildArgs;
+use crate::cmd::{
+    forge::build::CoreBuildArgs,
+    utils::{Cmd, LoadConfig},
+};
 use clap::{Parser, ValueHint};
 use ethers::contract::{Abigen, ContractFilter, ExcludeContracts, MultiAbigen, SelectContracts};
 use foundry_common::{compile, fs::json_files};
-use foundry_config::{
-    figment::{
-        self,
-        error::Kind::InvalidType,
-        value::{Dict, Map, Value},
-        Metadata, Profile, Provider,
-    },
-    impl_figment_convert, Config,
-};
-use serde::Serialize;
+use foundry_config::impl_figment_convert;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -21,86 +13,73 @@ use std::{
 
 impl_figment_convert!(BindArgs, build_args);
 
-static DEFAULT_CRATE_NAME: &str = "foundry-contracts";
-static DEFAULT_CRATE_VERSION: &str = "0.0.1";
+const DEFAULT_CRATE_NAME: &str = "foundry-contracts";
+const DEFAULT_CRATE_VERSION: &str = "0.1.0";
 
 /// CLI arguments for `forge bind`.
-#[derive(Debug, Clone, Parser, Serialize)]
+#[derive(Debug, Clone, Parser)]
 pub struct BindArgs {
+    /// Path to where the contract artifacts are stored.
     #[clap(
-        help = "Path to where the contract artifacts are stored",
         long = "bindings-path",
         short,
         value_hint = ValueHint::DirPath,
         value_name = "PATH"
     )]
-    #[serde(skip)]
     pub bindings: Option<PathBuf>,
 
-    #[clap(
-        long,
-        help = "Create bindings only for contracts whose names match the specified filter(s)"
-    )]
-    #[serde(skip)]
+    /// Create bindings only for contracts whose names match the specified filter(s)
+    #[clap(long)]
     pub select: Vec<regex::Regex>,
 
-    #[clap(
-        long,
-        help = "Create bindings only for contracts whose names do not match the specified filter(s)",
-        conflicts_with = "select"
-    )]
-    #[serde(skip)]
+    /// Create bindings only for contracts whose names do not match the specified filter(s)
+    #[clap(long, conflicts_with = "select")]
     pub skip: Vec<regex::Regex>,
 
-    #[clap(
-        long,
-        help ="By default all contracts ending with `Test` or `Script` are excluded. This will explicitly generate bindings for all contracts",
-        conflicts_with_all = &["select", "skip"]
-    )]
-    #[serde(skip)]
+    /// Explicitly generate bindings for all contracts
+    ///
+    /// By default all contracts ending with `Test` or `Script` are excluded.
+    #[clap(long, conflicts_with_all = &["select", "skip"])]
     pub select_all: bool,
 
-    #[clap(
-        long = "crate-name",
-        help = "The name of the Rust crate to generate. This should be a valid crates.io crate name. However, it is not currently validated by this command.",
-        default_value = DEFAULT_CRATE_NAME,
-    )]
-    #[serde(skip)]
+    /// The name of the Rust crate to generate.
+    ///
+    /// This should be a valid crates.io crate name,
+    /// however, this is not currently validated by this command.
+    #[clap(long, default_value = DEFAULT_CRATE_NAME, value_name = "NAME")]
     crate_name: String,
 
-    #[clap(
-        long = "crate-version",
-        help = "The version of the Rust crate to generate. This should be a standard semver version string. However, it is not currently validated by this command.",
-        default_value = DEFAULT_CRATE_VERSION,
-        value_name = "NAME"
-    )]
-    #[serde(skip)]
+    /// The version of the Rust crate to generate.
+    ///
+    /// This should be a standard semver version string,
+    /// however, this is not currently validated by this command.
+    #[clap(long, default_value = DEFAULT_CRATE_VERSION, value_name = "VERSION")]
     crate_version: String,
 
-    #[clap(long, help = "Generate the bindings as a module instead of a crate")]
+    /// Generate the bindings as a module instead of a crate.
+    #[clap(long)]
     module: bool,
 
-    #[clap(
-        long = "overwrite",
-        help = "Overwrite existing generated bindings. By default, the command will check that the bindings are correct, and then exit. If --overwrite is passed, it will instead delete and overwrite the bindings."
-    )]
-    #[serde(skip)]
+    /// Overwrite existing generated bindings.
+    ///
+    /// By default, the command will check that the bindings are correct, and then exit. If
+    /// --overwrite is passed, it will instead delete and overwrite the bindings.
+    #[clap(long)]
     overwrite: bool,
 
-    #[clap(long = "single-file", help = "Generate bindings as a single file.")]
-    #[serde(skip)]
+    /// Generate bindings as a single file.
+    #[clap(long)]
     single_file: bool,
 
-    #[clap(long = "skip-cargo-toml", help = "Skip Cargo.toml consistency checks.")]
-    #[serde(skip)]
+    /// Skip Cargo.toml consistency checks.
+    #[clap(long)]
     skip_cargo_toml: bool,
 
-    #[clap(long, help = "Skips running forge build before generating binding")]
-    #[serde(skip)]
+    /// Skips running forge build before generating binding
+    #[clap(long)]
     skip_build: bool,
 
     #[clap(flatten)]
-    #[serde(skip)]
     build_args: CoreBuildArgs,
 }
 
@@ -232,19 +211,5 @@ impl Cmd for BindArgs {
             self.bindings_root(&artifacts).to_str().unwrap()
         );
         Ok(())
-    }
-}
-
-// Make this args a `figment::Provider` so that it can be merged into the `Config`
-impl Provider for BindArgs {
-    fn metadata(&self) -> Metadata {
-        Metadata::named("Bind Args Provider")
-    }
-
-    fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
-        let value = Value::serialize(self)?;
-        let error = InvalidType(value.to_actual(), "map".into());
-        let dict = value.into_dict().ok_or(error)?;
-        Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }

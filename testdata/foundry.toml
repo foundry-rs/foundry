@@ -1,5 +1,5 @@
 [profile.default]
-auto_detect_solc = true
+solc = '0.8.19'
 block_base_fee_per_gas = 0
 block_coinbase = '0x0000000000000000000000000000000000000000'
 block_difficulty = 0
@@ -9,7 +9,7 @@ block_timestamp = 0
 bytecode_hash = 'ipfs'
 cache = true
 cache_path = 'cache'
-evm_version = 'london'
+evm_version = 'paris'
 extra_output = []
 extra_output_files = []
 ffi = false

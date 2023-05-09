@@ -10,12 +10,13 @@ use foundry_common::{ContractsByArtifact, TestFunctionExt};
 use foundry_evm::{
     executor::{
         backend::Backend, fork::CreateFork, inspector::CheatsConfig, opts::EvmOpts, Executor,
-        ExecutorBuilder, SpecId,
+        ExecutorBuilder,
     },
     revm,
 };
 use foundry_utils::PostLinkInput;
 use rayon::prelude::*;
+use revm::primitives::SpecId;
 use std::{collections::BTreeMap, path::Path, sync::mpsc::Sender};
 
 pub type DeployableContracts = BTreeMap<ArtifactId, (Abi, Bytes, Vec<Bytes>)>;
@@ -31,7 +32,7 @@ pub struct MultiContractRunner {
     /// The EVM instance used in the test runner
     pub evm_opts: EvmOpts,
     /// The configured evm
-    pub env: revm::Env,
+    pub env: revm::primitives::Env,
     /// The EVM spec
     pub evm_spec: SpecId,
     /// All known errors, used for decoding reverts
@@ -161,7 +162,7 @@ impl MultiContractRunner {
             .filter(|(_, results)| !results.is_empty())
             .map_with(stream_result, |stream_result, (name, result)| {
                 if let Some(stream_result) = stream_result.as_ref() {
-                    stream_result.send((name.clone(), result.clone())).unwrap();
+                    let _ = stream_result.send((name.clone(), result.clone()));
                 }
                 (name, result)
             })
@@ -226,7 +227,7 @@ impl MultiContractRunnerBuilder {
         self,
         root: impl AsRef<Path>,
         output: ProjectCompileOutput<A>,
-        env: revm::Env,
+        env: revm::primitives::Env,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner>
     where
@@ -308,7 +309,7 @@ impl MultiContractRunnerBuilder {
             known_contracts,
             evm_opts,
             env,
-            evm_spec: self.evm_spec.unwrap_or(SpecId::LONDON),
+            evm_spec: self.evm_spec.unwrap_or(SpecId::MERGE),
             sender: self.sender,
             errors: Some(execution_info.2),
             source_paths,

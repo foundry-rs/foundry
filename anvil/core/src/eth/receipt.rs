@@ -6,6 +6,7 @@ use ethers_core::{
         rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream},
     },
 };
+use foundry_evm::utils::{b256_to_h256, h256_to_b256};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "fastrlp", derive(open_fastrlp::RlpEncodable, open_fastrlp::RlpDecodable))]
@@ -16,17 +17,25 @@ pub struct Log {
     pub data: Bytes,
 }
 
-impl From<revm::Log> for Log {
-    fn from(log: revm::Log) -> Self {
-        let revm::Log { address, topics, data } = log;
-        Log { address, topics, data: data.into() }
+impl From<revm::primitives::Log> for Log {
+    fn from(log: revm::primitives::Log) -> Self {
+        let revm::primitives::Log { address, topics, data } = log;
+        Log {
+            address: address.into(),
+            topics: topics.into_iter().map(b256_to_h256).collect(),
+            data: data.into(),
+        }
     }
 }
 
-impl From<Log> for revm::Log {
+impl From<Log> for revm::primitives::Log {
     fn from(log: Log) -> Self {
         let Log { address, topics, data } = log;
-        revm::Log { address, topics, data: data.0 }
+        revm::primitives::Log {
+            address: address.into(),
+            topics: topics.into_iter().map(h256_to_b256).collect(),
+            data: data.0,
+        }
     }
 }
 

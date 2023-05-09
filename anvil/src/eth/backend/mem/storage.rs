@@ -15,7 +15,7 @@ use ethers::{
     prelude::{BlockId, BlockNumber, DefaultFrame, Trace, H256, H256 as TxHash, U64},
     types::{ActionType, Bytes, GethDebugTracingOptions, TransactionReceipt, U256},
 };
-use forge::revm::{Env, Return};
+use forge::revm::{interpreter::InstructionResult, primitives::Env};
 use parking_lot::RwLock;
 use std::{
     collections::{HashMap, VecDeque},
@@ -226,9 +226,9 @@ impl BlockchainStorage {
         let partial_header = PartialHeader {
             timestamp,
             base_fee,
-            gas_limit: env.block.gas_limit,
-            beneficiary: env.block.coinbase,
-            difficulty: env.block.difficulty,
+            gas_limit: env.block.gas_limit.into(),
+            beneficiary: env.block.coinbase.into(),
+            difficulty: env.block.difficulty.into(),
             ..Default::default()
         };
         let block = Block::new::<MaybeImpersonatedTransaction>(partial_header, vec![], vec![]);
@@ -372,7 +372,7 @@ impl MinedTransaction {
             let action = node.parity_action();
             let result = node.parity_result();
 
-            let action_type = if node.status() == Return::SelfDestruct {
+            let action_type = if node.status() == InstructionResult::SelfDestruct {
                 ActionType::Suicide
             } else {
                 node.kind().into()
@@ -415,7 +415,10 @@ mod tests {
     use super::*;
     use crate::eth::backend::db::Db;
     use ethers::{abi::ethereum_types::BigEndianHash, types::Address};
-    use forge::revm::{db::DatabaseRef, AccountInfo};
+    use forge::revm::{
+        db::DatabaseRef,
+        primitives::{AccountInfo, U256 as rU256},
+    };
     use foundry_evm::executor::backend::MemDb;
 
     #[test]
@@ -433,7 +436,7 @@ mod tests {
 
         let mut state = MemDb::default();
         let addr = Address::random();
-        let info = AccountInfo::from_balance(1337.into());
+        let info = AccountInfo::from_balance(rU256::from(1337));
         state.insert_account(addr, info);
         storage.insert(one, StateDb::new(state));
         storage.insert(two, StateDb::new(MemDb::default()));
@@ -446,8 +449,8 @@ mod tests {
 
         let loaded = storage.get(&one).unwrap();
 
-        let acc = loaded.basic(addr).unwrap().unwrap();
-        assert_eq!(acc.balance, 1337u64.into());
+        let acc = loaded.basic(addr.into()).unwrap().unwrap();
+        assert_eq!(acc.balance, rU256::from(1337u64));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -461,7 +464,7 @@ mod tests {
             let hash = H256::from_uint(&U256::from(idx));
             let addr = Address::from(hash);
             let balance = (idx * 2) as u64;
-            let info = AccountInfo::from_balance(balance.into());
+            let info = AccountInfo::from_balance(rU256::from(balance));
             state.insert_account(addr, info);
             storage.insert(hash, StateDb::new(state));
         }
@@ -476,9 +479,9 @@ mod tests {
             let hash = H256::from_uint(&U256::from(idx));
             let addr = Address::from(hash);
             let loaded = storage.get(&hash).unwrap();
-            let acc = loaded.basic(addr).unwrap().unwrap();
+            let acc = loaded.basic(addr.into()).unwrap().unwrap();
             let balance = (idx * 2) as u64;
-            assert_eq!(acc.balance, balance.into());
+            assert_eq!(acc.balance, rU256::from(balance));
         }
     }
 }

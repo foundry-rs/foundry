@@ -1,8 +1,9 @@
 use bytes::Bytes;
-use ethers::types::Address;
 use revm::{
-    opcode::{self},
-    CallInputs, CreateInputs, Database, EVMData, Gas, GasInspector, Inspector, Return,
+    inspectors::GasInspector,
+    interpreter::{opcode, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},
+    primitives::B160,
+    Database, EVMData, Inspector,
 };
 
 #[derive(Clone, Default)]
@@ -13,22 +14,22 @@ pub struct TracePrinter {
 impl<DB: Database> Inspector<DB> for TracePrinter {
     fn initialize_interp(
         &mut self,
-        interp: &mut revm::Interpreter,
+        interp: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
         is_static: bool,
-    ) -> Return {
+    ) -> InstructionResult {
         self.gas_inspector.initialize_interp(interp, data, is_static);
-        Return::Continue
+        InstructionResult::Continue
     }
 
     // get opcode by calling `interp.contract.opcode(interp.program_counter())`.
     // all other information can be obtained from interp.
     fn step(
         &mut self,
-        interp: &mut revm::Interpreter,
+        interp: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
         is_static: bool,
-    ) -> Return {
+    ) -> InstructionResult {
         let opcode = interp.current_opcode();
         let opcode_str = opcode::OPCODE_JUMPMAP[opcode as usize];
 
@@ -51,18 +52,18 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
 
         self.gas_inspector.step(interp, data, is_static);
 
-        Return::Continue
+        InstructionResult::Continue
     }
 
     fn step_end(
         &mut self,
-        interp: &mut revm::Interpreter,
+        interp: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
         is_static: bool,
-        eval: revm::Return,
-    ) -> Return {
+        eval: InstructionResult,
+    ) -> InstructionResult {
         self.gas_inspector.step_end(interp, data, is_static, eval);
-        Return::Continue
+        InstructionResult::Continue
     }
 
     fn call(
@@ -70,7 +71,7 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
         _data: &mut EVMData<'_, DB>,
         inputs: &mut CallInputs,
         is_static: bool,
-    ) -> (Return, Gas, Bytes) {
+    ) -> (InstructionResult, Gas, Bytes) {
         println!(
             "SM CALL:   {:?},context:{:?}, is_static:{:?}, transfer:{:?}, input_size:{:?}",
             inputs.contract,
@@ -79,7 +80,7 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
             inputs.transfer,
             inputs.input.len(),
         );
-        (Return::Continue, Gas::new(0), Bytes::new())
+        (InstructionResult::Continue, Gas::new(0), Bytes::new())
     }
 
     fn call_end(
@@ -87,10 +88,10 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
         data: &mut EVMData<'_, DB>,
         inputs: &CallInputs,
         remaining_gas: Gas,
-        ret: Return,
+        ret: InstructionResult,
         out: Bytes,
         is_static: bool,
-    ) -> (Return, Gas, Bytes) {
+    ) -> (InstructionResult, Gas, Bytes) {
         self.gas_inspector.call_end(data, inputs, remaining_gas, ret, out.clone(), is_static);
         (ret, remaining_gas, out)
     }
@@ -99,7 +100,7 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
         &mut self,
         _data: &mut EVMData<'_, DB>,
         inputs: &mut CreateInputs,
-    ) -> (Return, Option<Address>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<B160>, Gas, Bytes) {
         println!(
             "CREATE CALL: caller:{:?}, scheme:{:?}, value:{:?}, init_code:{:?}, gas:{:?}",
             inputs.caller,
@@ -108,18 +109,18 @@ impl<DB: Database> Inspector<DB> for TracePrinter {
             hex::encode(&inputs.init_code),
             inputs.gas_limit
         );
-        (Return::Continue, None, Gas::new(0), Bytes::new())
+        (InstructionResult::Continue, None, Gas::new(0), Bytes::new())
     }
 
     fn create_end(
         &mut self,
         data: &mut EVMData<'_, DB>,
         inputs: &CreateInputs,
-        ret: Return,
-        address: Option<Address>,
+        ret: InstructionResult,
+        address: Option<B160>,
         remaining_gas: Gas,
         out: Bytes,
-    ) -> (Return, Option<Address>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<B160>, Gas, Bytes) {
         self.gas_inspector.create_end(data, inputs, ret, address, remaining_gas, out.clone());
         (ret, address, remaining_gas, out)
     }

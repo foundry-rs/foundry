@@ -59,26 +59,24 @@ panic = "abort"
 codegen-units = 1
 
 [workspace.dependencies]
-ethers = { version = "2", default-features = false }
-ethers-addressbook = { version = "2", default-features = false }
-ethers-core = { version = "2", default-features = false }
-ethers-contract = { version = "2", default-features = false }
-ethers-providers = { version = "2", default-features = false }
-ethers-signers = { version = "2", default-features = false }
-ethers-middleware = { version = "2", default-features = false }
-ethers-etherscan = { version = "2", default-features = false }
-ethers-solc = { version = "2", default-features = false }
+ethers = { version = "2.0.4", default-features = false }
+ethers-addressbook = { version = "2.0.4", default-features = false }
+ethers-core = { version = "2.0.4", default-features = false }
+ethers-contract = { version = "2.0.4", default-features = false }
+ethers-providers = { version = "2.0.4", default-features = false }
+ethers-signers = { version = "2.0.4", default-features = false }
+ethers-middleware = { version = "2.0.4", default-features = false }
+ethers-etherscan = { version = "2.0.4", default-features = false }
+ethers-solc = { version = "2.0.4", default-features = false }
 
-# # Patch ethers-rs with a local checkout then run `cargo update -p ethers`
-# [patch."https://github.com/gakonst/ethers-rs"]
-# ethers = { path = "../ethers-rs" }
+#[patch.crates-io]
+# ethers = { path = "../ethers-rs/ethers" }
 # ethers-addressbook = { path = "../ethers-rs/ethers-addressbook" }
-# ethers-core = { path = "../ethers-rs/ethers-core" }
 # ethers-contract = { path = "../ethers-rs/ethers-contract" }
+# ethers-core = { path = "../ethers-rs/ethers-core" }
+# ethers-etherscan = { path = "../ethers-rs/ethers-etherscan" }
+# ethers-middleware = { path = "../ethers-rs/ethers-middleware" }
 # ethers-providers = { path = "../ethers-rs/ethers-providers" }
 # ethers-signers = { path = "../ethers-rs/ethers-signers" }
-# ethers-etherscan = { path = "../ethers-rs/ethers-etherscan" }
 # ethers-solc = { path = "../ethers-rs/ethers-solc" }
-
-# [patch.crates-io]
 # revm = { path = "../revm/crates/revm" }
