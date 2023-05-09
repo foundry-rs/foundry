@@ -264,7 +264,6 @@ pub fn apply<DB: DatabaseExt>(
             Bytes::new()
         }
         HEVMCalls::Deal(inner) => {
-            ensure!(!is_potential_precompile(inner.0), "Deal cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead");
             let who = inner.0;
             let value = inner.1;
             trace!(?who, ?value, "deal cheatcode");

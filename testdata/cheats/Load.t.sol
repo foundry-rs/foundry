@@ -26,6 +26,13 @@ contract LoadTest is DSTest {
         assertEq(val, 20, "load failed");
     }
 
+    function testLoadNotAvailableOnPrecompiles() public {
+        cheats.expectRevert(
+            bytes("Load cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead")
+        );
+        uint256 val = uint256(cheats.load(address(1), bytes32(0)));
+    }
+
     function testLoadOtherStorage() public {
         uint256 val = uint256(cheats.load(address(store), bytes32(0)));
         assertEq(val, 10, "load failed");
