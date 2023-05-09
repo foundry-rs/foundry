@@ -352,7 +352,7 @@ pub fn check_if_fixed_gas_limit<DB: DatabaseExt>(
 
 /// Small utility function that checks if an address is a potential precompile.
 pub fn is_potential_precompile(address: H160) -> bool {
-    address < H160::from_low_u64_be(10)
+    address < H160::from_low_u64_be(10) && address != H160::zero()
 }
 
 #[cfg(test)]
