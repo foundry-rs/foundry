@@ -206,7 +206,7 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::Difficulty(inner) => {
             ensure!(
                 data.env.cfg.spec_id < SpecId::MERGE,
-                "Difficulty is not supported after the merge. Please use vm.prevrandao instead."
+                "Difficulty is not supported after the Paris hard fork. Please use vm.prevrandao instead. For more information, please see https://eips.ethereum.org/EIPS/eip-4399"
             );
             data.env.block.difficulty = inner.0.into();
             Bytes::new()
@@ -214,7 +214,7 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::Prevrandao(inner) => {
             ensure!(
                 data.env.cfg.spec_id >= SpecId::MERGE,
-                "Prevrandao is not supported before the merge. Please use vm.difficulty instead."
+                "Prevrandao is not supported before the Paris hard fork. Please use vm.difficulty instead. For more information, please see https://eips.ethereum.org/EIPS/eip-4399"
             );
             data.env.block.prevrandao = Some(B256::from(inner.0));
             Bytes::new()
