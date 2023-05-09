@@ -24,7 +24,7 @@ static INLINE_CONFIG_PREFIX_SELECTED_PROFILE: Lazy<String> = Lazy::new(|| {
 /// errors [`InlineConfigParserError`], enriching them with context information
 /// reporting the misconfigured line.
 #[derive(thiserror::Error, Debug)]
-#[error("Inline config error detected at {line} {source}")]
+#[error("Inline config error detected at {line}")]
 pub struct InlineConfigError {
     /// Specifies the misconfigured line. This is something of the form
     /// `dir/TestContract.t.sol:FuzzContract:10:12:111`
