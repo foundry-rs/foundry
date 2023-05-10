@@ -230,6 +230,7 @@ fn expect_safe_memory(state: &mut Cheatcodes, start: u64, end: u64, depth: u64) 
     Ok(Bytes::new())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn expect_call(
     state: &mut Cheatcodes,
     target: H160,
