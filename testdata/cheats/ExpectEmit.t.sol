@@ -4,6 +4,14 @@ pragma solidity >=0.8.18;
 import "ds-test/test.sol";
 import "./Cheats.sol";
 
+contract NestedEmitter {
+    event SomethingDifferent(uint256 indexed topic1, uint256 indexed topic2, uint256 indexed topic3, uint256 data);
+
+    function emitEvent(uint256 topic1, uint256 topic2, uint256 topic3, uint256 data) public {
+        emit SomethingDifferent(topic1, topic2, topic3, data);
+    }
+}
+
 contract Emitter {
     event Something(uint256 indexed topic1, uint256 indexed topic2, uint256 indexed topic3, uint256 data);
 
@@ -27,6 +35,11 @@ contract Emitter {
     ) public {
         emit Something(topic1[0], topic2[0], topic3[0], data[0]);
         emit Something(topic1[1], topic2[1], topic3[1], data[1]);
+    }
+
+    function emitAndNest() public {
+        emit Something(1, 2, 3, 4);
+        emitNested(Emitter(address(this)), 1, 2, 3, 4);
     }
 
     function emitNested(Emitter inner, uint256 topic1, uint256 topic2, uint256 topic3, uint256 data) public {
@@ -58,6 +71,8 @@ contract ExpectEmitTest is DSTest {
     event Something(uint256 indexed topic1, uint256 indexed topic2, uint256 indexed topic3, uint256 data);
 
     event SomethingElse(uint256 indexed topic1);
+
+    event SomethingDifferent(uint256 indexed topic1, uint256 indexed topic2, uint256 indexed topic3, uint256 data);
 
     function setUp() public {
         emitter = new Emitter();
@@ -182,6 +197,15 @@ contract ExpectEmitTest is DSTest {
         );
     }
 
+    function testExpectedEmitMultipleNested() public {
+        cheats.expectEmit();
+        emit Something(1, 2, 3, 4);
+        cheats.expectEmit();
+        emit Something(1, 2, 3, 4);
+
+        emitter.emitAndNest();
+    }
+
     function testExpectEmitMultipleWithArgs() public {
         cheats.expectEmit(true, true, true, true);
         emit Something(1, 2, 3, 4);
@@ -232,6 +256,18 @@ contract ExpectEmitTest is DSTest {
         caller.f();
     }
 
+    function testFailNoEmitDirectlyOnNextCall() public {
+        LowLevelCaller caller = new LowLevelCaller();
+
+        cheats.expectEmit(true, true, true, true);
+        emit Something(1, 2, 3, 4);
+
+        // This call does not emit. As emit expects the next call to emit, this should fail.
+        caller.f();
+        // This call does emit, but it is a call later than expected.
+        emitter.emitEvent(1, 2, 3, 4);
+    }
+
     /// Ref: issue #760
     function testFailDifferentIndexedParameters() public {
         cheats.expectEmit(true, false, false, false);
@@ -250,14 +286,15 @@ contract ExpectEmitTest is DSTest {
     /// was invoked ends.
     ///
     /// Ref: issue #1214
-    function testExpectEmitIsCheckedWhenCurrentCallTerminates() public {
-        cheats.expectEmit(true, true, true, true);
-        emitter.doesNothing();
-        emit Something(1, 2, 3, 4);
+    /// Note: this is now illegal behaviour.
+    // function testExpectEmitIsCheckedWhenCurrentCallTerminates() public {
+    //     cheats.expectEmit(true, true, true, true);
+    //     emitter.doesNothing();
+    //     emit Something(1, 2, 3, 4);
 
-        // This should fail since `SomethingElse` in the test
-        // and in the `Emitter` contract have differing
-        // amounts of indexed topics.
-        emitter.emitEvent(1, 2, 3, 4);
-    }
+    //     // This should fail since `SomethingElse` in the test
+    //     // and in the `Emitter` contract have differing
+    //     // amounts of indexed topics.
+    //     emitter.emitEvent(1, 2, 3, 4);
+    // }
 }
