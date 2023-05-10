@@ -138,19 +138,15 @@ fn prank(
     let prank = Prank::new(prank_caller, prank_origin, new_caller, new_origin, depth, single_call);
 
     if let Some(Prank { used, .. }) = state.prank {
-        if !used {
-            return Err("You cannot overwrite `prank` until it is applied at least once"
-                .encode()
-                .into())
-        }
+        ensure!(used, "You cannot overwrite `prank` until it is applied at least once");
     }
-  
+
     ensure!(
         state.broadcast.is_none(),
         "You cannot `prank` for a broadcasted transaction.\
          Pass the desired tx.origin into the broadcast cheatcode call"
     );
-  
+
     state.prank = Some(prank);
     Ok(Bytes::new())
 }
