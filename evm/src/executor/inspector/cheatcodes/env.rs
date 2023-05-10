@@ -3,7 +3,10 @@ use crate::{
     abi::HEVMCalls,
     executor::{
         backend::DatabaseExt,
-        inspector::cheatcodes::{util::with_journaled_account, DealRecord},
+        inspector::cheatcodes::{
+            util::{is_potential_precompile, with_journaled_account},
+            DealRecord,
+        },
     },
     utils::{b160_to_h160, h160_to_b160, ru256_to_u256, u256_to_ru256},
 };
@@ -232,6 +235,7 @@ pub fn apply<DB: DatabaseExt>(
             Bytes::new()
         }
         HEVMCalls::Store(inner) => {
+            ensure!(!is_potential_precompile(inner.0), "Store cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead");
             data.journaled_state.load_account(h160_to_b160(inner.0), data.db)?;
             // ensure the account is touched
             data.journaled_state.touch(&h160_to_b160(inner.0));
@@ -245,6 +249,7 @@ pub fn apply<DB: DatabaseExt>(
             Bytes::new()
         }
         HEVMCalls::Load(inner) => {
+            ensure!(!is_potential_precompile(inner.0), "Load cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead");
             // TODO: Does this increase gas usage?
             data.journaled_state.load_account(h160_to_b160(inner.0), data.db)?;
             let (val, _) = data.journaled_state.sload(
@@ -257,6 +262,7 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::Breakpoint0(inner) => add_breakpoint(state, caller, &inner.0, true)?,
         HEVMCalls::Breakpoint1(inner) => add_breakpoint(state, caller, &inner.0, inner.1)?,
         HEVMCalls::Etch(inner) => {
+            ensure!(!is_potential_precompile(inner.0), "Etch cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead");
             let code = inner.1.clone();
             trace!(address=?inner.0, code=?hex::encode(&code), "etch cheatcode");
             // TODO: Does this increase gas usage?
