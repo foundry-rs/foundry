@@ -328,7 +328,7 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::ExpectCall0(inner) => expect_call(
             state,
             inner.0,
-            inner.1.to_vec().into(),
+            inner.1.to_vec(),
             None,
             None,
             None,
@@ -338,7 +338,7 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::ExpectCall1(inner) => expect_call(
             state,
             inner.0,
-            inner.1.to_vec().into(),
+            inner.1.to_vec(),
             None,
             None,
             None,
@@ -348,7 +348,7 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::ExpectCall2(inner) => expect_call(
             state,
             inner.0,
-            inner.2.to_vec().into(),
+            inner.2.to_vec(),
             Some(inner.1),
             None,
             None,
@@ -358,7 +358,7 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::ExpectCall3(inner) => expect_call(
             state,
             inner.0,
-            inner.2.to_vec().into(),
+            inner.2.to_vec(),
             Some(inner.1),
             None,
             None,
@@ -374,7 +374,7 @@ pub fn apply<DB: DatabaseExt>(
             expect_call(
                 state,
                 inner.0,
-                inner.3.to_vec().into(),
+                inner.3.to_vec(),
                 Some(value),
                 Some(inner.2 + positive_value_cost_stipend),
                 None,
@@ -391,7 +391,7 @@ pub fn apply<DB: DatabaseExt>(
             expect_call(
                 state,
                 inner.0,
-                inner.3.to_vec().into(),
+                inner.3.to_vec(),
                 Some(value),
                 Some(inner.2 + positive_value_cost_stipend),
                 None,
@@ -408,7 +408,7 @@ pub fn apply<DB: DatabaseExt>(
             expect_call(
                 state,
                 inner.0,
-                inner.3.to_vec().into(),
+                inner.3.to_vec(),
                 Some(value),
                 None,
                 Some(inner.2 + positive_value_cost_stipend),
@@ -425,7 +425,7 @@ pub fn apply<DB: DatabaseExt>(
             expect_call(
                 state,
                 inner.0,
-                inner.3.to_vec().into(),
+                inner.3.to_vec(),
                 Some(value),
                 None,
                 Some(inner.2 + positive_value_cost_stipend),
