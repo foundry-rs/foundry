@@ -72,10 +72,10 @@ mod tests {
     #[test]
     fn can_format_inline_config_errors() {
         let source = InlineConfigParserError::ParseBool("key".into(), "invalid-bool-value".into());
-        let line = "dir/TestContract.t.sol:FuzzContract:10:12:111".to_string();
+        let line = "dir/TestContract.t.sol:FuzzContract".to_string();
         let error = InlineConfigError { line: line.clone(), source: source.clone() };
 
-        let expected = format!("Inline config error detected at {line} {source}");
+        let expected = format!("Inline config error detected at {line}");
         assert_eq!(error.to_string(), expected);
     }
 }

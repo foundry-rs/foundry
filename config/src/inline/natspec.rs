@@ -208,7 +208,8 @@ mod tests {
     #[test]
     fn can_handle_available_src_line() {
         let mut fn_data: BTreeMap<String, Value> = BTreeMap::new();
-        let doc_withouth_src_field = json!({ "text":  "forge-config:default.fuzz.runs=600", "src": "73:21:12" });
+        let doc_withouth_src_field =
+            json!({ "text":  "forge-config:default.fuzz.runs=600", "src": "73:21:12" });
         fn_data.insert("documentation".into(), doc_withouth_src_field);
         let (_, src_line) = get_fn_docs(&fn_data).expect("Some docs");
         assert_eq!(src_line, "73:21:12".to_string());
