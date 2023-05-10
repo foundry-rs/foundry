@@ -123,47 +123,62 @@ pub struct ExpectedEmit {
 }
 
 pub fn handle_expect_emit(state: &mut Cheatcodes, log: RawLog, address: &Address) {
-    // Fill or check the expected emits
-    if let Some(next_expect_to_fill) =
-        state.expected_emits.iter_mut().find(|expect| expect.log.is_none())
-    {
-        // We have unfilled expects, so we fill the first one
-        next_expect_to_fill.log = Some(log);
-    } else if let Some(next_expect) = state.expected_emits.iter_mut().find(|expect| !expect.found) {
-        // We do not have unfilled expects, so we try to match this log with the first unfound
-        // log that we expect
-        let expected =
-            next_expect.log.as_ref().expect("we should have a log to compare against here");
+    // Fill or check the expected emits.
+    // We expect for emit checks to be filled as they're declared (from oldest to newest),
+    // so we fill them and push them to the back of the queue.
+    // If the user has properly filled all the emits, they'll end up in their original order.
+    // If not, we can detect this later and error out.
 
-        let expected_topic_0 = expected.topics.get(0);
-        let log_topic_0 = log.topics.get(0);
+    // if there's anything to fill, we need to pop back.
+    let event_to_fill_or_check =
+        if state.expected_emits.0.iter().any(|expected| expected.log.is_none()) {
+            state.expected_emits.0.pop_back()
+        } else {
+            // Else, we need to pop from the front in the order the events were added to the queue.
+            state.expected_emits.0.pop_front()
+        };
 
-        // same topic0 and equal number of topics should be verified further, others are a no
-        // match
-        if expected_topic_0
-            .zip(log_topic_0)
-            .map_or(false, |(a, b)| a == b && expected.topics.len() == log.topics.len())
-        {
-            // Match topics
-            next_expect.found = log
-                .topics
-                .iter()
-                .skip(1)
-                .enumerate()
-                .filter(|(i, _)| next_expect.checks[*i])
-                .all(|(i, topic)| topic == &expected.topics[i + 1]);
+    let mut event_to_fill_or_check =
+        event_to_fill_or_check.expect("We should have an emit to fill or check. This is a bug");
 
-            // Maybe match source address
-            if let Some(addr) = next_expect.address {
-                next_expect.found &= addr == *address;
-            }
+    match event_to_fill_or_check.log {
+        Some(ref expected) => {
+            let expected_topic_0 = expected.topics.get(0);
+            let log_topic_0 = log.topics.get(0);
 
-            // Maybe match data
-            if next_expect.checks[3] {
-                next_expect.found &= expected.data == log.data;
+            // same topic0 and equal number of topics should be verified further, others are a no
+            // match
+            if expected_topic_0
+                .zip(log_topic_0)
+                .map_or(false, |(a, b)| a == b && expected.topics.len() == log.topics.len())
+            {
+                // Match topics
+                event_to_fill_or_check.found = log
+                    .topics
+                    .iter()
+                    .skip(1)
+                    .enumerate()
+                    .filter(|(i, _)| event_to_fill_or_check.checks[*i])
+                    .all(|(i, topic)| topic == &expected.topics[i + 1]);
+
+                // Maybe match source address
+                if let Some(addr) = event_to_fill_or_check.address {
+                    event_to_fill_or_check.found &= addr == *address;
+                }
+
+                // Maybe match data
+                if event_to_fill_or_check.checks[3] {
+                    event_to_fill_or_check.found &= expected.data == log.data;
+                }
             }
         }
+        // Fill the event.
+        None => {
+            event_to_fill_or_check.log = Some(log);
+        }
     }
+
+    state.expected_emits.0.push_back(event_to_fill_or_check);
 }
 
 #[derive(Clone, Debug, Default)]
@@ -234,16 +249,16 @@ pub fn apply<DB: DatabaseExt>(
             expect_revert(state, Some(inner.0.into()), data.journaled_state.depth())
         }
         HEVMCalls::ExpectEmit0(_) => {
-            state.expected_emits.push(ExpectedEmit {
-                depth: data.journaled_state.depth() - 1,
+            state.expected_emits.0.push_back(ExpectedEmit {
+                depth: data.journaled_state.depth(),
                 checks: [true, true, true, true],
                 ..Default::default()
             });
             Ok(Bytes::new())
         }
         HEVMCalls::ExpectEmit1(inner) => {
-            state.expected_emits.push(ExpectedEmit {
-                depth: data.journaled_state.depth() - 1,
+            state.expected_emits.0.push_back(ExpectedEmit {
+                depth: data.journaled_state.depth(),
                 checks: [true, true, true, true],
                 address: Some(inner.0),
                 ..Default::default()
@@ -251,16 +266,16 @@ pub fn apply<DB: DatabaseExt>(
             Ok(Bytes::new())
         }
         HEVMCalls::ExpectEmit2(inner) => {
-            state.expected_emits.push(ExpectedEmit {
-                depth: data.journaled_state.depth() - 1,
+            state.expected_emits.0.push_back(ExpectedEmit {
+                depth: data.journaled_state.depth(),
                 checks: [inner.0, inner.1, inner.2, inner.3],
                 ..Default::default()
             });
             Ok(Bytes::new())
         }
         HEVMCalls::ExpectEmit3(inner) => {
-            state.expected_emits.push(ExpectedEmit {
-                depth: data.journaled_state.depth() - 1,
+            state.expected_emits.0.push_back(ExpectedEmit {
+                depth: data.journaled_state.depth(),
                 checks: [inner.0, inner.1, inner.2, inner.3],
                 address: Some(inner.4),
                 ..Default::default()
