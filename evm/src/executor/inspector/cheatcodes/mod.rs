@@ -126,7 +126,7 @@ pub struct Cheatcodes {
     pub mocked_calls: BTreeMap<Address, BTreeMap<MockCallDataContext, MockCallReturnData>>,
 
     /// Expected calls
-    pub expected_calls: BTreeMap<Address, BTreeMap<Bytes, (ExpectedCallData, u64)>>,
+    pub expected_calls: BTreeMap<Address, BTreeMap<Vec<u8>, (ExpectedCallData, u64)>>,
 
     /// Expected emits
     pub expected_emits: Vec<ExpectedEmit>,
@@ -789,7 +789,7 @@ where
             for (address, calldatas) in &self.expected_calls {
                 for (calldata, (expected, actual_count)) in calldatas {
                     let ExpectedCallData { gas, min_gas, value, count, call_type } = expected;
-                    let calldata = calldata.clone();
+                    let calldata = Bytes::from(calldata.clone());
                     match call_type {
                         // We must match exactly what has been specified.
                         ExpectedCallType::Count => {

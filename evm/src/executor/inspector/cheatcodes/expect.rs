@@ -234,7 +234,7 @@ fn expect_safe_memory(state: &mut Cheatcodes, start: u64, end: u64, depth: u64) 
 fn expect_call(
     state: &mut Cheatcodes,
     target: H160,
-    calldata: Bytes,
+    calldata: Vec<u8>,
     value: Option<U256>,
     gas: Option<u64>,
     min_gas: Option<u64>,
