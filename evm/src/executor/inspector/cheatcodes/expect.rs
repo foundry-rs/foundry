@@ -168,16 +168,26 @@ pub fn handle_expect_emit(state: &mut Cheatcodes, log: RawLog, address: &Address
 
 #[derive(Clone, Debug, Default)]
 pub struct ExpectedCallData {
-    /// The expected calldata
-    pub calldata: Bytes,
     /// The expected value sent in the call
     pub value: Option<U256>,
     /// The expected gas supplied to the call
     pub gas: Option<u64>,
     /// The expected *minimum* gas supplied to the call
     pub min_gas: Option<u64>,
-    /// The number of times the call is expected to be made
-    pub count: Option<u64>,
+    /// The number of times the call is expected to be made.
+    /// If the type of call is `NonCount`, this is the lower bound for the number of calls
+    /// that must be seen.
+    /// If the type of call is `Count`, this is the exact number of calls that must be seen.
+    pub count: u64,
+    /// The type of call
+    pub call_type: ExpectedCallType,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum ExpectedCallType {
+    #[default]
+    Count,
+    NonCount,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -218,6 +228,53 @@ fn expect_safe_memory(state: &mut Cheatcodes, start: u64, end: u64, depth: u64) 
     let offsets = state.allowed_mem_writes.entry(depth).or_insert_with(|| vec![0..0x60]);
     offsets.push(start..end);
     Ok(Bytes::new())
+}
+
+fn expect_call(
+    state: &mut Cheatcodes,
+    target: H160,
+    calldata: Bytes,
+    value: Option<U256>,
+    gas: Option<u64>,
+    min_gas: Option<u64>,
+    count: u64,
+    call_type: ExpectedCallType,
+) -> Result {
+    match call_type {
+        ExpectedCallType::Count => {
+            // Get the expected calls for this target.
+            let expecteds = state.expected_calls.entry(target).or_default();
+            // In this case, as we're using counted expectCalls, we should not be able to set them
+            // more than once.
+            ensure!(
+                !expecteds.contains_key(&calldata),
+                "Counted expected calls can only bet set once."
+            );
+            expecteds
+                .insert(calldata, (ExpectedCallData { value, gas, min_gas, count, call_type }, 0));
+            Ok(Bytes::new())
+        }
+        ExpectedCallType::NonCount => {
+            let expecteds = state.expected_calls.entry(target).or_default();
+            // Check if the expected calldata exists.
+            // If it does, increment the count by one as we expect to see it one more time.
+            if let Some(expected) = expecteds.get_mut(&calldata) {
+                // Ensure we're not overwriting a counted expectCall.
+                ensure!(
+                    expected.0.call_type == ExpectedCallType::NonCount,
+                    "Cannot overwrite a counted expectCall with a non-counted expectCall."
+                );
+                expected.0.count += 1;
+            } else {
+                // If it does not exist, then create it.
+                expecteds.insert(
+                    calldata,
+                    (ExpectedCallData { value, gas, min_gas, count, call_type }, 0),
+                );
+            }
+            Ok(Bytes::new())
+        }
+    }
 }
 
 pub fn apply<DB: DatabaseExt>(
@@ -267,125 +324,113 @@ pub fn apply<DB: DatabaseExt>(
             });
             Ok(Bytes::new())
         }
-        HEVMCalls::ExpectCall0(inner) => {
-            state.expected_calls.entry(inner.0).or_default().push((
-                ExpectedCallData {
-                    calldata: inner.1.to_vec().into(),
-                    value: None,
-                    gas: None,
-                    min_gas: None,
-                    count: None,
-                },
-                0,
-            ));
-            Ok(Bytes::new())
-        }
-        HEVMCalls::ExpectCall1(inner) => {
-            state.expected_calls.entry(inner.0).or_default().push((
-                ExpectedCallData {
-                    calldata: inner.1.to_vec().into(),
-                    value: None,
-                    gas: None,
-                    min_gas: None,
-                    count: Some(inner.2),
-                },
-                0,
-            ));
-            Ok(Bytes::new())
-        }
-        HEVMCalls::ExpectCall2(inner) => {
-            state.expected_calls.entry(inner.0).or_default().push((
-                ExpectedCallData {
-                    calldata: inner.2.to_vec().into(),
-                    value: Some(inner.1),
-                    gas: None,
-                    min_gas: None,
-                    count: None,
-                },
-                0,
-            ));
-            Ok(Bytes::new())
-        }
-        HEVMCalls::ExpectCall3(inner) => {
-            state.expected_calls.entry(inner.0).or_default().push((
-                ExpectedCallData {
-                    calldata: inner.2.to_vec().into(),
-                    value: Some(inner.1),
-                    gas: None,
-                    min_gas: None,
-                    count: Some(inner.3),
-                },
-                0,
-            ));
-            Ok(Bytes::new())
-        }
+        HEVMCalls::ExpectCall0(inner) => expect_call(
+            state,
+            inner.0,
+            inner.1.to_vec().into(),
+            None,
+            None,
+            None,
+            1,
+            ExpectedCallType::NonCount,
+        ),
+        HEVMCalls::ExpectCall1(inner) => expect_call(
+            state,
+            inner.0,
+            inner.1.to_vec().into(),
+            None,
+            None,
+            None,
+            inner.2,
+            ExpectedCallType::Count,
+        ),
+        HEVMCalls::ExpectCall2(inner) => expect_call(
+            state,
+            inner.0,
+            inner.2.to_vec().into(),
+            Some(inner.1),
+            None,
+            None,
+            1,
+            ExpectedCallType::NonCount,
+        ),
+        HEVMCalls::ExpectCall3(inner) => expect_call(
+            state,
+            inner.0,
+            inner.2.to_vec().into(),
+            Some(inner.1),
+            None,
+            None,
+            inner.3,
+            ExpectedCallType::Count,
+        ),
         HEVMCalls::ExpectCall4(inner) => {
             let value = inner.1;
-
             // If the value of the transaction is non-zero, the EVM adds a call stipend of 2300 gas
             // to ensure that the basic fallback function can be called.
             let positive_value_cost_stipend = if value > U256::zero() { 2300 } else { 0 };
 
-            state.expected_calls.entry(inner.0).or_default().push((
-                ExpectedCallData {
-                    calldata: inner.3.to_vec().into(),
-                    value: Some(value),
-                    gas: Some(inner.2 + positive_value_cost_stipend),
-                    min_gas: None,
-                    count: None,
-                },
-                0,
-            ));
-            Ok(Bytes::new())
+            expect_call(
+                state,
+                inner.0,
+                inner.3.to_vec().into(),
+                Some(value),
+                Some(inner.2 + positive_value_cost_stipend),
+                None,
+                1,
+                ExpectedCallType::NonCount,
+            )
         }
         HEVMCalls::ExpectCall5(inner) => {
             let value = inner.1;
-            let positive_value_cost_stipend = if value > U256::zero() { 2300 } else { 0 };
-            state.expected_calls.entry(inner.0).or_default().push((
-                ExpectedCallData {
-                    calldata: inner.3.to_vec().into(),
-                    value: Some(value),
-                    gas: Some(inner.2 + positive_value_cost_stipend),
-                    min_gas: None,
-                    count: Some(inner.4),
-                },
-                0,
-            ));
-            Ok(Bytes::new())
-        }
-        HEVMCalls::ExpectCallMinGas0(inner) => {
-            let value = inner.1;
-
             // If the value of the transaction is non-zero, the EVM adds a call stipend of 2300 gas
             // to ensure that the basic fallback function can be called.
             let positive_value_cost_stipend = if value > U256::zero() { 2300 } else { 0 };
 
-            state.expected_calls.entry(inner.0).or_default().push((
-                ExpectedCallData {
-                    calldata: inner.3.to_vec().into(),
-                    value: Some(value),
-                    gas: None,
-                    min_gas: Some(inner.2 + positive_value_cost_stipend),
-                    count: None,
-                },
-                0,
-            ));
-            Ok(Bytes::new())
+            expect_call(
+                state,
+                inner.0,
+                inner.3.to_vec().into(),
+                Some(value),
+                Some(inner.2 + positive_value_cost_stipend),
+                None,
+                inner.4,
+                ExpectedCallType::Count,
+            )
+        }
+        HEVMCalls::ExpectCallMinGas0(inner) => {
+            let value = inner.1;
+            // If the value of the transaction is non-zero, the EVM adds a call stipend of 2300 gas
+            // to ensure that the basic fallback function can be called.
+            let positive_value_cost_stipend = if value > U256::zero() { 2300 } else { 0 };
+
+            expect_call(
+                state,
+                inner.0,
+                inner.3.to_vec().into(),
+                Some(value),
+                None,
+                Some(inner.2 + positive_value_cost_stipend),
+                1,
+                ExpectedCallType::NonCount,
+            )
         }
         HEVMCalls::ExpectCallMinGas1(inner) => {
             let value = inner.1;
+            // If the value of the transaction is non-zero, the EVM adds a call stipend of 2300 gas
+            // to ensure that the basic fallback function can be called.
             let positive_value_cost_stipend = if value > U256::zero() { 2300 } else { 0 };
-            state.expected_calls.entry(inner.0).or_default().push((
-                ExpectedCallData {
-                    calldata: inner.3.to_vec().into(),
-                    value: Some(value),
-                    gas: None,
-                    min_gas: Some(inner.2 + positive_value_cost_stipend),
-                    count: Some(inner.4),
-                },
-                0,
-            ));
-            Ok(Bytes::new())
+
+            expect_call(
+                state,
+                inner.0,
+                inner.3.to_vec().into(),
+                Some(value),
+                None,
+                Some(inner.2 + positive_value_cost_stipend),
+                inner.4,
+                ExpectedCallType::Count,
+            )
         }
         HEVMCalls::MockCall0(inner) => {
             // TODO: Does this increase gas usage?

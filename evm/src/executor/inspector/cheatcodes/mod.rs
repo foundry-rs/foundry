@@ -1,6 +1,6 @@
 use self::{
     env::Broadcast,
-    expect::{handle_expect_emit, handle_expect_revert},
+    expect::{handle_expect_emit, handle_expect_revert, ExpectedCallType},
     util::{check_if_fixed_gas_limit, process_create, BroadcastableTransactions},
 };
 use crate::{
@@ -126,7 +126,7 @@ pub struct Cheatcodes {
     pub mocked_calls: BTreeMap<Address, BTreeMap<MockCallDataContext, MockCallReturnData>>,
 
     /// Expected calls
-    pub expected_calls: BTreeMap<Address, Vec<(ExpectedCallData, u64)>>,
+    pub expected_calls: BTreeMap<Address, BTreeMap<Bytes, (ExpectedCallData, u64)>>,
 
     /// Expected emits
     pub expected_emits: Vec<ExpectedEmit>,
@@ -565,15 +565,29 @@ where
             }
         } else if call.contract != h160_to_b160(HARDHAT_CONSOLE_ADDRESS) {
             // Handle expected calls
-            if let Some(expecteds) = self.expected_calls.get_mut(&(b160_to_h160(call.contract))) {
-                if let Some((_, count)) = expecteds.iter_mut().find(|(expected, _)| {
-                    expected.calldata.len() <= call.input.len() &&
-                        expected.calldata == call.input[..expected.calldata.len()] &&
-                        expected.value.map_or(true, |value| value == call.transfer.value.into()) &&
+
+            // Grab the different calldatas expected.
+            if let Some(expected_calls_for_target) =
+                self.expected_calls.get_mut(&(b160_to_h160(call.contract)))
+            {
+                // Match every partial/full calldata
+                for (calldata, (expected, actual_count)) in expected_calls_for_target.iter_mut() {
+                    // Increment actual times seen if...
+                    // The calldata is at most, as big as this call's input, and
+                    if calldata.len() <= call.input.len() &&
+                        // Both calldata match, taking the length of the assumed smaller one (which will have at least the selector), and
+                        *calldata == call.input[..calldata.len()] &&
+                        // The value matches, if provided
+                        expected
+                            .value
+                            .map_or(true, |value| value == call.transfer.value.into()) &&
+                        // The gas matches, if provided
                         expected.gas.map_or(true, |gas| gas == call.gas_limit) &&
+                        // The minimum gas matches, if provided
                         expected.min_gas.map_or(true, |min_gas| min_gas <= call.gas_limit)
-                }) {
-                    *count += 1;
+                    {
+                        *actual_count += 1;
+                    }
                 }
             }
 
@@ -772,43 +786,57 @@ where
 
         // If the depth is 0, then this is the root call terminating
         if data.journaled_state.depth() == 0 {
-            for (address, expecteds) in &self.expected_calls {
-                for (expected, actual_count) in expecteds {
-                    let ExpectedCallData { calldata, gas, min_gas, value, count } = expected;
+            for (address, calldatas) in &self.expected_calls {
+                for (calldata, (expected, actual_count)) in calldatas {
+                    let ExpectedCallData { gas, min_gas, value, count, call_type } = expected;
                     let calldata = calldata.clone();
-                    let expected_values = [
-                        Some(format!("data {calldata}")),
-                        value.map(|v| format!("value {v}")),
-                        gas.map(|g| format!("gas {g}")),
-                        min_gas.map(|g| format!("minimum gas {g}")),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .join(" and ");
-                    if count.is_none() {
-                        if *actual_count == 0 {
-                            return (
-                                InstructionResult::Revert,
-                                remaining_gas,
-                                format!("Expected at least one call to {address:?} with {expected_values}, but got none")
+                    match call_type {
+                        // We must match exactly what has been specified.
+                        ExpectedCallType::Count => {
+                            if *count != *actual_count {
+                                let expected_values = [
+                                    Some(format!("data {calldata}")),
+                                    value.map(|v| format!("value {v}")),
+                                    gas.map(|g| format!("gas {g}")),
+                                    min_gas.map(|g| format!("minimum gas {g}")),
+                                ]
+                                .into_iter()
+                                .flatten()
+                                .join(" and ");
+                                return (
+                                    InstructionResult::Revert,
+                                    remaining_gas,
+                                    format!(
+                                        "Expected call to {address:?} with {expected_values} to be called {count} time(s), but was called {actual_count} time(s)"
+                                    )
                                     .encode()
                                     .into(),
-                            )
+                                )
+                            }
                         }
-                    } else if *count != Some(*actual_count) {
-                        return (
-                            InstructionResult::Revert,
-                            remaining_gas,
-                            format!(
-                                "Expected call to {:?} with {} to be made {} time(s), but was called {} time(s)",
-                                address,
-                                expected_values,
-                                count.unwrap(),
-                                actual_count,
-                            )
-                            .encode()
-                            .into(),
-                        )
+                        // We must match at least the amount of times specified.
+                        ExpectedCallType::NonCount => {
+                            if *count > *actual_count {
+                                let expected_values = [
+                                    Some(format!("data {calldata}")),
+                                    value.map(|v| format!("value {v}")),
+                                    gas.map(|g| format!("gas {g}")),
+                                    min_gas.map(|g| format!("minimum gas {g}")),
+                                ]
+                                .into_iter()
+                                .flatten()
+                                .join(" and ");
+                                return (
+                                    InstructionResult::Revert,
+                                    remaining_gas,
+                                    format!(
+                                        "Expected call to {address:?} with {expected_values} to be called at least {count} time(s), but was called {actual_count} time(s)"
+                                    )
+                                    .encode()
+                                    .into(),
+                                )
+                            }
+                        }
                     }
                 }
             }
