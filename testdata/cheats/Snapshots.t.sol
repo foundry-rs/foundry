@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.0;
+pragma solidity >=0.8.18;
 
 import "ds-test/test.sol";
 import "./Cheats.sol";
@@ -36,7 +36,7 @@ contract SnapshotTest is DSTest {
     function testBlockValues() public {
         uint256 num = block.number;
         uint256 time = block.timestamp;
-        uint256 difficulty = block.difficulty;
+        uint256 prevrandao = block.prevrandao;
 
         uint256 snapshot = cheats.snapshot();
 
@@ -46,13 +46,13 @@ contract SnapshotTest is DSTest {
         cheats.roll(99);
         assertEq(block.number, 99);
 
-        cheats.difficulty(123);
-        assertEq(block.difficulty, 123);
+        cheats.prevrandao(bytes32(uint256(123)));
+        assertEq(block.prevrandao, 123);
 
         assert(cheats.revertTo(snapshot));
 
         assertEq(block.number, num, "snapshot revert for block.number unsuccessful");
         assertEq(block.timestamp, time, "snapshot revert for block.timestamp unsuccessful");
-        assertEq(block.difficulty, difficulty, "snapshot revert for block.difficulty unsuccessful");
+        assertEq(block.prevrandao, prevrandao, "snapshot revert for block.prevrandao unsuccessful");
     }
 }

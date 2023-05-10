@@ -15,12 +15,15 @@ pub struct App {
 
 #[derive(Clone, Debug, Subcommand, Eq, PartialEq)]
 pub enum Commands {
-    #[clap(visible_alias = "com", about = "Generate shell completions script.")]
+    /// Generate shell completions script.
+    #[clap(visible_alias = "com")]
     Completions {
         #[clap(value_enum)]
         shell: clap_complete::Shell,
     },
-    #[clap(visible_alias = "fig", about = "Generate Fig autocompletion spec.")]
+
+    /// Generate Fig autocompletion spec.
+    #[clap(visible_alias = "fig")]
     GenerateFigSpec,
 }
 

@@ -1,9 +1,9 @@
 use super::{EtherscanOpts, RpcOpts};
 use crate::{
     cmd::cast::{
-        bind::BindArgs, call::CallArgs, create2::Create2Args, estimate::EstimateArgs,
-        find_block::FindBlockArgs, interface::InterfaceArgs, rpc::RpcArgs, run::RunArgs,
-        send::SendTxArgs, storage::StorageArgs, wallet::WalletSubcommands,
+        access_list::AccessListArgs, bind::BindArgs, call::CallArgs, create2::Create2Args,
+        estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, rpc::RpcArgs,
+        run::RunArgs, send::SendTxArgs, storage::StorageArgs, wallet::WalletSubcommands,
     },
     utils::parse_u256,
 };
@@ -21,859 +21,801 @@ pub struct Opts {
     pub sub: Subcommands,
 }
 
+/// Perform Ethereum RPC calls from the comfort of your command line.
 #[derive(Debug, Subcommand)]
 #[clap(
-    about = "Perform Ethereum RPC calls from the comfort of your command line.",
     after_help = "Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html",
     next_display_order = None
 )]
 pub enum Subcommands {
-    #[clap(name = "--max-int")]
-    #[clap(visible_aliases = &["max-int", "maxi"])]
-    #[clap(about = "Get the maximum value of the given integer type.")]
+    /// Prints the maximum value of the given integer type.
+    #[clap(name = "--max-int", visible_aliases = &["max-int", "maxi"])]
     MaxInt {
+        /// The integer type to get the maximum value of.
         #[clap(default_value = "int256")]
         r#type: String,
     },
-    #[clap(name = "--min-int")]
-    #[clap(visible_aliases = &["min-int", "mini"])]
-    #[clap(about = "Get the minimum value of the given integer type.")]
+
+    /// Prints the minimum value of the given integer type.
+    #[clap(name = "--min-int", visible_aliases = &["min-int", "mini"])]
     MinInt {
+        /// The integer type to get the minimum value of.
         #[clap(default_value = "int256")]
         r#type: String,
     },
-    #[clap(name = "--max-uint")]
-    #[clap(visible_aliases = &["max-uint", "maxu"])]
-    #[clap(about = "Get the maximum value of the given integer type.")]
+
+    /// Prints the maximum value of the given integer type.
+    #[clap(name = "--max-uint", visible_aliases = &["max-uint", "maxu"])]
     MaxUint {
+        /// The unsigned integer type to get the maximum value of.
         #[clap(default_value = "uint256")]
         r#type: String,
     },
-    #[clap(name = "--address-zero", about = "Get zero address")]
-    #[clap(visible_aliases = &["address-zero", "az"])]
+
+    /// Prints the zero address.
+    #[clap(name = "--address-zero", visible_aliases = &["address-zero", "az"])]
     AddressZero,
-    #[clap(name = "--hash-zero", about = "Get zero hash")]
-    #[clap(visible_aliases = &["hash-zero", "hz"])]
+
+    /// Prints the zero hash.
+    #[clap(name = "--hash-zero", visible_aliases = &["hash-zero", "hz"])]
     HashZero,
 
-    #[clap(name = "--from-utf8")]
-    #[clap(visible_aliases = &["from-utf8", "--from-ascii", "from-ascii", "fu", "fa"])]
-    #[clap(about = "Convert UTF8 text to hex.")]
+    /// Convert UTF8 text to hex.
+    #[clap(
+        name = "--from-utf8",
+        visible_aliases = &["from-utf8",
+        "--from-ascii",
+        "from-ascii",
+        "fu",
+        "fa"]
+    )]
     FromUtf8 {
-        #[clap(value_name = "TEXT")]
+        /// The text to convert.
         text: Option<String>,
     },
-    #[clap(name = "--concat-hex")]
-    #[clap(visible_aliases = &["concat-hex", "ch"])]
-    #[clap(about = "Concatenate hex strings.")]
+
+    /// Concatenate hex strings.
+    #[clap(name = "--concat-hex", visible_aliases = &["concat-hex", "ch"])]
     ConcatHex {
-        #[clap(value_name = "DATA")]
+        /// The data to concatenate.
         data: Vec<String>,
     },
-    #[clap(name = "--from-bin")]
-    #[clap(visible_aliases = &["from-bin", "fb"])]
-    #[clap(about = "Convert binary data into hex data.")]
-    FromBin,
-    #[clap(name = "--to-hexdata")]
-    #[clap(visible_aliases = &["to-hexdata", "thd", "2hd"])]
-    #[clap(
-        about = "Normalize the input to lowercase, 0x-prefixed hex. See --help for more info.",
-        long_about = r#"Normalize the input to lowercase, 0x-prefixed hex.
 
-The input can be:
-- mixed case hex with or without 0x prefix
-- 0x prefixed hex, concatenated with a ':'
-- an absolute path to file
-- @tag, where the tag is defined in an environment variable"#
-    )]
+    /// "Convert binary data into hex data."
+    #[clap(name = "--from-bin", visible_aliases = &["from-binx", "fb"])]
+    FromBin,
+
+    /// Normalize the input to lowercase, 0x-prefixed hex.
+    ///
+    /// The input can be:
+    /// - mixed case hex with or without 0x prefix
+    /// - 0x prefixed hex, concatenated with a ':'
+    /// - an absolute path to file
+    /// - @tag, where the tag is defined in an environment variable
+    #[clap(name = "--to-hexdata", visible_aliases = &["to-hexdata", "thd", "2hd"])]
     ToHexdata {
-        #[clap(value_name = "INPUT")]
+        /// The input to normalize.
         input: Option<String>,
     },
-    #[clap(name = "--to-checksum-address")]
-    #[clap(visible_aliases = &["to-checksum-address", "--to-checksum", "to-checksum", "ta", "2a"])] // Compatibility with dapptools' cast
-    #[clap(about = "Convert an address to a checksummed format (EIP-55).")]
+
+    /// Convert an address to a checksummed format (EIP-55).
+    #[clap(
+        name = "--to-checksum-address",
+        visible_aliases = &["to-checksum-address",
+        "--to-checksum",
+        "to-checksum",
+        "ta",
+        "2a"]
+    )]
     ToCheckSumAddress {
-        #[clap(value_name = "ADDRESS")]
+        /// The address to convert.
         address: Option<Address>,
     },
-    #[clap(name = "--to-ascii")]
-    #[clap(visible_aliases = &["to-ascii", "tas", "2as"])]
-    #[clap(about = "Convert hex data to an ASCII string.")]
+
+    /// Convert hex data to an ASCII string.
+    #[clap(name = "--to-ascii", visible_aliases = &["to-ascii", "tas", "2as"])]
     ToAscii {
-        #[clap(value_name = "HEXDATA")]
+        /// The hex data to convert.
         hexdata: Option<String>,
     },
-    #[clap(name = "--from-fix")]
-    #[clap(visible_aliases = &["from-fix", "ff"])]
-    #[clap(about = "Convert a fixed point number into an integer.")]
+
+    /// Convert a fixed point number into an integer.
+    #[clap(name = "--from-fix", visible_aliases = &["from-fix", "ff"])]
     FromFixedPoint {
-        #[clap(value_name = "DECIMALS")]
+        /// The number of decimals to use.
         decimals: Option<String>,
 
-        #[clap(allow_hyphen_values = true, value_name = "VALUE")]
-        // negative values not yet supported internally
+        /// The value to convert.
+        #[clap(allow_hyphen_values = true)]
         value: Option<String>,
     },
-    #[clap(name = "--to-bytes32")]
-    #[clap(visible_aliases = &["to-bytes32", "tb", "2b"])]
-    #[clap(about = "Right-pads hex data to 32 bytes.")]
+
+    /// Right-pads hex data to 32 bytes.
+    #[clap(name = "--to-bytes32", visible_aliases = &["to-bytes32", "tb", "2b"])]
     ToBytes32 {
-        #[clap(value_name = "BYTES")]
+        /// The hex data to convert.
         bytes: Option<String>,
     },
-    #[clap(name = "--to-fix")]
-    #[clap(visible_aliases = &["to-fix", "tf", "2f"])]
-    #[clap(about = "Convert an integer into a fixed point number.")]
+
+    /// Convert an integer into a fixed point number.
+    #[clap(name = "--to-fix", visible_aliases = &["to-fix", "tf", "2f"])]
     ToFixedPoint {
-        #[clap(value_name = "DECIMALS")]
+        /// The number of decimals to use.
         decimals: Option<String>,
 
-        #[clap(allow_hyphen_values = true, value_name = "VALUE")]
+        /// The value to convert.
+        #[clap(allow_hyphen_values = true)]
         value: Option<String>,
     },
-    #[clap(name = "--to-uint256")]
-    #[clap(visible_aliases = &["to-uint256", "tu", "2u"])]
-    #[clap(about = "Convert a number to a hex-encoded uint256.")]
+
+    /// Convert a number to a hex-encoded uint256.
+    #[clap(name = "--to-uint256", visible_aliases = &["to-uint256", "tu", "2u"])]
     ToUint256 {
-        #[clap(value_name = "VALUE")]
+        /// The value to convert.
         value: Option<String>,
     },
-    #[clap(name = "--to-int256")]
-    #[clap(visible_aliases = &["to-int256", "ti", "2i"])]
-    #[clap(about = "Convert a number to a hex-encoded int256.")]
+
+    /// Convert a number to a hex-encoded int256.
+    #[clap(name = "--to-int256", visible_aliases = &["to-int256", "ti", "2i"])]
     ToInt256 {
-        #[clap(value_name = "VALUE")]
+        /// The value to convert.
         value: Option<String>,
     },
+
+    /// Perform a left shifting operation
     #[clap(name = "shl")]
-    #[clap(about = "Perform a left shifting operation")]
     LeftShift {
-        #[clap(value_name = "VALUE")]
+        /// The value to shift.
         value: String,
 
-        #[clap(value_name = "BITS")]
+        /// The number of bits to shift.
         bits: String,
 
-        #[clap(long = "base-in", help = "The input base")]
+        /// The input base.
+        #[clap(long)]
         base_in: Option<String>,
 
-        #[clap(long = "base-out", help = "The output base", default_value = "16")]
+        /// The output base.
+        #[clap(long, default_value = "16")]
         base_out: String,
     },
+
+    /// Perform a right shifting operation
     #[clap(name = "shr")]
-    #[clap(about = "Perform a right shifting operation")]
     RightShift {
-        #[clap(value_name = "VALUE")]
+        /// The value to shift.
         value: String,
 
-        #[clap(value_name = "BITS")]
+        /// The number of bits to shift.
         bits: String,
 
-        #[clap(long = "base-in", help = "The input base")]
+        /// The input base,
+        #[clap(long)]
         base_in: Option<String>,
 
-        #[clap(long = "base-out", help = "The output base", default_value = "16")]
+        /// The output base,
+        #[clap(long, default_value = "16")]
         base_out: String,
     },
-    #[clap(name = "--to-unit")]
-    #[clap(visible_aliases = &["to-unit", "tun", "2un"])]
-    #[clap(
-        about = "Convert an ETH amount into another unit (ether, gwei or wei).",
-        long_about = r#"Convert an ETH amount into another unit (ether, gwei or wei).\
 
-Examples:
-- 1ether wei
-- "1 ether" wei
-- 1ether
-- 1 gwei
-- 1gwei ether"#
-    )]
+    /// Convert an ETH amount into another unit (ether, gwei or wei).
+    ///
+    /// Examples:
+    /// - 1ether wei
+    /// - "1 ether" wei
+    /// - 1ether
+    /// - 1 gwei
+    /// - 1gwei ether
+    #[clap(name = "--to-unit", visible_aliases = &["to-unit", "tun", "2un"])]
     ToUnit {
-        #[clap(value_name = "VALUE")]
-        // negative values not yet supported internally
+        /// The value to convert.
         value: Option<String>,
 
-        #[clap(
-            help = "The unit to convert to (ether, gwei, wei).",
-            default_value = "wei",
-            value_name = "UNIT"
-        )]
+        /// The unit to convert to (ether, gwei, wei).
+        #[clap(default_value = "wei")]
         unit: String,
     },
-    #[clap(name = "--to-wei")]
-    #[clap(visible_aliases = &["to-wei", "tw", "2w"])]
-    #[clap(about = "Convert an ETH amount to wei. Consider using --to-unit.")]
+
+    /// Convert an ETH amount to wei.
+    ///
+    /// Consider using --to-unit.
+    #[clap(name = "--to-wei", visible_aliases = &["to-wei", "tw", "2w"])]
     ToWei {
-        #[clap(allow_hyphen_values = true, value_name = "VALUE")]
-        // negative values not yet supported internally
+        /// The value to convert.
+        #[clap(allow_hyphen_values = true)]
         value: Option<String>,
 
-        #[clap(value_name = "UNIT", default_value = "eth")]
+        /// The unit to convert from (ether, gwei, wei).
+        #[clap(default_value = "eth")]
         unit: String,
     },
-    #[clap(name = "--from-wei")]
-    #[clap(visible_aliases = &["from-wei", "fw"])]
-    #[clap(about = "Convert wei into an ETH amount. Consider using --to-unit.")]
+
+    /// Convert wei into an ETH amount.
+    ///
+    /// Consider using --to-unit.
+    #[clap(name = "--from-wei", visible_aliases = &["from-wei", "fw"])]
     FromWei {
-        #[clap(allow_hyphen_values = true, value_name = "VALUE")]
-        // negative values not yet supported internally
+        /// The value to convert.
+        #[clap(allow_hyphen_values = true)]
         value: Option<String>,
 
-        #[clap(value_name = "UNIT", default_value = "eth")]
+        /// The unit to convert from (ether, gwei, wei).
+        #[clap(default_value = "eth")]
         unit: String,
     },
+
+    /// RLP encodes hex data, or an array of hex data
     #[clap(name = "--to-rlp")]
-    #[clap(about = "RLP encodes hex data, or an array of hex data")]
-    ToRlp { value: Option<String> },
+    ToRlp {
+        /// The value to convert.
+        value: Option<String>,
+    },
+
+    /// Decodes RLP encoded data.
+    ///
+    /// Input must be hexadecimal.
     #[clap(name = "--from-rlp")]
-    #[clap(about = "Decodes RLP encoded data. Input must be hexadecimal.")]
-    FromRlp { value: Option<String> },
-    #[clap(name = "--to-hex")]
-    #[clap(visible_aliases = &["to-hex", "th", "2h"])]
-    #[clap(about = "Converts a number of one base to another")]
+    FromRlp {
+        /// The value to convert.
+        value: Option<String>,
+    },
+
+    /// Converts a number of one base to another
+    #[clap(name = "--to-hex", visible_aliases = &["to-hex", "th", "2h"])]
     ToHex(ToBaseArgs),
-    #[clap(name = "--to-dec")]
-    #[clap(visible_aliases = &["to-dec", "td", "2d"])]
-    #[clap(about = "Converts a number of one base to decimal")]
+
+    /// Converts a number of one base to decimal
+    #[clap(name = "--to-dec", visible_aliases = &["to-dec", "td", "2d"])]
     ToDec(ToBaseArgs),
-    #[clap(name = "--to-base")]
-    #[clap(visible_aliases = &["to-base", "--to-radix", "to-radix", "tr", "2r"])]
-    #[clap(about = "Converts a number of one base to another")]
+
+    /// Converts a number of one base to another
+    #[clap(
+        name = "--to-base",
+        visible_aliases = &["to-base",
+        "--to-radix",
+        "to-radix",
+        "tr",
+        "2r"]
+    )]
     ToBase {
         #[clap(flatten)]
         base: ToBaseArgs,
 
-        #[clap(value_name = "BASE", help = "The output base")]
+        /// The output base.
+        #[clap(value_name = "BASE")]
         base_out: Option<String>,
     },
-    #[clap(name = "access-list")]
-    #[clap(visible_aliases = &["ac", "acl"])]
-    #[clap(about = "Create an access list for a transaction.")]
-    AccessList {
-        #[clap(
-            help = "The destination of the transaction.",
-            value_parser = NameOrAddress::from_str,
-            value_name = "ADDRESS"
-        )]
-        address: NameOrAddress,
-
-        #[clap(help = "The signature of the function to call.", value_name = "SIG")]
-        sig: String,
-
-        #[clap(help = "The arguments of the function to call.", value_name = "ARGS")]
-        args: Vec<String>,
-
-        #[clap(
-            long,
-            short = 'B',
-            help = "The block height you want to query at.",
-            long_help = "The block height you want to query at. Can also be the tags earliest, finalized, safe, latest, or pending.",
-            value_name = "BLOCK"
-        )]
-        block: Option<BlockId>,
-
-        #[clap(long = "json", short = 'j', help_heading = "Display options")]
-        to_json: bool,
-
-        #[clap(flatten)]
-        rpc: RpcOpts,
-    },
-    #[clap(name = "block")]
+    /// Create an access list for a transaction.
+    #[clap(name = "access-list", visible_aliases = &["ac", "acl"])]
+    AccessList(AccessListArgs),
+    /// Get information about a block.
     #[clap(visible_alias = "bl")]
-    #[clap(about = "Get information about a block.")]
     Block {
-        #[clap(
-            help = "The block height you want to query at.",
-            long_help = "The block height you want to query at. Can also be the tags earliest, finalized, safe, latest, or pending.",
-            value_name = "BLOCK"
-        )]
+        /// The block height to query at.
+        ///
+        /// Can also be the tags earliest, finalized, safe, latest, or pending.
         block: Option<BlockId>,
 
-        #[clap(
-            long,
-            short = 'f',
-            help = "If specified, only get the given field of the block.",
-            value_name = "FIELD"
-        )]
+        /// If specified, only get the given field of the block.
+        #[clap(long, short)]
         field: Option<String>,
 
         #[clap(long, env = "CAST_FULL_BLOCK")]
         full: bool,
 
-        #[clap(long = "json", short = 'j', help_heading = "Display options")]
-        to_json: bool,
+        /// Print the block as JSON.
+        #[clap(long, short, help_heading = "Display options")]
+        json: bool,
 
         #[clap(flatten)]
         rpc: RpcOpts,
     },
-    #[clap(name = "block-number")]
-    #[clap(visible_alias = "bn")]
-    #[clap(about = "Get the latest block number.")]
+
+    /// Get the latest block number.
+    #[clap(name = "block-number", visible_alias = "bn")]
     BlockNumber {
         #[clap(flatten)]
         rpc: RpcOpts,
     },
-    #[clap(name = "call")]
+
+    /// Perform a call on an account without publishing a transaction.
     #[clap(visible_alias = "c")]
-    #[clap(about = "Perform a call on an account without publishing a transaction.")]
     Call(CallArgs),
-    #[clap(name = "calldata")]
-    #[clap(visible_alias = "cd")]
-    #[clap(about = "ABI-encode a function with arguments.")]
+
+    /// ABI-encode a function with arguments.
+    #[clap(name = "calldata", visible_alias = "cd")]
     CalldataEncode {
-        #[clap(
-            help = "The function signature.",
-            long_help = "The function signature in the form <name>(<types...>)",
-            value_name = "SIG"
-        )]
+        /// The function signature in the form <name>(<types...>)
         sig: String,
 
-        #[clap(allow_hyphen_values = true, value_name = "ARGS")]
+        /// The arguments to encode.
+        #[clap(allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    #[clap(name = "chain")]
-    #[clap(about = "Get the symbolic name of the current chain.")]
+
+    /// Get the symbolic name of the current chain.
     Chain {
         #[clap(flatten)]
         rpc: RpcOpts,
     },
-    #[clap(name = "chain-id")]
-    #[clap(visible_aliases = &["ci", "cid"])]
-    #[clap(about = "Get the Ethereum chain ID.")]
+
+    /// Get the Ethereum chain ID.
+    #[clap(name = "chain-id", visible_aliases = &["ci", "cid"])]
     ChainId {
         #[clap(flatten)]
         rpc: RpcOpts,
     },
-    #[clap(name = "client")]
+
+    /// Get the current client version.
     #[clap(visible_alias = "cl")]
-    #[clap(about = "Get the current client version.")]
     Client {
         #[clap(flatten)]
         rpc: RpcOpts,
     },
-    #[clap(name = "compute-address")]
-    #[clap(visible_alias = "ca")]
-    #[clap(about = "Compute the contract address from a given nonce and deployer address.")]
+
+    /// Compute the contract address from a given nonce and deployer address.
+    #[clap(name = "compute-address", visible_alias = "ca")]
     ComputeAddress {
-        #[clap(help = "The deployer address.", value_name = "ADDRESS")]
+        /// The deployer address.
         address: Option<String>,
 
-        #[clap(long, help = "The nonce of the deployer address.", value_parser = parse_u256, value_name = "NONCE")]
+        /// The nonce of the deployer address.
+        #[clap(long, value_parser = parse_u256)]
         nonce: Option<U256>,
 
         #[clap(flatten)]
         rpc: RpcOpts,
     },
-    #[clap(name = "disassemble")]
+
+    /// Disassembles hex encoded bytecode into individual / human readable opcodes
     #[clap(visible_alias = "da")]
-    #[clap(about = "Disassembles hex encoded bytecode into individual / human readable opcodes")]
     Disassemble {
-        #[clap(help = "The hex encoded bytecode", value_name = "BYTECODE")]
+        /// The hex encoded bytecode.
         bytecode: String,
     },
-    #[clap(name = "namehash")]
+
+    /// Calculate the ENS namehash of a name.
     #[clap(visible_aliases = &["na", "nh"])]
-    #[clap(about = "Calculate the ENS namehash of a name.")]
-    Namehash {
-        #[clap(value_name = "NAME")]
-        name: Option<String>,
-    },
-    #[clap(name = "tx")]
+    Namehash { name: Option<String> },
+
+    /// Get information about a transaction.
     #[clap(visible_alias = "t")]
-    #[clap(about = "Get information about a transaction.")]
     Tx {
-        #[clap(value_name = "TX_HASH")]
+        /// The transaction hash.
         tx_hash: String,
 
-        #[clap(value_name = "FIELD")]
+        /// If specified, only get the given field of the transaction.
         field: Option<String>,
 
-        #[clap(long = "json", short = 'j', help_heading = "Display options")]
-        to_json: bool,
+        /// Print as JSON.
+        #[clap(long, short, help_heading = "Display options")]
+        json: bool,
 
         #[clap(flatten)]
         rpc: RpcOpts,
     },
-    #[clap(name = "receipt")]
+
+    /// Get the transaction receipt for a transaction.
     #[clap(visible_alias = "re")]
-    #[clap(about = "Get the transaction receipt for a transaction.")]
     Receipt {
-        #[clap(value_name = "TX_HASH")]
+        /// The transaction hash.
         tx_hash: String,
 
-        #[clap(value_name = "FIELD")]
+        /// If specified, only get the given field of the transaction.
         field: Option<String>,
 
-        #[clap(
-            long,
-            help = "The number of confirmations until the receipt is fetched",
-            default_value = "1",
-            value_name = "CONFIRMATIONS"
-        )]
+        /// The number of confirmations until the receipt is fetched
+        #[clap(long, default_value = "1")]
         confirmations: usize,
 
-        #[clap(
-            long = "async",
-            env = "CAST_ASYNC",
-            name = "async",
-            alias = "cast-async",
-            help = "Exit immediately if the transaction was not found."
-        )]
+        /// Exit immediately if the transaction was not found.
+        #[clap(long = "async", env = "CAST_ASYNC", name = "async", alias = "cast-async")]
         cast_async: bool,
 
-        #[clap(long = "json", short = 'j', help_heading = "Display options")]
-        to_json: bool,
+        /// Print as JSON.
+        #[clap(long, short, help_heading = "Display options")]
+        json: bool,
 
         #[clap(flatten)]
         rpc: RpcOpts,
     },
-    #[clap(name = "send")]
-    #[clap(visible_alias = "s")]
-    #[clap(about = "Sign and publish a transaction.")]
+
+    /// Sign and publish a transaction.
+    #[clap(name = "send", visible_alias = "s")]
     SendTx(SendTxArgs),
-    #[clap(name = "publish")]
-    #[clap(visible_alias = "p")]
-    #[clap(about = "Publish a raw transaction to the network.")]
+
+    /// Publish a raw transaction to the network.
+    #[clap(name = "publish", visible_alias = "p")]
     PublishTx {
-        #[clap(help = "The raw transaction", value_name = "RAW_TX")]
+        /// The raw transaction
         raw_tx: String,
 
-        #[clap(
-            long = "async",
-            env = "CAST_ASYNC",
-            name = "async",
-            alias = "cast-async",
-            help = "Only print the transaction hash and exit immediately."
-        )]
+        /// Only print the transaction hash and exit immediately.
+        #[clap(long = "async", env = "CAST_ASYNC", name = "async", alias = "cast-async")]
         cast_async: bool,
 
         #[clap(flatten)]
         rpc: RpcOpts,
     },
-    #[clap(name = "estimate")]
+
+    /// Estimate the gas cost of a transaction.
     #[clap(visible_alias = "e")]
-    #[clap(about = "Estimate the gas cost of a transaction.")]
     Estimate(EstimateArgs),
-    #[clap(name = "--calldata-decode")]
-    #[clap(visible_alias = "cdd")]
-    #[clap(about = "Decode ABI-encoded input data.")]
+
+    /// Decode ABI-encoded input data.
+    #[clap(name = "--calldata-decode", visible_alias = "cdd")]
     CalldataDecode {
-        #[clap(
-            help = "The function signature in the format `<name>(<in-types>)(<out-types>)`.",
-            value_name = "SIG"
-        )]
+        /// The function signature in the format `<name>(<in-types>)(<out-types>)`.
         sig: String,
 
-        #[clap(help = "The ABI-encoded calldata.", value_name = "CALLDATA")]
+        /// The ABI-encoded calldata.
         calldata: String,
     },
-    #[clap(name = "--abi-decode")]
-    #[clap(visible_alias = "ad")]
-    #[clap(
-        about = "Decode ABI-encoded input or output data",
-        long_about = r#"Decode ABI-encoded input or output data.
 
-Defaults to decoding output data. To decode input data pass --input or use cast --calldata-decode."#
-    )]
+    /// Decode ABI-encoded input or output data.
+    ///
+    /// Defaults to decoding output data. To decode input data pass --input or use cast
+    /// --calldata-decode.
+    #[clap(name = "--abi-decode", visible_alias = "ad")]
     AbiDecode {
-        #[clap(
-            help = "The function signature in the format `<name>(<in-types>)(<out-types>)`.",
-            value_name = "SIG"
-        )]
+        /// The function signature in the format `<name>(<in-types>)(<out-types>)`.
         sig: String,
 
-        #[clap(help = "The ABI-encoded calldata.", value_name = "CALLDATA")]
+        /// The ABI-encoded calldata.
         calldata: String,
 
-        #[clap(long, short, help = "Decode input data.")]
+        /// Decode input data.
+        #[clap(long, short)]
         input: bool,
     },
-    #[clap(name = "abi-encode")]
-    #[clap(visible_alias = "ae")]
-    #[clap(about = "ABI encode the given function argument, excluding the selector.")]
+
+    /// ABI encode the given function argument, excluding the selector.
+    #[clap(name = "abi-encode", visible_alias = "ae")]
     AbiEncode {
-        #[clap(help = "The function signature.", value_name = "SIG")]
+        /// The function signature.
         sig: String,
 
-        #[clap(help = "The arguments of the function.", value_name = "ARGS")]
+        /// The arguments of the function.
         #[clap(allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    #[clap(name = "index")]
+
+    /// Compute the storage slot for an entry in a mapping.
     #[clap(visible_alias = "in")]
-    #[clap(about = "Compute the storage slot for an entry in a mapping.")]
     Index {
-        #[clap(help = "The mapping key type.", value_name = "KEY_TYPE")]
+        /// The mapping key type.
         key_type: String,
 
-        #[clap(help = "The mapping key.", value_name = "KEY")]
+        /// The mapping key.
         key: String,
 
-        #[clap(help = "The storage slot of the mapping.", value_name = "SLOT_NUMBER")]
+        /// The storage slot of the mapping.
         slot_number: String,
     },
-    #[clap(name = "implementation")]
+
+    /// Fetch the EIP-1967 implementation account
     #[clap(visible_alias = "impl")]
-    #[clap(about = "Fetch the EIP-1967 implementation account")]
     Implementation {
-        #[clap(
-            long,
-            short = 'B',
-            help = "The block height you want to query at.",
-            long_help = "The block height you want to query at. Can also be the tags earliest, finalized, safe, latest, or pending.",
-            value_name = "BLOCK"
-        )]
+        /// The block height to query at.
+        ///
+        /// Can also be the tags earliest, finalized, safe, latest, or pending.
+        #[clap(long, short = 'B')]
         block: Option<BlockId>,
 
-        #[clap(help = "The address you want to get the nonce for.", value_parser = NameOrAddress::from_str, value_name = "WHO")]
+        /// The address to get the nonce for.
+        #[clap(value_parser = NameOrAddress::from_str)]
         who: NameOrAddress,
 
         #[clap(flatten)]
         rpc: RpcOpts,
     },
-    #[clap(name = "admin")]
+
+    /// Fetch the EIP-1967 admin account
     #[clap(visible_alias = "adm")]
-    #[clap(about = "Fetch the EIP-1967 admin account")]
     Admin {
-        #[clap(
-            long,
-            short = 'B',
-            help = "The block height you want to query at.",
-            long_help = "The block height you want to query at. Can also be the tags earliest, finalized, safe, latest, or pending.",
-            value_name = "BLOCK"
-        )]
+        /// The block height to query at.
+        ///
+        /// Can also be the tags earliest, finalized, safe, latest, or pending.
+        #[clap(long, short = 'B')]
         block: Option<BlockId>,
 
-        #[clap(help = "The address you want to get the nonce for.", value_parser = NameOrAddress::from_str, value_name = "WHO")]
+        /// The address to get the nonce for.
+        #[clap(value_parser = NameOrAddress::from_str)]
         who: NameOrAddress,
 
         #[clap(flatten)]
         rpc: RpcOpts,
     },
-    #[clap(name = "4byte")]
-    #[clap(visible_aliases = &["4", "4b"])]
-    #[clap(
-        about = "Get the function signatures for the given selector from https://sig.eth.samczsun.com."
-    )]
+
+    /// Get the function signatures for the given selector from https://sig.eth.samczsun.com.
+    #[clap(name = "4byte", visible_aliases = &["4", "4b"])]
     FourByte {
-        #[clap(help = "The function selector.", value_name = "SELECTOR")]
+        /// The function selector.
         selector: Option<String>,
     },
-    #[clap(name = "4byte-decode")]
-    #[clap(visible_aliases = &["4d", "4bd"])]
-    #[clap(about = "Decode ABI-encoded calldata using https://sig.eth.samczsun.com.")]
+
+    /// Decode ABI-encoded calldata using https://sig.eth.samczsun.com.
+    #[clap(name = "4byte-decode", visible_aliases = &["4d", "4bd"])]
     FourByteDecode {
-        #[clap(help = "The ABI-encoded calldata.", value_name = "CALLDATA")]
+        /// The ABI-encoded calldata.
         calldata: Option<String>,
     },
-    #[clap(name = "4byte-event")]
-    #[clap(visible_aliases = &["4e", "4be"])]
-    #[clap(
-        about = "Get the event signature for a given topic 0 from https://sig.eth.samczsun.com."
-    )]
+
+    /// Get the event signature for a given topic 0 from https://sig.
+    ///
+    /// eth.samczsun.com.
+    #[clap(name = "4byte-event", visible_aliases = &["4e", "4be"])]
     FourByteEvent {
-        #[clap(help = "Topic 0", value_name = "TOPIC_0")]
+        /// Topic 0
+        #[clap(value_name = "TOPIC_0")]
         topic: Option<String>,
     },
-    #[clap(name = "upload-signature")]
-    #[clap(visible_aliases = &["ups"])]
-    #[clap(
-        about = "Upload the given signatures to https://sig.eth.samczsun.com.",
-        long_about = r#"Upload the given signatures to https://sig.eth.samczsun.com.
 
-Examples:
-- cast upload-signature "transfer(address,uint256)"
-- cast upload-signature "function transfer(address,uint256)"
-- cast upload-signature "function transfer(address,uint256)" "event Transfer(address,address,uint256)"
-- cast upload-signature ./out/Contract.sol/Contract.json""#
-    )]
+    /// Upload the given signatures to https://sig.eth.samczsun.com.
+    ///
+    /// Example inputs:
+    /// - "transfer(address,uint256)"
+    /// - "function transfer(address,uint256)"
+    /// - "function transfer(address,uint256)" "event Transfer(address,address,uint256)"
+    /// - "./out/Contract.sol/Contract.json"
+    #[clap(name = "upload-signature", visible_aliases = &["ups"])]
     UploadSignature {
-        #[clap(
-            help = "The signatures to upload. Prefix with 'function', 'event', or 'error'. Defaults to function if no prefix given. Can also take paths to contract artifact JSON."
-        )]
+        /// The signatures to upload.
+        ///
+        /// Prefix with 'function', 'event', or 'error'. Defaults to function if no prefix given.
+        /// Can also take paths to contract artifact JSON.
         signatures: Vec<String>,
     },
-    #[clap(name = "pretty-calldata")]
-    #[clap(visible_alias = "pc")]
-    #[clap(
-        about = "Pretty print calldata.",
-        long_about = r#"Pretty print calldata.
 
-Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline is passed."#
-    )]
+    /// Pretty print calldata.
+    ///
+    /// Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline is passed.
+    #[clap(name = "pretty-calldata", visible_alias = "pc")]
     PrettyCalldata {
-        #[clap(help = "The calldata.", value_name = "CALLDATA")]
+        /// The calldata.
         calldata: Option<String>,
-        #[clap(long, short, help = "Skip the https://sig.eth.samczsun.com lookup.")]
+
+        /// Skip the https://sig.eth.samczsun.com lookup.
+        #[clap(long, short)]
         offline: bool,
     },
-    #[clap(name = "age")]
+
+    /// Get the timestamp of a block.
     #[clap(visible_alias = "a")]
-    #[clap(about = "Get the timestamp of a block.")]
     Age {
-        #[clap(
-            help = "The block height you want to query at.",
-            long_help = "The block height you want to query at. Can also be the tags earliest, finalized, safe, latest, or pending.",
-            value_name = "BLOCK"
-        )]
+        /// The block height to query at.
+        ///
+        /// Can also be the tags earliest, finalized, safe, latest, or pending.
         block: Option<BlockId>,
 
         #[clap(flatten)]
         rpc: RpcOpts,
     },
-    #[clap(name = "balance")]
+
+    /// Get the balance of an account in wei.
     #[clap(visible_alias = "b")]
-    #[clap(about = "Get the balance of an account in wei.")]
     Balance {
-        #[clap(
-            long,
-            short = 'B',
-            help = "The block height you want to query at.",
-            long_help = "The block height you want to query at. Can also be the tags earliest, finalized, safe, latest, or pending.",
-            value_name = "BLOCK"
-        )]
+        /// The block height to query at.
+        ///
+        /// Can also be the tags earliest, finalized, safe, latest, or pending.
+        #[clap(long, short = 'B')]
         block: Option<BlockId>,
 
-        #[clap(
-            help = "The account you want to query",
-            value_parser = NameOrAddress::from_str,
-            value_name = "WHO"
-        )]
+        /// The account to query.
+        #[clap(value_parser = NameOrAddress::from_str)]
         who: NameOrAddress,
 
-        #[clap(long = "ether", short = 'e', help_heading = "format to ether")]
-        to_ether: bool,
+        /// Format the balance in ether.
+        #[clap(long, short)]
+        ether: bool,
 
         #[clap(flatten)]
         rpc: RpcOpts,
     },
-    #[clap(name = "basefee")]
+
+    /// Get the basefee of a block.
     #[clap(visible_aliases = &["ba", "fee"])]
-    #[clap(about = "Get the basefee of a block.")]
     BaseFee {
-        #[clap(
-            help = "The block height you want to query at.",
-            long_help = "The block height you want to query at. Can also be the tags earliest, finalized, safe, latest, or pending.",
-            value_name = "BLOCK"
-        )]
+        /// The block height to query at.
+        ///
+        /// Can also be the tags earliest, finalized, safe, latest, or pending.
         block: Option<BlockId>,
 
         #[clap(flatten)]
         rpc: RpcOpts,
     },
-    #[clap(name = "code")]
+
+    /// Get the bytecode of a contract.
     #[clap(visible_alias = "co")]
-    #[clap(about = "Get the bytecode of a contract.")]
     Code {
-        #[clap(
-            long,
-            short = 'B',
-            help = "The block height you want to query at.",
-            long_help = "The block height you want to query at. Can also be the tags earliest, finalized, safe, latest, or pending.",
-            value_name = "BLOCK"
-        )]
+        /// The block height to query at.
+        ///
+        /// Can also be the tags earliest, finalized, safe, latest, or pending.
+        #[clap(long, short = 'B')]
         block: Option<BlockId>,
 
-        #[clap(help = "The contract address.", value_parser = NameOrAddress::from_str, value_name = "WHO")]
+        /// The contract address.
+        #[clap(value_parser = NameOrAddress::from_str)]
         who: NameOrAddress,
 
-        #[clap(
-            long = "disassemble",
-            short = 'd',
-            help_heading = "disassemble bytecodes into individual opcodes"
-        )]
+        /// Disassemble bytecodes into individual opcodes.
+        #[clap(long, short)]
         disassemble: bool,
 
         #[clap(flatten)]
         rpc: RpcOpts,
     },
-    #[clap(name = "gas-price")]
-    #[clap(visible_alias = "g")]
-    #[clap(about = "Get the current gas price.")]
+
+    /// Get the current gas price.
+    #[clap(name = "gas-price", visible_alias = "g")]
     GasPrice {
         #[clap(flatten)]
         rpc: RpcOpts,
     },
-    #[clap(name = "sig-event")]
-    #[clap(visible_alias = "se")]
-    #[clap(about = "Generate event signatures from event string.")]
+
+    /// Generate event signatures from event string.
+    #[clap(name = "sig-event", visible_alias = "se")]
     SigEvent {
-        #[clap(value_name = "EVENT_STRING")]
+        /// The event string.
         event_string: Option<String>,
     },
-    #[clap(name = "keccak")]
+
+    /// Hash arbitrary data using Keccak-256.
     #[clap(visible_alias = "k")]
-    #[clap(about = "Hash arbitrary data using Keccak-256.")]
     Keccak {
-        #[clap(value_name = "DATA")]
+        /// The data to hash.
         data: Option<String>,
     },
-    #[clap(name = "resolve-name")]
-    #[clap(visible_alias = "rn")]
-    #[clap(about = "Perform an ENS lookup.")]
+
+    /// Perform an ENS lookup.
+    #[clap(name = "resolve-name", visible_alias = "rn")]
     ResolveName {
-        #[clap(help = "The name to lookup.", value_name = "WHO")]
+        /// The name to lookup.
         who: Option<String>,
 
-        #[clap(long, short, help = "Perform a reverse lookup to verify that the name is correct.")]
+        /// Perform a reverse lookup to verify that the name is correct.
+        #[clap(long, short)]
         verify: bool,
 
         #[clap(flatten)]
         rpc: RpcOpts,
     },
-    #[clap(name = "lookup-address")]
-    #[clap(visible_alias = "l")]
-    #[clap(about = "Perform an ENS reverse lookup.")]
+
+    /// Perform an ENS reverse lookup.
+    #[clap(name = "lookup-address", visible_alias = "l")]
     LookupAddress {
-        #[clap(help = "The account to perform the lookup for.", value_name = "WHO")]
+        /// The account to perform the lookup for.
         who: Option<Address>,
 
-        #[clap(
-            long,
-            short,
-            help = "Perform a normal lookup to verify that the address is correct."
-        )]
+        /// Perform a normal lookup to verify that the address is correct.
+        #[clap(long, short)]
         verify: bool,
 
         #[clap(flatten)]
         rpc: RpcOpts,
     },
-    #[clap(
-        name = "storage",
-        visible_alias = "st",
-        about = "Get the raw value of a contract's storage slot."
-    )]
+
+    /// Get the raw value of a contract's storage slot.
+    #[clap(visible_alias = "st")]
     Storage(StorageArgs),
-    #[clap(
-        name = "proof",
-        visible_alias = "pr",
-        about = "Generate a storage proof for a given storage slot."
-    )]
+
+    /// Generate a storage proof for a given storage slot.
+    #[clap(visible_alias = "pr")]
     Proof {
-        #[clap(help = "The contract address.", value_parser = NameOrAddress::from_str, value_name = "ADDRESS")]
+        /// The contract address.
+        #[clap(value_parser = NameOrAddress::from_str)]
         address: NameOrAddress,
 
-        #[clap(help = "The storage slot numbers (hex or decimal).",  value_parser = parse_slot, value_name = "SLOTS")]
+        /// The storage slot numbers (hex or decimal).
+        #[clap(value_parser = parse_slot)]
         slots: Vec<H256>,
 
-        #[clap(
-            long,
-            short = 'B',
-            help = "The block height you want to query at.",
-            long_help = "The block height you want to query at. Can also be the tags earliest, finalized, safe, latest, or pending.",
-            value_name = "BLOCK"
-        )]
+        /// The block height to query at.
+        ///
+        /// Can also be the tags earliest, finalized, safe, latest, or pending.
+        #[clap(long, short = 'B')]
         block: Option<BlockId>,
 
         #[clap(flatten)]
         rpc: RpcOpts,
     },
-    #[clap(name = "nonce")]
+
+    /// Get the nonce for an account.
     #[clap(visible_alias = "n")]
-    #[clap(about = "Get the nonce for an account.")]
     Nonce {
-        #[clap(
-            long,
-            short = 'B',
-            help = "The block height you want to query at.",
-            long_help = "The block height you want to query at. Can also be the tags earliest, finalized, safe, latest, or pending.",
-            value_name = "BLOCK"
-        )]
+        /// The block height to query at.
+        ///
+        /// Can also be the tags earliest, finalized, safe, latest, or pending.
+        #[clap(long, short = 'B')]
         block: Option<BlockId>,
 
-        #[clap(help = "The address you want to get the nonce for.", value_parser = NameOrAddress::from_str, value_name = "WHO")]
+        /// The address to get the nonce for.
+        #[clap(value_parser = NameOrAddress::from_str)]
         who: NameOrAddress,
 
         #[clap(flatten)]
         rpc: RpcOpts,
     },
-    #[clap(name = "etherscan-source")]
-    #[clap(visible_aliases = &["et", "src"])]
-    #[clap(about = "Get the source code of a contract from Etherscan.")]
+
+    /// Get the source code of a contract from Etherscan.
+    #[clap(name = "etherscan-source", visible_aliases = &["et", "src"])]
     EtherscanSource {
-        #[clap(help = "The contract's address.", value_name = "ADDRESS")]
+        /// The contract's address.
         address: String,
 
-        #[clap(short, help = "The output directory to expand source tree into.", value_hint = ValueHint::DirPath, value_name = "DIRECTORY")]
+        /// The output directory to expand source tree into.
+        #[clap(short, value_hint = ValueHint::DirPath)]
         directory: Option<PathBuf>,
 
         #[clap(flatten)]
         etherscan: EtherscanOpts,
     },
-    #[clap(name = "wallet", visible_alias = "w", about = "Wallet management utilities.")]
+
+    /// Wallet management utilities.
+    #[clap(visible_alias = "w")]
     Wallet {
         #[clap(subcommand)]
         command: WalletSubcommands,
     },
-    #[clap(
-        name = "interface",
-        visible_alias = "i",
-        about = "Generate a Solidity interface from a given ABI.",
-        long_about = "Generate a Solidity interface from a given ABI. Currently does not support ABI encoder v2."
-    )]
+
+    /// Generate a Solidity interface from a given ABI.
+    ///
+    /// Currently does not support ABI encoder v2.
+    #[clap(visible_alias = "i")]
     Interface(InterfaceArgs),
-    #[clap(
-        name = "bind",
-        visible_alias = "bi",
-        about = "Generate a rust binding from a given ABI.",
-        long_about = "Generate a rust binding from a given ABI. Currently does not support ABI encoder v2."
-    )]
+
+    /// Generate a rust binding from a given ABI.
+    #[clap(visible_alias = "bi")]
     Bind(BindArgs),
 
-    #[clap(name = "sig", visible_alias = "si", about = "Get the selector for a function.")]
+    /// Get the selector for a function.
+    #[clap(visible_alias = "si")]
     Sig {
-        #[clap(
-            help = "The function signature, e.g. transfer(address,uint256).",
-            value_name = "SIG"
-        )]
+        /// The function signature, e.g. transfer(address,uint256).
         sig: Option<String>,
 
-        #[clap(
-            help = "Optimize signature to contain provided amount of leading zeroes in selector.",
-            value_name = "OPTIMIZE"
-        )]
+        /// Optimize signature to contain provided amount of leading zeroes in selector.
         optimize: Option<usize>,
     },
-    #[clap(
-        name = "create2",
-        visible_alias = "c2",
-        about = "Generate a deterministic contract address using CREATE2"
-    )]
+
+    /// Generate a deterministic contract address using CREATE2.
+    #[clap(visible_alias = "c2")]
     Create2(Create2Args),
-    #[clap(
-        name = "find-block",
-        visible_alias = "f",
-        about = "Get the block number closest to the provided timestamp."
-    )]
+
+    /// Get the block number closest to the provided timestamp.
+    #[clap(name = "find-block", visible_alias = "f")]
     FindBlock(FindBlockArgs),
-    #[clap(visible_alias = "com", about = "Generate shell completions script")]
+
+    /// Generate shell completions script.
+    #[clap(visible_alias = "com")]
     Completions {
         #[clap(value_enum)]
         shell: clap_complete::Shell,
     },
-    #[clap(visible_alias = "fig", about = "Generate Fig autocompletion spec.")]
+
+    /// Generate Fig autocompletion spec.
+    #[clap(visible_alias = "fig")]
     GenerateFigSpec,
-    #[clap(
-        name = "run",
-        visible_alias = "r",
-        about = "Runs a published transaction in a local environment and prints the trace."
-    )]
+
+    /// Runs a published transaction in a local environment and prints the trace.
+    #[clap(visible_alias = "r")]
     Run(RunArgs),
-    #[clap(name = "rpc")]
+
+    /// Perform a raw JSON-RPC request.
     #[clap(visible_alias = "rp")]
-    #[clap(about = "Perform a raw JSON-RPC request")]
     Rpc(RpcArgs),
+
+    /// Formats a string into bytes32 encoding.
     #[clap(name = "--format-bytes32-string")]
-    #[clap(about = "Formats a string into bytes32 encoding.")]
     FormatBytes32String {
-        #[clap(value_name = "STRING")]
+        /// The string to format.
         string: Option<String>,
     },
+
+    /// Parses a string from bytes32 encoding.
     #[clap(name = "--parse-bytes32-string")]
-    #[clap(about = "Parses a string from bytes32 encoding.")]
     ParseBytes32String {
-        #[clap(value_name = "BYTES")]
+        /// The string to parse.
         bytes: Option<String>,
     },
 }
@@ -881,10 +823,12 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
 /// CLI arguments for `cast --to-base`.
 #[derive(Debug, Parser)]
 pub struct ToBaseArgs {
-    #[clap(allow_hyphen_values = true, value_name = "VALUE")]
+    /// The value to convert.
+    #[clap(allow_hyphen_values = true)]
     pub value: Option<String>,
 
-    #[clap(long = "base-in", short = 'i', help = "The input base")]
+    /// The input base.
+    #[clap(long, short = 'i')]
     pub base_in: Option<String>,
 }
 
@@ -915,9 +859,7 @@ mod tests {
                     vec!["5c9d55b78febcc2061715ba4f57ecf8ea2711f2c".to_string(), "2".to_string()]
                 )
             }
-            _ => {
-                unreachable!()
-            }
+            _ => unreachable!(),
         };
     }
 

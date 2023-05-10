@@ -6,10 +6,8 @@ use std::{path::PathBuf, process::Command};
 /// CLI arguments for `forge update`.
 #[derive(Debug, Clone, Parser)]
 pub struct UpdateArgs {
-    #[clap(
-        help = "The path to the dependency you want to update.",
-        value_hint = ValueHint::DirPath
-    )]
+    /// The path to the dependency you want to update.
+    #[clap(value_hint = ValueHint::DirPath, value_name = "PATH")]
     lib: Option<PathBuf>,
 }
 
@@ -23,8 +21,6 @@ impl Cmd for UpdateArgs {
         if let Some(lib) = self.lib {
             cmd.args(["--", lib.display().to_string().as_str()]);
         }
-        cmd.exec()?;
-
-        Ok(())
+        cmd.exec().map(|_| ())
     }
 }

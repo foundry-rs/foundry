@@ -1,5 +1,8 @@
 use crate::{init_progress, opts::RpcOpts, update_progress, utils};
-use cast::trace::{identifier::SignaturesIdentifier, CallTraceDecoder, Traces};
+use cast::{
+    executor::{EvmError, ExecutionErr},
+    trace::{identifier::SignaturesIdentifier, CallTraceDecoder, Traces},
+};
 use clap::Parser;
 use ethers::{
     abi::Address,
@@ -17,6 +20,7 @@ use forge::{
     utils::h256_to_b256,
 };
 use foundry_config::{find_project_root_path, Config};
+use foundry_evm::utils::evm_spec;
 use std::{collections::BTreeMap, str::FromStr};
 use tracing::trace;
 use ui::{TUIExitReason, Tui, Ui};
@@ -25,30 +29,31 @@ use yansi::Paint;
 /// CLI arguments for `cast run`.
 #[derive(Debug, Clone, Parser)]
 pub struct RunArgs {
-    #[clap(help = "The transaction hash.", value_name = "TXHASH")]
+    /// The transaction hash.
     tx_hash: String,
 
-    #[clap(long, short = 'd', help = "Debugs the transaction.")]
+    /// Opens the transaction in the debugger.
+    #[clap(long, short)]
     debug: bool,
 
-    #[clap(long, short = 't', help = "Print out opcode traces.")]
+    /// Print out opcode traces.
+    #[clap(long, short)]
     trace_printer: bool,
 
-    #[clap(
-        long,
-        short = 'q',
-        help = "Executes the transaction only with the state from the previous block. May result in different results than the live execution!"
-    )]
+    /// Executes the transaction only with the state from the previous block.
+    ///
+    /// May result in different results than the live execution!
+    #[clap(long, short)]
     quick: bool,
 
-    #[clap(long, short = 'v', help = "Prints full address")]
+    /// Prints the full address of the contract.
+    #[clap(long, short)]
     verbose: bool,
 
-    #[clap(
-        long,
-        help = "Labels address in the trace. 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045:vitalik.eth",
-        value_name = "LABEL"
-    )]
+    /// Label addresses in the trace.
+    ///
+    /// Example: 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045:vitalik.eth
+    #[clap(long, short)]
     label: Vec<String>,
 
     #[clap(flatten)]
@@ -88,9 +93,8 @@ impl RunArgs {
 
         // configures a bare version of the evm executor: no cheatcode inspector is enabled,
         // tracing will be enabled only for the targeted transaction
-        let builder = ExecutorBuilder::default()
-            .with_config(env)
-            .with_spec(crate::utils::evm_spec(&config.evm_version));
+        let builder =
+            ExecutorBuilder::default().with_config(env).with_spec(evm_spec(&config.evm_version));
 
         let mut executor = builder.build(db);
 
@@ -167,14 +171,26 @@ impl RunArgs {
                 }
             } else {
                 trace!(tx=?tx.hash, "executing create transaction");
-                let DeployResult { gas_used, traces, debug: run_debug, .. }: DeployResult =
-                    executor.deploy_with_env(env, None).unwrap();
-
-                RunResult {
-                    success: true,
-                    traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
-                    debug: run_debug.unwrap_or_default(),
-                    gas_used,
+                match executor.deploy_with_env(env, None) {
+                    Ok(DeployResult { gas_used, traces, debug: run_debug, .. }) => RunResult {
+                        success: true,
+                        traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
+                        debug: run_debug.unwrap_or_default(),
+                        gas_used,
+                    },
+                    Err(EvmError::Execution(inner)) => {
+                        let ExecutionErr { reverted, gas_used, traces, debug: run_debug, .. } =
+                            *inner;
+                        RunResult {
+                            success: !reverted,
+                            traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
+                            debug: run_debug.unwrap_or_default(),
+                            gas_used,
+                        }
+                    }
+                    Err(err) => {
+                        eyre::bail!("unexpected error when running create transaction: {:?}", err)
+                    }
                 }
             }
         };
@@ -182,20 +198,16 @@ impl RunArgs {
         let mut etherscan_identifier =
             EtherscanIdentifier::new(&config, evm_opts.get_remote_chain_id())?;
 
-        let labeled_addresses: BTreeMap<Address, String> = self
-            .label
-            .iter()
-            .filter_map(|label_str| {
-                let mut iter = label_str.split(':');
+        let labeled_addresses = self.label.iter().filter_map(|label_str| {
+            let mut iter = label_str.split(':');
 
-                if let Some(addr) = iter.next() {
-                    if let (Ok(address), Some(label)) = (Address::from_str(addr), iter.next()) {
-                        return Some((address, label.to_string()))
-                    }
+            if let Some(addr) = iter.next() {
+                if let (Ok(address), Some(label)) = (Address::from_str(addr), iter.next()) {
+                    return Some((address, label.to_string()))
                 }
-                None
-            })
-            .collect();
+            }
+            None
+        });
 
         let mut decoder = CallTraceDecoderBuilder::new().with_labels(labeled_addresses).build();
 

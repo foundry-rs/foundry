@@ -4,9 +4,9 @@ use crate::{
         forge::{build::CoreBuildArgs, install, test::FilterArgs},
         Cmd, LoadConfig,
     },
-    utils::{self, p_println, STATIC_FUZZ_SEED},
+    utils::{p_println, STATIC_FUZZ_SEED},
 };
-use clap::{ArgAction, Parser, ValueEnum};
+use clap::{Parser, ValueEnum};
 use ethers::{
     abi::Address,
     prelude::{
@@ -29,6 +29,7 @@ use forge::{
 };
 use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs};
 use foundry_config::Config;
+use foundry_evm::utils::evm_spec;
 use semver::Version;
 use std::{collections::HashMap, sync::mpsc::channel, thread};
 use tracing::trace;
@@ -39,13 +40,10 @@ foundry_config::impl_figment_convert!(CoverageArgs, opts, evm_opts);
 /// CLI arguments for `forge coverage`.
 #[derive(Debug, Clone, Parser)]
 pub struct CoverageArgs {
-    #[clap(
-        long,
-        value_enum,
-        action = ArgAction::Append,
-        default_value = "summary",
-        help = "The report type to use for coverage. This flag can be used multiple times."
-    )]
+    /// The report type to use for coverage.
+    ///
+    /// This flag can be used multiple times.
+    #[clap(long, value_enum, default_value = "summary")]
     report: Vec<CoverageReportKind>,
 
     #[clap(flatten)]
@@ -269,7 +267,7 @@ impl CoverageArgs {
         let root = project.paths.root;
 
         // Build the contract runner
-        let evm_spec = utils::evm_spec(&config.evm_version);
+        let evm_spec = evm_spec(&config.evm_version);
         let env = evm_opts.evm_env_blocking()?;
         let mut runner = MultiContractRunnerBuilder::default()
             .initial_balance(evm_opts.initial_balance)
@@ -327,7 +325,7 @@ impl CoverageArgs {
                 CoverageReportKind::Lcov => {
                     LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?).report(&report)
                 }
-                CoverageReportKind::Debug => DebugReporter::default().report(&report),
+                CoverageReportKind::Debug => DebugReporter.report(&report),
             }?;
         }
         Ok(())

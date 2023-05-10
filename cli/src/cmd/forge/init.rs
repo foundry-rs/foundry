@@ -22,38 +22,37 @@ use yansi::Paint;
 /// CLI arguments for `forge init`.
 #[derive(Debug, Clone, Parser)]
 pub struct InitArgs {
-    #[clap(
-        help = "The root directory of the new project. Defaults to the current working directory.",
-        value_hint = ValueHint::DirPath,
-        value_name = "ROOT"
-    )]
-    root: Option<PathBuf>,
-    #[clap(help = "The template to start from.", long, short, value_name = "TEMPLATE")]
+    /// The root directory of the new project.
+    #[clap(value_hint = ValueHint::DirPath, default_value = ".", value_name = "PATH")]
+    root: PathBuf,
+
+    /// The template to start from.
+    #[clap(long, short)]
     template: Option<String>,
-    #[clap(help = "Do not create a git repository.", conflicts_with = "template", long)]
+
+    /// Do not create a git repository.
+    #[clap(long, conflicts_with = "template")]
     no_git: bool,
-    #[clap(help = "Do not create an initial commit.", conflicts_with = "template", long)]
+
+    /// Do not create an initial commit.
+    #[clap(long, conflicts_with = "template")]
     no_commit: bool,
-    #[clap(help = "Do not print any messages.", short, long)]
+
+    /// Do not print any messages.
+    #[clap(long, short)]
     quiet: bool,
-    #[clap(
-        help = "Do not install dependencies from the network.",
-        conflicts_with = "template",
-        long,
-        visible_alias = "no-deps"
-    )]
+
+    /// Do not install dependencies from the network.
+    #[clap(long, conflicts_with = "template", visible_alias = "no-deps")]
     offline: bool,
-    #[clap(
-        help = "Create the project even if the specified root directory is not empty.",
-        conflicts_with = "template",
-        long
-    )]
+
+    /// Create the project even if the specified root directory is not empty.
+    #[clap(long, conflicts_with = "template")]
     force: bool,
-    #[clap(
-        help = "Create a .vscode/settings.json file with Solidity settings, and generate a remappings.txt file.",
-        conflicts_with = "template",
-        long
-    )]
+
+    /// Create a .vscode/settings.json file with Solidity settings, and generate a remappings.txt
+    /// file.
+    #[clap(long, conflicts_with = "template")]
     vscode: bool,
 }
 
@@ -63,7 +62,6 @@ impl Cmd for InitArgs {
     fn run(self) -> eyre::Result<Self::Output> {
         let InitArgs { root, template, no_git, no_commit, quiet, offline, force, vscode } = self;
 
-        let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
         // create the root dir if it does not exist
         if !root.exists() {
             fs::create_dir_all(&root)?;

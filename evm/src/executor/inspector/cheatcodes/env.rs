@@ -1,28 +1,26 @@
-use std::collections::BTreeMap;
-
-use super::Cheatcodes;
+use super::{ensure, err, Cheatcodes, Result};
 use crate::{
     abi::HEVMCalls,
-    error::SolError,
     executor::{
         backend::DatabaseExt,
-        inspector::cheatcodes::{util::with_journaled_account, DealRecord},
+        inspector::cheatcodes::{
+            util::{is_potential_precompile, with_journaled_account},
+            DealRecord,
+        },
     },
     utils::{b160_to_h160, h160_to_b160, ru256_to_u256, u256_to_ru256},
 };
-use bytes::Bytes;
 use ethers::{
     abi::{self, AbiEncode, RawLog, Token, Tokenizable, Tokenize},
-    prelude::k256::{
-        ecdsa::SigningKey,
-        elliptic_curve::{bigint::Encoding, Curve},
-        Secp256k1,
-    },
     signers::{LocalWallet, Signer},
-    types::{Address, U256},
+    types::{Address, Bytes, U256},
 };
 use foundry_config::Config;
-use revm::{primitives::Bytecode, Database, EVMData};
+use revm::{
+    primitives::{Bytecode, SpecId, B256},
+    Database, EVMData,
+};
+use std::collections::BTreeMap;
 use tracing::trace;
 
 #[derive(Clone, Debug, Default)]
@@ -96,17 +94,15 @@ fn broadcast(
     original_origin: Address,
     depth: u64,
     single_call: bool,
-) -> Result<Bytes, Bytes> {
+) -> Result {
+    ensure!(
+        state.prank.is_none(),
+        "You have an active prank. Broadcasting and pranks are not compatible. \
+         Disable one or the other"
+    );
+    ensure!(state.broadcast.is_none(), "You have an active broadcast already.");
+
     let broadcast = Broadcast { new_origin, original_origin, original_caller, depth, single_call };
-
-    if state.prank.is_some() {
-        return Err("You have an active prank. Broadcasting and pranks are not compatible. Disable one or the other".to_string().encode().into());
-    }
-
-    if state.broadcast.is_some() {
-        return Err("You have an active broadcast already.".to_string().encode().into())
-    }
-
     state.broadcast = Some(broadcast);
     Ok(Bytes::new())
 }
@@ -121,23 +117,10 @@ fn broadcast_key(
     chain_id: U256,
     depth: u64,
     single_call: bool,
-) -> Result<Bytes, Bytes> {
-    if private_key.is_zero() {
-        return Err("Private key cannot be 0.".to_string().encode().into())
-    }
-
-    if private_key >= U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()) {
-        return Err("Private key must be less than 115792089237316195423570985008687907852837564279074904382605163141518161494337 (the secp256k1 curve order).".to_string().encode().into());
-    }
-
-    let mut bytes: [u8; 32] = [0; 32];
-    private_key.to_big_endian(&mut bytes);
-
-    let key = SigningKey::from_bytes((&bytes).into()).map_err(|err| err.to_string().encode())?;
+) -> Result {
+    let key = super::util::parse_private_key(private_key)?;
     let wallet = LocalWallet::from(key).with_chain_id(chain_id.as_u64());
-
     let new_origin = wallet.address();
-
     state.script_wallets.push(wallet);
 
     broadcast(state, new_origin, original_caller, original_origin, depth, single_call)
@@ -151,7 +134,7 @@ fn prank(
     new_origin: Option<Address>,
     depth: u64,
     single_call: bool,
-) -> Result<Bytes, Bytes> {
+) -> Result {
     let prank = Prank::new(prank_caller, prank_origin, new_caller, new_origin, depth, single_call);
 
     if let Some(Prank { used, .. }) = state.prank {
@@ -161,11 +144,13 @@ fn prank(
                 .into())
         }
     }
-
-    if state.broadcast.is_some() {
-        return Err("You cannot `prank` for a broadcasted transaction. Pass the desired tx.origin into the broadcast cheatcode call".encode().into());
-    }
-
+  
+    ensure!(
+        state.broadcast.is_none(),
+        "You cannot `prank` for a broadcasted transaction.\
+         Pass the desired tx.origin into the broadcast cheatcode call"
+    );
+  
     state.prank = Some(prank);
     Ok(Bytes::new())
 }
@@ -182,9 +167,11 @@ fn start_record(state: &mut Cheatcodes) {
 
 fn accesses(state: &mut Cheatcodes, address: Address) -> Bytes {
     if let Some(storage_accesses) = &mut state.accesses {
+        let first_token =
+            |x: Option<Vec<_>>| x.unwrap_or_default().into_tokens().into_iter().next().unwrap();
         ethers::abi::encode(&[
-            storage_accesses.reads.remove(&address).unwrap_or_default().into_tokens()[0].clone(),
-            storage_accesses.writes.remove(&address).unwrap_or_default().into_tokens()[0].clone(),
+            first_token(storage_accesses.reads.remove(&address)),
+            first_token(storage_accesses.writes.remove(&address)),
         ])
         .into()
     } else {
@@ -230,26 +217,14 @@ fn get_recorded_logs(state: &mut Cheatcodes) -> Bytes {
 }
 
 /// Entry point of the breakpoint cheatcode. Adds the called breakpoint to the state.
-fn add_breakpoint(
-    state: &mut Cheatcodes,
-    caller: Address,
-    inner: &str,
-    add: bool,
-) -> Result<Bytes, Bytes> {
+fn add_breakpoint(state: &mut Cheatcodes, caller: Address, inner: &str, add: bool) -> Result {
     let mut chars = inner.chars();
     let point = chars.next();
 
-    let point = point.ok_or_else(|| {
-        Bytes::from("Please provide at least one char for the breakpoint".encode())
-    })?;
+    let point = point.ok_or_else(|| err!("Please provide at least one char for the breakpoint"))?;
 
-    if chars.next().is_some() {
-        return Err("Please provide only one char for the breakpoint".encode().into())
-    }
-
-    if !point.is_alphabetic() {
-        return Err("Only alphabetic chars are accepted".encode().into())
-    }
+    ensure!(chars.next().is_none(), "Provide only one character for the breakpoint");
+    ensure!(point.is_alphabetic(), "Only alphabetic characters are accepted as breakpoints");
 
     // add a breakpoint from the interpreter
     if add {
@@ -266,14 +241,26 @@ pub fn apply<DB: DatabaseExt>(
     data: &mut EVMData<'_, DB>,
     caller: Address,
     call: &HEVMCalls,
-) -> Result<Option<Bytes>, Bytes> {
-    let res = match call {
+) -> Result<Option<Bytes>> {
+    let result = match call {
         HEVMCalls::Warp(inner) => {
             data.env.block.timestamp = inner.0.into();
             Bytes::new()
         }
         HEVMCalls::Difficulty(inner) => {
+            ensure!(
+                data.env.cfg.spec_id < SpecId::MERGE,
+                "Difficulty is not supported after the Paris hard fork. Please use vm.prevrandao instead. For more information, please see https://eips.ethereum.org/EIPS/eip-4399"
+            );
             data.env.block.difficulty = inner.0.into();
+            Bytes::new()
+        }
+        HEVMCalls::Prevrandao(inner) => {
+            ensure!(
+                data.env.cfg.spec_id >= SpecId::MERGE,
+                "Prevrandao is not supported before the Paris hard fork. Please use vm.difficulty instead. For more information, please see https://eips.ethereum.org/EIPS/eip-4399"
+            );
+            data.env.block.prevrandao = Some(B256::from(inner.0));
             Bytes::new()
         }
         HEVMCalls::Roll(inner) => {
@@ -289,42 +276,38 @@ pub fn apply<DB: DatabaseExt>(
             Bytes::new()
         }
         HEVMCalls::Store(inner) => {
-            data.journaled_state
-                .load_account(h160_to_b160(inner.0), data.db)
-                .map_err(|err| err.encode_string())?;
+            ensure!(!is_potential_precompile(inner.0), "Store cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead");
+            data.journaled_state.load_account(h160_to_b160(inner.0), data.db)?;
             // ensure the account is touched
             data.journaled_state.touch(&h160_to_b160(inner.0));
 
-            data.journaled_state
-                .sstore(
-                    h160_to_b160(inner.0),
-                    u256_to_ru256(inner.1.into()),
-                    u256_to_ru256(inner.2.into()),
-                    data.db,
-                )
-                .map_err(|err| err.encode_string())?;
+            data.journaled_state.sstore(
+                h160_to_b160(inner.0),
+                u256_to_ru256(inner.1.into()),
+                u256_to_ru256(inner.2.into()),
+                data.db,
+            )?;
             Bytes::new()
         }
         HEVMCalls::Load(inner) => {
+            ensure!(!is_potential_precompile(inner.0), "Load cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead");
             // TODO: Does this increase gas usage?
-            data.journaled_state
-                .load_account(h160_to_b160(inner.0), data.db)
-                .map_err(|err| err.encode_string())?;
-            let (val, _) = data
-                .journaled_state
-                .sload(h160_to_b160(inner.0), u256_to_ru256(inner.1.into()), data.db)
-                .map_err(|err| err.encode_string())?;
+            data.journaled_state.load_account(h160_to_b160(inner.0), data.db)?;
+            let (val, _) = data.journaled_state.sload(
+                h160_to_b160(inner.0),
+                u256_to_ru256(inner.1.into()),
+                data.db,
+            )?;
             ru256_to_u256(val).encode().into()
         }
         HEVMCalls::Breakpoint0(inner) => add_breakpoint(state, caller, &inner.0, true)?,
         HEVMCalls::Breakpoint1(inner) => add_breakpoint(state, caller, &inner.0, inner.1)?,
         HEVMCalls::Etch(inner) => {
+            ensure!(!is_potential_precompile(inner.0), "Etch cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead");
             let code = inner.1.clone();
-            trace!(address=?inner.0, code=?hex::encode(&code.0), "etch cheatcode");
+            trace!(address=?inner.0, code=?hex::encode(&code), "etch cheatcode");
             // TODO: Does this increase gas usage?
-            data.journaled_state
-                .load_account(h160_to_b160(inner.0), data.db)
-                .map_err(|err| err.encode_string())?;
+            data.journaled_state.load_account(h160_to_b160(inner.0), data.db)?;
             data.journaled_state
                 .set_code(h160_to_b160(inner.0), Bytecode::new_raw(code.0).to_checked());
             Bytes::new()
@@ -343,8 +326,7 @@ pub fn apply<DB: DatabaseExt>(
                 state.eth_deals.push(record);
 
                 account.info.balance = value.into();
-            })
-            .map_err(|err| err.encode_string())?;
+            })?;
             Bytes::new()
         }
         HEVMCalls::Prank0(inner) => prank(
@@ -384,9 +366,7 @@ pub fn apply<DB: DatabaseExt>(
             false,
         )?,
         HEVMCalls::StopPrank(_) => {
-            if state.prank.is_none() {
-                return Err("No prank in progress to stop".to_string().encode().into())
-            }
+            ensure!(state.prank.is_some(), "No prank in progress to stop");
             state.prank = None;
             Bytes::new()
         }
@@ -401,15 +381,23 @@ pub fn apply<DB: DatabaseExt>(
         }
         HEVMCalls::GetRecordedLogs(_) => get_recorded_logs(state),
         HEVMCalls::SetNonce(inner) => {
-            with_journaled_account(&mut data.journaled_state, data.db, inner.0, |account| -> Result<Bytes, Bytes>{
-                // nonce must increment only
-                if account.info.nonce < inner.1 {
-                    account.info.nonce = inner.1;
+            with_journaled_account(
+                &mut data.journaled_state,
+                data.db,
+                inner.0,
+                |account| -> Result {
+                    // nonce must increment only
+                    let current = account.info.nonce;
+                    let new = inner.1;
+                    ensure!(
+                        new >= current,
+                        "New nonce ({new}) must be strictly equal to or higher than the \
+                         account's current nonce ({current})."
+                    );
+                    account.info.nonce = new;
                     Ok(Bytes::new())
-                } else {
-                    Err(format!("Nonce lower than account's current nonce. Please provide a higher nonce than {}", account.info.nonce).encode().into())
-                }
-            }).map_err(|err| err.encode_string())??
+                },
+            )??
         }
         HEVMCalls::GetNonce(inner) => {
             correct_sender_nonce(
@@ -417,23 +405,18 @@ pub fn apply<DB: DatabaseExt>(
                 &mut data.journaled_state,
                 &mut data.db,
                 state,
-            )
-            .map_err(|err| err.encode_string())?;
+            )?;
 
             // TODO:  this is probably not a good long-term solution since it might mess up the gas
             // calculations
-            data.journaled_state
-                .load_account(h160_to_b160(inner.0), data.db)
-                .map_err(|err| err.encode_string())?;
+            data.journaled_state.load_account(h160_to_b160(inner.0), data.db)?;
 
             // we can safely unwrap because `load_account` insert inner.0 to DB.
             let account = data.journaled_state.state().get(&h160_to_b160(inner.0)).unwrap();
             abi::encode(&[Token::Uint(account.info.nonce.into())]).into()
         }
         HEVMCalls::ChainId(inner) => {
-            if inner.0 > U256::from(u64::MAX) {
-                return Err("Chain ID must be less than 2^64".to_string().encode().into())
-            }
+            ensure!(inner.0 <= U256::from(u64::MAX), "Chain ID must be less than 2^64 - 1");
             data.env.cfg.chain_id = inner.0.into();
             Bytes::new()
         }
@@ -447,8 +430,7 @@ pub fn apply<DB: DatabaseExt>(
                 &mut data.journaled_state,
                 &mut data.db,
                 state,
-            )
-            .map_err(|err| err.encode_string())?;
+            )?;
             broadcast(
                 state,
                 b160_to_h160(data.env.tx.caller),
@@ -464,8 +446,7 @@ pub fn apply<DB: DatabaseExt>(
                 &mut data.journaled_state,
                 &mut data.db,
                 state,
-            )
-            .map_err(|err| err.encode_string())?;
+            )?;
             broadcast(
                 state,
                 inner.0,
@@ -481,8 +462,7 @@ pub fn apply<DB: DatabaseExt>(
                 &mut data.journaled_state,
                 &mut data.db,
                 state,
-            )
-            .map_err(|err| err.encode_string())?;
+            )?;
             broadcast_key(
                 state,
                 inner.0,
@@ -499,8 +479,7 @@ pub fn apply<DB: DatabaseExt>(
                 &mut data.journaled_state,
                 &mut data.db,
                 state,
-            )
-            .map_err(|err| err.encode_string())?;
+            )?;
             broadcast(
                 state,
                 b160_to_h160(data.env.tx.caller),
@@ -516,8 +495,7 @@ pub fn apply<DB: DatabaseExt>(
                 &mut data.journaled_state,
                 &mut data.db,
                 state,
-            )
-            .map_err(|err| err.encode_string())?;
+            )?;
             broadcast(
                 state,
                 inner.0,
@@ -533,8 +511,7 @@ pub fn apply<DB: DatabaseExt>(
                 &mut data.journaled_state,
                 &mut data.db,
                 state,
-            )
-            .map_err(|err| err.encode_string())?;
+            )?;
             broadcast_key(
                 state,
                 inner.0,
@@ -546,9 +523,7 @@ pub fn apply<DB: DatabaseExt>(
             )?
         }
         HEVMCalls::StopBroadcast(_) => {
-            if state.broadcast.is_none() {
-                return Err("No broadcast in progress to stop".to_string().encode().into())
-            }
+            ensure!(state.broadcast.is_some(), "No broadcast in progress to stop");
             state.broadcast = None;
             Bytes::new()
         }
@@ -564,8 +539,7 @@ pub fn apply<DB: DatabaseExt>(
         }
         _ => return Ok(None),
     };
-
-    Ok(Some(res))
+    Ok(Some(result))
 }
 
 /// When using `forge script`, the script method is called using the address from `--sender`.

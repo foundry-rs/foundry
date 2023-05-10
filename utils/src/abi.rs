@@ -45,9 +45,8 @@ pub fn abi_to_solidity(contract_abi: &RawAbi, mut contract_name: &str) -> eyre::
             .collect::<eyre::Result<Vec<String>>>()?
             .join(", ");
 
-        let event_final = format!("event {}({inputs})", event.name);
-
-        events.push(format!("{event_final};"));
+        let event_string = format!("event {}({inputs});", event.name);
+        events.push(event_string);
     }
 
     let mut functions = Vec::with_capacity(contract_abi.functions.len());

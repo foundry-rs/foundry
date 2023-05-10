@@ -162,7 +162,7 @@ impl MultiContractRunner {
             .filter(|(_, results)| !results.is_empty())
             .map_with(stream_result, |stream_result, (name, result)| {
                 if let Some(stream_result) = stream_result.as_ref() {
-                    stream_result.send((name.clone(), result.clone())).unwrap();
+                    let _ = stream_result.send((name.clone(), result.clone()));
                 }
                 (name, result)
             })
@@ -309,7 +309,7 @@ impl MultiContractRunnerBuilder {
             known_contracts,
             evm_opts,
             env,
-            evm_spec: self.evm_spec.unwrap_or(SpecId::LONDON),
+            evm_spec: self.evm_spec.unwrap_or(SpecId::MERGE),
             sender: self.sender,
             errors: Some(execution_info.2),
             source_paths,

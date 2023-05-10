@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.0;
+pragma solidity >=0.8.18;
 
 import "ds-test/test.sol";
 
@@ -22,6 +22,6 @@ contract ContractEnvironmentTest is DSTest {
         assertEq(blockhash(block.number), 0x0, "blockhash is incorrect");
         assertEq(block.coinbase, 0x0000000000000000000000000000000000000000, "coinbase is incorrect");
         assertEq(block.timestamp, 1, "timestamp is incorrect");
-        assertEq(block.difficulty, 0, "difficulty is incorrect");
+        assertEq(block.prevrandao, 0, "prevrandao is incorrect");
     }
 }

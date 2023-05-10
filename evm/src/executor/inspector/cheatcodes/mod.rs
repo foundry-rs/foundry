@@ -12,12 +12,12 @@ use crate::{
     },
     utils::{b160_to_h160, b256_to_h256, h160_to_b160, ru256_to_u256},
 };
-use bytes::Bytes;
 use ethers::{
     abi::{AbiDecode, AbiEncode, RawLog},
     signers::LocalWallet,
     types::{
-        transaction::eip2718::TypedTransaction, Address, NameOrAddress, TransactionRequest, U256,
+        transaction::eip2718::TypedTransaction, Address, Bytes, NameOrAddress, TransactionRequest,
+        U256,
     },
 };
 use foundry_common::evm::Breakpoints;
@@ -51,6 +51,8 @@ pub use expect::{
 mod ext;
 /// Fork related cheatcodes
 mod fork;
+/// File-system related cheatcodes
+mod fs;
 /// Cheatcodes that configure the fuzzer
 mod fuzz;
 /// Snapshot related cheatcodes
@@ -64,6 +66,8 @@ use crate::executor::{backend::RevertDiagnostic, inspector::utils::get_create_ad
 pub use config::CheatsConfig;
 
 mod error;
+pub(crate) use error::{bail, ensure, err};
+pub use error::{Error, Result};
 
 /// An inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
@@ -187,30 +191,34 @@ impl Cheatcodes {
         }
     }
 
-    #[tracing::instrument(skip_all, name = "applying cheatcode")]
+    #[tracing::instrument(skip_all, name = "cheatcode")]
     fn apply_cheatcode<DB: DatabaseExt>(
         &mut self,
         data: &mut EVMData<'_, DB>,
         caller: Address,
         call: &CallInputs,
-    ) -> Result<Bytes, Bytes> {
+    ) -> Result {
         // Decode the cheatcode call
-        let decoded = HEVMCalls::decode(&call.input).map_err(|err| err.to_string().encode())?;
+        let decoded = HEVMCalls::decode(&call.input)?;
 
-        // ensure the caller is allowed to execute cheatcodes, but only if the backend is in forking
-        // mode
-        data.db.ensure_cheatcode_access_forking_mode(caller).map_err(|err| err.encode_string())?;
+        // ensure the caller is allowed to execute cheatcodes,
+        // but only if the backend is in forking mode
+        data.db.ensure_cheatcode_access_forking_mode(caller)?;
 
         // TODO: Log the opcode for the debugger
-        env::apply(self, data, caller, &decoded)
+        let opt = env::apply(self, data, caller, &decoded)
             .transpose()
             .or_else(|| util::apply(self, data, &decoded))
             .or_else(|| expect::apply(self, data, &decoded))
-            .or_else(|| fuzz::apply(data, &decoded))
-            .or_else(|| ext::apply(self, self.config.ffi, &decoded))
-            .or_else(|| snapshot::apply(self, data, &decoded))
-            .or_else(|| fork::apply(self, data, &decoded))
-            .ok_or_else(|| "Cheatcode was unhandled. This is a bug.".to_string().encode())?
+            .or_else(|| fuzz::apply(&decoded))
+            .or_else(|| ext::apply(self, &decoded))
+            .or_else(|| fs::apply(self, &decoded))
+            .or_else(|| snapshot::apply(data, &decoded))
+            .or_else(|| fork::apply(self, data, &decoded));
+        match opt {
+            Some(res) => res,
+            None => Err(err!("Unhandled cheatcode: {decoded:?}. This is a bug.")),
+        }
     }
 
     /// Determines the address of the contract and marks it as allowed
@@ -512,7 +520,13 @@ where
         InstructionResult::Continue
     }
 
-    fn log(&mut self, _: &mut EVMData<'_, DB>, address: &B160, topics: &[B256], data: &Bytes) {
+    fn log(
+        &mut self,
+        _: &mut EVMData<'_, DB>,
+        address: &B160,
+        topics: &[B256],
+        data: &bytes::Bytes,
+    ) {
         // Match logs if `expectEmit` has been called
         if !self.expected_emits.is_empty() {
             handle_expect_emit(
@@ -542,11 +556,12 @@ where
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
         is_static: bool,
-    ) -> (InstructionResult, Gas, Bytes) {
+    ) -> (InstructionResult, Gas, bytes::Bytes) {
         if call.contract == h160_to_b160(CHEATCODE_ADDRESS) {
+            let gas = Gas::new(call.gas_limit);
             match self.apply_cheatcode(data, b160_to_h160(call.context.caller), call) {
-                Ok(retdata) => (InstructionResult::Return, Gas::new(call.gas_limit), retdata),
-                Err(err) => (InstructionResult::Revert, Gas::new(call.gas_limit), err),
+                Ok(retdata) => (InstructionResult::Return, gas, retdata.0),
+                Err(err) => (InstructionResult::Revert, gas, err.encode_error().0),
             }
         } else if call.contract != h160_to_b160(HARDHAT_CONSOLE_ADDRESS) {
             // Handle expected calls
@@ -565,26 +580,24 @@ where
             // Handle mocked calls
             if let Some(mocks) = self.mocked_calls.get(&b160_to_h160(call.contract)) {
                 let ctx = MockCallDataContext {
-                    calldata: call.input.clone(),
+                    calldata: call.input.clone().into(),
                     value: Some(call.transfer.value.into()),
                 };
                 if let Some(mock_retdata) = mocks.get(&ctx) {
                     return (
                         mock_retdata.ret_type,
                         Gas::new(call.gas_limit),
-                        mock_retdata.data.clone(),
+                        mock_retdata.data.clone().0,
                     )
                 } else if let Some((_, mock_retdata)) = mocks.iter().find(|(mock, _)| {
                     mock.calldata.len() <= call.input.len() &&
                         *mock.calldata == call.input[..mock.calldata.len()] &&
-                        mock.value
-                            .map(|value| value == call.transfer.value.into())
-                            .unwrap_or(true)
+                        mock.value.map_or(true, |value| value == call.transfer.value.into())
                 }) {
                     return (
                         mock_retdata.ret_type,
                         Gas::new(call.gas_limit),
-                        mock_retdata.data.clone(),
+                        mock_retdata.data.0.clone(),
                     )
                 }
             }
@@ -645,7 +658,7 @@ where
                             return (
                                 InstructionResult::Revert,
                                 Gas::new(call.gas_limit),
-                                err.encode_string(),
+                                err.encode_string().0,
                             )
                         }
 
@@ -689,9 +702,9 @@ where
                 }
             }
 
-            (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
+            (InstructionResult::Continue, Gas::new(call.gas_limit), bytes::Bytes::new())
         } else {
-            (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
+            (InstructionResult::Continue, Gas::new(call.gas_limit), bytes::Bytes::new())
         }
     }
 
@@ -701,9 +714,9 @@ where
         call: &CallInputs,
         remaining_gas: Gas,
         status: InstructionResult,
-        retdata: Bytes,
+        retdata: bytes::Bytes,
         _: bool,
-    ) -> (InstructionResult, Gas, Bytes) {
+    ) -> (InstructionResult, Gas, bytes::Bytes) {
         if call.contract == h160_to_b160(CHEATCODE_ADDRESS) ||
             call.contract == h160_to_b160(HARDHAT_CONSOLE_ADDRESS)
         {
@@ -739,13 +752,13 @@ where
                     false,
                     expected_revert.reason.as_ref(),
                     status,
-                    retdata,
+                    retdata.into(),
                 ) {
-                    Err(retdata) => {
-                        trace!(expected=?expected_revert, actual=%hex::encode(&retdata), ?status, "Expected revert mismatch");
-                        (InstructionResult::Revert, remaining_gas, retdata)
+                    Err(error) => {
+                        trace!(expected=?expected_revert, ?error, ?status, "Expected revert mismatch");
+                        (InstructionResult::Revert, remaining_gas, error.encode_error().0)
                     }
-                    Ok((_, retdata)) => (InstructionResult::Return, remaining_gas, retdata),
+                    Ok((_, retdata)) => (InstructionResult::Return, remaining_gas, retdata.0),
                 }
             }
         }
@@ -772,7 +785,7 @@ where
             for (address, expecteds) in &self.expected_calls {
                 for (expected, actual_count) in expecteds {
                     let ExpectedCallData { calldata, gas, min_gas, value, count } = expected;
-                    let calldata = ethers::types::Bytes::from(calldata.clone());
+                    let calldata = calldata.clone();
                     let expected_values = [
                         Some(format!("data {calldata}")),
                         value.map(|v| format!("value {v}")),
@@ -856,7 +869,7 @@ where
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &mut CreateInputs,
-    ) -> (InstructionResult, Option<B160>, Gas, Bytes) {
+    ) -> (InstructionResult, Option<B160>, Gas, bytes::Bytes) {
         // allow cheatcodes from the address of the new contract
         self.allow_cheatcodes_on_create(data, call);
 
@@ -889,7 +902,7 @@ where
                         InstructionResult::Revert,
                         None,
                         Gas::new(call.gas_limit),
-                        err.encode_string(),
+                        err.encode_string().0,
                     )
                 }
 
@@ -907,7 +920,7 @@ where
                             InstructionResult::Revert,
                             None,
                             Gas::new(call.gas_limit),
-                            err.encode_string(),
+                            err.encode_string().0,
                         )
                     }
                 };
@@ -929,7 +942,7 @@ where
             }
         }
 
-        (InstructionResult::Continue, None, Gas::new(call.gas_limit), Bytes::new())
+        (InstructionResult::Continue, None, Gas::new(call.gas_limit), bytes::Bytes::new())
     }
 
     fn create_end(
@@ -939,8 +952,8 @@ where
         status: InstructionResult,
         address: Option<B160>,
         remaining_gas: Gas,
-        retdata: Bytes,
-    ) -> (InstructionResult, Option<B160>, Gas, Bytes) {
+        retdata: bytes::Bytes,
+    ) -> (InstructionResult, Option<B160>, Gas, bytes::Bytes) {
         // Clean up pranks
         if let Some(prank) = &self.prank {
             if data.journaled_state.depth() == prank.depth {
@@ -970,15 +983,17 @@ where
                     true,
                     expected_revert.reason.as_ref(),
                     status,
-                    retdata,
+                    retdata.into(),
                 ) {
-                    Err(retdata) => (InstructionResult::Revert, None, remaining_gas, retdata),
                     Ok((address, retdata)) => (
                         InstructionResult::Return,
                         address.map(h160_to_b160),
                         remaining_gas,
-                        retdata,
+                        retdata.0,
                     ),
+                    Err(err) => {
+                        (InstructionResult::Revert, None, remaining_gas, err.encode_error().0)
+                    }
                 }
             }
         }
@@ -986,6 +1001,7 @@ where
         (status, address, remaining_gas, retdata)
     }
 }
+
 /// Contains additional, test specific resources that should be kept for the duration of the test
 #[derive(Debug, Default)]
 pub struct Context {

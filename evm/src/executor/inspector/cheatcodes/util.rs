@@ -1,4 +1,4 @@
-use super::Cheatcodes;
+use super::{ensure, err, Cheatcodes, Result};
 use crate::{
     abi::HEVMCalls,
     executor::backend::{
@@ -89,19 +89,19 @@ where
     Ok(f(account))
 }
 
-fn addr(private_key: U256) -> Result<Bytes, Bytes> {
+fn addr(private_key: U256) -> Result {
     let key = parse_private_key(private_key)?;
     let addr = utils::secret_key_to_address(&key);
     Ok(addr.encode().into())
 }
 
-fn sign(private_key: U256, digest: H256, chain_id: U256) -> Result<Bytes, Bytes> {
+fn sign(private_key: U256, digest: H256, chain_id: U256) -> Result {
     let key = parse_private_key(private_key)?;
     let wallet = LocalWallet::from(key).with_chain_id(chain_id.as_u64());
 
     // The `ecrecover` precompile does not use EIP-155
-    let sig = wallet.sign_hash(digest).map_err(|err| err.to_string().encode())?;
-    let recovered = sig.recover(digest).map_err(|err| err.to_string().encode())?;
+    let sig = wallet.sign_hash(digest)?;
+    let recovered = sig.recover(digest)?;
 
     assert_eq!(recovered, wallet.address());
 
@@ -113,23 +113,21 @@ fn sign(private_key: U256, digest: H256, chain_id: U256) -> Result<Bytes, Bytes>
     Ok((sig.v, r_bytes, s_bytes).encode().into())
 }
 
-fn derive_key(mnemonic: &str, path: &str, index: u32) -> Result<Bytes, Bytes> {
+fn derive_key(mnemonic: &str, path: &str, index: u32) -> Result {
     let derivation_path =
         if path.ends_with('/') { format!("{path}{index}") } else { format!("{path}/{index}") };
 
     let wallet = MnemonicBuilder::<English>::default()
         .phrase(mnemonic)
-        .derivation_path(&derivation_path)
-        .map_err(|err| err.to_string().encode())?
-        .build()
-        .map_err(|err| err.to_string().encode())?;
+        .derivation_path(&derivation_path)?
+        .build()?;
 
     let private_key = U256::from_big_endian(wallet.signer().to_bytes().as_slice());
 
     Ok(private_key.encode().into())
 }
 
-fn remember_key(state: &mut Cheatcodes, private_key: U256, chain_id: U256) -> Result<Bytes, Bytes> {
+fn remember_key(state: &mut Cheatcodes, private_key: U256, chain_id: U256) -> Result {
     let key = parse_private_key(private_key)?;
     let wallet = LocalWallet::from(key).with_chain_id(chain_id.as_u64());
     let address = wallet.address();
@@ -139,17 +137,17 @@ fn remember_key(state: &mut Cheatcodes, private_key: U256, chain_id: U256) -> Re
     Ok(address.encode().into())
 }
 
-pub fn parse(s: &str, ty: &ParamType) -> Result<Bytes, Bytes> {
+pub fn parse(s: &str, ty: &ParamType) -> Result {
     parse_token(s, ty)
         .map(|token| abi::encode(&[token]).into())
-        .map_err(|e| format!("Failed to parse `{s}` as type `{ty}`: {e}").encode().into())
+        .map_err(|e| err!("Failed to parse `{s}` as type `{ty}`: {e}"))
 }
 
 pub fn apply<DB: Database>(
     state: &mut Cheatcodes,
     data: &mut EVMData<'_, DB>,
     call: &HEVMCalls,
-) -> Option<Result<Bytes, Bytes>> {
+) -> Option<Result> {
     Some(match call {
         HEVMCalls::Addr(inner) => addr(inner.0),
         HEVMCalls::Sign(inner) => sign(inner.0, inner.1.into(), data.env.cfg.chain_id.into()),
@@ -160,7 +158,15 @@ pub fn apply<DB: Database>(
         HEVMCalls::RememberKey(inner) => remember_key(state, inner.0, data.env.cfg.chain_id.into()),
         HEVMCalls::Label(inner) => {
             state.labels.insert(inner.0, inner.1.clone());
-            Ok(Bytes::new())
+            Ok(Default::default())
+        }
+        HEVMCalls::GetLabel(inner) => {
+            let label = state
+                .labels
+                .get(&inner.0)
+                .cloned()
+                .unwrap_or_else(|| format!("unlabeled:{:?}", inner.0));
+            Ok(ethers::abi::encode(&[Token::String(label)]).into())
         }
         HEVMCalls::ToString0(inner) => {
             Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
@@ -248,7 +254,7 @@ where
     }
 }
 
-pub fn parse_array<I, T>(values: I, ty: &ParamType) -> Result<Bytes, Bytes>
+pub fn parse_array<I, T>(values: I, ty: &ParamType) -> Result
 where
     I: IntoIterator<Item = T>,
     T: AsRef<str>,
@@ -315,19 +321,16 @@ fn parse_bytes(s: &str) -> Result<Vec<u8>, String> {
     hex::decode(s.strip_prefix("0x").unwrap_or(s)).map_err(|e| e.to_string())
 }
 
-pub fn parse_private_key(private_key: U256) -> Result<SigningKey, Bytes> {
-    if private_key.is_zero() {
-        return Err("Private key cannot be 0.".to_string().encode().into())
-    }
-
-    if private_key >= U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()) {
-        return Err("Private key must be less than 115792089237316195423570985008687907852837564279074904382605163141518161494337 (the secp256k1 curve order).".to_string().encode().into());
-    }
-
+pub fn parse_private_key(private_key: U256) -> Result<SigningKey> {
+    ensure!(!private_key.is_zero(), "Private key cannot be 0.");
+    ensure!(
+        private_key < U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()),
+        "Private key must be less than the secp256k1 curve order \
+        (115792089237316195423570985008687907852837564279074904382605163141518161494337).",
+    );
     let mut bytes: [u8; 32] = [0; 32];
     private_key.to_big_endian(&mut bytes);
-
-    SigningKey::from_bytes((&bytes).into()).map_err(|err| err.to_string().encode().into())
+    SigningKey::from_bytes((&bytes).into()).map_err(Into::into)
 }
 
 // Determines if the gas limit on a given call was manually set in the script and should therefore
@@ -345,6 +348,11 @@ pub fn check_if_fixed_gas_limit<DB: DatabaseExt>(
         // Transfers in forge scripts seem to be estimated at 2300 by revm leading to "Intrinsic
         // gas too low" failure when simulated on chain
         && call_gas_limit > 2300
+}
+
+/// Small utility function that checks if an address is a potential precompile.
+pub fn is_potential_precompile(address: H160) -> bool {
+    address < H160::from_low_u64_be(10) && address != H160::zero()
 }
 
 #[cfg(test)]

@@ -215,6 +215,7 @@ macro_rules! impl_figment_convert_basic {
             fn metadata(&self) -> $crate::figment::Metadata {
                 $crate::figment::Metadata::named(stringify!($name))
             }
+
             fn data(
                 &self,
             ) -> Result<
