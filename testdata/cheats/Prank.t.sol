@@ -170,6 +170,28 @@ contract PrankTest is DSTest {
         );
     }
 
+    function testStartPrank0AfterPrank1(address sender, address origin) public {
+        // Perform the prank
+        address oldOrigin = tx.origin;
+        Victim victim = new Victim();
+        cheats.startPrank(sender, origin);
+        victim.assertCallerAndOrigin(
+            sender, "msg.sender was not set during prank", origin, "tx.origin was not set during prank"
+        );
+
+        // Overwrite the prank
+        cheats.startPrank(sender);
+        victim.assertCallerAndOrigin(
+            sender, "msg.sender was not set during prank", oldOrigin, "tx.origin invariant failed"
+        );
+
+        cheats.stopPrank();
+        // Ensure we cleaned up correctly after stopping the prank
+        victim.assertCallerAndOrigin(
+            address(this), "msg.sender was not cleaned up", oldOrigin, "tx.origin invariant failed"
+        );
+    }
+
     function testStartPrank1AfterStartPrank0(address sender, address origin) public {
         // Perform the prank
         address oldOrigin = tx.origin;
@@ -186,9 +208,7 @@ contract PrankTest is DSTest {
 
         // Overwrite the prank
         cheats.startPrank(sender, origin);
-        victim.assertCallerAndOrigin(
-            sender, "msg.sender was not set during prank", origin, "tx.origin was not set"
-        );
+        victim.assertCallerAndOrigin(sender, "msg.sender was not set during prank", origin, "tx.origin was not set");
 
         // Ensure prank is still up as startPrank covers multiple calls
         victim.assertCallerAndOrigin(
@@ -210,7 +230,7 @@ contract PrankTest is DSTest {
         // try to overwrite the prank. This should fail.
         cheats.startPrank(address(this), origin);
     }
-    
+
     function testFailOverwriteUnusedPrankAfterSuccessfulPrank(address sender, address origin) public {
         // Set the prank, but not use it
         address oldOrigin = tx.origin;
