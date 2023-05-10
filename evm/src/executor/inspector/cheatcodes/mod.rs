@@ -29,7 +29,8 @@ use revm::{
 };
 use serde_json::Value;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, VecDeque},
+    f32::consts::E,
     fs::File,
     io::BufReader,
     ops::Range,
@@ -129,7 +130,7 @@ pub struct Cheatcodes {
     pub expected_calls: BTreeMap<Address, Vec<(ExpectedCallData, u64)>>,
 
     /// Expected emits
-    pub expected_emits: Vec<ExpectedEmit>,
+    pub expected_emits: (VecDeque<ExpectedEmit>, u64),
 
     /// Map of context depths to memory offset ranges that may be written to within the call depth.
     pub allowed_mem_writes: BTreeMap<u64, Vec<Range<u64>>>,
@@ -528,7 +529,7 @@ where
         data: &bytes::Bytes,
     ) {
         // Match logs if `expectEmit` has been called
-        if !self.expected_emits.is_empty() {
+        if !self.expected_emits.0.is_empty() {
             handle_expect_emit(
                 self,
                 RawLog {
@@ -537,6 +538,8 @@ where
                 },
                 &b160_to_h160(*address),
             );
+            // Increment the number of inspected emits.
+            self.expected_emits.1 += 1;
         }
 
         // Stores this log if `recordLogs` has been called
@@ -753,21 +756,47 @@ where
             }
         }
 
-        // Handle expected emits at current depth
-        if !self
+        // At the end of the call,
+        // we need to check if we've found all the emits.
+        // We know we've found all the expected emits in the right order
+        // if the queue is fully matched.
+        // If it's not fully matched, then either:
+        // 1. Not enough events were emitted (we'll know this because the amount of times we
+        // inspected events will be less than the size of the queue) 2. The wrong events
+        // were emitted (The inspected events should match the size of the queue, but still some
+        // events will not be matched)
+
+        // First, check that we're at the call depth where the emits were declared from.
+        let should_check_emits = self
             .expected_emits
+            .0
             .iter()
-            .filter(|expected| expected.depth == data.journaled_state.depth())
-            .all(|expected| expected.found)
-        {
-            return (
-                InstructionResult::Revert,
-                remaining_gas,
-                "Log != expected log".to_string().encode().into(),
-            )
-        } else {
-            // Clear the emits we expected at this depth that have been found
-            self.expected_emits.retain(|expected| !expected.found)
+            .any(|expected| expected.depth == data.journaled_state.depth());
+        // If so, check the emits
+        if should_check_emits {
+            // Not all emits were found.
+            if self.expected_emits.0.iter().any(|expected| !expected.found) {
+                // Not enough emits were found
+                if self.expected_emits.0.len() as u64 > self.expected_emits.1 {
+                    return (
+                        InstructionResult::Revert,
+                        remaining_gas,
+                        "Not enough events were emitted".to_string().encode().into(),
+                    )
+                } else {
+                    // The wrong emits were found
+                    return (
+                        InstructionResult::Revert,
+                        remaining_gas,
+                        "Log != expected log".to_string().encode().into(),
+                    )
+                }
+            } else {
+                // All emits were found, we're good.
+                // Clear the queue, as we expect the user to declare more events for the next call
+                // if they wanna match further events.
+                self.expected_emits.0.clear();
+            }
         }
 
         // If the depth is 0, then this is the root call terminating
@@ -814,7 +843,7 @@ where
             }
 
             // Check if we have any leftover expected emits
-            if !self.expected_emits.is_empty() {
+            if !self.expected_emits.0.is_empty() {
                 return (
                     InstructionResult::Revert,
                     remaining_gas,
