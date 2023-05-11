@@ -130,7 +130,7 @@ pub struct Cheatcodes {
     pub expected_calls: BTreeMap<Address, Vec<(ExpectedCallData, u64)>>,
 
     /// Expected emits
-    pub expected_emits: (VecDeque<ExpectedEmit>, u64),
+    pub expected_emits: VecDeque<ExpectedEmit>,
 
     /// Map of context depths to memory offset ranges that may be written to within the call depth.
     pub allowed_mem_writes: BTreeMap<u64, Vec<Range<u64>>>,
@@ -529,7 +529,7 @@ where
         data: &bytes::Bytes,
     ) {
         // Match logs if `expectEmit` has been called
-        if !self.expected_emits.0.is_empty() {
+        if !self.expected_emits.is_empty() {
             handle_expect_emit(
                 self,
                 RawLog {
@@ -538,8 +538,6 @@ where
                 },
                 &b160_to_h160(*address),
             );
-            // Increment the number of inspected emits.
-            self.expected_emits.1 += 1;
         }
 
         // Stores this log if `recordLogs` has been called
@@ -769,13 +767,12 @@ where
         // First, check that we're at the call depth where the emits were declared from.
         let should_check_emits = self
             .expected_emits
-            .0
             .iter()
             .any(|expected| expected.depth == data.journaled_state.depth());
         // If so, check the emits
         if should_check_emits {
             // Not all emits were matched.
-            if self.expected_emits.0.iter().any(|expected| !expected.found) {
+            if self.expected_emits.iter().any(|expected| !expected.found) {
                     return (
                         InstructionResult::Revert,
                         remaining_gas,
@@ -785,7 +782,7 @@ where
                 // All emits were found, we're good.
                 // Clear the queue, as we expect the user to declare more events for the next call
                 // if they wanna match further events.
-                self.expected_emits.0.clear()
+                self.expected_emits.clear()
             }
         }
 
@@ -833,7 +830,7 @@ where
             }
 
             // Check if we have any leftover expected emits
-            if !self.expected_emits.0.is_empty() {
+            if !self.expected_emits.is_empty() {
                 return (
                     InstructionResult::Revert,
                     remaining_gas,

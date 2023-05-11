@@ -131,11 +131,11 @@ pub fn handle_expect_emit(state: &mut Cheatcodes, log: RawLog, address: &Address
 
     // if there's anything to fill, we need to pop back.
     let event_to_fill_or_check =
-        if state.expected_emits.0.iter().any(|expected| expected.log.is_none()) {
-            state.expected_emits.0.pop_back()
+        if state.expected_emits.iter().any(|expected| expected.log.is_none()) {
+            state.expected_emits.pop_back()
         } else {
             // Else, we need to pop from the front in the order the events were added to the queue.
-            state.expected_emits.0.pop_front()
+            state.expected_emits.pop_front()
         };
 
     let mut event_to_fill_or_check =
@@ -178,7 +178,7 @@ pub fn handle_expect_emit(state: &mut Cheatcodes, log: RawLog, address: &Address
         }
     }
 
-    state.expected_emits.0.push_back(event_to_fill_or_check);
+    state.expected_emits.push_back(event_to_fill_or_check);
 }
 
 #[derive(Clone, Debug, Default)]
@@ -249,7 +249,7 @@ pub fn apply<DB: DatabaseExt>(
             expect_revert(state, Some(inner.0.into()), data.journaled_state.depth())
         }
         HEVMCalls::ExpectEmit0(_) => {
-            state.expected_emits.0.push_back(ExpectedEmit {
+            state.expected_emits.push_back(ExpectedEmit {
                 depth: data.journaled_state.depth(),
                 checks: [true, true, true, true],
                 ..Default::default()
@@ -257,7 +257,7 @@ pub fn apply<DB: DatabaseExt>(
             Ok(Bytes::new())
         }
         HEVMCalls::ExpectEmit1(inner) => {
-            state.expected_emits.0.push_back(ExpectedEmit {
+            state.expected_emits.push_back(ExpectedEmit {
                 depth: data.journaled_state.depth(),
                 checks: [true, true, true, true],
                 address: Some(inner.0),
@@ -266,7 +266,7 @@ pub fn apply<DB: DatabaseExt>(
             Ok(Bytes::new())
         }
         HEVMCalls::ExpectEmit2(inner) => {
-            state.expected_emits.0.push_back(ExpectedEmit {
+            state.expected_emits.push_back(ExpectedEmit {
                 depth: data.journaled_state.depth(),
                 checks: [inner.0, inner.1, inner.2, inner.3],
                 ..Default::default()
@@ -274,7 +274,7 @@ pub fn apply<DB: DatabaseExt>(
             Ok(Bytes::new())
         }
         HEVMCalls::ExpectEmit3(inner) => {
-            state.expected_emits.0.push_back(ExpectedEmit {
+            state.expected_emits.push_back(ExpectedEmit {
                 depth: data.journaled_state.depth(),
                 checks: [inner.0, inner.1, inner.2, inner.3],
                 address: Some(inner.4),
