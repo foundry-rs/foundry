@@ -71,7 +71,6 @@ contract TransactOnForkTest is DSTest {
         // expect a call to USDT's transfer
         vm.expectCall(address(USDT), abi.encodeWithSelector(IERC20.transfer.selector, recipient, transferAmount));
 
-
         // expect a Transfer event to be emitted
         vm.expectEmit(true, true, false, true, address(USDT));
         emit Transfer(address(sender), address(recipient), transferAmount);
