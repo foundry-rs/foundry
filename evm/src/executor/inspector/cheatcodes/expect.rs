@@ -180,13 +180,23 @@ pub fn handle_expect_emit(state: &mut Cheatcodes, log: RawLog, address: &Address
                     event_to_fill_or_check.found &= expected.data == log.data;
                 }
             }
+
+            // If we found the event, we can push it to the back of the queue
+            // and begin expecting the next event.
+            if event_to_fill_or_check.found {
+                state.expected_emits.push_back(event_to_fill_or_check);
+            } else {
+                // We did not match this event, so we need to keep waiting for the right one to appear.
+                state.expected_emits.push_front(event_to_fill_or_check);
+            }
+
         }
         // Fill the event.
         None => {
             event_to_fill_or_check.log = Some(log);
+            state.expected_emits.push_back(event_to_fill_or_check);
         }
     }
-    state.expected_emits.push_back(event_to_fill_or_check);
 }
 
 #[derive(Clone, Debug, Default)]

@@ -17,6 +17,8 @@ contract Emitter {
     /// Ref: issue #760
     event SomethingElse(uint256 data);
 
+    event SomethingNonIndexed(uint256 data);
+
     function emitEvent(uint256 topic1, uint256 topic2, uint256 topic3, uint256 data) public {
         emit Something(topic1, topic2, topic3, data);
     }
@@ -34,6 +36,13 @@ contract Emitter {
     function emitAndNest() public {
         emit Something(1, 2, 3, 4);
         emitNested(Emitter(address(this)), 1, 2, 3, 4);
+    }
+
+    function emitOutOfExactOrder() public {
+        emit SomethingNonIndexed(1);
+        emit Something(1, 2, 3, 4);
+        emit Something(1, 2, 3, 4);
+        emit Something(1, 2, 3, 4);
     }
 
     function emitNested(Emitter inner, uint256 topic1, uint256 topic2, uint256 topic3, uint256 data) public {
@@ -73,6 +82,8 @@ contract ExpectEmitTest is DSTest {
     event Something(uint256 indexed topic1, uint256 indexed topic2, uint256 indexed topic3, uint256 data);
 
     event SomethingElse(uint256 indexed topic1);
+
+    event SomethingNonIndexed(uint256 data);
 
     function setUp() public {
         emitter = new Emitter();
@@ -215,6 +226,37 @@ contract ExpectEmitTest is DSTest {
         emitter.emitMultiple(
             [uint256(1), uint256(5)], [uint256(2), uint256(6)], [uint256(3), uint256(7)], [uint256(4), uint256(8)]
         );
+    }
+
+    function testExpectEmitCanMatchWithoutExactOrder() public {
+        cheats.expectEmit(true, true, true, true);
+        emit Something(1, 2, 3, 4);
+        cheats.expectEmit(true, true, true, true);
+        emit Something(1, 2, 3, 4);
+
+        emitter.emitOutOfExactOrder();
+    }
+
+    function testFailExpectEmitCanMatchWithoutExactOrder() public {
+        cheats.expectEmit(true, true, true, true);
+        emit Something(1, 2, 3, 4);
+        // This should fail, as this event is never emitted 
+        // in between the other two Something events.
+        cheats.expectEmit(true, true, true, true);
+        emit SomethingElse(1);
+        cheats.expectEmit(true, true, true, true);
+        emit Something(1, 2, 3, 4);
+
+        emitter.emitOutOfExactOrder();
+    }
+
+    function testExpectEmitCanMatchWithoutExactOrder2() public {
+        cheats.expectEmit(true, true, true, true);
+        emit SomethingNonIndexed(1);
+        cheats.expectEmit(true, true, true, true);
+        emit Something(1, 2, 3, 4);
+
+        emitter.emitOutOfExactOrder();
     }
 
     function testExpectEmitAddress() public {
