@@ -240,7 +240,7 @@ contract ExpectEmitTest is DSTest {
     function testFailExpectEmitCanMatchWithoutExactOrder() public {
         cheats.expectEmit(true, true, true, true);
         emit Something(1, 2, 3, 4);
-        // This should fail, as this event is never emitted 
+        // This should fail, as this event is never emitted
         // in between the other two Something events.
         cheats.expectEmit(true, true, true, true);
         emit SomethingElse(1);
