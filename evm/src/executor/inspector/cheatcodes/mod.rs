@@ -767,7 +767,9 @@ where
         let should_check_emits = self
             .expected_emits
             .iter()
-            .any(|expected| expected.depth == data.journaled_state.depth());
+            .any(|expected| expected.depth == data.journaled_state.depth()) &&
+            // Ignore staticcalls
+            !call.is_static;
         // If so, check the emits
         if should_check_emits {
             // Not all emits were matched.

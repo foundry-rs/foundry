@@ -38,6 +38,10 @@ contract Emitter {
         inner.emitEvent(topic1, topic2, topic3, data);
     }
 
+    function getVar() public view returns (uint256) {
+        return 1;
+    }
+
     /// Ref: issue #1214
     function doesNothing() public pure {}
 
@@ -267,6 +271,13 @@ contract ExpectEmitTest is DSTest {
         // and in the `Emitter` contract have differing
         // amounts of indexed topics.
         emitter.emitSomethingElse(1);
+    }
+
+    function testCanDoStaticCall() public {
+        cheats.expectEmit(true, true, true, true);
+        emit Something(emitter.getVar(), 2, 3, 4);
+
+        emitter.emitEvent(1, 2, 3, 4);
     }
 
     /// This test will fail if we check that all expected logs were emitted
