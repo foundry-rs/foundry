@@ -51,6 +51,39 @@ pub struct Prank {
     pub depth: u64,
     /// Whether the prank stops by itself after the next call
     pub single_call: bool,
+    /// Whether the prank has been used yet (false if unused)
+    pub used: bool,
+}
+
+impl Prank {
+    pub fn new(
+        prank_caller: Address,
+        prank_origin: Address,
+        new_caller: Address,
+        new_origin: Option<Address>,
+        depth: u64,
+        single_call: bool,
+    ) -> Prank {
+        Prank {
+            prank_caller,
+            prank_origin,
+            new_caller,
+            new_origin,
+            depth,
+            single_call,
+            used: false,
+        }
+    }
+
+    /// Apply the prank by setting `used` to true iff it is false
+    /// Only returns self in the case it is updated (first application)
+    pub fn first_time_applied(&self) -> Option<Self> {
+        if self.used {
+            None
+        } else {
+            Some(Prank { used: true, ..self.clone() })
+        }
+    }
 }
 
 /// Sets up broadcasting from a script using `origin` as the sender
@@ -102,14 +135,18 @@ fn prank(
     depth: u64,
     single_call: bool,
 ) -> Result {
+    let prank = Prank::new(prank_caller, prank_origin, new_caller, new_origin, depth, single_call);
+
+    if let Some(Prank { used, .. }) = state.prank {
+        ensure!(used, "You cannot overwrite `prank` until it is applied at least once");
+    }
+
     ensure!(
         state.broadcast.is_none(),
-        "You cannot `prank` for a broadcasted transaction. \
+        "You cannot `prank` for a broadcasted transaction.\
          Pass the desired tx.origin into the broadcast cheatcode call"
     );
-    ensure!(state.prank.is_none(), "You have an active prank already.");
 
-    let prank = Prank { prank_caller, prank_origin, new_caller, new_origin, depth, single_call };
     state.prank = Some(prank);
     Ok(Bytes::new())
 }

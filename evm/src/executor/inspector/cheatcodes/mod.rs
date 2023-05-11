@@ -607,15 +607,25 @@ where
                 if data.journaled_state.depth() >= prank.depth &&
                     call.context.caller == h160_to_b160(prank.prank_caller)
                 {
+                    let mut prank_applied = false;
                     // At the target depth we set `msg.sender`
                     if data.journaled_state.depth() == prank.depth {
                         call.context.caller = h160_to_b160(prank.new_caller);
                         call.transfer.source = h160_to_b160(prank.new_caller);
+                        prank_applied = true;
                     }
 
                     // At the target depth, or deeper, we set `tx.origin`
                     if let Some(new_origin) = prank.new_origin {
                         data.env.tx.caller = h160_to_b160(new_origin);
+                        prank_applied = true;
+                    }
+
+                    // If prank applied for first time, then update
+                    if prank_applied {
+                        if let Some(applied_prank) = prank.first_time_applied() {
+                            self.prank = Some(applied_prank);
+                        }
                     }
                 }
             }
