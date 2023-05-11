@@ -186,10 +186,10 @@ pub fn handle_expect_emit(state: &mut Cheatcodes, log: RawLog, address: &Address
             if event_to_fill_or_check.found {
                 state.expected_emits.push_back(event_to_fill_or_check);
             } else {
-                // We did not match this event, so we need to keep waiting for the right one to appear.
+                // We did not match this event, so we need to keep waiting for the right one to
+                // appear.
                 state.expected_emits.push_front(event_to_fill_or_check);
             }
-
         }
         // Fill the event.
         None => {
