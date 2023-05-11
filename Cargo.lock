@@ -2526,6 +2526,7 @@ dependencies = [
  "reqwest",
  "semver",
  "serde",
+ "serde_json",
  "serde_regex",
  "tempfile",
  "thiserror",
