@@ -67,7 +67,7 @@ where
             timestamp: block.timestamp.into(),
             coinbase: h160_to_b160(block.author.unwrap_or_default()),
             difficulty: block.difficulty.into(),
-            prevrandao: Some(block.mix_hash.unwrap_or_default()).map(h256_to_b256),
+            prevrandao: h256_to_b256(block.mix_hash.unwrap_or_default()),
             basefee: block.base_fee_per_gas.unwrap_or_default().into(),
             gas_limit: block.gas_limit.into(),
         },
