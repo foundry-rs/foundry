@@ -230,6 +230,23 @@ fn expect_safe_memory(state: &mut Cheatcodes, start: u64, end: u64, depth: u64) 
     Ok(Bytes::new())
 }
 
+/// Handles expected calls specified by the `vm.expectCall` cheatcode.
+///
+/// It can handle calls in two ways:
+/// - If the cheatcode was used with a `count` argument, it will expect the call to be made exactly
+///   `count` times.
+/// e.g. `vm.expectCall(address(0xc4f3), abi.encodeWithSelector(0xd34db33f), 4)` will expect the
+/// call to address(0xc4f3) with selector `0xd34db33f` to be made exactly 4 times. If the amount of
+/// calls is less or more than 4, the test will fail. Note that the `count` argument cannot be
+/// overwritten with another `vm.expectCall`. If this is attempted, `expectCall` will revert.
+/// - If the cheatcode was used without a `count` argument, it will expect the call to be made at
+///   least the amount of times the cheatcode
+/// was called. This means that `vm.expectCall` without a count argument can be called many times,
+/// but cannot be called with a `count` argument after it was called without one. If the latter
+/// happens, `expectCall` will revert. e.g `vm.expectCall(address(0xc4f3),
+/// abi.encodeWithSelector(0xd34db33f))` will expect the call to address(0xc4f3) and selector
+/// `0xd34db33f` to be made at least once. If the amount of calls is 0, the test will fail. If the
+/// call is made more than once, the test will pass.
 #[allow(clippy::too_many_arguments)]
 fn expect_call(
     state: &mut Cheatcodes,

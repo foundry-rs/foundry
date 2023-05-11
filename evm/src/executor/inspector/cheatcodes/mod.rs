@@ -69,6 +69,15 @@ mod error;
 pub(crate) use error::{bail, ensure, err};
 pub use error::{Error, Result};
 
+/// Tracks the expected calls per address.
+/// For each address, we track the expected calls per call data. We track it in such manner
+/// so that we don't mix together calldatas that only contain selectors and calldatas that contain
+/// selector and arguments (partial and full matches).
+/// This then allows us to customize the matching behavior for each call data on the
+/// `ExpectedCallData` struct and track how many times we've actually seen the call on the second
+/// element of the tuple.
+pub type ExpectedCallTracker = BTreeMap<Address, BTreeMap<Vec<u8>, (ExpectedCallData, u64)>>;
+
 /// An inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
 /// Cheatcodes can be called by contracts during execution to modify the VM environment, such as
@@ -126,7 +135,7 @@ pub struct Cheatcodes {
     pub mocked_calls: BTreeMap<Address, BTreeMap<MockCallDataContext, MockCallReturnData>>,
 
     /// Expected calls
-    pub expected_calls: BTreeMap<Address, BTreeMap<Vec<u8>, (ExpectedCallData, u64)>>,
+    pub expected_calls: ExpectedCallTracker,
 
     /// Expected emits
     pub expected_emits: Vec<ExpectedEmit>,
@@ -786,12 +795,19 @@ where
 
         // If the depth is 0, then this is the root call terminating
         if data.journaled_state.depth() == 0 {
+            // Match expected calls
             for (address, calldatas) in &self.expected_calls {
+                // Loop over each address, and for each address, loop over each calldata it expects.
                 for (calldata, (expected, actual_count)) in calldatas {
+                    // Grab the values we expect to see
                     let ExpectedCallData { gas, min_gas, value, count, call_type } = expected;
                     let calldata = Bytes::from(calldata.clone());
+
+                    // We must match differently depending on the type of call we expect.
                     match call_type {
-                        // We must match exactly what has been specified.
+                        // If the cheatcode was called with a `count` argument,
+                        // we must check that the EVM performed a CALL with this calldata exactly
+                        // `count` times.
                         ExpectedCallType::Count => {
                             if *count != *actual_count {
                                 let expected_values = [
@@ -814,7 +830,10 @@ where
                                 )
                             }
                         }
-                        // We must match at least the amount of times specified.
+                        // If the cheatcode was called without a `count` argument,
+                        // we must check that the EVM performed a CALL with this calldata at least
+                        // `count` times. The amount of times to check was
+                        // the amount of time the cheatcode was called.
                         ExpectedCallType::NonCount => {
                             if *count > *actual_count {
                                 let expected_values = [
