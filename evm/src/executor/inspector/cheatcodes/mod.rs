@@ -774,28 +774,18 @@ where
             .any(|expected| expected.depth == data.journaled_state.depth());
         // If so, check the emits
         if should_check_emits {
-            // Not all emits were found.
+            // Not all emits were matched.
             if self.expected_emits.0.iter().any(|expected| !expected.found) {
-                // Not enough emits were found
-                if self.expected_emits.0.len() as u64 > self.expected_emits.1 {
-                    return (
-                        InstructionResult::Revert,
-                        remaining_gas,
-                        "Not enough events were emitted".to_string().encode().into(),
-                    )
-                } else {
-                    // The wrong emits were found
                     return (
                         InstructionResult::Revert,
                         remaining_gas,
                         "Log != expected log".to_string().encode().into(),
                     )
-                }
             } else {
                 // All emits were found, we're good.
                 // Clear the queue, as we expect the user to declare more events for the next call
                 // if they wanna match further events.
-                self.expected_emits.0.clear();
+                self.expected_emits.0.clear()
             }
         }
 
@@ -847,7 +837,7 @@ where
                 return (
                     InstructionResult::Revert,
                     remaining_gas,
-                    "Expected an emit, but no logs were emitted afterward"
+                    "Expected an emit, but no logs were emitted afterward. You might have mismatched events or not enough events were emitted."
                         .to_string()
                         .encode()
                         .into(),
