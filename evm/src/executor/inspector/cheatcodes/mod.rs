@@ -30,7 +30,6 @@ use revm::{
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
-    f32::consts::E,
     fs::File,
     io::BufReader,
     ops::Range,
@@ -773,11 +772,11 @@ where
         if should_check_emits {
             // Not all emits were matched.
             if self.expected_emits.iter().any(|expected| !expected.found) {
-                    return (
-                        InstructionResult::Revert,
-                        remaining_gas,
-                        "Log != expected log".to_string().encode().into(),
-                    )
+                return (
+                    InstructionResult::Revert,
+                    remaining_gas,
+                    "Log != expected log".to_string().encode().into(),
+                )
             } else {
                 // All emits were found, we're good.
                 // Clear the queue, as we expect the user to declare more events for the next call
