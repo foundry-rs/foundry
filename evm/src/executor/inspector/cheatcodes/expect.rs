@@ -127,14 +127,23 @@ pub fn handle_expect_emit(state: &mut Cheatcodes, log: RawLog, address: &Address
     // We expect for emit checks to be filled as they're declared (from oldest to newest),
     // so we fill them and push them to the back of the queue.
     // If the user has properly filled all the emits, they'll end up in their original order.
-    // If not, we can detect this later and error out.
+    // If not, the queue will not be in the order the events will be intended to be filled,
+    // and we'll be able to later detect this and bail.
+
+    // First, we can return early if all events have been matched.
+    // This allows a contract to arbitrarily emit more events than expected (additive behavior),
+    // as long as all the previous events were matched in the order they were expected to be.
+    if !state.expected_emits.iter().any(|expected| !expected.found) {
+        return
+    }
 
     // if there's anything to fill, we need to pop back.
     let event_to_fill_or_check =
         if state.expected_emits.iter().any(|expected| expected.log.is_none()) {
             state.expected_emits.pop_back()
+        // Else, if there are any events that are unmatched, we try to match to match them
+        // in the order declared, so we start popping from the front (like a queue).
         } else {
-            // Else, we need to pop from the front in the order the events were added to the queue.
             state.expected_emits.pop_front()
         };
 
@@ -177,7 +186,6 @@ pub fn handle_expect_emit(state: &mut Cheatcodes, log: RawLog, address: &Address
             event_to_fill_or_check.log = Some(log);
         }
     }
-
     state.expected_emits.push_back(event_to_fill_or_check);
 }
 

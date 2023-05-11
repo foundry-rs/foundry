@@ -527,7 +527,6 @@ where
         topics: &[B256],
         data: &bytes::Bytes,
     ) {
-        // Match logs if `expectEmit` has been called
         if !self.expected_emits.is_empty() {
             handle_expect_emit(
                 self,
@@ -831,6 +830,9 @@ where
             }
 
             // Check if we have any leftover expected emits
+            // First, if any emits were found at the root call, then we its ok and we remove them.
+            self.expected_emits.retain(|expected| !expected.found);
+            // If not empty, we got mismatched emits
             if !self.expected_emits.is_empty() {
                 return (
                     InstructionResult::Revert,
