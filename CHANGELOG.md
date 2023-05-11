@@ -24,7 +24,7 @@ To use the latest pinned nightly on your CI, modify your Foundry installation st
 ### Breaking changes
 
 - [expectEmit](https://github.com/foundry-rs/foundry/pull/4920) will now only work for the next call.
-- [expectCall] will now only work if the call(s) are made exactly after the cheatcode is invoked.
-- [expectRevert] will now work if the next call does revert, instead of expecting a revert during the whole test.
+- expectCall will now only work if the call(s) are made exactly after the cheatcode is invoked.
+- expectRevert will now work if the next call does revert, instead of expecting a revert during the whole test.
 - [precompiles will not be compatible with all cheatcodes](https://github.com/foundry-rs/foundry/pull/4905).
 - The difficulty and prevrandao cheatcodes now [fail if not used with the correct EVM version](https://github.com/foundry-rs/foundry/pull/4904).
