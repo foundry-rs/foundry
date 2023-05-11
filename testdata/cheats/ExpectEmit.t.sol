@@ -4,14 +4,6 @@ pragma solidity >=0.8.18;
 import "ds-test/test.sol";
 import "./Cheats.sol";
 
-contract NestedEmitter {
-    event SomethingDifferent(uint256 indexed topic1, uint256 indexed topic2, uint256 indexed topic3, uint256 data);
-
-    function emitEvent(uint256 topic1, uint256 topic2, uint256 topic3, uint256 data) public {
-        emit SomethingDifferent(topic1, topic2, topic3, data);
-    }
-}
-
 contract Emitter {
     event Something(uint256 indexed topic1, uint256 indexed topic2, uint256 indexed topic3, uint256 data);
 
@@ -71,8 +63,6 @@ contract ExpectEmitTest is DSTest {
     event Something(uint256 indexed topic1, uint256 indexed topic2, uint256 indexed topic3, uint256 data);
 
     event SomethingElse(uint256 indexed topic1);
-
-    event SomethingDifferent(uint256 indexed topic1, uint256 indexed topic2, uint256 indexed topic3, uint256 data);
 
     function setUp() public {
         emitter = new Emitter();
