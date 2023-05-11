@@ -1,14 +1,13 @@
-use super::Cheatcodes;
+use super::{bail, ensure, err, Cheatcodes, Result};
 use crate::{
     abi::HEVMCalls,
-    error::{SolError, ERROR_PREFIX, REVERT_PREFIX},
+    error::{ERROR_PREFIX, REVERT_PREFIX},
     executor::backend::DatabaseExt,
     utils::h160_to_b160,
 };
-use bytes::Bytes;
 use ethers::{
-    abi::{AbiDecode, AbiEncode, RawLog},
-    types::{Address, H160, U256},
+    abi::{AbiDecode, RawLog},
+    types::{Address, Bytes, H160, U256},
 };
 use revm::{
     interpreter::{return_ok, InstructionResult},
@@ -38,34 +37,26 @@ pub struct ExpectedRevert {
     pub depth: u64,
 }
 
-fn expect_revert(
-    state: &mut Cheatcodes,
-    reason: Option<Bytes>,
-    depth: u64,
-) -> Result<Bytes, Bytes> {
-    if state.expected_revert.is_some() {
-        Err("You must call another function prior to expecting a second revert."
-            .to_string()
-            .encode()
-            .into())
-    } else {
-        state.expected_revert = Some(ExpectedRevert { reason, depth });
-        Ok(Bytes::new())
-    }
+fn expect_revert(state: &mut Cheatcodes, reason: Option<Bytes>, depth: u64) -> Result {
+    ensure!(
+        state.expected_revert.is_none(),
+        "You must call another function prior to expecting a second revert."
+    );
+    state.expected_revert = Some(ExpectedRevert { reason, depth });
+    Ok(Bytes::new())
 }
 
-#[instrument(skip_all, fields(expected_revert, status, retdata= hex::encode(&retdata)))]
+#[instrument(skip_all, fields(expected_revert, status, retdata = hex::encode(&retdata)))]
 pub fn handle_expect_revert(
     is_create: bool,
     expected_revert: Option<&Bytes>,
     status: InstructionResult,
     retdata: Bytes,
-) -> Result<(Option<Address>, Bytes), Bytes> {
+) -> Result<(Option<Address>, Bytes)> {
     trace!("handle expect revert");
 
-    if matches!(status, return_ok!()) {
-        return Err("Call did not revert as expected".to_string().encode().into())
-    }
+    ensure!(!matches!(status, return_ok!()), "Call did not revert as expected");
+
     macro_rules! success_return {
         () => {
             Ok(if is_create {
@@ -84,62 +75,32 @@ pub fn handle_expect_revert(
     };
 
     if !expected_revert.is_empty() && retdata.is_empty() {
-        return Err("Call reverted as expected, but without data".to_string().encode().into())
+        bail!("Call reverted as expected, but without data");
     }
 
-    let maybe_prefixed_error_string = match retdata {
-        _ if retdata.len() >= REVERT_PREFIX.len() &&
-            retdata[..REVERT_PREFIX.len()] == REVERT_PREFIX =>
-        {
-            Some(&retdata[4..])
+    let mut actual_revert = retdata;
+    if actual_revert.len() >= 4 &&
+        matches!(actual_revert[..4].try_into(), Ok(ERROR_PREFIX | REVERT_PREFIX))
+    {
+        if let Ok(bytes) = Bytes::decode(&actual_revert[4..]) {
+            actual_revert = bytes;
         }
-        _ if retdata.len() >= ERROR_PREFIX.len() &&
-            &retdata[..ERROR_PREFIX.len()] == ERROR_PREFIX.as_slice() =>
-        {
-            Some(&retdata[ERROR_PREFIX.len()..])
-        }
-        _ => None,
-    };
+    }
 
-    let stringify = |data: &[u8]| {
-        String::decode(data)
-            .ok()
-            .or_else(|| String::from_utf8(data.to_vec()).ok())
-            .unwrap_or_else(|| format!("0x{}", hex::encode(data)))
-    };
-
-    let (err_message, actual_revert): (_, Bytes) = if let Some(data) = maybe_prefixed_error_string {
-        // It's a prefixed revert string, so we do some conversion to perform the check
-        let decoded_data = ethers::prelude::Bytes::decode(data)
-            .expect("String error code, but data can't be decoded as bytes");
-
-        (
-            format!(
-                "Error != expected error: '{}' != '{}'",
-                stringify(&decoded_data),
-                stringify(expected_revert),
-            )
-            .encode()
-            .into(),
-            decoded_data.0,
-        )
-    } else {
-        (
-            format!(
-                "Error != expected error: {} != {}",
-                stringify(&retdata),
-                stringify(expected_revert),
-            )
-            .encode()
-            .into(),
-            retdata,
-        )
-    };
-
-    if actual_revert == expected_revert {
+    if actual_revert == *expected_revert {
         success_return!()
     } else {
-        Err(err_message)
+        let stringify = |data: &[u8]| {
+            String::decode(data)
+                .ok()
+                .or_else(|| std::str::from_utf8(data).ok().map(ToOwned::to_owned))
+                .unwrap_or_else(|| format!("0x{}", hex::encode(data)))
+        };
+        Err(err!(
+            "Error != expected error: {} != {}",
+            stringify(&actual_revert),
+            stringify(expected_revert),
+        ))
     }
 }
 
@@ -252,18 +213,25 @@ impl PartialOrd for MockCallDataContext {
     }
 }
 
+fn expect_safe_memory(state: &mut Cheatcodes, start: u64, end: u64, depth: u64) -> Result {
+    ensure!(start < end, "Invalid memory range: [{start}:{end}]");
+    let offsets = state.allowed_mem_writes.entry(depth).or_insert_with(|| vec![0..0x60]);
+    offsets.push(start..end);
+    Ok(Bytes::new())
+}
+
 pub fn apply<DB: DatabaseExt>(
     state: &mut Cheatcodes,
     data: &mut EVMData<'_, DB>,
     call: &HEVMCalls,
-) -> Option<Result<Bytes, Bytes>> {
-    Some(match call {
+) -> Option<Result> {
+    let result = match call {
         HEVMCalls::ExpectRevert0(_) => expect_revert(state, None, data.journaled_state.depth()),
         HEVMCalls::ExpectRevert1(inner) => {
-            expect_revert(state, Some(inner.0.to_vec().into()), data.journaled_state.depth())
+            expect_revert(state, Some(inner.0.clone()), data.journaled_state.depth())
         }
         HEVMCalls::ExpectRevert2(inner) => {
-            expect_revert(state, Some(inner.0.to_vec().into()), data.journaled_state.depth())
+            expect_revert(state, Some(inner.0.into()), data.journaled_state.depth())
         }
         HEVMCalls::ExpectEmit0(_) => {
             state.expected_emits.push(ExpectedEmit {
@@ -422,29 +390,25 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::MockCall0(inner) => {
             // TODO: Does this increase gas usage?
             if let Err(err) = data.journaled_state.load_account(h160_to_b160(inner.0), data.db) {
-                return Some(Err(err.encode_string()))
+                return Some(Err(err.into()))
             }
 
             // Etches a single byte onto the account if it is empty to circumvent the `extcodesize`
             // check Solidity might perform.
-            if data
+            let empty_bytecode = data
                 .journaled_state
                 .account(h160_to_b160(inner.0))
                 .info
                 .code
                 .as_ref()
-                .map(|code| code.is_empty())
-                .unwrap_or(true)
-            {
-                let code = Bytecode::new_raw(Bytes::from_static(&[0u8])).to_checked();
+                .map_or(true, Bytecode::is_empty);
+            if empty_bytecode {
+                let code = Bytecode::new_raw(bytes::Bytes::from_static(&[0u8])).to_checked();
                 data.journaled_state.set_code(h160_to_b160(inner.0), code);
             }
             state.mocked_calls.entry(inner.0).or_default().insert(
-                MockCallDataContext { calldata: inner.1.to_vec().into(), value: None },
-                MockCallReturnData {
-                    data: inner.2.to_vec().into(),
-                    ret_type: InstructionResult::Return,
-                },
+                MockCallDataContext { calldata: inner.1.clone(), value: None },
+                MockCallReturnData { data: inner.2.clone(), ret_type: InstructionResult::Return },
             );
             Ok(Bytes::new())
         }
@@ -483,37 +447,12 @@ pub fn apply<DB: DatabaseExt>(
             Ok(Bytes::new())
         }
         HEVMCalls::ExpectSafeMemory(inner) => {
-            if inner.0 >= inner.1 {
-                return Some(Err(format!("Invalid memory range: [{}, {})", inner.0, inner.1)
-                    .encode()
-                    .into()))
-            }
-
-            // Write the new range to the map at the current call depth
-            let offsets = state
-                .allowed_mem_writes
-                .entry(data.journaled_state.depth())
-                .or_insert(vec![(0..0x60)]);
-            offsets.push(inner.0..inner.1);
-
-            Ok(Bytes::new())
+            expect_safe_memory(state, inner.0, inner.1, data.journaled_state.depth())
         }
         HEVMCalls::ExpectSafeMemoryCall(inner) => {
-            if inner.0 >= inner.1 {
-                return Some(Err(format!("Invalid memory range: [{}, {})", inner.0, inner.1)
-                    .encode()
-                    .into()))
-            }
-
-            // Write the new range to the map at the current call depth + 1
-            let offsets = state
-                .allowed_mem_writes
-                .entry(data.journaled_state.depth() + 1)
-                .or_insert(vec![(0..0x60)]);
-            offsets.push(inner.0..inner.1);
-
-            Ok(Bytes::new())
+            expect_safe_memory(state, inner.0, inner.1, data.journaled_state.depth() + 1)
         }
         _ => return None,
-    })
+    };
+    Some(result)
 }

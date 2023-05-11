@@ -270,6 +270,7 @@ impl ScriptArgs {
         if let Some(txs) = result.transactions.take() {
             script_config.collect_rpcs(&txs);
             script_config.check_multi_chain_constraints(&libraries)?;
+            script_config.check_shanghai_support().await?;
 
             if !script_config.missing_rpc {
                 trace!(target: "script", "creating deployments");

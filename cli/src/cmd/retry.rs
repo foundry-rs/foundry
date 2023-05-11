@@ -46,15 +46,15 @@ mod tests {
 
     #[test]
     fn test_cli() {
-        let args = RetryArgs::parse_from(&["foundry-cli", "--retries", "10"]);
+        let args = RetryArgs::parse_from(["foundry-cli", "--retries", "10"]);
         assert_eq!(args.retries, 10);
         assert_eq!(args.delay, 5);
 
-        let args = RetryArgs::parse_from(&["foundry-cli", "--delay", "10"]);
+        let args = RetryArgs::parse_from(["foundry-cli", "--delay", "10"]);
         assert_eq!(args.retries, 5);
         assert_eq!(args.delay, 10);
 
-        let args = RetryArgs::parse_from(&["foundry-cli", "--retries", "10", "--delay", "10"]);
+        let args = RetryArgs::parse_from(["foundry-cli", "--retries", "10", "--delay", "10"]);
         assert_eq!(args.retries, 10);
         assert_eq!(args.delay, 10);
     }

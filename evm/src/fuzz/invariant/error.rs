@@ -6,7 +6,10 @@ use crate::{
     trace::{load_contracts, TraceKind, Traces},
     CALLER,
 };
-use ethers::{abi::Function, types::Address};
+use ethers::{
+    abi::Function,
+    types::{Address, U256},
+};
 use eyre::{Result, WrapErr};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use proptest::test_runner::TestError;
@@ -114,7 +117,7 @@ impl InvariantFuzzError {
         // Replay each call from the sequence until we break the invariant.
         for (sender, (addr, bytes)) in calls.iter() {
             let call_result = executor
-                .call_raw_committing(*sender, *addr, bytes.0.clone(), 0.into())
+                .call_raw_committing(*sender, *addr, bytes.0.clone(), U256::zero())
                 .expect("bad call to evm");
 
             logs.extend(call_result.logs);
@@ -140,7 +143,7 @@ impl InvariantFuzzError {
             // Checks the invariant.
             if let Some(func) = &self.func {
                 let error_call_result = executor
-                    .call_raw(CALLER, self.addr, func.0.clone(), 0.into())
+                    .call_raw(CALLER, self.addr, func.0.clone(), U256::zero())
                     .expect("bad call to evm");
 
                 if error_call_result.reverted {

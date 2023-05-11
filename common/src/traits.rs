@@ -51,7 +51,7 @@ impl TestFunctionExt for Function {
 
 impl<'a> TestFunctionExt for &'a str {
     fn is_invariant_test(&self) -> bool {
-        self.starts_with("invariant")
+        self.starts_with("invariant") || self.starts_with("statefulFuzz")
     }
 
     fn is_fuzz_test(&self) -> bool {

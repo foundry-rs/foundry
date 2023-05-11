@@ -13,7 +13,7 @@ use ethers::{
         Address, Signature,
     },
 };
-use eyre::{bail, eyre, Result, WrapErr};
+use eyre::{bail, Result, WrapErr};
 use foundry_common::fs;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -133,7 +133,7 @@ pub struct Wallet {
     pub trezor: bool,
 
     /// Use AWS Key Management Service.
-    #[clap(long, help_heading = "Wallet options - remote")]
+    #[clap(long, help_heading = "Wallet options - AWS KMS")]
     pub aws: bool,
 }
 
@@ -201,7 +201,11 @@ impl Wallet {
                 Some(hd_path) => LedgerHDPath::Other(hd_path.clone()),
                 None => LedgerHDPath::LedgerLive(self.mnemonic_index as usize),
             };
-            let ledger = Ledger::new(derivation, chain_id).await?;
+            let ledger = Ledger::new(derivation, chain_id).await.wrap_err_with(|| {
+                "\
+Could not connect to Ledger device.
+Make sure it's connected and unlocked, with no other desktop wallet apps open."
+            })?;
 
             Ok(WalletSigner::Ledger(ledger))
         } else if self.trezor {
@@ -211,7 +215,11 @@ impl Wallet {
             };
 
             // cached to ~/.ethers-rs/trezor/cache/trezor.session
-            let trezor = Trezor::new(derivation, chain_id, None).await?;
+            let trezor = Trezor::new(derivation, chain_id, None).await.wrap_err_with(|| {
+                "\
+Could not connect to Trezor device.
+Make sure it's connected and unlocked, with no other conflicting desktop wallet apps open."
+            })?;
 
             Ok(WalletSigner::Trezor(trezor))
         } else if self.aws {
@@ -230,17 +238,18 @@ impl Wallet {
 
             let maybe_local = self.try_resolve_local_wallet()?;
 
-            let local = maybe_local
-                .ok_or_else(|| eyre::eyre!("\
-                    Error accessing local wallet. Did you set a private key, mnemonic or keystore?\n\
-                    Run `cast send --help` or `forge create --help` and use the corresponding CLI\n\
-                    flag to set your key via:\n\
-                    --private-key, --mnemonic-path, --aws, --interactive, --trezor or --ledger.\n\
-                    \n\
-                    Alternatively, if you're using a local node with unlocked accounts,\n\
-                    use the --unlocked flag and set the `ETH_FROM` environment variable to the address\n\
-                    of the unlocked account you want to use.\
-                "))?;
+            let local = maybe_local.ok_or_else(|| {
+                eyre::eyre!(
+                    "\
+Error accessing local wallet. Did you set a private key, mnemonic or keystore?
+Run `cast send --help` or `forge create --help` and use the corresponding CLI
+flag to set your key via:
+--private-key, --mnemonic-path, --aws, --interactive, --trezor or --ledger.
+Alternatively, if you're using a local node with unlocked accounts,
+use the --unlocked flag and either set the `ETH_FROM` environment variable to the address
+of the unlocked account you want to use, or provide the --from flag with the address directly."
+                )
+            })?;
 
             Ok(WalletSigner::Local(local.with_chain_id(chain_id)))
         }
@@ -316,10 +325,10 @@ pub trait WalletTrait {
         Ok(builder.build()?)
     }
 
-    /// Attempts to find the actual path of the keystore file.
+    /// Ensures the path to the keystore exists.
     ///
-    /// If the path is a directory then we try to find the first keystore file with the correct
-    /// sender address
+    /// if the path is a directory, it bails and asks the user to specify the keystore file
+    /// directly.
     fn find_keystore_file(&self, path: impl AsRef<Path>) -> Result<PathBuf> {
         let path = path.as_ref();
         if !path.exists() {
@@ -327,24 +336,7 @@ pub trait WalletTrait {
         }
 
         if path.is_dir() {
-            let sender =
-                self.sender().ok_or_else(|| eyre!("No sender account configured: $ETH_FROM"))?;
-
-            let (_, file) = walkdir::WalkDir::new(path)
-                .max_depth(2)
-                .into_iter()
-                .filter_map(Result::ok)
-                .filter(|e| e.file_type().is_file())
-                .filter_map(|e| {
-                    fs::read_json_file::<KeystoreFile>(e.path())
-                        .map(|keystore| (keystore, e.path().to_path_buf()))
-                        .ok()
-                })
-                .find(|(keystore, _)| keystore.address == sender)
-                .ok_or_else(|| {
-                    eyre!("No matching keystore file found for {sender:?} in {path:?}")
-                })?;
-            return Ok(file)
+            bail!("Keystore path `{path:?}` is a directory. Please specify the keystore file directly.")
         }
 
         Ok(path.to_path_buf())
@@ -548,9 +540,6 @@ mod tests {
             "--from",
             "560d246fcddc9ea98a8b032c9a2f474efb493c28",
         ]);
-        let file = wallet.find_keystore_file(&keystore).unwrap();
-        assert_eq!(file, keystore_file);
-
         let file = wallet.find_keystore_file(&keystore_file).unwrap();
         assert_eq!(file, keystore_file);
     }

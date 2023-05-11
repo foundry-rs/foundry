@@ -432,8 +432,8 @@ impl Executor {
             ..
         } = result;
 
-        let result = match out {
-            Some(Output::Create(ref data, _)) => data.to_owned(),
+        let result = match &out {
+            Some(Output::Create(data, _)) => data.to_owned(),
             _ => Bytes::default(),
         };
 

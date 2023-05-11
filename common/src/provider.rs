@@ -168,7 +168,7 @@ impl ProviderBuilder {
                 .rate_limit_retries(max_retry)
                 .timeout_retries(timeout_retry)
                 .compute_units_per_second(compute_units_per_second)
-                .build(provider, Box::new(HttpRateLimitRetryPolicy::default())),
+                .build(provider, Box::new(HttpRateLimitRetryPolicy)),
         );
 
         if is_local {
