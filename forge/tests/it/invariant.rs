@@ -30,7 +30,16 @@ fn test_invariant() {
             ),
             (
                 "fuzz/invariant/common/InvariantTest1.t.sol:InvariantTest",
-                vec![("invariant_neverFalse()", false, Some("false.".into()), None, None)],
+                vec![
+                    ("invariant_neverFalse()", false, Some("false.".into()), None, None),
+                    (
+                        "statefulFuzz_neverFalseWithInvariantAlias()",
+                        false,
+                        Some("false.".into()),
+                        None,
+                        None,
+                    ),
+                ],
             ),
             (
                 "fuzz/invariant/target/ExcludeContracts.t.sol:ExcludeContracts",

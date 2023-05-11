@@ -32,4 +32,8 @@ contract InvariantTest is DSTest {
     function invariant_neverFalse() public {
         require(inv.flag1(), "false.");
     }
+
+    function statefulFuzz_neverFalseWithInvariantAlias() public {
+        require(inv.flag1(), "false.");
+    }
 }
