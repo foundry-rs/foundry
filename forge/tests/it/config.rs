@@ -126,6 +126,7 @@ pub fn test_opts() -> TestOptions {
                 max_fuzz_dictionary_addresses: 10_000,
                 max_fuzz_dictionary_values: 10_000,
             },
+            shrink_sequence: true,
         },
         inline_fuzz: Default::default(),
         inline_invariant: Default::default(),

@@ -24,6 +24,8 @@ pub struct InvariantConfig {
     /// The fuzz dictionary configuration
     #[serde(flatten)]
     pub dictionary: FuzzDictionaryConfig,
+    /// Attempt to shrink the failure case to its smallest sequence of calls
+    pub shrink_sequence: bool,
 }
 
 impl Default for InvariantConfig {
@@ -34,6 +36,7 @@ impl Default for InvariantConfig {
             fail_on_revert: false,
             call_override: false,
             dictionary: FuzzDictionaryConfig { dictionary_weight: 80, ..Default::default() },
+            shrink_sequence: true,
         }
     }
 }
@@ -61,6 +64,7 @@ impl InlineConfigParser for InvariantConfig {
                 "depth" => conf_clone.depth = parse_config_u32(key, value)?,
                 "fail-on-revert" => conf_clone.fail_on_revert = parse_config_bool(key, value)?,
                 "call-override" => conf_clone.call_override = parse_config_bool(key, value)?,
+                "shrink-sequence" => conf_clone.shrink_sequence = parse_config_bool(key, value)?,
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key.to_string()))?,
             }
         }
