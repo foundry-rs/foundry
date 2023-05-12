@@ -15,6 +15,7 @@ pub struct DocConfig {
     /// Path to user provided welcome markdown.
     ///
     /// If none is provided, it defaults to `README.md`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub homepage: Option<PathBuf>,
     /// The repository url.
     #[serde(default, skip_serializing_if = "Option::is_none")]
