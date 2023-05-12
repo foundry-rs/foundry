@@ -247,7 +247,7 @@ impl DocBuilder {
             //If not, fall back to src and root readme files, in that order.
             if homepage_or_src_readme.exists() {
                 fs::read_to_string(homepage_or_src_readme)?
-            } else if homepage_or_src_readme.exists() {
+            } else if root_readme.exists() {
                 fs::read_to_string(root_readme)?
             } else {
                 String::new()
