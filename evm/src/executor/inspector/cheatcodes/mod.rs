@@ -29,7 +29,7 @@ use revm::{
 };
 use serde_json::Value;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, VecDeque},
     fs::File,
     io::BufReader,
     ops::Range,
@@ -138,7 +138,7 @@ pub struct Cheatcodes {
     pub expected_calls: ExpectedCallTracker,
 
     /// Expected emits
-    pub expected_emits: Vec<ExpectedEmit>,
+    pub expected_emits: VecDeque<ExpectedEmit>,
 
     /// Map of context depths to memory offset ranges that may be written to within the call depth.
     pub allowed_mem_writes: BTreeMap<u64, Vec<Range<u64>>>,
@@ -536,7 +536,6 @@ where
         topics: &[B256],
         data: &bytes::Bytes,
     ) {
-        // Match logs if `expectEmit` has been called
         if !self.expected_emits.is_empty() {
             handle_expect_emit(
                 self,
@@ -786,21 +785,38 @@ where
             }
         }
 
-        // Handle expected emits at current depth
-        if !self
+        // At the end of the call,
+        // we need to check if we've found all the emits.
+        // We know we've found all the expected emits in the right order
+        // if the queue is fully matched.
+        // If it's not fully matched, then either:
+        // 1. Not enough events were emitted (we'll know this because the amount of times we
+        // inspected events will be less than the size of the queue) 2. The wrong events
+        // were emitted (The inspected events should match the size of the queue, but still some
+        // events will not be matched)
+
+        // First, check that we're at the call depth where the emits were declared from.
+        let should_check_emits = self
             .expected_emits
             .iter()
-            .filter(|expected| expected.depth == data.journaled_state.depth())
-            .all(|expected| expected.found)
-        {
-            return (
-                InstructionResult::Revert,
-                remaining_gas,
-                "Log != expected log".to_string().encode().into(),
-            )
-        } else {
-            // Clear the emits we expected at this depth that have been found
-            self.expected_emits.retain(|expected| !expected.found)
+            .any(|expected| expected.depth == data.journaled_state.depth()) &&
+            // Ignore staticcalls
+            !call.is_static;
+        // If so, check the emits
+        if should_check_emits {
+            // Not all emits were matched.
+            if self.expected_emits.iter().any(|expected| !expected.found) {
+                return (
+                    InstructionResult::Revert,
+                    remaining_gas,
+                    "Log != expected log".to_string().encode().into(),
+                )
+            } else {
+                // All emits were found, we're good.
+                // Clear the queue, as we expect the user to declare more events for the next call
+                // if they wanna match further events.
+                self.expected_emits.clear()
+            }
         }
 
         // If the depth is 0, then this is the root call terminating
@@ -871,11 +887,14 @@ where
             }
 
             // Check if we have any leftover expected emits
+            // First, if any emits were found at the root call, then we its ok and we remove them.
+            self.expected_emits.retain(|expected| !expected.found);
+            // If not empty, we got mismatched emits
             if !self.expected_emits.is_empty() {
                 return (
                     InstructionResult::Revert,
                     remaining_gas,
-                    "Expected an emit, but no logs were emitted afterward"
+                    "Expected an emit, but no logs were emitted afterward. You might have mismatched events or not enough events were emitted."
                         .to_string()
                         .encode()
                         .into(),
