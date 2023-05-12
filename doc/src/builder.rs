@@ -232,30 +232,28 @@ impl DocBuilder {
 
         // Write readme content if any
         let homepage_content = {
-            
-            let src_readme = self.sources.join(Self::README);
+            // Default to the homepage README if it's available.
+            // If not, use the src README as a fallback.
+            let homepage_or_src_readme = self
+                .config
+                .homepage
+                .as_ref()
+                .map(|homepage| self.root.join(homepage))
+                .unwrap_or_else(|| self.sources.join(Self::README));
+            // Grab the root readme.
             let root_readme = self.root.join(Self::README);
-            
+
             //Check to see if there is a 'homepage' option specified in config.
-            //If not, fall back to src and root readme files.
-            let homepage_path = {
-                if self.config.homepage.is_file() {
-                    Some(self.config.homepage.clone())
-                } else if src_readme.exists() {
-                    Some(src_readme)
-                }else if root_readme.exists() {
-                    Some(root_readme)
-                }else {
-                    None                
-                }
-            };
-            
-            match homepage_path {
-                Some(path) => fs::read_to_string(path)?,
-                None => String::new(),
+            //If not, fall back to src and root readme files, in that order.
+            if homepage_or_src_readme.exists() {
+                fs::read_to_string(homepage_or_src_readme)?
+            } else if homepage_or_src_readme.exists() {
+                fs::read_to_string(root_readme)?
+            } else {
+                String::new()
             }
-           
         };
+
         let readme_path = out_dir_src.join(Self::README);
         fs::write(&readme_path, homepage_content)?;
 
