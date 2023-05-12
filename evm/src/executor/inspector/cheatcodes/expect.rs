@@ -133,7 +133,7 @@ pub fn handle_expect_emit(state: &mut Cheatcodes, log: RawLog, address: &Address
     // First, we can return early if all events have been matched.
     // This allows a contract to arbitrarily emit more events than expected (additive behavior),
     // as long as all the previous events were matched in the order they were expected to be.
-    if !state.expected_emits.iter().any(|expected| !expected.found) {
+    if state.expected_emits.iter().all(|expected| expected.found) {
         return
     }
 
