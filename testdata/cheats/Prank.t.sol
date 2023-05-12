@@ -118,6 +118,159 @@ contract PrankTest is DSTest {
         );
     }
 
+    function testPrank1AfterPrank0(address sender, address origin) public {
+        // Perform the prank
+        address oldOrigin = tx.origin;
+        Victim victim = new Victim();
+        cheats.prank(sender);
+        victim.assertCallerAndOrigin(
+            sender, "msg.sender was not set during prank", oldOrigin, "tx.origin was not set during prank"
+        );
+
+        // Ensure we cleaned up correctly
+        victim.assertCallerAndOrigin(
+            address(this), "msg.sender was not cleaned up", oldOrigin, "tx.origin invariant failed"
+        );
+
+        // Overwrite the prank
+        cheats.prank(sender, origin);
+        victim.assertCallerAndOrigin(
+            sender, "msg.sender was not set during prank", origin, "tx.origin invariant failed"
+        );
+
+        // Ensure we cleaned up correctly
+        victim.assertCallerAndOrigin(
+            address(this), "msg.sender was not cleaned up", oldOrigin, "tx.origin invariant failed"
+        );
+    }
+
+    function testPrank0AfterPrank1(address sender, address origin) public {
+        // Perform the prank
+        address oldOrigin = tx.origin;
+        Victim victim = new Victim();
+        cheats.prank(sender, origin);
+        victim.assertCallerAndOrigin(
+            sender, "msg.sender was not set during prank", origin, "tx.origin was not set during prank"
+        );
+
+        // Ensure we cleaned up correctly
+        victim.assertCallerAndOrigin(
+            address(this), "msg.sender was not cleaned up", oldOrigin, "tx.origin invariant failed"
+        );
+
+        // Overwrite the prank
+        cheats.prank(sender);
+        victim.assertCallerAndOrigin(
+            sender, "msg.sender was not set during prank", oldOrigin, "tx.origin invariant failed"
+        );
+
+        // Ensure we cleaned up correctly
+        victim.assertCallerAndOrigin(
+            address(this), "msg.sender was not cleaned up", oldOrigin, "tx.origin invariant failed"
+        );
+    }
+
+    function testStartPrank0AfterPrank1(address sender, address origin) public {
+        // Perform the prank
+        address oldOrigin = tx.origin;
+        Victim victim = new Victim();
+        cheats.startPrank(sender, origin);
+        victim.assertCallerAndOrigin(
+            sender, "msg.sender was not set during prank", origin, "tx.origin was not set during prank"
+        );
+
+        // Overwrite the prank
+        cheats.startPrank(sender);
+        victim.assertCallerAndOrigin(
+            sender, "msg.sender was not set during prank", oldOrigin, "tx.origin invariant failed"
+        );
+
+        cheats.stopPrank();
+        // Ensure we cleaned up correctly after stopping the prank
+        victim.assertCallerAndOrigin(
+            address(this), "msg.sender was not cleaned up", oldOrigin, "tx.origin invariant failed"
+        );
+    }
+
+    function testStartPrank1AfterStartPrank0(address sender, address origin) public {
+        // Perform the prank
+        address oldOrigin = tx.origin;
+        Victim victim = new Victim();
+        cheats.startPrank(sender);
+        victim.assertCallerAndOrigin(
+            sender, "msg.sender was not set during prank", oldOrigin, "tx.origin was set during prank incorrectly"
+        );
+
+        // Ensure prank is still up as startPrank covers multiple calls
+        victim.assertCallerAndOrigin(
+            sender, "msg.sender was cleaned up incorrectly", oldOrigin, "tx.origin invariant failed"
+        );
+
+        // Overwrite the prank
+        cheats.startPrank(sender, origin);
+        victim.assertCallerAndOrigin(sender, "msg.sender was not set during prank", origin, "tx.origin was not set");
+
+        // Ensure prank is still up as startPrank covers multiple calls
+        victim.assertCallerAndOrigin(
+            sender, "msg.sender was cleaned up incorrectly", origin, "tx.origin invariant failed"
+        );
+
+        cheats.stopPrank();
+        // Ensure everything is back to normal after stopPrank
+        victim.assertCallerAndOrigin(
+            address(this), "msg.sender was not cleaned up", oldOrigin, "tx.origin invariant failed"
+        );
+    }
+
+    function testFailOverwriteUnusedPrank(address sender, address origin) public {
+        // Set the prank, but not use it
+        address oldOrigin = tx.origin;
+        Victim victim = new Victim();
+        cheats.startPrank(sender, origin);
+        // try to overwrite the prank. This should fail.
+        cheats.startPrank(address(this), origin);
+    }
+
+    function testFailOverwriteUnusedPrankAfterSuccessfulPrank(address sender, address origin) public {
+        // Set the prank, but not use it
+        address oldOrigin = tx.origin;
+        Victim victim = new Victim();
+        cheats.startPrank(sender, origin);
+        victim.assertCallerAndOrigin(
+            sender, "msg.sender was not set during prank", origin, "tx.origin was set during prank incorrectly"
+        );
+        cheats.startPrank(address(this), origin);
+        // try to overwrite the prank. This should fail.
+        cheats.startPrank(sender, origin);
+    }
+
+    function testStartPrank0AfterStartPrank1(address sender, address origin) public {
+        // Perform the prank
+        address oldOrigin = tx.origin;
+        Victim victim = new Victim();
+        cheats.startPrank(sender, origin);
+        victim.assertCallerAndOrigin(
+            sender, "msg.sender was not set during prank", origin, "tx.origin was not set during prank"
+        );
+
+        // Ensure prank is still ongoing as we haven't called stopPrank
+        victim.assertCallerAndOrigin(
+            sender, "msg.sender was cleaned up incorrectly", origin, "tx.origin was cleaned up incorrectly"
+        );
+
+        // Overwrite the prank
+        cheats.startPrank(sender);
+        victim.assertCallerAndOrigin(
+            sender, "msg.sender was not set during prank", oldOrigin, "tx.origin was not reset correctly"
+        );
+
+        cheats.stopPrank();
+        // Ensure we cleaned up correctly
+        victim.assertCallerAndOrigin(
+            address(this), "msg.sender was not cleaned up", oldOrigin, "tx.origin invariant failed"
+        );
+    }
+
     function testPrankConstructorSender(address sender) public {
         cheats.prank(sender);
         ConstructorVictim victim = new ConstructorVictim(

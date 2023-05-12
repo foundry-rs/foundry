@@ -31,6 +31,8 @@ pub struct InvariantFuzzError {
     pub func: Option<ethers::prelude::Bytes>,
     /// Inner fuzzing Sequence coming from overriding calls.
     pub inner_sequence: Vec<Option<BasicTxDetails>>,
+    /// Shrink the failed test case to the smallest sequence.
+    pub shrink: bool,
 }
 
 impl InvariantFuzzError {
@@ -40,6 +42,7 @@ impl InvariantFuzzError {
         calldata: &[BasicTxDetails],
         call_result: RawCallResult,
         inner_sequence: &[Option<BasicTxDetails>],
+        shrink_sequence: bool,
     ) -> Self {
         let mut func = None;
         let origin: String;
@@ -80,6 +83,7 @@ impl InvariantFuzzError {
             addr: invariant_contract.address,
             func,
             inner_sequence: inner_sequence.to_vec(),
+            shrink: shrink_sequence,
         }
     }
 
@@ -99,7 +103,11 @@ impl InvariantFuzzError {
             TestError::Fail(_, ref calls) => calls,
         };
 
-        let calls = self.try_shrinking(calls, &executor);
+        if self.shrink {
+            let _ = self.try_shrinking(calls, &executor);
+        } else {
+            trace!(target: "forge::test", "Shrinking disabled.");
+        }
 
         // We want traces for a failed case.
         executor.set_tracing(true);

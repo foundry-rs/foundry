@@ -92,6 +92,9 @@ use crate::fs_permissions::PathPermission;
 pub use invariant::InvariantConfig;
 use providers::remappings::RemappingsProvider;
 
+mod inline;
+pub use inline::{validate_profiles, InlineConfig, InlineConfigError, InlineConfigParser, NatSpec};
+
 /// Foundry configuration
 ///
 /// # Defaults
@@ -3374,6 +3377,7 @@ mod tests {
                 depth = 15
                 fail_on_revert = false
                 call_override = false
+                shrink_sequence = true
             "#,
             )?;
 

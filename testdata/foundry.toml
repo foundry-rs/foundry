@@ -16,6 +16,7 @@ ffi = false
 force = false
 invariant_fail_on_revert = false
 invariant_call_override = false
+invariant_shrink_sequence = true
 gas_limit = 9223372036854775807
 gas_price = 0
 gas_reports = ['*']
