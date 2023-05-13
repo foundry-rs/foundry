@@ -2375,6 +2375,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "foundry-abi"
+version = "0.1.0"
+dependencies = [
+ "ethers-contract",
+ "ethers-contract-abigen",
+ "ethers-core",
+ "ethers-providers",
+ "eyre",
+ "foundry-macros",
+ "syn 2.0.15",
+]
+
+[[package]]
 name = "foundry-binder"
 version = "0.1.0"
 dependencies = [
@@ -2490,6 +2503,7 @@ dependencies = [
  "ethers-solc",
  "eyre",
  "foundry-config",
+ "foundry-macros",
  "is-terminal",
  "once_cell",
  "regex",
@@ -2544,6 +2558,7 @@ dependencies = [
  "bytes",
  "ethers",
  "eyre",
+ "foundry-abi",
  "foundry-common",
  "foundry-config",
  "foundry-macros",
@@ -2575,8 +2590,9 @@ name = "foundry-macros"
 version = "0.1.0"
 dependencies = [
  "ethers-core",
- "foundry-common",
  "foundry-macros-impl",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
