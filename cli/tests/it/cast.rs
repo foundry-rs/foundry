@@ -92,7 +92,6 @@ casttest!(cast_wallet_sign_message_utf8_data, |_: TestProject, mut cmd: TestComm
         "sign",
         "--private-key",
         "0x0000000000000000000000000000000000000000000000000000000000000001",
-        "message",
         "test",
     ]);
     let output = cmd.stdout_lossy();
@@ -106,7 +105,6 @@ casttest!(cast_wallet_sign_message_hex_data, |_: TestProject, mut cmd: TestComma
         "sign",
         "--private-key",
         "0x0000000000000000000000000000000000000000000000000000000000000001",
-        "message",
         "0x0000000000000000000000000000000000000000000000000000000000000000",
     ]);
     let output = cmd.stdout_lossy();
@@ -120,7 +118,7 @@ casttest!(cast_wallet_sign_typed_data_string, |_: TestProject, mut cmd: TestComm
         "sign",
         "--private-key",
         "0x0000000000000000000000000000000000000000000000000000000000000001",
-        "typed-data",
+        "--data",
         "{\"types\": {\"EIP712Domain\": [{\"name\": \"name\",\"type\": \"string\"},{\"name\": \"version\",\"type\": \"string\"},{\"name\": \"chainId\",\"type\": \"uint256\"},{\"name\": \"verifyingContract\",\"type\": \"address\"}],\"Message\": [{\"name\": \"data\",\"type\": \"string\"}]},\"primaryType\": \"Message\",\"domain\": {\"name\": \"example.metamask.io\",\"version\": \"1\",\"chainId\": \"1\",\"verifyingContract\": \"0x0000000000000000000000000000000000000000\"},\"message\": {\"data\": \"Hello!\"}}",
     ]);
     let output = cmd.stdout_lossy();
@@ -134,8 +132,8 @@ casttest!(cast_wallet_sign_typed_data_file, |_: TestProject, mut cmd: TestComman
         "sign",
         "--private-key",
         "0x0000000000000000000000000000000000000000000000000000000000000001",
-        "typed-data",
-        "-f",
+        "--data",
+        "--from-file",
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/sign_typed_data.json")
             .into_os_string()

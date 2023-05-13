@@ -1,7 +1,7 @@
 use crate::opts::error::PrivateKeyError;
 use async_trait::async_trait;
 use cast::{AwsChainProvider, AwsClient, AwsHttpClient, AwsRegion, KmsClient};
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use ethers::{
     signers::{
         coins_bip39::English, AwsSigner, AwsSignerError, HDPath as LedgerHDPath, Ledger,
@@ -532,32 +532,6 @@ impl Signer for &WalletSigner {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeystoreFile {
     pub address: Address,
-}
-
-#[derive(Debug, Subcommand)]
-#[clap(
-    about = "Sign a message or typed data",
-    next_display_order = None
-)]
-pub enum SignType {
-    #[clap(
-        name = "message",
-        about = "Sign a message. The message will be prefixed with the Ethereum Signed Message header and hashed before signing."
-    )]
-    Message {
-        #[clap(value_name = "MESSAGE")]
-        message: String,
-    },
-    #[clap(
-        name = "typed-data",
-        about = "Sign typed data. The data will be combined and hashed using the EIP712 specification before signing. The data should be formatted as JSON."
-    )]
-    TypedData {
-        #[clap(short = 'f')]
-        from_file: bool,
-        #[clap(value_name = "JSON")]
-        data: String,
-    },
 }
 
 #[cfg(test)]

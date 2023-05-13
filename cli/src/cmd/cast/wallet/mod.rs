@@ -4,7 +4,7 @@ pub mod vanity;
 
 use crate::{
     cmd::{cast::wallet::vanity::VanityArgs, Cmd},
-    opts::{SignType, Wallet},
+    opts::Wallet,
 };
 use cast::SimpleCast;
 use clap::Parser;
@@ -16,7 +16,7 @@ use ethers::{
 use eyre::Context;
 use std::{fs::File, io::BufReader};
 
-/// CLI arguments for `cast send`.
+/// CLI arguments for `cast wallet`.
 #[derive(Debug, Parser)]
 pub enum WalletSubcommands {
     /// Create a new random keypair.
@@ -59,8 +59,29 @@ pub enum WalletSubcommands {
     /// Sign a message or typed data.
     #[clap(visible_alias = "s")]
     Sign {
-        #[clap(subcommand)]
-        command: Option<SignType>,
+        /// The message or typed data to sign.
+        ///
+        /// Messages starting with 0x are expected to be hex encoded,
+        /// which get decoded before being signed.
+        /// The message will be prefixed with the Ethereum Signed Message header and hashed before
+        /// signing.
+        ///
+        /// Typed data can be provided as a json string or a file name.
+        /// Use --data flag to denote the message is a string of typed data.
+        /// Use --data --from-file to denote the message is a file name containing typed data.
+        /// The data will be combined and hashed using the EIP712 specification before signing.
+        /// The data should be formatted as JSON.
+        message: String,
+
+        /// If provided, the message will be treated as typed data.
+        #[clap(long)]
+        data: bool,
+
+        /// If provided, the message will be treated as a file name containing typed data. Requires
+        /// --data.
+        #[clap(long, requires = "data")]
+        from_file: bool,
+
         #[clap(flatten)]
         wallet: Wallet,
     },
@@ -124,37 +145,30 @@ impl WalletSubcommands {
                 let addr = wallet.address();
                 println!("{}", SimpleCast::to_checksum_address(&addr));
             }
-            WalletSubcommands::Sign { command, wallet } => {
+            WalletSubcommands::Sign { message, data, from_file, wallet } => {
                 let wallet = wallet.signer(0).await?;
-                match command {
-                    Some(SignType::Message { message }) => {
-                        let sig = match message.strip_prefix("0x") {
-                            Some(data) => {
-                                let data_bytes: Vec<u8> = hex::decode(data)
-                                    .wrap_err("Could not decode 0x-prefixed string.")?;
-                                wallet.sign_message(data_bytes).await?
-                            }
-                            None => wallet.sign_message(message).await?,
-                        };
-                        println!("0x{sig}");
+                let sig = if data {
+                    let typed_data: TypedData = if from_file {
+                        // data is a file name, read json from file
+                        let file = File::open(&message)?;
+                        let reader = BufReader::new(file);
+                        serde_json::from_reader(reader)?
+                    } else {
+                        // data is a json string
+                        serde_json::from_str(&message)?
+                    };
+                    wallet.sign_typed_data(&typed_data).await?
+                } else {
+                    match message.strip_prefix("0x") {
+                        Some(data) => {
+                            let data_bytes: Vec<u8> = hex::decode(data)
+                                .wrap_err("Could not decode 0x-prefixed string.")?;
+                            wallet.sign_message(data_bytes).await?
+                        }
+                        None => wallet.sign_message(message).await?,
                     }
-                    Some(SignType::TypedData { from_file, data }) => {
-                        let typed_data: TypedData = if from_file {
-                            // data is a file name, read json from file
-                            let file = File::open(&data)?;
-                            let reader = BufReader::new(file);
-                            serde_json::from_reader(reader)?
-                        } else {
-                            // data is a json string
-                            serde_json::from_str(&data)?
-                        };
-                        let sig = wallet.sign_typed_data(&typed_data).await?;
-                        println!("0x{sig}");
-                    }
-                    None => {
-                        println!("No subcommand provided. Please provide a subcommand for the type of data to sign.")
-                    }
-                }
+                };
+                println!("0x{sig}");
             }
             WalletSubcommands::Verify { message, signature, address } => {
                 match signature.verify(message, address) {
@@ -169,5 +183,68 @@ impl WalletSubcommands {
         };
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_parse_wallet_sign_message() {
+        let args = WalletSubcommands::parse_from(["foundry-cli", "sign", "deadbeef"]);
+        match args {
+            WalletSubcommands::Sign { message, data, from_file, .. } => {
+                assert_eq!(message, "deadbeef".to_string());
+                assert_eq!(data, false);
+                assert_eq!(from_file, false);
+            }
+            _ => panic!("expected WalletSubcommands::Sign"),
+        }
+    }
+
+    #[test]
+    fn can_parse_wallet_sign_hex_message() {
+        let args = WalletSubcommands::parse_from(["foundry-cli", "sign", "0xdeadbeef"]);
+        match args {
+            WalletSubcommands::Sign { message, data, from_file, .. } => {
+                assert_eq!(message, "0xdeadbeef".to_string());
+                assert_eq!(data, false);
+                assert_eq!(from_file, false);
+            }
+            _ => panic!("expected WalletSubcommands::Sign"),
+        }
+    }
+
+    #[test]
+    fn can_parse_wallet_sign_data() {
+        let args = WalletSubcommands::parse_from(["foundry-cli", "sign", "--data", "{ ... }"]);
+        match args {
+            WalletSubcommands::Sign { message, data, from_file, .. } => {
+                assert_eq!(message, "{ ... }".to_string());
+                assert_eq!(data, true);
+                assert_eq!(from_file, false);
+            }
+            _ => panic!("expected WalletSubcommands::Sign"),
+        }
+    }
+
+    #[test]
+    fn can_parse_wallet_sign_data_file() {
+        let args = WalletSubcommands::parse_from([
+            "foundry-cli",
+            "sign",
+            "--data",
+            "--from-file",
+            "tests/data/typed_data.json",
+        ]);
+        match args {
+            WalletSubcommands::Sign { message, data, from_file, .. } => {
+                assert_eq!(message, "tests/data/typed_data.json".to_string());
+                assert_eq!(data, true);
+                assert_eq!(from_file, true);
+            }
+            _ => panic!("expected WalletSubcommands::Sign"),
+        }
     }
 }
