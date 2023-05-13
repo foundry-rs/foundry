@@ -697,7 +697,7 @@ mod tests {
     use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
     const ENDPOINT: &str = "https://mainnet.infura.io/v3/40bee2d557ed4b52908c3e62345a3d8b";
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn shared_backend() {
         let provider = get_http_provider(ENDPOINT);
         let meta = BlockchainDbMeta {
