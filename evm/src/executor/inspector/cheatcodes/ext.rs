@@ -3,7 +3,7 @@ use crate::{abi::HEVMCalls, executor::inspector::cheatcodes::util};
 use ethers::{
     abi::{self, AbiEncode, JsonAbi, ParamType, Token},
     prelude::artifacts::CompactContractBytecode,
-    types::{Bytes, *},
+    types::*,
 };
 use foundry_common::{fmt::*, fs, get_artifact_path};
 use foundry_config::fs_permissions::FsAccessKind;
@@ -59,7 +59,7 @@ enum ArtifactBytecode {
 }
 
 impl ArtifactBytecode {
-    fn into_bytecode(self) -> Option<ethers::types::Bytes> {
+    fn into_bytecode(self) -> Option<Bytes> {
         match self {
             ArtifactBytecode::Hardhat(inner) => Some(inner.bytecode),
             ArtifactBytecode::Forge(inner) => {
@@ -70,7 +70,7 @@ impl ArtifactBytecode {
         }
     }
 
-    fn into_deployed_bytecode(self) -> Option<ethers::types::Bytes> {
+    fn into_deployed_bytecode(self) -> Option<Bytes> {
         match self {
             ArtifactBytecode::Hardhat(inner) => Some(inner.deployed_bytecode),
             ArtifactBytecode::Forge(inner) => inner.deployed_bytecode.and_then(|bytecode| {
@@ -86,19 +86,14 @@ impl ArtifactBytecode {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct HardhatArtifact {
-    #[serde(deserialize_with = "ethers::solc::artifacts::deserialize_bytes")]
-    bytecode: ethers::types::Bytes,
-    #[serde(deserialize_with = "ethers::solc::artifacts::deserialize_bytes")]
-    deployed_bytecode: ethers::types::Bytes,
+    bytecode: Bytes,
+    deployed_bytecode: Bytes,
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct HuffArtifact {
-    #[serde(deserialize_with = "ethers::solc::artifacts::deserialize_bytes")]
-    bytecode: ethers::types::Bytes,
-    #[serde(deserialize_with = "ethers::solc::artifacts::deserialize_bytes")]
-    runtime: ethers::types::Bytes,
+    bytecode: Bytes,
+    runtime: Bytes,
 }
 
 /// Returns the _deployed_ bytecode (`bytecode`) of the matching artifact

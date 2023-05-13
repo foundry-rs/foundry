@@ -8,7 +8,7 @@ contract DealTest is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
 
     function testDeal(uint256 amount) public {
-        address target = address(1);
+        address target = address(10);
         assertEq(target.balance, 0, "initial balance incorrect");
 
         // Give half the amount

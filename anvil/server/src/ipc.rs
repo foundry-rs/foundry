@@ -150,7 +150,6 @@ impl tokio_util::codec::Decoder for JsonRpcCodec {
             } else if is_whitespace(byte) {
                 whitespaces += 1;
             }
-
             is_escaped = byte == b'\\' && !is_escaped && in_str;
 
             if depth == 0 && idx != start_idx && idx - start_idx + 1 > whitespaces {

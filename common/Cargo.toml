@@ -10,6 +10,7 @@ repository = "https://github.com/foundry-rs/foundry"
 [dependencies]
 # foundry internal
 foundry-config = { path = "../config" }
+foundry-macros = { path = "../macros" }
 
 # eth
 ethers-core = { workspace = true }

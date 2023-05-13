@@ -1,5 +1,5 @@
 use super::{Cheatcodes, Result};
-use crate::abi::{DirEntry, FsMetadata, HEVMCalls};
+use crate::abi::hevm::{DirEntry, FsMetadata, HEVMCalls};
 use ethers::{
     abi::{self, AbiEncode, Token, Tokenize},
     types::Bytes,

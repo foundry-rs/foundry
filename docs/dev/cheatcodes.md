@@ -9,10 +9,10 @@ as test for specific reverts and events, Foundry is shipped with a set of cheat 
 ## `revm` `Inspector`
 
 To understand how cheat codes are implemented, we first need to look
-at [`revm::Inspector`] (https://docs.rs/revm/latest/revm/trait.Inspector.html), a trait that provides a set of event
+at [`revm::Inspector`](https://docs.rs/revm/latest/revm/trait.Inspector.html), a trait that provides a set of event
 hooks to be notified at certain stages of EVM execution.
 
-For example `Inspector::call` is called wen the EVM is about to execute a call:
+For example [`Inspector::call`](https://docs.rs/revm/latest/revm/trait.Inspector.html#method.call) is called wen the EVM is about to execute a call:
 
 ```rust
  fn call(
@@ -20,7 +20,7 @@ For example `Inspector::call` is called wen the EVM is about to execute a call:
     _data: &mut EVMData<'_, DB>,
     _inputs: &mut CallInputs,
     _is_static: bool
-) -> (Return, Gas, Bytes) { ... }
+) -> (InstructionResult, Gas, Bytes) { ... }
 ```
 
 ## [Foundry Inspectors](../../evm/src/executor/inspector)
@@ -38,7 +38,7 @@ The concept of cheat codes and cheat code inspector is very simple.
 
 In solidity cheat codes are calls to a specific address, the cheat code handler address:
 
-`keccak(address(bytes20(uint160(uint256(keccak256('hevm cheat code'))))))`: 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D
+`address(uint160(uint256(keccak256('hevm cheat code'))))`: 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D
 
 which can be initialized like `Cheats constant cheats = Cheats(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);`, when
 inheriting from `forge-std/Test.sol` it can be accessed via `vm.<cheatcode>` directly.

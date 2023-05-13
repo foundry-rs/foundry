@@ -1,4 +1,4 @@
-//! Formatting helpers for [`Token`](ethers_core::abi::Token)
+//! Formatting helpers for [`Token`]s.
 
 use ethers_core::{abi::Token, types::I256, utils, utils::hex};
 use std::{fmt, fmt::Write};
@@ -6,12 +6,13 @@ use std::{fmt, fmt::Write};
 /// Wrapper that pretty formats a token
 pub struct TokenDisplay<'a>(pub &'a Token);
 
-impl<'a> fmt::Display for TokenDisplay<'a> {
+impl fmt::Display for TokenDisplay<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt_token(f, self.0)
     }
 }
 
+/// Recursively formats an ABI token.
 fn fmt_token(f: &mut fmt::Formatter, item: &Token) -> fmt::Result {
     match item {
         Token::Address(inner) => {

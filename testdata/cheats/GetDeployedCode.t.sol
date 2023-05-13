@@ -33,8 +33,8 @@ contract GetDeployedCodeTest is DSTest {
         Override over = Override(overrideAddress);
 
         vm.expectEmit(true, false, false, true);
-        over.emitPayload(address(0), "hello");
         emit Payload(address(this), address(0), "hello");
+        over.emitPayload(address(0), "hello");
     }
 }
 

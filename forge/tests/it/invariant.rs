@@ -13,7 +13,7 @@ fn test_invariant() {
         .test(
             &Filter::new(".*", ".*", ".*fuzz/invariant/(target|targetAbi|common)"),
             None,
-            TEST_OPTS,
+            test_opts(),
         )
         .unwrap();
 
@@ -30,7 +30,16 @@ fn test_invariant() {
             ),
             (
                 "fuzz/invariant/common/InvariantTest1.t.sol:InvariantTest",
-                vec![("invariant_neverFalse()", false, Some("false.".into()), None, None)],
+                vec![
+                    ("invariant_neverFalse()", false, Some("false.".into()), None, None),
+                    (
+                        "statefulFuzz_neverFalseWithInvariantAlias()",
+                        false,
+                        Some("false.".into()),
+                        None,
+                        None,
+                    ),
+                ],
             ),
             (
                 "fuzz/invariant/target/ExcludeContracts.t.sol:ExcludeContracts",
@@ -79,9 +88,9 @@ fn test_invariant() {
 fn test_invariant_override() {
     let mut runner = runner();
 
-    let mut opts = TEST_OPTS;
+    let mut opts = test_opts();
     opts.invariant.call_override = true;
-    runner.test_options = opts;
+    runner.test_options = opts.clone();
 
     let results = runner
         .test(
@@ -104,10 +113,10 @@ fn test_invariant_override() {
 fn test_invariant_storage() {
     let mut runner = runner();
 
-    let mut opts = TEST_OPTS;
+    let mut opts = test_opts();
     opts.invariant.depth = 100;
     opts.fuzz.seed = Some(U256::from(6u32));
-    runner.test_options = opts;
+    runner.test_options = opts.clone();
 
     let results = runner
         .test(
@@ -137,9 +146,9 @@ fn test_invariant_storage() {
 fn test_invariant_shrink() {
     let mut runner = runner();
 
-    let mut opts = TEST_OPTS;
+    let mut opts = test_opts();
     opts.fuzz.seed = Some(U256::from(102u32));
-    runner.test_options = opts;
+    runner.test_options = opts.clone();
 
     let results = runner
         .test(
