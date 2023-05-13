@@ -2490,6 +2490,7 @@ dependencies = [
  "ethers-solc",
  "eyre",
  "foundry-config",
+ "foundry-macros",
  "is-terminal",
  "once_cell",
  "regex",
@@ -2575,8 +2576,9 @@ name = "foundry-macros"
 version = "0.1.0"
 dependencies = [
  "ethers-core",
- "foundry-common",
  "foundry-macros-impl",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
