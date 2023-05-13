@@ -4,6 +4,7 @@ members = [
     "anvil/core",
     "anvil/rpc",
     "anvil/server",
+    "abi",
     "binder",
     "cast",
     "chisel",
@@ -63,6 +64,7 @@ ethers = { version = "2.0.4", default-features = false }
 ethers-addressbook = { version = "2.0.4", default-features = false }
 ethers-core = { version = "2.0.4", default-features = false }
 ethers-contract = { version = "2.0.4", default-features = false }
+ethers-contract-abigen = { version = "2.0.4", default-features = false }
 ethers-providers = { version = "2.0.4", default-features = false }
 ethers-signers = { version = "2.0.4", default-features = false }
 ethers-middleware = { version = "2.0.4", default-features = false }
@@ -73,6 +75,7 @@ ethers-solc = { version = "2.0.4", default-features = false }
 # ethers = { path = "../ethers-rs/ethers" }
 # ethers-addressbook = { path = "../ethers-rs/ethers-addressbook" }
 # ethers-contract = { path = "../ethers-rs/ethers-contract" }
+# ethers-contract-abigen = { path = "../ethers-rs/ethers-contract/ethers-contract-abigen" }
 # ethers-core = { path = "../ethers-rs/ethers-core" }
 # ethers-etherscan = { path = "../ethers-rs/ethers-etherscan" }
 # ethers-middleware = { path = "../ethers-rs/ethers-middleware" }

@@ -8,6 +8,7 @@ repository = "https://github.com/foundry-rs/foundry"
 keywords = ["ethereum", "web3", "evm"]
 
 [dependencies]
+foundry-abi = { path = "../abi" }
 foundry-common = { path = "../common" }
 foundry-config = { path = "../config" }
 foundry-macros = { path = "../macros" }
@@ -16,7 +17,7 @@ foundry-macros = { path = "../macros" }
 serde_json = "1.0.95"
 serde = "1.0.159"
 hex = "0.4.3"
-ethers = { workspace = true, features = ["solc-full", "abigen", "ethers-solc"] }
+ethers = { workspace = true, features = ["ethers-solc"] }
 jsonpath_lib = "0.3.0"
 
 # Error handling

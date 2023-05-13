@@ -1,10 +1,10 @@
 use super::{AddressIdentity, TraceIdentifier};
+use crate::utils::RuntimeOrHandle;
 use ethers::{
     abi::Address,
     etherscan,
     etherscan::contract::{ContractMetadata, Metadata},
     prelude::{artifacts::ContractBytecodeSome, errors::EtherscanError, ArtifactId},
-    solc::utils::RuntimeOrHandle,
     types::H160,
 };
 use foundry_common::compile;
