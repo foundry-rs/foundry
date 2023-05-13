@@ -1,5 +1,5 @@
 //! Foundry's procedural macros.
-//! 
+//!
 //! Also includes traits and other utilities used by the macros.
 
 pub mod fmt;

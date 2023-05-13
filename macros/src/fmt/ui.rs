@@ -14,7 +14,7 @@ const NAME_COLUMN_LEN: usize = 20usize;
 /// # Examples
 ///
 /// ```
-/// use foundry_common::fmt::UIfmt;
+/// use foundry_macros::fmt::UIfmt;
 /// let boolean: bool = true;
 /// let string = boolean.pretty();
 /// ```
