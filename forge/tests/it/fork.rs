@@ -18,7 +18,7 @@ fn test_cheats_fork_revert() {
                 &format!(".*cheats{RE_PATH_SEPARATOR}Fork"),
             ),
             None,
-            TEST_OPTS,
+            test_opts(),
         )
         .unwrap();
     assert_eq!(suite_result.len(), 1);

@@ -15,7 +15,7 @@ fn test_fuzz() {
                 .exclude_tests(r#"invariantCounter|testIncrement\(address\)|testNeedle\(uint256\)"#)
                 .exclude_paths("invariant"),
             None,
-            TEST_OPTS,
+            test_opts(),
         )
         .unwrap();
 
@@ -53,12 +53,12 @@ fn test_fuzz() {
 fn test_fuzz_collection() {
     let mut runner = runner();
 
-    let mut opts = TEST_OPTS;
+    let mut opts = test_opts();
     opts.invariant.depth = 100;
     opts.invariant.runs = 1000;
     opts.fuzz.runs = 1000;
     opts.fuzz.seed = Some(U256::from(6u32));
-    runner.test_options = opts;
+    runner.test_options = opts.clone();
 
     let results =
         runner.test(&Filter::new(".*", ".*", ".*fuzz/FuzzCollection.t.sol"), None, opts).unwrap();

@@ -3,7 +3,10 @@ use crate::{
     abi::HEVMCalls,
     executor::{
         backend::DatabaseExt,
-        inspector::cheatcodes::{util::with_journaled_account, DealRecord},
+        inspector::cheatcodes::{
+            util::{is_potential_precompile, with_journaled_account},
+            DealRecord,
+        },
     },
     utils::{b160_to_h160, h160_to_b160, ru256_to_u256, u256_to_ru256},
 };
@@ -13,7 +16,10 @@ use ethers::{
     types::{Address, Bytes, U256},
 };
 use foundry_config::Config;
-use revm::{primitives::Bytecode, Database, EVMData};
+use revm::{
+    primitives::{Bytecode, SpecId, B256},
+    Database, EVMData,
+};
 use std::collections::BTreeMap;
 use tracing::trace;
 
@@ -45,6 +51,39 @@ pub struct Prank {
     pub depth: u64,
     /// Whether the prank stops by itself after the next call
     pub single_call: bool,
+    /// Whether the prank has been used yet (false if unused)
+    pub used: bool,
+}
+
+impl Prank {
+    pub fn new(
+        prank_caller: Address,
+        prank_origin: Address,
+        new_caller: Address,
+        new_origin: Option<Address>,
+        depth: u64,
+        single_call: bool,
+    ) -> Prank {
+        Prank {
+            prank_caller,
+            prank_origin,
+            new_caller,
+            new_origin,
+            depth,
+            single_call,
+            used: false,
+        }
+    }
+
+    /// Apply the prank by setting `used` to true iff it is false
+    /// Only returns self in the case it is updated (first application)
+    pub fn first_time_applied(&self) -> Option<Self> {
+        if self.used {
+            None
+        } else {
+            Some(Prank { used: true, ..self.clone() })
+        }
+    }
 }
 
 /// Sets up broadcasting from a script using `origin` as the sender
@@ -96,14 +135,18 @@ fn prank(
     depth: u64,
     single_call: bool,
 ) -> Result {
+    let prank = Prank::new(prank_caller, prank_origin, new_caller, new_origin, depth, single_call);
+
+    if let Some(Prank { used, .. }) = state.prank {
+        ensure!(used, "You cannot overwrite `prank` until it is applied at least once");
+    }
+
     ensure!(
         state.broadcast.is_none(),
-        "You cannot `prank` for a broadcasted transaction. \
+        "You cannot `prank` for a broadcasted transaction.\
          Pass the desired tx.origin into the broadcast cheatcode call"
     );
-    ensure!(state.prank.is_none(), "You have an active prank already.");
 
-    let prank = Prank { prank_caller, prank_origin, new_caller, new_origin, depth, single_call };
     state.prank = Some(prank);
     Ok(Bytes::new())
 }
@@ -201,7 +244,19 @@ pub fn apply<DB: DatabaseExt>(
             Bytes::new()
         }
         HEVMCalls::Difficulty(inner) => {
+            ensure!(
+                data.env.cfg.spec_id < SpecId::MERGE,
+                "Difficulty is not supported after the Paris hard fork. Please use vm.prevrandao instead. For more information, please see https://eips.ethereum.org/EIPS/eip-4399"
+            );
             data.env.block.difficulty = inner.0.into();
+            Bytes::new()
+        }
+        HEVMCalls::Prevrandao(inner) => {
+            ensure!(
+                data.env.cfg.spec_id >= SpecId::MERGE,
+                "Prevrandao is not supported before the Paris hard fork. Please use vm.difficulty instead. For more information, please see https://eips.ethereum.org/EIPS/eip-4399"
+            );
+            data.env.block.prevrandao = Some(B256::from(inner.0));
             Bytes::new()
         }
         HEVMCalls::Roll(inner) => {
@@ -217,6 +272,7 @@ pub fn apply<DB: DatabaseExt>(
             Bytes::new()
         }
         HEVMCalls::Store(inner) => {
+            ensure!(!is_potential_precompile(inner.0), "Store cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead");
             data.journaled_state.load_account(h160_to_b160(inner.0), data.db)?;
             // ensure the account is touched
             data.journaled_state.touch(&h160_to_b160(inner.0));
@@ -230,6 +286,7 @@ pub fn apply<DB: DatabaseExt>(
             Bytes::new()
         }
         HEVMCalls::Load(inner) => {
+            ensure!(!is_potential_precompile(inner.0), "Load cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead");
             // TODO: Does this increase gas usage?
             data.journaled_state.load_account(h160_to_b160(inner.0), data.db)?;
             let (val, _) = data.journaled_state.sload(
@@ -242,6 +299,7 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::Breakpoint0(inner) => add_breakpoint(state, caller, &inner.0, true)?,
         HEVMCalls::Breakpoint1(inner) => add_breakpoint(state, caller, &inner.0, inner.1)?,
         HEVMCalls::Etch(inner) => {
+            ensure!(!is_potential_precompile(inner.0), "Etch cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead");
             let code = inner.1.clone();
             trace!(address=?inner.0, code=?hex::encode(&code), "etch cheatcode");
             // TODO: Does this increase gas usage?

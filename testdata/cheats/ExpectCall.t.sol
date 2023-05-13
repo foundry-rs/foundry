@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.0;
+pragma solidity >=0.8.18;
 
 import "ds-test/test.sol";
 import "./Cheats.sol";
@@ -58,6 +58,33 @@ contract ExpectCallTest is DSTest {
     function testExpectMultipleCallsWithData() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
+        target.add(1, 2);
+        target.add(1, 2);
+    }
+
+    function testExpectMultipleCallsWithDataAdditive() public {
+        Contract target = new Contract();
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
+        target.add(1, 2);
+        target.add(1, 2);
+    }
+
+    function testExpectMultipleCallsWithDataAdditiveLowerBound() public {
+        Contract target = new Contract();
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
+        target.add(1, 2);
+        target.add(1, 2);
+        target.add(1, 2);
+    }
+
+    function testFailExpectMultipleCallsWithDataAdditive() public {
+        Contract target = new Contract();
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
+        // Not enough calls to satisfy the additive expectCall, which expects 3 calls.
         target.add(1, 2);
         target.add(1, 2);
     }
@@ -310,5 +337,56 @@ contract ExpectCallCountTest is DSTest {
 
         cheats.expectCallMinGas(address(inner), 0, 50_001, abi.encodeWithSelector(inner.add.selector, 1, 1), 1);
         target.addHardGasLimit();
+    }
+}
+
+contract ExpectCallMixedTest is DSTest {
+    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+
+    function testFailOverrideNoCountWithCount() public {
+        Contract target = new Contract();
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
+        // You should not be able to overwrite a expectCall that had no count with some count.
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2), 2);
+        target.add(1, 2);
+        target.add(1, 2);
+    }
+
+    function testFailOverrideCountWithCount() public {
+        Contract target = new Contract();
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2), 2);
+        // You should not be able to overwrite a expectCall that had a count with some count.
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2), 1);
+        target.add(1, 2);
+        target.add(1, 2);
+    }
+
+    function testFailOverrideCountWithNoCount() public {
+        Contract target = new Contract();
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2), 2);
+        // You should not be able to overwrite a expectCall that had a count with no count.
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
+        target.add(1, 2);
+        target.add(1, 2);
+    }
+
+    function testExpectMatchPartialAndFull() public {
+        Contract target = new Contract();
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector), 2);
+        // Even if a partial match is speciifed, you should still be able to look for full matches
+        // as one does not override the other.
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
+        target.add(1, 2);
+        target.add(1, 2);
+    }
+
+    function testExpectMatchPartialAndFullFlipped() public {
+        Contract target = new Contract();
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector));
+        // Even if a partial match is speciifed, you should still be able to look for full matches
+        // as one does not override the other.
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2), 2);
+        target.add(1, 2);
+        target.add(1, 2);
     }
 }

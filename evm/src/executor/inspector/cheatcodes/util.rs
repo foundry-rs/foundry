@@ -160,6 +160,14 @@ pub fn apply<DB: Database>(
             state.labels.insert(inner.0, inner.1.clone());
             Ok(Default::default())
         }
+        HEVMCalls::GetLabel(inner) => {
+            let label = state
+                .labels
+                .get(&inner.0)
+                .cloned()
+                .unwrap_or_else(|| format!("unlabeled:{:?}", inner.0));
+            Ok(ethers::abi::encode(&[Token::String(label)]).into())
+        }
         HEVMCalls::ToString0(inner) => {
             Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
         }
@@ -340,6 +348,11 @@ pub fn check_if_fixed_gas_limit<DB: DatabaseExt>(
         // Transfers in forge scripts seem to be estimated at 2300 by revm leading to "Intrinsic
         // gas too low" failure when simulated on chain
         && call_gas_limit > 2300
+}
+
+/// Small utility function that checks if an address is a potential precompile.
+pub fn is_potential_precompile(address: H160) -> bool {
+    address < H160::from_low_u64_be(10) && address != H160::zero()
 }
 
 #[cfg(test)]
