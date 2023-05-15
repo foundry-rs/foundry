@@ -15,9 +15,7 @@ contract RpcUrlTest is DSTest {
 
     // returns an error if env alias does not exist
     function testRevertsOnMissingEnv() public {
-        cheats.expectRevert(
-            "invalid rpc url rpcUrlEnv"
-        );
+        cheats.expectRevert("invalid rpc url rpcUrlEnv");
         string memory url = this.rpcUrl("rpcUrlEnv");
     }
 
