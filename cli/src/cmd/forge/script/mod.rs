@@ -420,6 +420,8 @@ impl ScriptArgs {
             .enumerate()
             .map(|(i, bytes)| BroadcastableTransaction {
                 rpc: fork_url.clone(),
+                bundle_block: None,
+                bundle_gas: None,
                 transaction: TypedTransaction::Legacy(TransactionRequest {
                     from: Some(from),
                     data: Some(bytes.clone()),

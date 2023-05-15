@@ -13,7 +13,7 @@ use crate::{
 use ethers::{
     abi::{self, AbiEncode, RawLog, Token, Tokenizable, Tokenize},
     signers::{LocalWallet, Signer},
-    types::{Address, Bytes, U256},
+    types::{Address, Bytes, U256, U64},
 };
 use foundry_config::Config;
 use revm::{
@@ -468,6 +468,25 @@ pub fn apply<DB: DatabaseExt>(
                 data.journaled_state.depth(),
                 true,
             )?
+        }
+        HEVMCalls::StartBundle(inner) => {
+            ensure!(state.broadcast.is_some(), "You must have already started broadcasting.");
+            ensure!(
+                state.bundle_enabled == false,
+                "You must not have already started a bundle."
+            );
+            state.bundle_enabled = true;
+            state.bundle_block = U64::from(inner.0);
+            state.bundle_gas = inner.1;
+
+
+            Bytes::new()
+        }
+        HEVMCalls::StopBundle(_) => {
+            ensure!(state.broadcast.is_some(), "You must not have stopped broadcasting.");
+            ensure!(state.bundle_enabled == true, "You must start a bundle first.");
+            state.bundle_enabled = false;
+            Bytes::new()
         }
         HEVMCalls::StartBroadcast0(_) => {
             correct_sender_nonce(

@@ -17,7 +17,7 @@ use ethers::{
     signers::LocalWallet,
     types::{
         transaction::eip2718::TypedTransaction, Address, Bytes, NameOrAddress, TransactionRequest,
-        U256,
+        U256, U64,
     },
 };
 use foundry_common::evm::Breakpoints;
@@ -185,6 +185,10 @@ pub struct Cheatcodes {
     /// Breakpoints supplied by the `vm.breakpoint("<char>")` cheatcode
     /// char -> pc
     pub breakpoints: Breakpoints,
+
+    pub bundle_block: U64,
+    pub bundle_gas: U256,
+    pub bundle_enabled: bool,
 }
 
 impl Cheatcodes {
@@ -694,6 +698,8 @@ where
 
                         self.broadcastable_transactions.push_back(BroadcastableTransaction {
                             rpc: data.db.active_fork_url(),
+                            bundle_block: if self.bundle_enabled {Some(self.bundle_block)} else { None },
+                            bundle_gas: if self.bundle_enabled {Some(self.bundle_gas)} else { None },
                             transaction: TypedTransaction::Legacy(TransactionRequest {
                                 from: Some(broadcast.new_origin),
                                 to: Some(NameOrAddress::Address(b160_to_h160(call.contract))),
@@ -995,6 +1001,8 @@ where
 
                 self.broadcastable_transactions.push_back(BroadcastableTransaction {
                     rpc: data.db.active_fork_url(),
+                    bundle_block: if self.bundle_enabled {Some(self.bundle_block)} else { None },
+                    bundle_gas: if self.bundle_enabled {Some(self.bundle_gas)} else { None },
                     transaction: TypedTransaction::Legacy(TransactionRequest {
                         from: Some(broadcast.new_origin),
                         to,

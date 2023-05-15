@@ -25,6 +25,7 @@ ui = { path = "../ui" }
 # eth
 ethers = { workspace = true, features = ["rustls"] }
 solang-parser = "=0.2.4"
+ethers-flashbots = { git = "https://github.com/onbjerg/ethers-flashbots" }
 
 # cli
 clap = { version = "4.2", features = ["derive", "env", "unicode", "wrap_help"] }

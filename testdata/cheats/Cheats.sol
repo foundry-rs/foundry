@@ -293,6 +293,12 @@ interface Cheats {
     // Has all subsequent calls (at this call depth only) create transactions with the private key provided that can later be signed and sent onchain
     function startBroadcast(uint256) external;
 
+    // Has all subsequent transactions add to a flashbots bundle instead of being sent directly and awaiting receipts 
+    function startBundle(uint64 futureBlock, uint256 gasPrice) external;
+
+    // Stops having all subsequent transactions add to a flashbots bundle instead of being sent directly and awaiting receipts
+    function stopBundle() external;
+
     // Stops collecting onchain transactions
     function stopBroadcast() external;
 

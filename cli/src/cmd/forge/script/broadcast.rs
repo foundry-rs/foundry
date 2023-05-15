@@ -11,13 +11,15 @@ use crate::{
     update_progress,
 };
 use ethers::{
-    prelude::{Provider, Signer, TxHash},
+    prelude::{Provider, Signer, TxHash, rand::thread_rng, SignerMiddleware, k256::ecdsa::SigningKey},
     providers::{JsonRpcClient, Middleware},
-    utils::format_units,
+    utils::format_units, signers::Wallet, types::{U64, Signature},
 };
+use ethers_flashbots::{FlashbotsMiddleware, BundleRequest, PendingBundleError};
 use eyre::{bail, ContextCompat, Result, WrapErr};
 use foundry_common::{estimate_eip1559_fees, shell, try_get_http_provider, RetryProvider};
 use futures::StreamExt;
+use reqwest::Url;
 use std::{cmp::min, collections::HashSet, ops::Mul, sync::Arc};
 use tracing::trace;
 
@@ -85,12 +87,15 @@ impl ScriptArgs {
                 }
             };
 
+            trace!(target: "script", "transactions: {:#?}", &deployment_sequence.transactions);
+
             // Iterate through transactions, matching the `from` field with the associated
             // wallet. Then send the transaction. Panics if we find a unknown `from`
             let sequence = deployment_sequence
                 .transactions
                 .iter()
                 .skip(already_broadcasted)
+                .filter(|tx| tx.bundle_block.is_none() && tx.bundle_gas.is_none())
                 .map(|tx_with_metadata| {
                     let tx = tx_with_metadata.typed_tx();
                     let from = *tx.from().expect("No sender for onchain transaction!");
@@ -123,12 +128,110 @@ impl ScriptArgs {
                 })
                 .collect::<Result<Vec<_>>>()?;
 
+            let flashbots_sequence = deployment_sequence
+                .transactions
+                .iter()
+                .skip(already_broadcasted)
+                .filter(|tx| tx.bundle_block.is_some() && tx.bundle_gas.is_some())
+                .map(|tx_with_metadata| {
+                    let tx = tx_with_metadata.typed_tx();
+                    let from = *tx.from().expect("No sender for onchain transaction!");
+
+                    let kind = send_kind.for_sender(&from)?;
+                    let is_fixed_gas_limit = tx_with_metadata.is_fixed_gas_limit;
+
+                    let mut tx = tx.clone();
+
+                    tx.set_chain_id(chain);
+
+                    if let Some(gas_price) = self.with_gas_price {
+                        tx.set_gas_price(gas_price);
+                    } else {
+                        // fill gas price
+                        match tx {
+                            TypedTransaction::Eip2930(_) | TypedTransaction::Legacy(_) => {
+                                tx.set_gas_price(gas_price.expect("Could not get gas_price."));
+                            }
+                            TypedTransaction::Eip1559(ref mut inner) => {
+                                let eip1559_fees =
+                                    eip1559_fees.expect("Could not get eip1559 fee estimation.");
+                                let prio_fee = tx_with_metadata.bundle_gas.expect("Max priority fee per gas must be set");
+                                inner.max_fee_per_gas = Some(eip1559_fees.0.overflowing_add(prio_fee).0);
+                                inner.max_priority_fee_per_gas = tx_with_metadata.bundle_gas;
+                            }
+                        }
+                    }
+
+                    Ok((tx, tx_with_metadata.bundle_block, kind, is_fixed_gas_limit))
+                })
+                .collect::<Result<Vec<_>>>()?;
+
+            trace!(target: "script", "sequence: {:#?}", &sequence);
+
             let pb = init_progress!(deployment_sequence.transactions, "txes");
 
             // We send transactions and wait for receipts in batches of 100, since some networks
             // cannot handle more than that.
             let batch_size = 100;
             let mut index = 0;
+
+            let bundle_map: HashMap<U64, Vec<_>> = flashbots_sequence.into_iter().fold(
+                HashMap::new(),
+                |mut acc, (tx, block, kind, _)| {
+                    acc.entry(block.expect("we should have a target block"))
+                        .or_insert_with(Vec::new)
+                        .push((tx, kind));
+                    acc
+                },
+            );
+
+            for (target_block, transactions) in bundle_map.iter() {
+                let bundle_signer = LocalWallet::new(&mut thread_rng());
+
+                let mut bundle = BundleRequest::new();
+
+                let client = FlashbotsMiddleware::new(
+                    provider.clone(),
+                    Url::parse("https://relay.flashbots.net")?,
+                    bundle_signer.clone(),
+                );
+
+                for (tx, kind) in transactions.into_iter() {
+                    let signature = self.sign_flashbots(
+                        provider.clone(),
+                        &tx,
+                        kind,
+                        bundle_signer.clone()
+                    ).await;
+
+                    trace!(target: "script", "tx: {:#?}", &tx);
+                    
+                    bundle = bundle.push_transaction(tx.rlp_signed(&signature.unwrap()));
+                }
+
+                bundle = bundle.set_block(target_block.clone())
+                        .set_simulation_block(provider.get_block_number().await?)
+                        .set_simulation_timestamp(0);
+
+                trace!(target: "script", "bundle: {:#?}", &bundle);
+
+                let simulated_bundle = client.simulate_bundle(&bundle).await?;
+                trace!(target: "script","Simulated bundle: {:?}", simulated_bundle);
+            
+                // Send it
+                let pending_bundle = client.send_bundle(&bundle).await?;
+                match pending_bundle.await {
+                    Ok(bundle_hash) => trace!(
+                        target: "script",
+                        "Bundle with hash {:?} was included in target block",
+                        bundle_hash
+                    ),
+                    Err(PendingBundleError::BundleNotIncluded) => {
+                        trace!(target: "script", "Bundle was not included in target block.")
+                    }
+                    Err(e) => trace!(target: "script", "An error occured: {}", e),
+                }            
+            }
 
             for (batch_number, batch) in sequence.chunks(batch_size).map(|f| f.to_vec()).enumerate()
             {
@@ -211,6 +314,37 @@ impl ScriptArgs {
 
         Ok(())
     }
+    
+    async fn sign_flashbots(
+        &self,
+        provider: Arc<RetryProvider>,
+        tx: &TypedTransaction,
+        kind: &SendTransactionKind<'_>,
+        bundle_signer: Wallet<SigningKey>
+    ) -> Result<Signature> {
+    
+        match kind {
+            SendTransactionKind::Unlocked(_) => {
+                panic!("Need a local signer to send a flashbots bundle.")
+            }
+            SendTransactionKind::Raw(signer) => {
+                let client = SignerMiddleware::new(
+                    FlashbotsMiddleware::new(
+                        provider.clone(),
+                        Url::parse("https://relay.flashbots.net")?,
+                        bundle_signer,
+                    ),
+                    signer.clone(),
+                );
+                
+                let signature = client.signer().sign_transaction(&tx).await?;
+
+                Ok(signature)
+        
+
+            }
+        }
+    }
 
     async fn send_transaction(
         &self,
@@ -241,9 +375,9 @@ impl ScriptArgs {
 
                 // Chains which use `eth_estimateGas` are being sent sequentially and require their
                 // gas to be re-estimated right before broadcasting.
-                if !is_fixed_gas_limit &&
-                    (has_different_gas_calc(provider.get_chainid().await?.as_u64()) ||
-                        self.skip_simulation)
+                if !is_fixed_gas_limit
+                    && (has_different_gas_calc(provider.get_chainid().await?.as_u64())
+                        || self.skip_simulation)
                 {
                     self.estimate_gas(&mut tx, &provider).await?;
                 }
@@ -345,7 +479,7 @@ impl ScriptArgs {
         self.send_transactions(deployment_sequence, &rpc, &result.script_wallets).await?;
 
         if self.verify {
-            return deployment_sequence.verify_contracts(&script_config.config, verify).await
+            return deployment_sequence.verify_contracts(&script_config.config, verify).await;
         }
         Ok(())
     }
@@ -377,7 +511,7 @@ impl ScriptArgs {
                     &mut script_config.config,
                     returns,
                 )
-                .await
+                .await;
         } else if self.broadcast {
             eyre::bail!("No onchain transactions generated in script");
         }
@@ -401,6 +535,8 @@ impl ScriptArgs {
                 .map(|btx| {
                     let mut tx = TransactionWithMetadata::from_typed_transaction(btx.transaction);
                     tx.rpc = btx.rpc;
+                    tx.bundle_block = btx.bundle_block;
+                    tx.bundle_gas = btx.bundle_gas;
                     tx
                 })
                 .collect()
@@ -500,7 +636,7 @@ impl ScriptArgs {
             // transactions.
             if let Some(next_tx) = txes_iter.peek() {
                 if next_tx.rpc == Some(tx_rpc) {
-                    continue
+                    continue;
                 }
             }
 
@@ -605,16 +741,16 @@ impl ScriptArgs {
             provider
                 .estimate_gas(tx, None)
                 .await
-                .wrap_err_with(|| format!("Failed to estimate gas for tx: {:?}", tx.sighash()))? *
-                self.gas_estimate_multiplier /
-                100,
+                .wrap_err_with(|| format!("Failed to estimate gas for tx: {:?}", tx.sighash()))?
+                * self.gas_estimate_multiplier
+                / 100,
         );
         Ok(())
     }
 }
 
 /// How to send a single transaction
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 enum SendTransactionKind<'a> {
     Unlocked(Address),
     Raw(&'a WalletSigner),

@@ -4,7 +4,7 @@ use ethers::{
     abi,
     abi::Address,
     prelude::{NameOrAddress, H256 as TxHash},
-    types::transaction::eip2718::TypedTransaction,
+    types::{transaction::eip2718::TypedTransaction, U256, U64},
 };
 use eyre::{ContextCompat, WrapErr};
 use foundry_common::{abi::format_token, RpcUrl, SELECTOR_LEN};
@@ -41,6 +41,8 @@ pub struct TransactionWithMetadata {
     pub transaction: TypedTransaction,
     pub additional_contracts: Vec<AdditionalContract>,
     pub is_fixed_gas_limit: bool,
+    pub bundle_block: Option<U64>,
+    pub bundle_gas: Option<U256>,
 }
 
 fn default_string() -> Option<String> {
@@ -68,8 +70,10 @@ impl TransactionWithMetadata {
         decoder: &CallTraceDecoder,
         additional_contracts: Vec<AdditionalContract>,
         is_fixed_gas_limit: bool,
+        bundle_block: Option<U64>,
+        bundle_gas: Option<U256>,
     ) -> eyre::Result<Self> {
-        let mut metadata = Self { transaction, rpc, is_fixed_gas_limit, ..Default::default() };
+        let mut metadata = Self { transaction, rpc, is_fixed_gas_limit, bundle_block, bundle_gas, ..Default::default() };
 
         // Specify if any contract was directly created with this transaction
         if let Some(NameOrAddress::Address(to)) = metadata.transaction.to().cloned() {
@@ -108,6 +112,7 @@ impl TransactionWithMetadata {
                 })
                 .collect();
         }
+        
 
         Ok(metadata)
     }

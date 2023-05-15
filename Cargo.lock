@@ -1995,6 +1995,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethers-flashbots"
+version = "0.13.0"
+source = "git+https://github.com/onbjerg/ethers-flashbots#e85fdcff5fde770891f4c55b1b71079e2abf0580"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "ethers",
+ "futures-core",
+ "futures-util",
+ "pin-project",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "url",
+]
+
+[[package]]
 name = "ethers-middleware"
 version = "2.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2421,6 +2439,7 @@ dependencies = [
  "dotenvy",
  "dunce",
  "ethers",
+ "ethers-flashbots",
  "eyre",
  "forge",
  "forge-doc",

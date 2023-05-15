@@ -10,7 +10,7 @@ use crate::cmd::forge::{
 use ethers::{
     abi::Address,
     prelude::{artifacts::Libraries, ArtifactId, TransactionReceipt, TxHash},
-    types::transaction::eip2718::TypedTransaction,
+    types::{transaction::eip2718::TypedTransaction, U256, U64},
 };
 use eyre::{ContextCompat, WrapErr};
 use foundry_common::{fs, shell, SELECTOR_LEN};
@@ -43,6 +43,12 @@ pub struct ScriptSequence {
     /// If `True`, the sequence belongs to a `MultiChainSequence` and won't save to disk as usual.
     pub multi: bool,
     pub commit: Option<String>,
+}
+
+pub struct TransactionMetadata {
+    pub rpc: String,
+    pub bundle_block: Option<U64>,
+    pub bundle_gas: Option<U256>,
 }
 
 impl ScriptSequence {
@@ -183,8 +189,8 @@ impl ScriptSequence {
 
         verify.set_chain(config, self.chain.into());
 
-        if verify.etherscan.key.is_some() ||
-            verify.verifier.verifier != VerificationProviderType::Etherscan
+        if verify.etherscan.key.is_some()
+            || verify.verifier.verifier != VerificationProviderType::Etherscan
         {
             trace!(target: "script", "prepare future verifications");
 
@@ -267,11 +273,18 @@ impl ScriptSequence {
     }
 
     /// Returns the list of the transactions without the metadata.
-    pub fn typed_transactions(&self) -> Vec<(String, &TypedTransaction)> {
+    pub fn typed_transactions(&self) -> Vec<(TransactionMetadata, &TypedTransaction)> {
         self.transactions
             .iter()
             .map(|tx| {
-                (tx.rpc.clone().expect("to have been filled with a proper rpc"), tx.typed_tx())
+                (
+                    TransactionMetadata {
+                        rpc: tx.rpc.clone().expect("to have been filled with a proper rpc"),
+                        bundle_block: tx.bundle_block,
+                        bundle_gas: tx.bundle_gas,
+                    },
+                    tx.typed_tx(),
+                )
             })
             .collect()
     }
@@ -291,12 +304,12 @@ impl Drop for ScriptSequence {
 fn sig_to_file_name(sig: &str) -> String {
     if let Some((name, _)) = sig.split_once('(') {
         // strip until call argument parenthesis
-        return name.to_string()
+        return name.to_string();
     }
     // assume calldata if `sig` is hex
     if let Ok(calldata) = hex::decode(sig) {
         // in which case we return the function signature
-        return hex::encode(&calldata[..SELECTOR_LEN])
+        return hex::encode(&calldata[..SELECTOR_LEN]);
     }
 
     // return sig as is
