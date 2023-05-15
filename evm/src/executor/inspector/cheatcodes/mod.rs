@@ -826,7 +826,7 @@ where
                 return (
                     InstructionResult::Revert,
                     remaining_gas,
-                    "Expected revert was left dangling".encode().into(),
+                    "A `vm.expectRevert`was left dangling. Make sure that calls you expect to revert are external".encode().into(),
                 )
             }
 
