@@ -35,7 +35,6 @@ contract Issue3220Test is DSTest {
 
         vm.expectRevert("This fails");
         repro.doRevert();
-
     }
 
     function mockCount() public {
@@ -44,7 +43,7 @@ contract Issue3220Test is DSTest {
 }
 
 contract IssueRepro {
-    function doRevert() external{
+    function doRevert() external {
         revert("This fails");
     }
 }

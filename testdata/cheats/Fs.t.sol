@@ -50,7 +50,6 @@ contract FsProxy is DSTest {
     function createDir(string calldata path, bool recursive) external {
         return cheats.createDir(path, recursive);
     }
-
 }
 
 contract FsTest is DSTest {
@@ -69,7 +68,7 @@ contract FsTest is DSTest {
     }
 
     function testReadFile() public {
-        fsProxy = new FsProxy();  
+        fsProxy = new FsProxy();
 
         string memory path = "../testdata/fixtures/File/read.txt";
 
@@ -83,7 +82,7 @@ contract FsTest is DSTest {
     }
 
     function testReadLine() public {
-        fsProxy = new FsProxy();  
+        fsProxy = new FsProxy();
 
         string memory path = "../testdata/fixtures/File/read.txt";
 
@@ -96,7 +95,7 @@ contract FsTest is DSTest {
     }
 
     function testWriteFile() public {
-        fsProxy = new FsProxy();  
+        fsProxy = new FsProxy();
 
         string memory path = "../testdata/fixtures/File/write_file.txt";
         string memory data = "hello writable world";
@@ -113,7 +112,7 @@ contract FsTest is DSTest {
     }
 
     function testWriteLine() public {
-        fsProxy = new FsProxy();  
+        fsProxy = new FsProxy();
 
         string memory path = "../testdata/fixtures/File/write_line.txt";
 
@@ -140,7 +139,7 @@ contract FsTest is DSTest {
     }
 
     function testRemoveFile() public {
-        fsProxy = new FsProxy();  
+        fsProxy = new FsProxy();
 
         string memory path = "../testdata/fixtures/File/remove_file.txt";
         string memory data = "hello writable world";
@@ -159,7 +158,7 @@ contract FsTest is DSTest {
     }
 
     function testWriteLineFoundrytoml() public {
-        fsProxy = new FsProxy();  
+        fsProxy = new FsProxy();
 
         string memory root = cheats.projectRoot();
         string memory foundryToml = string.concat(root, "/", "foundry.toml");
@@ -184,7 +183,7 @@ contract FsTest is DSTest {
     }
 
     function testWriteFoundrytoml() public {
-        fsProxy = new FsProxy();  
+        fsProxy = new FsProxy();
 
         string memory root = cheats.projectRoot();
         string memory foundryToml = string.concat(root, "/", "foundry.toml");
@@ -209,7 +208,7 @@ contract FsTest is DSTest {
     }
 
     function testReadDir() public {
-        fsProxy = new FsProxy();  
+        fsProxy = new FsProxy();
 
         string memory path = "../testdata/fixtures/Dir";
 
@@ -246,7 +245,7 @@ contract FsTest is DSTest {
     }
 
     function testCreateRemoveDir() public {
-        fsProxy = new FsProxy();  
+        fsProxy = new FsProxy();
 
         string memory path = "../testdata/fixtures/Dir/remove_dir";
         string memory child = string.concat(path, "/child");
@@ -274,7 +273,7 @@ contract FsTest is DSTest {
     }
 
     function testFsMetadata() public {
-        fsProxy = new FsProxy();  
+        fsProxy = new FsProxy();
 
         string memory path = "../testdata/fixtures/File";
         Cheats.FsMetadata memory metadata = cheats.fsMetadata(path);

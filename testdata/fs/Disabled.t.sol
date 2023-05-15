@@ -50,7 +50,6 @@ contract FsProxy is DSTest {
     function createDir(string calldata path, bool recursive) external {
         return cheats.createDir(path, recursive);
     }
-
 }
 
 contract DisabledTest is DSTest {
