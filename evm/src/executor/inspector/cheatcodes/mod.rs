@@ -768,7 +768,7 @@ where
 
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
-            if data.journaled_state.depth() <= expected_revert.depth {
+            if data.journaled_state.depth() == expected_revert.depth {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match handle_expect_revert(
                     false,
@@ -821,6 +821,20 @@ where
 
         // If the depth is 0, then this is the root call terminating
         if data.journaled_state.depth() == 0 {
+
+            // See if there's a dangling expectRevert that should've been matched.
+            if self.expected_revert.is_some() {
+                return (
+                    InstructionResult::Revert,
+                    remaining_gas,
+                    format!(
+                        "Expected revert was left dangling",
+                    )
+                    .encode()
+                    .into(),
+                )
+            }
+
             // Match expected calls
             for (address, calldatas) in &self.expected_calls {
                 // Loop over each address, and for each address, loop over each calldata it expects.
@@ -1043,7 +1057,7 @@ where
 
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
-            if data.journaled_state.depth() <= expected_revert.depth {
+            if data.journaled_state.depth() == expected_revert.depth {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match handle_expect_revert(
                     true,
