@@ -821,17 +821,12 @@ where
 
         // If the depth is 0, then this is the root call terminating
         if data.journaled_state.depth() == 0 {
-
             // See if there's a dangling expectRevert that should've been matched.
             if self.expected_revert.is_some() {
                 return (
                     InstructionResult::Revert,
                     remaining_gas,
-                    format!(
-                        "Expected revert was left dangling",
-                    )
-                    .encode()
-                    .into(),
+                    format!("Expected revert was left dangling",).encode().into(),
                 )
             }
 
