@@ -826,7 +826,7 @@ where
                 return (
                     InstructionResult::Revert,
                     remaining_gas,
-                    format!("Expected revert was left dangling",).encode().into(),
+                    "Expected revert was left dangling".encode().into(),
                 )
             }
 
