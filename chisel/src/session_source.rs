@@ -108,16 +108,17 @@ impl SessionSourceConfig {
                 // 2. Check if the version provided is less than 0.8.18 and override it,
                 // or leave it as-is if we don't need a post merge solc version or the version we
                 // have is good enough.
-                if let v = needs_solc_18 && version < Version::new(0, 8, 18) {
+                let v = if needs_post_merge_solc && version < Version::new(0, 8, 18) {
                     // If we do need a new version, install 0.8.19 (Paris)
-                    // NOTE: This needs to be bumped to 0.8.20 once we upgrade all tooling to Shanghai.
-                   Version::new(0, 8, 19)
+                    // NOTE: This needs to be bumped to 0.8.20 once we upgrade all tooling to
+                    // Shanghai.
+                    Version::new(0, 8, 19).to_string()
                 } else {
-                    version
+                    version.to_string()
                 };
 
-                let v = version.to_string();
                 let mut solc = Solc::find_svm_installed_version(&v)?;
+
                 if solc.is_none() {
                     if self.foundry_config.offline {
                         eyre::bail!("can't install missing solc {version} in offline mode")
