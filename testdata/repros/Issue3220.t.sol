@@ -7,6 +7,8 @@ import "../cheats/Cheats.sol";
 // https://github.com/foundry-rs/foundry/issues/3220
 contract Issue3220Test is DSTest {
     Cheats constant vm = Cheats(HEVM_ADDRESS);
+    IssueRepro repro;
+
     uint256 fork1;
     uint256 fork2;
     uint256 counter;
@@ -19,6 +21,9 @@ contract Issue3220Test is DSTest {
 
     function testForkRevert() public {
         vm.selectFork(fork2);
+
+        repro = new IssueRepro();
+
         vm.selectFork(fork1);
 
         // do a bunch of work to increase the revm checkpoint counter
@@ -29,14 +34,17 @@ contract Issue3220Test is DSTest {
         vm.selectFork(fork2);
 
         vm.expectRevert("This fails");
-        doRevert();
-    }
+        repro.doRevert();
 
-    function doRevert() public {
-        revert("This fails");
     }
 
     function mockCount() public {
         counter += 1;
+    }
+}
+
+contract IssueRepro {
+    function doRevert() external{
+        revert("This fails");
     }
 }
