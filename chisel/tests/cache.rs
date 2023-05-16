@@ -104,7 +104,7 @@ fn test_list_sessions() {
 
     // Create a new session
     let mut env = ChiselSession::new(SessionSourceConfig::default())
-        .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
+        .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
 
     env.write().unwrap();
 
