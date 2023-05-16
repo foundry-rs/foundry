@@ -101,18 +101,19 @@ impl SessionSourceConfig {
         match solc_req {
             SolcReq::Version(version) => {
                 // We now need to verify if the solc version provided is supported by the evm
-                // version set. If not, we need to install the latest version of
-                // solc that is supported by the evm version.
+                // version set. If not, we bail and ask the user to provide a newer version.
                 // 1. Do we need solc 0.8.18 or higher?
-                let needs_post_merge_solc = self.foundry_config.evm_version >= EvmVersion::Paris;
-                // 2. Check if the version provided is less than 0.8.18 and override it,
+                let evm_version = self.foundry_config.evm_version;
+                let needs_post_merge_solc = evm_version >= EvmVersion::Paris;
+                // 2. Check if the version provided is less than 0.8.18 and bail,
                 // or leave it as-is if we don't need a post merge solc version or the version we
                 // have is good enough.
                 let v = if needs_post_merge_solc && version < Version::new(0, 8, 18) {
                     // If we do need a new version, install 0.8.19 (Paris)
                     // NOTE: This needs to be bumped to 0.8.20 once we upgrade all tooling to
                     // Shanghai.
-                    Version::new(0, 8, 19).to_string()
+                    eyre::bail!("solc {version} is not supported by the set evm version: {evm_version}. Please install and use a version of solc higher or equal to 0.8.18.
+You can also set the solc version in your foundry.toml.")
                 } else {
                     version.to_string()
                 };
