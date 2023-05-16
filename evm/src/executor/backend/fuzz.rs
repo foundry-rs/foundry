@@ -16,7 +16,6 @@ use revm::{
     Database, Inspector, JournaledState,
 };
 use std::borrow::Cow;
-use tracing::trace;
 
 /// A wrapper around `Backend` that ensures only `revm::DatabaseRef` functions are called.
 ///

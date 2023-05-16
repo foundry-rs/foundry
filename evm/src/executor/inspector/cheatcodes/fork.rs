@@ -1,4 +1,4 @@
-use super::{err, Cheatcodes, Error, Result};
+use super::{fmt_err, Cheatcodes, Error, Result};
 use crate::{
     abi::HEVMCalls,
     executor::{backend::DatabaseExt, fork::CreateFork},
@@ -15,6 +15,7 @@ fn empty<T>(_: T) -> Bytes {
 }
 
 /// Handles fork related cheatcodes
+#[instrument(level = "error", name = "fork", target = "evm::cheatcodes", skip_all)]
 pub fn apply<DB: DatabaseExt>(
     state: &mut Cheatcodes,
     data: &mut EVMData<'_, DB>,
@@ -68,7 +69,7 @@ pub fn apply<DB: DatabaseExt>(
             .db
             .active_fork_id()
             .map(|id| id.encode().into())
-            .ok_or_else(|| err!("No active fork")),
+            .ok_or_else(|| fmt_err!("No active fork")),
         HEVMCalls::RollFork0(fork) => data
             .db
             .roll_fork(None, fork.0, data.env, &mut data.journaled_state)

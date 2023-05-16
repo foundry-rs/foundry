@@ -30,7 +30,6 @@ use std::{
         Arc,
     },
 };
-use tracing::{error, trace, warn};
 
 // Various future/request type aliases
 

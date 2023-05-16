@@ -241,6 +241,7 @@ fn fs_metadata(state: &Cheatcodes, path: impl AsRef<Path>) -> Result {
     Ok(metadata.encode().into())
 }
 
+#[instrument(level = "error", name = "fs", target = "evm::cheatcodes", skip_all)]
 pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result> {
     let res = match call {
         HEVMCalls::ProjectRoot(_) => project_root(state),
