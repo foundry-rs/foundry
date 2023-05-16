@@ -33,7 +33,6 @@ use proptest::{
 };
 use revm::{primitives::B160, DatabaseCommit};
 use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
-use tracing::warn;
 
 /// Alias for (Dictionary for fuzzing, initial contracts to fuzz and an InvariantStrategy).
 type InvariantPreparation =
@@ -220,7 +219,7 @@ impl<'a> InvariantExecutor<'a> {
             });
         }
 
-        tracing::trace!(target: "forge::test::invariant::dictionary", "{:?}", fuzz_state.read().values().iter().map(hex::encode).collect::<Vec<_>>());
+        trace!(target: "forge::test::invariant::dictionary", "{:?}", fuzz_state.read().values().iter().map(hex::encode).collect::<Vec<_>>());
 
         let (reverts, invariants) = failures.into_inner().into_inner();
 

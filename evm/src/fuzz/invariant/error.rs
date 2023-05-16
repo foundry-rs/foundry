@@ -13,7 +13,6 @@ use ethers::{
 use eyre::{Result, WrapErr};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use proptest::test_runner::TestError;
-use tracing::trace;
 
 #[derive(Debug, Clone)]
 pub struct InvariantFuzzError {

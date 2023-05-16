@@ -33,7 +33,6 @@ pub use revm::{
     },
 };
 use std::collections::BTreeMap;
-use tracing::trace;
 
 /// ABIs used internally in the executor
 pub mod abi;
