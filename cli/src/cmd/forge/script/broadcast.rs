@@ -322,7 +322,6 @@ impl ScriptArgs {
         kind: &SendTransactionKind<'_>,
         bundle_signer: Wallet<SigningKey>
     ) -> Result<Signature> {
-    
         match kind {
             SendTransactionKind::Unlocked(_) => {
                 panic!("Need a local signer to send a flashbots bundle.")
@@ -336,12 +335,7 @@ impl ScriptArgs {
                     ),
                     signer.clone(),
                 );
-                
-                let signature = client.signer().sign_transaction(&tx).await?;
-
-                Ok(signature)
-        
-
+                Ok(client.signer().sign_transaction(&tx).await?)
             }
         }
     }
@@ -479,7 +473,7 @@ impl ScriptArgs {
         self.send_transactions(deployment_sequence, &rpc, &result.script_wallets).await?;
 
         if self.verify {
-            return deployment_sequence.verify_contracts(&script_config.config, verify).await;
+            return deployment_sequence.verify_contracts(&script_config.config, verify).await
         }
         Ok(())
     }
@@ -636,7 +630,7 @@ impl ScriptArgs {
             // transactions.
             if let Some(next_tx) = txes_iter.peek() {
                 if next_tx.rpc == Some(tx_rpc) {
-                    continue;
+                    continue
                 }
             }
 
@@ -741,9 +735,9 @@ impl ScriptArgs {
             provider
                 .estimate_gas(tx, None)
                 .await
-                .wrap_err_with(|| format!("Failed to estimate gas for tx: {:?}", tx.sighash()))?
-                * self.gas_estimate_multiplier
-                / 100,
+                .wrap_err_with(|| format!("Failed to estimate gas for tx: {:?}", tx.sighash()))? *
+                self.gas_estimate_multiplier /
+                100,
         );
         Ok(())
     }

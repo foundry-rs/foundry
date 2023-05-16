@@ -30,8 +30,6 @@ impl ScriptTester {
         ScriptTester::copy_testdata(project_root).unwrap();
         cmd.set_current_dir(project_root);
 
-        cmd.set_env("RUST_LOG", "script=trace");
-
         cmd.args([
             "script",
             "-R",
@@ -224,7 +222,7 @@ impl ScriptTester {
         if !output.contains(expected.as_str()) {
             panic!("OUTPUT: {output}\n\nEXPECTED: {}", expected.as_str());
         }
-        println!("{output}");
+        // println!("{output}");
 
         self
     }
