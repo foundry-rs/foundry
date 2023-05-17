@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use chisel::{session::ChiselSession, session_source::SessionSourceConfig};
+use ethers_solc::{Solc, PARIS_SOLC};
 use forge::executor::opts::EvmOpts;
 use foundry_config::Config;
 use serial_test::serial;
@@ -95,12 +96,15 @@ fn test_clear_cache() {
     assert_eq!(num_items, 0);
 }
 
-#[test]
+#[tokio::test]
 #[serial]
-fn test_list_sessions() {
+async fn test_list_sessions() {
     // Create and clear the cache directory
     ChiselSession::create_cache_dir().unwrap();
     ChiselSession::clear_cache().unwrap();
+
+    // Ensure we have a paris-compatible solc version
+    Solc::install(&PARIS_SOLC).await.unwrap();
 
     // Create a new session
     let mut env = ChiselSession::new(SessionSourceConfig::default())
@@ -116,12 +120,15 @@ fn test_list_sessions() {
     assert_eq!(sessions[0].1, "chisel-0.json");
 }
 
-#[test]
+#[tokio::test]
 #[serial]
-fn test_load_cache() {
+async fn test_load_cache() {
     // Create and clear the cache directory
     ChiselSession::create_cache_dir().unwrap();
     ChiselSession::clear_cache().unwrap();
+
+    // Ensure we have a paris-compatible solc version
+    Solc::install(&PARIS_SOLC).await.unwrap();
 
     // Create a new session
     let mut env = ChiselSession::new(SessionSourceConfig::default())
