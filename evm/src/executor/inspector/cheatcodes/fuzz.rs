@@ -2,6 +2,7 @@ use super::{Error, Result};
 use crate::{abi::HEVMCalls, fuzz::error::ASSUME_MAGIC_RETURN_CODE};
 use ethers::types::Bytes;
 
+#[instrument(level = "error", name = "fuzz", target = "evm::cheatcodes", skip_all)]
 pub fn apply(call: &HEVMCalls) -> Option<Result> {
     if let HEVMCalls::Assume(inner) = call {
         let bytes = if inner.0 {

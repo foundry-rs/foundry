@@ -1,4 +1,4 @@
-use super::{ensure, err, Cheatcodes, Result};
+use super::{ensure, fmt_err, Cheatcodes, Result};
 use crate::{
     abi::HEVMCalls,
     executor::{
@@ -21,7 +21,6 @@ use revm::{
     Database, EVMData,
 };
 use std::collections::BTreeMap;
-use tracing::trace;
 
 #[derive(Clone, Debug, Default)]
 pub struct Broadcast {
@@ -217,7 +216,8 @@ fn add_breakpoint(state: &mut Cheatcodes, caller: Address, inner: &str, add: boo
     let mut chars = inner.chars();
     let point = chars.next();
 
-    let point = point.ok_or_else(|| err!("Please provide at least one char for the breakpoint"))?;
+    let point =
+        point.ok_or_else(|| fmt_err!("Please provide at least one char for the breakpoint"))?;
 
     ensure!(chars.next().is_none(), "Provide only one character for the breakpoint");
     ensure!(point.is_alphabetic(), "Only alphabetic characters are accepted as breakpoints");
@@ -232,6 +232,7 @@ fn add_breakpoint(state: &mut Cheatcodes, caller: Address, inner: &str, add: boo
     Ok(Bytes::new())
 }
 
+#[instrument(level = "error", name = "env", target = "evm::cheatcodes", skip_all)]
 pub fn apply<DB: DatabaseExt>(
     state: &mut Cheatcodes,
     data: &mut EVMData<'_, DB>,

@@ -26,7 +26,6 @@ use revm::{
     Database, DatabaseCommit, Inspector, JournaledState, EVM,
 };
 use std::collections::{HashMap, HashSet};
-use tracing::{trace, warn};
 
 mod fuzz;
 pub mod snapshot;
