@@ -86,13 +86,19 @@ impl<'a> FuzzedExecutor<'a> {
             build_initial_state(self.executor.backend().mem_db(), &self.config.dictionary)
         };
 
-        let strat = proptest::strategy::Union::new_weighted(vec![
-            (100 - self.config.dictionary.dictionary_weight, fuzz_calldata(func.clone())),
-            (
+        let mut weights = vec![];
+        let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
+        if self.config.dictionary.dictionary_weight < 100 {
+            weights.push((100 - dictionary_weight, fuzz_calldata(func.clone())));
+        }
+        if dictionary_weight > 0 {
+            weights.push((
                 self.config.dictionary.dictionary_weight,
                 fuzz_calldata_from_state(func.clone(), state.clone()),
-            ),
-        ]);
+            ));
+        }
+
+        let strat = proptest::strategy::Union::new_weighted(weights);
         debug!(func = ?func.name, should_fail, "fuzzing");
         let run_result = self.runner.clone().run(&strat, |calldata| {
             let call = self
