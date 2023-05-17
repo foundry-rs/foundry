@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use chisel::{session::ChiselSession};
-use ethers_solc::{Solc};
+use chisel::session::ChiselSession;
+use ethers_solc::Solc;
 use forge::executor::opts::EvmOpts;
 use foundry_config::{Config, SolcReq};
 use semver::Version;
