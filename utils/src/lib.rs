@@ -1,5 +1,5 @@
-#![allow(dead_code)]
 #![doc = include_str!("../README.md")]
+
 use ethers_addressbook::contract;
 use ethers_core::types::*;
 use ethers_providers::{Middleware, Provider};
@@ -392,15 +392,6 @@ impl Retry {
             };
         }
     }
-}
-
-/// Enables tracing
-#[cfg(any(feature = "test"))]
-pub fn init_tracing_subscriber() {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .try_init()
-        .ok();
 }
 
 pub async fn next_nonce(

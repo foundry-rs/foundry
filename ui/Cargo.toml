@@ -8,11 +8,13 @@ repository = "https://github.com/foundry-rs/foundry"
 keywords = ["ethereum", "web3", "evm", "debugger"]
 
 [dependencies]
-crossterm = "0.26"
-tui = { version = "0.19", default-features = false, features = ["crossterm"] }
-eyre = "0.6.8"
-hex = "0.4.3"
-ethers = { workspace = true }
 forge = { path = "../forge" }
-revm = { version = "3.1.1", features = ["std", "serde"] }
 foundry-common = { path = "../common" }
+
+ethers = { workspace = true }
+
+crossterm = "0.26"
+eyre = "0.6"
+hex = "0.4"
+revm = { version = "3", features = ["std", "serde"] }
+tui = { version = "0.19", default-features = false, features = ["crossterm"] }
