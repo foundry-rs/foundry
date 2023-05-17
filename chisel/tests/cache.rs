@@ -90,8 +90,7 @@ fn test_write_session_with_name() {
     assert_eq!(cached_session_name, format!("{cache_dir}chisel-test.json"));
 }
 
-#[tokio::test]
-#[serial]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_clear_cache() {
     // Create a session to validate clearing a non-empty cache directory
     let cache_dir = ChiselSession::cache_dir().unwrap();
@@ -118,8 +117,7 @@ async fn test_clear_cache() {
     assert_eq!(num_items, 0);
 }
 
-#[tokio::test]
-#[serial]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_list_sessions() {
     // Create and clear the cache directory
     ChiselSession::create_cache_dir().unwrap();
