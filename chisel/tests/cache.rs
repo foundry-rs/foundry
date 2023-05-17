@@ -80,7 +80,7 @@ fn test_write_session_with_name() {
         foundry_config: Config::default(),
         ..Default::default()
     })
-        .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
+    .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
     env.id = Some(String::from("test"));
 
     // Write the session
@@ -105,7 +105,7 @@ fn test_clear_cache() {
         foundry_config: Config::default(),
         ..Default::default()
     })
-        .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
+    .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
     env.write().unwrap();
 
     // Clear the cache
@@ -132,7 +132,7 @@ fn test_list_sessions() {
         foundry_config: Config::default(),
         ..Default::default()
     })
-        .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
+    .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
 
     env.write().unwrap();
 
@@ -160,7 +160,7 @@ fn test_load_cache() {
         foundry_config: Config::default(),
         ..Default::default()
     })
-        .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
+    .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
     env.write().unwrap();
 
     // Load the session
@@ -192,7 +192,7 @@ fn test_write_same_session_multiple_times() {
         foundry_config: Config::default(),
         ..Default::default()
     })
-        .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
+    .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
     env.write().unwrap();
     env.write().unwrap();
     env.write().unwrap();
@@ -216,7 +216,7 @@ fn test_load_latest_cache() {
         foundry_config: Config::default(),
         ..Default::default()
     })
-        .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
+    .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
     env.write().unwrap();
 
     let wait_time = std::time::Duration::from_millis(100);
@@ -226,7 +226,7 @@ fn test_load_latest_cache() {
         foundry_config: Config::default(),
         ..Default::default()
     })
-        .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
+    .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
     env2.write().unwrap();
 
     // Load the latest session
