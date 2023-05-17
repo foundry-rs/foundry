@@ -90,12 +90,13 @@ fn test_write_session_with_name() {
     assert_eq!(cached_session_name, format!("{cache_dir}chisel-test.json"));
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn test_clear_cache() {
+#[test]
+#[serial]
+fn test_clear_cache() {
     // Create a session to validate clearing a non-empty cache directory
     let cache_dir = ChiselSession::cache_dir().unwrap();
 
-    Solc::install(&Version::new(0, 8, 19)).await.unwrap();
+    Solc::blocking_install(&Version::new(0, 8, 19)).unwrap();
 
     // Force the solc version to be 0.8.19
     let mut foundry_config = Config::default();
@@ -117,13 +118,14 @@ async fn test_clear_cache() {
     assert_eq!(num_items, 0);
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn test_list_sessions() {
+#[test]
+#[serial]
+fn test_list_sessions() {
     // Create and clear the cache directory
     ChiselSession::create_cache_dir().unwrap();
     ChiselSession::clear_cache().unwrap();
 
-    Solc::install(&Version::new(0, 8, 19)).await.unwrap();
+    Solc::blocking_install(&Version::new(0, 8, 19)).unwrap();
 
     // Force the solc version to be 0.8.19
     let mut foundry_config = Config::default();
