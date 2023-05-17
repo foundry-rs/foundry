@@ -15,7 +15,6 @@ pub struct FilterArgs {
     #[clap(
         long = "match-test",
         visible_alias = "mt",
-        conflicts_with = "pattern",
         value_name = "REGEX"
     )]
     pub test_pattern: Option<regex::Regex>,
@@ -24,7 +23,6 @@ pub struct FilterArgs {
     #[clap(
         long = "no-match-test",
         visible_alias = "nmt",
-        conflicts_with = "pattern",
         value_name = "REGEX"
     )]
     pub test_pattern_inverse: Option<regex::Regex>,
@@ -33,7 +31,6 @@ pub struct FilterArgs {
     #[clap(
         long = "match-contract",
         visible_alias = "mc",
-        conflicts_with = "pattern",
         value_name = "REGEX"
     )]
     pub contract_pattern: Option<regex::Regex>,
@@ -42,7 +39,6 @@ pub struct FilterArgs {
     #[clap(
         long = "no-match-contract",
         visible_alias = "nmc",
-        conflicts_with = "pattern",
         value_name = "REGEX"
     )]
     pub contract_pattern_inverse: Option<regex::Regex>,
@@ -51,7 +47,6 @@ pub struct FilterArgs {
     #[clap(
         long = "match-path",
         visible_alias = "mp",
-        conflicts_with = "pattern",
         value_name = "GLOB"
     )]
     pub path_pattern: Option<GlobMatcher>,
@@ -61,7 +56,6 @@ pub struct FilterArgs {
         name = "no-match-path",
         long = "no-match-path",
         visible_alias = "nmp",
-        conflicts_with = "pattern",
         value_name = "GLOB"
     )]
     pub path_pattern_inverse: Option<GlobMatcher>,
