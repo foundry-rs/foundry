@@ -12,12 +12,6 @@ use std::{fmt, path::Path, str::FromStr};
 #[clap(next_help_heading = "Test filtering")]
 pub struct FilterArgs {
     /// Only run test functions matching the specified regex pattern.
-    ///
-    /// Deprecated: See --match-test
-    #[clap(long = "match", short = 'm')]
-    pub pattern: Option<regex::Regex>,
-
-    /// Only run test functions matching the specified regex pattern.
     #[clap(
         long = "match-test",
         visible_alias = "mt",
@@ -103,7 +97,6 @@ impl FilterArgs {
 impl fmt::Debug for FilterArgs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FilterArgs")
-            .field("match", &self.pattern.as_ref().map(|r| r.as_str()))
             .field("match-test", &self.test_pattern.as_ref().map(|r| r.as_str()))
             .field("no-match-test", &self.test_pattern_inverse.as_ref().map(|r| r.as_str()))
             .field("match-contract", &self.contract_pattern.as_ref().map(|r| r.as_str()))
@@ -136,10 +129,6 @@ impl TestFilter for FilterArgs {
     fn matches_test(&self, test_name: impl AsRef<str>) -> bool {
         let mut ok = true;
         let test_name = test_name.as_ref();
-        // Handle the deprecated option match
-        if let Some(re) = &self.pattern {
-            ok &= re.is_match(test_name);
-        }
         if let Some(re) = &self.test_pattern {
             ok &= re.is_match(test_name);
         }
@@ -177,9 +166,6 @@ impl TestFilter for FilterArgs {
 impl fmt::Display for FilterArgs {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut patterns = Vec::new();
-        if let Some(ref p) = self.pattern {
-            patterns.push(format!("\tmatch: `{}`", p.as_str()));
-        }
         if let Some(ref p) = self.test_pattern {
             patterns.push(format!("\tmatch-test: `{}`", p.as_str()));
         }
