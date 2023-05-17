@@ -625,7 +625,7 @@ pub enum Subcommands {
         rpc: RpcOpts,
     },
 
-    /// Get the bytecode of a contract.
+    /// Get the runtime bytecode of a contract.
     #[clap(visible_alias = "co")]
     Code {
         /// The block height to query at.
