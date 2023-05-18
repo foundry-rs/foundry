@@ -213,6 +213,8 @@ pub struct ExpectedCallData {
     pub count: u64,
     /// The type of call
     pub call_type: ExpectedCallType,
+    /// The depth at which this call must be checked
+    pub depth: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -289,6 +291,7 @@ fn expect_call(
     min_gas: Option<u64>,
     count: u64,
     call_type: ExpectedCallType,
+    depth: u64,
 ) -> Result {
     match call_type {
         ExpectedCallType::Count => {
@@ -301,7 +304,7 @@ fn expect_call(
                 "Counted expected calls can only bet set once."
             );
             expecteds
-                .insert(calldata, (ExpectedCallData { value, gas, min_gas, count, call_type }, 0));
+                .insert(calldata, (ExpectedCallData { value, gas, min_gas, count, call_type, depth }, 0));
             Ok(Bytes::new())
         }
         ExpectedCallType::NonCount => {
@@ -319,7 +322,7 @@ fn expect_call(
                 // If it does not exist, then create it.
                 expecteds.insert(
                     calldata,
-                    (ExpectedCallData { value, gas, min_gas, count, call_type }, 0),
+                    (ExpectedCallData { value, gas, min_gas, count, call_type, depth }, 0),
                 );
             }
             Ok(Bytes::new())
@@ -384,6 +387,7 @@ pub fn apply<DB: DatabaseExt>(
             None,
             1,
             ExpectedCallType::NonCount,
+            data.journaled_state.depth(),
         ),
         HEVMCalls::ExpectCall1(inner) => expect_call(
             state,
@@ -394,6 +398,7 @@ pub fn apply<DB: DatabaseExt>(
             None,
             inner.2,
             ExpectedCallType::Count,
+            data.journaled_state.depth(),
         ),
         HEVMCalls::ExpectCall2(inner) => expect_call(
             state,
@@ -404,6 +409,7 @@ pub fn apply<DB: DatabaseExt>(
             None,
             1,
             ExpectedCallType::NonCount,
+            data.journaled_state.depth(),
         ),
         HEVMCalls::ExpectCall3(inner) => expect_call(
             state,
@@ -414,6 +420,7 @@ pub fn apply<DB: DatabaseExt>(
             None,
             inner.3,
             ExpectedCallType::Count,
+            data.journaled_state.depth(),
         ),
         HEVMCalls::ExpectCall4(inner) => {
             let value = inner.1;
@@ -430,6 +437,7 @@ pub fn apply<DB: DatabaseExt>(
                 None,
                 1,
                 ExpectedCallType::NonCount,
+                data.journaled_state.depth(),
             )
         }
         HEVMCalls::ExpectCall5(inner) => {
@@ -447,6 +455,7 @@ pub fn apply<DB: DatabaseExt>(
                 None,
                 inner.4,
                 ExpectedCallType::Count,
+                data.journaled_state.depth(),
             )
         }
         HEVMCalls::ExpectCallMinGas0(inner) => {
@@ -464,6 +473,7 @@ pub fn apply<DB: DatabaseExt>(
                 Some(inner.2 + positive_value_cost_stipend),
                 1,
                 ExpectedCallType::NonCount,
+                data.journaled_state.depth(),
             )
         }
         HEVMCalls::ExpectCallMinGas1(inner) => {
@@ -481,6 +491,7 @@ pub fn apply<DB: DatabaseExt>(
                 Some(inner.2 + positive_value_cost_stipend),
                 inner.4,
                 ExpectedCallType::Count,
+                data.journaled_state.depth(),
             )
         }
         HEVMCalls::MockCall0(inner) => {
