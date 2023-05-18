@@ -4,11 +4,24 @@ pragma solidity >=0.8.18;
 import "ds-test/test.sol";
 import "./Cheats.sol";
 
+contract AddrMock is DSTest {
+    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+
+    function exposed_addr(uint256 pk) public returns (address) {
+        return cheats.addr(pk);
+    }
+
+}
+
 contract AddrTest is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
 
-    function testFailPrivKeyZero() public {
-        cheats.addr(0);
+    function testRevertsPrivKeyZero() public {
+        // Deploy a mock contract to test reverts
+        AddrMock mock = new AddrMock();
+
+        cheats.expectRevert();
+        mock.exposed_addr(0);
     }
 
     function testAddr() public {

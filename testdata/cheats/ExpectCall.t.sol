@@ -79,7 +79,12 @@ contract ExpectCallTest is DSTest {
         target.add(1, 2);
     }
 
-    function testFailExpectMultipleCallsWithDataAdditive() public {
+    function testRevertsExpectMultipleCallsWithDataAdditive() public {
+        vm.expectRevert();
+        this.exposed_multipleCallsDataAdditive();
+    }
+    
+    function exposed_multipleCallsDataAdditive() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
@@ -89,7 +94,12 @@ contract ExpectCallTest is DSTest {
         target.add(1, 2);
     }
 
-    function testFailExpectCallWithData() public {
+    function testRevertsExpectCallWithData() public {
+        cheats.expectRevert();
+        this.exposed_expectCallWithData();
+    }
+
+    function exposed_expectCallWithData() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
         target.add(3, 3);
@@ -103,7 +113,12 @@ contract ExpectCallTest is DSTest {
         target.sum();
     }
 
-    function testFailExpectInnerCall() public {
+    function testRevertsExpectInnerCall() public {
+        cheats.expectRevert();
+        this.exposed_expectInnerCall();
+    }
+
+    function exposed_expectInnerCall() public {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
 
@@ -119,12 +134,22 @@ contract ExpectCallTest is DSTest {
         target.add(5, 5);
     }
 
-    function testFailExpectSelectorCall() public {
+    function testRevertsExpectSelectorCall() public {
+        cheats.expectRevert();
+        this.exposed_expectSelectorCall();
+    }
+
+    function exposed_expectSelectorCall() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector));
     }
 
-    function testFailExpectCallWithMoreParameters() public {
+    function testRevertsExpectCallWithMoreParameters() public {
+        cheats.expectRevert();
+        this.exposed_expectCallWithMoreParameters();
+    }
+
+    function exposed_expectCallWithMoreParameters() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 3, 3, 3));
         target.add(3, 3);
@@ -136,7 +161,12 @@ contract ExpectCallTest is DSTest {
         target.pay{value: 1}(2);
     }
 
-    function testFailExpectCallValue() public {
+    function testRevertsExpectCallValue() public {
+        cheats.expectRevert();
+        this.exposed_expectCallValue();
+    }
+
+    function exposed_expectCallValue() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), 1, abi.encodeWithSelector(target.pay.selector, 2));
     }
@@ -163,7 +193,12 @@ contract ExpectCallTest is DSTest {
         target.addHardGasLimit();
     }
 
-    function testFailExpectCallWithNoValueAndWrongGas() public {
+    function testRevertsExpectCallWithNoValueAndWrongGas() public {
+        cheats.expectRevert();
+        this.exposed_expectCallWithNoValueAndWrongGas();
+    }
+
+    function exposed_expectCallWithNoValueAndWrongGas() public {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
 
@@ -187,7 +222,12 @@ contract ExpectCallTest is DSTest {
         target.addHardGasLimit();
     }
 
-    function testFailExpectCallWithNoValueAndWrongMinGas() public {
+    function testRevertsExpectCallWithNoValueAndWrongMinGas() public {
+        cheats.expectRevert();
+        this.exposed_expectCallWithNoValueAndWrongMinGas();
+    }
+
+    function exposed_expectCallWithNoValueAndWrongMinGas() public {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
 
@@ -213,7 +253,12 @@ contract ExpectCallCountTest is DSTest {
         target.add(3, 3);
     }
 
-    function testFailExpectCallCountWithWrongCount() public {
+    function testRevertsExpectCallCountWithWrongCount() public {
+        cheats.expectRevert();
+        this.exposed_expectCallCountWithWrongCount();
+    }
+
+    function exposed_expectCallCountWithWrongCount() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2), 2);
         target.add(1, 2);
@@ -227,7 +272,12 @@ contract ExpectCallCountTest is DSTest {
         target.sum();
     }
 
-    function testFailExpectCountInnerCall() public {
+    function testRevertsExpectCountInnerCall() public {
+        cheats.expectRevert();
+        this.exposed_expectCountInnerCall();
+    }
+
+    function exposed_expectCountInnerCall() public {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
 
@@ -258,7 +308,12 @@ contract ExpectCallCountTest is DSTest {
         target.pay{value: 2}(2);
     }
 
-    function testFailExpectCallCountValue() public {
+    function testRevertsExpectCallCountValue() public {
+        cheats.expectRevert();
+        this.exposed_expectCallCountValue();
+    }
+
+    function exposed_expectCallCountValue() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), 1, abi.encodeWithSelector(target.pay.selector, 2), 1);
         target.pay{value: 2}(2);
@@ -297,7 +352,12 @@ contract ExpectCallCountTest is DSTest {
         target.addHardGasLimit();
     }
 
-    function testFailExpectCallCountWithNoValueAndWrongGas() public {
+    function testRevertsExpectCallCountWithNoValueAndWrongGas() public {
+        cheats.expectRevert();
+        this.exposed_expectCallCountWithNoValueAndWrongGas();
+    }
+
+    function exposed_expectCallCountWithNoValueAndWrongGas() public {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
 
@@ -331,10 +391,12 @@ contract ExpectCallCountTest is DSTest {
         target.addHardGasLimit();
     }
 
-    function testFailExpectCallCountWithNoValueAndWrongMinGas() public {
-        Contract inner = new Contract();
-        NestedContract target = new NestedContract(inner);
+    function testRevertsExpectCallCountWithNoValueAndWrongMinGas() public {
+        cheats.expectRevert();
+        this.exposed_expectCallCountWithNoValueAndWrongMinGas();
+    }
 
+    function exposed_expectCallCountWithNoValueAndWrongMinGas() public {
         cheats.expectCallMinGas(address(inner), 0, 50_001, abi.encodeWithSelector(inner.add.selector, 1, 1), 1);
         target.addHardGasLimit();
     }
@@ -343,7 +405,12 @@ contract ExpectCallCountTest is DSTest {
 contract ExpectCallMixedTest is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
 
-    function testFailOverrideNoCountWithCount() public {
+    function testRevertsOverrideNoCountWithCount() public {
+        cheats.expectRevert();
+        this.exposed_overrideNoCountWithCount();
+    }
+        
+    function exposed_overrideNoCountWithCount() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
         // You should not be able to overwrite a expectCall that had no count with some count.
@@ -352,7 +419,12 @@ contract ExpectCallMixedTest is DSTest {
         target.add(1, 2);
     }
 
-    function testFailOverrideCountWithCount() public {
+    function testRevertsOverrideCountWithCount() public {
+        cheats.expectRevert();
+        this.exposed_overrideCountWithCount();
+    }
+
+    function exposed_overrideCountWithCount() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2), 2);
         // You should not be able to overwrite a expectCall that had a count with some count.
@@ -361,7 +433,12 @@ contract ExpectCallMixedTest is DSTest {
         target.add(1, 2);
     }
 
-    function testFailOverrideCountWithNoCount() public {
+    function testRevertsOverrideCountWithNoCount() public {
+        cheats.expectRevert();
+        this.exposed_overrideCountWithCount();
+    }
+
+    function exposed_overrideCountWithNoCount() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2), 2);
         // You should not be able to overwrite a expectCall that had a count with no count.

@@ -156,7 +156,17 @@ contract BroadcastTest is DSTest {
         cheats.stopBroadcast();
     }
 
-    function testFailNoBroadcast() public {
+    function testRevertsNoBroadcast() public {
+        BroadcastMock mock = new BroadcastMock();
+        cheats.expectRevert();
+        mock.exposed_stopBroadcast();
+    }
+}
+
+contract BroadcastMock is DSTest {
+    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+
+    function exposed_stopBroadcast() public {
         cheats.stopBroadcast();
     }
 }
