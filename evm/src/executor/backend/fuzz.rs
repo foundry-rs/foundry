@@ -73,10 +73,16 @@ impl<'a> FuzzBackendWrapper<'a> {
         }
     }
 
+    /// Returns whether there was a snapshot failure in the fuzz backend.
+    ///
+    /// This is bubbled up from the underlying Copy-On-Write backend when a revert occurs.
     pub fn has_snapshot_failure(&self) -> bool {
         self.has_snapshot_failure
     }
 
+    /// Sets whether there was a snapshot failure in the fuzz backend.
+    ///
+    /// This is bubbled up from the underlying Copy-On-Write backend when a revert occurs.
     pub fn set_snapshot_failure(&mut self, has_snapshot_failure: bool) {
         self.has_snapshot_failure = has_snapshot_failure;
     }
@@ -109,7 +115,8 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
     ) -> Option<JournaledState> {
         trace!(?id, "fuzz: revert snapshot");
         let journaled_state = self.backend_mut(current).revert(id, journaled_state, current);
-        // Persist the snapshot failure
+        // Persist the snapshot failure in the fuzz backend, as the underlying backend state is lost
+        // after the call.
         self.set_snapshot_failure(self.has_snapshot_failure || self.backend.has_snapshot_failure());
         journaled_state
     }
