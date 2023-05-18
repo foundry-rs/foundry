@@ -2,6 +2,15 @@
 pragma solidity >=0.8.18;
 
 interface Cheats {
+    // Possible caller modes for readCallers()
+    enum CallerMode {
+        None,
+        Broadcast,
+        RecurrentBroadCast,
+        Prank,
+        RecurrentPrank
+    }
+
     // This allows us to getRecordedLogs()
     struct Log {
         bytes32[] topics;
@@ -157,7 +166,7 @@ interface Cheats {
     function stopPrank() external;
 
     // Reads the current msg.sender and tx.origin from state
-    function readCallers() external returns (bool, address, address);
+    function readCallers() external returns (CallerMode, address, address);
 
     // Sets an address' balance, (who, newBalance)
     function deal(address, uint256) external;

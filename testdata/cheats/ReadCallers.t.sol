@@ -11,30 +11,31 @@ contract Target {
 contract ReadCallersTest is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
 
-    function testReadCallersWithNoActivePrank() public {
+    function testReadCallersWithNoActivePrankOrBroadcast() public {
         // Arrange
         address expectedSender = msg.sender;
         address expectedTxOrigin = tx.origin;
 
         // Act
-        (bool isActive, address newSender, address newOrigin) = cheats.readCallers();
+        (Cheats.CallerMode mode, address newSender, address newOrigin) = cheats.readCallers();
 
         // Assert
-        assertEq(isActive, false);
+        assertEq(uint256(mode), uint256(Cheats.CallerMode.None));
         assertEq(newSender, expectedSender);
         assertEq(newOrigin, expectedTxOrigin);
     }
 
+    // Prank Tests
     function testReadCallersWithActivePrankForMsgSender(address sender) public {
         // Arrange
         cheats.prank(sender);
         address expectedTxOrigin = tx.origin;
 
         // Act
-        (bool isActive, address newSender, address newOrigin) = cheats.readCallers();
+        (Cheats.CallerMode mode, address newSender, address newOrigin) = cheats.readCallers();
 
         // Assert
-        assertTrue(isActive);
+        assertEq(uint256(mode), uint256(Cheats.CallerMode.Prank));
         assertEq(newSender, sender);
         assertEq(newOrigin, expectedTxOrigin);
     }
@@ -44,10 +45,10 @@ contract ReadCallersTest is DSTest {
         cheats.prank(sender, origin);
 
         // Act
-        (bool isActive, address newSender, address newOrigin) = cheats.readCallers();
+        (Cheats.CallerMode mode, address newSender, address newOrigin) = cheats.readCallers();
 
         // Assert
-        assertTrue(isActive);
+        assertEq(uint256(mode), uint256(Cheats.CallerMode.Prank));
         assertEq(newSender, sender);
         assertEq(newOrigin, origin);
     }
@@ -62,10 +63,10 @@ contract ReadCallersTest is DSTest {
 
         // Act
         target.consumePrank();
-        (bool isActive, address newSender, address newOrigin) = cheats.readCallers();
+        (Cheats.CallerMode mode, address newSender, address newOrigin) = cheats.readCallers();
 
         // Assert
-        assertEq(isActive, false);
+        assertEq(uint256(mode), uint256(Cheats.CallerMode.None));
         assertEq(newSender, expectedSender);
         assertEq(newOrigin, expectedTxOrigin);
     }
@@ -80,10 +81,10 @@ contract ReadCallersTest is DSTest {
 
         // Act
         target.consumePrank();
-        (bool isActive, address newSender, address newOrigin) = cheats.readCallers();
+        (Cheats.CallerMode mode, address newSender, address newOrigin) = cheats.readCallers();
 
         // Assert
-        assertEq(isActive, false);
+        assertEq(uint256(mode), uint256(Cheats.CallerMode.None));
         assertEq(newSender, expectedSender);
         assertEq(newOrigin, expectedTxOrigin);
     }
@@ -97,10 +98,10 @@ contract ReadCallersTest is DSTest {
         for (uint256 i = 0; i < 5; i++) {
             // Act
             target.consumePrank();
-            (bool isActive, address newSender, address newOrigin) = cheats.readCallers();
+            (Cheats.CallerMode mode, address newSender, address newOrigin) = cheats.readCallers();
 
             // Assert
-            assertTrue(isActive);
+            assertEq(uint256(mode), uint256(Cheats.CallerMode.RecurrentPrank));
             assertEq(newSender, sender);
             assertEq(newOrigin, expectedTxOrigin);
         }
@@ -114,10 +115,10 @@ contract ReadCallersTest is DSTest {
         for (uint256 i = 0; i < 5; i++) {
             // Act
             target.consumePrank();
-            (bool isActive, address newSender, address newOrigin) = cheats.readCallers();
+            (Cheats.CallerMode mode, address newSender, address newOrigin) = cheats.readCallers();
 
             // Assert
-            assertTrue(isActive);
+            assertEq(uint256(mode), uint256(Cheats.CallerMode.RecurrentPrank));
             assertEq(newSender, sender);
             assertEq(newOrigin, origin);
         }
@@ -132,10 +133,10 @@ contract ReadCallersTest is DSTest {
         // Act
         cheats.stopPrank();
 
-        (bool isActive, address newSender, address newOrigin) = cheats.readCallers();
+        (Cheats.CallerMode mode, address newSender, address newOrigin) = cheats.readCallers();
 
         // Assert
-        assertEq(isActive, false);
+        assertEq(uint256(mode), uint256(Cheats.CallerMode.None));
         assertEq(newSender, expectedSender);
         assertEq(newOrigin, expectedTxOrigin);
     }
@@ -149,10 +150,10 @@ contract ReadCallersTest is DSTest {
         // Act
         cheats.stopPrank();
 
-        (bool isActive, address newSender, address newOrigin) = cheats.readCallers();
+        (Cheats.CallerMode mode, address newSender, address newOrigin) = cheats.readCallers();
 
         // Assert
-        assertEq(isActive, false);
+        assertEq(uint256(mode), uint256(Cheats.CallerMode.None));
         assertEq(newSender, expectedSender);
         assertEq(newOrigin, expectedTxOrigin);
     }

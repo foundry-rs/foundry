@@ -153,26 +153,25 @@ fn prank(
 
 fn read_callers(state: &Cheatcodes, default_sender: Address) -> Bytes {
     let Cheatcodes { prank, broadcast, .. } = &state;
-    let is_modifed_caller_active = prank.is_some() || broadcast.is_some();
 
     let data = if let Some(prank) = prank {
+        let caller_mode = if prank.single_call { 3 } else { 4 };
+
         [
-            Token::Bool(is_modifed_caller_active),
+            Token::Uint(caller_mode.into()),
             Token::Address(prank.new_caller),
             Token::Address(prank.new_origin.unwrap_or(default_sender)),
         ]
     } else if let Some(broadcast) = broadcast {
+        let caller_mode = if broadcast.single_call { 1 } else { 2 };
+
         [
-            Token::Bool(is_modifed_caller_active),
+            Token::Uint(caller_mode.into()),
             Token::Address(broadcast.new_origin),
             Token::Address(broadcast.new_origin),
         ]
     } else {
-        [
-            Token::Bool(is_modifed_caller_active),
-            Token::Address(default_sender),
-            Token::Address(default_sender),
-        ]
+        [Token::Uint(0.into()), Token::Address(default_sender), Token::Address(default_sender)]
     };
 
     abi::encode(&data).into()
