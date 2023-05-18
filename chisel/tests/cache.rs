@@ -7,6 +7,14 @@ use foundry_config::{Config, SolcReq};
 use semver::Version;
 use serial_test::serial;
 
+/// Needed for subsequent tests so we use a compatible solc version.
+/// If not, we'll use 0.8.13, which will cause CI failures.
+#[test]
+#[serial]
+fn test_install_solc() {
+    Solc::blocking_install(&Version::new(0, 8, 19)).unwrap();
+}
+
 #[test]
 #[serial]
 fn test_cache_directory() {
@@ -96,8 +104,6 @@ fn test_clear_cache() {
     // Create a session to validate clearing a non-empty cache directory
     let cache_dir = ChiselSession::cache_dir().unwrap();
 
-    Solc::blocking_install(&Version::new(0, 8, 19)).unwrap();
-
     // Force the solc version to be 0.8.19
     let mut foundry_config = Config::default();
     foundry_config.solc = Some(SolcReq::Version(Version::new(0, 8, 19)));
@@ -124,8 +130,6 @@ fn test_list_sessions() {
     // Create and clear the cache directory
     ChiselSession::create_cache_dir().unwrap();
     ChiselSession::clear_cache().unwrap();
-
-    Solc::blocking_install(&Version::new(0, 8, 19)).unwrap();
 
     // Force the solc version to be 0.8.19
     let mut foundry_config = Config::default();
