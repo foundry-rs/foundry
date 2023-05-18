@@ -62,7 +62,7 @@ impl SuiteResult {
 pub struct TestResult {
     /// Whether the test case was successful. This means that the transaction executed
     /// properly, or that there was a revert and that the test was expected to fail
-    /// (prefixed with `testFail`)
+    /// (by calling `vm.expectRevert`)
     pub success: bool,
 
     /// If there was a revert, this field will be populated. Note that the test can

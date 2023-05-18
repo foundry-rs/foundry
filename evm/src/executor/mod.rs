@@ -242,7 +242,7 @@ impl Executor {
         match res.state_changeset.as_ref() {
             Some(changeset) => {
                 let success = self
-                    .ensure_success(to, res.reverted, changeset.clone(), false)
+                    .ensure_success(to, res.reverted, changeset.clone())
                     .map_err(|err| EvmError::Eyre(eyre::eyre!(err.to_string())))?;
                 if success {
                     Ok(res)
@@ -529,9 +529,8 @@ impl Executor {
         address: Address,
         reverted: bool,
         state_changeset: StateChangeset,
-        should_fail: bool,
     ) -> bool {
-        self.ensure_success(address, reverted, state_changeset, should_fail).unwrap_or_default()
+        self.ensure_success(address, reverted, state_changeset).unwrap_or_default()
     }
 
     fn ensure_success(
@@ -539,11 +538,10 @@ impl Executor {
         address: Address,
         reverted: bool,
         state_changeset: StateChangeset,
-        should_fail: bool,
     ) -> Result<bool, DatabaseError> {
         if self.backend().has_snapshot_failure() {
             // a failure occurred in a reverted snapshot, which is considered a failed test
-            return Ok(should_fail)
+            return Ok(true)
         }
 
         // Construct a new VM with the state changeset
@@ -574,7 +572,7 @@ impl Executor {
             }
         }
 
-        Ok(should_fail ^ success)
+        Ok(success)
     }
 
     /// Creates the environment to use when executing a transaction in a test context

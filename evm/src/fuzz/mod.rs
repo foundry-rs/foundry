@@ -61,7 +61,6 @@ impl<'a> FuzzedExecutor<'a> {
         &self,
         func: &Function,
         address: Address,
-        should_fail: bool,
         errors: Option<&Abi>,
     ) -> Result<FuzzTestResult> {
         // Stores the first Fuzzcase
@@ -99,7 +98,7 @@ impl<'a> FuzzedExecutor<'a> {
         }
 
         let strat = proptest::strategy::Union::new_weighted(weights);
-        debug!(func = ?func.name, should_fail, "fuzzing");
+        debug!(func = ?func.name, "fuzzing");
         let run_result = self.runner.clone().run(&strat, |calldata| {
             let call = self
                 .executor
@@ -126,8 +125,7 @@ impl<'a> FuzzedExecutor<'a> {
             let success = self.executor.is_success(
                 address,
                 call.reverted,
-                state_changeset.clone(),
-                should_fail,
+                state_changeset.clone()
             );
 
             if success {
@@ -316,7 +314,7 @@ pub struct FuzzTestResult {
     pub gas_by_case: Vec<(u64, u64)>,
     /// Whether the test case was successful. This means that the transaction executed
     /// properly, or that there was a revert and that the test was expected to fail
-    /// (prefixed with `testFail`)
+    /// (by calling `vm.expectRevert`)
     pub success: bool,
 
     /// If there was a revert, this field will be populated. Note that the test can

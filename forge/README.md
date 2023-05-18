@@ -211,8 +211,9 @@ contract MyTest {
         foo.bar(101);
     }
 
-    function testFailBar() public {
+    function testBarReverts() public {
         // this call would revert, causing this test to pass
+        vm.expectRevert();
         foo.bar(101);
     }
 }

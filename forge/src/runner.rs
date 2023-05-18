@@ -280,7 +280,6 @@ impl<'a> ContractRunner<'a> {
             .contract
             .functions()
             .filter(|func| func.is_test() && filter.matches_test(func.signature()))
-            .map(|func| (func, func.is_test_fail()))
             .collect();
 
         let mut test_results = BTreeMap::new();
@@ -288,7 +287,7 @@ impl<'a> ContractRunner<'a> {
             test_results.extend(
                 tests
                     .par_iter()
-                    .flat_map(|(func, should_fail)| {
+                    .flat_map(|func| {
                         if func.is_fuzz_test() {
                             let fn_name = &func.name;
                             let runner = test_options.fuzz_runner(self.name, fn_name);
@@ -296,13 +295,12 @@ impl<'a> ContractRunner<'a> {
 
                             self.run_fuzz_test(
                                 func,
-                                *should_fail,
                                 runner,
                                 setup.clone(),
                                 *fuzz_config,
                             )
                         } else {
-                            self.clone().run_test(func, *should_fail, setup.clone())
+                            self.clone().run_test(func, setup.clone())
                         }
                         .map(|result| Ok((func.signature(), result)))
                     })
@@ -372,11 +370,10 @@ impl<'a> ContractRunner<'a> {
     ///
     /// State modifications are not committed to the evm database but discarded after the call,
     /// similar to `eth_call`.
-    #[tracing::instrument(name = "test", skip_all, fields(name = %func.signature(), %should_fail))]
+    #[tracing::instrument(name = "test", skip_all, fields(name = %func.signature()))]
     pub fn run_test(
         mut self,
         func: &Function,
-        should_fail: bool,
         setup: TestSetup,
     ) -> Result<TestResult> {
         let TestSetup { address, mut logs, mut traces, mut labeled_addresses, .. } = setup;
@@ -461,7 +458,6 @@ impl<'a> ContractRunner<'a> {
             setup.address,
             reverted,
             state_changeset.expect("we should have a state changeset"),
-            should_fail,
         );
 
         // Record test execution time
@@ -588,11 +584,10 @@ impl<'a> ContractRunner<'a> {
         }
     }
 
-    #[tracing::instrument(name = "fuzz-test", skip_all, fields(name = %func.signature(), %should_fail))]
+    #[tracing::instrument(name = "fuzz-test", skip_all, fields(name = %func.signature()))]
     pub fn run_fuzz_test(
         &self,
         func: &Function,
-        should_fail: bool,
         runner: TestRunner,
         setup: TestSetup,
         fuzz_config: FuzzConfig,
@@ -602,7 +597,7 @@ impl<'a> ContractRunner<'a> {
         // Run fuzz test
         let start = Instant::now();
         let mut result = FuzzedExecutor::new(&self.executor, runner, self.sender, fuzz_config)
-            .fuzz(func, address, should_fail, self.errors)
+            .fuzz(func, address, self.errors)
             .wrap_err("Failed to run fuzz test")?;
 
         let kind = TestKind::Fuzz {

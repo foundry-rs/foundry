@@ -71,7 +71,6 @@ pub fn assert_invariants(
                 invariant_contract.address,
                 call_result.reverted,
                 call_result.state_changeset.take().expect("we should have a state changeset"),
-                false,
             ) {
                 Some(*func)
             } else {
