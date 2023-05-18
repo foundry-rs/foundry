@@ -89,13 +89,22 @@ contract ExpectEmitTest is DSTest {
         emitter = new Emitter();
     }
 
-    function testFailExpectEmitDanglingNoReference() public {
+    function testRevertsExpectEmitDanglingNoReference() public {
+        cheats.expectRevert();
+        this.exposed_expectEmitDanglingNoReference();
+    }
+
+    function exposed_expectEmitDanglingNoReference() public {
         cheats.expectEmit(false, false, false, false);
     }
 
-    function testFailExpectEmitDanglingWithReference() public {
+    function testRevertsExpectEmitDanglingWithReference() public {
+        cheats.expectRevert();
+        this.exposed_expectEmitDanglingWithReference();
+    }
+
+    function exposed_expectEmitDanglingWithReference() public {
         cheats.expectEmit(false, false, false, false);
-        emit Something(1, 2, 3, 4);
     }
 
     /// The topics that are not checked are altered to be incorrect
@@ -123,7 +132,30 @@ contract ExpectEmitTest is DSTest {
 
     /// The topics that are checked are altered to be incorrect
     /// compared to the reference.
-    function testFailExpectEmit(
+    function testRevertsExpectEmit(
+        bool checkTopic1,
+        bool checkTopic2,
+        bool checkTopic3,
+        bool checkData,
+        uint128 topic1,
+        uint128 topic2,
+        uint128 topic3,
+        uint128 data
+    ) public {
+        cheats.expectRevert();
+        this.exposed_expectEmit(
+            checkTopic1,
+            checkTopic2,
+            checkTopic3,
+            checkData,
+            topic1,
+            topic2,
+            topic3,
+            data
+        );
+    }
+
+    function exposed_expectEmit(
         bool checkTopic1,
         bool checkTopic2,
         bool checkTopic3,
@@ -173,7 +205,30 @@ contract ExpectEmitTest is DSTest {
 
     /// The topics that are checked are altered to be incorrect
     /// compared to the reference.
-    function testFailExpectEmitNested(
+    function testRevertsExpectEmitNested(
+        bool checkTopic1,
+        bool checkTopic2,
+        bool checkTopic3,
+        bool checkData,
+        uint128 topic1,
+        uint128 topic2,
+        uint128 topic3,
+        uint128 data
+    ) public {
+        cheats.expectRevert();
+        this.exposed_expectEmitNested(
+            checkTopic1,
+            checkTopic2,
+            checkTopic3,
+            checkData,
+            topic1,
+            topic2,
+            topic3,
+            data
+        );
+    }
+
+    function exposed_expectEmitNested(
         bool checkTopic1,
         bool checkTopic2,
         bool checkTopic3,
@@ -237,7 +292,11 @@ contract ExpectEmitTest is DSTest {
         emitter.emitOutOfExactOrder();
     }
 
-    function testFailExpectEmitCanMatchWithoutExactOrder() public {
+    function testRevertsExpectEmitCanMatchWithoutExactOrder() public {
+        cheats.expectRevert();
+        this.exposed_expectEmitCanMatchWithoutExactOrder();
+    }
+    function exposed_expectEmitCanMatchWithoutExactOrder() public {
         cheats.expectEmit(true, true, true, true);
         emit Something(1, 2, 3, 4);
         // This should fail, as this event is never emitted
@@ -273,22 +332,36 @@ contract ExpectEmitTest is DSTest {
         emitter.emitEvent(1, 2, 3, 4);
     }
 
-    function testFailExpectEmitAddress() public {
+    function testRevertsExpectEmitAddress() public {
+        cheats.expectRevert();
+        this.exposed_expectEmitAddress();
+    }
+    function exposed_expectEmitAddress() public {
         cheats.expectEmit(address(0));
         emit Something(1, 2, 3, 4);
 
         emitter.emitEvent(1, 2, 3, 4);
     }
 
-    function testFailExpectEmitAddressWithArgs() public {
+    function testRevertsEmitAddressWithArgs() public {
+        cheats.expectRevert();
+        this.exposed_expectEmitAddressWithArgs();
+    }
+
+    function exposed_expectEmitAddressWithArgs() public {
         cheats.expectEmit(true, true, true, true, address(0));
         emit Something(1, 2, 3, 4);
 
         emitter.emitEvent(1, 2, 3, 4);
     }
 
+    function testRevertsLowLevelWithoutEmit() public {
+        cheats.expectRevert();
+        this.exposed_LowLevelWithoutEmit();
+    }
+
     /// Ref: issue #760
-    function testFailLowLevelWithoutEmit() public {
+    function exposed_LowLevelWithoutEmit() public {
         LowLevelCaller caller = new LowLevelCaller();
 
         cheats.expectEmit(true, true, true, true);
@@ -298,7 +371,12 @@ contract ExpectEmitTest is DSTest {
         caller.f();
     }
 
-    function testFailNoEmitDirectlyOnNextCall() public {
+    function testRevertsNoEmitDirectlyOnNextCall() public {
+        cheats.expectRevert();
+        this.exposed_NoEmitDirectlyOnNextCall();
+    }
+
+    function exposed_NoEmitDirectlyOnNextCall() public {
         LowLevelCaller caller = new LowLevelCaller();
 
         cheats.expectEmit(true, true, true, true);
@@ -310,8 +388,13 @@ contract ExpectEmitTest is DSTest {
         emitter.emitEvent(1, 2, 3, 4);
     }
 
+    function testRevertsDifferentIndexedParameters() public {
+        cheats.expectRevert();
+        this.exposed_differentIndexedParameters();
+    }
+
     /// Ref: issue #760
-    function testFailDifferentIndexedParameters() public {
+    function exposed_differentIndexedParameters() public {
         cheats.expectEmit(true, false, false, false);
         emit SomethingElse(1);
 
@@ -339,9 +422,14 @@ contract ExpectEmitTest is DSTest {
         );
     }
 
+    function testRevertsEmitOnlyAppliesToNextCall() public {
+        cheats.expectRevert();
+        this.exposed_emitOnlyAppliesToNextCall();
+    }
+
     /// This test should fail, as the call to `changeThing` is not a static call.
     /// While we can ignore static calls, we cannot ignore normal calls.
-    function testFailEmitOnlyAppliesToNextCall() public {
+    function exposed_emitOnlyAppliesToNextCall() public {
         cheats.expectEmit(true, true, true, true);
         emit Something(1, 2, 3, 4);
         // This works because it's a staticcall.

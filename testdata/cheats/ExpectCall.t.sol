@@ -80,7 +80,7 @@ contract ExpectCallTest is DSTest {
     }
 
     function testRevertsExpectMultipleCallsWithDataAdditive() public {
-        vm.expectRevert();
+        cheats.expectRevert();
         this.exposed_multipleCallsDataAdditive();
     }
     
@@ -397,6 +397,8 @@ contract ExpectCallCountTest is DSTest {
     }
 
     function exposed_expectCallCountWithNoValueAndWrongMinGas() public {
+        Contract inner = new Contract();
+        NestedContract target = new NestedContract(inner);
         cheats.expectCallMinGas(address(inner), 0, 50_001, abi.encodeWithSelector(inner.add.selector, 1, 1), 1);
         target.addHardGasLimit();
     }

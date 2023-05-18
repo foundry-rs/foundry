@@ -64,7 +64,12 @@ contract GetCodeTest is DSTest {
         assertEq(string(deployedCode), string(deployed.code), "deployedCode for path was incorrect");
     }
 
-    function testFailGetUnlinked() public {
+    function testRevertsGetUnlinked() public {
+        cheats.expectRevert();
+        this.exposed_GetUnlinked();
+    }
+
+    function exposed_GetUnlinked() public {
         cheats.getCode("UnlinkedContract.sol");
     }
 }

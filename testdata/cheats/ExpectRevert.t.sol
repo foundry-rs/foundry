@@ -113,13 +113,23 @@ contract ExpectRevertTest is DSTest {
         dummy.largeReturnType();
     }
 
-    function testFailExpectRevertErrorDoesNotMatch() public {
+    function testRevertsExpectRevertErrorDoesNotMatch() public {
+        cheats.expectRevert();
+        this.exposed_expectRevertErrorDoesNotMatch();
+    }
+
+    function exposed_expectRevertErrorDoesNotMatch() public {
         Reverter reverter = new Reverter();
         cheats.expectRevert("should revert with this message");
         reverter.revertWithMessage("but reverts with this message");
     }
 
-    function testFailExpectRevertDidNotRevert() public {
+    function testRevertsExpectRevertDidNotRevert() public {
+        cheats.expectRevert();
+        this.exposed_expectRevertDidNotRevert();
+    }
+
+    function exposed_expectRevertDidNotRevert() public {
         Reverter reverter = new Reverter();
         cheats.expectRevert("does not revert, but we think it should");
         reverter.doNotRevert();
@@ -157,13 +167,23 @@ contract ExpectRevertTest is DSTest {
         reverter.revertWithoutReason();
     }
 
-    function testFailExpectRevertAnyRevertDidNotRevert() public {
+    function testRevertsExpectRevertAnyRevertDidNotRevert() public {
+        cheats.expectRevert();
+        this.exposed_expectRevertAnyRevertDidNotRevert();
+    }
+
+    function exposed_expectRevertAnyRevertDidNotRevert() public {
         Reverter reverter = new Reverter();
         cheats.expectRevert();
         reverter.doNotRevert();
     }
 
-    function testFailExpectRevertDangling() public {
+    function testRevertExpectRevertDangling() public {
+        cheats.expectRevert("dangling");
+        this.exposed_expectRevertDangling();
+    }
+
+    function exposed_expectRevertDangling() public {
         cheats.expectRevert("dangling");
     }
 
