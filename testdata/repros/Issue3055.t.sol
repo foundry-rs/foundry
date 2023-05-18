@@ -23,6 +23,8 @@ contract Issue3055Test is DSTest {
 
     function test_snapshot3(uint256) public {
         vm.expectRevert();
+        // Call exposed_snapshot3() using this to perform an external call,
+        // so we can properly test for reverts.
         this.exposed_snapshot3();
     }
 
