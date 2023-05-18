@@ -59,7 +59,7 @@ fn test_write_session() {
         traces: false,
         calldata: None,
     })
-    .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
+    .unwrap_or_else(|e| panic!("Failed to create ChiselSession!, {}", e));
 
     // Write the session
     let cached_session_name = env.write().unwrap();
@@ -88,7 +88,7 @@ fn test_write_session_with_name() {
         foundry_config: Config::default(),
         ..Default::default()
     })
-    .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
+    .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
     env.id = Some(String::from("test"));
 
     // Write the session
