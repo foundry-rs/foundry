@@ -293,12 +293,7 @@ impl<'a> ContractRunner<'a> {
                             let runner = test_options.fuzz_runner(self.name, fn_name);
                             let fuzz_config = test_options.fuzz_config(self.name, fn_name);
 
-                            self.run_fuzz_test(
-                                func,
-                                runner,
-                                setup.clone(),
-                                *fuzz_config,
-                            )
+                            self.run_fuzz_test(func, runner, setup.clone(), *fuzz_config)
                         } else {
                             self.clone().run_test(func, setup.clone())
                         }
@@ -371,11 +366,7 @@ impl<'a> ContractRunner<'a> {
     /// State modifications are not committed to the evm database but discarded after the call,
     /// similar to `eth_call`.
     #[tracing::instrument(name = "test", skip_all, fields(name = %func.signature()))]
-    pub fn run_test(
-        mut self,
-        func: &Function,
-        setup: TestSetup,
-    ) -> Result<TestResult> {
+    pub fn run_test(mut self, func: &Function, setup: TestSetup) -> Result<TestResult> {
         let TestSetup { address, mut logs, mut traces, mut labeled_addresses, .. } = setup;
 
         // Run unit test

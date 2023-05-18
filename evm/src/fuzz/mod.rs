@@ -122,11 +122,7 @@ impl<'a> FuzzedExecutor<'a> {
                 return Err(TestCaseError::reject(FuzzError::AssumeReject))
             }
 
-            let success = self.executor.is_success(
-                address,
-                call.reverted,
-                state_changeset.clone()
-            );
+            let success = self.executor.is_success(address, call.reverted, state_changeset.clone());
 
             if success {
                 let mut first_case = first_case.borrow_mut();
