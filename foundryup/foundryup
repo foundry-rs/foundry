@@ -205,11 +205,11 @@ EOF
 
     # Build the repo and install the binaries locally to the .foundry bin directory.
     # --root appends /bin to the directory it is given, so we pass FOUNDRY_DIR.
-    ensure cargo install --path ./cli --bins --locked --force --root "$FOUNDRY_DIR"
+    ensure cargo install --release --path ./cli --bins --locked --force --root "$FOUNDRY_DIR"
     # install anvil
-    ensure cargo install --path ./anvil --bin anvil --locked --force --root "$FOUNDRY_DIR"
+    ensure cargo install --release --path ./anvil --bin anvil --locked --force --root "$FOUNDRY_DIR"
     # install chisel
-    ensure cargo install --path ./chisel --bin chisel --locked --force --root "$FOUNDRY_DIR"
+    ensure cargo install --release --path ./chisel --bin chisel --locked --force --root "$FOUNDRY_DIR"
 
     # If help2man is installed, use it to add Foundry man pages.
     if check_cmd help2man; then
