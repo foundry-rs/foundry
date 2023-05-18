@@ -156,8 +156,8 @@ interface Cheats {
     // Resets subsequent calls' msg.sender to be `address(this)`
     function stopPrank() external;
 
-    // Reads the current prank from state
-    function readPrank() external returns (bool, address, address);
+    // Reads the current msg.sender and tx.origin from state
+    function readCallers() external returns (bool, address, address);
 
     // Sets an address' balance, (who, newBalance)
     function deal(address, uint256) external;
@@ -367,8 +367,10 @@ interface Cheats {
     // Follows symbolic links if `follow_links` is true.
     // (path) => (entries)
     function readDir(string calldata) external returns (DirEntry[] memory);
+
     // (path, max_depth) => (entries)
     function readDir(string calldata, uint64) external returns (DirEntry[] memory);
+
     // (path, max_depth, follow_links) => (entries)
     function readDir(string calldata, uint64, bool) external returns (DirEntry[] memory);
 

@@ -151,18 +151,25 @@ fn prank(
     Ok(Bytes::new())
 }
 
-fn read_prank(prank: &Option<Prank>, default_sender: Address) -> Bytes {
-    let is_prank_active = prank.is_some();
+fn read_callers(state: &Cheatcodes, default_sender: Address) -> Bytes {
+    let Cheatcodes { prank, broadcast, .. } = &state;
+    let is_modifed_caller_active = prank.is_some() || broadcast.is_some();
 
     let data = if let Some(prank) = prank {
         [
-            Token::Bool(is_prank_active),
+            Token::Bool(is_modifed_caller_active),
             Token::Address(prank.new_caller),
             Token::Address(prank.new_origin.unwrap_or(default_sender)),
         ]
+    } else if let Some(broadcast) = broadcast {
+        [
+            Token::Bool(is_modifed_caller_active),
+            Token::Address(broadcast.new_origin),
+            Token::Address(broadcast.new_origin),
+        ]
     } else {
         [
-            Token::Bool(is_prank_active),
+            Token::Bool(is_modifed_caller_active),
             Token::Address(default_sender),
             Token::Address(default_sender),
         ]
@@ -386,7 +393,7 @@ pub fn apply<DB: DatabaseExt>(
             state.prank = None;
             Bytes::new()
         }
-        HEVMCalls::ReadPrank(_) => read_prank(&state.prank, b160_to_h160(data.env.tx.caller)),
+        HEVMCalls::ReadCallers(_) => read_callers(state, b160_to_h160(data.env.tx.caller)),
         HEVMCalls::Record(_) => {
             start_record(state);
             Bytes::new()

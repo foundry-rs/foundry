@@ -8,16 +8,16 @@ contract Target {
     function consumePrank() external {}
 }
 
-contract ReadPrankTest is DSTest {
+contract ReadCallersTest is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
 
-    function testReadPrankWithNoActivePrank() public {
+    function testReadCallersWithNoActivePrank() public {
         // Arrange
         address expectedSender = msg.sender;
         address expectedTxOrigin = tx.origin;
 
         // Act
-        (bool isActive, address newSender, address newOrigin) = cheats.readPrank();
+        (bool isActive, address newSender, address newOrigin) = cheats.readCallers();
 
         // Assert
         assertEq(isActive, false);
@@ -25,13 +25,13 @@ contract ReadPrankTest is DSTest {
         assertEq(newOrigin, expectedTxOrigin);
     }
 
-    function testReadPrankWithActivePrankForMsgSender(address sender) public {
+    function testReadCallersWithActivePrankForMsgSender(address sender) public {
         // Arrange
         cheats.prank(sender);
         address expectedTxOrigin = tx.origin;
 
         // Act
-        (bool isActive, address newSender, address newOrigin) = cheats.readPrank();
+        (bool isActive, address newSender, address newOrigin) = cheats.readCallers();
 
         // Assert
         assertTrue(isActive);
@@ -39,12 +39,12 @@ contract ReadPrankTest is DSTest {
         assertEq(newOrigin, expectedTxOrigin);
     }
 
-    function testReadPrankWithActivePrankForMsgSenderAndTxOrigin(address sender, address origin) public {
+    function testReadCallersWithActivePrankForMsgSenderAndTxOrigin(address sender, address origin) public {
         // Arrange
         cheats.prank(sender, origin);
 
         // Act
-        (bool isActive, address newSender, address newOrigin) = cheats.readPrank();
+        (bool isActive, address newSender, address newOrigin) = cheats.readCallers();
 
         // Assert
         assertTrue(isActive);
@@ -52,7 +52,7 @@ contract ReadPrankTest is DSTest {
         assertEq(newOrigin, origin);
     }
 
-    function testReadPrankAfterConsumingMsgSenderPrank(address sender) public {
+    function testReadCallersAfterConsumingMsgSenderPrank(address sender) public {
         // Arrange
         Target target = new Target();
         address expectedSender = msg.sender;
@@ -62,7 +62,7 @@ contract ReadPrankTest is DSTest {
 
         // Act
         target.consumePrank();
-        (bool isActive, address newSender, address newOrigin) = cheats.readPrank();
+        (bool isActive, address newSender, address newOrigin) = cheats.readCallers();
 
         // Assert
         assertEq(isActive, false);
@@ -70,7 +70,7 @@ contract ReadPrankTest is DSTest {
         assertEq(newOrigin, expectedTxOrigin);
     }
 
-    function testReadPrankAfterConsumingMsgSenderAndTxOriginPrank(address sender, address origin) public {
+    function testReadCallersAfterConsumingMsgSenderAndTxOriginPrank(address sender, address origin) public {
         // Arrange
         Target target = new Target();
         address expectedSender = msg.sender;
@@ -80,7 +80,7 @@ contract ReadPrankTest is DSTest {
 
         // Act
         target.consumePrank();
-        (bool isActive, address newSender, address newOrigin) = cheats.readPrank();
+        (bool isActive, address newSender, address newOrigin) = cheats.readCallers();
 
         // Assert
         assertEq(isActive, false);
@@ -88,7 +88,7 @@ contract ReadPrankTest is DSTest {
         assertEq(newOrigin, expectedTxOrigin);
     }
 
-    function testReadPrankWithActiveRecurrentMsgSenderPrank(address sender) public {
+    function testReadCallersWithActiveRecurrentMsgSenderPrank(address sender) public {
         // Arrange
         address expectedTxOrigin = tx.origin;
         Target target = new Target();
@@ -97,7 +97,7 @@ contract ReadPrankTest is DSTest {
         for (uint256 i = 0; i < 5; i++) {
             // Act
             target.consumePrank();
-            (bool isActive, address newSender, address newOrigin) = cheats.readPrank();
+            (bool isActive, address newSender, address newOrigin) = cheats.readCallers();
 
             // Assert
             assertTrue(isActive);
@@ -106,7 +106,7 @@ contract ReadPrankTest is DSTest {
         }
     }
 
-    function testReadPrankWithActiveRecurrentMsgSenderAndTxOriginPrank(address sender, address origin) public {
+    function testReadCallersWithActiveRecurrentMsgSenderAndTxOriginPrank(address sender, address origin) public {
         // Arrange
         Target target = new Target();
         cheats.startPrank(sender, origin);
@@ -114,7 +114,7 @@ contract ReadPrankTest is DSTest {
         for (uint256 i = 0; i < 5; i++) {
             // Act
             target.consumePrank();
-            (bool isActive, address newSender, address newOrigin) = cheats.readPrank();
+            (bool isActive, address newSender, address newOrigin) = cheats.readCallers();
 
             // Assert
             assertTrue(isActive);
@@ -123,7 +123,7 @@ contract ReadPrankTest is DSTest {
         }
     }
 
-    function testReadPrankAfterStoppingRecurrentMsgSenderPrank(address sender) public {
+    function testReadCallersAfterStoppingRecurrentMsgSenderPrank(address sender) public {
         // Arrange
         address expectedSender = msg.sender;
         address expectedTxOrigin = tx.origin;
@@ -132,7 +132,7 @@ contract ReadPrankTest is DSTest {
         // Act
         cheats.stopPrank();
 
-        (bool isActive, address newSender, address newOrigin) = cheats.readPrank();
+        (bool isActive, address newSender, address newOrigin) = cheats.readCallers();
 
         // Assert
         assertEq(isActive, false);
@@ -140,7 +140,7 @@ contract ReadPrankTest is DSTest {
         assertEq(newOrigin, expectedTxOrigin);
     }
 
-    function testReadPrankAfterStoppingRecurrentMsgSenderAndTxOriginPrank(address sender, address origin) public {
+    function testReadCallersAfterStoppingRecurrentMsgSenderAndTxOriginPrank(address sender, address origin) public {
         // Arrange
         address expectedSender = msg.sender;
         address expectedTxOrigin = tx.origin;
@@ -149,7 +149,7 @@ contract ReadPrankTest is DSTest {
         // Act
         cheats.stopPrank();
 
-        (bool isActive, address newSender, address newOrigin) = cheats.readPrank();
+        (bool isActive, address newSender, address newOrigin) = cheats.readCallers();
 
         // Assert
         assertEq(isActive, false);
