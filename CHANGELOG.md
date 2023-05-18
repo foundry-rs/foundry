@@ -27,6 +27,7 @@ To use the latest pinned nightly on your CI, modify your Foundry installation st
 
 - [expectEmit](https://github.com/foundry-rs/foundry/pull/4920) will now only work for the next call.
 - expectCall will now only work if the call(s) are made exactly after the cheatcode is invoked.
+- `-m`, the deprecated alias for `--mt` or `--match-test`, has now been removed.
 - expectRevert will now work if the next call does revert, instead of expecting a revert during the whole test.
 - [startPrank will now override the existing prank instead of erroring](https://github.com/foundry-rs/foundry/pull/4826).
 - [precompiles will not be compatible with all cheatcodes](https://github.com/foundry-rs/foundry/pull/4905).
