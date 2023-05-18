@@ -96,5 +96,6 @@ fn main() -> eyre::Result<()> {
             Ok(())
         }
         Subcommands::Doc(cmd) => cmd.run(),
+        Subcommands::SigCollision(cmd) => cmd.run(),
     }
 }

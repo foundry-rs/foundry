@@ -15,6 +15,7 @@ use crate::cmd::forge::{
     install::InstallArgs,
     remappings::RemappingArgs,
     remove::RemoveArgs,
+    sig_collision::SigCollisionArgs,
     script::ScriptArgs,
     snapshot, test, tree, update,
     verify::{VerifyArgs, VerifyCheckArgs},
@@ -155,6 +156,12 @@ pub enum Subcommands {
 
     /// Generate documentation for the project.
     Doc(DocArgs),
+
+    /// Detects methods from 2 contracts whose selectors clash
+    #[clap(
+        about = "Detect method signature collision between two contracts."
+    )]
+    SigCollision(SigCollisionArgs),
 }
 
 // A set of solc compiler settings that can be set via command line arguments, which are intended
