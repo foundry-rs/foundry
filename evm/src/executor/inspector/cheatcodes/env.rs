@@ -86,6 +86,20 @@ impl Prank {
     }
 }
 
+enum CallerMode {
+    None,
+    Broadcast,
+    RecurrentBroadcast,
+    Prank,
+    RecurrentPrank,
+}
+
+impl From<CallerMode> for U256 {
+    fn from(value: CallerMode) -> Self {
+        (value as i8).into()
+    }
+}
+
 /// Sets up broadcasting from a script using `origin` as the sender
 fn broadcast(
     state: &mut Cheatcodes,
@@ -155,7 +169,8 @@ fn read_callers(state: &Cheatcodes, default_sender: Address) -> Bytes {
     let Cheatcodes { prank, broadcast, .. } = &state;
 
     let data = if let Some(prank) = prank {
-        let caller_mode = if prank.single_call { 3 } else { 4 };
+        let caller_mode =
+            if prank.single_call { CallerMode::Prank } else { CallerMode::RecurrentPrank };
 
         [
             Token::Uint(caller_mode.into()),
@@ -163,7 +178,11 @@ fn read_callers(state: &Cheatcodes, default_sender: Address) -> Bytes {
             Token::Address(prank.new_origin.unwrap_or(default_sender)),
         ]
     } else if let Some(broadcast) = broadcast {
-        let caller_mode = if broadcast.single_call { 1 } else { 2 };
+        let caller_mode = if broadcast.single_call {
+            CallerMode::Broadcast
+        } else {
+            CallerMode::RecurrentBroadcast
+        };
 
         [
             Token::Uint(caller_mode.into()),
@@ -171,7 +190,11 @@ fn read_callers(state: &Cheatcodes, default_sender: Address) -> Bytes {
             Token::Address(broadcast.new_origin),
         ]
     } else {
-        [Token::Uint(0.into()), Token::Address(default_sender), Token::Address(default_sender)]
+        [
+            Token::Uint(CallerMode::None.into()),
+            Token::Address(default_sender),
+            Token::Address(default_sender),
+        ]
     };
 
     abi::encode(&data).into()

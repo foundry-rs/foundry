@@ -201,7 +201,7 @@ contract ReadCallersTest is DSTest {
             (Cheats.CallerMode mode, address newSender, address newOrigin) = cheats.readCallers();
 
             // Assert
-            assertEq(uint256(mode), uint256(Cheats.CallerMode.RecurrentBroadCast));
+            assertEq(uint256(mode), uint256(Cheats.CallerMode.RecurrentBroadcast));
             assertEq(newSender, sender);
             assertEq(newOrigin, sender);
         }

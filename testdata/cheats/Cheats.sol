@@ -6,7 +6,7 @@ interface Cheats {
     enum CallerMode {
         None,
         Broadcast,
-        RecurrentBroadCast,
+        RecurrentBroadcast,
         Prank,
         RecurrentPrank
     }
