@@ -858,7 +858,7 @@ impl DatabaseExt for Backend {
                 .map(|addr| self.is_failed_test_contract_state(addr, current_state))
                 .unwrap_or_default()
             {
-                self.inner.has_snapshot_failure.fetch_or(true, Ordering::Relaxed);
+                self.inner.has_snapshot_failure.store(true, Ordering::Relaxed);
             }
 
             // merge additional logs
