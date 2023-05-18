@@ -20,4 +20,15 @@ contract Issue3055Test is DSTest {
         vm.revertTo(snapshot);
         assertTrue(true);
     }
+
+    function test_snapshot3(uint256) public {
+        vm.expectRevert();
+        this.exposed_snapshot3();
+    }
+
+    function exposed_snapshot3() public {
+        uint256 snapshot = vm.snapshot();
+        assertTrue(false);
+        vm.revertTo(snapshot);
+    }
 }
