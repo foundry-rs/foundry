@@ -17,7 +17,6 @@ use revm::{
     Database, DatabaseCommit,
 };
 use std::sync::Arc;
-use tracing::{trace, warn};
 
 /// a [revm::Database] that's forked off another client
 ///

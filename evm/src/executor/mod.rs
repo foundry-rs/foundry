@@ -33,7 +33,6 @@ pub use revm::{
     },
 };
 use std::collections::BTreeMap;
-use tracing::trace;
 
 /// ABIs used internally in the executor
 pub mod abi;
@@ -362,6 +361,11 @@ impl Executor {
             self.build_test_env(from, TransactTo::Call(h160_to_b160(to)), calldata, value);
         let mut db = FuzzBackendWrapper::new(self.backend());
         let result = db.inspect_ref(&mut env, &mut inspector)?;
+
+        // Persist the snapshot failure recorded on the fuzz backend wrapper.
+        self.backend().set_snapshot_failure(
+            self.backend().has_snapshot_failure() || db.has_snapshot_failure(),
+        );
 
         convert_executed_result(env, inspector, result)
     }

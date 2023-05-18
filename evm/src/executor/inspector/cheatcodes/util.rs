@@ -1,4 +1,4 @@
-use super::{ensure, err, Cheatcodes, Result};
+use super::{ensure, fmt_err, Cheatcodes, Result};
 use crate::{
     abi::HEVMCalls,
     executor::backend::{
@@ -26,7 +26,6 @@ use revm::{
     Database, EVMData, JournaledState,
 };
 use std::collections::VecDeque;
-use tracing::trace;
 
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 
@@ -140,9 +139,10 @@ fn remember_key(state: &mut Cheatcodes, private_key: U256, chain_id: U256) -> Re
 pub fn parse(s: &str, ty: &ParamType) -> Result {
     parse_token(s, ty)
         .map(|token| abi::encode(&[token]).into())
-        .map_err(|e| err!("Failed to parse `{s}` as type `{ty}`: {e}"))
+        .map_err(|e| fmt_err!("Failed to parse `{s}` as type `{ty}`: {e}"))
 }
 
+#[instrument(level = "error", name = "util", target = "evm::cheatcodes", skip_all)]
 pub fn apply<DB: Database>(
     state: &mut Cheatcodes,
     data: &mut EVMData<'_, DB>,

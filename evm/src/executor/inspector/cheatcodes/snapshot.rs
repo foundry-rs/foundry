@@ -4,6 +4,7 @@ use ethers::abi::AbiEncode;
 use revm::EVMData;
 
 /// Handles fork related cheatcodes
+#[instrument(level = "error", name = "snapshot", target = "evm::cheatcodes", skip_all)]
 pub fn apply<DB: DatabaseExt>(data: &mut EVMData<'_, DB>, call: &HEVMCalls) -> Option<Result> {
     Some(match call {
         HEVMCalls::Snapshot(_) => {

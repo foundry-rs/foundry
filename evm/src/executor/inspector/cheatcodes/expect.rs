@@ -1,4 +1,4 @@
-use super::{bail, ensure, err, Cheatcodes, Result};
+use super::{bail, ensure, fmt_err, Cheatcodes, Result};
 use crate::{
     abi::HEVMCalls,
     error::{ERROR_PREFIX, REVERT_PREFIX},
@@ -15,7 +15,6 @@ use revm::{
     EVMData,
 };
 use std::cmp::Ordering;
-use tracing::{instrument, trace};
 
 /// For some cheatcodes we may internally change the status of the call, i.e. in `expectRevert`.
 /// Solidity will see a successful call and attempt to decode the return data. Therefore, we need
@@ -96,7 +95,7 @@ pub fn handle_expect_revert(
                 .or_else(|| std::str::from_utf8(data).ok().map(ToOwned::to_owned))
                 .unwrap_or_else(|| format!("0x{}", hex::encode(data)))
         };
-        Err(err!(
+        Err(fmt_err!(
             "Error != expected error: {} != {}",
             stringify(&actual_revert),
             stringify(expected_revert),
@@ -328,6 +327,7 @@ fn expect_call(
     }
 }
 
+#[instrument(level = "error", name = "expect", target = "evm::cheatcodes", skip_all)]
 pub fn apply<DB: DatabaseExt>(
     state: &mut Cheatcodes,
     data: &mut EVMData<'_, DB>,
