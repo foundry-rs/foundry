@@ -41,13 +41,18 @@ pub struct FuzzBackendWrapper<'a> {
     pub backend: Cow<'a, Backend>,
     /// Keeps track of whether the backed is already intialized
     is_initialized: bool,
+    /// Keeps track of wheter there was a snapshot failure.
+    ///
+    /// Necessary as the backend is dropped after usage, but we'll need to persist
+    /// the snapshot failure anyhow.
+    has_snapshot_failure: bool,
 }
 
 // === impl FuzzBackendWrapper ===
 
 impl<'a> FuzzBackendWrapper<'a> {
     pub fn new(backend: &'a Backend) -> Self {
-        Self { backend: Cow::Borrowed(backend), is_initialized: false }
+        Self { backend: Cow::Borrowed(backend), is_initialized: false, has_snapshot_failure: false }
     }
 
     /// Executes the configured transaction of the `env` without committing state changes
@@ -66,6 +71,14 @@ impl<'a> FuzzBackendWrapper<'a> {
             Ok(result) => Ok(result),
             Err(e) => eyre::bail!("fuzz: failed to inspect: {:?}", e),
         }
+    }
+
+    pub fn has_snapshot_failure(&self) -> bool {
+        self.has_snapshot_failure
+    }
+
+    pub fn set_snapshot_failure(&mut self, has_snapshot_failure: bool) {
+        self.has_snapshot_failure = has_snapshot_failure;
     }
 
     /// Returns a mutable instance of the Backend.
@@ -95,7 +108,10 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         current: &mut Env,
     ) -> Option<JournaledState> {
         trace!(?id, "fuzz: revert snapshot");
-        self.backend_mut(current).revert(id, journaled_state, current)
+        let journaled_state = self.backend_mut(current).revert(id, journaled_state, current);
+        // Persist the snapshot failure
+        self.set_snapshot_failure(self.has_snapshot_failure || self.backend.has_snapshot_failure());
+        journaled_state
     }
 
     fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<LocalForkId> {
