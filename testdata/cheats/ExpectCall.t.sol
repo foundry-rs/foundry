@@ -65,6 +65,12 @@ contract ExpectCallTest is DSTest {
         this.exposed_callTargetNTimes(target, 1, 2, 1);
     }
 
+    function testFailExpectCallDirectly() public {
+        Contract target = new Contract();
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2), 1);
+        target.add(1, 2);
+    }
+
     function testExpectMultipleCallsWithData() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
@@ -151,10 +157,10 @@ contract ExpectCallTest is DSTest {
         this.exposed_expectCallWithValue(target, 1, 2);
     }
 
-    // function testFailExpectCallValue() public {
-    //     Contract target = new Contract();
-    //     cheats.expectCall(address(target), 1, abi.encodeWithSelector(target.pay.selector, 2));
-    // }
+    function testFailExpectCallValue() public {
+        Contract target = new Contract();
+        cheats.expectCall(address(target), 1, abi.encodeWithSelector(target.pay.selector, 2));
+    }
 
     function testExpectCallWithValueWithoutParameters() public {
         Contract target = new Contract();
@@ -277,22 +283,26 @@ contract ExpectCallCountTest is DSTest {
         target.sum();
     }
 
+    function exposed_pay(Contract target, uint256 value, uint256 amount) public payable {
+        target.pay{value: value}(amount);
+    }
+
     function testExpectCallCountWithValue() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), 1, abi.encodeWithSelector(target.pay.selector, 2), 1);
-        target.pay{value: 1}(2);
+        this.exposed_pay{value: 1}(target, 1, 2);
     }
 
     function testExpectZeroCallCountValue() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), 1, abi.encodeWithSelector(target.pay.selector, 2), 0);
-        target.pay{value: 2}(2);
+        this.exposed_pay{value: 2}(target, 2, 2);
     }
 
     function testFailExpectCallCountValue() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), 1, abi.encodeWithSelector(target.pay.selector, 2), 1);
-        target.pay{value: 2}(2);
+        this.exposed_pay{value: 2}(target, 2, 2);
     }
 
     function testExpectCallCountWithValueWithoutParameters() public {
