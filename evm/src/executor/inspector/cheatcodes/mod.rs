@@ -824,8 +824,11 @@ where
             for (calldata, (expected, actual_count)) in calldatas {
                 // Grab the values we expect to see
                 let ExpectedCallData { gas, min_gas, value, count, call_type, depth } = expected;
-                // Only check calls in the corresponding depth
-                if depth == &data.journaled_state.depth() {
+                // Only check calls in the corresponding depth,
+                // or if the expected depth is higher than the current depth. This is correct, as the expected depth can only be bigger than the
+                // current depth if we're either terminating the root call (the test itself), or exiting the intended call that contained
+                // the calls we expected to see.
+                if depth >= &data.journaled_state.depth() {
                     let calldata = Bytes::from(calldata.clone());
 
                     // We must match differently depending on the type of call we expect.
