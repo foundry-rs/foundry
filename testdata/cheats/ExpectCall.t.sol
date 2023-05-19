@@ -65,7 +65,6 @@ contract ExpectCallTest is DSTest {
         this.exposed_callTargetNTimes(target, 1, 2, 1);
     }
 
-
     function testExpectMultipleCallsWithData() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
@@ -151,7 +150,6 @@ contract ExpectCallTest is DSTest {
         cheats.expectCall(address(target), 1, abi.encodeWithSelector(target.pay.selector, 2));
         this.exposed_expectCallWithValue(target, 1, 2);
     }
-
 
     // function testFailExpectCallValue() public {
     //     Contract target = new Contract();
