@@ -888,7 +888,6 @@ where
 
         // If the depth is 0, then this is the root call terminating
         if data.journaled_state.depth() == 0 {
-
             // Check if we have any leftover expected emits
             // First, if any emits were found at the root call, then we its ok and we remove them.
             self.expected_emits.retain(|expected| !expected.found);

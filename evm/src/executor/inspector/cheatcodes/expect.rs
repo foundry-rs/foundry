@@ -303,8 +303,10 @@ fn expect_call(
                 !expecteds.contains_key(&calldata),
                 "Counted expected calls can only bet set once."
             );
-            expecteds
-                .insert(calldata, (ExpectedCallData { value, gas, min_gas, count, call_type, depth }, 0));
+            expecteds.insert(
+                calldata,
+                (ExpectedCallData { value, gas, min_gas, count, call_type, depth }, 0),
+            );
             Ok(Bytes::new())
         }
         ExpectedCallType::NonCount => {
