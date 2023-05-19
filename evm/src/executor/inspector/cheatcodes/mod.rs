@@ -769,7 +769,6 @@ where
         if let Some(expected_revert) = &self.expected_revert {
             if data.journaled_state.depth() <= expected_revert.depth {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-                println!("expected_revert: {:?}", expected_revert.clone());
                 return match handle_expect_revert(
                     false,
                     expected_revert.reason.as_ref(),
@@ -777,7 +776,6 @@ where
                     retdata.into(),
                 ) {
                     Err(error) => {
-                        println!("error: {:?}", error.to_string());
                         trace!(expected=?expected_revert, ?error, ?status, "Expected revert mismatch");
                         (InstructionResult::Revert, remaining_gas, error.encode_error().0)
                     }
@@ -820,6 +818,7 @@ where
             }
         }
 
+        // Match expected calls
         for (address, calldatas) in &self.expected_calls {
             // Loop over each address, and for each address, loop over each calldata it expects.
             for (calldata, (expected, actual_count)) in calldatas {
@@ -889,7 +888,6 @@ where
 
         // If the depth is 0, then this is the root call terminating
         if data.journaled_state.depth() == 0 {
-            // Match expected calls
 
             // Check if we have any leftover expected emits
             // First, if any emits were found at the root call, then we its ok and we remove them.
