@@ -591,7 +591,9 @@ where
                         // The gas matches, if provided
                         expected.gas.map_or(true, |gas| gas == call.gas_limit) &&
                         // The minimum gas matches, if provided
-                        expected.min_gas.map_or(true, |min_gas| min_gas <= call.gas_limit)
+                        expected.min_gas.map_or(true, |min_gas| min_gas <= call.gas_limit) &&
+                        // The depth is equal or higher than the expected depth
+                        expected.depth < data.journaled_state.depth()
                     {
                         *actual_count += 1;
                     }
@@ -892,6 +894,79 @@ where
 
         // If the depth is 0, then this is the root call terminating
         if data.journaled_state.depth() == 0 {
+            for (address, calldatas) in &self.expected_calls {
+                // Loop over each address, and for each address, loop over each calldata it expects.
+                for (calldata, (expected, actual_count)) in calldatas {
+                    // Grab the values we expect to see
+                    let ExpectedCallData { gas, min_gas, value, count, call_type, depth } =
+                        expected;
+                    // Only check calls in the corresponding depth,
+                    // or if the expected depth is higher than the current depth. This is correct,
+                    // as the expected depth can only be bigger than the current
+                    // depth if we're either terminating the root call (the test
+                    // itself), or exiting the intended call that contained the
+                    // calls we expected to see.
+                    if depth >= &data.journaled_state.depth() {
+                        let calldata = Bytes::from(calldata.clone());
+
+                        // We must match differently depending on the type of call we expect.
+                        match call_type {
+                            // If the cheatcode was called with a `count` argument,
+                            // we must check that the EVM performed a CALL with this calldata
+                            // exactly `count` times.
+                            ExpectedCallType::Count => {
+                                if *count != *actual_count {
+                                    let expected_values = [
+                                        Some(format!("data {calldata}")),
+                                        value.map(|v| format!("value {v}")),
+                                        gas.map(|g| format!("gas {g}")),
+                                        min_gas.map(|g| format!("minimum gas {g}")),
+                                    ]
+                                    .into_iter()
+                                    .flatten()
+                                    .join(" and ");
+                                    return (
+                                    InstructionResult::Revert,
+                                    remaining_gas,
+                                    format!(
+                                        "Expected call to {address:?} with {expected_values} to be called {count} time(s), but was called {actual_count} time(s)"
+                                    )
+                                    .encode()
+                                    .into(),
+                                )
+                                }
+                            }
+                            // If the cheatcode was called without a `count` argument,
+                            // we must check that the EVM performed a CALL with this calldata at
+                            // least `count` times. The amount of times
+                            // to check was the amount of time the
+                            // cheatcode was called.
+                            ExpectedCallType::NonCount => {
+                                if *count > *actual_count {
+                                    let expected_values = [
+                                        Some(format!("data {calldata}")),
+                                        value.map(|v| format!("value {v}")),
+                                        gas.map(|g| format!("gas {g}")),
+                                        min_gas.map(|g| format!("minimum gas {g}")),
+                                    ]
+                                    .into_iter()
+                                    .flatten()
+                                    .join(" and ");
+                                    return (
+                                    InstructionResult::Revert,
+                                    remaining_gas,
+                                    format!(
+                                        "Expected call to {address:?} with {expected_values} to be called at least {count} time(s), but was called {actual_count} time(s)"
+                                    )
+                                    .encode()
+                                    .into(),
+                                )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             // Check if we have any leftover expected emits
             // First, if any emits were found at the root call, then we its ok and we remove them.
             self.expected_emits.retain(|expected| !expected.found);
