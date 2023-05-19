@@ -592,7 +592,8 @@ where
                         expected.gas.map_or(true, |gas| gas == call.gas_limit) &&
                         // The minimum gas matches, if provided
                         expected.min_gas.map_or(true, |min_gas| min_gas <= call.gas_limit) &&
-                        // The depth is equal or higher than the expected depth
+                        // The expected depth is smaller than the actual depth,
+                        // which means we're in the subcalls of the call were we expect to find the matches.
                         expected.depth < data.journaled_state.depth()
                     {
                         *actual_count += 1;
