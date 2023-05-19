@@ -61,13 +61,13 @@ jobs:
                   git config --global user.email "<>"
 
             - name: Apple M1 setup
-              if: ${{ matrix.job.target == 'aarch64-apple-darwin' }}
+              if: matrix.job.target == 'aarch64-apple-darwin'
               run: |
                   echo "SDKROOT=$(xcrun -sdk macosx --show-sdk-path)" >> $GITHUB_ENV
                   echo "MACOSX_DEPLOYMENT_TARGET=$(xcrun -sdk macosx --show-sdk-platform-version)" >> $GITHUB_ENV
 
             - name: Linux ARM setup
-              if: ${{ matrix.job.target == 'aarch64-unknown-linux-gnu' }}
+              if: matrix.job.target == 'aarch64-unknown-linux-gnu'
               run: |
                   sudo apt-get update -y
                   sudo apt-get install -y gcc-aarch64-linux-gnu
@@ -75,7 +75,7 @@ jobs:
 
             # For some reason the FFI cheatcode uses WSL bash instead of Git bash, so we need to install a WSL distribution
             - name: Windows setup
-              if: ${{ matrix.job.target == 'x86_64-pc-windows-msvc' }}
+              if: matrix.job.target == 'x86_64-pc-windows-msvc'
               uses: Vampire/setup-wsl@v1
               with:
                 distribution: Ubuntu-20.04
@@ -195,7 +195,7 @@ jobs:
                   git config --global user.email "<>"
 
             - name: cargo nextest
-              if: ${{ matrix.job.target == 'aarch64-apple-darwin' }}
+              if: matrix.job.target == 'aarch64-apple-darwin'
               shell: bash
               run: |
                 # see https://github.com/foundry-rs/foundry/pull/3959
@@ -203,7 +203,7 @@ jobs:
                 cargo nextest run --retries 3 --archive-file ${{ matrix.job.target }}-${{ matrix.archive.file }} -E '${{ matrix.nextest.macos-aarch-filter }}'
 
             - name: cargo nextest
-              if: ${{ matrix.job.target != 'aarch64-apple-darwin' }}
+              if: matrix.job.target != 'aarch64-apple-darwin'
               shell: bash
               run: |
                 # see https://github.com/foundry-rs/foundry/pull/3959
