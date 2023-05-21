@@ -223,7 +223,6 @@ impl Visitor for Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use assert_matches::assert_matches;
     use solang_parser::parse;
 
     #[inline]
@@ -244,7 +243,7 @@ mod tests {
                 assert!(item.comments.is_empty());
                 assert!(item.children.is_empty());
                 assert_eq!(item.source.ident(), $identity);
-                assert_matches!(item.source, ParseSource::$variant(_));
+                assert!(matches!(item.source, ParseSource::$variant(_)));
             }
         };
     }
@@ -274,15 +273,15 @@ mod tests {
         assert_eq!(items.len(), 3);
 
         let first_item = items.get(0).unwrap();
-        assert_matches!(first_item.source, ParseSource::Contract(_));
+        assert!(matches!(first_item.source, ParseSource::Contract(_)));
         assert_eq!(first_item.source.ident(), "A");
 
         let first_item = items.get(1).unwrap();
-        assert_matches!(first_item.source, ParseSource::Contract(_));
+        assert!(matches!(first_item.source, ParseSource::Contract(_)));
         assert_eq!(first_item.source.ident(), "B");
 
         let first_item = items.get(2).unwrap();
-        assert_matches!(first_item.source, ParseSource::Contract(_));
+        assert!(matches!(first_item.source, ParseSource::Contract(_)));
         assert_eq!(first_item.source.ident(), "C");
     }
 
@@ -314,13 +313,13 @@ mod tests {
         assert!(event.comments.is_empty());
         assert!(event.children.is_empty());
         assert_eq!(event.source.ident(), "TopLevelEvent");
-        assert_matches!(event.source, ParseSource::Event(_));
+        assert!(matches!(event.source, ParseSource::Event(_)));
 
         let contract = items.get(1).unwrap();
         assert!(contract.comments.is_empty());
         assert_eq!(contract.children.len(), 7);
         assert_eq!(contract.source.ident(), "Contract");
-        assert_matches!(contract.source, ParseSource::Contract(_));
+        assert!(matches!(contract.source, ParseSource::Contract(_)));
         assert!(contract.children.iter().all(|ch| ch.children.is_empty()));
         assert!(contract.children.iter().all(|ch| ch.comments.is_empty()));
     }
@@ -341,11 +340,11 @@ mod tests {
         assert!(contract.comments.is_empty());
         assert_eq!(contract.children.len(), 1);
         assert_eq!(contract.source.ident(), "Contract");
-        assert_matches!(contract.source, ParseSource::Contract(_));
+        assert!(matches!(contract.source, ParseSource::Contract(_)));
 
         let fallback = contract.children.first().unwrap();
         assert_eq!(fallback.source.ident(), "fallback");
-        assert_matches!(fallback.source, ParseSource::Function(_));
+        assert!(matches!(fallback.source, ParseSource::Function(_)));
     }
 
     // TODO: test regular doc comments & natspec

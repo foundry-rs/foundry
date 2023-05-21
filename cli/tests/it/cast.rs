@@ -285,49 +285,6 @@ casttest!(cast_run_succeeds, |_: TestProject, mut cmd: TestCommand| {
     assert!(!output.contains("Revert"));
 });
 
-// tests that the `cast storage` command works correctly
-casttest!(test_live_cast_storage_succeeds, |_: TestProject, mut cmd: TestCommand| {
-    // ignore if ETHERSCAN_API_KEY not set
-    if std::env::var("ETHERSCAN_API_KEY").is_err() {
-        eprintln!("ETHERSCAN_API_KEY not set");
-        return
-    }
-
-    let eth_rpc_url = next_http_rpc_endpoint();
-
-    // WETH
-    // version < min, so empty storage layout
-    let address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
-    cmd.cast_fuse().args(["storage", "--rpc-url", eth_rpc_url.as_str(), address]);
-    let output = cmd.stderr_lossy();
-    assert!(output.contains("Storage layout is empty"), "{}", output);
-    // first slot is the name, always is "Wrapped Ether"
-    cmd.cast_fuse().args(["storage", "--rpc-url", eth_rpc_url.as_str(), address, "0"]);
-    let output = cmd.stdout_lossy();
-    assert!(
-        output.contains("0x577261707065642045746865720000000000000000000000000000000000001a"),
-        "{output}",
-    );
-
-    // Polygon bridge proxy
-    let address = "0xA0c68C638235ee32657e8f720a23ceC1bFc77C77";
-    cmd.cast_fuse().args(["storage", "--rpc-url", eth_rpc_url.as_str(), address]);
-    let output = cmd.stdout_lossy();
-    assert!(
-        output.contains("RootChainManager") &&
-            output.contains("_roles") &&
-            output.contains("mapping(bytes32 => struct AccessControl.RoleData)"),
-        "{output}",
-    );
-    // first slot is `inited`, always is 1
-    cmd.cast_fuse().args(["storage", "--rpc-url", eth_rpc_url.as_str(), address, "0"]);
-    let output = cmd.stdout_lossy();
-    assert!(
-        output.contains("0x0000000000000000000000000000000000000000000000000000000000000001"),
-        "{output}",
-    );
-});
-
 // tests that `cast --to-base` commands are working correctly.
 casttest!(cast_to_base, |_: TestProject, mut cmd: TestCommand| {
     let values = [

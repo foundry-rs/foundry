@@ -29,6 +29,7 @@ To use the latest pinned nightly on your CI, modify your Foundry installation st
 - expectCall will now only work if the call(s) are made exactly after the cheatcode is invoked.
 - [expectRevert will now work if the next call does revert](https://github.com/foundry-rs/foundry/pull/4945), instead of expecting a revert during the whole test.
   - This will very likely break your tests. Please make sure that all the calls you expect to revert are external, and if not, abstract them into a separate contract so that they can be called externally and the cheatcode can be used.
+- `-m`, the deprecated alias for `--mt` or `--match-test`, has now been removed.
 - [startPrank will now override the existing prank instead of erroring](https://github.com/foundry-rs/foundry/pull/4826).
 - [precompiles will not be compatible with all cheatcodes](https://github.com/foundry-rs/foundry/pull/4905).
 - The difficulty and prevrandao cheatcodes now [fail if not used with the correct EVM version](https://github.com/foundry-rs/foundry/pull/4904).

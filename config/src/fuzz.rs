@@ -60,6 +60,9 @@ impl InlineConfigParser for FuzzConfig {
             match key.as_str() {
                 "runs" => conf_clone.runs = parse_config_u32(key, value)?,
                 "max-test-rejects" => conf_clone.max_test_rejects = parse_config_u32(key, value)?,
+                "dictionary-weight" => {
+                    conf_clone.dictionary.dictionary_weight = parse_config_u32(key, value)?
+                }
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key))?,
             }
         }
@@ -120,10 +123,14 @@ mod tests {
 
     #[test]
     fn successful_merge() {
-        let configs = &["forge-config: default.fuzz.runs = 42424242".to_string()];
+        let configs = &[
+            "forge-config: default.fuzz.runs = 42424242".to_string(),
+            "forge-config: default.fuzz.dictionary-weight = 42".to_string(),
+        ];
         let base_config = FuzzConfig::default();
         let merged: FuzzConfig = base_config.try_merge(configs).expect("No errors").unwrap();
         assert_eq!(merged.runs, 42424242);
+        assert_eq!(merged.dictionary.dictionary_weight, 42);
     }
 
     #[test]
@@ -148,11 +155,16 @@ mod tests {
             "forge-config: default.fuzz.runs = 42424242".to_string(),
             "forge-config: ci.fuzz.runs = 666666".to_string(),
             "forge-config: default.invariant.runs = 2".to_string(),
+            "forge-config: default.fuzz.dictionary-weight = 42".to_string(),
         ];
         let variables = FuzzConfig::get_config_overrides(configs);
         assert_eq!(
             variables,
-            vec![("runs".into(), "42424242".into()), ("runs".into(), "666666".into())]
+            vec![
+                ("runs".into(), "42424242".into()),
+                ("runs".into(), "666666".into()),
+                ("dictionary-weight".into(), "42".into())
+            ]
         );
     }
 }

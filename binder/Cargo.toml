@@ -14,7 +14,7 @@ ethers-solc = { workspace = true, features = ["async", "svm-solc", "project-util
 ethers-contract = { workspace = true, features = ["abigen"] }
 curl = { version = "0.4", default-features = false, features = ["http2"] }
 eyre = "0.6"
-git2 = { version = "0.16.1", default-features = false }
-url = "2.3"
+git2 = { version = "0.17", default-features = false }
+url = "2"
 tracing = "0.1"
-tempfile = "3.5"
+tempfile = "3"

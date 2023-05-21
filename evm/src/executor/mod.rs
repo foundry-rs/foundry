@@ -362,6 +362,11 @@ impl Executor {
         let mut db = FuzzBackendWrapper::new(self.backend());
         let result = db.inspect_ref(&mut env, &mut inspector)?;
 
+        // Persist the snapshot failure recorded on the fuzz backend wrapper.
+        self.backend().set_snapshot_failure(
+            self.backend().has_snapshot_failure() || db.has_snapshot_failure(),
+        );
+
         convert_executed_result(env, inspector, result)
     }
 
