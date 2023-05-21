@@ -48,7 +48,7 @@ COPY --from=build-environment /opt/foundry/out/forge /usr/local/bin/forge
 COPY --from=build-environment /opt/foundry/out/cast /usr/local/bin/cast
 COPY --from=build-environment /opt/foundry/out/anvil /usr/local/bin/anvil
 
-RUN adduser --uid 1000 --disabled-password --gecos '' foundry
+RUN adduser -Du 1000 foundry
 
 ENTRYPOINT ["/bin/sh", "-c"]
 
