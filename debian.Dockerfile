@@ -1,12 +1,22 @@
 # syntax=docker/dockerfile:1.4
 # based on @dboreham's docker file (https://github.com/dboreham/foundry/blob/cerc-release/Dockerfile-debian)
 # discussion in https://github.com/foundry-rs/foundry/issues/2358
-FROM rust:1-bullseye as build-environment
 
+ARG DEBIAN_VERSION=bullseye-20230502
 ARG TARGETARCH
+
+FROM debian:$DEBIAN_VERSION as build-environment
+
 WORKDIR /opt
 
 SHELL ["/bin/bash", "-c"]
+
+RUN apt-get update \
+    && apt-get install -y clang lld curl build-essential \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rustup.sh \
+    && chmod +x ./rustup.sh \
+    && ./rustup.sh -y
 
 # Works around an arm-specific rust bug, see: https://github.com/cross-rs/cross/issues/598
 RUN set -e; [[ "$TARGETARCH" = "arm64" || $(uname -m) = "aarch64" ]] && echo "export CFLAGS=-mno-outline-atomics" >> $HOME/.profile || true
@@ -26,7 +36,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     && strip out/cast \
     && strip out/anvil;
 
-FROM debian:bullseye-20230502-slim as foundry-client
+FROM debian:$DEBIAN_VERSION-slim as foundry-client
 
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
     && apt-get -y install --no-install-recommends git
