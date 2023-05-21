@@ -2,14 +2,16 @@
 # based on @dboreham's docker file (https://github.com/dboreham/foundry/blob/cerc-release/Dockerfile-debian)
 # discussion in https://github.com/foundry-rs/foundry/issues/2358
 
-ARG DEBIAN_VERSION=bullseye-20230502
 ARG TARGETARCH
+ARG DEBIAN_VERSION=bullseye-20230502
+
+ARG DEBIAN_FRONTEND=noninteractive
 
 FROM debian:$DEBIAN_VERSION as build-environment
 
-WORKDIR /opt
-
 SHELL ["/bin/bash", "-c"]
+
+WORKDIR /opt
 
 RUN apt-get update \
     && apt-get install -y clang lld curl build-essential \
@@ -22,6 +24,7 @@ RUN apt-get update \
 RUN set -e; [[ "$TARGETARCH" = "arm64" || $(uname -m) = "aarch64" ]] && echo "export CFLAGS=-mno-outline-atomics" >> $HOME/.profile || true
 
 WORKDIR /opt/foundry
+
 COPY . .
 
 RUN --mount=type=cache,target=/root/.cargo/registry \
@@ -38,7 +41,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
 
 FROM debian:$DEBIAN_VERSION-slim as foundry-client
 
-RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
+RUN apt-get update \
     && apt-get -y install --no-install-recommends git
 
 COPY --from=build-environment /opt/foundry/out/forge /usr/local/bin/forge
