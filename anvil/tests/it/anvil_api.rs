@@ -431,7 +431,7 @@ async fn can_get_node_info() {
         current_block_number: U64([0]),
         current_block_timestamp: 1,
         current_block_hash: block.hash.unwrap(),
-        hard_fork: SpecId::LATEST,
+        hard_fork: SpecId::SHANGHAI,
         transaction_order: "fees".to_owned(),
         environment: NodeEnvironment {
             base_fee: U256::from_str("0x3b9aca00").unwrap(),
