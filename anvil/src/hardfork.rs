@@ -86,14 +86,12 @@ impl Hardfork {
             }
             Hardfork::GrayGlacier => {
                 ForkId { hash: ForkHash([0xf0, 0xaf, 0xd0, 0xe3]), next: 15537394 }
-            },
-            Hardfork::Paris => {
-                ForkId { hash: ForkHash([0x4f, 0xb8, 0xa8, 0x72]), next: 17034870 }
-            },
+            }
+            Hardfork::Paris => ForkId { hash: ForkHash([0x4f, 0xb8, 0xa8, 0x72]), next: 17034870 },
             Hardfork::Shanghai | Hardfork::Latest => {
                 // update `next` when another fork block num is known
                 ForkId { hash: ForkHash([0xc1, 0xfd, 0xf1, 0x81]), next: 0 }
-            },
+            }
         }
     }
 }
