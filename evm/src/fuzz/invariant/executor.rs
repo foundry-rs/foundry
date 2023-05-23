@@ -561,12 +561,7 @@ fn can_continue(
     shrink_sequence: bool,
 ) -> (bool, Option<BTreeMap<String, RawCallResult>>) {
     let mut call_results = None;
-    if executor.is_success(
-        invariant_contract.address,
-        call_result.reverted,
-        call_result.state_changeset.clone().unwrap_or_default(),
-        fail_on_revert,
-    ) {
+    if !call_result.reverted {
         call_results = assert_invariants(invariant_contract, executor, calldata, failures).ok();
         if call_results.is_none() {
             return (false, None)
