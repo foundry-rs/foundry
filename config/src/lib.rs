@@ -561,16 +561,13 @@ impl Config {
 
     /// Sanitizes the EVM version and solc version combination used in the config if both are set.
     pub fn sanitize_evm_version(&mut self) -> Result<(), ExtractConfigError> {
-        if let Some(solc_req) = &self.solc {
-            match solc_req {
-                SolcReq::Version(version) => {
-                    // Users should not be able to both specify a solc version equal or higher to
-                    // 0.8.20 and an EVM version lower than Shanghai, as this
-                    // could introduce PUSH0 opcodes into the code that would be
-                    // considered invalid in a chain that does not support EIP 3855.
-                    if version >= &Version::new(0, 8, 20) && self.evm_version < EvmVersion::Shanghai
-                    {
-                        return Err(ExtractConfigError::new(
+        if let Some(SolcReq::Version(version)) = &self.solc {
+            // Users should not be able to both specify a solc version equal or higher to
+            // 0.8.20 and an EVM version lower than Shanghai, as this
+            // could introduce PUSH0 opcodes into the code that would be
+            // considered invalid in a chain that does not support EIP 3855.
+            if version >= &Version::new(0, 8, 20) && self.evm_version < EvmVersion::Shanghai {
+                return Err(ExtractConfigError::new(
                             format!(
                                 "Solc version {} requires EVM version {} or higher. You can fix this by specifying evm_version = \"shanghai\" in your config file.",
                                 version,
@@ -578,12 +575,8 @@ impl Config {
                             )
                             .into(),
                         ))
-                    }
-                }
-                _ => {}
             }
         }
-
         Ok(())
     }
 
