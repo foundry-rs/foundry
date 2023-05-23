@@ -62,10 +62,10 @@ jobs:
             - name: Finalize Docker Metadata
               id: docker_tagging
               run: |
-                  if [[ "${{ github.event_name }}" == "schedule" ]]; then
+                  if [[ "${{ github.event_name }}" == 'schedule' ]]; then
                     echo "cron trigger, assigning nightly tag"
                     echo "::set-output name=docker_tags::${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly-${GITHUB_SHA}"
-                  elif [[ "${GITHUB_REF##*/}" == "main" || "${GITHUB_REF##*/}" == "master" ]]; then
+                  elif [[ "${GITHUB_REF##*/}" == "main" ]] || [[ ${GITHUB_REF##*/} == "master" ]]; then
                     echo "manual trigger from master/main branch, assigning latest tag"
                     echo "::set-output name=docker_tags::${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${GITHUB_REF##*/},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
                   else
