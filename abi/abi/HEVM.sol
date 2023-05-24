@@ -102,6 +102,7 @@ assume(bool)
 setNonce(address,uint64)
 getNonce(address)
 resetNonce(address)
+setNonceUnsafe(address,uint64)
 chainId(uint256)
 txGasPrice(uint256)
 
