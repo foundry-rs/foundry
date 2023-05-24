@@ -101,6 +101,7 @@ getLabel(address)(string)
 assume(bool)
 setNonce(address,uint64)
 getNonce(address)
+resetNonce(address)
 chainId(uint256)
 txGasPrice(uint256)
 
