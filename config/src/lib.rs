@@ -469,7 +469,6 @@ impl Config {
     pub fn try_from<T: Provider>(provider: T) -> Result<Self, ExtractConfigError> {
         let figment = Figment::from(provider);
         let mut config = figment.extract::<Self>().map_err(ExtractConfigError::new)?;
-        config.sanitize_evm_version()?;
         config.profile = figment.profile().clone();
         Ok(config)
     }
@@ -557,27 +556,6 @@ impl Config {
         config.libs.dedup();
 
         config
-    }
-
-    /// Sanitizes the EVM version and solc version combination used in the config if both are set.
-    pub fn sanitize_evm_version(&mut self) -> Result<(), ExtractConfigError> {
-        if let Some(SolcReq::Version(version)) = &self.solc {
-            // Users should not be able to both specify a solc version equal or higher to
-            // 0.8.20 and an EVM version lower than Shanghai, as this
-            // could introduce PUSH0 opcodes into the code that would be
-            // considered invalid in a chain that does not support EIP 3855.
-            if version >= &Version::new(0, 8, 20) && self.evm_version < EvmVersion::Shanghai {
-                return Err(ExtractConfigError::new(
-                            format!(
-                                "Solc version {} requires EVM version {} or higher. You can fix this by specifying evm_version = \"shanghai\" in your config file.",
-                                version,
-                                EvmVersion::Shanghai
-                            )
-                            .into(),
-                        ))
-            }
-        }
-        Ok(())
     }
 
     /// Cleans up any duplicate `Remapping` and sorts them
@@ -3470,38 +3448,6 @@ mod tests {
             assert_eq!(config.solc, Some(SolcReq::Version("0.6.6".parse().unwrap())));
             Ok(())
         });
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_sanitize_evm_version() {
-        figment::Jail::expect_with(|jail| {
-            jail.create_file(
-                "foundry.toml",
-                r#"
-                [profile.default]
-                solc_version = "0.8.12"
-            "#,
-            )?;
-
-            let config = Config::load();
-            assert_eq!(config.solc, Some(SolcReq::Version("0.8.12".parse().unwrap())));
-            assert_eq!(config.evm_version, EvmVersion::Paris); // OK, compatible solc/evm versions
-
-            // This should panic, as you should not be able to compile solidity with solc 0.8.20
-            // and use an EVM version lower than shanghai
-            jail.create_file(
-                "foundry.toml",
-                r#"
-                [profile.default]
-                solc_version = "0.8.20"
-                evm_version = "london"
-            "#,
-            )?;
-            let _ = Config::load();
-
-            Ok(())
-        })
     }
 
     #[test]
