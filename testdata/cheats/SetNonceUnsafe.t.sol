@@ -18,17 +18,17 @@ contract SetNonceTest is DSTest {
         foo = new Foo();
     }
 
-    function testSetNonce() public {
-        cheats.setNonce(address(foo), 10);
+    function testSetNonceUnsafe() public {
+        cheats.setNonceUnsafe(address(foo), 10);
         // makes sure working correctly after mutating nonce.
         foo.f();
         assertEq(cheats.getNonce(address(foo)), 10);
         foo.f();
     }
 
-    function tesDoesNottFailDecreasingdNonce() public {
+    function testDoesNotFailDecreasingNonce() public {
         cheats.setNonce(address(foo), 10);
-        // set lower nonce should fail
-        cheats.setNonce(address(foo), 5);
+        cheats.setNonceUnsafe(address(foo), 5);
+        assertEq(cheats.getNonce(address(foo)), 5);
     }
 }
