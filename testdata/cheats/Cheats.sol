@@ -275,7 +275,7 @@ interface Cheats {
     // Resets the nonce for an account
     function resetNonce(address) external;
 
-    // Set nonce for an account
+    // Set an arbitrary nonce for an account
     function setNonceUnsafe(address, uint64) external;
 
     // Set block.chainid (newChainId)

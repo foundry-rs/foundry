@@ -402,7 +402,6 @@ pub fn apply<DB: DatabaseExt>(
                 data.db,
                 inner.0,
                 |account| -> Result {
-                    // nonce must increment only
                     let new = inner.1;
                     account.info.nonce = new;
                     Ok(Bytes::new())
