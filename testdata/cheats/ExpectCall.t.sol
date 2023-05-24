@@ -49,47 +49,34 @@ contract NestedContract {
 contract ExpectCallTest is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
 
-    function exposed_callTargetNTimes(Contract target, uint256 a, uint256 b, uint256 times) public {
-        for (uint256 i = 0; i < times; i++) {
-            target.add(a, b);
-        }
-    }
-
-    function exposed_expectCallWithValue(Contract target, uint256 value, uint256 amount) public {
-        target.pay{value: value}(amount);
-    }
-
     function testExpectCallWithData() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
-        this.exposed_callTargetNTimes(target, 1, 2, 1);
-    }
-
-    function testFailExpectCallDirectly() public {
-        Contract target = new Contract();
-        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2), 1);
         target.add(1, 2);
     }
 
     function testExpectMultipleCallsWithData() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
-        // Even though we expect one call, we're using additive behavior, so getting more than one call is okay.
-        this.exposed_callTargetNTimes(target, 1, 2, 2);
+        target.add(1, 2);
+        target.add(1, 2);
     }
 
     function testExpectMultipleCallsWithDataAdditive() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
-        this.exposed_callTargetNTimes(target, 1, 2, 2);
+        target.add(1, 2);
+        target.add(1, 2);
     }
 
     function testExpectMultipleCallsWithDataAdditiveLowerBound() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
-        this.exposed_callTargetNTimes(target, 1, 2, 3);
+        target.add(1, 2);
+        target.add(1, 2);
+        target.add(1, 2);
     }
 
     function testFailExpectMultipleCallsWithDataAdditive() public {
@@ -98,13 +85,14 @@ contract ExpectCallTest is DSTest {
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
         // Not enough calls to satisfy the additive expectCall, which expects 3 calls.
-        this.exposed_callTargetNTimes(target, 1, 2, 2);
+        target.add(1, 2);
+        target.add(1, 2);
     }
 
     function testFailExpectCallWithData() public {
         Contract target = new Contract();
-        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2), 1);
-        this.exposed_callTargetNTimes(target, 3, 3, 1);
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
+        target.add(3, 3);
     }
 
     function testExpectInnerCall() public {
@@ -112,10 +100,6 @@ contract ExpectCallTest is DSTest {
         NestedContract target = new NestedContract(inner);
 
         cheats.expectCall(address(inner), abi.encodeWithSelector(inner.numberB.selector));
-        this.exposed_expectInnerCall(target);
-    }
-
-    function exposed_expectInnerCall(NestedContract target) public {
         target.sum();
     }
 
@@ -125,10 +109,6 @@ contract ExpectCallTest is DSTest {
 
         cheats.expectCall(address(inner), abi.encodeWithSelector(inner.numberB.selector));
 
-        this.exposed_failExpectInnerCall(target);
-    }
-
-    function exposed_failExpectInnerCall(NestedContract target) public {
         // this function does not call inner
         target.hello();
     }
@@ -136,7 +116,7 @@ contract ExpectCallTest is DSTest {
     function testExpectSelectorCall() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector));
-        this.exposed_callTargetNTimes(target, 5, 5, 1);
+        target.add(5, 5);
     }
 
     function testFailExpectSelectorCall() public {
@@ -148,13 +128,12 @@ contract ExpectCallTest is DSTest {
         Contract target = new Contract();
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 3, 3, 3));
         target.add(3, 3);
-        this.exposed_callTargetNTimes(target, 3, 3, 1);
     }
 
     function testExpectCallWithValue() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), 1, abi.encodeWithSelector(target.pay.selector, 2));
-        this.exposed_expectCallWithValue(target, 1, 2);
+        target.pay{value: 1}(2);
     }
 
     function testFailExpectCallValue() public {
@@ -165,7 +144,7 @@ contract ExpectCallTest is DSTest {
     function testExpectCallWithValueWithoutParameters() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), 3, abi.encodeWithSelector(target.pay.selector));
-        this.exposed_expectCallWithValue(target, 3, 100);
+        target.pay{value: 3}(100);
     }
 
     function testExpectCallWithValueAndGas() public {
@@ -173,10 +152,6 @@ contract ExpectCallTest is DSTest {
         NestedContract target = new NestedContract(inner);
 
         cheats.expectCall(address(inner), 1, 50_000, abi.encodeWithSelector(inner.pay.selector, 1));
-        this.exposed_forwardPay(target);
-    }
-
-    function exposed_forwardPay(NestedContract target) public {
         target.forwardPay{value: 1}();
     }
 
@@ -185,10 +160,6 @@ contract ExpectCallTest is DSTest {
         NestedContract target = new NestedContract(inner);
 
         cheats.expectCall(address(inner), 0, 50_000, abi.encodeWithSelector(inner.add.selector, 1, 1));
-        this.exposed_addHardGasLimit(target);
-    }
-
-    function exposed_addHardGasLimit(NestedContract target) public {
         target.addHardGasLimit();
     }
 
@@ -197,7 +168,7 @@ contract ExpectCallTest is DSTest {
         NestedContract target = new NestedContract(inner);
 
         cheats.expectCall(address(inner), 0, 25_000, abi.encodeWithSelector(inner.add.selector, 1, 1));
-        this.exposed_addHardGasLimit(target);
+        target.addHardGasLimit();
     }
 
     function testExpectCallWithValueAndMinGas() public {
@@ -205,7 +176,7 @@ contract ExpectCallTest is DSTest {
         NestedContract target = new NestedContract(inner);
 
         cheats.expectCallMinGas(address(inner), 1, 50_000, abi.encodeWithSelector(inner.pay.selector, 1));
-        this.exposed_forwardPay(target);
+        target.forwardPay{value: 1}();
     }
 
     function testExpectCallWithNoValueAndMinGas() public {
@@ -213,7 +184,7 @@ contract ExpectCallTest is DSTest {
         NestedContract target = new NestedContract(inner);
 
         cheats.expectCallMinGas(address(inner), 0, 25_000, abi.encodeWithSelector(inner.add.selector, 1, 1));
-        this.exposed_addHardGasLimit(target);
+        target.addHardGasLimit();
     }
 
     function testFailExpectCallWithNoValueAndWrongMinGas() public {
@@ -221,7 +192,7 @@ contract ExpectCallTest is DSTest {
         NestedContract target = new NestedContract(inner);
 
         cheats.expectCallMinGas(address(inner), 0, 50_001, abi.encodeWithSelector(inner.add.selector, 1, 1));
-        this.exposed_addHardGasLimit(target);
+        target.addHardGasLimit();
     }
 }
 
@@ -230,11 +201,7 @@ contract ExpectCallCountTest is DSTest {
 
     function testExpectCallCountWithData() public {
         Contract target = new Contract();
-        cheats.expectCall(address(target), abi.encodeWithSelector(Contract.add.selector, 1, 2), 3);
-        this.exposed_expectCallCountWithData(target);
-    }
-
-    function exposed_expectCallCountWithData(Contract target) public {
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2), 3);
         target.add(1, 2);
         target.add(1, 2);
         target.add(1, 2);
@@ -275,43 +242,31 @@ contract ExpectCallCountTest is DSTest {
         NestedContract target = new NestedContract(inner);
 
         cheats.expectCall(address(inner), abi.encodeWithSelector(inner.numberB.selector), 2);
-        this.exposed_expectCountInnerAndOuterCalls(inner, target);
-    }
-
-    function exposed_expectCountInnerAndOuterCalls(Contract inner, NestedContract target) public {
         inner.numberB();
         target.sum();
-    }
-
-    function exposed_pay(Contract target, uint256 value, uint256 amount) public payable {
-        target.pay{value: value}(amount);
     }
 
     function testExpectCallCountWithValue() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), 1, abi.encodeWithSelector(target.pay.selector, 2), 1);
-        this.exposed_pay{value: 1}(target, 1, 2);
+        target.pay{value: 1}(2);
     }
 
     function testExpectZeroCallCountValue() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), 1, abi.encodeWithSelector(target.pay.selector, 2), 0);
-        this.exposed_pay{value: 2}(target, 2, 2);
+        target.pay{value: 2}(2);
     }
 
     function testFailExpectCallCountValue() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), 1, abi.encodeWithSelector(target.pay.selector, 2), 1);
-        this.exposed_pay{value: 2}(target, 2, 2);
+        target.pay{value: 2}(2);
     }
 
     function testExpectCallCountWithValueWithoutParameters() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), 3, abi.encodeWithSelector(target.pay.selector), 3);
-        this.exposed_expectCallCountWithValueWithoutParameters(target);
-    }
-
-    function exposed_expectCallCountWithValueWithoutParameters(Contract target) public {
         target.pay{value: 3}(100);
         target.pay{value: 3}(100);
         target.pay{value: 3}(100);
@@ -322,18 +277,8 @@ contract ExpectCallCountTest is DSTest {
         NestedContract target = new NestedContract(inner);
 
         cheats.expectCall(address(inner), 1, 50_000, abi.encodeWithSelector(inner.pay.selector, 1), 2);
-        this.exposed_expectCallCountWithValueAndGas(target);
-    }
-
-    function exposed_expectCallCountWithValueAndGas(NestedContract target) public {
         target.forwardPay{value: 1}();
         target.forwardPay{value: 1}();
-    }
-
-    function exposed_addHardGasLimit(NestedContract target, uint256 times) public {
-        for (uint256 i = 0; i < times; i++) {
-            target.addHardGasLimit();
-        }
     }
 
     function testExpectCallCountWithNoValueAndGas() public {
@@ -341,7 +286,7 @@ contract ExpectCallCountTest is DSTest {
         NestedContract target = new NestedContract(inner);
 
         cheats.expectCall(address(inner), 0, 50_000, abi.encodeWithSelector(inner.add.selector, 1, 1), 1);
-        this.exposed_addHardGasLimit(target, 1);
+        target.addHardGasLimit();
     }
 
     function testExpectZeroCallCountWithNoValueAndWrongGas() public {
@@ -349,7 +294,7 @@ contract ExpectCallCountTest is DSTest {
         NestedContract target = new NestedContract(inner);
 
         cheats.expectCall(address(inner), 0, 25_000, abi.encodeWithSelector(inner.add.selector, 1, 1), 0);
-        this.exposed_addHardGasLimit(target, 1);
+        target.addHardGasLimit();
     }
 
     function testFailExpectCallCountWithNoValueAndWrongGas() public {
@@ -357,7 +302,8 @@ contract ExpectCallCountTest is DSTest {
         NestedContract target = new NestedContract(inner);
 
         cheats.expectCall(address(inner), 0, 25_000, abi.encodeWithSelector(inner.add.selector, 1, 1), 2);
-        this.exposed_addHardGasLimit(target, 2);
+        target.addHardGasLimit();
+        target.addHardGasLimit();
     }
 
     function testExpectCallCountWithValueAndMinGas() public {
@@ -365,10 +311,6 @@ contract ExpectCallCountTest is DSTest {
         NestedContract target = new NestedContract(inner);
 
         cheats.expectCallMinGas(address(inner), 1, 50_000, abi.encodeWithSelector(inner.pay.selector, 1), 1);
-        this.exposed_forwardPay(target);
-    }
-
-    function exposed_forwardPay(NestedContract target) public {
         target.forwardPay{value: 1}();
     }
 
@@ -377,7 +319,8 @@ contract ExpectCallCountTest is DSTest {
         NestedContract target = new NestedContract(inner);
 
         cheats.expectCallMinGas(address(inner), 0, 25_000, abi.encodeWithSelector(inner.add.selector, 1, 1), 2);
-        this.exposed_addHardGasLimit(target, 2);
+        target.addHardGasLimit();
+        target.addHardGasLimit();
     }
 
     function testExpectCallZeroCountWithNoValueAndWrongMinGas() public {
@@ -385,7 +328,7 @@ contract ExpectCallCountTest is DSTest {
         NestedContract target = new NestedContract(inner);
 
         cheats.expectCallMinGas(address(inner), 0, 50_001, abi.encodeWithSelector(inner.add.selector, 1, 1), 0);
-        this.exposed_addHardGasLimit(target, 1);
+        target.addHardGasLimit();
     }
 
     function testFailExpectCallCountWithNoValueAndWrongMinGas() public {
@@ -393,25 +336,20 @@ contract ExpectCallCountTest is DSTest {
         NestedContract target = new NestedContract(inner);
 
         cheats.expectCallMinGas(address(inner), 0, 50_001, abi.encodeWithSelector(inner.add.selector, 1, 1), 1);
-        this.exposed_addHardGasLimit(target, 1);
+        target.addHardGasLimit();
     }
 }
 
 contract ExpectCallMixedTest is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
 
-    function exposed_callTargetNTimes(Contract target, uint256 a, uint256 b, uint256 times) public {
-        for (uint256 i = 0; i < times; i++) {
-            target.add(1, 2);
-        }
-    }
-
     function testFailOverrideNoCountWithCount() public {
         Contract target = new Contract();
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
         // You should not be able to overwrite a expectCall that had no count with some count.
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2), 2);
-        this.exposed_callTargetNTimes(target, 1, 2, 2);
+        target.add(1, 2);
+        target.add(1, 2);
     }
 
     function testFailOverrideCountWithCount() public {
@@ -438,10 +376,6 @@ contract ExpectCallMixedTest is DSTest {
         // Even if a partial match is speciifed, you should still be able to look for full matches
         // as one does not override the other.
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
-        this.exposed_expectMatchPartialAndFull(target);
-    }
-
-    function exposed_expectMatchPartialAndFull(Contract target) public {
         target.add(1, 2);
         target.add(1, 2);
     }
@@ -452,10 +386,6 @@ contract ExpectCallMixedTest is DSTest {
         // Even if a partial match is speciifed, you should still be able to look for full matches
         // as one does not override the other.
         cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2), 2);
-        this.exposed_expectMatchPartialAndFullFlipped(target);
-    }
-
-    function exposed_expectMatchPartialAndFullFlipped(Contract target) public {
         target.add(1, 2);
         target.add(1, 2);
     }
