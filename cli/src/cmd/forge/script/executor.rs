@@ -191,6 +191,17 @@ impl ScriptArgs {
                         println!("Gas limit was set in script to {:}", tx.gas.unwrap());
                     }
 
+                    if let Some(NameOrAddress::Address(to)) = tx.to {                        
+                        // when calling a known contract, we check if it has code deployed
+                        if address_to_abi.contains_key(&to) {
+                            let fork = runner.executor.backend().active_fork().unwrap();
+                            if !fork.is_contract(to) {
+                                let contract_name = address_to_abi.get(&to).unwrap().contract_name.clone();
+                                shell::println(Paint::yellow(format!("Contract {:} has no code deployed!", contract_name)))?;
+                            }
+                        }
+                    }
+
                     let tx = TransactionWithMetadata::new(
                         tx.into(),
                         transaction.rpc,

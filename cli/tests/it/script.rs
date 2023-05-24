@@ -245,6 +245,65 @@ contract DeployScript is Script {
     }
 );
 
+forgetest_async!(
+    detects_contracts_with_zero_extcodesize,
+    |prj: TestProject, mut cmd: TestCommand| async move {
+        foundry_cli_test_utils::util::initialize(prj.root());
+        let deploy_script = prj
+            .inner()
+            .add_source(
+                "Foo",
+                r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import "forge-std/Script.sol";
+
+contract Data {
+    uint256 num;
+    function setNum(uint256 _num) public returns (uint256) {
+        num = _num;
+        return num;
+    }
+}
+contract DeployScript is Script {
+    function run() external {
+        Data d = new Data();
+        vm.startBroadcast();
+        require(d.setNum(1) == 1, "setNum failed");
+    }
+}
+   "#,
+            )
+            .unwrap();
+
+        let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
+
+        let node_config = NodeConfig::test()
+            .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()))
+            .silent();
+        let (_api, handle) = spawn(node_config).await;
+        let private_key =
+            "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
+        cmd.set_current_dir(prj.root());
+
+        cmd.args([
+            "script",
+            &deploy_contract,
+            "--root",
+            prj.root().to_str().unwrap(),
+            "--fork-url",
+            &handle.http_endpoint(),
+            "-vvvvv",
+            "--broadcast",
+            "--private-key",
+            &private_key,
+        ]);
+
+        let output = cmd.stdout_lossy();
+        assert!(output.contains("Contract Data has no code deployed!"));
+    }
+);
+
 // Tests that the run command can run functions with arguments
 forgetest!(can_execute_script_command_with_args, |prj: TestProject, mut cmd: TestCommand| {
     let script = prj
