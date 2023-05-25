@@ -770,7 +770,7 @@ where
 
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
-            if data.journaled_state.depth() <= expected_revert.depth {
+            if data.journaled_state.depth() == expected_revert.depth {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match handle_expect_revert(
                     false,
@@ -895,6 +895,15 @@ where
 
         // If the depth is 0, then this is the root call terminating
         if data.journaled_state.depth() == 0 {
+            // See if there's a dangling expectRevert that should've been matched.
+            if self.expected_revert.is_some() {
+                return (
+                    InstructionResult::Revert,
+                    remaining_gas,
+                    "A `vm.expectRevert`was left dangling. Make sure that calls you expect to revert are external".encode().into(),
+                )
+            }
+
             // Check if we have any leftover expected emits
             // First, if any emits were found at the root call, then we its ok and we remove them.
             self.expected_emits.retain(|expected| !expected.found);
@@ -1052,7 +1061,7 @@ where
 
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
-            if data.journaled_state.depth() <= expected_revert.depth {
+            if data.journaled_state.depth() == expected_revert.depth {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match handle_expect_revert(
                     true,

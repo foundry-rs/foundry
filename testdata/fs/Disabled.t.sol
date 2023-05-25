@@ -4,42 +4,98 @@ pragma solidity >=0.8.18;
 import "ds-test/test.sol";
 import "../cheats/Cheats.sol";
 
+contract FsProxy is DSTest {
+    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+
+    function readFile(string calldata path) external returns (string memory) {
+        return cheats.readFile(path);
+    }
+
+    function readDir(string calldata path) external returns (Cheats.DirEntry[] memory) {
+        return cheats.readDir(path);
+    }
+
+    function readFileBinary(string calldata path) external returns (bytes memory) {
+        return cheats.readFileBinary(path);
+    }
+
+    function readLine(string calldata path) external returns (string memory) {
+        return cheats.readLine(path);
+    }
+
+    function writeLine(string calldata path, string calldata data) external {
+        return cheats.writeLine(path, data);
+    }
+
+    function writeFile(string calldata path, string calldata data) external {
+        return cheats.writeLine(path, data);
+    }
+
+    function writeFileBinary(string calldata path, bytes calldata data) external {
+        return cheats.writeFileBinary(path, data);
+    }
+
+    function removeFile(string calldata path) external {
+        return cheats.removeFile(path);
+    }
+
+    function fsMetadata(string calldata path) external returns (Cheats.FsMetadata memory) {
+        return cheats.fsMetadata(path);
+    }
+
+    function createDir(string calldata path) external {
+        return cheats.createDir(path, false);
+    }
+
+    function createDir(string calldata path, bool recursive) external {
+        return cheats.createDir(path, recursive);
+    }
+}
+
 contract DisabledTest is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    FsProxy public fsProxy;
+
     bytes constant FOUNDRY_READ_ERR =
         "The path \"../testdata/fixtures/File/read.txt\" is not allowed to be accessed for read operations.";
     bytes constant FOUNDRY_WRITE_ERR =
         "The path \"../testdata/fixtures/File/write_file.txt\" is not allowed to be accessed for write operations.";
 
     function testReadFile() public {
+        fsProxy = new FsProxy();
+
         string memory path = "../testdata/fixtures/File/read.txt";
         cheats.expectRevert(FOUNDRY_READ_ERR);
-        cheats.readFile(path);
+        fsProxy.readFile(path);
     }
 
     function testReadLine() public {
+        fsProxy = new FsProxy();
         string memory path = "../testdata/fixtures/File/read.txt";
         cheats.expectRevert(FOUNDRY_READ_ERR);
-        cheats.readLine(path);
+        fsProxy.readLine(path);
     }
 
     function testWriteFile() public {
+        fsProxy = new FsProxy();
         string memory path = "../testdata/fixtures/File/write_file.txt";
         string memory data = "hello writable world";
         cheats.expectRevert(FOUNDRY_WRITE_ERR);
-        cheats.writeFile(path, data);
+        fsProxy.writeFile(path, data);
     }
 
     function testWriteLine() public {
+        fsProxy = new FsProxy();
         string memory path = "../testdata/fixtures/File/write_file.txt";
         string memory data = "hello writable world";
         cheats.expectRevert(FOUNDRY_WRITE_ERR);
-        cheats.writeLine(path, data);
+        fsProxy.writeLine(path, data);
     }
 
     function testRemoveFile() public {
+        fsProxy = new FsProxy();
         string memory path = "../testdata/fixtures/File/write_file.txt";
         cheats.expectRevert(FOUNDRY_WRITE_ERR);
-        cheats.removeFile(path);
+        fsProxy.removeFile(path);
     }
 }

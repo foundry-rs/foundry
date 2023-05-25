@@ -14,6 +14,10 @@ contract Issue3753Test is DSTest {
             res := staticcall(gas(), 4, 0, 0, 0, 0)
         }
         vm.expectRevert("require");
-        require(false, "require");
+        this.revert_require();
+    }
+
+    function revert_require() public {
+        revert("require");
     }
 }
