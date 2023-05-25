@@ -75,37 +75,38 @@ impl LogsArgs {
             }
             None => None,
         };
-        let from_block = match from_block {
-            Some(block) => match block {
-                BlockId::Number(block_number) => Some(block_number),
-                BlockId::Hash(hash) => {
-                    let block = provider.get_block(hash).await?;
-                    Some(BlockNumber::from(block.unwrap().number.unwrap()))
-                }
-            },
-            None => None,
-        };
-        let to_block = match to_block {
-            Some(block) => match block {
-                BlockId::Number(block_number) => Some(block_number),
-                BlockId::Hash(hash) => {
-                    let block = provider.get_block(hash).await?;
-                    Some(BlockNumber::from(block.unwrap().number.unwrap()))
-                }
-            },
-            None => None,
-        };
+
+        let from_block = get_block_number(&provider, from_block).await?;
+        let to_block = get_block_number(&provider, to_block).await?;
 
         let cast = Cast::new(&provider);
 
-        let filter =
-            build_filter(from_block, to_block, address, sig_or_topic, topics_or_args).unwrap();
+        let filter = build_filter(from_block, to_block, address, sig_or_topic, topics_or_args)?;
 
         let logs = cast.filter_logs(filter, json).await?;
 
         println!("{}", logs);
 
         Ok(())
+    }
+}
+
+async fn get_block_number<M: Middleware>(
+    provider: M,
+    block: Option<BlockId>,
+) -> Result<Option<BlockNumber>, eyre::Error>
+where
+    M::Error: 'static,
+{
+    match block {
+        Some(block) => match block {
+            BlockId::Number(block_number) => Ok(Some(block_number)),
+            BlockId::Hash(hash) => {
+                let block = provider.get_block(hash).await?;
+                Ok(block.map(|block| block.number.unwrap()).map(BlockNumber::from))
+            }
+        },
+        None => Ok(None),
     }
 }
 
@@ -172,7 +173,7 @@ fn build_filter(
                 };
 
                 // Let filter do the hardwork of converting arguments to topics
-                let filter = event.filter(raw).unwrap();
+                let filter = event.filter(raw)?;
 
                 // Convert from TopicFilter to Filter
                 [filter.topic0, filter.topic1, filter.topic2, filter.topic3]
@@ -191,9 +192,10 @@ fn build_filter(
 
                 topics
                     .into_iter()
-                    .map(|topic_str| {
-                        Some(ValueOrArray::Value(Some(H256::from_str(topic_str.as_str()).unwrap())))
-                    })
+                    .map(|topic_str| H256::from_str(topic_str.as_str()))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .map(|hash| Some(ValueOrArray::Value(Some(hash))))
                     .collect::<Vec<_>>()
             }
         },
