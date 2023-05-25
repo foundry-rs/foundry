@@ -396,6 +396,25 @@ pub fn apply<DB: DatabaseExt>(
                 },
             )??
         }
+        HEVMCalls::SetNonceUnsafe(inner) => with_journaled_account(
+            &mut data.journaled_state,
+            data.db,
+            inner.0,
+            |account| -> Result {
+                let new = inner.1;
+                account.info.nonce = new;
+                Ok(Bytes::new())
+            },
+        )??,
+        HEVMCalls::ResetNonce(inner) => with_journaled_account(
+            &mut data.journaled_state,
+            data.db,
+            inner.0,
+            |account| -> Result {
+                account.info.nonce = 0;
+                Ok(Bytes::new())
+            },
+        )??,
         HEVMCalls::GetNonce(inner) => {
             correct_sender_nonce(
                 b160_to_h160(data.env.tx.caller),
