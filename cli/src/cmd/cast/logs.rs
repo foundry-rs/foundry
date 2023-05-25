@@ -6,13 +6,14 @@ use crate::{
 use cast::Cast;
 use clap::Parser;
 use ethers::{
-    abi::{Address, Topic},
+    abi::{Address, RawTopicFilter, Topic},
     providers::Middleware,
     types::{BlockId, BlockNumber, Filter, FilterBlockOption, NameOrAddress, ValueOrArray, H256},
 };
 
 use foundry_common::abi::{get_event, parse_tokens};
 use foundry_config::Config;
+use itertools::Itertools;
 
 use std::str::FromStr;
 
@@ -118,49 +119,62 @@ fn build_filter(
     let block_option = FilterBlockOption::Range { from_block, to_block };
 
     let mut topics = match sig_or_topic {
+        // Try and parse the signature as an event signature
         Some(sig_or_topic) => match get_event(sig_or_topic.as_str()) {
             Ok(event) => {
                 let args = topics_or_args.iter().map(|arg| arg.as_str()).collect::<Vec<_>>();
 
-                let indexed_inputs = event
+                // Match the args to indexed inputs. Enumerate so that the ordering can be restored
+                // when merging the inputs with arguments and without arguments
+                let (with_args, without_args): (Vec<_>, Vec<_>) = event
                     .inputs
                     .iter()
                     .zip(args)
                     .filter(|(input, _)| input.indexed)
                     .map(|(input, arg)| (&input.kind, arg))
+                    .enumerate()
+                    .partition(|(_, (_, arg))| !arg.is_empty());
+
+                // Only parse the inputs with arguments
+                let indexed_tokens = parse_tokens(
+                    with_args.clone().into_iter().map(|(_, p)| p).collect::<Vec<_>>(),
+                    true,
+                )?;
+
+                // Merge the inputs restoring the original ordering
+                let mut tokens = with_args
+                    .into_iter()
+                    .zip(indexed_tokens)
+                    .map(|((i, _), t)| (i, Some(t)))
+                    .chain(without_args.into_iter().map(|(i, _)| (i, None)))
+                    .sorted_by(|(i1, _), (i2, _)| i1.cmp(i2))
+                    .map(|(_, token)| token)
                     .collect::<Vec<_>>();
 
-                let indexed_tokens = parse_tokens(indexed_inputs, true)?;
+                // Need to ensure length is 3
+                while tokens.len() < 3 {
+                    tokens.push(None);
+                }
 
-                let token0 = indexed_tokens.get(0);
-                let token1 = indexed_tokens.get(1);
-                let token2 = indexed_tokens.get(2);
-
-                let raw = match (token0, token1, token2) {
-                    (Some(token0), Some(token1), Some(token2)) => ethers::abi::RawTopicFilter {
-                        topic0: Topic::This(token0.clone()),
-                        topic1: Topic::This(token1.clone()),
-                        topic2: Topic::This(token2.clone()),
+                let raw: RawTopicFilter = RawTopicFilter {
+                    topic0: match tokens[0].clone() {
+                        Some(token) => Topic::This(token),
+                        None => Topic::Any,
                     },
-                    (Some(token0), Some(token1), None) => ethers::abi::RawTopicFilter {
-                        topic0: Topic::This(token0.clone()),
-                        topic1: Topic::This(token1.clone()),
-                        topic2: Topic::Any,
+                    topic1: match tokens[1].clone() {
+                        Some(token) => Topic::This(token),
+                        None => Topic::Any,
                     },
-                    (Some(token0), None, None) => ethers::abi::RawTopicFilter {
-                        topic0: Topic::This(token0.clone()),
-                        topic1: Topic::Any,
-                        topic2: Topic::Any,
+                    topic2: match tokens[2].clone() {
+                        Some(token) => Topic::This(token),
+                        None => Topic::Any,
                     },
-                    (None, None, None) => ethers::abi::RawTopicFilter {
-                        topic0: Topic::Any,
-                        topic1: Topic::Any,
-                        topic2: Topic::Any,
-                    },
-                    _ => panic!("Invalid number of indexed arguments"),
                 };
 
+                // Let filter do the hardwork of converting arguments to topics
                 let filter = event.filter(raw).unwrap();
+
+                // Convert from TopicFilter to Filter
                 [filter.topic0, filter.topic1, filter.topic2, filter.topic3]
                     .into_iter()
                     .map(|topic| match topic {
