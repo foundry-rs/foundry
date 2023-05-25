@@ -30,6 +30,9 @@ tokio = { version = "1", features = ["time"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 yansi = "0.5"
+itertools = "0.10.5"
+maud = "0.25"
+time = "0.3.21"
 
 [dev-dependencies]
 ethers = { workspace = true, features = ["solc-full", "solc-tests"] }

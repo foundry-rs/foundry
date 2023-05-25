@@ -19,7 +19,7 @@ use eyre::Context;
 use forge::{
     coverage::{
         analysis::SourceAnalyzer, anchors::find_anchors, ContractId, CoverageReport,
-        CoverageReporter, DebugReporter, ItemAnchor, LcovReporter, SummaryReporter,
+        CoverageReporter, DebugReporter, HtmlReporter, ItemAnchor, LcovReporter, SummaryReporter,
     },
     executor::{inspector::CheatsConfig, opts::EvmOpts},
     result::SuiteResult,
@@ -321,6 +321,8 @@ impl CoverageArgs {
         for report_kind in self.report {
             match report_kind {
                 CoverageReportKind::Summary => SummaryReporter::default().report(&report),
+                // TODO: Sensible place to put the HTML file
+                CoverageReportKind::Html => HtmlReporter::new(root.clone()).report(&report),
                 // TODO: Sensible place to put the LCOV file
                 CoverageReportKind::Lcov => {
                     LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?).report(&report)
@@ -335,6 +337,7 @@ impl CoverageArgs {
 // TODO: HTML
 #[derive(Debug, Clone, ValueEnum)]
 pub enum CoverageReportKind {
+    Html,
     Summary,
     Lcov,
     Debug,
