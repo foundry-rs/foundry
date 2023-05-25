@@ -9,7 +9,7 @@ on:
     workflow_dispatch:
 
 env:
-    IS_NIGHTLY: ${{ github.event_name == 'schedule' || ( github.event_name == 'workflow_dispatch' && github.ref_type != 'tag' ) }}
+    IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     CARGO_TERM_COLOR: always
 
 jobs:
@@ -31,7 +31,7 @@ jobs:
             - name: Compute release name and tag
               id: release_info
               run: |
-                  if $IS_NIGHTLY; then
+                  if [[ $IS_NIGHTLY ]]; then
                     echo "::set-output name=tag_name::nightly-${GITHUB_SHA}"
                     echo "::set-output name=release_name::Nightly ($(date '+%Y-%m-%d'))"
                   else
@@ -44,7 +44,7 @@ jobs:
             # which allows users to roll back. It is also used to build
             # the changelog.
             - name: Create build-specific nightly tag
-              if: env.IS_NIGHTLY == true
+              if: ${{ env.IS_NIGHTLY }}
               uses: actions/github-script@v5
               env:
                   TAG_NAME: ${{ steps.release_info.outputs.tag_name }}
@@ -58,7 +58,7 @@ jobs:
               uses: mikepenz/release-changelog-builder-action@v2
               with:
                   configuration: "./.github/changelog.json"
-                  fromTag: ${{ env.IS_NIGHTLY == true && 'nightly' || '' }}
+                  fromTag: ${{ env.IS_NIGHTLY && 'nightly' || '' }}
                   toTag: ${{ steps.release_info.outputs.tag_name }}
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -122,13 +122,13 @@ jobs:
                   cache-on-failure: true
 
             - name: Apple M1 setup
-              if: matrix.job.target == 'aarch64-apple-darwin'
+              if: ${{ matrix.job.target == 'aarch64-apple-darwin' }}
               run: |
                   echo "SDKROOT=$(xcrun -sdk macosx --show-sdk-path)" >> $GITHUB_ENV
                   echo "MACOSX_DEPLOYMENT_TARGET=$(xcrun -sdk macosx --show-sdk-platform-version)" >> $GITHUB_ENV
 
             - name: Linux ARM setup
-              if: matrix.job.target == 'aarch64-unknown-linux-gnu'
+              if: ${{ matrix.job.target == 'aarch64-unknown-linux-gnu' }}
               run: |
                   sudo apt-get update -y
                   sudo apt-get install -y gcc-aarch64-linux-gnu
@@ -148,7 +148,7 @@ jobs:
                   PLATFORM_NAME: ${{ matrix.job.platform }}
                   TARGET: ${{ matrix.job.target }}
                   ARCH: ${{ matrix.job.arch }}
-                  VERSION_NAME: ${{ (env.IS_NIGHTLY == true && 'nightly') || needs.prepare.outputs.tag_name }}
+                  VERSION_NAME: ${{ (env.IS_NIGHTLY && 'nightly') || needs.prepare.outputs.tag_name }}
               run: |
                   if [ "$PLATFORM_NAME" == "linux" ]; then
                     tar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C ./target/${TARGET}/release forge cast anvil chisel
@@ -168,11 +168,11 @@ jobs:
 
             - name: Build man page
               id: man
-              if: matrix.job.target == 'x86_64-unknown-linux-gnu'
+              if: ${{ matrix.job.target == 'x86_64-unknown-linux-gnu' }}
               env:
                   PLATFORM_NAME: ${{ matrix.job.platform }}
                   TARGET: ${{ matrix.job.target }}
-                  VERSION_NAME: ${{ (env.IS_NIGHTLY == true && 'nightly') || needs.prepare.outputs.tag_name }}
+                  VERSION_NAME: ${{ (env.IS_NIGHTLY && 'nightly') || needs.prepare.outputs.tag_name }}
               run: |
                   sudo apt-get -y install help2man
                   help2man -N ./target/${TARGET}/release/forge > forge.1
@@ -202,7 +202,7 @@ jobs:
             # If this is a nightly release, it also updates the release
             # tagged `nightly` for compatibility with `foundryup`
             - name: Update nightly release
-              if: env.IS_NIGHTLY == true
+              if: ${{ env.IS_NIGHTLY }}
               uses: softprops/action-gh-release@v1
               with:
                   name: "Nightly"
@@ -224,7 +224,7 @@ jobs:
 
             # Moves the `nightly` tag to `HEAD`
             - name: Move nightly tag
-              if: env.IS_NIGHTLY == true
+              if: ${{ env.IS_NIGHTLY }}
               uses: actions/github-script@v5
               with:
                   script: |
