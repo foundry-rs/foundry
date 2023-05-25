@@ -17,7 +17,7 @@ use ethers::{
 };
 use foundry_config::Config;
 use revm::{
-    primitives::{Bytecode, SpecId, B256},
+    primitives::{Bytecode, SpecId, B256, KECCAK_EMPTY},
     Database, EVMData,
 };
 use std::collections::BTreeMap;
@@ -411,7 +411,12 @@ pub fn apply<DB: DatabaseExt>(
             data.db,
             inner.0,
             |account| -> Result {
-                account.info.nonce = 0;
+                // Per EIP-161, EOA nonces start at 0, but contract nonces
+                // start at 1. Comparing by code_hash instead of code
+                // to avoid hitting the case where account's code is None.
+                let empty = account.info.code_hash == KECCAK_EMPTY;
+                let nonce = if empty { 0 } else { 1 };
+                account.info.nonce = nonce;
                 Ok(Bytes::new())
             },
         )??,

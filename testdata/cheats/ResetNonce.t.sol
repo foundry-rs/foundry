@@ -12,23 +12,32 @@ contract Foo {
 
 contract ResetNonce is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
-    Foo public foo;
+    Foo public fooContract;
+    address barEOA;
 
     function setUp() public {
-        foo = new Foo();
+        fooContract = new Foo();
+        barEOA = address(0x42);
     }
 
-    function testResetNonce() public {
-        cheats.setNonce(address(foo), 10);
+    function testResetNonceContract() public {
+        cheats.setNonce(address(fooContract), 10);
 
         // makes sure working correctly after mutating nonce.
-        foo.f();
-        assertEq(cheats.getNonce(address(foo)), 10);
-        foo.f();
+        fooContract.f();
+        assertEq(cheats.getNonce(address(fooContract)), 10);
+        fooContract.f();
 
         // now make sure that it is reset after calling the cheatcode.
-        cheats.resetNonce(address(foo));
-        assertEq(cheats.getNonce(address(foo)), 0);
-        foo.f();
+        cheats.resetNonce(address(fooContract));
+        assertEq(cheats.getNonce(address(fooContract)), 1);
+        fooContract.f();
+    }
+
+    function testResetNonceEOA() public {
+        cheats.setNonce(address(barEOA), 10);
+        assertEq(cheats.getNonce(address(barEOA)), 10);
+        cheats.resetNonce(address(barEOA));
+        assertEq(cheats.getNonce(address(barEOA)), 0);
     }
 }
