@@ -411,8 +411,8 @@ pub fn apply<DB: DatabaseExt>(
             data.db,
             inner.0,
             |account| -> Result {
-                // EOA nonces start at 0, but contract nonces
-                // start a 1. Comparing by code_hash instead of code
+                // Per EIP-161, EOA nonces start at 0, but contract nonces
+                // start at 1. Comparing by code_hash instead of code
                 // to avoid hitting the case where account's code is None.
                 let empty = account.info.code_hash == KECCAK_EMPTY;
                 let nonce = if empty { 0 } else { 1 };
