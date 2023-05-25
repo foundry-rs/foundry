@@ -162,9 +162,9 @@ fn build_filter(
 
                 let filter = event.filter(raw).unwrap();
                 [filter.topic0, filter.topic1, filter.topic2, filter.topic3]
-                    .iter()
+                    .into_iter()
                     .map(|topic| match topic {
-                        Topic::This(topic) => Some(ValueOrArray::Value(Some(*topic))),
+                        Topic::This(topic) => Some(ValueOrArray::Value(Some(topic))),
                         _ => None,
                     })
                     .collect::<Vec<_>>()
