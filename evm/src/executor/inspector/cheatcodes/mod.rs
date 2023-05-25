@@ -895,7 +895,7 @@ where
 
         // If the depth is 0, then this is the root call terminating
         if data.journaled_state.depth() == 0 {
-             // See if there's a dangling expectRevert that should've been matched.
+            // See if there's a dangling expectRevert that should've been matched.
             if self.expected_revert.is_some() {
                 return (
                     InstructionResult::Revert,
