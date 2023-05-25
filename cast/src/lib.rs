@@ -773,6 +773,29 @@ where
     ) -> Result<String> {
         Ok(format!("{:?}", self.provider.get_storage_at(from, slot, block).await?))
     }
+
+    pub async fn filter_logs(&self, filter: Filter, to_json: bool) -> Result<String> {
+        let logs = self.provider.get_logs(&filter).await?;
+
+        let res = if to_json {
+            serde_json::to_string(&logs)?
+        } else {
+            let mut s = vec![];
+            for log in logs {
+                let pretty = log.pretty();
+                let lines: Vec<_> = pretty.split('\n').collect();
+                for (i, line) in lines.into_iter().enumerate() {
+                    match i {
+                        0 => {}
+                        1 => s.push(format!("- {}", line)),
+                        _ => s.push(format!("  {}", line)),
+                    }
+                }
+            }
+            s.join("\n")
+        };
+        Ok(res)
+    }
 }
 
 pub struct InterfaceSource {
