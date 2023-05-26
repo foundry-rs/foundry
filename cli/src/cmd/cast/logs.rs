@@ -13,6 +13,7 @@ use ethers::{
 
 use foundry_common::abi::{get_event, parse_tokens};
 use foundry_config::Config;
+
 use itertools::Itertools;
 
 use std::str::FromStr;
@@ -192,11 +193,14 @@ fn build_filter(
 
                 topics
                     .into_iter()
-                    .map(|topic_str| H256::from_str(topic_str.as_str()))
+                    .map(|topic| -> Result<Option<ValueOrArray<Option<H256>>>, eyre::Error> {
+                        if topic.is_empty() {
+                            Ok(Some(ValueOrArray::Value(None)))
+                        } else {
+                            Ok(Some(ValueOrArray::Value(Some(H256::from_str(topic.as_str())?))))
+                        }
+                    })
                     .collect::<Result<Vec<_>, _>>()?
-                    .into_iter()
-                    .map(|hash| Some(ValueOrArray::Value(Some(hash))))
-                    .collect::<Vec<_>>()
             }
         },
         None => Vec::new(),

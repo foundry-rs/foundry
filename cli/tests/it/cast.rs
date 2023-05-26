@@ -388,6 +388,7 @@ casttest!(cast_logs_topic_2, |_: TestProject, mut cmd: TestCommand| {
         "--to-block",
         "12421182",
         "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+        "",
         "0x00000000000000000000000068a99f89e475a078645f4bac491360afe255dff1", /* Filter on the
                                                                                * `to` address */
     ]);
