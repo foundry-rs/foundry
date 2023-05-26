@@ -212,3 +212,156 @@ fn build_filter(
 
     Ok(filter)
 }
+
+#[cfg(test)]
+mod tests {
+    use ethers::types::H160;
+
+    use super::*;
+
+    const ADDRESS: &str = "0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38";
+    const TRANSFER_SIG: &str = "Transfer(address indexed,address indexed,uint256)";
+    const TRANSFER_TOPIC: &str =
+        "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+    #[test]
+    fn test_build_filter_basic() {
+        let from_block = Some(BlockNumber::from(1337));
+        let to_block = Some(BlockNumber::Latest);
+        let address = Address::from_str(ADDRESS).ok();
+        let expected = Filter {
+            block_option: FilterBlockOption::Range { from_block, to_block },
+            address: Some(ValueOrArray::Value(address.unwrap())),
+            topics: [None, None, None, None],
+        };
+        let filter = build_filter(from_block, to_block, address, None, vec![]).unwrap();
+        assert_eq!(filter, expected)
+    }
+
+    #[test]
+    fn test_build_filter_sig() {
+        let expected = Filter {
+            block_option: FilterBlockOption::Range { from_block: None, to_block: None },
+            address: None,
+            topics: [Some(H256::from_str(TRANSFER_TOPIC).unwrap().into()), None, None, None],
+        };
+        let filter =
+            build_filter(None, None, None, Some(TRANSFER_SIG.to_string()), vec![]).unwrap();
+        assert_eq!(filter, expected)
+    }
+
+    #[test]
+    fn test_build_filter_mismatch() {
+        let expected = Filter {
+            block_option: FilterBlockOption::Range { from_block: None, to_block: None },
+            address: None,
+            topics: [Some(H256::from_str(TRANSFER_TOPIC).unwrap().into()), None, None, None],
+        };
+        let filter = build_filter(
+            None,
+            None,
+            None,
+            Some("Swap(address indexed from, address indexed to, uint256 value)".to_string()), // Change signature, should result in error
+            vec![],
+        )
+        .unwrap();
+        assert_ne!(filter, expected)
+    }
+
+    #[test]
+    fn test_build_filter_sig_with_arguments() {
+        let expected = Filter {
+            block_option: FilterBlockOption::Range { from_block: None, to_block: None },
+            address: None,
+            topics: [
+                Some(H256::from_str(TRANSFER_TOPIC).unwrap().into()),
+                Some(H160::from_str(ADDRESS).unwrap().into()),
+                None,
+                None,
+            ],
+        };
+        let filter = build_filter(
+            None,
+            None,
+            None,
+            Some(TRANSFER_SIG.to_string()),
+            vec![ADDRESS.to_string()],
+        )
+        .unwrap();
+        assert_eq!(filter, expected)
+    }
+
+    #[test]
+    fn test_build_filter_sig_with_skipped_arguments() {
+        let expected = Filter {
+            block_option: FilterBlockOption::Range { from_block: None, to_block: None },
+            address: None,
+            topics: [
+                Some(H256::from_str(TRANSFER_TOPIC).unwrap().into()),
+                None,
+                Some(H160::from_str(ADDRESS).unwrap().into()),
+                None,
+            ],
+        };
+        let filter = build_filter(
+            None,
+            None,
+            None,
+            Some(TRANSFER_SIG.to_string()),
+            vec!["".to_string(), ADDRESS.to_string()],
+        )
+        .unwrap();
+        assert_eq!(filter, expected)
+    }
+
+    #[test]
+    fn test_build_filter_sig_with_mismatched_argument() {
+        let err = build_filter(
+            None,
+            None,
+            None,
+            Some(TRANSFER_SIG.to_string()),
+            vec!["1234".to_string()],
+        )
+        .err()
+        .unwrap()
+        .to_string();
+
+        assert_eq!(err, "Failed to parse `1234`, expected value of type: address");
+    }
+
+    #[test]
+    fn test_build_filter_with_invalid_sig_or_topic() {
+        let err = build_filter(None, None, None, Some("asdasdasd".to_string()), vec![])
+            .err()
+            .unwrap()
+            .to_string();
+
+        assert_eq!(err, "Invalid character 's' at position 1");
+    }
+
+    #[test]
+    fn test_build_filter_with_invalid_sig_or_topic_hex() {
+        let err = build_filter(None, None, None, Some(ADDRESS.to_string()), vec![])
+            .err()
+            .unwrap()
+            .to_string();
+
+        assert_eq!(err, "Invalid input length");
+    }
+
+    #[test]
+    fn test_build_filter_with_invalid_topic() {
+        let err = build_filter(
+            None,
+            None,
+            None,
+            Some(TRANSFER_TOPIC.to_string()),
+            vec!["1234".to_string()],
+        )
+        .err()
+        .unwrap()
+        .to_string();
+
+        assert_eq!(err, "Invalid input length");
+    }
+}
