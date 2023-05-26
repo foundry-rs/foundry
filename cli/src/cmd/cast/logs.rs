@@ -6,7 +6,7 @@ use crate::{
 use cast::Cast;
 use clap::Parser;
 use ethers::{
-    abi::{Address, RawTopicFilter, Topic},
+    abi::{Address, RawTopicFilter, Topic, TopicFilter},
     providers::Middleware,
     types::{BlockId, BlockNumber, Filter, FilterBlockOption, NameOrAddress, ValueOrArray, H256},
 };
@@ -120,7 +120,7 @@ fn build_filter(
 ) -> Result<Filter, eyre::Error> {
     let block_option = FilterBlockOption::Range { from_block, to_block };
 
-    let mut topics = match sig_or_topic {
+    let topic_filter = match sig_or_topic {
         // Try and parse the signature as an event signature
         Some(sig_or_topic) => match get_event(sig_or_topic.as_str()) {
             Ok(event) => {
@@ -153,60 +153,46 @@ fn build_filter(
                     .map(|(_, token)| token)
                     .collect::<Vec<_>>();
 
-                // Need to ensure length is 3
-                while tokens.len() < 3 {
-                    tokens.push(None);
-                }
+                tokens.resize(3, None);
 
-                let raw: RawTopicFilter = RawTopicFilter {
-                    topic0: match tokens[0].clone() {
-                        Some(token) => Topic::This(token),
-                        None => Topic::Any,
-                    },
-                    topic1: match tokens[1].clone() {
-                        Some(token) => Topic::This(token),
-                        None => Topic::Any,
-                    },
-                    topic2: match tokens[2].clone() {
-                        Some(token) => Topic::This(token),
-                        None => Topic::Any,
-                    },
+                let raw = RawTopicFilter {
+                    topic0: tokens[0].clone().map_or(Topic::Any, Topic::This),
+                    topic1: tokens[1].clone().map_or(Topic::Any, Topic::This),
+                    topic2: tokens[2].clone().map_or(Topic::Any, Topic::This),
                 };
 
                 // Let filter do the hardwork of converting arguments to topics
-                let filter = event.filter(raw)?;
-
-                // Convert from TopicFilter to Filter
-                [filter.topic0, filter.topic1, filter.topic2, filter.topic3]
-                    .into_iter()
-                    .map(|topic| match topic {
-                        Topic::This(topic) => Some(ValueOrArray::Value(Some(topic))),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
+                event.filter(raw)?
             }
             Err(_) => {
-                let mut topics = topics_or_args;
-                topics.reverse();
-                topics.push(sig_or_topic);
-                topics.reverse();
+                let mut topics = Vec::new();
+                topics.push(Some(H256::from_str(&sig_or_topic)?));
+                for topic in topics_or_args {
+                    topics.push(Some(H256::from_str(&topic)?));
+                }
 
-                topics
-                    .into_iter()
-                    .map(|topic| -> Result<Option<ValueOrArray<Option<H256>>>, eyre::Error> {
-                        if topic.is_empty() {
-                            Ok(Some(ValueOrArray::Value(None)))
-                        } else {
-                            Ok(Some(ValueOrArray::Value(Some(H256::from_str(topic.as_str())?))))
-                        }
-                    })
-                    .collect::<Result<Vec<_>, _>>()?
+                topics.resize(4, None);
+
+                TopicFilter {
+                    topic0: topics[0].map_or(Topic::Any, Topic::This),
+                    topic1: topics[1].map_or(Topic::Any, Topic::This),
+                    topic2: topics[2].map_or(Topic::Any, Topic::This),
+                    topic3: topics[3].map_or(Topic::Any, Topic::This),
+                }
             }
         },
-        None => Vec::new(),
+        None => TopicFilter::default(),
     };
 
-    topics.resize(4, None);
+    let topics =
+        vec![topic_filter.topic0, topic_filter.topic1, topic_filter.topic2, topic_filter.topic3]
+            .into_iter()
+            .map(|topic| match topic {
+                Topic::Any => None,
+                Topic::This(topic) => Some(ValueOrArray::Value(Some(topic))),
+                _ => unreachable!(),
+            })
+            .collect::<Vec<_>>();
 
     let filter = Filter {
         block_option,
