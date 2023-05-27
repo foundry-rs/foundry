@@ -67,7 +67,7 @@ use forge::{
     },
 };
 use foundry_evm::{
-    decode::{decode_revert, decode_custom_error_args},
+    decode::{decode_custom_error_args, decode_revert},
     executor::backend::{DatabaseError, DatabaseResult},
     revm,
     revm::{
@@ -842,13 +842,20 @@ impl Backend {
                                 if let Ok(reason) = decode_revert(r.as_ref(), None, None) {
                                     node_info!("    Error: reverted with '{}'", reason);
                                 } else {
-                                    match decode_custom_error_args(r, 5) { // assuming max 5 args
+                                    match decode_custom_error_args(r, 5) {
+                                        // assuming max 5 args
                                         Some(token) => {
-                                            node_info!("    Error: reverted with custom error: {:?}", token);
-                                        },
+                                            node_info!(
+                                                "    Error: reverted with custom error: {:?}",
+                                                token
+                                            );
+                                        }
                                         None => {
-                                            node_info!("    Error: reverted with custom error: {}", hex::encode(r));
-                                        },
+                                            node_info!(
+                                                "    Error: reverted with custom error: {}",
+                                                hex::encode(r)
+                                            );
+                                        }
                                     }
                                 }
                             } else {
