@@ -17,7 +17,7 @@ use ethers::{
 };
 use foundry_config::Config;
 use revm::{
-    primitives::{Bytecode, SpecId, B256},
+    primitives::{Bytecode, SpecId, B256, KECCAK_EMPTY},
     Database, EVMData,
 };
 use std::collections::BTreeMap;
@@ -446,6 +446,30 @@ pub fn apply<DB: DatabaseExt>(
                 },
             )??
         }
+        HEVMCalls::SetNonceUnsafe(inner) => with_journaled_account(
+            &mut data.journaled_state,
+            data.db,
+            inner.0,
+            |account| -> Result {
+                let new = inner.1;
+                account.info.nonce = new;
+                Ok(Bytes::new())
+            },
+        )??,
+        HEVMCalls::ResetNonce(inner) => with_journaled_account(
+            &mut data.journaled_state,
+            data.db,
+            inner.0,
+            |account| -> Result {
+                // Per EIP-161, EOA nonces start at 0, but contract nonces
+                // start at 1. Comparing by code_hash instead of code
+                // to avoid hitting the case where account's code is None.
+                let empty = account.info.code_hash == KECCAK_EMPTY;
+                let nonce = if empty { 0 } else { 1 };
+                account.info.nonce = nonce;
+                Ok(Bytes::new())
+            },
+        )??,
         HEVMCalls::GetNonce(inner) => {
             correct_sender_nonce(
                 b160_to_h160(data.env.tx.caller),

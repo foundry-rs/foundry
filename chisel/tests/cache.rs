@@ -1,10 +1,9 @@
 use std::path::Path;
 
 use chisel::session::ChiselSession;
-use ethers_solc::Solc;
+use ethers_solc::EvmVersion;
 use forge::executor::opts::EvmOpts;
-use foundry_config::{Config, SolcReq};
-use semver::Version;
+use foundry_config::Config;
 use serial_test::serial;
 
 #[test]
@@ -41,17 +40,17 @@ fn test_write_session() {
 
     // Force the solc version to be 0.8.19
     let mut foundry_config = Config::default();
-    foundry_config.solc = Some(SolcReq::Version(Version::new(0, 8, 19)));
+    foundry_config.evm_version = EvmVersion::London;
 
     // Create a new session
     let mut env = ChiselSession::new(chisel::session_source::SessionSourceConfig {
-        foundry_config: Config::default(),
+        foundry_config,
         evm_opts: EvmOpts::default(),
         backend: None,
         traces: false,
         calldata: None,
     })
-    .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
+    .unwrap_or_else(|e| panic!("Failed to create ChiselSession!, {}", e));
 
     // Write the session
     let cached_session_name = env.write().unwrap();
@@ -73,14 +72,14 @@ fn test_write_session_with_name() {
 
     // Force the solc version to be 0.8.19
     let mut foundry_config = Config::default();
-    foundry_config.solc = Some(SolcReq::Version(Version::new(0, 8, 19)));
+    foundry_config.evm_version = EvmVersion::London;
 
     // Create a new session
     let mut env = ChiselSession::new(chisel::session_source::SessionSourceConfig {
-        foundry_config: Config::default(),
+        foundry_config,
         ..Default::default()
     })
-    .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
+    .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
     env.id = Some(String::from("test"));
 
     // Write the session
@@ -96,15 +95,13 @@ fn test_clear_cache() {
     // Create a session to validate clearing a non-empty cache directory
     let cache_dir = ChiselSession::cache_dir().unwrap();
 
-    Solc::blocking_install(&Version::new(0, 8, 19)).unwrap();
-
     // Force the solc version to be 0.8.19
     let mut foundry_config = Config::default();
-    foundry_config.solc = Some(SolcReq::Version(Version::new(0, 8, 19)));
+    foundry_config.evm_version = EvmVersion::London;
 
     ChiselSession::create_cache_dir().unwrap();
     let mut env = ChiselSession::new(chisel::session_source::SessionSourceConfig {
-        foundry_config: Config::default(),
+        foundry_config,
         ..Default::default()
     })
     .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
@@ -125,15 +122,13 @@ fn test_list_sessions() {
     ChiselSession::create_cache_dir().unwrap();
     ChiselSession::clear_cache().unwrap();
 
-    Solc::blocking_install(&Version::new(0, 8, 19)).unwrap();
-
     // Force the solc version to be 0.8.19
     let mut foundry_config = Config::default();
-    foundry_config.solc = Some(SolcReq::Version(Version::new(0, 8, 19)));
+    foundry_config.evm_version = EvmVersion::London;
 
     // Create a new session
     let mut env = ChiselSession::new(chisel::session_source::SessionSourceConfig {
-        foundry_config: Config::default(),
+        foundry_config,
         ..Default::default()
     })
     .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
@@ -157,11 +152,11 @@ fn test_load_cache() {
 
     // Force the solc version to be 0.8.19
     let mut foundry_config = Config::default();
-    foundry_config.solc = Some(SolcReq::Version(Version::new(0, 8, 19)));
+    foundry_config.evm_version = EvmVersion::London;
 
     // Create a new session
     let mut env = ChiselSession::new(chisel::session_source::SessionSourceConfig {
-        foundry_config: Config::default(),
+        foundry_config,
         ..Default::default()
     })
     .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
@@ -189,11 +184,11 @@ fn test_write_same_session_multiple_times() {
 
     // Force the solc version to be 0.8.19
     let mut foundry_config = Config::default();
-    foundry_config.solc = Some(SolcReq::Version(Version::new(0, 8, 19)));
+    foundry_config.evm_version = EvmVersion::London;
 
     // Create a new session
     let mut env = ChiselSession::new(chisel::session_source::SessionSourceConfig {
-        foundry_config: Config::default(),
+        foundry_config,
         ..Default::default()
     })
     .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
@@ -213,11 +208,11 @@ fn test_load_latest_cache() {
 
     // Force the solc version to be 0.8.19
     let mut foundry_config = Config::default();
-    foundry_config.solc = Some(SolcReq::Version(Version::new(0, 8, 19)));
+    foundry_config.evm_version = EvmVersion::London;
 
     // Create sessions
     let mut env = ChiselSession::new(chisel::session_source::SessionSourceConfig {
-        foundry_config: Config::default(),
+        foundry_config: foundry_config.clone(),
         ..Default::default()
     })
     .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
@@ -227,7 +222,7 @@ fn test_load_latest_cache() {
     std::thread::sleep(wait_time);
 
     let mut env2 = ChiselSession::new(chisel::session_source::SessionSourceConfig {
-        foundry_config: Config::default(),
+        foundry_config,
         ..Default::default()
     })
     .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));

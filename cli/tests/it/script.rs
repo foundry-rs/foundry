@@ -686,70 +686,76 @@ forgetest_async!(fail_broadcast_staticcall, |prj: TestProject, cmd: TestCommand|
         .simulate(ScriptOutcome::StaticCallNotAllowed);
 });
 
-forgetest_async!(check_broadcast_log, |prj: TestProject, cmd: TestCommand| async move {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+forgetest_async!(
+    #[serial_test::serial]
+    check_broadcast_log,
+    |prj: TestProject, cmd: TestCommand| async move {
+        let (api, handle) = spawn(NodeConfig::test()).await;
+        let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
-    // Prepare CREATE2 Deployer
-    let addr = Address::from_str("0x4e59b44847b379578588920ca78fbf26c0b4956c").unwrap();
-    let code = hex::decode("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("Could not decode create2 deployer init_code").into();
-    api.anvil_set_code(addr, code).await.unwrap();
+        // Prepare CREATE2 Deployer
+        let addr = Address::from_str("0x4e59b44847b379578588920ca78fbf26c0b4956c").unwrap();
+        let code = hex::decode("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("Could not decode create2 deployer init_code").into();
+        api.anvil_set_code(addr, code).await.unwrap();
 
-    tester
-        .load_private_keys(vec![0])
-        .await
-        .add_sig("BroadcastTestSetup", "run()")
-        .simulate(ScriptOutcome::OkSimulation)
-        .broadcast(ScriptOutcome::OkBroadcast)
-        .assert_nonce_increment(vec![(0, 6)])
-        .await;
+        tester
+            .load_private_keys(vec![0])
+            .await
+            .add_sig("BroadcastTestSetup", "run()")
+            .simulate(ScriptOutcome::OkSimulation)
+            .broadcast(ScriptOutcome::OkBroadcast)
+            .assert_nonce_increment(vec![(0, 6)])
+            .await;
 
-    // Uncomment to recreate the broadcast log
-    // std::fs::copy(
-    //     "broadcast/Broadcast.t.sol/31337/run-latest.json",
-    //     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/fixtures/broadcast.log.json"
-    // ), );
+        // Uncomment to recreate the broadcast log
+        // std::fs::copy(
+        //     "broadcast/Broadcast.t.sol/31337/run-latest.json",
+        //     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/fixtures/broadcast.log.
+        // json" ), );
 
-    // Check broadcast logs
-    // Ignore timestamp, blockHash, blockNumber, cumulativeGasUsed, effectiveGasPrice,
-    // transactionIndex and logIndex values since they can change inbetween runs
-    let re = Regex::new(r#"((timestamp":).[0-9]*)|((blockHash":).*)|((blockNumber":).*)|((cumulativeGasUsed":).*)|((effectiveGasPrice":).*)|((transactionIndex":).*)|((logIndex":).*)"#).unwrap();
+        // Check broadcast logs
+        // Ignore timestamp, blockHash, blockNumber, cumulativeGasUsed, effectiveGasPrice,
+        // transactionIndex and logIndex values since they can change inbetween runs
+        let re = Regex::new(r#"((timestamp":).[0-9]*)|((blockHash":).*)|((blockNumber":).*)|((cumulativeGasUsed":).*)|((effectiveGasPrice":).*)|((transactionIndex":).*)|((logIndex":).*)"#).unwrap();
 
-    let fixtures_log = std::fs::read_to_string(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/fixtures/broadcast.log.json"),
-    )
-    .unwrap();
-    let fixtures_log = re.replace_all(&fixtures_log, "");
+        let fixtures_log = std::fs::read_to_string(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../testdata/fixtures/broadcast.log.json"),
+        )
+        .unwrap();
+        let fixtures_log = re.replace_all(&fixtures_log, "");
 
-    let run_log =
-        std::fs::read_to_string("broadcast/Broadcast.t.sol/31337/run-latest.json").unwrap();
-    let run_log = re.replace_all(&run_log, "");
+        let run_log =
+            std::fs::read_to_string("broadcast/Broadcast.t.sol/31337/run-latest.json").unwrap();
+        let run_log = re.replace_all(&run_log, "");
 
-    assert!(fixtures_log == run_log);
+        pretty_assertions::assert_eq!(fixtures_log, run_log);
 
-    // Uncomment to recreate the sensitive log
-    // std::fs::copy(
-    //     "cache/Broadcast.t.sol/31337/run-latest.json",
-    //     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-    //         .join("../testdata/fixtures/broadcast.sensitive.log.json"),
-    // );
+        // Uncomment to recreate the sensitive log
+        // std::fs::copy(
+        //     "cache/Broadcast.t.sol/31337/run-latest.json",
+        //     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        //         .join("../testdata/fixtures/broadcast.sensitive.log.json"),
+        // );
 
-    // Check sensitive logs
-    // Ignore port number since it can change inbetween runs
-    let re = Regex::new(r#":[0-9]+"#).unwrap();
+        // Check sensitive logs
+        // Ignore port number since it can change inbetween runs
+        let re = Regex::new(r#":[0-9]+"#).unwrap();
 
-    let fixtures_log = std::fs::read_to_string(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../testdata/fixtures/broadcast.sensitive.log.json"),
-    )
-    .unwrap();
-    let fixtures_log = re.replace_all(&fixtures_log, "");
+        let fixtures_log = std::fs::read_to_string(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../testdata/fixtures/broadcast.sensitive.log.json"),
+        )
+        .unwrap();
+        let fixtures_log = re.replace_all(&fixtures_log, "");
 
-    let run_log = std::fs::read_to_string("cache/Broadcast.t.sol/31337/run-latest.json").unwrap();
-    let run_log = re.replace_all(&run_log, "");
+        let run_log =
+            std::fs::read_to_string("cache/Broadcast.t.sol/31337/run-latest.json").unwrap();
+        let run_log = re.replace_all(&run_log, "");
 
-    assert!(fixtures_log == run_log);
-});
+        pretty_assertions::assert_eq!(fixtures_log, run_log);
+    }
+);
 
 forgetest_async!(test_default_sender_balance, |prj: TestProject, cmd: TestCommand| async move {
     let (_api, handle) = spawn(NodeConfig::test()).await;
