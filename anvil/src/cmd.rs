@@ -65,6 +65,9 @@ pub struct NodeArgs {
     pub silent: bool,
 
     /// The EVM hardfork to use.
+    ///
+    /// Choose the hardfork by name, e.g. `shanghai`, `paris`, `london`, etc...
+    /// [default: latest]
     #[clap(long, value_parser = Hardfork::from_str)]
     pub hardfork: Option<Hardfork>,
 
