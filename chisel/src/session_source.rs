@@ -334,6 +334,9 @@ impl SessionSource {
             .filter(|remapping| !remapping.name.starts_with("forge-std"))
             .collect();
 
+        // We also need to enforce the EVM version that the user has specified.
+        compiler_input.settings.evm_version = Some(self.config.foundry_config.evm_version);
+
         compiler_input
     }
 
