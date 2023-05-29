@@ -29,7 +29,7 @@ mod tests {
                 assert_eq!(runs, &1024);
             }
             _ => {
-                assert!(false); // Force test to fail
+                unreachable!()
             }
         }
     }
@@ -58,7 +58,7 @@ mod tests {
                 assert_eq!(runs, &333);
             }
             _ => {
-                assert!(false); // Force test to fail
+                unreachable!()
             }
         }
 
@@ -67,7 +67,7 @@ mod tests {
                 assert_eq!(runs, &42);
             }
             _ => {
-                assert!(false); // Force test to fail
+                unreachable!()
             }
         }
     }
