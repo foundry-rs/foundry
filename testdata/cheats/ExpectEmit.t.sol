@@ -509,6 +509,18 @@ contract ExpectEmitTest is DSTest {
         emitter.emitNestedWindow();
     }
 
+    /// emitWindow() emits events A, B, C, D, E.
+    /// We should not be able to match [A, A] even if emitWindow() is called twice,
+    /// as expectEmit() only works for the next call.
+    function testFailEventsOnTwoCalls() public {
+        cheats.expectEmit(true, false, false, true);
+        emit A(1);
+        cheats.expectEmit(true, false, false, true);
+        emit A(1);
+        emitter.emitWindow();
+        emitter.emitWindow();
+    }
+
     /// This test will fail if we check that all expected logs were emitted
     /// after every call from the same depth as the call that invoked the cheatcode.
     ///
