@@ -8,7 +8,7 @@ use ethers::prelude::artifacts::output_selection::ContractOutputSelection;
 use foundry_common::{
     compile,
     selectors::{import_selectors, SelectorImportData},
-    shell
+    shell,
 };
 use yansi::Paint;
 
