@@ -10,6 +10,7 @@ use foundry_common::{
     selectors::{import_selectors, SelectorImportData},
 };
 
+/// CLI arguments for `forge selectors`.
 #[derive(Debug, Clone, Parser)]
 pub enum SelectorsSubcommands {
     /// Upload selectors to registry
