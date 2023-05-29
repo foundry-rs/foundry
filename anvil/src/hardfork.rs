@@ -115,8 +115,11 @@ impl FromStr for Hardfork {
             "berlin" | "11" => Hardfork::Berlin,
             "london" | "12" => Hardfork::London,
             "arrowglacier" | "13" => Hardfork::ArrowGlacier,
-            "grayglacier" => Hardfork::GrayGlacier,
-            "latest" | "14" => Hardfork::Latest,
+            "grayglacier" | "14" => Hardfork::GrayGlacier,
+            "paris" | "merge" | "15" => Hardfork::Paris,
+            "shanghai" | "16" => Hardfork::Shanghai,
+            // "cancun" | "17"=> Hardfork::Cancun,
+            "latest" => Hardfork::Latest,
             _ => return Err(format!("Unknown hardfork {s}")),
         };
         Ok(hardfork)
@@ -167,7 +170,7 @@ impl<T: Into<BlockNumber>> From<T> for Hardfork {
             _i if num < 12_965_000 => Hardfork::Berlin,
             _i if num < 13_773_000 => Hardfork::London,
             _i if num < 15_050_000 => Hardfork::ArrowGlacier,
-
+            _i if num < 17_034_870 => Hardfork::Paris,
             _ => Hardfork::Latest,
         }
     }
