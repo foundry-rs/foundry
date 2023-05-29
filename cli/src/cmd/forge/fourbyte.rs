@@ -28,6 +28,8 @@ pub struct UploadSelectorsArgs {
 impl UploadSelectorsArgs {
     /// Builds a contract and uploads the ABI to selector database
     pub async fn run(self) -> eyre::Result<()> {
+        println!("Warning! This command is deprecated and will be removed in v1, use `forge selectors upload` instead");
+
         let UploadSelectorsArgs { contract, all, project_paths } = self;
 
         let build_args = CoreBuildArgs {
