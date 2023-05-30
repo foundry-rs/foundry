@@ -20,7 +20,7 @@ use forge::{
     utils::h256_to_b256,
 };
 use foundry_config::{find_project_root_path, Config};
-use foundry_evm::utils::evm_spec;
+use foundry_evm::executor::SpecId;
 use std::{collections::BTreeMap, str::FromStr};
 use tracing::trace;
 use ui::{TUIExitReason, Tui, Ui};
@@ -94,7 +94,7 @@ impl RunArgs {
         // configures a bare version of the evm executor: no cheatcode inspector is enabled,
         // tracing will be enabled only for the targeted transaction
         let builder =
-            ExecutorBuilder::default().with_config(env).with_spec(evm_spec(&config.evm_version));
+            ExecutorBuilder::default().with_config(env).with_spec(SpecId::SHANGHAI);
 
         let mut executor = builder.build(db);
 

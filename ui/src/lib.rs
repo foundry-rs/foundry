@@ -1,7 +1,7 @@
 use crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
-        MouseEvent, MouseEventKind,
+        MouseEvent, MouseEventKind, KeyEventKind,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -1330,9 +1330,11 @@ enum Interrupt {
 impl Interrupt {
     fn char_press(&self) -> Option<char> {
         if let Self::KeyPressed(event) = &self {
-            if let KeyCode::Char(c) = event.code {
-                if c.is_alphanumeric() || c == '\'' {
-                    return Some(c)
+            if matches!(event.kind, KeyEventKind::Press) {
+                if let KeyCode::Char(c) = event.code {
+                    if c.is_alphanumeric() || c == '\'' {
+                        return Some(c)
+                    }
                 }
             }
         }
