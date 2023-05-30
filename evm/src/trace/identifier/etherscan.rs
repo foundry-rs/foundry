@@ -106,43 +106,48 @@ impl TraceIdentifier for EtherscanIdentifier {
     ) -> Vec<AddressIdentity> {
         trace!(target: "etherscanidentifier", "identify {} addresses", addresses.len());
 
+        let client = if let Some(client) = self.client.clone() {
+            client
+        } else {
+            // no client was configured
+            return Vec::new()
+        };
+
         if self.invalid_api_key.load(Ordering::Relaxed) {
             // api key was marked as invalid
             return Vec::new()
         }
 
-        self.client.as_ref().map_or(Default::default(), |client| {
-            let mut fetcher = EtherscanFetcher::new(
-                Arc::clone(client),
-                Duration::from_secs(1),
-                5,
-                Arc::clone(&self.invalid_api_key),
-            );
+        let mut fetcher = EtherscanFetcher::new(
+            client,
+            Duration::from_secs(1),
+            5,
+            Arc::clone(&self.invalid_api_key),
+        );
 
-            for (addr, _) in addresses {
-                if !self.contracts.contains_key(addr) {
-                    fetcher.push(*addr);
-                }
+        for (addr, _) in addresses {
+            if !self.contracts.contains_key(addr) {
+                fetcher.push(*addr);
             }
+        }
 
-            let fut = fetcher
-                .map(|(address, metadata)| {
-                    let label = metadata.contract_name.clone();
-                    let abi = metadata.abi().ok().map(Cow::Owned);
-                    self.contracts.insert(address, metadata);
+        let fut = fetcher
+            .map(|(address, metadata)| {
+                let label = metadata.contract_name.clone();
+                let abi = metadata.abi().ok().map(Cow::Owned);
+                self.contracts.insert(address, metadata);
 
-                    AddressIdentity {
-                        address,
-                        label: Some(label.clone()),
-                        contract: Some(label),
-                        abi,
-                        artifact_id: None,
-                    }
-                })
-                .collect();
+                AddressIdentity {
+                    address,
+                    label: Some(label.clone()),
+                    contract: Some(label),
+                    abi,
+                    artifact_id: None,
+                }
+            })
+            .collect();
 
-            RuntimeOrHandle::new().block_on(fut)
-        })
+        RuntimeOrHandle::new().block_on(fut)
     }
 }
 
