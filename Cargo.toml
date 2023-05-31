@@ -71,7 +71,7 @@ ethers-middleware = { version = "2.0.4", default-features = false }
 ethers-etherscan = { version = "2.0.4", default-features = false }
 ethers-solc = { version = "2.0.4", default-features = false }
 
-#[patch.crates-io]
+[patch.crates-io]
 # ethers = { path = "../ethers-rs/ethers" }
 # ethers-addressbook = { path = "../ethers-rs/ethers-addressbook" }
 # ethers-contract = { path = "../ethers-rs/ethers-contract" }
@@ -82,4 +82,4 @@ ethers-solc = { version = "2.0.4", default-features = false }
 # ethers-providers = { path = "../ethers-rs/ethers-providers" }
 # ethers-signers = { path = "../ethers-rs/ethers-signers" }
 # ethers-solc = { path = "../ethers-rs/ethers-solc" }
-# revm = { path = "../revm/crates/revm" }
+revm = { git = "https://github.com/bluealloy/revm/", branch = "release/v25" }
