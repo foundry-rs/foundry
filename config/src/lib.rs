@@ -3969,6 +3969,8 @@ mod tests {
                     show_unproved: None,
                     div_mod_with_slacks: None,
                     solvers: None,
+                    show_unsupported: None,
+                    show_proved_safe: None,
                 })
             );
 
@@ -4029,6 +4031,8 @@ mod tests {
                     show_unproved: None,
                     div_mod_with_slacks: None,
                     solvers: None,
+                    show_unsupported: None,
+                    show_proved_safe: None,
                 })
             );
 
