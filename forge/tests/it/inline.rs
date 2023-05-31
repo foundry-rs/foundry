@@ -19,7 +19,7 @@ mod tests {
         let mut runner = runner();
         runner.test_options = opts.clone();
 
-        let result = runner.test(&filter, None, opts).expect("Test ran");
+        let result = runner.test(&filter, None, opts);
         let suite_result: &SuiteResult =
             result.get("inline/FuzzInlineConf.t.sol:FuzzInlineConf").unwrap();
         let test_result: &TestResult =
@@ -43,7 +43,7 @@ mod tests {
         let mut runner = runner();
         runner.test_options = opts.clone();
 
-        let result = runner.test(&filter, None, opts).expect("Test ran");
+        let result = runner.test(&filter, None, opts);
 
         let suite_result_1 =
             result.get(&format!("{ROOT}:InvariantInlineConf")).expect("Result exists");
