@@ -5117,8 +5117,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "3.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f293f351c4c203d321744e54ed7eed3d2b6eef4c140228910dde3ac9a5ea8031"
+source = "git+https://github.com/bluealloy/revm/?branch=release/v25#4e6750b88cfa9f53f890eb413bbe8ac762a88f30"
 dependencies = [
  "auto_impl",
  "revm-interpreter",
@@ -5130,8 +5129,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "1.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a53980a26f9b5a66d13511c35074d4b53631e157850a1d7cf1af4efc2c2b72c9"
+source = "git+https://github.com/bluealloy/revm/?branch=release/v25#4e6750b88cfa9f53f890eb413bbe8ac762a88f30"
 dependencies = [
  "derive_more",
  "enumn",
@@ -5143,8 +5141,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "2.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41320af3bd6a65153d38eb1d3638ba89104cc9513c7feedb2d8510e8307dab29"
+source = "git+https://github.com/bluealloy/revm/?branch=release/v25#4e6750b88cfa9f53f890eb413bbe8ac762a88f30"
 dependencies = [
  "k256",
  "num",
@@ -5160,8 +5157,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "1.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "304d998f466ffef72d76c7f20b05bf08a96801736a6fb1fdef47d49a292618df"
+source = "git+https://github.com/bluealloy/revm/?branch=release/v25#4e6750b88cfa9f53f890eb413bbe8ac762a88f30"
 dependencies = [
  "auto_impl",
  "bitvec 1.0.1",
