@@ -248,7 +248,18 @@ impl<'a> ContractRunner<'a> {
             self.executor.set_tracing(true);
         }
 
-        let setup = self.setup(needs_setup)?;
+        let setup = match self.setup(needs_setup) {
+            Ok(setup) => setup,
+            Err(err) => {
+                // If deploying the setup contract failed we treat this as an error and report it as
+                // such
+                TestSetup {
+                    setup_failed: true,
+                    reason: Some(err.to_string()),
+                    ..Default::default()
+                }
+            }
+        };
         self.executor.set_tracing(original_tracing);
 
         if setup.setup_failed {
