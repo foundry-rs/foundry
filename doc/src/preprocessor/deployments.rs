@@ -14,6 +14,8 @@ pub const DEPLOYMENTS_ID: PreprocessorId = PreprocessorId("deployments");
 pub struct Deployments {
     /// The project root.
     pub root: PathBuf,
+    /// The deployments directory.
+    pub deployments: Option<PathBuf>,
 }
 
 /// A contract deployment.
@@ -31,8 +33,11 @@ impl Preprocessor for Deployments {
     }
 
     fn preprocess(&self, documents: Vec<Document>) -> Result<Vec<Document>, eyre::Error> {
+        let deployments_dir =
+            self.root.join(self.deployments.as_ref().unwrap_or(&PathBuf::from("deployments")));
+
         // Gather all networks from the deployments directory.
-        let networks = fs::read_dir(self.root.join("deployments"))?
+        let networks = fs::read_dir(&deployments_dir)?
             .map(|x| {
                 x.map(|y| {
                     if y.file_type()?.is_dir() {
@@ -57,7 +62,7 @@ impl Preprocessor for Deployments {
                 item_path_clone.set_extension("json");
 
                 // Determine the path of the deployment artifact relative to the root directory.
-                let deployment_path = self.root.join("deployments").join(network).join(
+                let deployment_path = deployments_dir.join(network).join(
                     item_path_clone
                         .file_name()
                         .ok_or(eyre::eyre!("Failed to extract file name from item path"))?,

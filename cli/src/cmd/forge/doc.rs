@@ -40,9 +40,10 @@ pub struct DocArgs {
     #[clap(long, short, requires = "serve")]
     port: Option<usize>,
 
-    /// Option to generate documentation for deployments via `hardhat-deploy` / `forge-deploy`.
-    #[clap(long, short)]
-    deployments: bool,
+    /// The relative path to the `hardhat-deploy` or `forge-deploy` artifact directory. Leave blank
+    /// for default.
+    #[clap(long)]
+    deployments: Option<Option<PathBuf>>,
 }
 
 impl Cmd for DocArgs {
@@ -96,8 +97,8 @@ impl Cmd for DocArgs {
             });
 
         // If deployment docgen is enabled, add the [Deployments] preprocessor
-        if self.deployments {
-            builder = builder.with_preprocessor(Deployments { root });
+        if let Some(deployments) = self.deployments {
+            builder = builder.with_preprocessor(Deployments { root, deployments });
         }
 
         builder.build()?;
