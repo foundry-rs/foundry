@@ -166,6 +166,7 @@ impl MultiContractRunner {
     }
 
     #[instrument(skip_all, fields(name = %name))]
+    #[allow(clippy::too_many_arguments)]
     fn run_tests(
         &self,
         name: &str,

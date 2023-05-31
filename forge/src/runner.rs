@@ -2,7 +2,6 @@ use crate::{
     result::{SuiteResult, TestKind, TestResult, TestSetup},
     TestFilter, TestOptions,
 };
-use error;
 use ethers::{
     abi::{Abi, Function},
     types::{Address, Bytes, U256},
