@@ -1,10 +1,15 @@
+use std::fs::canonicalize;
+
 use crate::{
     cmd::forge::build::{CoreBuildArgs, ProjectPathsArgs},
     opts::forge::CompilerArgs,
     utils::FoundryPathExt,
 };
 use clap::Parser;
-use ethers::prelude::artifacts::output_selection::ContractOutputSelection;
+use ethers::prelude::{
+    artifacts::output_selection::ContractOutputSelection,
+    info::ContractInfo,
+};
 use foundry_common::{
     compile,
     selectors::{import_selectors, SelectorImportData},
@@ -13,6 +18,28 @@ use foundry_common::{
 /// CLI arguments for `forge selectors`.
 #[derive(Debug, Clone, Parser)]
 pub enum SelectorsSubcommands {
+    /// Check for selector collisions between contracts
+    #[clap(visible_alias = "co")]
+    Collision {
+        /// First contract 
+        #[clap(
+            help = "The first of the two contracts for which to look selector collisions for, in the form `(<path>:)?<contractname>`",
+            value_name = "FIRST_CONTRACT",
+        )]
+        first_contract: ContractInfo,
+        
+        /// Second contract 
+        #[clap(
+            help = "The second of the two contracts for which to look selector collisions for, in the form `(<path>:)?<contractname>`",
+            value_name = "SECOND_CONTRACT",
+        )]
+        second_contract: ContractInfo,
+
+        /// Support build args
+        #[clap(flatten)]
+        build: CoreBuildArgs,
+    },
+    
     /// Upload selectors to registry
     #[clap(visible_alias = "up")]
     Upload {
@@ -87,6 +114,56 @@ impl SelectorsSubcommands {
                     if artifacts.peek().is_some() {
                         println!()
                     }
+                }
+            }
+            SelectorsSubcommands::Collision { mut first_contract, mut second_contract, build } => {
+                // Build first project
+                let first_project = build.project()?;
+                let first_outcome = if let Some(ref mut contract_path) = first_contract.path {
+                    let target_path = canonicalize(&*contract_path)?;
+                    *contract_path = target_path.to_string_lossy().to_string();
+                    compile::compile_files(&first_project, vec![target_path], true)
+                } else {
+                    compile::suppress_compile(&first_project)
+                }?;
+
+                // Build second project
+                let second_project = build.project()?;
+                let second_outcome = if let Some(ref mut contract_path) = second_contract.path {
+                    let target_path = canonicalize(&*contract_path)?;
+                    *contract_path = target_path.to_string_lossy().to_string();
+                    compile::compile_files(&second_project, vec![target_path], true)
+                } else {
+                    compile::suppress_compile(&second_project)
+                }?;
+
+                // Find the artifacts
+                let first_found_artifact = first_outcome.find_contract(&first_contract);
+                let second_found_artifact = second_outcome.find_contract(&second_contract);
+
+                // Unwrap inner artifacts
+                let first_artifact = first_found_artifact.ok_or_else( || {
+                    eyre::eyre!("Failed to extract first artifact bytecode as a string")
+                })?;
+                let second_artifact = second_found_artifact.ok_or_else( || {
+                    eyre::eyre!("Failed to extract second artifact bytecode as a string")
+                })?;
+
+                // Check method selectors for collisions
+                let first_method_map = first_artifact.method_identifiers.as_ref().unwrap();
+                let second_method_map = second_artifact.method_identifiers.as_ref().unwrap();
+
+                let mut colliding_methods = Vec::new();
+                for (k1, v1) in first_method_map {
+                    if let Some(k2) = second_method_map.iter().find_map(|(k2,v2)| if v1 == v2 {Some(k2)} else {None}) {
+                        colliding_methods.push((k1, k2));
+                    }
+                }
+
+                if colliding_methods.is_empty() {
+                    println!("No colliding method selectors between the two contracts.");
+                } else {
+                    println!("The two contracts have the following methods whose signatures clash: {:#?}", colliding_methods);
                 }
             }
         }
