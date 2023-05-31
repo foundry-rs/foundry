@@ -1771,6 +1771,7 @@ impl Default for Config {
             ignored_error_codes: vec![
                 SolidityErrorCode::SpdxLicenseNotProvided,
                 SolidityErrorCode::ContractExceeds24576Bytes,
+                SolidityErrorCode::ContractInitCodeSizeExceeds49152Bytes,
             ],
             deny_warnings: false,
             via_ir: false,
