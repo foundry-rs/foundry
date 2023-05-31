@@ -741,7 +741,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serial_test",
- "solang-parser 0.2.4",
+ "solang-parser",
  "strum",
  "time 0.3.21",
  "tokio",
@@ -1344,9 +1344,9 @@ dependencies = [
 
 [[package]]
 name = "curl-sys"
-version = "0.4.62+curl-8.1.0"
+version = "0.4.63+curl-8.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "274ef7ef7c1113c7611af49ce248a700afa1171045a1aaa40137030773f993b8"
+checksum = "aeb0fef7046022a1e2ad67a004978f0e3cacb9e3123dc62ce768f92197b771dc"
 dependencies = [
  "cc",
  "libc",
@@ -1998,7 +1998,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.6",
- "solang-parser 0.3.0",
+ "solang-parser",
  "svm-rs",
  "svm-rs-builds",
  "tempfile",
@@ -2225,7 +2225,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
- "solang-parser 0.2.4",
+ "solang-parser",
  "thiserror",
  "tokio",
  "toml 0.7.4",
@@ -2243,7 +2243,7 @@ dependencies = [
  "itertools",
  "pretty_assertions",
  "semver",
- "solang-parser 0.2.4",
+ "solang-parser",
  "thiserror",
  "toml 0.7.4",
  "tracing",
@@ -2336,7 +2336,7 @@ dependencies = [
  "serde_json",
  "serial_test",
  "similar",
- "solang-parser 0.2.4",
+ "solang-parser",
  "strsim",
  "strum",
  "svm-rs",
@@ -3633,9 +3633,6 @@ name = "lalrpop-util"
 version = "0.19.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3c48237b9604c5a4702de6b824e02006c3214327564636aef27c1028a8fa0ed"
-dependencies = [
- "regex",
-]
 
 [[package]]
 name = "lazy_static"
@@ -4218,9 +4215,9 @@ dependencies = [
 
 [[package]]
 name = "openssl"
-version = "0.10.53"
+version = "0.10.54"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12df40a956736488b7b44fe79fe12d4f245bb5b3f5a1f6095e499760015be392"
+checksum = "69b3f656a17a6cbc115b5c7a40c616947d213ba182135b014d6051b73ab6f019"
 dependencies = [
  "bitflags 1.3.2",
  "cfg-if",
@@ -5913,20 +5910,6 @@ checksum = "64a4a911eed85daf18834cfaa86a79b7d266ff93ff5ba14005426219480ed662"
 dependencies = [
  "libc",
  "winapi",
-]
-
-[[package]]
-name = "solang-parser"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c5ead679f39243782be98c2689e592fc0fc9489ca2e47c9e027bd30f948df31"
-dependencies = [
- "itertools",
- "lalrpop",
- "lalrpop-util",
- "phf 0.11.1",
- "thiserror",
- "unicode-xid",
 ]
 
 [[package]]
