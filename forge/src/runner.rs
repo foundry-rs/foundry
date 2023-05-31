@@ -2,6 +2,7 @@ use crate::{
     result::{SuiteResult, TestKind, TestResult, TestSetup},
     TestFilter, TestOptions,
 };
+use error;
 use ethers::{
     abi::{Abi, Function},
     types::{Address, Bytes, U256},
@@ -30,7 +31,6 @@ use std::{
     collections::{BTreeMap, HashMap},
     time::Instant,
 };
-use tracing::{error, trace};
 
 /// A type that executes all tests of a contract
 #[derive(Debug, Clone)]
@@ -175,7 +175,7 @@ impl<'a> ContractRunner<'a> {
         test_options: TestOptions,
         known_contracts: Option<&ContractsByArtifact>,
     ) -> SuiteResult {
-        tracing::info!("starting tests");
+        info!("starting tests");
         let start = Instant::now();
         let mut warnings = Vec::new();
 
@@ -290,7 +290,7 @@ impl<'a> ContractRunner<'a> {
         let duration = start.elapsed();
         if !test_results.is_empty() {
             let successful = test_results.iter().filter(|(_, tst)| tst.success).count();
-            tracing::info!(
+            info!(
                 duration = ?duration,
                 "done. {}/{} successful",
                 successful,
@@ -307,7 +307,7 @@ impl<'a> ContractRunner<'a> {
     ///
     /// State modifications are not committed to the evm database but discarded after the call,
     /// similar to `eth_call`.
-    #[tracing::instrument(name = "test", skip_all, fields(name = %func.signature(), %should_fail))]
+    #[instrument(name = "test", skip_all, fields(name = %func.signature(), %should_fail))]
     pub fn run_test(mut self, func: &Function, should_fail: bool, setup: TestSetup) -> TestResult {
         let TestSetup { address, mut logs, mut traces, mut labeled_addresses, .. } = setup;
 
@@ -369,7 +369,7 @@ impl<'a> ContractRunner<'a> {
         );
 
         // Record test execution time
-        tracing::debug!(
+        debug!(
             duration = ?start.elapsed(),
             %success,
             %gas
@@ -389,7 +389,7 @@ impl<'a> ContractRunner<'a> {
         }
     }
 
-    #[tracing::instrument(name = "invariant-test", skip_all)]
+    #[instrument(name = "invariant-test", skip_all)]
     pub fn run_invariant_test(
         &mut self,
         runner: TestRunner,
@@ -489,7 +489,7 @@ impl<'a> ContractRunner<'a> {
             .collect()
     }
 
-    #[tracing::instrument(name = "fuzz-test", skip_all, fields(name = %func.signature(), %should_fail))]
+    #[instrument(name = "fuzz-test", skip_all, fields(name = %func.signature(), %should_fail))]
     pub fn run_fuzz_test(
         &self,
         func: &Function,
@@ -518,7 +518,7 @@ impl<'a> ContractRunner<'a> {
         traces.extend(result.traces.map(|traces| (TraceKind::Execution, traces)));
 
         // Record test execution time
-        tracing::debug!(
+        debug!(
             duration = ?start.elapsed(),
             success = %result.success
         );

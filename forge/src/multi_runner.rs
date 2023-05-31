@@ -121,7 +121,7 @@ impl MultiContractRunner {
         stream_result: Option<Sender<(String, SuiteResult)>>,
         test_options: TestOptions,
     ) -> BTreeMap<String, SuiteResult> {
-        tracing::trace!("running all tests");
+        trace!("running all tests");
 
         // the db backend that serves all the data, each contract gets its own instance
         let db = Backend::spawn(self.fork.take());
@@ -143,7 +143,7 @@ impl MultiContractRunner {
                     .set_coverage(self.coverage)
                     .build(db.clone());
                 let identifier = id.identifier();
-                tracing::trace!(contract= ?identifier, "start executing all tests in contract");
+                trace!(contract= ?identifier, "start executing all tests in contract");
 
                 let result = self.run_tests(
                     &identifier,
@@ -154,7 +154,7 @@ impl MultiContractRunner {
                     filter,
                     test_options.clone(),
                 );
-                tracing::trace!(contract= ?identifier, "executed all tests in contract");
+                trace!(contract= ?identifier, "executed all tests in contract");
 
                 if let Some(stream_result) = stream_result {
                     let _ = stream_result.send((identifier.clone(), result.clone()));
@@ -165,11 +165,7 @@ impl MultiContractRunner {
             .collect()
     }
 
-    #[tracing::instrument(
-        name = "contract",
-        skip_all,
-        fields(name = %name)
-    )]
+    #[instrument(skip_all, fields(name = %name))]
     fn run_tests(
         &self,
         name: &str,
