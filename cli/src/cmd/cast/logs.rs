@@ -119,7 +119,6 @@ fn build_filter(
     topics_or_args: Vec<String>,
 ) -> Result<Filter, eyre::Error> {
     let block_option = FilterBlockOption::Range { from_block, to_block };
-
     let topic_filter = match sig_or_topic {
         // Try and parse the signature as an event signature
         Some(sig_or_topic) => match get_event(sig_or_topic.as_str()) {
@@ -168,7 +167,8 @@ fn build_filter(
                 let mut topics = Vec::new();
                 topics.push(Some(H256::from_str(&sig_or_topic)?));
                 for topic in topics_or_args {
-                    topics.push(Some(H256::from_str(&topic)?));
+                    let topic = if topic.is_empty() { None } else { Some(H256::from_str(&topic)?) };
+                    topics.push(topic);
                 }
 
                 topics.resize(4, None);
@@ -300,6 +300,54 @@ mod tests {
             vec!["".to_string(), ADDRESS.to_string()],
         )
         .unwrap();
+        assert_eq!(filter, expected)
+    }
+
+    #[test]
+    fn test_build_filter_with_topics() {
+        let expected = Filter {
+            block_option: FilterBlockOption::Range { from_block: None, to_block: None },
+            address: None,
+            topics: [
+                Some(H256::from_str(TRANSFER_TOPIC).unwrap().into()),
+                Some(H256::from_str(TRANSFER_TOPIC).unwrap().into()),
+                None,
+                None,
+            ],
+        };
+        let filter = build_filter(
+            None,
+            None,
+            None,
+            Some(TRANSFER_TOPIC.to_string()),
+            vec![TRANSFER_TOPIC.to_string()],
+        )
+        .unwrap();
+
+        assert_eq!(filter, expected)
+    }
+
+    #[test]
+    fn test_build_filter_with_skipped_topic() {
+        let expected = Filter {
+            block_option: FilterBlockOption::Range { from_block: None, to_block: None },
+            address: None,
+            topics: [
+                Some(H256::from_str(TRANSFER_TOPIC).unwrap().into()),
+                None,
+                Some(H256::from_str(TRANSFER_TOPIC).unwrap().into()),
+                None,
+            ],
+        };
+        let filter = build_filter(
+            None,
+            None,
+            None,
+            Some(TRANSFER_TOPIC.to_string()),
+            vec!["".to_string(), TRANSFER_TOPIC.to_string()],
+        )
+        .unwrap();
+
         assert_eq!(filter, expected)
     }
 
