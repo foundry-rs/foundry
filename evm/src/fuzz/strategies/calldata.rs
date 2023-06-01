@@ -11,7 +11,7 @@ pub fn fuzz_calldata(func: Function) -> BoxedStrategy<Bytes> {
 
     strats
         .prop_map(move |tokens| {
-            tracing::trace!(input = ?tokens);
+            trace!(input = ?tokens);
             func.encode_input(&tokens).unwrap().into()
         })
         .boxed()

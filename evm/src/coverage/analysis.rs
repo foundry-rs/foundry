@@ -3,7 +3,6 @@ use ethers::solc::artifacts::ast::{self, Ast, Node, NodeType};
 use foundry_common::TestFunctionExt;
 use semver::Version;
 use std::collections::{HashMap, HashSet};
-use tracing::warn;
 
 /// A visitor that walks the AST of a single contract and finds coverage items.
 #[derive(Debug, Clone)]

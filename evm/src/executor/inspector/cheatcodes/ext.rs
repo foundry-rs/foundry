@@ -1,4 +1,4 @@
-use super::{bail, ensure, err, Cheatcodes, Result};
+use super::{bail, ensure, fmt_err, Cheatcodes, Result};
 use crate::{abi::HEVMCalls, executor::inspector::cheatcodes::util};
 use ethers::{
     abi::{self, AbiEncode, JsonAbi, ParamType, Token},
@@ -11,7 +11,6 @@ use hex::FromHex;
 use serde::Deserialize;
 use serde_json::Value;
 use std::{collections::BTreeMap, env, path::Path, process::Command, str::FromStr};
-use tracing::{error, trace};
 
 /// Invokes a `Command` with the given args and returns the abi encoded response
 ///
@@ -20,21 +19,22 @@ fn ffi(state: &Cheatcodes, args: &[String]) -> Result {
     if args.is_empty() || args[0].is_empty() {
         bail!("Can't execute empty command");
     }
-    let mut cmd = Command::new(&args[0]);
+    let name = &args[0];
+    let mut cmd = Command::new(name);
     if args.len() > 1 {
         cmd.args(&args[1..]);
     }
 
-    trace!(?args, "invoking ffi");
+    debug!(target: "evm::cheatcodes", ?args, "invoking ffi");
 
     let output = cmd
         .current_dir(&state.config.root)
         .output()
-        .map_err(|err| err!("Failed to execute command: {err}"))?;
+        .map_err(|err| fmt_err!("Failed to execute command: {err}"))?;
 
     if !output.stderr.is_empty() {
-        let err = String::from_utf8_lossy(&output.stderr);
-        error!(?err, "stderr");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        error!(target: "evm::cheatcodes", ?args, ?stderr, "non-empty stderr");
     }
 
     let output = String::from_utf8(output.stdout)?;
@@ -102,7 +102,7 @@ fn get_code(state: &Cheatcodes, path: &str) -> Result {
     if let Some(bin) = bytecode.into_bytecode() {
         Ok(bin.encode().into())
     } else {
-        Err(err!("No bytecode for contract. Is it abstract or unlinked?"))
+        Err(fmt_err!("No bytecode for contract. Is it abstract or unlinked?"))
     }
 }
 
@@ -112,7 +112,7 @@ fn get_deployed_code(state: &Cheatcodes, path: &str) -> Result {
     if let Some(bin) = bytecode.into_deployed_bytecode() {
         Ok(bin.encode().into())
     } else {
-        Err(err!("No deployed bytecode for contract. Is it abstract or unlinked?"))
+        Err(fmt_err!("No deployed bytecode for contract. Is it abstract or unlinked?"))
     }
 }
 
@@ -128,13 +128,13 @@ fn set_env(key: &str, val: &str) -> Result {
     // `std::env::set_var` may panic in the following situations
     // ref: https://doc.rust-lang.org/std/env/fn.set_var.html
     if key.is_empty() {
-        Err(err!("Environment variable key can't be empty"))
+        Err(fmt_err!("Environment variable key can't be empty"))
     } else if key.contains('=') {
-        Err(err!("Environment variable key can't contain equal sign `=`"))
+        Err(fmt_err!("Environment variable key can't contain equal sign `=`"))
     } else if key.contains('\0') {
-        Err(err!("Environment variable key can't contain NUL character `\\0`"))
+        Err(fmt_err!("Environment variable key can't contain NUL character `\\0`"))
     } else if val.contains('\0') {
-        Err(err!("Environment variable value can't contain NUL character `\\0`"))
+        Err(fmt_err!("Environment variable value can't contain NUL character `\\0`"))
     } else {
         env::set_var(key, val);
         Ok(Bytes::new())
@@ -143,8 +143,9 @@ fn set_env(key: &str, val: &str) -> Result {
 
 fn get_env(key: &str, ty: ParamType, delim: Option<&str>, default: Option<String>) -> Result {
     let val = env::var(key).or_else(|e| {
-        default
-            .ok_or_else(|| err!("Failed to get environment variable `{key}` as type `{ty}`: {e}"))
+        default.ok_or_else(|| {
+            fmt_err!("Failed to get environment variable `{key}` as type `{ty}`: {e}")
+        })
     })?;
     if let Some(d) = delim {
         util::parse_array(val.split(d).map(str::trim), &ty)
@@ -185,7 +186,7 @@ fn value_to_token(value: &Value) -> Result<Token> {
                     }
                 }
             }
-            Err(err!("Unsupported value: {number:?}"))
+            Err(fmt_err!("Unsupported value: {number:?}"))
         }
         Value::String(string) => {
             if let Some(val) = string.strip_prefix("0x") {
@@ -255,7 +256,7 @@ fn parse_json(json_str: &str, key: &str, coerce: Option<ParamType>) -> Result {
     let res = values
         .iter()
         .map(|inner| {
-            value_to_token(inner).map_err(|err| err!("Failed to parse key \"{key}\": {err}"))
+            value_to_token(inner).map_err(|err| fmt_err!("Failed to parse key \"{key}\": {err}"))
         })
         .collect::<Result<Vec<Token>>>()?;
 
@@ -292,7 +293,7 @@ fn serialize_json(
         serialization.clone()
     };
     let stringified = serde_json::to_string(&json)
-        .map_err(|err| err!(format!("Failed to stringify hashmap: {err}")))?;
+        .map_err(|err| fmt_err!(format!("Failed to stringify hashmap: {err}")))?;
     Ok(abi::encode(&[Token::String(stringified)]).into())
 }
 
@@ -358,13 +359,14 @@ fn write_json(
     Ok(Bytes::new())
 }
 
+#[instrument(level = "error", name = "ext", target = "evm::cheatcodes", skip_all)]
 pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result> {
     Some(match call {
         HEVMCalls::Ffi(inner) => {
             if state.config.ffi {
                 ffi(state, &inner.0)
             } else {
-                Err(err!("FFI disabled: run again with `--ffi` if you want to allow tests to call external scripts."))
+                Err(fmt_err!("FFI disabled: run again with `--ffi` if you want to allow tests to call external scripts."))
             }
         }
         HEVMCalls::GetCode(inner) => get_code(state, &inner.0),

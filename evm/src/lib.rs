@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate tracing;
+
 /// Decoding helpers
 pub mod decode;
 

@@ -31,7 +31,7 @@ pub fn find_anchors(
                             _ => panic!("Too many paths for branch"),
                         },
                         Err(e) => {
-                            tracing::warn!("Could not find anchor for item: {}, error: {e}", item);
+                            warn!("Could not find anchor for item: {}, error: {e}", item);
                             None
                         }
                     }
@@ -39,7 +39,7 @@ pub fn find_anchors(
                 _ => match find_anchor_simple(source_map, ic_pc_map, *item_id, &item.loc) {
                     Ok(anchor) => Some(anchor),
                     Err(e) => {
-                        tracing::warn!("Could not find anchor for item: {}, error: {e}", item);
+                        warn!("Could not find anchor for item: {}, error: {e}", item);
                         None
                     }
                 },

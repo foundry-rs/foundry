@@ -25,7 +25,6 @@ use std::{
     },
 };
 use tokio::time::{Duration, Interval};
-use tracing::{trace, warn};
 
 /// A trace identifier that tries to identify addresses using Etherscan.
 #[derive(Default)]
