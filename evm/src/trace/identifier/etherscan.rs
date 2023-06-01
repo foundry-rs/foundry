@@ -106,9 +106,7 @@ impl TraceIdentifier for EtherscanIdentifier {
     ) -> Vec<AddressIdentity> {
         trace!(target: "etherscanidentifier", "identify {} addresses", addresses.len());
 
-        let client = if let Some(client) = self.client.clone() {
-            client
-        } else {
+        let Some(client) = self.client.clone() else {
             // no client was configured
             return Vec::new()
         };
