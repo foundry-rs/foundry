@@ -408,7 +408,6 @@ impl Type {
             pt::Expression::Type(_, ty) => Self::from_type(ty),
 
             pt::Expression::Variable(ident) => Some(Self::Custom(vec![ident.name.clone()])),
-            pt::Expression::This(_) => Some(Self::Custom(vec!["this".to_string()])),
 
             // array
             pt::Expression::ArraySubscript(_, expr, num) => {

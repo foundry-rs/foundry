@@ -569,7 +569,6 @@ derive_ast_eq! { enum Expression {
     Variable(ident1),
     List(loc, params1),
     ArrayLiteral(loc, exprs1),
-    This(loc),
     Parenthesis(loc, expr)
     _
 }}
