@@ -12,7 +12,7 @@ use std::{borrow::Cow, fmt::Arguments};
 /// Type alias with a default Ok type of [`Bytes`], and default Err type of [`Error`].
 pub type Result<T = Bytes, E = Error> = std::result::Result<T, E>;
 
-macro_rules! err {
+macro_rules! fmt_err {
     ($msg:literal $(,)?) => {
         $crate::executor::inspector::cheatcodes::Error::fmt(::std::format_args!($msg))
     };
@@ -26,13 +26,13 @@ macro_rules! err {
 
 macro_rules! bail {
     ($msg:literal $(,)?) => {
-        return ::std::result::Result::Err($crate::executor::inspector::cheatcodes::err!($msg))
+        return ::std::result::Result::Err($crate::executor::inspector::cheatcodes::fmt_err!($msg))
     };
     ($err:expr $(,)?) => {
-        return ::std::result::Result::Err($crate::executor::inspector::cheatcodes::err!($err))
+        return ::std::result::Result::Err($crate::executor::inspector::cheatcodes::fmt_err!($err))
     };
     ($fmt:expr, $($arg:tt)*) => {
-        return ::std::result::Result::Err($crate::executor::inspector::cheatcodes::err!($fmt, $($arg)*))
+        return ::std::result::Result::Err($crate::executor::inspector::cheatcodes::fmt_err!($fmt, $($arg)*))
     };
 }
 
@@ -46,24 +46,24 @@ macro_rules! ensure {
     };
     ($cond:expr, $msg:literal $(,)?) => {
         if !$cond {
-            return ::std::result::Result::Err($crate::executor::inspector::cheatcodes::err!($msg));
+            return ::std::result::Result::Err($crate::executor::inspector::cheatcodes::fmt_err!($msg));
         }
     };
     ($cond:expr, $err:expr $(,)?) => {
         if !$cond {
-            return ::std::result::Result::Err($crate::executor::inspector::cheatcodes::err!($err));
+            return ::std::result::Result::Err($crate::executor::inspector::cheatcodes::fmt_err!($err));
         }
     };
     ($cond:expr, $fmt:expr, $($arg:tt)*) => {
         if !$cond {
-            return ::std::result::Result::Err($crate::executor::inspector::cheatcodes::err!($fmt, $($arg)*));
+            return ::std::result::Result::Err($crate::executor::inspector::cheatcodes::fmt_err!($fmt, $($arg)*));
         }
     };
 }
 
 pub(crate) use bail;
 pub(crate) use ensure;
-pub(crate) use err;
+pub(crate) use fmt_err;
 
 /// Errors that can happen when working with [`Cheacodes`].
 #[derive(Debug, thiserror::Error)]

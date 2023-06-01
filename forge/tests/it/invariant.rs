@@ -9,13 +9,11 @@ use std::collections::BTreeMap;
 fn test_invariant() {
     let mut runner = runner();
 
-    let results = runner
-        .test(
-            &Filter::new(".*", ".*", ".*fuzz/invariant/(target|targetAbi|common)"),
-            None,
-            test_opts(),
-        )
-        .unwrap();
+    let results = runner.test(
+        &Filter::new(".*", ".*", ".*fuzz/invariant/(target|targetAbi|common)"),
+        None,
+        test_opts(),
+    );
 
     assert_multiple(
         &results,
@@ -92,13 +90,11 @@ fn test_invariant_override() {
     opts.invariant.call_override = true;
     runner.test_options = opts.clone();
 
-    let results = runner
-        .test(
-            &Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantReentrancy.t.sol"),
-            None,
-            opts,
-        )
-        .unwrap();
+    let results = runner.test(
+        &Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantReentrancy.t.sol"),
+        None,
+        opts,
+    );
 
     assert_multiple(
         &results,
@@ -118,13 +114,11 @@ fn test_invariant_storage() {
     opts.fuzz.seed = Some(U256::from(6u32));
     runner.test_options = opts.clone();
 
-    let results = runner
-        .test(
-            &Filter::new(".*", ".*", ".*fuzz/invariant/storage/InvariantStorageTest.t.sol"),
-            None,
-            opts,
-        )
-        .unwrap();
+    let results = runner.test(
+        &Filter::new(".*", ".*", ".*fuzz/invariant/storage/InvariantStorageTest.t.sol"),
+        None,
+        opts,
+    );
 
     assert_multiple(
         &results,
@@ -150,13 +144,11 @@ fn test_invariant_shrink() {
     opts.fuzz.seed = Some(U256::from(102u32));
     runner.test_options = opts.clone();
 
-    let results = runner
-        .test(
-            &Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantInnerContract.t.sol"),
-            None,
-            opts,
-        )
-        .unwrap();
+    let results = runner.test(
+        &Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantInnerContract.t.sol"),
+        None,
+        opts,
+    );
 
     let results =
         results.values().last().expect("`InvariantInnerContract.t.sol` should be testable.");

@@ -36,7 +36,6 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
-use tracing::trace;
 
 /// Cheatcodes related to the execution environment.
 mod env;
@@ -66,7 +65,7 @@ use crate::executor::{backend::RevertDiagnostic, inspector::utils::get_create_ad
 pub use config::CheatsConfig;
 
 mod error;
-pub(crate) use error::{bail, ensure, err};
+pub(crate) use error::{bail, ensure, fmt_err};
 pub use error::{Error, Result};
 
 /// Tracks the expected calls per address.
@@ -204,7 +203,7 @@ impl Cheatcodes {
         }
     }
 
-    #[tracing::instrument(skip_all, name = "cheatcode")]
+    #[instrument(level = "error", name = "apply", target = "evm::cheatcodes", skip_all)]
     fn apply_cheatcode<DB: DatabaseExt>(
         &mut self,
         data: &mut EVMData<'_, DB>,
@@ -230,7 +229,7 @@ impl Cheatcodes {
             .or_else(|| fork::apply(self, data, &decoded));
         match opt {
             Some(res) => res,
-            None => Err(err!("Unhandled cheatcode: {decoded:?}. This is a bug.")),
+            None => Err(fmt_err!("Unhandled cheatcode: {decoded:?}. This is a bug.")),
         }
     }
 

@@ -12,54 +12,23 @@ use std::{fmt, path::Path, str::FromStr};
 #[clap(next_help_heading = "Test filtering")]
 pub struct FilterArgs {
     /// Only run test functions matching the specified regex pattern.
-    ///
-    /// Deprecated: See --match-test
-    #[clap(long = "match", short = 'm')]
-    pub pattern: Option<regex::Regex>,
-
-    /// Only run test functions matching the specified regex pattern.
-    #[clap(
-        long = "match-test",
-        visible_alias = "mt",
-        conflicts_with = "pattern",
-        value_name = "REGEX"
-    )]
+    #[clap(long = "match-test", visible_alias = "mt", value_name = "REGEX")]
     pub test_pattern: Option<regex::Regex>,
 
     /// Only run test functions that do not match the specified regex pattern.
-    #[clap(
-        long = "no-match-test",
-        visible_alias = "nmt",
-        conflicts_with = "pattern",
-        value_name = "REGEX"
-    )]
+    #[clap(long = "no-match-test", visible_alias = "nmt", value_name = "REGEX")]
     pub test_pattern_inverse: Option<regex::Regex>,
 
     /// Only run tests in contracts matching the specified regex pattern.
-    #[clap(
-        long = "match-contract",
-        visible_alias = "mc",
-        conflicts_with = "pattern",
-        value_name = "REGEX"
-    )]
+    #[clap(long = "match-contract", visible_alias = "mc", value_name = "REGEX")]
     pub contract_pattern: Option<regex::Regex>,
 
     /// Only run tests in contracts that do not match the specified regex pattern.
-    #[clap(
-        long = "no-match-contract",
-        visible_alias = "nmc",
-        conflicts_with = "pattern",
-        value_name = "REGEX"
-    )]
+    #[clap(long = "no-match-contract", visible_alias = "nmc", value_name = "REGEX")]
     pub contract_pattern_inverse: Option<regex::Regex>,
 
     /// Only run tests in source files matching the specified glob pattern.
-    #[clap(
-        long = "match-path",
-        visible_alias = "mp",
-        conflicts_with = "pattern",
-        value_name = "GLOB"
-    )]
+    #[clap(long = "match-path", visible_alias = "mp", value_name = "GLOB")]
     pub path_pattern: Option<GlobMatcher>,
 
     /// Only run tests in source files that do not match the specified glob pattern.
@@ -67,7 +36,6 @@ pub struct FilterArgs {
         name = "no-match-path",
         long = "no-match-path",
         visible_alias = "nmp",
-        conflicts_with = "pattern",
         value_name = "GLOB"
     )]
     pub path_pattern_inverse: Option<GlobMatcher>,
@@ -103,7 +71,6 @@ impl FilterArgs {
 impl fmt::Debug for FilterArgs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FilterArgs")
-            .field("match", &self.pattern.as_ref().map(|r| r.as_str()))
             .field("match-test", &self.test_pattern.as_ref().map(|r| r.as_str()))
             .field("no-match-test", &self.test_pattern_inverse.as_ref().map(|r| r.as_str()))
             .field("match-contract", &self.contract_pattern.as_ref().map(|r| r.as_str()))
@@ -136,10 +103,6 @@ impl TestFilter for FilterArgs {
     fn matches_test(&self, test_name: impl AsRef<str>) -> bool {
         let mut ok = true;
         let test_name = test_name.as_ref();
-        // Handle the deprecated option match
-        if let Some(re) = &self.pattern {
-            ok &= re.is_match(test_name);
-        }
         if let Some(re) = &self.test_pattern {
             ok &= re.is_match(test_name);
         }
@@ -177,9 +140,6 @@ impl TestFilter for FilterArgs {
 impl fmt::Display for FilterArgs {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut patterns = Vec::new();
-        if let Some(ref p) = self.pattern {
-            patterns.push(format!("\tmatch: `{}`", p.as_str()));
-        }
         if let Some(ref p) = self.test_pattern {
             patterns.push(format!("\tmatch-test: `{}`", p.as_str()));
         }

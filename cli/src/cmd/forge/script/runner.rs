@@ -1,8 +1,7 @@
 use super::*;
-use cast::executor::ExecutionErr;
 use ethers::types::{Address, Bytes, NameOrAddress, U256};
 use forge::{
-    executor::{CallResult, DeployResult, EvmError, Executor, RawCallResult},
+    executor::{CallResult, DeployResult, EvmError, ExecutionErr, Executor, RawCallResult},
     revm::interpreter::{return_ok, InstructionResult},
     trace::{TraceKind, Traces},
     CALLER,
@@ -227,7 +226,7 @@ impl ScriptRunner {
 
                     (Address::zero(), gas_used, logs, traces, debug)
                 }
-                e => eyre::bail!("Unrecoverable error: {:?}", e),
+                Err(e) => eyre::bail!("Failed deploying contract: {e:?}"),
             };
 
             Ok(ScriptResult {

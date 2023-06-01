@@ -704,7 +704,7 @@ forgetest_async!(fail_broadcast_staticcall, |prj: TestProject, cmd: TestCommand|
 });
 
 forgetest_async!(
-    #[ignore]
+    #[serial_test::serial]
     check_broadcast_log,
     |prj: TestProject, cmd: TestCommand| async move {
         let (api, handle) = spawn(NodeConfig::test()).await;
@@ -718,20 +718,22 @@ forgetest_async!(
         tester
             .load_private_keys(vec![0])
             .await
-            .add_sig("BroadcastTestLog", "run()")
-            .slow()
+            .add_sig("BroadcastTestSetup", "run()")
             .simulate(ScriptOutcome::OkSimulation)
             .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment(vec![(0, 7)])
+            .assert_nonce_increment(vec![(0, 6)])
             .await;
 
-        // Uncomment to recreate log
-        // std::fs::copy("broadcast/Broadcast.t.sol/31337/run-latest.json",
-        // PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/fixtures/broadcast.log.json"
-        // ));
+        // Uncomment to recreate the broadcast log
+        // std::fs::copy(
+        //     "broadcast/Broadcast.t.sol/31337/run-latest.json",
+        //     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/fixtures/broadcast.log.
+        // json" ), );
 
-        // Ignore blockhash and timestamp since they can change inbetween runs.
-        let re = Regex::new(r#"(blockHash.*?blockNumber)|((timestamp":)[0-9]*)"#).unwrap();
+        // Check broadcast logs
+        // Ignore timestamp, blockHash, blockNumber, cumulativeGasUsed, effectiveGasPrice,
+        // transactionIndex and logIndex values since they can change inbetween runs
+        let re = Regex::new(r#"((timestamp":).[0-9]*)|((blockHash":).*)|((blockNumber":).*)|((cumulativeGasUsed":).*)|((effectiveGasPrice":).*)|((transactionIndex":).*)|((logIndex":).*)"#).unwrap();
 
         let fixtures_log = std::fs::read_to_string(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -744,7 +746,31 @@ forgetest_async!(
             std::fs::read_to_string("broadcast/Broadcast.t.sol/31337/run-latest.json").unwrap();
         let run_log = re.replace_all(&run_log, "");
 
-        assert!(fixtures_log == run_log);
+        pretty_assertions::assert_eq!(fixtures_log, run_log);
+
+        // Uncomment to recreate the sensitive log
+        // std::fs::copy(
+        //     "cache/Broadcast.t.sol/31337/run-latest.json",
+        //     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        //         .join("../testdata/fixtures/broadcast.sensitive.log.json"),
+        // );
+
+        // Check sensitive logs
+        // Ignore port number since it can change inbetween runs
+        let re = Regex::new(r#":[0-9]+"#).unwrap();
+
+        let fixtures_log = std::fs::read_to_string(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../testdata/fixtures/broadcast.sensitive.log.json"),
+        )
+        .unwrap();
+        let fixtures_log = re.replace_all(&fixtures_log, "");
+
+        let run_log =
+            std::fs::read_to_string("cache/Broadcast.t.sol/31337/run-latest.json").unwrap();
+        let run_log = re.replace_all(&run_log, "");
+
+        pretty_assertions::assert_eq!(fixtures_log, run_log);
     }
 );
 

@@ -190,10 +190,10 @@ impl EvmOpts {
     pub fn get_remote_chain_id(&self) -> Option<Chain> {
         if let Some(ref url) = self.fork_url {
             if url.contains("mainnet") {
-                tracing::trace!(?url, "auto detected mainnet chain");
+                trace!(?url, "auto detected mainnet chain");
                 return Some(Chain::Mainnet)
             }
-            tracing::trace!(?url, "retrieving chain via eth_chainId");
+            trace!(?url, "retrieving chain via eth_chainId");
             let provider = Provider::try_from(url.as_str())
                 .unwrap_or_else(|_| panic!("Failed to establish provider to {url}"));
 

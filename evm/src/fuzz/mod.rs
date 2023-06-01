@@ -63,7 +63,7 @@ impl<'a> FuzzedExecutor<'a> {
         address: Address,
         should_fail: bool,
         errors: Option<&Abi>,
-    ) -> Result<FuzzTestResult> {
+    ) -> FuzzTestResult {
         // Stores the first Fuzzcase
         let first_case: RefCell<Option<FuzzCase>> = RefCell::default();
 
@@ -86,14 +86,20 @@ impl<'a> FuzzedExecutor<'a> {
             build_initial_state(self.executor.backend().mem_db(), &self.config.dictionary)
         };
 
-        let strat = proptest::strategy::Union::new_weighted(vec![
-            (100 - self.config.dictionary.dictionary_weight, fuzz_calldata(func.clone())),
-            (
+        let mut weights = vec![];
+        let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
+        if self.config.dictionary.dictionary_weight < 100 {
+            weights.push((100 - dictionary_weight, fuzz_calldata(func.clone())));
+        }
+        if dictionary_weight > 0 {
+            weights.push((
                 self.config.dictionary.dictionary_weight,
                 fuzz_calldata_from_state(func.clone(), state.clone()),
-            ),
-        ]);
-        tracing::debug!(func = ?func.name, should_fail, "fuzzing");
+            ));
+        }
+
+        let strat = proptest::strategy::Union::new_weighted(weights);
+        debug!(func = ?func.name, should_fail, "fuzzing");
         let run_result = self.runner.clone().run(&strat, |calldata| {
             let call = self
                 .executor
@@ -154,14 +160,12 @@ impl<'a> FuzzedExecutor<'a> {
                 // case to find a minimal failure case.
                 *counterexample.borrow_mut() = (calldata, call);
                 Err(TestCaseError::fail(
-                    match decode::decode_revert(
+                    decode::decode_revert(
                         counterexample.borrow().1.result.as_ref(),
                         errors,
                         Some(status),
-                    ) {
-                        Ok(e) => e,
-                        Err(_) => "".to_string(),
-                    },
+                    )
+                    .unwrap_or_default(),
                 ))
             }
         });
@@ -196,10 +200,7 @@ impl<'a> FuzzedExecutor<'a> {
                 let reason = reason.to_string();
                 result.reason = if reason.is_empty() { None } else { Some(reason) };
 
-                let args = func
-                    .decode_input(&calldata.as_ref()[4..])
-                    .map_err(|_| FuzzError::FailedDecodeInput)?;
-
+                let args = func.decode_input(&calldata.as_ref()[4..]).unwrap_or_default();
                 result.counterexample = Some(CounterExample::Single(BaseCounterExample {
                     sender: None,
                     addr: None,
@@ -210,10 +211,10 @@ impl<'a> FuzzedExecutor<'a> {
                     args,
                 }));
             }
-            _ => (),
+            _ => {}
         }
 
-        Ok(result)
+        result
     }
 }
 

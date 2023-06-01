@@ -12,8 +12,8 @@ use ethers_core::{
     },
     types::{Chain, *},
     utils::{
-        self, format_bytes32_string, format_units, get_contract_address, keccak256,
-        parse_bytes32_string, parse_units, rlp, Units,
+        format_bytes32_string, format_units, get_contract_address, keccak256, parse_bytes32_string,
+        parse_units, rlp, Units,
     },
 };
 use ethers_etherscan::{errors::EtherscanError, Client};
@@ -1007,7 +1007,7 @@ impl SimpleCast {
     /// # }
     /// ```
     pub fn to_checksum_address(address: &Address) -> String {
-        utils::to_checksum(address, None)
+        ethers_core::utils::to_checksum(address, None)
     }
 
     /// Converts a number into uint256 hex string with 0x prefix

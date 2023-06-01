@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.18;
+pragma solidity >=0.8.0;
 
 interface Cheats {
     // This allows us to getRecordedLogs()
@@ -271,6 +271,12 @@ interface Cheats {
 
     // Get nonce for an account
     function getNonce(address) external returns (uint64);
+
+    // Resets the nonce for an account
+    function resetNonce(address) external;
+
+    // Set an arbitrary nonce for an account
+    function setNonceUnsafe(address, uint64) external;
 
     // Set block.chainid (newChainId)
     function chainId(uint256) external;
