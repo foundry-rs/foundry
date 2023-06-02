@@ -782,15 +782,11 @@ where
         } else {
             let mut s = vec![];
             for log in logs {
-                let pretty = log.pretty();
-                let lines: Vec<_> = pretty.split('\n').collect();
-                for (i, line) in lines.into_iter().enumerate() {
-                    match i {
-                        0 => {}
-                        1 => s.push(format!("- {}", line)),
-                        _ => s.push(format!("  {}", line)),
-                    }
-                }
+                let pretty = log
+                    .pretty()
+                    .replacen('\n', "- ", 1) // Remove empty first line
+                    .replace('\n', "\n  "); // Indent
+                s.push(pretty);
             }
             s.join("\n")
         };
