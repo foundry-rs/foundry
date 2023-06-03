@@ -12,6 +12,9 @@ pub use inheritdoc::{Inheritdoc, INHERITDOC_ID};
 mod git_source;
 pub use git_source::{GitSource, GIT_SOURCE_ID};
 
+mod deployments;
+pub use deployments::{Deployment, Deployments, DEPLOYMENTS_ID};
+
 /// The preprocessor id.
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub struct PreprocessorId(&'static str);
@@ -30,6 +33,9 @@ pub enum PreprocessorOutput {
     /// The git source output.
     /// The git url of the item path.
     GitSource(String),
+    /// The deployments output.
+    /// The deployment address of the item path.
+    Deployments(Vec<Deployment>),
 }
 
 /// Trait for preprocessing and/or modifying existing documents

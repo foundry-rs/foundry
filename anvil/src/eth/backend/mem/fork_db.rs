@@ -2,7 +2,7 @@ use crate::{
     eth::backend::db::{
         Db, MaybeHashDatabase, SerializableAccountRecord, SerializableState, StateDb,
     },
-    revm::AccountInfo,
+    revm::primitives::AccountInfo,
     Address, U256,
 };
 use ethers::prelude::H256;
@@ -21,12 +21,12 @@ impl Db for ForkedDatabase {
 
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) -> DatabaseResult<()> {
         // this ensures the account is loaded first
-        let _ = Database::basic(self, address)?;
+        let _ = Database::basic(self, address.into())?;
         self.database_mut().set_storage_at(address, slot, val)
     }
 
     fn insert_block_hash(&mut self, number: U256, hash: H256) {
-        self.inner().block_hashes().write().insert(number, hash);
+        self.inner().block_hashes().write().insert(number.into(), hash.into());
     }
 
     fn dump_state(&self) -> DatabaseResult<Option<SerializableState>> {
@@ -44,12 +44,16 @@ impl Db for ForkedDatabase {
                 }
                 .to_checked();
                 Ok((
-                    k,
+                    k.into(),
                     SerializableAccountRecord {
                         nonce: v.info.nonce,
-                        balance: v.info.balance,
+                        balance: v.info.balance.into(),
                         code: code.bytes()[..code.len()].to_vec().into(),
-                        storage: v.storage.into_iter().collect(),
+                        storage: v
+                            .storage
+                            .into_iter()
+                            .map(|kv| (kv.0.into(), kv.1.into()))
+                            .collect(),
                     },
                 ))
             })

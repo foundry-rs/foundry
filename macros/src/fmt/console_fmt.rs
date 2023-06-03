@@ -1,5 +1,5 @@
+use super::UIfmt;
 use ethers_core::types::{Address, Bytes, H256, I256, U256};
-use foundry_common::fmt::UIfmt;
 
 /// A format specifier.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -167,10 +167,14 @@ impl<const N: usize> ConsoleFmt for [u8; N] {
 /// Formatting rules are the same as Hardhat. The supported format specifiers are as follows:
 /// - %s: Converts the value using its String representation. This is equivalent to applying
 ///   [`UIfmt::pretty()`] on the format string.
-/// - %d, %i: Converts the value to an integer. If a non-numeric value, such as String or Address,
-///   is passed, then the spec is formatted as `NaN`.
 /// - %o: Treats the format value as a javascript "object" and converts it to its string
 ///   representation.
+/// - %d, %i: Converts the value to an integer. If a non-numeric value, such as String or Address,
+///   is passed, then the spec is formatted as `NaN`.
+/// - %x: Converts the value to a hexadecimal string. If a non-numeric value, such as String or
+///   Address, is passed, then the spec is formatted as `NaN`.
+/// - %e: Converts the value to an exponential notation string. If a non-numeric value, such as
+///   String or Address, is passed, then the spec is formatted as `NaN`.
 /// - %%: This is parsed as a single percent sign ('%') without consuming any input value.
 ///
 /// Unformatted values are appended to the end of the formatted output using [`UIfmt::pretty()`].

@@ -12,7 +12,7 @@ use ethers::{
 use foundry_common::{abi::format_token, SELECTOR_LEN};
 use itertools::Itertools;
 use once_cell::sync::Lazy;
-use revm::Return;
+use revm::interpreter::{return_ok, InstructionResult};
 
 /// Decode a set of logs, only returning logs from DSTest logging events and Hardhat's `console.log`
 pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
@@ -70,11 +70,11 @@ pub fn decode_console_log(log: &Log) -> Option<String> {
 pub fn decode_revert(
     err: &[u8],
     maybe_abi: Option<&Abi>,
-    status: Option<Return>,
+    status: Option<InstructionResult>,
 ) -> eyre::Result<String> {
     if err.len() < SELECTOR_LEN {
         if let Some(status) = status {
-            if !matches!(status, revm::return_ok!()) {
+            if !matches!(status, return_ok!()) {
                 return Ok(format!("EvmError: {status:?}"))
             }
         }

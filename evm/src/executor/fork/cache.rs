@@ -1,11 +1,13 @@
 //! Cache related abstraction
 use crate::{executor::backend::snapshot::StateSnapshot, HashMap as Map};
-use ethers::types::{Address, H256, U256};
 use parking_lot::RwLock;
-use revm::{Account, AccountInfo, DatabaseCommit, KECCAK_EMPTY};
+use revm::{
+    primitives::{Account, AccountInfo, B160, B256, KECCAK_EMPTY, U256},
+    DatabaseCommit,
+};
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
 use std::{collections::BTreeSet, fs, io::BufWriter, path::PathBuf, sync::Arc};
-use tracing::{trace, warn};
+
 use url::Url;
 
 pub type StorageInfo = Map<U256, U256>;
@@ -77,17 +79,17 @@ impl BlockchainDb {
     }
 
     /// Returns the map that holds the account related info
-    pub fn accounts(&self) -> &RwLock<Map<Address, AccountInfo>> {
+    pub fn accounts(&self) -> &RwLock<Map<B160, AccountInfo>> {
         &self.db.accounts
     }
 
     /// Returns the map that holds the storage related info
-    pub fn storage(&self) -> &RwLock<Map<Address, StorageInfo>> {
+    pub fn storage(&self) -> &RwLock<Map<B160, StorageInfo>> {
         &self.db.storage
     }
 
     /// Returns the map that holds all the block hashes
-    pub fn block_hashes(&self) -> &RwLock<Map<U256, H256>> {
+    pub fn block_hashes(&self) -> &RwLock<Map<U256, B256>> {
         &self.db.block_hashes
     }
 
@@ -110,15 +112,15 @@ impl BlockchainDb {
 /// relevant identifying markers in the context of [BlockchainDb]
 #[derive(Debug, Clone, Eq, Serialize)]
 pub struct BlockchainDbMeta {
-    pub cfg_env: revm::CfgEnv,
-    pub block_env: revm::BlockEnv,
+    pub cfg_env: revm::primitives::CfgEnv,
+    pub block_env: revm::primitives::BlockEnv,
     /// all the hosts used to connect to
     pub hosts: BTreeSet<String>,
 }
 
 impl BlockchainDbMeta {
     /// Creates a new instance
-    pub fn new(env: revm::Env, url: String) -> Self {
+    pub fn new(env: revm::primitives::Env, url: String) -> Self {
         let host = Url::parse(&url)
             .ok()
             .and_then(|url| url.host().map(|host| host.to_string()))
@@ -151,7 +153,7 @@ impl<'de> Deserialize<'de> for BlockchainDbMeta {
         /// default [revm::CfgEnv], for example enabling an optional feature.
         /// By hand rolling deserialize impl we can prevent cache file issues
         struct CfgEnvBackwardsCompat {
-            inner: revm::CfgEnv,
+            inner: revm::primitives::CfgEnv,
         }
 
         impl<'de> Deserialize<'de> for CfgEnvBackwardsCompat {
@@ -177,7 +179,7 @@ impl<'de> Deserialize<'de> for BlockchainDbMeta {
                     }
                 }
 
-                let cfg_env: revm::CfgEnv =
+                let cfg_env: revm::primitives::CfgEnv =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(Self { inner: cfg_env })
             }
@@ -187,7 +189,7 @@ impl<'de> Deserialize<'de> for BlockchainDbMeta {
         #[derive(Deserialize)]
         struct Meta {
             cfg_env: CfgEnvBackwardsCompat,
-            block_env: revm::BlockEnv,
+            block_env: revm::primitives::BlockEnv,
             /// all the hosts used to connect to
             #[serde(alias = "host")]
             hosts: Hosts,
@@ -217,11 +219,11 @@ impl<'de> Deserialize<'de> for BlockchainDbMeta {
 #[derive(Debug, Default)]
 pub struct MemDb {
     /// Account related data
-    pub accounts: RwLock<Map<Address, AccountInfo>>,
+    pub accounts: RwLock<Map<B160, AccountInfo>>,
     /// Storage related data
-    pub storage: RwLock<Map<Address, StorageInfo>>,
+    pub storage: RwLock<Map<B160, StorageInfo>>,
     /// All retrieved block hashes
-    pub block_hashes: RwLock<Map<U256, H256>>,
+    pub block_hashes: RwLock<Map<U256, B256>>,
 }
 
 impl MemDb {
@@ -233,12 +235,12 @@ impl MemDb {
     }
 
     // Inserts the account, replacing it if it exists already
-    pub fn do_insert_account(&self, address: Address, account: AccountInfo) {
+    pub fn do_insert_account(&self, address: B160, account: AccountInfo) {
         self.accounts.write().insert(address, account);
     }
 
     /// The implementation of [DatabaseCommit::commit()]
-    pub fn do_commit(&self, changes: Map<Address, Account>) {
+    pub fn do_commit(&self, changes: Map<B160, Account>) {
         let mut storage = self.storage.write();
         let mut accounts = self.accounts.write();
         for (add, mut acc) in changes {
@@ -261,7 +263,7 @@ impl MemDb {
                     acc_storage.clear();
                 }
                 for (index, value) in acc.storage {
-                    if value.present_value().is_zero() {
+                    if value.present_value() == U256::from(0) {
                         acc_storage.remove(&index);
                     } else {
                         acc_storage.insert(index, value.present_value());
@@ -286,7 +288,7 @@ impl Clone for MemDb {
 }
 
 impl DatabaseCommit for MemDb {
-    fn commit(&mut self, changes: Map<Address, Account>) {
+    fn commit(&mut self, changes: Map<B160, Account>) {
         self.do_commit(changes)
     }
 }

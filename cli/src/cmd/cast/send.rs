@@ -8,63 +8,67 @@ use clap::Parser;
 use ethers::{
     prelude::MiddlewareBuilder, providers::Middleware, signers::Signer, types::NameOrAddress,
 };
+use foundry_common::cli_warn;
 use foundry_config::{Chain, Config};
 use std::str::FromStr;
 
 /// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
 pub struct SendTxArgs {
-    #[clap(
-        help = "The destination of the transaction. If not provided, you must use cast send --create.",
-        value_parser = NameOrAddress::from_str,
-        value_name = "TO",
-    )]
+    /// The destination of the transaction.
+    ///
+    /// If not provided, you must use cast send --create.
+    #[clap(value_parser = NameOrAddress::from_str)]
     to: Option<NameOrAddress>,
-    #[clap(help = "The signature of the function to call.", value_name = "SIG")]
+
+    /// The signature of the function to call.
     sig: Option<String>,
-    #[clap(help = "The arguments of the function to call.", value_name = "ARGS")]
+
+    /// The arguments of the function to call.
     args: Vec<String>,
-    #[clap(
-        long = "async",
-        env = "CAST_ASYNC",
-        name = "async",
-        alias = "cast-async",
-        help = "Only print the transaction hash and exit immediately."
-    )]
+
+    /// Only print the transaction hash and exit immediately.
+    #[clap(name = "async", long = "async", alias = "cast-async", env = "CAST_ASYNC")]
     cast_async: bool,
+
     #[clap(flatten)]
     tx: TransactionOpts,
+
     #[clap(flatten)]
     eth: EthereumOpts,
-    #[clap(
-        long,
-        help = "The number of confirmations until the receipt is fetched.",
-        default_value = "1",
-        value_name = "CONFIRMATIONS"
-    )]
+
+    /// The number of confirmations until the receipt is fetched.
+    #[clap(long, default_value = "1")]
     confirmations: usize,
-    #[clap(long = "json", short = 'j', help_heading = "Display options")]
-    to_json: bool,
-    #[clap(
-        long = "resend",
-        help = "Reuse the latest nonce for the sender account.",
-        conflicts_with = "nonce"
-    )]
+
+    /// Print the transaction receipt as JSON.
+    #[clap(long, short, help_heading = "Display options")]
+    json: bool,
+
+    /// Reuse the latest nonce for the sender account.
+    #[clap(long, conflicts_with = "nonce")]
     resend: bool,
 
     #[clap(subcommand)]
     command: Option<SendTxSubcommands>,
+
+    /// Send via `eth_sendTransaction using the `--from` argument or $ETH_FROM as sender
+    #[clap(long, requires = "from")]
+    unlocked: bool,
 }
 
 #[derive(Debug, Parser)]
 pub enum SendTxSubcommands {
-    #[clap(name = "--create", about = "Use to deploy raw contract bytecode")]
+    /// Use to deploy raw contract bytecode.
+    #[clap(name = "--create")]
     Create {
-        #[clap(help = "Bytecode of contract.", value_name = "CODE")]
+        /// The bytecode of the contract to deploy.
         code: String,
-        #[clap(help = "The signature of the function to call.", value_name = "SIG")]
+
+        /// The signature of the function to call.
         sig: Option<String>,
-        #[clap(help = "The arguments of the function to call.", value_name = "ARGS")]
+
+        /// The arguments of the function to call.
         args: Vec<String>,
     },
 }
@@ -79,9 +83,10 @@ impl SendTxArgs {
             mut args,
             mut tx,
             confirmations,
-            to_json,
+            json: to_json,
             resend,
             command,
+            unlocked,
         } = self;
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
@@ -89,39 +94,87 @@ impl SendTxArgs {
         let api_key = config.get_etherscan_api_key(Some(chain));
         let mut sig = sig.unwrap_or_default();
 
-        if let Ok(signer) = eth.wallet.signer(chain.id()).await {
+        let code = if let Some(SendTxSubcommands::Create {
+            code,
+            sig: constructor_sig,
+            args: constructor_args,
+        }) = command
+        {
+            sig = constructor_sig.unwrap_or_default();
+            args = constructor_args;
+            Some(code)
+        } else {
+            None
+        };
+
+        // Case 1:
+        // Default to sending via eth_sendTransaction if the --unlocked flag is passed.
+        // This should be the only way this RPC method is used as it requires a local node
+        // or remote RPC with unlocked accounts.
+        if unlocked {
+            // only check current chain id if it was specified in the config
+            if let Some(config_chain) = config.chain_id {
+                let current_chain_id = provider.get_chainid().await?.as_u64();
+                let config_chain_id = config_chain.id();
+                // switch chain if current chain id is not the same as the one specified in the
+                // config
+                if config_chain_id != current_chain_id {
+                    cli_warn!("Switching to chain {}", config_chain);
+                    provider
+                        .request(
+                            "wallet_switchEthereumChain",
+                            [serde_json::json!({
+                                "chainId": format!("0x{:x}", config_chain_id),
+                            })],
+                        )
+                        .await?;
+                }
+            }
+
+            if resend {
+                tx.nonce = Some(provider.get_transaction_count(config.sender, None).await?);
+            }
+
+            cast_send(
+                provider,
+                config.sender,
+                to,
+                code,
+                (sig, args),
+                tx,
+                chain,
+                api_key,
+                cast_async,
+                confirmations,
+                to_json,
+            )
+            .await
+        // Case 2:
+        // An option to use a local signer was provided.
+        // If we cannot successfully instanciate a local signer, then we will assume we don't have
+        // enough information to sign and we must bail.
+        } else {
+            // Retrieve the signer, and bail if it can't be constructed.
+            let signer = eth.wallet.signer(chain.id()).await?;
             let from = signer.address();
 
             // prevent misconfigured hwlib from sending a transaction that defies
             // user-specified --from
             if let Some(specified_from) = eth.wallet.from {
                 if specified_from != from {
-                    eyre::bail!("\
-                        The specified sender via CLI/env vars does not match the sender configured via\n\
-                        the hardware wallet's HD Path.\n\
-                        Please use the `--hd-path <PATH>` parameter to specify the BIP32 Path which\n\
-                        corresponds to the sender.\n\
-                        This will be automatically detected in the future: https://github.com/foundry-rs/foundry/issues/2289\
-                    ")
+                    eyre::bail!(
+                        "\
+The specified sender via CLI/env vars does not match the sender configured via
+the hardware wallet's HD Path.
+Please use the `--hd-path <PATH>` parameter to specify the BIP32 Path which
+corresponds to the sender, or let foundry automatically detect it by not specifying any sender address."
+                    )
                 }
             }
 
             if resend {
                 tx.nonce = Some(provider.get_transaction_count(from, None).await?);
             }
-
-            let code = if let Some(SendTxSubcommands::Create {
-                code,
-                sig: constructor_sig,
-                args: constructor_args,
-            }) = command
-            {
-                sig = constructor_sig.unwrap_or_default();
-                args = constructor_args;
-                Some(code)
-            } else {
-                None
-            };
 
             let provider = provider.with_signer(signer);
 
@@ -139,47 +192,6 @@ impl SendTxArgs {
                 to_json,
             )
             .await
-        } else if config.sender != Config::DEFAULT_SENDER {
-            // Checking if signer isn't the default value
-            // 00a329c0648769A73afAc7F9381E08FB43dBEA72.
-            if resend {
-                tx.nonce = Some(provider.get_transaction_count(config.sender, None).await?);
-            }
-
-            let code = if let Some(SendTxSubcommands::Create {
-                code,
-                sig: constructor_sig,
-                args: constructor_args,
-            }) = command
-            {
-                sig = constructor_sig.unwrap_or_default();
-                args = constructor_args;
-                Some(code)
-            } else {
-                None
-            };
-
-            cast_send(
-                provider,
-                config.sender,
-                to,
-                code,
-                (sig, args),
-                tx,
-                chain,
-                api_key,
-                cast_async,
-                confirmations,
-                to_json,
-            )
-            .await
-        } else {
-            Err(eyre::eyre!(
-                "\
-                    No wallet or sender address provided. Consider passing it via the --from flag or\n\
-                    setting the ETH_FROM env variable or setting in foundry.toml\
-                "
-            ))
         }
     }
 }

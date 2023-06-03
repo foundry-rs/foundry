@@ -1,14 +1,22 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.0;
+pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
 import "./Cheats.sol";
 
-contract FileTest is DSTest {
+contract FsTest is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
     bytes constant FOUNDRY_TOML_ACCESS_ERR = "Access to foundry.toml is not allowed.";
     bytes constant FOUNDRY_READ_ERR = "The path \"/etc/hosts\" is not allowed to be accessed for read operations.";
+    bytes constant FOUNDRY_READ_DIR_ERR = "The path \"/etc\" is not allowed to be accessed for read operations.";
     bytes constant FOUNDRY_WRITE_ERR = "The path \"/etc/hosts\" is not allowed to be accessed for write operations.";
+
+    function assertEntry(Cheats.DirEntry memory entry, uint64 depth, bool dir) private {
+        assertEq(entry.errorMessage, "");
+        assertEq(entry.depth, depth);
+        assertEq(entry.isDir, dir);
+        assertEq(entry.isSymlink, false);
+    }
 
     function testReadFile() public {
         string memory path = "../testdata/fixtures/File/read.txt";
@@ -126,6 +134,67 @@ contract FileTest is DSTest {
 
         cheats.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
         cheats.writeFile("./../foundry.toml", "\nffi = true\n");
+    }
+
+    function testReadDir() public {
+        string memory path = "../testdata/fixtures/Dir";
+
+        {
+            Cheats.DirEntry[] memory entries = cheats.readDir(path);
+            assertEq(entries.length, 2);
+            assertEntry(entries[0], 1, false);
+            assertEntry(entries[1], 1, true);
+
+            Cheats.DirEntry[] memory entries2 = cheats.readDir(path, 1);
+            assertEq(entries2.length, 2);
+            assertEq(entries[0].path, entries2[0].path);
+            assertEq(entries[1].path, entries2[1].path);
+
+            string memory contents = cheats.readFile(entries[0].path);
+            assertEq(contents, unicode"Wow! 😀\n");
+        }
+
+        {
+            Cheats.DirEntry[] memory entries = cheats.readDir(path, 2);
+            assertEq(entries.length, 4);
+            assertEntry(entries[2], 2, false);
+            assertEntry(entries[3], 2, true);
+        }
+
+        {
+            Cheats.DirEntry[] memory entries = cheats.readDir(path, 3);
+            assertEq(entries.length, 5);
+            assertEntry(entries[4], 3, true);
+        }
+
+        cheats.expectRevert(FOUNDRY_READ_DIR_ERR);
+        cheats.readDir("/etc");
+    }
+
+    function testCreateRemoveDir() public {
+        string memory path = "../testdata/fixtures/Dir/remove_dir";
+        string memory child = string.concat(path, "/child");
+
+        cheats.createDir(path, false);
+        assertEq(cheats.fsMetadata(path).isDir, true);
+
+        cheats.removeDir(path, false);
+        cheats.expectRevert();
+        cheats.fsMetadata(path);
+
+        // reverts because not recursive
+        cheats.expectRevert();
+        cheats.createDir(child, false);
+
+        cheats.createDir(child, true);
+        assertEq(cheats.fsMetadata(child).isDir, true);
+
+        // deleted both, recursively
+        cheats.removeDir(path, true);
+        cheats.expectRevert();
+        cheats.fsMetadata(path);
+        cheats.expectRevert();
+        cheats.fsMetadata(child);
     }
 
     function testFsMetadata() public {

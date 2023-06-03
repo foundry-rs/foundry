@@ -14,11 +14,10 @@ pub struct DebugArgs {
     ///
     /// If multiple contracts exist in the same file you must specify the target contract with
     /// --target-contract.
-    #[clap(value_hint = ValueHint::FilePath, value_name = "PATH")]
+    #[clap(value_hint = ValueHint::FilePath)]
     pub path: PathBuf,
 
     /// Arguments to pass to the script function.
-    #[clap(value_name = "ARGS")]
     pub args: Vec<String>,
 
     /// The name of the contract you want to run.

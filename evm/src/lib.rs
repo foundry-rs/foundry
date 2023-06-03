@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate tracing;
+
 /// Decoding helpers
 pub mod decode;
 
@@ -29,7 +32,7 @@ pub mod error;
 pub use ethers::types::Address;
 pub use hashbrown::{self, HashMap};
 pub use revm;
-use revm::{CallScheme, CreateScheme};
+use revm::interpreter::{CallScheme, CreateScheme};
 use serde::{Deserialize, Serialize};
 
 /// Stores the caller address to be used as _sender_ account for:

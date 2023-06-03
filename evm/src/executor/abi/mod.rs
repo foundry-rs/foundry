@@ -1,9 +1,12 @@
-use ethers::{
-    contract::abigen,
-    types::{Address, Selector, H160},
-};
+use ethers::types::{Address, Selector, H160};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
+
+pub use foundry_abi::{
+    console::{self, ConsoleEvents, CONSOLE_ABI},
+    hardhat_console::{self, HardhatConsoleCalls, HARDHATCONSOLE_ABI as HARDHAT_CONSOLE_ABI},
+    hevm::{self, HEVMCalls, HEVM_ABI},
+};
 
 /// The cheatcode handler address (0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).
 ///
@@ -14,249 +17,13 @@ pub const CHEATCODE_ADDRESS: Address = H160([
     0x5b, 0x1d, 0xd1, 0x2d,
 ]);
 
-// Bindings for cheatcodes
-abigen!(
-    HEVM,
-    "[
-        struct Log { bytes32[] topics; bytes data; }
-        struct Rpc { string name; string url; }
-        struct FsMetadata { bool isDir; bool isSymlink; uint256 length; bool readOnly; uint256 modified; uint256 accessed; uint256 created; }
-
-        allowCheatcodes(address)
-
-        ffi(string[])(bytes)
-
-        breakpoint(string)
-
-        roll(uint256)
-        warp(uint256)
-        difficulty(uint256)
-        fee(uint256)
-        coinbase(address)
-        store(address,bytes32,bytes32)
-        load(address,bytes32)(bytes32)
-
-        setEnv(string,string)
-        envBool(string)(bool)
-        envUint(string)(uint256)
-        envInt(string)(int256)
-        envAddress(string)(address)
-        envBytes32(string)(bytes32)
-        envString(string)(string)
-        envBytes(string)(bytes)
-        envBool(string,string)(bool[])
-        envUint(string,string)(uint256[])
-        envInt(string,string)(int256[])
-        envAddress(string,string)(address[])
-        envBytes32(string,string)(bytes32[])
-        envString(string,string)(string[])
-        envBytes(string,string)(bytes[])
-        envOr(string,bool)(bool)
-        envOr(string,uint256)(uint256)
-        envOr(string,int256)(int256)
-        envOr(string,address)(address)
-        envOr(string,bytes32)(bytes32)
-        envOr(string,string)(string)
-        envOr(string,bytes)(bytes)
-        envOr(string,string,bool[])(bool[])
-        envOr(string,string,uint256[])(uint256[])
-        envOr(string,string,int256[])(int256[])
-        envOr(string,string,address[])(address[])
-        envOr(string,string,bytes32[])(bytes32[])
-        envOr(string,string,string[])(string[])
-        envOr(string,string,bytes[])(bytes[])
-
-        addr(uint256)(address)
-        sign(uint256,bytes32)(uint8,bytes32,bytes32)
-        deriveKey(string,uint32)(uint256)
-        deriveKey(string,string,uint32)(uint256)
-        rememberKey(uint256)(address)
-
-        prank(address)
-        prank(address,address)
-        startPrank(address)
-        startPrank(address,address)
-        stopPrank()
-
-        deal(address,uint256)
-        etch(address,bytes)
-        expectRevert()
-        expectRevert(bytes)
-        expectRevert(bytes4)
-        record()
-        accesses(address)(bytes32[],bytes32[])
-
-        recordLogs()
-        getRecordedLogs()(Log[])
-
-        expectEmit()
-        expectEmit(address)
-        expectEmit(bool,bool,bool,bool)
-        expectEmit(bool,bool,bool,bool,address)
-
-        mockCall(address,bytes,bytes)
-        mockCall(address,uint256,bytes,bytes)
-        mockCallRevert(address,bytes,bytes)
-        mockCallRevert(address,uint256,bytes,bytes)
-        clearMockedCalls()
-
-        expectCall(address,bytes)
-        expectCall(address,uint256,bytes)
-        expectCall(address,uint256,uint64,bytes)
-        expectCallMinGas(address,uint256,uint64,bytes)
-        expectSafeMemory(uint64,uint64)
-        expectSafeMemoryCall(uint64,uint64)
-
-        getCode(string)
-        getDeployedCode(string)
-        label(address,string)
-        assume(bool)
-        setNonce(address,uint64)
-        getNonce(address)
-        chainId(uint256)
-        txGasPrice(uint256)
-
-        broadcast()
-        broadcast(address)
-        broadcast(uint256)
-        startBroadcast()
-        startBroadcast(address)
-        startBroadcast(uint256)
-        stopBroadcast()
-
-        projectRoot()(string)
-        readFile(string)(string)
-        readFileBinary(string)(bytes)
-        writeFile(string,string)
-        writeFileBinary(string,bytes)
-        openFile(string)
-        readLine(string)(string)
-        writeLine(string,string)
-        closeFile(string)
-        removeFile(string)
-        fsMetadata(string)(FsMetadata)
-
-        toString(bytes)
-        toString(address)
-        toString(uint256)
-        toString(int256)
-        toString(bytes32)
-        toString(bool)
-        parseBytes(string)(bytes)
-        parseAddress(string)(address)
-        parseUint(string)(uint256)
-        parseInt(string)(int256)
-        parseBytes32(string)(bytes32)
-        parseBool(string)(bool)
-
-        snapshot()(uint256)
-        revertTo(uint256)(bool)
-        createFork(string,uint256)(uint256)
-        createFork(string,bytes32)(uint256)
-        createFork(string)(uint256)
-        createSelectFork(string,uint256)(uint256)
-        createSelectFork(string,bytes32)(uint256)
-        createSelectFork(string)(uint256)
-        selectFork(uint256)
-        activeFork()(uint256)
-        transact(bytes32)
-        transact(uint256,bytes32)
-        makePersistent(address)
-        makePersistent(address,address)
-        makePersistent(address,address,address)
-        makePersistent(address[])
-        revokePersistent(address)
-        revokePersistent(address[])
-        isPersistent(address)(bool)
-        rollFork(uint256)
-        rollFork(bytes32)
-        rollFork(uint256,uint256)
-        rollFork(uint256,bytes32)
-        rpcUrl(string)(string)
-        rpcUrls()(string[2][])
-        rpcUrlStructs()(Rpc[])
-
-        writeJson(string, string)
-        writeJson(string, string, string)
-        parseJson(string)(bytes)
-        parseJson(string, string)(bytes)
-        parseJsonUint(string, string)(uint256)
-        parseJsonUintArray(string, string)(uint256[])
-        parseJsonInt(string, string)(int256)
-        parseJsonIntArray(string, string)(int256[])
-        parseJsonString(string, string)(string)
-        parseJsonStringArray(string, string)(string[])
-        parseJsonAddress(string, string)(address)
-        parseJsonAddressArray(string, string)(address[])
-        parseJsonBool(string, string)(bool)
-        parseJsonBoolArray(string, string)(bool[])
-        parseJsonBytes(string, string)(bytes)
-        parseJsonBytesArray(string, string)(bytes[])
-        parseJsonBytes32(string, string)(bytes32)
-        parseJsonBytes32Array(string, string)(bytes32[])
-        serializeBool(string,string,bool)(string)
-        serializeBool(string,string,bool[])(string)
-        serializeUint(string,string,uint256)(string)
-        serializeUint(string,string,uint256[])(string)
-        serializeInt(string,string,int256)(string)
-        serializeInt(string,string,int256[])(string)
-        serializeAddress(string,string,address)(string)
-        serializeAddress(string,string,address[])(string)
-        serializeBytes32(string,string,bytes32)(string)
-        serializeBytes32(string,string,bytes32[])(string)
-        serializeString(string,string,string)(string)
-        serializeString(string,string,string[])(string)
-        serializeBytes(string,string,bytes)(string)
-        serializeBytes(string,string,bytes[])(string)
-
-        pauseGasMetering()
-        resumeGasMetering()
-    ]",
-);
-pub use hevm::{HEVMCalls, HEVM_ABI};
-
 /// The Hardhat console address (0x000000000000000000636F6e736F6c652e6c6f67).
 ///
 /// See: https://github.com/nomiclabs/hardhat/blob/master/packages/hardhat-core/console.sol
-pub static HARDHAT_CONSOLE_ADDRESS: Address = H160([
+pub const HARDHAT_CONSOLE_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x63, 0x6f, 0x6e, 0x73, 0x6f, 0x6c, 0x65,
     0x2e, 0x6c, 0x6f, 0x67,
 ]);
-
-// Bindings for DS-style event logs. Note that the array logs below are not actually part of DSTest,
-// but are part of forge-std, so are included here to ensure they are decoded in output logs.
-abigen!(
-    Console,
-    r#"[
-        event log(string)
-        event logs                   (bytes)
-        event log_address            (address)
-        event log_bytes32            (bytes32)
-        event log_int                (int)
-        event log_uint               (uint)
-        event log_bytes              (bytes)
-        event log_string             (string)
-        event log_array              (uint256[] val)
-        event log_array              (int256[] val)
-        event log_array              (address[] val)
-        event log_named_address      (string key, address val)
-        event log_named_bytes32      (string key, bytes32 val)
-        event log_named_decimal_int  (string key, int val, uint decimals)
-        event log_named_decimal_uint (string key, uint val, uint decimals)
-        event log_named_int          (string key, int val)
-        event log_named_uint         (string key, uint val)
-        event log_named_bytes        (string key, bytes val)
-        event log_named_string       (string key, string val)
-        event log_named_array        (string key, uint256[] val)
-        event log_named_array        (string key, int256[] val)
-        event log_named_array        (string key, address[] val)
-    ]"#,
-);
-pub use console::{ConsoleEvents, CONSOLE_ABI};
-
-// Bindings for Hardhat console
-abigen!(HardhatConsole, "./abi/console.json", event_derives(foundry_macros::ConsoleFmt));
-pub use hardhat_console::HARDHATCONSOLE_ABI as HARDHAT_CONSOLE_ABI;
 
 /// If the input starts with a known `hardhat/console.log` `uint` selector, then this will replace
 /// it with the selector `abigen!` bindings expect.

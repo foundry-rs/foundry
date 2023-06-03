@@ -5,7 +5,7 @@ use ethers_core::{
     types::{H256, U256},
     utils::rlp,
 };
-use revm::KECCAK_EMPTY;
+use revm::primitives::KECCAK_EMPTY;
 // reexport for convenience
 pub use ethers_core::types::{EIP1186ProofResponse as AccountProof, StorageProof};
 
@@ -28,7 +28,7 @@ impl Default for BasicAccount {
         BasicAccount {
             balance: 0.into(),
             nonce: 0.into(),
-            code_hash: KECCAK_EMPTY,
+            code_hash: KECCAK_EMPTY.into(),
             storage_root: KECCAK_NULL_RLP,
         }
     }

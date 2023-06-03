@@ -85,6 +85,32 @@ casttest!(wallet_address_keystore_with_password_file, |_: TestProject, mut cmd: 
     assert!(out.contains("0xeC554aeAFE75601AaAb43Bd4621A22284dB566C2"));
 });
 
+// tests that `cast wallet sign` outputs the expected signature
+casttest!(cast_wallet_sign_utf8_data, |_: TestProject, mut cmd: TestCommand| {
+    cmd.args([
+        "wallet",
+        "sign",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "test",
+    ]);
+    let output = cmd.stdout_lossy();
+    assert_eq!(output.trim(), "0xfe28833983d6faa0715c7e8c3873c725ddab6fa5bf84d40e780676e463e6bea20fc6aea97dc273a98eb26b0914e224c8dd5c615ceaab69ddddcf9b0ae3de0e371c");
+});
+
+// tests that `cast wallet sign` outputs the expected signature, given a 0x-prefixed data
+casttest!(cast_wallet_sign_hex_data, |_: TestProject, mut cmd: TestCommand| {
+    cmd.args([
+        "wallet",
+        "sign",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+    ]);
+    let output = cmd.stdout_lossy();
+    assert_eq!(output.trim(), "0x23a42ca5616ee730ff3735890c32fc7b9491a9f633faca9434797f2c845f5abf4d9ba23bd7edb8577acebaa3644dc5a4995296db420522bb40060f1693c33c9b1c");
+});
+
 // tests that `cast estimate` is working correctly.
 casttest!(estimate_function_gas, |_: TestProject, mut cmd: TestCommand| {
     let eth_rpc_url = next_http_rpc_endpoint();
@@ -259,49 +285,6 @@ casttest!(cast_run_succeeds, |_: TestProject, mut cmd: TestCommand| {
     assert!(!output.contains("Revert"));
 });
 
-// tests that the `cast storage` command works correctly
-casttest!(test_live_cast_storage_succeeds, |_: TestProject, mut cmd: TestCommand| {
-    // ignore if ETHERSCAN_API_KEY not set
-    if std::env::var("ETHERSCAN_API_KEY").is_err() {
-        eprintln!("ETHERSCAN_API_KEY not set");
-        return
-    }
-
-    let eth_rpc_url = next_http_rpc_endpoint();
-
-    // WETH
-    // version < min, so empty storage layout
-    let address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
-    cmd.cast_fuse().args(["storage", "--rpc-url", eth_rpc_url.as_str(), address]);
-    let output = cmd.stderr_lossy();
-    assert!(output.contains("Storage layout is empty"), "{}", output);
-    // first slot is the name, always is "Wrapped Ether"
-    cmd.cast_fuse().args(["storage", "--rpc-url", eth_rpc_url.as_str(), address, "0"]);
-    let output = cmd.stdout_lossy();
-    assert!(
-        output.contains("0x577261707065642045746865720000000000000000000000000000000000001a"),
-        "{output}",
-    );
-
-    // Polygon bridge proxy
-    let address = "0xA0c68C638235ee32657e8f720a23ceC1bFc77C77";
-    cmd.cast_fuse().args(["storage", "--rpc-url", eth_rpc_url.as_str(), address]);
-    let output = cmd.stdout_lossy();
-    assert!(
-        output.contains("RootChainManager") &&
-            output.contains("_roles") &&
-            output.contains("mapping(bytes32 => struct AccessControl.RoleData)"),
-        "{output}",
-    );
-    // first slot is `inited`, always is 1
-    cmd.cast_fuse().args(["storage", "--rpc-url", eth_rpc_url.as_str(), address, "0"]);
-    let output = cmd.stdout_lossy();
-    assert!(
-        output.contains("0x0000000000000000000000000000000000000000000000000000000000000001"),
-        "{output}",
-    );
-});
-
 // tests that `cast --to-base` commands are working correctly.
 casttest!(cast_to_base, |_: TestProject, mut cmd: TestCommand| {
     let values = [
@@ -354,4 +337,23 @@ casttest!(cast_receipt_revert_reason, |_: TestProject, mut cmd: TestCommand| {
     let output = cmd.stdout_lossy();
     assert!(output.contains("revertReason"));
     assert!(output.contains("Transaction too old"));
+});
+
+casttest!(cast_access_list, |_: TestProject, mut cmd: TestCommand| {
+    let rpc = next_http_rpc_endpoint();
+    cmd.args([
+        "access-list",
+        "0xbb2b8038a1640196fbe3e38816f3e67cba72d940",
+        "skim(address)",
+        "0xbb2b8038a1640196fbe3e38816f3e67cba72d940",
+        "--rpc-url",
+        rpc.as_str(),
+        "--gas-limit", // need to set this for alchemy.io to avoid "intrinsic gas too low" error
+        "100000",
+    ]);
+
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("address: 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"));
+    assert!(output.contains("0x0d2a19d3ac39dc6cc6fd07423195495e18679bd8c7dd610aa1db7cd784a683a8"));
+    assert!(output.contains("0x7fba2702a7d6e85ac783a88eacdc48e51310443458071f6db9ac66f8ca7068b8"));
 });

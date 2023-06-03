@@ -8,34 +8,29 @@ use std::path::{Path, PathBuf};
 /// CLI arguments for `cast interface`.
 #[derive(Debug, Clone, Parser)]
 pub struct InterfaceArgs {
-    #[clap(
-        help = "The contract address, or the path to an ABI file.",
-        long_help = r#"The contract address, or the path to an ABI file.
-
-If an address is specified, then the ABI is fetched from Etherscan."#,
-        value_name = "PATH_OR_ADDRESS"
-    )]
+    /// The contract address, or the path to an ABI file.
+    ///
+    /// If an address is specified, then the ABI is fetched from Etherscan.
     path_or_address: String,
 
-    #[clap(long, short, help = "The name to use for the generated interface", value_name = "NAME")]
+    /// The name to use for the generated interface.
+    #[clap(long, short)]
     name: Option<String>,
 
-    #[clap(
-        long,
-        short,
-        default_value = "^0.8.10",
-        help = "Solidity pragma version.",
-        value_name = "VERSION"
-    )]
+    /// Solidity pragma version.
+    #[clap(long, short, default_value = "^0.8.10", value_name = "VERSION")]
     pragma: String,
 
+    /// The path to the output file.
+    ///
+    /// If not specified, the interface will be output to stdout.
     #[clap(
         short,
-        help = "The path to the output file.",
-        long_help = "The path to the output file. If not specified, the interface will be output to stdout.",
-        value_name = "PATH"
+        long,
+        value_hint = clap::ValueHint::FilePath,
+        value_name = "PATH",
     )]
-    output_location: Option<PathBuf>,
+    output: Option<PathBuf>,
 
     #[clap(flatten)]
     etherscan: EtherscanOpts,
@@ -43,7 +38,8 @@ If an address is specified, then the ABI is fetched from Etherscan."#,
 
 impl InterfaceArgs {
     pub async fn run(self) -> eyre::Result<()> {
-        let InterfaceArgs { path_or_address, name, pragma, output_location, etherscan } = self;
+        let InterfaceArgs { path_or_address, name, pragma, output: output_location, etherscan } =
+            self;
         let config = Config::from(&etherscan);
         let chain = config.chain_id.unwrap_or_default();
         let source = if Path::new(&path_or_address).exists() {

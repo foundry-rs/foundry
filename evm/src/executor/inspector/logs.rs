@@ -1,13 +1,18 @@
-use crate::executor::{
-    patch_hardhat_console_selector, HardhatConsoleCalls, HARDHAT_CONSOLE_ADDRESS,
+use crate::{
+    executor::{patch_hardhat_console_selector, HardhatConsoleCalls, HARDHAT_CONSOLE_ADDRESS},
+    utils::{b160_to_h160, b256_to_h256, h160_to_b160},
 };
 use bytes::Bytes;
 use ethers::{
     abi::{AbiDecode, Token},
-    types::{Address, Log, H256},
+    types::{Log, H256},
 };
 use foundry_macros::ConsoleFmt;
-use revm::{db::Database, CallInputs, EVMData, Gas, Inspector, Return};
+use revm::{
+    interpreter::{CallInputs, Gas, InstructionResult},
+    primitives::{B160, B256},
+    Database, EVMData, Inspector,
+};
 
 /// An inspector that collects logs during execution.
 ///
@@ -18,14 +23,14 @@ pub struct LogCollector {
 }
 
 impl LogCollector {
-    fn hardhat_log(&mut self, mut input: Vec<u8>) -> (Return, Bytes) {
+    fn hardhat_log(&mut self, mut input: Vec<u8>) -> (InstructionResult, Bytes) {
         // Patch the Hardhat-style selectors
         patch_hardhat_console_selector(&mut input);
         let decoded = match HardhatConsoleCalls::decode(input) {
             Ok(inner) => inner,
             Err(err) => {
                 return (
-                    Return::Revert,
+                    InstructionResult::Revert,
                     ethers::abi::encode(&[Token::String(err.to_string())]).into(),
                 )
             }
@@ -34,7 +39,7 @@ impl LogCollector {
         // Convert it to a DS-style `emit log(string)` event
         self.logs.push(convert_hh_log_to_event(decoded));
 
-        (Return::Continue, Bytes::new())
+        (InstructionResult::Continue, Bytes::new())
     }
 }
 
@@ -42,10 +47,10 @@ impl<DB> Inspector<DB> for LogCollector
 where
     DB: Database,
 {
-    fn log(&mut self, _: &mut EVMData<'_, DB>, address: &Address, topics: &[H256], data: &Bytes) {
+    fn log(&mut self, _: &mut EVMData<'_, DB>, address: &B160, topics: &[B256], data: &Bytes) {
         self.logs.push(Log {
-            address: *address,
-            topics: topics.to_vec(),
+            address: b160_to_h160(*address),
+            topics: topics.iter().copied().map(b256_to_h256).collect(),
             data: data.clone().into(),
             ..Default::default()
         });
@@ -56,12 +61,12 @@ where
         _: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
         _: bool,
-    ) -> (Return, Gas, Bytes) {
-        if call.contract == HARDHAT_CONSOLE_ADDRESS {
+    ) -> (InstructionResult, Gas, Bytes) {
+        if call.contract == h160_to_b160(HARDHAT_CONSOLE_ADDRESS) {
             let (status, reason) = self.hardhat_log(call.input.to_vec());
             (status, Gas::new(call.gas_limit), reason)
         } else {
-            (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
+            (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
         }
     }
 }

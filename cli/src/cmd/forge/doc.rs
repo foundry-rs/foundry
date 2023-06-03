@@ -1,41 +1,49 @@
 use crate::{cmd::Cmd, opts::GH_REPO_PREFIX_REGEX};
 use clap::{Parser, ValueHint};
-use forge_doc::{ContractInheritance, DocBuilder, GitSource, Inheritdoc, Server};
+use forge_doc::{ContractInheritance, Deployments, DocBuilder, GitSource, Inheritdoc, Server};
 use foundry_config::{find_project_root_path, load_config_with_root};
 use std::{path::PathBuf, process::Command};
 
 #[derive(Debug, Clone, Parser)]
 pub struct DocArgs {
-    #[clap(
-        help = "The project's root path.",
-        long_help = "The project's root path. By default, this is the root directory of the current Git repository, or the current working directory.",
-        long,
-        value_hint = ValueHint::DirPath,
-        value_name = "PATH"
-    )]
-    root: Option<PathBuf>,
+    /// The project's root path.
+    ///
+    /// By default root of the Git repository, if in one,
+    /// or the current working directory.
+    #[clap(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
+    pub root: Option<PathBuf>,
 
+    /// The doc's output path.
+    ///
+    /// By default, it is the `docs/` in project root.
     #[clap(
-        help = "The doc's output path.",
-        long_help = "The output path for the generated mdbook. By default, it is the `docs/` in project root.",
-        long = "out",
+        long,
         short,
         value_hint = ValueHint::DirPath,
-        value_name = "PATH"
+        value_name = "PATH",
     )]
     out: Option<PathBuf>,
 
-    #[clap(help = "Build the `mdbook` from generated files.", long, short)]
+    /// Build the `mdbook` from generated files.
+    #[clap(long, short)]
     build: bool,
 
-    #[clap(help = "Serve the documentation.", long, short)]
+    /// Serve the documentation.
+    #[clap(long, short)]
     serve: bool,
 
-    #[clap(help = "Hostname for serving documentation.", long, requires = "serve")]
+    /// Hostname for serving documentation.
+    #[clap(long, requires = "serve")]
     hostname: Option<String>,
 
-    #[clap(help = "Port for serving documentation.", long, short, requires = "serve")]
+    /// Port for serving documentation.
+    #[clap(long, short, requires = "serve")]
     port: Option<usize>,
+
+    /// The relative path to the `hardhat-deploy` or `forge-deploy` artifact directory. Leave blank
+    /// for default.
+    #[clap(long)]
+    deployments: Option<Option<PathBuf>>,
 }
 
 impl Cmd for DocArgs {
@@ -76,18 +84,24 @@ impl Cmd for DocArgs {
                 }
             });
 
-        DocBuilder::new(root.clone(), config.project_paths().sources)
+        let mut builder = DocBuilder::new(root.clone(), config.project_paths().sources)
             .with_should_build(self.build)
             .with_config(doc_config.clone())
             .with_fmt(config.fmt)
             .with_preprocessor(ContractInheritance::default())
             .with_preprocessor(Inheritdoc::default())
             .with_preprocessor(GitSource {
-                root,
+                root: root.clone(),
                 commit,
                 repository: doc_config.repository.clone(),
-            })
-            .build()?;
+            });
+
+        // If deployment docgen is enabled, add the [Deployments] preprocessor
+        if let Some(deployments) = self.deployments {
+            builder = builder.with_preprocessor(Deployments { root, deployments });
+        }
+
+        builder.build()?;
 
         if self.serve {
             Server::new(doc_config.out)

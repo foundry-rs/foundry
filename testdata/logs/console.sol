@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.0;
+pragma solidity 0.8.18;
 
 library console {
     address constant CONSOLE_ADDRESS = address(0x000000000000000000636F6e736F6c652e6c6f67);

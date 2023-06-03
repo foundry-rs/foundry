@@ -18,59 +18,68 @@ use eyre::Context;
 /// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
 pub enum WalletSubcommands {
-    #[clap(name = "new", visible_alias = "n", about = "Create a new random keypair.")]
+    /// Create a new random keypair.
+    #[clap(visible_alias = "n")]
     New {
-        #[clap(
-            help = "If provided, then keypair will be written to an encrypted JSON keystore.",
-            value_name = "PATH"
-        )]
+        /// If provided, then keypair will be written to an encrypted JSON keystore.
         path: Option<String>,
-        #[clap(
-            long,
-            short,
-            help = r#"Deprecated: prompting for a hidden password is now the default.
-            Triggers a hidden password prompt for the JSON keystore."#,
-            conflicts_with = "unsafe_password",
-            requires = "path"
-        )]
+
+        /// Triggers a hidden password prompt for the JSON keystore.
+        ///
+        /// Deprecated: prompting for a hidden password is now the default.
+        #[clap(long, short, requires = "path", conflicts_with = "unsafe_password")]
         password: bool,
-        #[clap(
-            long,
-            help = "Password for the JSON keystore in cleartext. This is UNSAFE to use and we recommend using the --password.",
-            requires = "path",
-            env = "CAST_PASSWORD",
-            value_name = "PASSWORD"
-        )]
+
+        /// Password for the JSON keystore in cleartext.
+        ///
+        /// This is UNSAFE to use and we recommend using the --password.
+        #[clap(long, requires = "path", env = "CAST_PASSWORD", value_name = "PASSWORD")]
         unsafe_password: Option<String>,
     },
-    #[clap(name = "vanity", visible_alias = "va", about = "Generate a vanity address.")]
+
+    /// Generate a vanity address.
+    #[clap(visible_alias = "va")]
     Vanity(VanityArgs),
-    #[clap(name = "address", visible_aliases = &["a", "addr"], about = "Convert a private key to an address.")]
+
+    /// Convert a private key to an address.
+    #[clap(visible_aliases = &["a", "addr"])]
     Address {
+        /// If provided, the address will be derived from the specified private key.
         #[clap(
-            help = "If provided, the address will be derived from the specified private key.",
             value_name = "PRIVATE_KEY",
-            value_parser = foundry_common::clap_helpers::strip_0x_prefix
+            value_parser = foundry_common::clap_helpers::strip_0x_prefix,
         )]
         private_key_override: Option<String>,
+
         #[clap(flatten)]
         wallet: Wallet,
     },
-    #[clap(name = "sign", visible_alias = "s", about = "Sign a message.")]
+
+    /// Sign a message.
+    #[clap(visible_alias = "s")]
     Sign {
-        #[clap(help = "message to sign", value_name = "MESSAGE")]
+        /// The message to sign.
+        ///
+        /// Messages starting with 0x are expected to be hex encoded,
+        /// which get decoded before being signed.
         message: String,
+
         #[clap(flatten)]
         wallet: Wallet,
     },
-    #[clap(name = "verify", visible_alias = "v", about = "Verify the signature of a message.")]
+
+    /// Verify the signature of a message.
+    #[clap(visible_alias = "v")]
     Verify {
-        #[clap(help = "The original message.", value_name = "MESSAGE")]
+        /// The original message.
         message: String,
-        #[clap(help = "The signature to verify.", value_name = "SIGNATURE")]
-        signature: String,
-        #[clap(long, short, help = "The address of the message signer.", value_name = "ADDRESS")]
-        address: String,
+
+        /// The signature to verify.
+        signature: Signature,
+
+        /// The address of the message signer.
+        #[clap(long, short)]
+        address: Address,
     },
 }
 
@@ -84,7 +93,7 @@ impl WalletSubcommands {
                     let path = dunce::canonicalize(path)?;
                     if !path.is_dir() {
                         // we require path to be an existing directory
-                        eyre::bail!("`{}` is not a directory.", path.display());
+                        eyre::bail!("`{}` is not a directory", path.display());
                     }
 
                     let password = if let Some(password) = unsafe_password {
@@ -120,13 +129,11 @@ impl WalletSubcommands {
             }
             WalletSubcommands::Sign { message, wallet } => {
                 let wallet = wallet.signer(0).await?;
-                let sig = wallet.sign_message(message).await?;
-                println!("Signature: 0x{sig}");
+                let sig = wallet.sign_message(Self::hex_str_to_bytes(&message)?).await?;
+                println!("0x{sig}");
             }
             WalletSubcommands::Verify { message, signature, address } => {
-                let pubkey: Address = address.parse().wrap_err("Invalid address")?;
-                let signature: Signature = signature.parse().wrap_err("Invalid signature")?;
-                match signature.verify(message, pubkey) {
+                match signature.verify(Self::hex_str_to_bytes(&message)?, address) {
                     Ok(_) => {
                         println!("Validation succeeded. Address {address} signed this message.")
                     }
@@ -138,5 +145,12 @@ impl WalletSubcommands {
         };
 
         Ok(())
+    }
+
+    fn hex_str_to_bytes(s: &str) -> eyre::Result<Vec<u8>> {
+        Ok(match s.strip_prefix("0x") {
+            Some(data) => hex::decode(data).wrap_err("Could not decode 0x-prefixed string.")?,
+            None => s.as_bytes().to_vec(),
+        })
     }
 }
