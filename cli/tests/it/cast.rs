@@ -4,7 +4,7 @@ use clap::CommandFactory;
 use foundry_cli::opts::cast::Opts;
 use foundry_cli_test_utils::{
     casttest,
-    util::{TestCommand, TestProject},
+    util::{OutputExt, TestCommand, TestProject},
 };
 use foundry_utils::rpc::next_http_rpc_endpoint;
 use std::{io::Write, path::PathBuf};
@@ -356,4 +356,83 @@ casttest!(cast_access_list, |_: TestProject, mut cmd: TestCommand| {
     assert!(output.contains("address: 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"));
     assert!(output.contains("0x0d2a19d3ac39dc6cc6fd07423195495e18679bd8c7dd610aa1db7cd784a683a8"));
     assert!(output.contains("0x7fba2702a7d6e85ac783a88eacdc48e51310443458071f6db9ac66f8ca7068b8"));
+});
+
+casttest!(cast_logs_topics, |_: TestProject, mut cmd: TestCommand| {
+    let rpc = next_http_rpc_endpoint();
+    cmd.args([
+        "logs",
+        "--rpc-url",
+        rpc.as_str(),
+        "--from-block",
+        "12421181",
+        "--to-block",
+        "12421182",
+        "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+        "0x000000000000000000000000ab5801a7d398351b8be11c439e05c5b3259aec9b",
+    ]);
+
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cast_logs.stdout"),
+    );
+});
+
+casttest!(cast_logs_topic_2, |_: TestProject, mut cmd: TestCommand| {
+    let rpc = next_http_rpc_endpoint();
+    cmd.args([
+        "logs",
+        "--rpc-url",
+        rpc.as_str(),
+        "--from-block",
+        "12421181",
+        "--to-block",
+        "12421182",
+        "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+        "",
+        "0x00000000000000000000000068a99f89e475a078645f4bac491360afe255dff1", /* Filter on the
+                                                                               * `to` address */
+    ]);
+
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cast_logs.stdout"),
+    );
+});
+
+casttest!(cast_logs_sig, |_: TestProject, mut cmd: TestCommand| {
+    let rpc = next_http_rpc_endpoint();
+    cmd.args([
+        "logs",
+        "--rpc-url",
+        rpc.as_str(),
+        "--from-block",
+        "12421181",
+        "--to-block",
+        "12421182",
+        "Transfer(address indexed from, address indexed to, uint256 value)",
+        "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B",
+    ]);
+
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cast_logs.stdout"),
+    );
+});
+
+casttest!(cast_logs_sig_2, |_: TestProject, mut cmd: TestCommand| {
+    let rpc = next_http_rpc_endpoint();
+    cmd.args([
+        "logs",
+        "--rpc-url",
+        rpc.as_str(),
+        "--from-block",
+        "12421181",
+        "--to-block",
+        "12421182",
+        "Transfer(address indexed from, address indexed to, uint256 value)",
+        "",
+        "0x68A99f89E475a078645f4BAC491360aFe255Dff1",
+    ]);
+
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cast_logs.stdout"),
+    );
 });
