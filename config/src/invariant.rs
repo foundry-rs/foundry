@@ -83,7 +83,7 @@ mod tests {
         if let Err(e) = base_config.try_merge(configs) {
             assert_eq!(e.to_string(), "'unknownprop' is an invalid config property");
         } else {
-            assert!(false)
+            unreachable!()
         }
     }
 

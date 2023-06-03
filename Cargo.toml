@@ -60,18 +60,20 @@ panic = "abort"
 codegen-units = 1
 
 [workspace.dependencies]
-ethers = { version = "2.0.4", default-features = false }
-ethers-addressbook = { version = "2.0.4", default-features = false }
-ethers-core = { version = "2.0.4", default-features = false }
-ethers-contract = { version = "2.0.4", default-features = false }
-ethers-contract-abigen = { version = "2.0.4", default-features = false }
-ethers-providers = { version = "2.0.4", default-features = false }
-ethers-signers = { version = "2.0.4", default-features = false }
-ethers-middleware = { version = "2.0.4", default-features = false }
-ethers-etherscan = { version = "2.0.4", default-features = false }
-ethers-solc = { version = "2.0.4", default-features = false }
+ethers = { version = "2.0.7", default-features = false }
+ethers-addressbook = { version = "2.0.7", default-features = false }
+ethers-core = { version = "2.0.7", default-features = false }
+ethers-contract = { version = "2.0.7", default-features = false }
+ethers-contract-abigen = { version = "2.0.7", default-features = false }
+ethers-providers = { version = "2.0.7", default-features = false }
+ethers-signers = { version = "2.0.7", default-features = false }
+ethers-middleware = { version = "2.0.7", default-features = false }
+ethers-etherscan = { version = "2.0.7", default-features = false }
+ethers-solc = { version = "2.0.7", default-features = false }
 
-#[patch.crates-io]
+solang-parser = "=0.3.0"
+
+[patch.crates-io]
 # ethers = { path = "../ethers-rs/ethers" }
 # ethers-addressbook = { path = "../ethers-rs/ethers-addressbook" }
 # ethers-contract = { path = "../ethers-rs/ethers-contract" }
@@ -82,4 +84,4 @@ ethers-solc = { version = "2.0.4", default-features = false }
 # ethers-providers = { path = "../ethers-rs/ethers-providers" }
 # ethers-signers = { path = "../ethers-rs/ethers-signers" }
 # ethers-solc = { path = "../ethers-rs/ethers-solc" }
-# revm = { path = "../revm/crates/revm" }
+revm = { git = "https://github.com/bluealloy/revm/", branch = "release/v25" }

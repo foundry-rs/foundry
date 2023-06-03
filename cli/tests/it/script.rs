@@ -1077,3 +1077,55 @@ contract ContractC {
         assert!(cmd.stdout_lossy().contains("Script ran successfully."));
     }
 );
+
+forgetest_async!(
+    assert_can_create_multiple_contracts_with_correct_nonce,
+    |prj: TestProject, mut cmd: TestCommand| async move {
+        cmd.args(["init", "--force"]).arg(prj.root());
+        cmd.assert_non_empty_stdout();
+        cmd.forge_fuse();
+
+        let script = prj
+            .inner()
+            .add_script(
+                "ScriptTxOrigin.s.sol",
+                r#"
+pragma solidity ^0.8.17;
+
+import {Script, console} from "forge-std/Script.sol";
+
+contract Contract {
+  constructor() {
+    console.log(tx.origin);
+  }
+}
+contract SubContract {
+  constructor() {
+    console.log(tx.origin);
+  }
+}
+contract BadContract {
+  constructor() {
+    // new SubContract();
+    console.log(tx.origin);
+  }
+}
+contract NestedCreateFail is Script {
+  function run() public {
+    address sender = address(uint160(uint(keccak256("woops"))));
+
+    vm.broadcast(sender);
+    new BadContract();
+
+    vm.broadcast(sender);
+    new Contract();
+  }
+}
+   "#,
+            )
+            .unwrap();
+
+        cmd.arg("script").arg(script).args(["--tc", "NestedCreateFail"]);
+        assert!(cmd.stdout_lossy().contains("Script ran successfully."));
+    }
+);

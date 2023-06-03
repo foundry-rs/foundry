@@ -16,7 +16,7 @@ foundry-config = { path = "../config" }
 ethers-core = { workspace = true }
 
 # parser
-solang-parser = "=0.2.4"
+solang-parser.workspace = true
 
 # misc
 semver = "1"

@@ -282,8 +282,7 @@ impl CoverageArgs {
         // Run tests
         let known_contracts = runner.known_contracts.clone();
         let (tx, rx) = channel::<(String, SuiteResult)>();
-        let handle =
-            thread::spawn(move || runner.test(&self.filter, Some(tx), Default::default()).unwrap());
+        let handle = thread::spawn(move || runner.test(&self.filter, Some(tx), Default::default()));
 
         // Add hit data to the coverage report
         for (artifact_id, hits) in rx

@@ -306,7 +306,7 @@ impl Visitor for CheatcodeVisitor {
         _loc: Loc,
         init: &mut Option<Box<Statement>>,
         cond: &mut Option<Box<Expression>>,
-        update: &mut Option<Box<Statement>>,
+        update: &mut Option<Box<Expression>>,
         body: &mut Option<Box<Statement>>,
     ) -> Result<(), Self::Error> {
         init.visit(self)?;
