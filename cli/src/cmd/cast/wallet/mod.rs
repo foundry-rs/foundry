@@ -14,7 +14,6 @@ use ethers::{
     types::{transaction::eip712::TypedData, Address, Signature},
 };
 use eyre::Context;
-use std::{fs::File, io::BufReader};
 
 /// CLI arguments for `cast wallet`.
 #[derive(Debug, Parser)]
@@ -150,9 +149,7 @@ impl WalletSubcommands {
                 let sig = if data {
                     let typed_data: TypedData = if from_file {
                         // data is a file name, read json from file
-                        let file = File::open(&message)?;
-                        let reader = BufReader::new(file);
-                        serde_json::from_reader(reader)?
+                        foundry_common::fs::read_json_file(message.as_ref())?
                     } else {
                         // data is a json string
                         serde_json::from_str(&message)?
