@@ -408,7 +408,6 @@ impl Type {
             pt::Expression::Type(_, ty) => Self::from_type(ty),
 
             pt::Expression::Variable(ident) => Some(Self::Custom(vec![ident.name.clone()])),
-            pt::Expression::This(_) => Some(Self::Custom(vec!["this".to_string()])),
 
             // array
             pt::Expression::ArraySubscript(_, expr, num) => {
@@ -1488,10 +1487,10 @@ mod tests {
             let mut is_preinstalled = PRE_INSTALL_SOLC_LOCK.lock().unwrap();
             if !*is_preinstalled {
                 let solc =
-                    Solc::find_or_install_svm_version("0.8.17").and_then(|solc| solc.version());
+                    Solc::find_or_install_svm_version("0.8.19").and_then(|solc| solc.version());
                 if solc.is_err() {
                     // try reinstalling
-                    let solc = Solc::blocking_install(&"0.8.17".parse().unwrap());
+                    let solc = Solc::blocking_install(&"0.8.19".parse().unwrap());
                     if solc.map_err(SolcError::from).and_then(|solc| solc.version()).is_ok() {
                         *is_preinstalled = true;
                         break
@@ -1503,7 +1502,7 @@ mod tests {
             }
         }
 
-        let solc = Solc::find_or_install_svm_version("0.8.17").expect("could not install solc");
+        let solc = Solc::find_or_install_svm_version("0.8.19").expect("could not install solc");
         SessionSource::new(solc, Default::default())
     }
 

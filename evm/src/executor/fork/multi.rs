@@ -31,7 +31,6 @@ use std::{
     },
     time::Duration,
 };
-use tracing::trace;
 
 /// The identifier for a specific fork, this could be the name of the network a custom descriptive
 /// name.

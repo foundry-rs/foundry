@@ -188,7 +188,7 @@ pub fn fuzz_contract_with_calldata(
     ]);
 
     strats.prop_map(move |calldata| {
-        tracing::trace!(input = ?calldata);
+        trace!(input = ?calldata);
         (contract, calldata)
     })
 }

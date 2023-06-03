@@ -7,7 +7,7 @@ use revm::{
 };
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
 use std::{collections::BTreeSet, fs, io::BufWriter, path::PathBuf, sync::Arc};
-use tracing::{trace, warn};
+
 use url::Url;
 
 pub type StorageInfo = Map<U256, U256>;
