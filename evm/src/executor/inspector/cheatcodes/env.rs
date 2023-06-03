@@ -85,11 +85,17 @@ impl Prank {
     }
 }
 
+/// Represents the possible caller modes for the readCallers() cheat code return value
 enum CallerMode {
+    /// No caller modification is currently active
     None,
+    /// A one time broadcast triggered by a `vm.broadcast()` call is currently active
     Broadcast,
+    /// A recurrent broadcast triggered by a `vm.startBroadcast()` call is currently active
     RecurrentBroadcast,
+    /// A one time prank triggered by a `vm.prank()` call is currently active
     Prank,
+    /// A recurrent prank triggered by a `vm.startPrank()` call is currently active
     RecurrentPrank,
 }
 
@@ -164,6 +170,29 @@ fn prank(
     Ok(Bytes::new())
 }
 
+/// Reads the current caller information and returns the current [CallerMode], `msg.sender` and
+/// `tx.origin`.
+///
+/// Depending on the current caller mode, one of the following results will be returned:
+/// - If there is an active prank:
+///     - caller_mode will be equal to:
+///         - [CallerMode::Prank] if the prank has been set with `vm.prank(..)`.
+///         - [CallerMode::RecurrentPrank] if the prank has been set with `vm.startPrank(..)`.
+///     - `msg.sender` will be equal to the address set for the prank.
+///     - `tx.origin` will be equal to the default sender address unless an alternative one has been
+///       set when configuring the prank.
+///
+/// - If there is an active broadcast:
+///     - caller_mode will be equal to:
+///         - [CallerMode::Broadcast] if the broadcast has been set with `vm.broadcast(..)`.
+///         - [CallerMode::RecurrentBroadcast] if the broadcast has been set with
+///           `vm.startBroadcast(..)`.
+///     - `msg.sender` and `tx.origin` will be equal to the address provided when setting the
+///       broadcast.
+///
+/// - If no caller modification is active:
+///     - caller_mode will be equal to [CallerMode::None],
+///     - `msg.sender` and `tx.origin` will be equal to the default sender address.
 fn read_callers(state: &Cheatcodes, default_sender: Address) -> Bytes {
     let Cheatcodes { prank, broadcast, .. } = &state;
 
