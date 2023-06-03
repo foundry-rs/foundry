@@ -21,6 +21,7 @@ members = [
     "ui",
     "utils",
 ]
+resolver = "2"
 
 [profile.dev]
 # Disabling debug info speeds up builds a bunch,
