@@ -302,6 +302,7 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::Rpc(cmd) => cmd.run().await?,
         Subcommands::Storage(cmd) => cmd.run().await?,
+        Subcommands::Events(cmd) => cmd.run().await?,
 
         // Calls & transactions
         Subcommands::Call(cmd) => cmd.run().await?,

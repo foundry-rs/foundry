@@ -10,6 +10,7 @@ pub mod bind;
 pub mod call;
 pub mod create2;
 pub mod estimate;
+pub mod events;
 pub mod find_block;
 pub mod interface;
 pub mod logs;
