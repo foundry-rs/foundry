@@ -54,10 +54,7 @@ use ethers::{
     },
     utils::{get_contract_address, hex, keccak256, rlp},
 };
-use flate2::{
-    read::GzDecoder,
-    write::GzEncoder, Compression,
-};
+use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use forge::{
     executor::inspector::AccessListTracer,
     hashbrown,
@@ -83,7 +80,13 @@ use foundry_evm::{
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;
 use parking_lot::{Mutex, RwLock};
-use std::{collections::HashMap, ops::Deref, sync::Arc, time::Duration, io::{Read, Write}};
+use std::{
+    collections::HashMap,
+    io::{Read, Write},
+    ops::Deref,
+    sync::Arc,
+    time::Duration,
+};
 use storage::{Blockchain, MinedTransaction};
 use tokio::sync::RwLock as AsyncRwLock;
 use tracing::{trace, warn};
