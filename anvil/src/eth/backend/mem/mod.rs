@@ -54,6 +54,10 @@ use ethers::{
     },
     utils::{get_contract_address, hex, keccak256, rlp},
 };
+use flate2::{
+    read::GzDecoder,
+    write::GzEncoder, Compression,
+};
 use forge::{
     executor::inspector::AccessListTracer,
     hashbrown,
@@ -79,7 +83,7 @@ use foundry_evm::{
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;
 use parking_lot::{Mutex, RwLock};
-use std::{collections::HashMap, ops::Deref, sync::Arc, time::Duration};
+use std::{collections::HashMap, ops::Deref, sync::Arc, time::Duration, io::{Read, Write}};
 use storage::{Blockchain, MinedTransaction};
 use tokio::sync::RwLock as AsyncRwLock;
 use tracing::{trace, warn};
@@ -630,14 +634,25 @@ impl Backend {
     /// Write all chain data to serialized bytes buffer
     pub async fn dump_state(&self) -> Result<Bytes, BlockchainError> {
         let state = self.serialized_state().await?;
-        let content = serde_json::to_vec(&state).unwrap_or_default().into();
-        Ok(content)
+        let mut e = GzEncoder::new(Vec::new(), Compression::default());
+        e.write_all(&serde_json::to_vec(&state).unwrap_or_default())
+            .map_err(|_| BlockchainError::DataUnavailable)?;
+        Ok(e.finish().unwrap_or_default().into())
     }
 
     /// Deserialize and add all chain data to the backend storage
     pub async fn load_state(&self, buf: Bytes) -> Result<bool, BlockchainError> {
-        let state: SerializableState =
-            serde_json::from_slice(&buf.0).map_err(|_| BlockchainError::FailedToDecodeStateDump)?;
+        let orig_buf = &buf.0[..];
+        let mut d = GzDecoder::new(orig_buf);
+        let mut v = Vec::new();
+
+        let state: SerializableState = serde_json::from_slice(if d.header().is_some() {
+            d.read_to_end(v.as_mut()).map_err(|_| BlockchainError::FailedToDecodeStateDump)?;
+            &v
+        } else {
+            &buf.0
+        })
+        .map_err(|_| BlockchainError::FailedToDecodeStateDump)?;
 
         if !self.db.write().await.load_state(state)? {
             Err(RpcError::invalid_params(
