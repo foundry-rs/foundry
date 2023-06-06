@@ -182,6 +182,7 @@ dependencies = [
  "ethers",
  "ethers-solc",
  "fdlimit",
+ "flate2",
  "forge",
  "foundry-common",
  "foundry-config",
