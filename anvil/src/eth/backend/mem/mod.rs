@@ -637,21 +637,21 @@ impl Backend {
     /// Write all chain data to serialized bytes buffer
     pub async fn dump_state(&self) -> Result<Bytes, BlockchainError> {
         let state = self.serialized_state().await?;
-        let mut e = GzEncoder::new(Vec::new(), Compression::default());
-        e.write_all(&serde_json::to_vec(&state).unwrap_or_default())
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&serde_json::to_vec(&state).unwrap_or_default())
             .map_err(|_| BlockchainError::DataUnavailable)?;
-        Ok(e.finish().unwrap_or_default().into())
+        Ok(encoder.finish().unwrap_or_default().into())
     }
 
     /// Deserialize and add all chain data to the backend storage
     pub async fn load_state(&self, buf: Bytes) -> Result<bool, BlockchainError> {
         let orig_buf = &buf.0[..];
-        let mut d = GzDecoder::new(orig_buf);
-        let mut v = Vec::new();
+        let mut decoder = GzDecoder::new(orig_buf);
+        let mut decoded_data = Vec::new();
 
-        let state: SerializableState = serde_json::from_slice(if d.header().is_some() {
-            d.read_to_end(v.as_mut()).map_err(|_| BlockchainError::FailedToDecodeStateDump)?;
-            &v
+        let state: SerializableState = serde_json::from_slice(if decoder.header().is_some() {
+            decoder.read_to_end(decoded_data.as_mut()).map_err(|_| BlockchainError::FailedToDecodeStateDump)?;
+            &decoded_data
         } else {
             &buf.0
         })
