@@ -976,7 +976,7 @@ where
 
         // Apply our broadcast
         if let Some(broadcast) = &self.broadcast {
-            if data.journaled_state.depth() == broadcast.depth &&
+            if data.journaled_state.depth() >= broadcast.depth &&
                 call.caller == h160_to_b160(broadcast.original_caller)
             {
                 if let Err(err) =
@@ -992,37 +992,43 @@ where
 
                 data.env.tx.caller = h160_to_b160(broadcast.new_origin);
 
-                let (bytecode, to, nonce) = match process_create(
-                    broadcast.new_origin,
-                    call.init_code.clone(),
-                    data,
-                    call,
-                ) {
-                    Ok(val) => val,
-                    Err(err) => {
-                        return (
-                            InstructionResult::Revert,
-                            None,
-                            Gas::new(call.gas_limit),
-                            err.encode_string().0,
-                        )
-                    }
-                };
+                if data.journaled_state.depth() == broadcast.depth {
+                    let (bytecode, to, nonce) = match process_create(
+                        broadcast.new_origin,
+                        call.init_code.clone(),
+                        data,
+                        call,
+                    ) {
+                        Ok(val) => val,
+                        Err(err) => {
+                            return (
+                                InstructionResult::Revert,
+                                None,
+                                Gas::new(call.gas_limit),
+                                err.encode_string().0,
+                            )
+                        }
+                    };
 
-                let is_fixed_gas_limit = check_if_fixed_gas_limit(data, call.gas_limit);
+                    let is_fixed_gas_limit = check_if_fixed_gas_limit(data, call.gas_limit);
 
-                self.broadcastable_transactions.push_back(BroadcastableTransaction {
-                    rpc: data.db.active_fork_url(),
-                    transaction: TypedTransaction::Legacy(TransactionRequest {
-                        from: Some(broadcast.new_origin),
-                        to,
-                        value: Some(call.value.into()),
-                        data: Some(bytecode.into()),
-                        nonce: Some(nonce.into()),
-                        gas: if is_fixed_gas_limit { Some(call.gas_limit.into()) } else { None },
-                        ..Default::default()
-                    }),
-                });
+                    self.broadcastable_transactions.push_back(BroadcastableTransaction {
+                        rpc: data.db.active_fork_url(),
+                        transaction: TypedTransaction::Legacy(TransactionRequest {
+                            from: Some(broadcast.new_origin),
+                            to,
+                            value: Some(call.value.into()),
+                            data: Some(bytecode.into()),
+                            nonce: Some(nonce.into()),
+                            gas: if is_fixed_gas_limit {
+                                Some(call.gas_limit.into())
+                            } else {
+                                None
+                            },
+                            ..Default::default()
+                        }),
+                    });
+                }
             }
         }
 

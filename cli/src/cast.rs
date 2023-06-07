@@ -483,6 +483,7 @@ async fn main() -> eyre::Result<()> {
             "cast",
             &mut std::io::stdout(),
         ),
+        Subcommands::Logs(cmd) => cmd.run().await?,
     };
     Ok(())
 }

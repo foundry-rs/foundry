@@ -295,8 +295,7 @@ impl<'a> TokenStyle for Token<'a> {
             RationalNumber(_, _, _) |
             HexNumber(_) |
             True |
-            False |
-            This => Color::Yellow.style(),
+            False => Color::Yellow.style(),
 
             Memory | Storage | Calldata | Public | Private | Internal | External | Constant |
             Pure | View | Payable | Anonymous | Indexed | Abstract | Virtual | Override |
