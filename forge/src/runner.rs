@@ -307,7 +307,7 @@ impl<'a> ContractRunner<'a> {
     /// State modifications are not committed to the evm database but discarded after the call,
     /// similar to `eth_call`.
     #[tracing::instrument(name = "test", skip_all, fields(name = %func.signature()))]
-    pub fn run_test(mut self, func: &Function, setup: TestSetup) -> Result<TestResult> {
+    pub fn run_test(mut self, func: &Function, setup: TestSetup) -> TestResult {
         let TestSetup { address, mut logs, mut traces, mut labeled_addresses, .. } = setup;
 
         // Run unit test
@@ -500,8 +500,7 @@ impl<'a> ContractRunner<'a> {
         // Run fuzz test
         let start = Instant::now();
         let mut result = FuzzedExecutor::new(&self.executor, runner, self.sender, fuzz_config)
-            .fuzz(func, address, self.errors)
-            .wrap_err("Failed to run fuzz test")?;
+            .fuzz(func, address, self.errors);
 
         let kind = TestKind::Fuzz {
             median_gas: result.median_gas(false),
