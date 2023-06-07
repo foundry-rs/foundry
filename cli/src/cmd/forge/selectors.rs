@@ -164,9 +164,10 @@ impl SelectorsSubcommands {
                 if colliding_methods.is_empty() {
                     println!("No colliding method selectors between the two contracts.");
                 } else {
-                    println!("\t{}\t{}", first_contract.name, second_contract.name);
-                    println!("The two contracts have the following methods whose selectors collide: {:#?}", colliding_methods);
-                    return Err(eyre::eyre!("Collision found"))
+                    colliding_methods.iter().for_each(|t| {
+                        println!("\"{}\": {:?}", first_method_map.get(t.0).unwrap(), t)
+                    });
+                    return Err(eyre::eyre!("At least one collision was found"))
                 }
             }
         }
