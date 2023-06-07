@@ -5,8 +5,9 @@ use ethers::prelude::Log;
 use foundry_common::evm::Breakpoints;
 use foundry_evm::{
     coverage::HitMaps,
+    executor::EvmError,
     fuzz::{CounterExample, FuzzCase},
-    trace::Traces,
+    trace::{TraceKind, Traces},
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt, time::Duration};
@@ -58,7 +59,7 @@ impl SuiteResult {
 }
 
 /// The result of an executed solidity test
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TestResult {
     /// Whether the test case was successful. This means that the transaction executed
     /// properly, or that there was a revert and that the test was expected to fail
@@ -97,6 +98,10 @@ pub struct TestResult {
 }
 
 impl TestResult {
+    pub fn fail(reason: String) -> Self {
+        Self { success: false, reason: Some(reason), ..Default::default() }
+    }
+
     /// Returns `true` if this is the result of a fuzz test
     pub fn is_fuzz(&self) -> bool {
         matches!(self.kind, TestKind::Fuzz { .. })
@@ -159,6 +164,12 @@ pub enum TestKind {
     Invariant { runs: usize, calls: usize, reverts: usize },
 }
 
+impl Default for TestKind {
+    fn default() -> Self {
+        Self::Standard(0)
+    }
+}
+
 impl TestKind {
     /// The gas consumed by this test
     pub fn report(&self) -> TestKindReport {
@@ -184,8 +195,53 @@ pub struct TestSetup {
     pub traces: Traces,
     /// Addresses labeled during setup
     pub labeled_addresses: BTreeMap<Address, String>,
-    /// Whether the setup failed
-    pub setup_failed: bool,
-    /// The reason the setup failed
+    /// The reason the setup failed, if it did
     pub reason: Option<String>,
+}
+
+impl TestSetup {
+    pub fn from_evm_error_with(
+        error: EvmError,
+        mut logs: Vec<Log>,
+        mut traces: Traces,
+        mut labeled_addresses: BTreeMap<Address, String>,
+    ) -> Self {
+        match error {
+            EvmError::Execution(err) => {
+                // force the tracekind to be setup so a trace is shown.
+                traces.extend(err.traces.map(|traces| (TraceKind::Setup, traces)));
+                logs.extend(err.logs);
+                labeled_addresses.extend(err.labels);
+                Self::failed_with(logs, traces, labeled_addresses, err.reason)
+            }
+            e => Self::failed_with(
+                logs,
+                traces,
+                labeled_addresses,
+                format!("Failed to deploy contract: {e}"),
+            ),
+        }
+    }
+
+    pub fn success(
+        address: Address,
+        logs: Vec<Log>,
+        traces: Traces,
+        labeled_addresses: BTreeMap<Address, String>,
+    ) -> Self {
+        Self { address, logs, traces, labeled_addresses, reason: None }
+    }
+
+    pub fn failed_with(
+        logs: Vec<Log>,
+        traces: Traces,
+        labeled_addresses: BTreeMap<Address, String>,
+        reason: String,
+    ) -> Self {
+        Self { address: Address::zero(), logs, traces, labeled_addresses, reason: Some(reason) }
+    }
+
+    pub fn failed(reason: String) -> Self {
+        Self { reason: Some(reason), ..Default::default() }
+    }
 }

@@ -7,6 +7,7 @@ use crate::{
     decode,
     executor::inspector::DEFAULT_CREATE2_DEPLOYER,
     trace::{node::CallTraceNode, utils},
+    CALLER, TEST_CONTRACT_ADDRESS,
 };
 use ethers::{
     abi::{Abi, Address, Event, Function, Param, ParamType, Token},
@@ -136,6 +137,8 @@ impl CallTraceDecoder {
                 (CHEATCODE_ADDRESS, "VM".to_string()),
                 (HARDHAT_CONSOLE_ADDRESS, "console".to_string()),
                 (DEFAULT_CREATE2_DEPLOYER, "Create2Deployer".to_string()),
+                (CALLER, "DefaultSender".to_string()),
+                (TEST_CONTRACT_ADDRESS, "DefaultTestContract".to_string()),
             ]
             .into(),
 

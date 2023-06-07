@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.18;
+pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
 import "./Cheats.sol";
@@ -70,10 +70,29 @@ contract Dummy {
 contract ExpectRevertTest is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
 
+    function shouldRevert() internal {
+        revert();
+    }
+
     function testExpectRevertString() public {
         Reverter reverter = new Reverter();
         cheats.expectRevert("revert");
         reverter.revertWithMessage("revert");
+    }
+
+    function testFailRevertNotOnImmediateNextCall() public {
+        Reverter reverter = new Reverter();
+        // expectRevert should only work for the next call. However,
+        // we do not inmediately revert, so,
+        // we fail.
+        cheats.expectRevert("revert");
+        reverter.doNotRevert();
+        reverter.revertWithMessage("revert");
+    }
+
+    function testFailDanglingOnInternalCall() public {
+        cheats.expectRevert();
+        shouldRevert();
     }
 
     function testExpectRevertConstructor() public {
@@ -187,10 +206,17 @@ contract ExpectRevertTest is DSTest {
         cheats.expectRevert("dangling");
     }
 
-    function testExpectRevertInvalidEnv() public {
-        cheats.expectRevert(
-            "Failed to get environment variable `_testExpectRevertInvalidEnv` as type `string`: environment variable not found"
-        );
-        string memory val = cheats.envString("_testExpectRevertInvalidEnv");
-    }
+    // This is now illegal behavior for expectRevert.
+    // This test would've previously passed as expectRevert
+    // would also check reverts at the test level, not only
+    // at the immediate next call.
+    // This allowed cheatcodes to be checked for reverts,
+    // which actually shouldn't have been possible as cheatcodes
+    // are supposed to be bypassed for all expect* checks.
+    // function testExpectRevertInvalidEnv() public {
+    //     cheats.expectRevert(
+    //         "Failed to get environment variable `_testExpectRevertInvalidEnv` as type `string`: environment variable not found"
+    //     );
+    //     string memory val = cheats.envString("_testExpectRevertInvalidEnv");
+    // }
 }

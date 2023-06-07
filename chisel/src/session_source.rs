@@ -109,9 +109,6 @@ impl SessionSourceConfig {
                 // or leave it as-is if we don't need a post merge solc version or the version we
                 // have is good enough.
                 let v = if needs_post_merge_solc && version < Version::new(0, 8, 18) {
-                    // If we do need a new version, install 0.8.19 (Paris)
-                    // NOTE: This needs to be bumped to 0.8.20 once we upgrade all tooling to
-                    // Shanghai.
                     eyre::bail!("solc {version} is not supported by the set evm version: {evm_version}. Please install and use a version of solc higher or equal to 0.8.18.
 You can also set the solc version in your foundry.toml.")
                 } else {
@@ -333,6 +330,9 @@ impl SessionSource {
             .into_iter()
             .filter(|remapping| !remapping.name.starts_with("forge-std"))
             .collect();
+
+        // We also need to enforce the EVM version that the user has specified.
+        compiler_input.settings.evm_version = Some(self.config.foundry_config.evm_version);
 
         compiler_input
     }

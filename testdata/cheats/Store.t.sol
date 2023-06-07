@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.18;
+pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
 import "./Cheats.sol";
@@ -33,7 +33,11 @@ contract StoreTest is DSTest {
         cheats.expectRevert(
             bytes("Store cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead")
         );
-        cheats.store(address(1), bytes32(0), bytes32(uint256(1)));
+        this._store(address(1), bytes32(0), bytes32(uint256(1)));
+    }
+
+    function _store(address target, bytes32 slot, bytes32 value) public {
+        cheats.store(target, slot, value);
     }
 
     function testStoreFuzzed(uint256 slot0, uint256 slot1) public {

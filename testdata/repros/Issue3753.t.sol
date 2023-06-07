@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.18;
+pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
 import "../cheats/Cheats.sol";
@@ -14,6 +14,10 @@ contract Issue3753Test is DSTest {
             res := staticcall(gas(), 4, 0, 0, 0, 0)
         }
         vm.expectRevert("require");
-        require(false, "require");
+        this.revert_require();
+    }
+
+    function revert_require() public {
+        revert("require");
     }
 }

@@ -4,7 +4,7 @@ use clap::CommandFactory;
 use foundry_cli::opts::cast::Opts;
 use foundry_cli_test_utils::{
     casttest,
-    util::{TestCommand, TestProject},
+    util::{OutputExt, TestCommand, TestProject},
 };
 use foundry_utils::rpc::next_http_rpc_endpoint;
 use std::{io::Write, path::PathBuf};
@@ -85,8 +85,8 @@ casttest!(wallet_address_keystore_with_password_file, |_: TestProject, mut cmd: 
     assert!(out.contains("0xeC554aeAFE75601AaAb43Bd4621A22284dB566C2"));
 });
 
-// tests that `cast wallet sign` outputs the expected signature
-casttest!(cast_wallet_sign_utf8_data, |_: TestProject, mut cmd: TestCommand| {
+// tests that `cast wallet sign message` outputs the expected signature
+casttest!(cast_wallet_sign_message_utf8_data, |_: TestProject, mut cmd: TestCommand| {
     cmd.args([
         "wallet",
         "sign",
@@ -98,8 +98,8 @@ casttest!(cast_wallet_sign_utf8_data, |_: TestProject, mut cmd: TestCommand| {
     assert_eq!(output.trim(), "0xfe28833983d6faa0715c7e8c3873c725ddab6fa5bf84d40e780676e463e6bea20fc6aea97dc273a98eb26b0914e224c8dd5c615ceaab69ddddcf9b0ae3de0e371c");
 });
 
-// tests that `cast wallet sign` outputs the expected signature, given a 0x-prefixed data
-casttest!(cast_wallet_sign_hex_data, |_: TestProject, mut cmd: TestCommand| {
+// tests that `cast wallet sign message` outputs the expected signature, given a 0x-prefixed data
+casttest!(cast_wallet_sign_message_hex_data, |_: TestProject, mut cmd: TestCommand| {
     cmd.args([
         "wallet",
         "sign",
@@ -109,6 +109,40 @@ casttest!(cast_wallet_sign_hex_data, |_: TestProject, mut cmd: TestCommand| {
     ]);
     let output = cmd.stdout_lossy();
     assert_eq!(output.trim(), "0x23a42ca5616ee730ff3735890c32fc7b9491a9f633faca9434797f2c845f5abf4d9ba23bd7edb8577acebaa3644dc5a4995296db420522bb40060f1693c33c9b1c");
+});
+
+// tests that `cast wallet sign typed-data` outputs the expected signature, given a JSON string
+casttest!(cast_wallet_sign_typed_data_string, |_: TestProject, mut cmd: TestCommand| {
+    cmd.args([
+        "wallet",
+        "sign",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--data",
+        "{\"types\": {\"EIP712Domain\": [{\"name\": \"name\",\"type\": \"string\"},{\"name\": \"version\",\"type\": \"string\"},{\"name\": \"chainId\",\"type\": \"uint256\"},{\"name\": \"verifyingContract\",\"type\": \"address\"}],\"Message\": [{\"name\": \"data\",\"type\": \"string\"}]},\"primaryType\": \"Message\",\"domain\": {\"name\": \"example.metamask.io\",\"version\": \"1\",\"chainId\": \"1\",\"verifyingContract\": \"0x0000000000000000000000000000000000000000\"},\"message\": {\"data\": \"Hello!\"}}",
+    ]);
+    let output = cmd.stdout_lossy();
+    assert_eq!(output.trim(), "0x06c18bdc8163219fddc9afaf5a0550e381326474bb757c86dc32317040cf384e07a2c72ce66c1a0626b6750ca9b6c035bf6f03e7ed67ae2d1134171e9085c0b51b");
+});
+
+// tests that `cast wallet sign typed-data` outputs the expected signature, given a JSON file
+casttest!(cast_wallet_sign_typed_data_file, |_: TestProject, mut cmd: TestCommand| {
+    cmd.args([
+        "wallet",
+        "sign",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--data",
+        "--from-file",
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/sign_typed_data.json")
+            .into_os_string()
+            .into_string()
+            .unwrap()
+            .as_str(),
+    ]);
+    let output = cmd.stdout_lossy();
+    assert_eq!(output.trim(), "0x06c18bdc8163219fddc9afaf5a0550e381326474bb757c86dc32317040cf384e07a2c72ce66c1a0626b6750ca9b6c035bf6f03e7ed67ae2d1134171e9085c0b51b");
 });
 
 // tests that `cast estimate` is working correctly.
@@ -285,49 +319,6 @@ casttest!(cast_run_succeeds, |_: TestProject, mut cmd: TestCommand| {
     assert!(!output.contains("Revert"));
 });
 
-// tests that the `cast storage` command works correctly
-casttest!(test_live_cast_storage_succeeds, |_: TestProject, mut cmd: TestCommand| {
-    // ignore if ETHERSCAN_API_KEY not set
-    if std::env::var("ETHERSCAN_API_KEY").is_err() {
-        eprintln!("ETHERSCAN_API_KEY not set");
-        return
-    }
-
-    let eth_rpc_url = next_http_rpc_endpoint();
-
-    // WETH
-    // version < min, so empty storage layout
-    let address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
-    cmd.cast_fuse().args(["storage", "--rpc-url", eth_rpc_url.as_str(), address]);
-    let output = cmd.stderr_lossy();
-    assert!(output.contains("Storage layout is empty"), "{}", output);
-    // first slot is the name, always is "Wrapped Ether"
-    cmd.cast_fuse().args(["storage", "--rpc-url", eth_rpc_url.as_str(), address, "0"]);
-    let output = cmd.stdout_lossy();
-    assert!(
-        output.contains("0x577261707065642045746865720000000000000000000000000000000000001a"),
-        "{output}",
-    );
-
-    // Polygon bridge proxy
-    let address = "0xA0c68C638235ee32657e8f720a23ceC1bFc77C77";
-    cmd.cast_fuse().args(["storage", "--rpc-url", eth_rpc_url.as_str(), address]);
-    let output = cmd.stdout_lossy();
-    assert!(
-        output.contains("RootChainManager") &&
-            output.contains("_roles") &&
-            output.contains("mapping(bytes32 => struct AccessControl.RoleData)"),
-        "{output}",
-    );
-    // first slot is `inited`, always is 1
-    cmd.cast_fuse().args(["storage", "--rpc-url", eth_rpc_url.as_str(), address, "0"]);
-    let output = cmd.stdout_lossy();
-    assert!(
-        output.contains("0x0000000000000000000000000000000000000000000000000000000000000001"),
-        "{output}",
-    );
-});
-
 // tests that `cast --to-base` commands are working correctly.
 casttest!(cast_to_base, |_: TestProject, mut cmd: TestCommand| {
     let values = [
@@ -399,4 +390,83 @@ casttest!(cast_access_list, |_: TestProject, mut cmd: TestCommand| {
     assert!(output.contains("address: 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"));
     assert!(output.contains("0x0d2a19d3ac39dc6cc6fd07423195495e18679bd8c7dd610aa1db7cd784a683a8"));
     assert!(output.contains("0x7fba2702a7d6e85ac783a88eacdc48e51310443458071f6db9ac66f8ca7068b8"));
+});
+
+casttest!(cast_logs_topics, |_: TestProject, mut cmd: TestCommand| {
+    let rpc = next_http_rpc_endpoint();
+    cmd.args([
+        "logs",
+        "--rpc-url",
+        rpc.as_str(),
+        "--from-block",
+        "12421181",
+        "--to-block",
+        "12421182",
+        "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+        "0x000000000000000000000000ab5801a7d398351b8be11c439e05c5b3259aec9b",
+    ]);
+
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cast_logs.stdout"),
+    );
+});
+
+casttest!(cast_logs_topic_2, |_: TestProject, mut cmd: TestCommand| {
+    let rpc = next_http_rpc_endpoint();
+    cmd.args([
+        "logs",
+        "--rpc-url",
+        rpc.as_str(),
+        "--from-block",
+        "12421181",
+        "--to-block",
+        "12421182",
+        "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+        "",
+        "0x00000000000000000000000068a99f89e475a078645f4bac491360afe255dff1", /* Filter on the
+                                                                               * `to` address */
+    ]);
+
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cast_logs.stdout"),
+    );
+});
+
+casttest!(cast_logs_sig, |_: TestProject, mut cmd: TestCommand| {
+    let rpc = next_http_rpc_endpoint();
+    cmd.args([
+        "logs",
+        "--rpc-url",
+        rpc.as_str(),
+        "--from-block",
+        "12421181",
+        "--to-block",
+        "12421182",
+        "Transfer(address indexed from, address indexed to, uint256 value)",
+        "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B",
+    ]);
+
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cast_logs.stdout"),
+    );
+});
+
+casttest!(cast_logs_sig_2, |_: TestProject, mut cmd: TestCommand| {
+    let rpc = next_http_rpc_endpoint();
+    cmd.args([
+        "logs",
+        "--rpc-url",
+        rpc.as_str(),
+        "--from-block",
+        "12421181",
+        "--to-block",
+        "12421182",
+        "Transfer(address indexed from, address indexed to, uint256 value)",
+        "",
+        "0x68A99f89E475a078645f4BAC491360aFe255Dff1",
+    ]);
+
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cast_logs.stdout"),
+    );
 });

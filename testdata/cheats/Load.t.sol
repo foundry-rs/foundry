@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.18;
+pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
 import "./Cheats.sol";
@@ -30,7 +30,11 @@ contract LoadTest is DSTest {
         cheats.expectRevert(
             bytes("Load cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead")
         );
-        uint256 val = uint256(cheats.load(address(1), bytes32(0)));
+        uint256 val = this.load(address(1), bytes32(0));
+    }
+
+    function load(address target, bytes32 slot) public returns (uint256) {
+        return uint256(cheats.load(target, slot));
     }
 
     function testLoadOtherStorage() public {

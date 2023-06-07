@@ -8,6 +8,7 @@ use clap::Parser;
 use ethers::{
     prelude::MiddlewareBuilder, providers::Middleware, signers::Signer, types::NameOrAddress,
 };
+use foundry_common::cli_warn;
 use foundry_config::{Chain, Config};
 use std::str::FromStr;
 
@@ -111,6 +112,25 @@ impl SendTxArgs {
         // This should be the only way this RPC method is used as it requires a local node
         // or remote RPC with unlocked accounts.
         if unlocked {
+            // only check current chain id if it was specified in the config
+            if let Some(config_chain) = config.chain_id {
+                let current_chain_id = provider.get_chainid().await?.as_u64();
+                let config_chain_id = config_chain.id();
+                // switch chain if current chain id is not the same as the one specified in the
+                // config
+                if config_chain_id != current_chain_id {
+                    cli_warn!("Switching to chain {}", config_chain);
+                    provider
+                        .request(
+                            "wallet_switchEthereumChain",
+                            [serde_json::json!({
+                                "chainId": format!("0x{:x}", config_chain_id),
+                            })],
+                        )
+                        .await?;
+                }
+            }
+
             if resend {
                 tx.nonce = Some(provider.get_transaction_count(config.sender, None).await?);
             }

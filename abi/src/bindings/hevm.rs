@@ -11,7 +11,7 @@ pub use hevm::*;
 )]
 pub mod hevm {
     #[rustfmt::skip]
-    const __ABI: &str = "[\nstruct Log { bytes32[] topics; bytes data; }\nstruct Rpc { string name; string url; }\nstruct DirEntry { string errorMessage; string path; uint64 depth; bool isDir; bool isSymlink; }\nstruct FsMetadata { bool isDir; bool isSymlink; uint256 length; bool readOnly; uint256 modified; uint256 accessed; uint256 created; }\n\nallowCheatcodes(address)\n\nffi(string[])(bytes)\n\nbreakpoint(string)\nbreakpoint(string,bool)\n\nroll(uint256)\nwarp(uint256)\ndifficulty(uint256)\nprevrandao(bytes32)\nfee(uint256)\ncoinbase(address)\nstore(address,bytes32,bytes32)\nload(address,bytes32)(bytes32)\n\nsetEnv(string,string)\nenvBool(string)(bool)\nenvUint(string)(uint256)\nenvInt(string)(int256)\nenvAddress(string)(address)\nenvBytes32(string)(bytes32)\nenvString(string)(string)\nenvBytes(string)(bytes)\nenvBool(string,string)(bool[])\nenvUint(string,string)(uint256[])\nenvInt(string,string)(int256[])\nenvAddress(string,string)(address[])\nenvBytes32(string,string)(bytes32[])\nenvString(string,string)(string[])\nenvBytes(string,string)(bytes[])\nenvOr(string,bool)(bool)\nenvOr(string,uint256)(uint256)\nenvOr(string,int256)(int256)\nenvOr(string,address)(address)\nenvOr(string,bytes32)(bytes32)\nenvOr(string,string)(string)\nenvOr(string,bytes)(bytes)\nenvOr(string,string,bool[])(bool[])\nenvOr(string,string,uint256[])(uint256[])\nenvOr(string,string,int256[])(int256[])\nenvOr(string,string,address[])(address[])\nenvOr(string,string,bytes32[])(bytes32[])\nenvOr(string,string,string[])(string[])\nenvOr(string,string,bytes[])(bytes[])\n\naddr(uint256)(address)\nsign(uint256,bytes32)(uint8,bytes32,bytes32)\nderiveKey(string,uint32)(uint256)\nderiveKey(string,string,uint32)(uint256)\nrememberKey(uint256)(address)\n\nprank(address)\nprank(address,address)\nstartPrank(address)\nstartPrank(address,address)\nstopPrank()\n\ndeal(address,uint256)\netch(address,bytes)\nexpectRevert()\nexpectRevert(bytes)\nexpectRevert(bytes4)\nrecord()\naccesses(address)(bytes32[],bytes32[])\n\nrecordLogs()\ngetRecordedLogs()(Log[])\n\nexpectEmit()\nexpectEmit(address)\nexpectEmit(bool,bool,bool,bool)\nexpectEmit(bool,bool,bool,bool,address)\n\nmockCall(address,bytes,bytes)\nmockCall(address,uint256,bytes,bytes)\nmockCallRevert(address,bytes,bytes)\nmockCallRevert(address,uint256,bytes,bytes)\nclearMockedCalls()\n\nexpectCall(address,bytes)\nexpectCall(address,bytes,uint64)\nexpectCall(address,uint256,bytes)\nexpectCall(address,uint256,bytes,uint64)\nexpectCall(address,uint256,uint64,bytes)\nexpectCall(address,uint256,uint64,bytes,uint64)\nexpectCallMinGas(address,uint256,uint64,bytes)\nexpectCallMinGas(address,uint256,uint64,bytes,uint64)\nexpectSafeMemory(uint64,uint64)\nexpectSafeMemoryCall(uint64,uint64)\n\ngetCode(string)\ngetDeployedCode(string)\nlabel(address,string)\ngetLabel(address)(string)\nassume(bool)\nsetNonce(address,uint64)\ngetNonce(address)\nchainId(uint256)\ntxGasPrice(uint256)\n\nbroadcast()\nbroadcast(address)\nbroadcast(uint256)\nstartBroadcast()\nstartBroadcast(address)\nstartBroadcast(uint256)\nstopBroadcast()\n\nprojectRoot()(string)\nreadFile(string)(string)\nreadFileBinary(string)(bytes)\nwriteFile(string,string)\nwriteFileBinary(string,bytes)\nopenFile(string)\nreadLine(string)(string)\nwriteLine(string,string)\ncloseFile(string)\nremoveFile(string)\ncreateDir(string, bool)\nremoveDir(string, bool)\nreadDir(string)(DirEntry[])\nreadDir(string, uint64)(DirEntry[])\nreadDir(string, uint64, bool)(DirEntry[])\nreadLink(string)(string)\nfsMetadata(string)(FsMetadata)\n\ntoString(bytes)\ntoString(address)\ntoString(uint256)\ntoString(int256)\ntoString(bytes32)\ntoString(bool)\nparseBytes(string)(bytes)\nparseAddress(string)(address)\nparseUint(string)(uint256)\nparseInt(string)(int256)\nparseBytes32(string)(bytes32)\nparseBool(string)(bool)\n\nsnapshot()(uint256)\nrevertTo(uint256)(bool)\ncreateFork(string,uint256)(uint256)\ncreateFork(string,bytes32)(uint256)\ncreateFork(string)(uint256)\ncreateSelectFork(string,uint256)(uint256)\ncreateSelectFork(string,bytes32)(uint256)\ncreateSelectFork(string)(uint256)\nselectFork(uint256)\nactiveFork()(uint256)\ntransact(bytes32)\ntransact(uint256,bytes32)\nmakePersistent(address)\nmakePersistent(address,address)\nmakePersistent(address,address,address)\nmakePersistent(address[])\nrevokePersistent(address)\nrevokePersistent(address[])\nisPersistent(address)(bool)\nrollFork(uint256)\nrollFork(bytes32)\nrollFork(uint256,uint256)\nrollFork(uint256,bytes32)\nrpcUrl(string)(string)\nrpcUrls()(string[2][])\nrpcUrlStructs()(Rpc[])\n\nwriteJson(string, string)\nwriteJson(string, string, string)\nparseJson(string)(bytes)\nparseJson(string, string)(bytes)\nparseJsonUint(string, string)(uint256)\nparseJsonUintArray(string, string)(uint256[])\nparseJsonInt(string, string)(int256)\nparseJsonIntArray(string, string)(int256[])\nparseJsonString(string, string)(string)\nparseJsonStringArray(string, string)(string[])\nparseJsonAddress(string, string)(address)\nparseJsonAddressArray(string, string)(address[])\nparseJsonBool(string, string)(bool)\nparseJsonBoolArray(string, string)(bool[])\nparseJsonBytes(string, string)(bytes)\nparseJsonBytesArray(string, string)(bytes[])\nparseJsonBytes32(string, string)(bytes32)\nparseJsonBytes32Array(string, string)(bytes32[])\nserializeBool(string,string,bool)(string)\nserializeBool(string,string,bool[])(string)\nserializeUint(string,string,uint256)(string)\nserializeUint(string,string,uint256[])(string)\nserializeInt(string,string,int256)(string)\nserializeInt(string,string,int256[])(string)\nserializeAddress(string,string,address)(string)\nserializeAddress(string,string,address[])(string)\nserializeBytes32(string,string,bytes32)(string)\nserializeBytes32(string,string,bytes32[])(string)\nserializeString(string,string,string)(string)\nserializeString(string,string,string[])(string)\nserializeBytes(string,string,bytes)(string)\nserializeBytes(string,string,bytes[])(string)\n\npauseGasMetering()\nresumeGasMetering()\n\n]";
+    const __ABI: &str = "[\nstruct Log { bytes32[] topics; bytes data; }\nstruct Rpc { string name; string url; }\nstruct DirEntry { string errorMessage; string path; uint64 depth; bool isDir; bool isSymlink; }\nstruct FsMetadata { bool isDir; bool isSymlink; uint256 length; bool readOnly; uint256 modified; uint256 accessed; uint256 created; }\n\nallowCheatcodes(address)\n\nffi(string[])(bytes)\n\nbreakpoint(string)\nbreakpoint(string,bool)\n\nroll(uint256)\nwarp(uint256)\ndifficulty(uint256)\nprevrandao(bytes32)\nfee(uint256)\ncoinbase(address)\nstore(address,bytes32,bytes32)\nload(address,bytes32)(bytes32)\n\nsetEnv(string,string)\nenvBool(string)(bool)\nenvUint(string)(uint256)\nenvInt(string)(int256)\nenvAddress(string)(address)\nenvBytes32(string)(bytes32)\nenvString(string)(string)\nenvBytes(string)(bytes)\nenvBool(string,string)(bool[])\nenvUint(string,string)(uint256[])\nenvInt(string,string)(int256[])\nenvAddress(string,string)(address[])\nenvBytes32(string,string)(bytes32[])\nenvString(string,string)(string[])\nenvBytes(string,string)(bytes[])\nenvOr(string,bool)(bool)\nenvOr(string,uint256)(uint256)\nenvOr(string,int256)(int256)\nenvOr(string,address)(address)\nenvOr(string,bytes32)(bytes32)\nenvOr(string,string)(string)\nenvOr(string,bytes)(bytes)\nenvOr(string,string,bool[])(bool[])\nenvOr(string,string,uint256[])(uint256[])\nenvOr(string,string,int256[])(int256[])\nenvOr(string,string,address[])(address[])\nenvOr(string,string,bytes32[])(bytes32[])\nenvOr(string,string,string[])(string[])\nenvOr(string,string,bytes[])(bytes[])\n\naddr(uint256)(address)\nsign(uint256,bytes32)(uint8,bytes32,bytes32)\nderiveKey(string,uint32)(uint256)\nderiveKey(string,string,uint32)(uint256)\nrememberKey(uint256)(address)\n\nprank(address)\nprank(address,address)\nreadCallers()(uint256,address,address)\nstartPrank(address)\nstartPrank(address,address)\nstopPrank()\n\ndeal(address,uint256)\netch(address,bytes)\nexpectRevert()\nexpectRevert(bytes)\nexpectRevert(bytes4)\nrecord()\naccesses(address)(bytes32[],bytes32[])\n\nrecordLogs()\ngetRecordedLogs()(Log[])\n\nexpectEmit()\nexpectEmit(address)\nexpectEmit(bool,bool,bool,bool)\nexpectEmit(bool,bool,bool,bool,address)\n\nmockCall(address,bytes,bytes)\nmockCall(address,uint256,bytes,bytes)\nmockCallRevert(address,bytes,bytes)\nmockCallRevert(address,uint256,bytes,bytes)\nclearMockedCalls()\n\nexpectCall(address,bytes)\nexpectCall(address,bytes,uint64)\nexpectCall(address,uint256,bytes)\nexpectCall(address,uint256,bytes,uint64)\nexpectCall(address,uint256,uint64,bytes)\nexpectCall(address,uint256,uint64,bytes,uint64)\nexpectCallMinGas(address,uint256,uint64,bytes)\nexpectCallMinGas(address,uint256,uint64,bytes,uint64)\nexpectSafeMemory(uint64,uint64)\nexpectSafeMemoryCall(uint64,uint64)\n\ngetCode(string)\ngetDeployedCode(string)\nlabel(address,string)\ngetLabel(address)(string)\nassume(bool)\nsetNonce(address,uint64)\ngetNonce(address)\nresetNonce(address)\nsetNonceUnsafe(address,uint64)\nchainId(uint256)\ntxGasPrice(uint256)\n\nbroadcast()\nbroadcast(address)\nbroadcast(uint256)\nstartBroadcast()\nstartBroadcast(address)\nstartBroadcast(uint256)\nstopBroadcast()\n\nprojectRoot()(string)\nreadFile(string)(string)\nreadFileBinary(string)(bytes)\nwriteFile(string,string)\nwriteFileBinary(string,bytes)\nopenFile(string)\nreadLine(string)(string)\nwriteLine(string,string)\ncloseFile(string)\nremoveFile(string)\ncreateDir(string, bool)\nremoveDir(string, bool)\nreadDir(string)(DirEntry[])\nreadDir(string, uint64)(DirEntry[])\nreadDir(string, uint64, bool)(DirEntry[])\nreadLink(string)(string)\nfsMetadata(string)(FsMetadata)\n\ntoString(bytes)\ntoString(address)\ntoString(uint256)\ntoString(int256)\ntoString(bytes32)\ntoString(bool)\nparseBytes(string)(bytes)\nparseAddress(string)(address)\nparseUint(string)(uint256)\nparseInt(string)(int256)\nparseBytes32(string)(bytes32)\nparseBool(string)(bool)\n\nsnapshot()(uint256)\nrevertTo(uint256)(bool)\ncreateFork(string,uint256)(uint256)\ncreateFork(string,bytes32)(uint256)\ncreateFork(string)(uint256)\ncreateSelectFork(string,uint256)(uint256)\ncreateSelectFork(string,bytes32)(uint256)\ncreateSelectFork(string)(uint256)\nselectFork(uint256)\nactiveFork()(uint256)\ntransact(bytes32)\ntransact(uint256,bytes32)\nmakePersistent(address)\nmakePersistent(address,address)\nmakePersistent(address,address,address)\nmakePersistent(address[])\nrevokePersistent(address)\nrevokePersistent(address[])\nisPersistent(address)(bool)\nrollFork(uint256)\nrollFork(bytes32)\nrollFork(uint256,uint256)\nrollFork(uint256,bytes32)\nrpcUrl(string)(string)\nrpcUrls()(string[2][])\nrpcUrlStructs()(Rpc[])\n\nwriteJson(string, string)\nwriteJson(string, string, string)\nparseJson(string)(bytes)\nparseJson(string, string)(bytes)\nparseJsonUint(string, string)(uint256)\nparseJsonUintArray(string, string)(uint256[])\nparseJsonInt(string, string)(int256)\nparseJsonIntArray(string, string)(int256[])\nparseJsonString(string, string)(string)\nparseJsonStringArray(string, string)(string[])\nparseJsonAddress(string, string)(address)\nparseJsonAddressArray(string, string)(address[])\nparseJsonBool(string, string)(bool)\nparseJsonBoolArray(string, string)(bool[])\nparseJsonBytes(string, string)(bytes)\nparseJsonBytesArray(string, string)(bytes[])\nparseJsonBytes32(string, string)(bytes32)\nparseJsonBytes32Array(string, string)(bytes32[])\nserializeBool(string,string,bool)(string)\nserializeBool(string,string,bool[])(string)\nserializeUint(string,string,uint256)(string)\nserializeUint(string,string,uint256[])(string)\nserializeInt(string,string,int256)(string)\nserializeInt(string,string,int256[])(string)\nserializeAddress(string,string,address)(string)\nserializeAddress(string,string,address[])(string)\nserializeBytes32(string,string,bytes32)(string)\nserializeBytes32(string,string,bytes32[])(string)\nserializeString(string,string,string)(string)\nserializeString(string,string,string[])(string)\nserializeBytes(string,string,bytes)(string)\nserializeBytes(string,string,bytes[])(string)\n\npauseGasMetering()\nresumeGasMetering()\n\n]";
     ///The parsed human-readable ABI of the contract.
     pub static HEVM_ABI: ::ethers_contract::Lazy<::ethers_core::abi::Abi> = ::ethers_contract::Lazy::new(||
     ::ethers_core::abi::parse_abi_str(__ABI).expect("ABI is always valid"));
@@ -1280,6 +1280,21 @@ pub mod hevm {
                 .method_hash([217, 48, 160, 230], ())
                 .expect("method not found (this should never happen)")
         }
+        ///Calls the contract's `readCallers` (0x4ad0bac9) function
+        pub fn read_callers(
+            &self,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            (
+                ::ethers_core::types::U256,
+                ::ethers_core::types::Address,
+                ::ethers_core::types::Address,
+            ),
+        > {
+            self.0
+                .method_hash([74, 208, 186, 201], ())
+                .expect("method not found (this should never happen)")
+        }
         ///Calls the contract's `readDir` (0xc4bc59e0) function
         pub fn read_dir_0(
             &self,
@@ -1402,6 +1417,15 @@ pub mod hevm {
         ) -> ::ethers_contract::builders::ContractCall<M, ()> {
             self.0
                 .method_hash([241, 175, 224, 77], p0)
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `resetNonce` (0x1c72346d) function
+        pub fn reset_nonce(
+            &self,
+            p0: ::ethers_core::types::Address,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([28, 114, 52, 109], p0)
                 .expect("method not found (this should never happen)")
         }
         ///Calls the contract's `resumeGasMetering` (0x2bcd50e0) function
@@ -1698,6 +1722,16 @@ pub mod hevm {
         ) -> ::ethers_contract::builders::ContractCall<M, ()> {
             self.0
                 .method_hash([248, 225, 139, 87], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `setNonceUnsafe` (0x9b67b21c) function
+        pub fn set_nonce_unsafe(
+            &self,
+            p0: ::ethers_core::types::Address,
+            p1: u64,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([155, 103, 178, 28], (p0, p1))
                 .expect("method not found (this should never happen)")
         }
         ///Calls the contract's `sign` (0xe341eaa4) function
@@ -3638,6 +3672,19 @@ pub mod hevm {
     )]
     #[ethcall(name = "projectRoot", abi = "projectRoot()")]
     pub struct ProjectRootCall;
+    ///Container type for all input parameters for the `readCallers` function with signature `readCallers()` and selector `0x4ad0bac9`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "readCallers", abi = "readCallers()")]
+    pub struct ReadCallersCall;
     ///Container type for all input parameters for the `readDir` function with signature `readDir(string)` and selector `0xc4bc59e0`
     #[derive(
         Clone,
@@ -3794,6 +3841,19 @@ pub mod hevm {
     )]
     #[ethcall(name = "removeFile", abi = "removeFile(string)")]
     pub struct RemoveFileCall(pub ::std::string::String);
+    ///Container type for all input parameters for the `resetNonce` function with signature `resetNonce(address)` and selector `0x1c72346d`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "resetNonce", abi = "resetNonce(address)")]
+    pub struct ResetNonceCall(pub ::ethers_core::types::Address);
     ///Container type for all input parameters for the `resumeGasMetering` function with signature `resumeGasMetering()` and selector `0x2bcd50e0`
     #[derive(
         Clone,
@@ -4242,6 +4302,19 @@ pub mod hevm {
     )]
     #[ethcall(name = "setNonce", abi = "setNonce(address,uint64)")]
     pub struct SetNonceCall(pub ::ethers_core::types::Address, pub u64);
+    ///Container type for all input parameters for the `setNonceUnsafe` function with signature `setNonceUnsafe(address,uint64)` and selector `0x9b67b21c`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "setNonceUnsafe", abi = "setNonceUnsafe(address,uint64)")]
+    pub struct SetNonceUnsafeCall(pub ::ethers_core::types::Address, pub u64);
     ///Container type for all input parameters for the `sign` function with signature `sign(uint256,bytes32)` and selector `0xe341eaa4`
     #[derive(
         Clone,
@@ -4698,6 +4771,7 @@ pub mod hevm {
         Prank1(Prank1Call),
         Prevrandao(PrevrandaoCall),
         ProjectRoot(ProjectRootCall),
+        ReadCallers(ReadCallersCall),
         ReadDir0(ReadDir0Call),
         ReadDir1(ReadDir1Call),
         ReadDir2(ReadDir2Call),
@@ -4710,6 +4784,7 @@ pub mod hevm {
         RememberKey(RememberKeyCall),
         RemoveDir(RemoveDirCall),
         RemoveFile(RemoveFileCall),
+        ResetNonce(ResetNonceCall),
         ResumeGasMetering(ResumeGasMeteringCall),
         RevertTo(RevertToCall),
         RevokePersistent0(RevokePersistent0Call),
@@ -4739,6 +4814,7 @@ pub mod hevm {
         SerializeUint1(SerializeUint1Call),
         SetEnv(SetEnvCall),
         SetNonce(SetNonceCall),
+        SetNonceUnsafe(SetNonceUnsafeCall),
         Sign(SignCall),
         Snapshot(SnapshotCall),
         StartBroadcast0(StartBroadcast0Call),
@@ -5269,6 +5345,10 @@ pub mod hevm {
                 return Ok(Self::ProjectRoot(decoded));
             }
             if let Ok(decoded)
+                = <ReadCallersCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+                return Ok(Self::ReadCallers(decoded));
+            }
+            if let Ok(decoded)
                 = <ReadDir0Call as ::ethers_core::abi::AbiDecode>::decode(data) {
                 return Ok(Self::ReadDir0(decoded));
             }
@@ -5315,6 +5395,10 @@ pub mod hevm {
             if let Ok(decoded)
                 = <RemoveFileCall as ::ethers_core::abi::AbiDecode>::decode(data) {
                 return Ok(Self::RemoveFile(decoded));
+            }
+            if let Ok(decoded)
+                = <ResetNonceCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+                return Ok(Self::ResetNonce(decoded));
             }
             if let Ok(decoded)
                 = <ResumeGasMeteringCall as ::ethers_core::abi::AbiDecode>::decode(
@@ -5445,6 +5529,10 @@ pub mod hevm {
             if let Ok(decoded)
                 = <SetNonceCall as ::ethers_core::abi::AbiDecode>::decode(data) {
                 return Ok(Self::SetNonce(decoded));
+            }
+            if let Ok(decoded)
+                = <SetNonceUnsafeCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+                return Ok(Self::SetNonceUnsafe(decoded));
             }
             if let Ok(decoded)
                 = <SignCall as ::ethers_core::abi::AbiDecode>::decode(data) {
@@ -5830,6 +5918,9 @@ pub mod hevm {
                 Self::ProjectRoot(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
+                Self::ReadCallers(element) => {
+                    ::ethers_core::abi::AbiEncode::encode(element)
+                }
                 Self::ReadDir0(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::ReadDir1(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::ReadDir2(element) => ::ethers_core::abi::AbiEncode::encode(element),
@@ -5850,6 +5941,9 @@ pub mod hevm {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
                 Self::RemoveFile(element) => {
+                    ::ethers_core::abi::AbiEncode::encode(element)
+                }
+                Self::ResetNonce(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
                 Self::ResumeGasMetering(element) => {
@@ -5927,6 +6021,9 @@ pub mod hevm {
                 }
                 Self::SetEnv(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::SetNonce(element) => ::ethers_core::abi::AbiEncode::encode(element),
+                Self::SetNonceUnsafe(element) => {
+                    ::ethers_core::abi::AbiEncode::encode(element)
+                }
                 Self::Sign(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::Snapshot(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::StartBroadcast0(element) => {
@@ -6132,6 +6229,7 @@ pub mod hevm {
                 Self::Prank1(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Prevrandao(element) => ::core::fmt::Display::fmt(element, f),
                 Self::ProjectRoot(element) => ::core::fmt::Display::fmt(element, f),
+                Self::ReadCallers(element) => ::core::fmt::Display::fmt(element, f),
                 Self::ReadDir0(element) => ::core::fmt::Display::fmt(element, f),
                 Self::ReadDir1(element) => ::core::fmt::Display::fmt(element, f),
                 Self::ReadDir2(element) => ::core::fmt::Display::fmt(element, f),
@@ -6144,6 +6242,7 @@ pub mod hevm {
                 Self::RememberKey(element) => ::core::fmt::Display::fmt(element, f),
                 Self::RemoveDir(element) => ::core::fmt::Display::fmt(element, f),
                 Self::RemoveFile(element) => ::core::fmt::Display::fmt(element, f),
+                Self::ResetNonce(element) => ::core::fmt::Display::fmt(element, f),
                 Self::ResumeGasMetering(element) => ::core::fmt::Display::fmt(element, f),
                 Self::RevertTo(element) => ::core::fmt::Display::fmt(element, f),
                 Self::RevokePersistent0(element) => ::core::fmt::Display::fmt(element, f),
@@ -6173,6 +6272,7 @@ pub mod hevm {
                 Self::SerializeUint1(element) => ::core::fmt::Display::fmt(element, f),
                 Self::SetEnv(element) => ::core::fmt::Display::fmt(element, f),
                 Self::SetNonce(element) => ::core::fmt::Display::fmt(element, f),
+                Self::SetNonceUnsafe(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Sign(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Snapshot(element) => ::core::fmt::Display::fmt(element, f),
                 Self::StartBroadcast0(element) => ::core::fmt::Display::fmt(element, f),
@@ -6791,6 +6891,11 @@ pub mod hevm {
             Self::ProjectRoot(value)
         }
     }
+    impl ::core::convert::From<ReadCallersCall> for HEVMCalls {
+        fn from(value: ReadCallersCall) -> Self {
+            Self::ReadCallers(value)
+        }
+    }
     impl ::core::convert::From<ReadDir0Call> for HEVMCalls {
         fn from(value: ReadDir0Call) -> Self {
             Self::ReadDir0(value)
@@ -6849,6 +6954,11 @@ pub mod hevm {
     impl ::core::convert::From<RemoveFileCall> for HEVMCalls {
         fn from(value: RemoveFileCall) -> Self {
             Self::RemoveFile(value)
+        }
+    }
+    impl ::core::convert::From<ResetNonceCall> for HEVMCalls {
+        fn from(value: ResetNonceCall) -> Self {
+            Self::ResetNonce(value)
         }
     }
     impl ::core::convert::From<ResumeGasMeteringCall> for HEVMCalls {
@@ -6994,6 +7104,11 @@ pub mod hevm {
     impl ::core::convert::From<SetNonceCall> for HEVMCalls {
         fn from(value: SetNonceCall) -> Self {
             Self::SetNonce(value)
+        }
+    }
+    impl ::core::convert::From<SetNonceUnsafeCall> for HEVMCalls {
+        fn from(value: SetNonceUnsafeCall) -> Self {
+            Self::SetNonceUnsafe(value)
         }
     }
     impl ::core::convert::From<SignCall> for HEVMCalls {
@@ -7956,6 +8071,22 @@ pub mod hevm {
         Hash
     )]
     pub struct ProjectRootReturn(pub ::std::string::String);
+    ///Container type for all return fields from the `readCallers` function with signature `readCallers()` and selector `0x4ad0bac9`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthAbiType,
+        ::ethers_contract::EthAbiCodec,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    pub struct ReadCallersReturn(
+        pub ::ethers_core::types::U256,
+        pub ::ethers_core::types::Address,
+        pub ::ethers_core::types::Address,
+    );
     ///Container type for all return fields from the `readDir` function with signature `readDir(string)` and selector `0xc4bc59e0`
     #[derive(
         Clone,
