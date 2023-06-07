@@ -6,10 +6,7 @@ use crate::{
     utils::FoundryPathExt,
 };
 use clap::Parser;
-use ethers::prelude::{
-    artifacts::output_selection::ContractOutputSelection,
-    info::ContractInfo,
-};
+use ethers::prelude::{artifacts::output_selection::ContractOutputSelection, info::ContractInfo};
 use foundry_common::{
     compile,
     selectors::{import_selectors, SelectorImportData},
@@ -21,25 +18,25 @@ pub enum SelectorsSubcommands {
     /// Check for selector collisions between contracts
     #[clap(visible_alias = "co")]
     Collision {
-        /// First contract 
+        /// First contract
         #[clap(
             help = "The first of the two contracts for which to look selector collisions for, in the form `(<path>:)?<contractname>`",
-            value_name = "FIRST_CONTRACT",
+            value_name = "FIRST_CONTRACT"
         )]
         first_contract: ContractInfo,
-        
-        /// Second contract 
+
+        /// Second contract
         #[clap(
             help = "The second of the two contracts for which to look selector collisions for, in the form `(<path>:)?<contractname>`",
-            value_name = "SECOND_CONTRACT",
+            value_name = "SECOND_CONTRACT"
         )]
         second_contract: ContractInfo,
 
         /// Support build args
         #[clap(flatten)]
-        build: CoreBuildArgs,
+        build: Box<CoreBuildArgs>,
     },
-    
+
     /// Upload selectors to registry
     #[clap(visible_alias = "up")]
     Upload {
@@ -142,10 +139,10 @@ impl SelectorsSubcommands {
                 let second_found_artifact = second_outcome.find_contract(&second_contract);
 
                 // Unwrap inner artifacts
-                let first_artifact = first_found_artifact.ok_or_else( || {
+                let first_artifact = first_found_artifact.ok_or_else(|| {
                     eyre::eyre!("Failed to extract first artifact bytecode as a string")
                 })?;
-                let second_artifact = second_found_artifact.ok_or_else( || {
+                let second_artifact = second_found_artifact.ok_or_else(|| {
                     eyre::eyre!("Failed to extract second artifact bytecode as a string")
                 })?;
 
@@ -155,7 +152,11 @@ impl SelectorsSubcommands {
 
                 let mut colliding_methods = Vec::new();
                 for (k1, v1) in first_method_map {
-                    if let Some(k2) = second_method_map.iter().find_map(|(k2,v2)| if v1 == v2 {Some(k2)} else {None}) {
+                    if let Some(k2) =
+                        second_method_map
+                            .iter()
+                            .find_map(|(k2, v2)| if v1 == v2 { Some(k2) } else { None })
+                    {
                         colliding_methods.push((k1, k2));
                     }
                 }
@@ -165,7 +166,7 @@ impl SelectorsSubcommands {
                 } else {
                     println!("\t{}\t{}", first_contract.name, second_contract.name);
                     println!("The two contracts have the following methods whose selectors collide: {:#?}", colliding_methods);
-                    return Err(eyre::eyre!("Collision found"));
+                    return Err(eyre::eyre!("Collision found"))
                 }
             }
         }
