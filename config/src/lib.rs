@@ -1723,7 +1723,7 @@ impl Default for Config {
             allow_paths: vec![],
             include_paths: vec![],
             force: false,
-            evm_version: Default::default(),
+            evm_version: EvmVersion::Paris,
             gas_reports: vec!["*".to_string()],
             gas_reports_ignore: vec![],
             solc: None,
@@ -1771,6 +1771,7 @@ impl Default for Config {
             ignored_error_codes: vec![
                 SolidityErrorCode::SpdxLicenseNotProvided,
                 SolidityErrorCode::ContractExceeds24576Bytes,
+                SolidityErrorCode::ContractInitCodeSizeExceeds49152Bytes,
             ],
             deny_warnings: false,
             via_ir: false,
@@ -3969,6 +3970,8 @@ mod tests {
                     show_unproved: None,
                     div_mod_with_slacks: None,
                     solvers: None,
+                    show_unsupported: None,
+                    show_proved_safe: None,
                 })
             );
 
@@ -4029,6 +4032,8 @@ mod tests {
                     show_unproved: None,
                     div_mod_with_slacks: None,
                     solvers: None,
+                    show_unsupported: None,
+                    show_proved_safe: None,
                 })
             );
 

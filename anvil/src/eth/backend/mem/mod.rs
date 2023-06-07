@@ -54,6 +54,7 @@ use ethers::{
     },
     utils::{get_contract_address, hex, keccak256, rlp},
 };
+use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use forge::{
     executor::inspector::AccessListTracer,
     hashbrown,
@@ -79,7 +80,13 @@ use foundry_evm::{
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hash_db::HashDB;
 use parking_lot::{Mutex, RwLock};
-use std::{collections::HashMap, ops::Deref, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    io::{Read, Write},
+    ops::Deref,
+    sync::Arc,
+    time::Duration,
+};
 use storage::{Blockchain, MinedTransaction};
 use tokio::sync::RwLock as AsyncRwLock;
 use tracing::{trace, warn};
@@ -630,14 +637,28 @@ impl Backend {
     /// Write all chain data to serialized bytes buffer
     pub async fn dump_state(&self) -> Result<Bytes, BlockchainError> {
         let state = self.serialized_state().await?;
-        let content = serde_json::to_vec(&state).unwrap_or_default().into();
-        Ok(content)
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder
+            .write_all(&serde_json::to_vec(&state).unwrap_or_default())
+            .map_err(|_| BlockchainError::DataUnavailable)?;
+        Ok(encoder.finish().unwrap_or_default().into())
     }
 
     /// Deserialize and add all chain data to the backend storage
     pub async fn load_state(&self, buf: Bytes) -> Result<bool, BlockchainError> {
-        let state: SerializableState =
-            serde_json::from_slice(&buf.0).map_err(|_| BlockchainError::FailedToDecodeStateDump)?;
+        let orig_buf = &buf.0[..];
+        let mut decoder = GzDecoder::new(orig_buf);
+        let mut decoded_data = Vec::new();
+
+        let state: SerializableState = serde_json::from_slice(if decoder.header().is_some() {
+            decoder
+                .read_to_end(decoded_data.as_mut())
+                .map_err(|_| BlockchainError::FailedToDecodeStateDump)?;
+            &decoded_data
+        } else {
+            &buf.0
+        })
+        .map_err(|_| BlockchainError::FailedToDecodeStateDump)?;
 
         if !self.db.write().await.load_state(state)? {
             Err(RpcError::invalid_params(

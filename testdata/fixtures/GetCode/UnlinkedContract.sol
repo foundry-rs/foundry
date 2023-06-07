@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.18;
+pragma solidity 0.8.18;
 
 library SmolLibrary {
     function add(uint256 a, uint256 b) public pure returns (uint256 c) {
