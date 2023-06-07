@@ -57,12 +57,7 @@ impl<'a> FuzzedExecutor<'a> {
     /// test case.
     ///
     /// Returns a list of all the consumed gas and calldata of every fuzz case
-    pub fn fuzz(
-        &self,
-        func: &Function,
-        address: Address,
-        errors: Option<&Abi>,
-    ) -> FuzzTestResult {
+    pub fn fuzz(&self, func: &Function, address: Address, errors: Option<&Abi>) -> FuzzTestResult {
         // Stores the first Fuzzcase
         let first_case: RefCell<Option<FuzzCase>> = RefCell::default();
 
