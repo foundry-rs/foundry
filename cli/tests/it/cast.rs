@@ -373,6 +373,16 @@ casttest!(cast_receipt_revert_reason, |_: TestProject, mut cmd: TestCommand| {
     assert!(output.contains("Transaction too old"));
 });
 
+// tests that `cast --parse-bytes32-address` command is working correctly.
+casttest!(parse_bytes32_address, |_: TestProject, mut cmd: TestCommand| {
+    cmd.args([
+        "--parse-bytes32-address",
+        "0x000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045",
+    ]);
+    let output = cmd.stdout_lossy();
+    assert_eq!(output.trim(), "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
+});
+
 casttest!(cast_access_list, |_: TestProject, mut cmd: TestCommand| {
     let rpc = next_http_rpc_endpoint();
     cmd.args([
