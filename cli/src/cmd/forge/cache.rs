@@ -21,10 +21,10 @@ pub struct CacheArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum CacheSubcommands {
-    #[clap(about = "Cleans cached data from ~/.foundry.")]
+    /// Cleans cached data from the global foundry directory.
     Clean(CleanArgs),
 
-    #[clap(about = "Shows cached data from ~/.foundry.")]
+    /// Shows cached data from the global foundry directory.
     Ls(LsArgs),
 }
 
@@ -32,25 +32,28 @@ pub enum CacheSubcommands {
 #[derive(Debug, Parser)]
 #[clap(group = clap::ArgGroup::new("etherscan-blocks").multiple(false))]
 pub struct CleanArgs {
+    /// The chains to clean the cache for.
+    ///
+    /// Can also be "all" to clean all chains.
     #[clap(
         env = "CHAIN",
         default_value = "all",
         value_parser = ChainOrAllValueParser::default(),
-        value_name = "CHAINS"
     )]
     chains: Vec<ChainOrAll>,
 
+    /// The blocks to clean the cache for.
     #[clap(
         short,
         long,
         num_args(1..),
         use_value_delimiter(true),
         value_delimiter(','),
-        value_name = "BLOCKS",
         group = "etherscan-blocks"
     )]
     blocks: Vec<u64>,
 
+    /// Whether to clean the Etherscan cache.
     #[clap(long, group = "etherscan-blocks")]
     etherscan: bool,
 }
@@ -80,11 +83,13 @@ impl Cmd for CleanArgs {
 
 #[derive(Debug, Parser)]
 pub struct LsArgs {
+    /// The chains to list the cache for.
+    ///
+    /// Can also be "all" to list all chains.
     #[clap(
         env = "CHAIN",
         default_value = "all",
         value_parser = ChainOrAllValueParser::default(),
-        value_name = "CHAINS"
     )]
     chains: Vec<ChainOrAll>,
 }

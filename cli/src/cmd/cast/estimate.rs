@@ -13,17 +13,17 @@ use std::str::FromStr;
 /// CLI arguments for `cast estimate`.
 #[derive(Debug, Parser)]
 pub struct EstimateArgs {
-    /// The destination of the transaction
+    /// The destination of the transaction.
     #[clap(value_parser = NameOrAddress::from_str)]
     to: Option<NameOrAddress>,
 
-    /// The signature of the function to call
+    /// The signature of the function to call.
     sig: Option<String>,
 
-    /// The arguments of the function to call
+    /// The arguments of the function to call.
     args: Vec<String>,
 
-    /// The sender account
+    /// The sender account.
     #[clap(
         short,
         long,
@@ -33,7 +33,7 @@ pub struct EstimateArgs {
     )]
     from: NameOrAddress,
 
-    /// Ether to send in the transaction
+    /// Ether to send in the transaction.
     ///
     /// Either specified in wei, or as a string with a unit type:
     ///

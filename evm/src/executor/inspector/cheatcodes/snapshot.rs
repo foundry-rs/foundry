@@ -1,15 +1,11 @@
-use super::Cheatcodes;
+use super::Result;
 use crate::{abi::HEVMCalls, executor::backend::DatabaseExt};
-use bytes::Bytes;
 use ethers::abi::AbiEncode;
 use revm::EVMData;
 
 /// Handles fork related cheatcodes
-pub fn apply<DB: DatabaseExt>(
-    _state: &mut Cheatcodes,
-    data: &mut EVMData<'_, DB>,
-    call: &HEVMCalls,
-) -> Option<Result<Bytes, Bytes>> {
+#[instrument(level = "error", name = "snapshot", target = "evm::cheatcodes", skip_all)]
+pub fn apply<DB: DatabaseExt>(data: &mut EVMData<'_, DB>, call: &HEVMCalls) -> Option<Result> {
     Some(match call {
         HEVMCalls::Snapshot(_) => {
             Ok(data.db.snapshot(&data.journaled_state, data.env).encode().into())

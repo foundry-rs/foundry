@@ -7,16 +7,11 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 # foundry internal
 foundry-evm = { path = "../../evm" }
-revm = { version = "2.3", default-features = false, features = [
-    "std",
-    "k256",
-    "with-serde",
-    "memory_limit",
-] }
+revm = { version = "3", default-features = false, features = ["std", "serde", "memory_limit"] }
 
 ethers-core = { workspace = true }
-serde = { version = "1.0", features = ["derive"], optional = true }
-serde_json = { version = "1.0" }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = "1"
 bytes = { version = "1.4" }
 open-fastrlp = { version = "0.1.4", optional = true }
 

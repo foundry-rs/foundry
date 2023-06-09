@@ -21,31 +21,26 @@ use tracing::log::warn;
 /// CLI arguments for `forge fmt`.
 #[derive(Debug, Clone, Parser)]
 pub struct FmtArgs {
-    #[clap(
-        help = "path to the file, directory or '-' to read from stdin",
-        value_hint = ValueHint::FilePath,
-        value_name = "PATH",
-        num_args(1..)
-    )]
+    /// Path to the file, directory or '-' to read from stdin.
+    #[clap(value_hint = ValueHint::FilePath, value_name = "PATH", num_args(1..))]
     paths: Vec<PathBuf>,
-    #[clap(
-        help = "The project's root path.",
-        long_help = "The project's root path. By default, this is the root directory of the current Git repository, or the current working directory.",
-        long,
-        value_hint = ValueHint::DirPath,
-        value_name = "PATH"
-    )]
+
+    /// The project's root path.
+    ///
+    /// By default root of the Git repository, if in one,
+    /// or the current working directory.
+    #[clap(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     root: Option<PathBuf>,
-    #[clap(
-        help = "run in 'check' mode. Exits with 0 if input is formatted correctly. Exits with 1 if formatting is required.",
-        long
-    )]
+
+    /// Run in 'check' mode.
+    ///
+    /// Exits with 0 if input is formatted correctly.
+    /// Exits with 1 if formatting is required.
+    #[clap(long)]
     check: bool,
-    #[clap(
-        help = "in 'check' and stdin modes, outputs raw formatted code instead of diff",
-        long = "raw",
-        short
-    )]
+
+    /// In 'check' and stdin modes, outputs raw formatted code instead of the diff.
+    #[clap(long, short)]
     raw: bool,
 }
 

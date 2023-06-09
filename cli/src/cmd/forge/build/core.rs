@@ -21,21 +21,13 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Parser, Serialize, Default)]
 #[clap(next_help_heading = "Build options")]
 pub struct CoreBuildArgs {
-    #[clap(
-        help_heading = "Cache options",
-        help = "Clear the cache and artifacts folder and recompile.",
-        long
-    )]
+    /// Clear the cache and artifacts folder and recompile.
+    #[clap(long, help_heading = "Cache options")]
     #[serde(skip)]
     pub force: bool,
 
-    #[clap(
-        help_heading = "Linker options",
-        help = "Set pre-linked libraries.",
-        long,
-        env = "DAPP_LIBRARIES",
-        value_name = "LIBRARIES"
-    )]
+    /// Set pre-linked libraries.
+    #[clap(long, help_heading = "Linker options", env = "DAPP_LIBRARIES")]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub libraries: Vec<String>,
 
@@ -43,48 +35,37 @@ pub struct CoreBuildArgs {
     #[serde(flatten)]
     pub compiler: CompilerArgs,
 
-    #[clap(
-        help_heading = "Compiler options",
-        help = "Ignore solc warnings by error code.",
-        long,
-        value_name = "ERROR_CODES"
-    )]
+    /// Ignore solc warnings by error code.
+    #[clap(long, help_heading = "Compiler options", value_name = "ERROR_CODES")]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub ignored_error_codes: Vec<u64>,
 
-    #[clap(
-        help_heading = "Compiler options",
-        help = "Warnings will trigger a compiler error",
-        long
-    )]
+    /// Warnings will trigger a compiler error
+    #[clap(long, help_heading = "Compiler options")]
     #[serde(skip)]
     pub deny_warnings: bool,
 
-    #[clap(help_heading = "Compiler options", help = "Do not auto-detect solc.", long)]
+    /// Do not auto-detect the `solc` version.
+    #[clap(long, help_heading = "Compiler options")]
     #[serde(skip)]
     pub no_auto_detect: bool,
 
     /// Specify the solc version, or a path to a local solc, to build with.
     ///
     /// Valid values are in the format `x.y.z`, `solc:x.y.z` or `path/to/solc`.
-    #[clap(help_heading = "Compiler options", value_name = "SOLC_VERSION", long = "use")]
+    #[clap(long = "use", help_heading = "Compiler options", value_name = "SOLC_VERSION")]
     #[serde(skip)]
     pub use_solc: Option<String>,
 
-    #[clap(
-        help_heading = "Compiler options",
-        help = "Do not access the network.",
-        long_help = "Do not access the network. Missing solc versions will not be installed.",
-        long
-    )]
+    /// Do not access the network.
+    ///
+    /// Missing solc versions will not be installed.
+    #[clap(help_heading = "Compiler options", long)]
     #[serde(skip)]
     pub offline: bool,
 
-    #[clap(
-        help_heading = "Compiler options",
-        help = "Use the Yul intermediate representation compilation pipeline.",
-        long
-    )]
+    /// Use the Yul intermediate representation compilation pipeline.
+    #[clap(long, help_heading = "Compiler options")]
     #[serde(skip)]
     pub via_ir: bool,
 
@@ -92,46 +73,42 @@ pub struct CoreBuildArgs {
     #[serde(flatten)]
     pub project_paths: ProjectPathsArgs,
 
+    /// The path to the contract artifacts folder.
     #[clap(
-        help_heading = "Project options",
-        help = "The path to the contract artifacts folder.",
         long = "out",
         short,
+        help_heading = "Project options",
         value_hint = ValueHint::DirPath,
-        value_name = "PATH"
+        value_name = "PATH",
     )]
     #[serde(rename = "out", skip_serializing_if = "Option::is_none")]
     pub out_path: Option<PathBuf>,
 
-    #[clap(
-        help_heading = "Project options",
-        help = r#"Revert string configuration. Possible values are "default", "strip" (remove), "debug" (Solidity-generated revert strings) and "verboseDebug""#,
-        long = "revert-strings",
-        value_name = "REVERT"
-    )]
+    /// Revert string configuration.
+    ///
+    /// Possible values are "default", "strip" (remove),
+    /// "debug" (Solidity-generated revert strings) and "verboseDebug"
+    #[clap(long, help_heading = "Project options", value_name = "REVERT")]
     #[serde(skip)]
     pub revert_strings: Option<RevertStrings>,
 
-    #[clap(help_heading = "Compiler options", long, help = "Don't print anything on startup.")]
+    /// Don't print anything on startup.
+    #[clap(long, help_heading = "Compiler options")]
     #[serde(skip)]
     pub silent: bool,
 
-    #[clap(
-        long,
-        name = "build_info",
-        help_heading = "Project options",
-        help = "Generate build info files."
-    )]
+    /// Generate build info files.
+    #[clap(long, help_heading = "Project options")]
     #[serde(skip)]
     pub build_info: bool,
 
+    /// Output path to directory that build info files will be written to.
     #[clap(
-        help_heading = "Project options",
-        help = "Output path to directory that build info files will be written to.",
         long,
+        help_heading = "Project options",
         value_hint = ValueHint::DirPath,
         value_name = "PATH",
-        requires = "build_info"
+        requires = "build_info",
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_info_path: Option<PathBuf>,

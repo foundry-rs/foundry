@@ -1,11 +1,13 @@
-use crate::utils::apply_chain_and_block_specific_env_changes;
+use crate::utils::{
+    apply_chain_and_block_specific_env_changes, h160_to_b160, h256_to_b256, u256_to_ru256,
+};
 use ethers::{
     providers::Middleware,
     types::{Address, Block, TxHash, U256},
 };
 use eyre::WrapErr;
 use futures::TryFutureExt;
-use revm::{BlockEnv, CfgEnv, Env, TxEnv};
+use revm::primitives::{BlockEnv, CfgEnv, Env, TxEnv};
 
 /// Initializes a REVM block environment based on a forked
 /// ethereum provider.
@@ -51,7 +53,7 @@ where
 
     let mut env = Env {
         cfg: CfgEnv {
-            chain_id: override_chain_id.unwrap_or(rpc_chain_id.as_u64()).into(),
+            chain_id: u256_to_ru256(override_chain_id.unwrap_or(rpc_chain_id.as_u64()).into()),
             memory_limit,
             limit_contract_code_size: Some(usize::MAX),
             // EIP-3607 rejects transactions from senders with deployed code.
@@ -61,17 +63,17 @@ where
             ..Default::default()
         },
         block: BlockEnv {
-            number: block.number.expect("block number not found").as_u64().into(),
-            timestamp: block.timestamp,
-            coinbase: block.author.unwrap_or_default(),
-            difficulty: block.difficulty,
-            prevrandao: block.mix_hash,
-            basefee: block.base_fee_per_gas.unwrap_or_default(),
-            gas_limit: block.gas_limit,
+            number: u256_to_ru256(block.number.expect("block number not found").as_u64().into()),
+            timestamp: block.timestamp.into(),
+            coinbase: h160_to_b160(block.author.unwrap_or_default()),
+            difficulty: block.difficulty.into(),
+            prevrandao: Some(block.mix_hash.map(h256_to_b256).unwrap_or_default()),
+            basefee: block.base_fee_per_gas.unwrap_or_default().into(),
+            gas_limit: block.gas_limit.into(),
         },
         tx: TxEnv {
-            caller: origin,
-            gas_price: gas_price.map(U256::from).unwrap_or(fork_gas_price),
+            caller: h160_to_b160(origin),
+            gas_price: gas_price.map(U256::from).unwrap_or(fork_gas_price).into(),
             chain_id: Some(override_chain_id.unwrap_or(rpc_chain_id.as_u64())),
             gas_limit: block.gas_limit.as_u64(),
             ..Default::default()

@@ -231,19 +231,31 @@ impl DocBuilder {
         fs::create_dir_all(&out_dir_src)?;
 
         // Write readme content if any
-        let readme_content = {
-            let src_readme = self.sources.join(Self::README);
+        let homepage_content = {
+            // Default to the homepage README if it's available.
+            // If not, use the src README as a fallback.
+            let homepage_or_src_readme = self
+                .config
+                .homepage
+                .as_ref()
+                .map(|homepage| self.root.join(homepage))
+                .unwrap_or_else(|| self.sources.join(Self::README));
+            // Grab the root readme.
             let root_readme = self.root.join(Self::README);
-            if src_readme.exists() {
-                fs::read_to_string(src_readme)?
+
+            // Check to see if there is a 'homepage' option specified in config.
+            // If not, fall back to src and root readme files, in that order.
+            if homepage_or_src_readme.exists() {
+                fs::read_to_string(homepage_or_src_readme)?
             } else if root_readme.exists() {
                 fs::read_to_string(root_readme)?
             } else {
                 String::new()
             }
         };
+
         let readme_path = out_dir_src.join(Self::README);
-        fs::write(&readme_path, readme_content)?;
+        fs::write(&readme_path, homepage_content)?;
 
         // Write summary and section readmes
         let mut summary = BufWriter::default();

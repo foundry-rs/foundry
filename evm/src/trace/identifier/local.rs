@@ -24,8 +24,8 @@ impl LocalTraceIdentifier {
     }
 
     /// Get all the events of the local contracts.
-    pub fn events(&self) -> Vec<Event> {
-        self.local_contracts.iter().flat_map(|(_, (_, abi))| abi.events().cloned()).collect()
+    pub fn events(&self) -> impl Iterator<Item = &Event> {
+        self.local_contracts.iter().flat_map(|(_, (_, abi))| abi.events())
     }
 }
 

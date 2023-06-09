@@ -69,7 +69,7 @@ impl GasReport {
                 (!self.ignore.contains(&contract_name) && self.report_for.is_empty()) ||
                 (self.report_for.contains(&contract_name));
             if report_contract {
-                let mut contract_report =
+                let contract_report =
                     self.contracts.entry(name.to_string()).or_insert_with(Default::default);
 
                 match &trace.data {

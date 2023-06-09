@@ -78,7 +78,7 @@ allow_paths = []
 # additional solc include paths
 include_paths = []
 force = false
-evm_version = 'london'
+evm_version = 'shanghai'
 gas_reports = ['*']
 gas_reports_ignore = []
 ## Sets the concrete solc version to use, this overrides the `auto_detect_solc` value
@@ -113,8 +113,9 @@ no_match_contract = "Bar"
 match_path = "*/Foo*"
 no_match_path = "*/Bar*"
 ffi = false
-sender = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
-tx_origin = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
+# These are the default callers, generated using `address(uint160(uint256(keccak256("foundry default caller"))))`
+sender = '0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38'
+tx_origin = '0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38'
 initial_balance = '0xffffffffffffffffffffffff'
 block_number = 0
 fork_block_number = 0
@@ -187,6 +188,7 @@ call_override = false
 dictionary_weight = 80
 include_storage = true
 include_push_bytes = true
+shrink_sequence = true
 
 [fmt]
 line_length = 100

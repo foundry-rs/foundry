@@ -11,7 +11,7 @@ use futures::join;
 /// CLI arguments for `cast find-block`.
 #[derive(Debug, Clone, Parser)]
 pub struct FindBlockArgs {
-    #[clap(help = "The UNIX timestamp to search for (in seconds)", value_name = "TIMESTAMP")]
+    /// The UNIX timestamp to search for, in seconds.
     timestamp: u64,
 
     #[clap(flatten)]
@@ -33,10 +33,10 @@ impl FindBlockArgs {
         let ts_block_latest = res.0?;
         let ts_block_1 = res.1?;
 
-        let block_num = if ts_block_latest.lt(&ts_target) {
+        let block_num = if ts_block_latest < ts_target {
             // If the most recent block's timestamp is below the target, return it
             last_block_num
-        } else if ts_block_1.gt(&ts_target) {
+        } else if ts_block_1 > ts_target {
             // If the target timestamp is below block 1's timestamp, return that
             U64::from(1_u64)
         } else {
@@ -44,7 +44,7 @@ impl FindBlockArgs {
             let mut low_block = U64::from(1_u64); // block 0 has a timestamp of 0: https://github.com/ethereum/go-ethereum/issues/17042#issuecomment-559414137
             let mut high_block = last_block_num;
             let mut matching_block: Option<U64> = None;
-            while high_block.gt(&low_block) && matching_block.is_none() {
+            while high_block > low_block && matching_block.is_none() {
                 // Get timestamp of middle block (this approach approach to avoids overflow)
                 let high_minus_low_over_2 = high_block
                     .checked_sub(low_block)
@@ -56,9 +56,9 @@ impl FindBlockArgs {
                 let ts_mid_block = cast_provider.timestamp(mid_block).await?;
 
                 // Check if we've found a match or should keep searching
-                if ts_mid_block.eq(&ts_target) {
+                if ts_mid_block == ts_target {
                     matching_block = Some(mid_block)
-                } else if high_block.checked_sub(low_block).unwrap().eq(&U64::from(1_u64)) {
+                } else if high_block.checked_sub(low_block).unwrap() == U64::from(1_u64) {
                     // The target timestamp is in between these blocks. This rounds to the
                     // highest block if timestamp is equidistant between blocks
                     let res = join!(
@@ -69,9 +69,9 @@ impl FindBlockArgs {
                     let ts_low = res.1.unwrap();
                     let high_diff = ts_high.checked_sub(ts_target).unwrap();
                     let low_diff = ts_target.checked_sub(ts_low).unwrap();
-                    let is_low = low_diff.lt(&high_diff);
+                    let is_low = low_diff < high_diff;
                     matching_block = if is_low { Some(low_block) } else { Some(high_block) }
-                } else if ts_mid_block.lt(&ts_target) {
+                } else if ts_mid_block < ts_target {
                     low_block = mid_block;
                 } else {
                     high_block = mid_block;

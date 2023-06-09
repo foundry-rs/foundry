@@ -6,11 +6,13 @@ use crate::{
     trace::{load_contracts, TraceKind, Traces},
     CALLER,
 };
-use ethers::{abi::Function, types::Address};
+use ethers::{
+    abi::Function,
+    types::{Address, U256},
+};
 use eyre::{Result, WrapErr};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use proptest::test_runner::TestError;
-use tracing::trace;
 
 #[derive(Debug, Clone)]
 pub struct InvariantFuzzError {
@@ -28,6 +30,8 @@ pub struct InvariantFuzzError {
     pub func: Option<ethers::prelude::Bytes>,
     /// Inner fuzzing Sequence coming from overriding calls.
     pub inner_sequence: Vec<Option<BasicTxDetails>>,
+    /// Shrink the failed test case to the smallest sequence.
+    pub shrink: bool,
 }
 
 impl InvariantFuzzError {
@@ -37,6 +41,7 @@ impl InvariantFuzzError {
         calldata: &[BasicTxDetails],
         call_result: RawCallResult,
         inner_sequence: &[Option<BasicTxDetails>],
+        shrink_sequence: bool,
     ) -> Self {
         let mut func = None;
         let origin: String;
@@ -77,6 +82,7 @@ impl InvariantFuzzError {
             addr: invariant_contract.address,
             func,
             inner_sequence: inner_sequence.to_vec(),
+            shrink: shrink_sequence,
         }
     }
 
@@ -96,7 +102,11 @@ impl InvariantFuzzError {
             TestError::Fail(_, ref calls) => calls,
         };
 
-        let calls = self.try_shrinking(calls, &executor);
+        if self.shrink {
+            let _ = self.try_shrinking(calls, &executor);
+        } else {
+            trace!(target: "forge::test", "Shrinking disabled.");
+        }
 
         // We want traces for a failed case.
         executor.set_tracing(true);
@@ -106,7 +116,7 @@ impl InvariantFuzzError {
         // Replay each call from the sequence until we break the invariant.
         for (sender, (addr, bytes)) in calls.iter() {
             let call_result = executor
-                .call_raw_committing(*sender, *addr, bytes.0.clone(), 0.into())
+                .call_raw_committing(*sender, *addr, bytes.0.clone(), U256::zero())
                 .expect("bad call to evm");
 
             logs.extend(call_result.logs);
@@ -132,7 +142,7 @@ impl InvariantFuzzError {
             // Checks the invariant.
             if let Some(func) = &self.func {
                 let error_call_result = executor
-                    .call_raw(CALLER, self.addr, func.0.clone(), 0.into())
+                    .call_raw(CALLER, self.addr, func.0.clone(), U256::zero())
                     .expect("bad call to evm");
 
                 if error_call_result.reverted {

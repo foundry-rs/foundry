@@ -11,15 +11,16 @@ use ethers::solc::resolver::{Charset, TreeOptions};
 /// CLI arguments for `forge tree`.
 #[derive(Debug, Clone, Parser)]
 pub struct TreeArgs {
-    #[clap(help = "Do not de-duplicate (repeats all shared dependencies)", long)]
+    /// Do not de-duplicate (repeats all shared dependencies)
+    #[clap(long)]
     no_dedupe: bool,
-    #[clap(
-        help = "Character set to use in output: utf8, ascii",
-        default_value = "utf8",
-        long,
-        value_name = "CHARSET"
-    )]
+
+    /// Character set to use in output.
+    ///
+    /// [possible values: utf8, ascii]
+    #[clap(long, default_value = "utf8")]
     charset: Charset,
+
     #[clap(flatten)]
     opts: ProjectPathsArgs,
 }

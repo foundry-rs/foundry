@@ -12,8 +12,8 @@ use ethers_core::{
     },
     types::{Chain, *},
     utils::{
-        self, format_bytes32_string, format_units, get_contract_address, keccak256,
-        parse_bytes32_string, parse_units, rlp, Units,
+        format_bytes32_string, format_units, get_contract_address, keccak256, parse_bytes32_string,
+        parse_units, rlp, Units,
     },
 };
 use ethers_etherscan::{errors::EtherscanError, Client};
@@ -773,6 +773,25 @@ where
     ) -> Result<String> {
         Ok(format!("{:?}", self.provider.get_storage_at(from, slot, block).await?))
     }
+
+    pub async fn filter_logs(&self, filter: Filter, to_json: bool) -> Result<String> {
+        let logs = self.provider.get_logs(&filter).await?;
+
+        let res = if to_json {
+            serde_json::to_string(&logs)?
+        } else {
+            let mut s = vec![];
+            for log in logs {
+                let pretty = log
+                    .pretty()
+                    .replacen('\n', "- ", 1) // Remove empty first line
+                    .replace('\n', "\n  "); // Indent
+                s.push(pretty);
+            }
+            s.join("\n")
+        };
+        Ok(res)
+    }
 }
 
 pub struct InterfaceSource {
@@ -1007,7 +1026,7 @@ impl SimpleCast {
     /// # }
     /// ```
     pub fn to_checksum_address(address: &Address) -> String {
-        utils::to_checksum(address, None)
+        ethers_core::utils::to_checksum(address, None)
     }
 
     /// Converts a number into uint256 hex string with 0x prefix
