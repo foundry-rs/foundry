@@ -6,6 +6,7 @@ use crate::{
     utils::FoundryPathExt,
 };
 use clap::Parser;
+use comfy_table::Table;
 use ethers::prelude::{artifacts::output_selection::ContractOutputSelection, info::ContractInfo};
 use foundry_common::{
     compile,
@@ -163,9 +164,17 @@ impl SelectorsSubcommands {
                 if colliding_methods.is_empty() {
                     println!("No colliding method selectors between the two contracts.");
                 } else {
+                    let mut table = Table::new();
+                    table.set_header(vec![
+                        String::from("Selector"),
+                        first_contract.name,
+                        second_contract.name,
+                    ]);
                     colliding_methods.iter().for_each(|t| {
-                        println!("\"{}\": {:?}", first_method_map.get(t.0).unwrap(), t)
+                        table.add_row(vec![first_method_map.get(t.0).unwrap(), t.0, t.1]);
                     });
+                    println!("{table}");
+
                     return Err(eyre::eyre!("At least one collision was found"))
                 }
             }
