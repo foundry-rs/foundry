@@ -177,6 +177,11 @@ impl<'de> Deserialize<'de> for BlockchainDbMeta {
                         // keep default value
                         obj.insert(key.to_string(), false.into());
                     }
+                    let key = "disable_base_fee";
+                    if !obj.contains_key(key) {
+                        // keep default value
+                        obj.insert(key.to_string(), false.into());
+                    }
                 }
 
                 let cfg_env: revm::primitives::CfgEnv =
