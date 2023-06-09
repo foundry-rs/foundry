@@ -120,21 +120,20 @@ impl MultiContractRunner {
         filter: &impl TestFilter,
         stream_result: Option<Sender<(String, SuiteResult)>>,
         test_options: TestOptions,
-    ) -> Result<BTreeMap<String, SuiteResult>> {
-        tracing::trace!("start all tests");
+    ) -> BTreeMap<String, SuiteResult> {
+        trace!("running all tests");
 
         // the db backend that serves all the data, each contract gets its own instance
         let db = Backend::spawn(self.fork.take());
 
-        let results = self
-            .contracts
+        self.contracts
             .par_iter()
             .filter(|(id, _)| {
                 filter.matches_path(id.source.to_string_lossy()) &&
                     filter.matches_contract(&id.name)
             })
             .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
-            .map(|(id, (abi, deploy_code, libs))| {
+            .map_with(stream_result, |stream_result, (id, (abi, deploy_code, libs))| {
                 let executor = ExecutorBuilder::default()
                     .with_cheatcodes(self.cheats_config.clone())
                     .with_config(self.env.clone())
@@ -144,7 +143,7 @@ impl MultiContractRunner {
                     .set_coverage(self.coverage)
                     .build(db.clone());
                 let identifier = id.identifier();
-                tracing::trace!(contract= ?identifier, "start executing all tests in contract");
+                trace!(contract= ?identifier, "start executing all tests in contract");
 
                 let result = self.run_tests(
                     &identifier,
@@ -152,42 +151,34 @@ impl MultiContractRunner {
                     executor,
                     deploy_code.clone(),
                     libs,
-                    (filter, test_options),
-                )?;
+                    filter,
+                    test_options.clone(),
+                );
+                trace!(contract= ?identifier, "executed all tests in contract");
 
-                tracing::trace!(contract= ?identifier, "executed all tests in contract");
-                Ok((identifier, result))
-            })
-            .filter_map(Result::<_>::ok)
-            .filter(|(_, results)| !results.is_empty())
-            .map_with(stream_result, |stream_result, (name, result)| {
-                if let Some(stream_result) = stream_result.as_ref() {
-                    let _ = stream_result.send((name.clone(), result.clone()));
+                if let Some(stream_result) = stream_result {
+                    let _ = stream_result.send((identifier.clone(), result.clone()));
                 }
-                (name, result)
-            })
-            .collect::<BTreeMap<_, _>>();
 
-        Ok(results)
+                (identifier, result)
+            })
+            .collect()
     }
 
-    // The _name field is unused because we only want it for tracing
-    #[tracing::instrument(
-        name = "contract",
-        skip_all,
-        err,
-        fields(name = %_name)
-    )]
+    #[instrument(skip_all, fields(name = %name))]
+    #[allow(clippy::too_many_arguments)]
     fn run_tests(
         &self,
-        _name: &str,
+        name: &str,
         contract: &Abi,
         executor: Executor,
         deploy_code: Bytes,
         libs: &[Bytes],
-        (filter, test_options): (&impl TestFilter, TestOptions),
-    ) -> Result<SuiteResult> {
+        filter: &impl TestFilter,
+        test_options: TestOptions,
+    ) -> SuiteResult {
         let runner = ContractRunner::new(
+            name,
             executor,
             contract,
             deploy_code,

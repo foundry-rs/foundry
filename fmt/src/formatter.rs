@@ -2052,9 +2052,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 // support of solana/substrate address literals
                 self.write_quoted_str(*loc, Some("address"), val)?;
             }
-            Expression::This(loc) => {
-                write_chunk!(self, loc.start(), loc.end(), "this")?;
-            }
             Expression::Parenthesis(loc, expr) => {
                 self.surrounded(
                     SurroundingChunk::new("(", Some(loc.start()), None),
@@ -2859,7 +2856,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         loc: Loc,
         init: &mut Option<Box<Statement>>,
         cond: &mut Option<Box<Expression>>,
-        update: &mut Option<Box<Statement>>,
+        update: &mut Option<Box<Expression>>,
         body: &mut Option<Box<Statement>>,
     ) -> Result<(), Self::Error> {
         return_source_if_disabled!(self, loc);
@@ -2884,16 +2881,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                         fmt.write_whitespace_separator(true)?;
                     }
 
-                    // Don't write a semi after the update expression
-                    // This should be just an `Expression`, but it is parsed as a `Statement` for
-                    // some reason in solang-parser
-                    // See https://github.com/hyperledger/solang/issues/1283
-                    match update.as_deref_mut() {
-                        Some(Statement::Expression(loc, expr)) => fmt.visit_expr(*loc, expr),
-                        Some(stmt) => {
-                            unreachable!("Invalid Solidity for loop `update` expression: {stmt:?}")
-                        }
-                        _ => Ok(()),
+                    match update {
+                        Some(expr) => expr.visit(fmt),
+                        None => Ok(()),
                     }
                 };
                 let multiline = !fmt.try_on_single_line(|fmt| write_for_loop_header(fmt, false))?;

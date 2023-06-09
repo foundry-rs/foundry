@@ -18,14 +18,14 @@ use forge::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
         CallTraceDecoderBuilder, TraceKind,
     },
-    MultiContractRunner, MultiContractRunnerBuilder, TestOptions,
+    MultiContractRunner, MultiContractRunnerBuilder, TestOptions, TestOptionsBuilder,
 };
 use foundry_common::{
     compile::{self, ProjectCompiler},
     evm::EvmArgs,
     get_contract_name, get_file_name,
 };
-use foundry_config::{figment, Config};
+use foundry_config::{figment, get_available_profiles, Config};
 use regex::Regex;
 use std::{collections::BTreeMap, path::PathBuf, sync::mpsc::channel, thread, time::Duration};
 use tracing::trace;
@@ -123,8 +123,6 @@ impl TestArgs {
         // Merge all configs
         let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
-        let test_options = TestOptions { fuzz: config.fuzz, invariant: config.invariant };
-
         let mut filter = self.filter(&config);
 
         trace!(target: "forge::test", ?filter, "using filter");
@@ -150,6 +148,19 @@ impl TestArgs {
             compiler.compile(&project)
         }?;
 
+        // Create test options from general project settings
+        // and compiler output
+        let project_root = &project.paths.root;
+        let toml = config.get_config_path();
+        let profiles = get_available_profiles(toml)?;
+
+        let test_options: TestOptions = TestOptionsBuilder::default()
+            .fuzz(config.fuzz)
+            .invariant(config.invariant)
+            .compile_output(&output)
+            .profiles(profiles)
+            .build(project_root)?;
+
         // Determine print verbosity and executor verbosity
         let verbosity = evm_opts.verbosity;
         if self.gas_report && evm_opts.verbosity < 3 {
@@ -167,8 +178,8 @@ impl TestArgs {
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_cheats_config(CheatsConfig::new(&config, &evm_opts))
-            .with_test_options(test_options)
-            .build(project.paths.root, output, env, evm_opts)?;
+            .with_test_options(test_options.clone())
+            .build(project_root, output, env, evm_opts)?;
 
         if self.debug.is_some() {
             filter.args_mut().test_pattern = self.debug;
@@ -176,7 +187,7 @@ impl TestArgs {
             match runner.count_filtered_tests(&filter) {
                 1 => {
                     // Run the test
-                    let results = runner.test(&filter, None, test_options)?;
+                    let results = runner.test(&filter, None, test_options);
 
                     // Get the result of the single test
                     let (id, sig, test_kind, counterexample, breakpoints) = results.iter().map(|(id, SuiteResult{ test_results, .. })| {
@@ -499,7 +510,7 @@ fn test(
     }
 
     if json {
-        let results = runner.test(&filter, None, test_options)?;
+        let results = runner.test(&filter, None, test_options);
         println!("{}", serde_json::to_string(&results)?);
         Ok(TestOutcome::new(results, allow_failure))
     } else {
@@ -513,7 +524,7 @@ fn test(
         let (tx, rx) = channel::<(String, SuiteResult)>();
 
         // Run tests
-        let handle = thread::spawn(move || runner.test(&filter, Some(tx), test_options).unwrap());
+        let handle = thread::spawn(move || runner.test(&filter, Some(tx), test_options));
 
         let mut results: BTreeMap<String, SuiteResult> = BTreeMap::new();
         let mut gas_report = GasReport::new(config.gas_reports, config.gas_reports_ignore);

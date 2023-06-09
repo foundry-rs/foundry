@@ -12,8 +12,8 @@ use ethers_core::{
     },
     types::{Chain, *},
     utils::{
-        self, format_bytes32_string, format_units, get_contract_address, keccak256,
-        parse_bytes32_string, parse_units, rlp, Units,
+        format_bytes32_string, format_units, get_contract_address, keccak256, parse_bytes32_string,
+        parse_units, rlp, Units,
     },
 };
 use ethers_etherscan::{errors::EtherscanError, Client};
@@ -773,6 +773,25 @@ where
     ) -> Result<String> {
         Ok(format!("{:?}", self.provider.get_storage_at(from, slot, block).await?))
     }
+
+    pub async fn filter_logs(&self, filter: Filter, to_json: bool) -> Result<String> {
+        let logs = self.provider.get_logs(&filter).await?;
+
+        let res = if to_json {
+            serde_json::to_string(&logs)?
+        } else {
+            let mut s = vec![];
+            for log in logs {
+                let pretty = log
+                    .pretty()
+                    .replacen('\n', "- ", 1) // Remove empty first line
+                    .replace('\n', "\n  "); // Indent
+                s.push(pretty);
+            }
+            s.join("\n")
+        };
+        Ok(res)
+    }
 }
 
 pub struct InterfaceSource {
@@ -1007,7 +1026,7 @@ impl SimpleCast {
     /// # }
     /// ```
     pub fn to_checksum_address(address: &Address) -> String {
-        utils::to_checksum(address, None)
+        ethers_core::utils::to_checksum(address, None)
     }
 
     /// Converts a number into uint256 hex string with 0x prefix
@@ -1264,7 +1283,7 @@ impl SimpleCast {
     pub fn parse_bytes32_string(s: &str) -> Result<String> {
         let s = strip_0x(s);
         if s.len() != 64 {
-            eyre::bail!("string not 32 bytes");
+            eyre::bail!("expected 64 byte hex-string, got {s}");
         }
 
         let bytes = hex::decode(s)?;
@@ -1272,6 +1291,25 @@ impl SimpleCast {
         buffer.copy_from_slice(&bytes);
 
         Ok(parse_bytes32_string(&buffer)?.to_owned())
+    }
+
+    /// Decodes checksummed address from bytes32 value
+    pub fn parse_bytes32_address(s: &str) -> Result<String> {
+        let s = strip_0x(s);
+        if s.len() != 64 {
+            eyre::bail!("expected 64 byte hex-string, got {s}");
+        }
+
+        let s = if let Some(stripped) = s.strip_prefix("000000000000000000000000") {
+            stripped
+        } else {
+            return Err(eyre::eyre!("Not convertible to address, there are non-zero bytes"))
+        };
+
+        let lowercase_address_string = format!("0x{s}");
+        let lowercase_address = Address::from_str(&lowercase_address_string)?;
+
+        Ok(ethers_core::utils::to_checksum(&lowercase_address, None))
     }
 
     /// Decodes abi-encoded hex input or output

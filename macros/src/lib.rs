@@ -1,8 +1,9 @@
 //! Foundry's procedural macros.
+//!
+//! Also includes traits and other utilities used by the macros.
 
-// TODO: Remove dependency on foundry-common (currently only used for the UIfmt trait).
+pub mod fmt;
+pub use fmt::{console_format, ConsoleFmt, FormatSpec, TokenDisplay, UIfmt};
 
-mod console_fmt;
-pub use console_fmt::{console_format, ConsoleFmt, FormatSpec};
-
+#[doc(inline)]
 pub use foundry_macros_impl::ConsoleFmt;

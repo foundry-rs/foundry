@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.18;
+pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
 import "./Cheats.sol";
@@ -33,8 +33,8 @@ contract GetDeployedCodeTest is DSTest {
         Override over = Override(overrideAddress);
 
         vm.expectEmit(true, false, false, true);
-        over.emitPayload(address(0), "hello");
         emit Payload(address(this), address(0), "hello");
+        over.emitPayload(address(0), "hello");
     }
 }
 

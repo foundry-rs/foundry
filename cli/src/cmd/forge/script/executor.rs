@@ -8,13 +8,15 @@ use crate::cmd::{
     },
     needs_setup,
 };
-use cast::executor::inspector::cheatcodes::util::BroadcastableTransactions;
 use ethers::{
     solc::artifacts::CompactContractBytecode,
     types::{transaction::eip2718::TypedTransaction, Address, U256},
 };
 use forge::{
-    executor::{inspector::CheatsConfig, Backend, ExecutorBuilder},
+    executor::{
+        inspector::{cheatcodes::util::BroadcastableTransactions, CheatsConfig},
+        Backend, ExecutorBuilder,
+    },
     revm::primitives::U256 as rU256,
     trace::{CallTraceDecoder, Traces},
     CallKind,

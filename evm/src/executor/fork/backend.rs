@@ -30,7 +30,6 @@ use std::{
         Arc,
     },
 };
-use tracing::{error, trace, warn};
 
 // Various future/request type aliases
 
@@ -691,14 +690,14 @@ mod tests {
         opts::EvmOpts,
         Backend,
     };
-    use ethers::{solc::utils::RuntimeOrHandle, types::Chain};
+    use ethers::types::Chain;
     use foundry_common::get_http_provider;
     use foundry_config::Config;
     use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
     const ENDPOINT: &str = "https://mainnet.infura.io/v3/40bee2d557ed4b52908c3e62345a3d8b";
 
-    #[test]
-    fn shared_backend() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn shared_backend() {
         let provider = get_http_provider(ENDPOINT);
         let meta = BlockchainDbMeta {
             cfg_env: Default::default(),
@@ -707,9 +706,7 @@ mod tests {
         };
 
         let db = BlockchainDb::new(meta, None);
-        let runtime = RuntimeOrHandle::new();
-        let backend =
-            runtime.block_on(SharedBackend::spawn_backend(Arc::new(provider), db.clone(), None));
+        let backend = SharedBackend::spawn_backend(Arc::new(provider), db.clone(), None).await;
 
         // some rng contract from etherscan
         let address: B160 = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();

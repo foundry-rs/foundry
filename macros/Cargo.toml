@@ -8,6 +8,7 @@ repository = "https://github.com/foundry-rs/foundry"
 
 [dependencies]
 foundry-macros-impl = { path = "./impl" }
-foundry-common = { path = "../common" }
 
 ethers-core = { workspace = true }
+serde = "1.0"
+serde_json = "1.0"

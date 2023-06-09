@@ -1,6 +1,6 @@
 use self::{
     env::Broadcast,
-    expect::{handle_expect_emit, handle_expect_revert},
+    expect::{handle_expect_emit, handle_expect_revert, ExpectedCallType},
     util::{check_if_fixed_gas_limit, process_create, BroadcastableTransactions},
 };
 use crate::{
@@ -29,14 +29,13 @@ use revm::{
 };
 use serde_json::Value;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, VecDeque},
     fs::File,
     io::BufReader,
     ops::Range,
     path::PathBuf,
     sync::Arc,
 };
-use tracing::trace;
 
 /// Cheatcodes related to the execution environment.
 mod env;
@@ -66,8 +65,17 @@ use crate::executor::{backend::RevertDiagnostic, inspector::utils::get_create_ad
 pub use config::CheatsConfig;
 
 mod error;
-pub(crate) use error::{bail, ensure, err};
+pub(crate) use error::{bail, ensure, fmt_err};
 pub use error::{Error, Result};
+
+/// Tracks the expected calls per address.
+/// For each address, we track the expected calls per call data. We track it in such manner
+/// so that we don't mix together calldatas that only contain selectors and calldatas that contain
+/// selector and arguments (partial and full matches).
+/// This then allows us to customize the matching behavior for each call data on the
+/// `ExpectedCallData` struct and track how many times we've actually seen the call on the second
+/// element of the tuple.
+pub type ExpectedCallTracker = BTreeMap<Address, BTreeMap<Vec<u8>, (ExpectedCallData, u64)>>;
 
 /// An inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
@@ -126,10 +134,10 @@ pub struct Cheatcodes {
     pub mocked_calls: BTreeMap<Address, BTreeMap<MockCallDataContext, MockCallReturnData>>,
 
     /// Expected calls
-    pub expected_calls: BTreeMap<Address, Vec<(ExpectedCallData, u64)>>,
+    pub expected_calls: ExpectedCallTracker,
 
     /// Expected emits
-    pub expected_emits: Vec<ExpectedEmit>,
+    pub expected_emits: VecDeque<ExpectedEmit>,
 
     /// Map of context depths to memory offset ranges that may be written to within the call depth.
     pub allowed_mem_writes: BTreeMap<u64, Vec<Range<u64>>>,
@@ -191,7 +199,7 @@ impl Cheatcodes {
         }
     }
 
-    #[tracing::instrument(skip_all, name = "cheatcode")]
+    #[instrument(level = "error", name = "apply", target = "evm::cheatcodes", skip_all)]
     fn apply_cheatcode<DB: DatabaseExt>(
         &mut self,
         data: &mut EVMData<'_, DB>,
@@ -217,7 +225,7 @@ impl Cheatcodes {
             .or_else(|| fork::apply(self, data, &decoded));
         match opt {
             Some(res) => res,
-            None => Err(err!("Unhandled cheatcode: {decoded:?}. This is a bug.")),
+            None => Err(fmt_err!("Unhandled cheatcode: {decoded:?}. This is a bug.")),
         }
     }
 
@@ -527,7 +535,6 @@ where
         topics: &[B256],
         data: &bytes::Bytes,
     ) {
-        // Match logs if `expectEmit` has been called
         if !self.expected_emits.is_empty() {
             handle_expect_emit(
                 self,
@@ -565,15 +572,29 @@ where
             }
         } else if call.contract != h160_to_b160(HARDHAT_CONSOLE_ADDRESS) {
             // Handle expected calls
-            if let Some(expecteds) = self.expected_calls.get_mut(&(b160_to_h160(call.contract))) {
-                if let Some((_, count)) = expecteds.iter_mut().find(|(expected, _)| {
-                    expected.calldata.len() <= call.input.len() &&
-                        expected.calldata == call.input[..expected.calldata.len()] &&
-                        expected.value.map_or(true, |value| value == call.transfer.value.into()) &&
+
+            // Grab the different calldatas expected.
+            if let Some(expected_calls_for_target) =
+                self.expected_calls.get_mut(&(b160_to_h160(call.contract)))
+            {
+                // Match every partial/full calldata
+                for (calldata, (expected, actual_count)) in expected_calls_for_target.iter_mut() {
+                    // Increment actual times seen if...
+                    // The calldata is at most, as big as this call's input, and
+                    if calldata.len() <= call.input.len() &&
+                        // Both calldata match, taking the length of the assumed smaller one (which will have at least the selector), and
+                        *calldata == call.input[..calldata.len()] &&
+                        // The value matches, if provided
+                        expected
+                            .value
+                            .map_or(true, |value| value == call.transfer.value.into()) &&
+                        // The gas matches, if provided
                         expected.gas.map_or(true, |gas| gas == call.gas_limit) &&
+                        // The minimum gas matches, if provided
                         expected.min_gas.map_or(true, |min_gas| min_gas <= call.gas_limit)
-                }) {
-                    *count += 1;
+                    {
+                        *actual_count += 1;
+                    }
                 }
             }
 
@@ -607,15 +628,25 @@ where
                 if data.journaled_state.depth() >= prank.depth &&
                     call.context.caller == h160_to_b160(prank.prank_caller)
                 {
+                    let mut prank_applied = false;
                     // At the target depth we set `msg.sender`
                     if data.journaled_state.depth() == prank.depth {
                         call.context.caller = h160_to_b160(prank.new_caller);
                         call.transfer.source = h160_to_b160(prank.new_caller);
+                        prank_applied = true;
                     }
 
                     // At the target depth, or deeper, we set `tx.origin`
                     if let Some(new_origin) = prank.new_origin {
                         data.env.tx.caller = h160_to_b160(new_origin);
+                        prank_applied = true;
+                    }
+
+                    // If prank applied for first time, then update
+                    if prank_applied {
+                        if let Some(applied_prank) = prank.first_time_applied() {
+                            self.prank = Some(applied_prank);
+                        }
                     }
                 }
             }
@@ -753,72 +784,116 @@ where
             }
         }
 
-        // Handle expected emits at current depth
-        if !self
+        // At the end of the call,
+        // we need to check if we've found all the emits.
+        // We know we've found all the expected emits in the right order
+        // if the queue is fully matched.
+        // If it's not fully matched, then either:
+        // 1. Not enough events were emitted (we'll know this because the amount of times we
+        // inspected events will be less than the size of the queue) 2. The wrong events
+        // were emitted (The inspected events should match the size of the queue, but still some
+        // events will not be matched)
+
+        // First, check that we're at the call depth where the emits were declared from.
+        let should_check_emits = self
             .expected_emits
             .iter()
-            .filter(|expected| expected.depth == data.journaled_state.depth())
-            .all(|expected| expected.found)
-        {
-            return (
-                InstructionResult::Revert,
-                remaining_gas,
-                "Log != expected log".to_string().encode().into(),
-            )
-        } else {
-            // Clear the emits we expected at this depth that have been found
-            self.expected_emits.retain(|expected| !expected.found)
+            .any(|expected| expected.depth == data.journaled_state.depth()) &&
+            // Ignore staticcalls
+            !call.is_static;
+        // If so, check the emits
+        if should_check_emits {
+            // Not all emits were matched.
+            if self.expected_emits.iter().any(|expected| !expected.found) {
+                return (
+                    InstructionResult::Revert,
+                    remaining_gas,
+                    "Log != expected log".to_string().encode().into(),
+                )
+            } else {
+                // All emits were found, we're good.
+                // Clear the queue, as we expect the user to declare more events for the next call
+                // if they wanna match further events.
+                self.expected_emits.clear()
+            }
         }
 
         // If the depth is 0, then this is the root call terminating
         if data.journaled_state.depth() == 0 {
-            for (address, expecteds) in &self.expected_calls {
-                for (expected, actual_count) in expecteds {
-                    let ExpectedCallData { calldata, gas, min_gas, value, count } = expected;
-                    let calldata = calldata.clone();
-                    let expected_values = [
-                        Some(format!("data {calldata}")),
-                        value.map(|v| format!("value {v}")),
-                        gas.map(|g| format!("gas {g}")),
-                        min_gas.map(|g| format!("minimum gas {g}")),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .join(" and ");
-                    if count.is_none() {
-                        if *actual_count == 0 {
-                            return (
-                                InstructionResult::Revert,
-                                remaining_gas,
-                                format!("Expected at least one call to {address:?} with {expected_values}, but got none")
+            // Match expected calls
+            for (address, calldatas) in &self.expected_calls {
+                // Loop over each address, and for each address, loop over each calldata it expects.
+                for (calldata, (expected, actual_count)) in calldatas {
+                    // Grab the values we expect to see
+                    let ExpectedCallData { gas, min_gas, value, count, call_type } = expected;
+                    let calldata = Bytes::from(calldata.clone());
+
+                    // We must match differently depending on the type of call we expect.
+                    match call_type {
+                        // If the cheatcode was called with a `count` argument,
+                        // we must check that the EVM performed a CALL with this calldata exactly
+                        // `count` times.
+                        ExpectedCallType::Count => {
+                            if *count != *actual_count {
+                                let expected_values = [
+                                    Some(format!("data {calldata}")),
+                                    value.map(|v| format!("value {v}")),
+                                    gas.map(|g| format!("gas {g}")),
+                                    min_gas.map(|g| format!("minimum gas {g}")),
+                                ]
+                                .into_iter()
+                                .flatten()
+                                .join(" and ");
+                                return (
+                                    InstructionResult::Revert,
+                                    remaining_gas,
+                                    format!(
+                                        "Expected call to {address:?} with {expected_values} to be called {count} time(s), but was called {actual_count} time(s)"
+                                    )
                                     .encode()
                                     .into(),
-                            )
+                                )
+                            }
                         }
-                    } else if *count != Some(*actual_count) {
-                        return (
-                            InstructionResult::Revert,
-                            remaining_gas,
-                            format!(
-                                "Expected call to {:?} with {} to be made {} time(s), but was called {} time(s)",
-                                address,
-                                expected_values,
-                                count.unwrap(),
-                                actual_count,
-                            )
-                            .encode()
-                            .into(),
-                        )
+                        // If the cheatcode was called without a `count` argument,
+                        // we must check that the EVM performed a CALL with this calldata at least
+                        // `count` times. The amount of times to check was
+                        // the amount of time the cheatcode was called.
+                        ExpectedCallType::NonCount => {
+                            if *count > *actual_count {
+                                let expected_values = [
+                                    Some(format!("data {calldata}")),
+                                    value.map(|v| format!("value {v}")),
+                                    gas.map(|g| format!("gas {g}")),
+                                    min_gas.map(|g| format!("minimum gas {g}")),
+                                ]
+                                .into_iter()
+                                .flatten()
+                                .join(" and ");
+                                return (
+                                    InstructionResult::Revert,
+                                    remaining_gas,
+                                    format!(
+                                        "Expected call to {address:?} with {expected_values} to be called at least {count} time(s), but was called {actual_count} time(s)"
+                                    )
+                                    .encode()
+                                    .into(),
+                                )
+                            }
+                        }
                     }
                 }
             }
 
             // Check if we have any leftover expected emits
+            // First, if any emits were found at the root call, then we its ok and we remove them.
+            self.expected_emits.retain(|expected| !expected.found);
+            // If not empty, we got mismatched emits
             if !self.expected_emits.is_empty() {
                 return (
                     InstructionResult::Revert,
                     remaining_gas,
-                    "Expected an emit, but no logs were emitted afterward"
+                    "Expected an emit, but no logs were emitted afterward. You might have mismatched events or not enough events were emitted."
                         .to_string()
                         .encode()
                         .into(),
@@ -882,7 +957,7 @@ where
 
         // Apply our broadcast
         if let Some(broadcast) = &self.broadcast {
-            if data.journaled_state.depth() == broadcast.depth &&
+            if data.journaled_state.depth() >= broadcast.depth &&
                 call.caller == h160_to_b160(broadcast.original_caller)
             {
                 if let Err(err) =
@@ -898,37 +973,43 @@ where
 
                 data.env.tx.caller = h160_to_b160(broadcast.new_origin);
 
-                let (bytecode, to, nonce) = match process_create(
-                    broadcast.new_origin,
-                    call.init_code.clone(),
-                    data,
-                    call,
-                ) {
-                    Ok(val) => val,
-                    Err(err) => {
-                        return (
-                            InstructionResult::Revert,
-                            None,
-                            Gas::new(call.gas_limit),
-                            err.encode_string().0,
-                        )
-                    }
-                };
+                if data.journaled_state.depth() == broadcast.depth {
+                    let (bytecode, to, nonce) = match process_create(
+                        broadcast.new_origin,
+                        call.init_code.clone(),
+                        data,
+                        call,
+                    ) {
+                        Ok(val) => val,
+                        Err(err) => {
+                            return (
+                                InstructionResult::Revert,
+                                None,
+                                Gas::new(call.gas_limit),
+                                err.encode_string().0,
+                            )
+                        }
+                    };
 
-                let is_fixed_gas_limit = check_if_fixed_gas_limit(data, call.gas_limit);
+                    let is_fixed_gas_limit = check_if_fixed_gas_limit(data, call.gas_limit);
 
-                self.broadcastable_transactions.push_back(BroadcastableTransaction {
-                    rpc: data.db.active_fork_url(),
-                    transaction: TypedTransaction::Legacy(TransactionRequest {
-                        from: Some(broadcast.new_origin),
-                        to,
-                        value: Some(call.value.into()),
-                        data: Some(bytecode.into()),
-                        nonce: Some(nonce.into()),
-                        gas: if is_fixed_gas_limit { Some(call.gas_limit.into()) } else { None },
-                        ..Default::default()
-                    }),
-                });
+                    self.broadcastable_transactions.push_back(BroadcastableTransaction {
+                        rpc: data.db.active_fork_url(),
+                        transaction: TypedTransaction::Legacy(TransactionRequest {
+                            from: Some(broadcast.new_origin),
+                            to,
+                            value: Some(call.value.into()),
+                            data: Some(bytecode.into()),
+                            nonce: Some(nonce.into()),
+                            gas: if is_fixed_gas_limit {
+                                Some(call.gas_limit.into())
+                            } else {
+                                None
+                            },
+                            ..Default::default()
+                        }),
+                    });
+                }
             }
         }
 

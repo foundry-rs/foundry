@@ -7,7 +7,7 @@ use revm::{
 };
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
 use std::{collections::BTreeSet, fs, io::BufWriter, path::PathBuf, sync::Arc};
-use tracing::{trace, warn};
+
 use url::Url;
 
 pub type StorageInfo = Map<U256, U256>;
@@ -173,6 +173,11 @@ impl<'de> Deserialize<'de> for BlockchainDbMeta {
                     // additional field `disable_block_gas_limit` enabled by the
                     // `optional_block_gas_limit` feature
                     let key = "disable_block_gas_limit";
+                    if !obj.contains_key(key) {
+                        // keep default value
+                        obj.insert(key.to_string(), false.into());
+                    }
+                    let key = "disable_base_fee";
                     if !obj.contains_key(key) {
                         // keep default value
                         obj.insert(key.to_string(), false.into());
