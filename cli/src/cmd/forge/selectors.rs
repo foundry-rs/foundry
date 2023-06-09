@@ -150,16 +150,15 @@ impl SelectorsSubcommands {
                 let first_method_map = first_artifact.method_identifiers.as_ref().unwrap();
                 let second_method_map = second_artifact.method_identifiers.as_ref().unwrap();
 
-                let mut colliding_methods = Vec::new();
-                for (k1, v1) in first_method_map {
-                    if let Some(k2) =
+                let colliding_methods: Vec<(&String, &String)> = first_method_map
+                    .iter()
+                    .filter_map(|(k1, v1)| {
                         second_method_map
                             .iter()
-                            .find_map(|(k2, v2)| if v1 == v2 { Some(k2) } else { None })
-                    {
-                        colliding_methods.push((k1, k2));
-                    }
-                }
+                            .find_map(|(k2, v2)| if **v2 == *v1 { Some(k2) } else { None })
+                            .map(|k2| (k1, k2))
+                    })
+                    .collect();
 
                 if colliding_methods.is_empty() {
                     println!("No colliding method selectors between the two contracts.");
