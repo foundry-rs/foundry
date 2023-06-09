@@ -135,7 +135,6 @@ impl<'a> CoverageReporter for LcovReporter<'a> {
 }
 
 /// A super verbose reporter for debugging coverage while it is still unstable.
-#[derive(Default)]
 pub struct DebugReporter;
 
 impl CoverageReporter for DebugReporter {

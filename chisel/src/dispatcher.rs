@@ -379,6 +379,40 @@ impl ChiselDispatcher {
                     DispatchResult::CommandFailed(Self::make_error("Session not present."))
                 }
             }
+            ChiselCommand::Calldata => {
+                if let Some(session_source) = self.session.session_source.as_mut() {
+                    // remove empty space, double quotes, and 0x prefix
+                    let arg = args
+                        .first()
+                        .map(|s| {
+                            s.trim_matches(|c: char| c.is_whitespace() || c == '"' || c == '\'')
+                        })
+                        .map(|s| s.strip_prefix("0x").unwrap_or(s))
+                        .unwrap_or("");
+
+                    if arg.is_empty() {
+                        session_source.config.calldata = None;
+                        return DispatchResult::CommandSuccess(Some("Calldata cleared.".to_string()))
+                    }
+
+                    let calldata = hex::decode(arg);
+                    match calldata {
+                        Ok(calldata) => {
+                            session_source.config.calldata = Some(calldata);
+                            DispatchResult::CommandSuccess(Some(format!(
+                                "Set calldata to '{}'",
+                                Paint::yellow(arg)
+                            )))
+                        }
+                        Err(e) => DispatchResult::CommandFailed(Self::make_error(format!(
+                            "Invalid calldata: {}",
+                            e
+                        ))),
+                    }
+                } else {
+                    DispatchResult::CommandFailed(Self::make_error("Session not present."))
+                }
+            }
             ChiselCommand::MemDump | ChiselCommand::StackDump => {
                 if let Some(session_source) = self.session.session_source.as_mut() {
                     match session_source.execute().await {

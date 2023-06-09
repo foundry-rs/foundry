@@ -1,6 +1,6 @@
 Compiling 2 files with 0.8.10
 Solc 0.8.10 finished in 424.55ms
-Compiler run successful
+Compiler run successful!
 
 Running 1 test for src/ATest.t.sol:ATest
 [PASS] testExample() (gas: 168)

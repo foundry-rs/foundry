@@ -36,13 +36,40 @@ pub struct ScriptSequence {
     pub receipts: Vec<TransactionReceipt>,
     pub libraries: Vec<String>,
     pub pending: Vec<TxHash>,
+    #[serde(skip)]
     pub path: PathBuf,
+    #[serde(skip)]
+    pub sensitive_path: PathBuf,
     pub returns: HashMap<String, NestedValue>,
     pub timestamp: u64,
     pub chain: u64,
     /// If `True`, the sequence belongs to a `MultiChainSequence` and won't save to disk as usual.
     pub multi: bool,
     pub commit: Option<String>,
+}
+
+/// Sensitive values from the transactions in a script sequence
+#[derive(Deserialize, Serialize, Clone, Default)]
+pub struct SensitiveTransactionMetadata {
+    pub rpc: Option<String>,
+}
+
+/// Sensitive info from the script sequence which is saved into the cache folder
+#[derive(Deserialize, Serialize, Clone, Default)]
+pub struct SensitiveScriptSequence {
+    pub transactions: VecDeque<SensitiveTransactionMetadata>,
+}
+
+impl From<&mut ScriptSequence> for SensitiveScriptSequence {
+    fn from(sequence: &mut ScriptSequence) -> Self {
+        SensitiveScriptSequence {
+            transactions: sequence
+                .transactions
+                .iter()
+                .map(|tx| SensitiveTransactionMetadata { rpc: tx.rpc.clone() })
+                .collect(),
+        }
+    }
 }
 
 impl ScriptSequence {
@@ -57,13 +84,15 @@ impl ScriptSequence {
     ) -> eyre::Result<Self> {
         let chain = config.chain_id.unwrap_or_default().id();
 
-        let path = ScriptSequence::get_path(
+        let (path, sensitive_path) = ScriptSequence::get_paths(
             &config.broadcast,
+            &config.cache_path,
             sig,
             target,
             chain,
             broadcasted && !is_multi,
         )?;
+
         let commit = get_commit_hash(&config.__root.0);
 
         Ok(ScriptSequence {
@@ -72,6 +101,7 @@ impl ScriptSequence {
             receipts: vec![],
             pending: vec![],
             path,
+            sensitive_path,
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .expect("Wrong system time.")
@@ -91,16 +121,46 @@ impl ScriptSequence {
         chain_id: u64,
         broadcasted: bool,
     ) -> eyre::Result<Self> {
-        let path = ScriptSequence::get_path(&config.broadcast, sig, target, chain_id, broadcasted)?;
-        ethers::solc::utils::read_json_file(path)
-            .wrap_err(format!("Deployment not found for chain `{chain_id}`."))
+        let (path, sensitive_path) = ScriptSequence::get_paths(
+            &config.broadcast,
+            &config.cache_path,
+            sig,
+            target,
+            chain_id,
+            broadcasted,
+        )?;
+
+        let mut script_sequence: Self = ethers::solc::utils::read_json_file(&path)
+            .wrap_err(format!("Deployment not found for chain `{chain_id}`."))?;
+
+        let sensitive_script_sequence: SensitiveScriptSequence =
+            ethers::solc::utils::read_json_file(&sensitive_path).wrap_err(format!(
+                "Deployment's sensitive details not found for chain `{chain_id}`."
+            ))?;
+
+        script_sequence
+            .transactions
+            .iter_mut()
+            .enumerate()
+            .for_each(|(i, tx)| tx.rpc = sensitive_script_sequence.transactions[i].rpc.clone());
+
+        script_sequence.path = path;
+        script_sequence.sensitive_path = sensitive_path;
+
+        Ok(script_sequence)
     }
 
     /// Saves the transactions as file if it's a standalone deployment.
     pub fn save(&mut self) -> eyre::Result<()> {
         if !self.multi && !self.transactions.is_empty() {
             self.timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+
+            let sensitive_script_sequence: SensitiveScriptSequence = self.into();
+
             let path = self.path.to_string_lossy();
+            let sensitive_path = self.sensitive_path.to_string_lossy();
+
+            // broadcast folder writes
             //../run-latest.json
             serde_json::to_writer_pretty(BufWriter::new(fs::create_file(&self.path)?), &self)?;
             //../run-[timestamp].json
@@ -110,7 +170,23 @@ impl ScriptSequence {
                 )?),
                 &self,
             )?;
+
+            // cache folder writes
+            //../run-latest.json
+            serde_json::to_writer_pretty(
+                BufWriter::new(fs::create_file(&self.sensitive_path)?),
+                &sensitive_script_sequence,
+            )?;
+            //../run-[timestamp].json
+            serde_json::to_writer_pretty(
+                BufWriter::new(fs::create_file(
+                    sensitive_path.replace("latest.json", &format!("{}.json", self.timestamp)),
+                )?),
+                &sensitive_script_sequence,
+            )?;
+
             shell::println(format!("\nTransactions saved to: {path}\n"))?;
+            shell::println(format!("Sensitive values saved to: {sensitive_path}\n"))?;
         }
 
         Ok(())
@@ -147,29 +223,41 @@ impl ScriptSequence {
             .collect();
     }
 
-    /// Saves to ./broadcast/contract_filename/sig[-timestamp].json
-    pub fn get_path(
-        out: &Path,
+    /// Gets paths in the formats
+    /// ./broadcast/[contract_filename]/[chain_id]/[sig]-[timestamp].json and
+    /// ./cache/[contract_filename]/[chain_id]/[sig]-[timestamp].json
+    pub fn get_paths(
+        broadcast: &Path,
+        cache: &Path,
         sig: &str,
         target: &ArtifactId,
         chain_id: u64,
         broadcasted: bool,
-    ) -> eyre::Result<PathBuf> {
-        let mut out = out.to_path_buf();
+    ) -> eyre::Result<(PathBuf, PathBuf)> {
+        let mut broadcast = broadcast.to_path_buf();
+        let mut cache = cache.to_path_buf();
+        let mut common = PathBuf::new();
+
         let target_fname = target.source.file_name().wrap_err("No filename.")?;
-        out.push(target_fname);
-        out.push(chain_id.to_string());
+        common.push(target_fname);
+        common.push(chain_id.to_string());
         if !broadcasted {
-            out.push(DRY_RUN_DIR);
+            common.push(DRY_RUN_DIR);
         }
 
-        fs::create_dir_all(&out)?;
+        broadcast.push(common.clone());
+        cache.push(common);
+
+        fs::create_dir_all(&broadcast)?;
+        fs::create_dir_all(&cache)?;
 
         // TODO: ideally we want the name of the function here if sig is calldata
         let filename = sig_to_file_name(sig);
 
-        out.push(format!("{filename}-latest.json"));
-        Ok(out)
+        broadcast.push(format!("{filename}-latest.json"));
+        cache.push(format!("{filename}-latest.json"));
+
+        Ok((broadcast, cache))
     }
 
     /// Given the broadcast log, it matches transactions with receipts, and tries to verify any

@@ -8,22 +8,19 @@ use ethers::prelude::artifacts::output_selection::ContractOutputSelection;
 use foundry_common::{
     compile,
     selectors::{import_selectors, SelectorImportData},
+    shell,
 };
+use yansi::Paint;
 
 /// CLI arguments for `forge upload-selectors`.
 #[derive(Debug, Clone, Parser)]
 pub struct UploadSelectorsArgs {
-    #[clap(
-        help = "The name of the contract to upload selectors for.",
-        required_unless_present = "all"
-    )]
+    /// The name of the contract to upload selectors for.
+    #[clap(required_unless_present = "all")]
     pub contract: Option<String>,
 
-    #[clap(
-        long,
-        help = "Upload selectors for all contracts in the project.",
-        required_unless_present = "contract"
-    )]
+    /// Upload selectors for all contracts in the project.
+    #[clap(long, required_unless_present = "contract")]
     pub all: bool,
 
     #[clap(flatten)]
@@ -33,6 +30,8 @@ pub struct UploadSelectorsArgs {
 impl UploadSelectorsArgs {
     /// Builds a contract and uploads the ABI to selector database
     pub async fn run(self) -> eyre::Result<()> {
+        shell::println(Paint::yellow("Warning! This command is deprecated and will be removed in v1, use `forge selectors upload` instead"))?;
+
         let UploadSelectorsArgs { contract, all, project_paths } = self;
 
         let build_args = CoreBuildArgs {

@@ -4,7 +4,10 @@ use ethers::prelude::{
     sourcemap::{SourceElement, SourceMap},
     Bytes,
 };
-use revm::{opcode, spec_opcode_gas, SpecId};
+use revm::{
+    interpreter::opcode::{self, spec_opcode_gas},
+    primitives::SpecId,
+};
 
 /// Attempts to find anchors for the given items using the given source map and bytecode.
 pub fn find_anchors(
@@ -28,7 +31,7 @@ pub fn find_anchors(
                             _ => panic!("Too many paths for branch"),
                         },
                         Err(e) => {
-                            tracing::warn!("Could not find anchor for item: {}, error: {e}", item);
+                            warn!("Could not find anchor for item: {}, error: {e}", item);
                             None
                         }
                     }
@@ -36,7 +39,7 @@ pub fn find_anchors(
                 _ => match find_anchor_simple(source_map, ic_pc_map, *item_id, &item.loc) {
                     Ok(anchor) => Some(anchor),
                     Err(e) => {
-                        tracing::warn!("Could not find anchor for item: {}, error: {e}", item);
+                        warn!("Could not find anchor for item: {}, error: {e}", item);
                         None
                     }
                 },

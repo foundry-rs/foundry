@@ -10,7 +10,7 @@ use ethers::{
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use hashbrown::HashMap;
 use node::CallTraceNode;
-use revm::{opcode, CallContext, Memory, Return, Stack};
+use revm::interpreter::{opcode, CallContext, InstructionResult, Memory, Stack};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
@@ -427,7 +427,7 @@ impl From<&CallTraceStep> for StructLog {
             } else {
                 None
             },
-            stack: Some(step.stack.data().clone()),
+            stack: Some(step.stack.data().iter().copied().map(|data| data.into()).collect()),
             // Filled in `CallTraceArena::geth_trace` as a result of compounding all slot changes
             storage: None,
         }
@@ -467,7 +467,7 @@ pub struct CallTrace {
     /// The gas cost of the call
     pub gas_cost: u64,
     /// The status of the trace's call
-    pub status: Return,
+    pub status: InstructionResult,
     /// call context of the runtime
     pub call_context: Option<CallContext>,
     /// Opcode-level execution steps
@@ -497,7 +497,7 @@ impl Default for CallTrace {
             data: Default::default(),
             output: Default::default(),
             gas_cost: Default::default(),
-            status: Return::Continue,
+            status: InstructionResult::Continue,
             call_context: Default::default(),
             steps: Default::default(),
         }

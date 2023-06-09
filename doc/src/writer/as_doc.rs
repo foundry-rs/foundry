@@ -5,7 +5,7 @@ use crate::{
     parser::ParseSource,
     writer::BufWriter,
     CommentTag, Comments, CommentsRef, Document, Markdown, PreprocessorOutput,
-    CONTRACT_INHERITANCE_ID, GIT_SOURCE_ID, INHERITDOC_ID,
+    CONTRACT_INHERITANCE_ID, DEPLOYMENTS_ID, GIT_SOURCE_ID, INHERITDOC_ID,
 };
 use forge_fmt::solang_ext::SafeUnwrap;
 use itertools::Itertools;
@@ -117,6 +117,10 @@ impl AsDoc for Document {
                 if let Some(git_source) = read_context!(self, GIT_SOURCE_ID, GitSource) {
                     writer.write_link("Git Source", &git_source)?;
                     writer.writeln()?;
+                }
+
+                if let Some(deployments) = read_context!(self, DEPLOYMENTS_ID, Deployments) {
+                    writer.write_deployments_table(deployments)?;
                 }
 
                 match &item.source {

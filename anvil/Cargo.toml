@@ -49,21 +49,22 @@ futures = "0.3"
 async-trait = "0.1"
 
 # misc
-serde_json = "1.0.95"
-serde = { version = "1.0", features = ["derive"] }
-thiserror = "1.0"
+flate2 = "1.0"
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+thiserror = "1"
 yansi = "0.5"
-tempfile = "3.5"
+tempfile = "3"
 
 # cli
-clap = { version = "4.2", features = ["derive", "env", "wrap_help"], optional = true }
-clap_complete = { version = "4.2", optional = true }
-chrono = "0.4.24"
-auto_impl = "1.0"
+clap = { version = "4", features = ["derive", "env", "wrap_help"], optional = true }
+clap_complete = { version = "4", optional = true }
+chrono = "0.4"
+auto_impl = "1"
 ctrlc = { version = "3", optional = true }
-fdlimit = { version = "0.2.1", optional = true }
-clap_complete_fig = "4.2"
-ethereum-forkid = "0.11"
+fdlimit = { version = "0.2", optional = true }
+clap_complete_fig = "4"
+ethereum-forkid = "0.12"
 
 # ethers
 [target.'cfg(not(windows))'.dependencies]

@@ -8,7 +8,6 @@ use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
-use tracing::{trace, warn};
 
 pub type SingleSignaturesIdentifier = Arc<RwLock<SignaturesIdentifier>>;
 
@@ -29,7 +28,7 @@ pub struct SignaturesIdentifier {
 }
 
 impl SignaturesIdentifier {
-    #[tracing::instrument(target = "forge::signatures")]
+    #[instrument(target = "forge::signatures")]
     pub fn new(
         cache_path: Option<PathBuf>,
         offline: bool,
@@ -69,7 +68,7 @@ impl SignaturesIdentifier {
         Ok(Arc::new(RwLock::new(identifier)))
     }
 
-    #[tracing::instrument(target = "forge::signatures", skip(self))]
+    #[instrument(target = "forge::signatures", skip(self))]
     pub fn save(&self) {
         if let Some(cached_path) = &self.cached_path {
             if let Some(parent) = cached_path.parent() {

@@ -37,6 +37,7 @@ pub struct TransactionWithMetadata {
     pub function: Option<String>,
     #[serde(default = "default_vec_of_strings")]
     pub arguments: Option<Vec<String>>,
+    #[serde(skip)]
     pub rpc: Option<RpcUrl>,
     pub transaction: TypedTransaction,
     pub additional_contracts: Vec<AdditionalContract>,
@@ -406,10 +407,10 @@ pub mod wrapper {
         /// Number of the block this transaction was included within.
         #[serde(rename = "blockNumber")]
         pub block_number: Option<U64>,
-        /// address of the sender.
+        /// The address of the sender.
         #[serde(serialize_with = "serialize_addr")]
         pub from: Address,
-        // address of the receiver. null when its a contract creation transaction.
+        // The address of the receiver. `None` when its a contract creation transaction.
         #[serde(serialize_with = "serialize_opt_addr")]
         pub to: Option<Address>,
         /// Cumulative gas used within the block after this was executed.
