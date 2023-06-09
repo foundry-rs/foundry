@@ -11,7 +11,7 @@ pub use hevm::*;
 )]
 pub mod hevm {
     #[rustfmt::skip]
-    const __ABI: &str = "[\nstruct Log { bytes32[] topics; bytes data; }\nstruct Rpc { string name; string url; }\nstruct DirEntry { string errorMessage; string path; uint64 depth; bool isDir; bool isSymlink; }\nstruct FsMetadata { bool isDir; bool isSymlink; uint256 length; bool readOnly; uint256 modified; uint256 accessed; uint256 created; }\n\nallowCheatcodes(address)\n\nffi(string[])(bytes)\n\nbreakpoint(string)\nbreakpoint(string,bool)\n\nroll(uint256)\nwarp(uint256)\ndifficulty(uint256)\nprevrandao(bytes32)\nfee(uint256)\ncoinbase(address)\nstore(address,bytes32,bytes32)\nload(address,bytes32)(bytes32)\n\nsetEnv(string,string)\nenvBool(string)(bool)\nenvUint(string)(uint256)\nenvInt(string)(int256)\nenvAddress(string)(address)\nenvBytes32(string)(bytes32)\nenvString(string)(string)\nenvBytes(string)(bytes)\nenvBool(string,string)(bool[])\nenvUint(string,string)(uint256[])\nenvInt(string,string)(int256[])\nenvAddress(string,string)(address[])\nenvBytes32(string,string)(bytes32[])\nenvString(string,string)(string[])\nenvBytes(string,string)(bytes[])\nenvOr(string,bool)(bool)\nenvOr(string,uint256)(uint256)\nenvOr(string,int256)(int256)\nenvOr(string,address)(address)\nenvOr(string,bytes32)(bytes32)\nenvOr(string,string)(string)\nenvOr(string,bytes)(bytes)\nenvOr(string,string,bool[])(bool[])\nenvOr(string,string,uint256[])(uint256[])\nenvOr(string,string,int256[])(int256[])\nenvOr(string,string,address[])(address[])\nenvOr(string,string,bytes32[])(bytes32[])\nenvOr(string,string,string[])(string[])\nenvOr(string,string,bytes[])(bytes[])\n\naddr(uint256)(address)\nsign(uint256,bytes32)(uint8,bytes32,bytes32)\nderiveKey(string,uint32)(uint256)\nderiveKey(string,string,uint32)(uint256)\nrememberKey(uint256)(address)\n\nprank(address)\nprank(address,address)\nreadCallers()(uint256,address,address)\nstartPrank(address)\nstartPrank(address,address)\nstopPrank()\n\ndeal(address,uint256)\netch(address,bytes)\nexpectRevert()\nexpectRevert(bytes)\nexpectRevert(bytes4)\nrecord()\naccesses(address)(bytes32[],bytes32[])\n\nrecordLogs()\ngetRecordedLogs()(Log[])\n\nexpectEmit()\nexpectEmit(address)\nexpectEmit(bool,bool,bool,bool)\nexpectEmit(bool,bool,bool,bool,address)\n\nmockCall(address,bytes,bytes)\nmockCall(address,uint256,bytes,bytes)\nmockCallRevert(address,bytes,bytes)\nmockCallRevert(address,uint256,bytes,bytes)\nclearMockedCalls()\n\nexpectCall(address,bytes)\nexpectCall(address,bytes,uint64)\nexpectCall(address,uint256,bytes)\nexpectCall(address,uint256,bytes,uint64)\nexpectCall(address,uint256,uint64,bytes)\nexpectCall(address,uint256,uint64,bytes,uint64)\nexpectCallMinGas(address,uint256,uint64,bytes)\nexpectCallMinGas(address,uint256,uint64,bytes,uint64)\nexpectSafeMemory(uint64,uint64)\nexpectSafeMemoryCall(uint64,uint64)\n\ngetCode(string)\ngetDeployedCode(string)\nlabel(address,string)\ngetLabel(address)(string)\nassume(bool)\nsetNonce(address,uint64)\ngetNonce(address)\nresetNonce(address)\nsetNonceUnsafe(address,uint64)\nchainId(uint256)\ntxGasPrice(uint256)\n\nbroadcast()\nbroadcast(address)\nbroadcast(uint256)\nstartBroadcast()\nstartBroadcast(address)\nstartBroadcast(uint256)\nstopBroadcast()\n\nprojectRoot()(string)\nreadFile(string)(string)\nreadFileBinary(string)(bytes)\nwriteFile(string,string)\nwriteFileBinary(string,bytes)\nopenFile(string)\nreadLine(string)(string)\nwriteLine(string,string)\ncloseFile(string)\nremoveFile(string)\ncreateDir(string, bool)\nremoveDir(string, bool)\nreadDir(string)(DirEntry[])\nreadDir(string, uint64)(DirEntry[])\nreadDir(string, uint64, bool)(DirEntry[])\nreadLink(string)(string)\nfsMetadata(string)(FsMetadata)\n\ntoString(bytes)\ntoString(address)\ntoString(uint256)\ntoString(int256)\ntoString(bytes32)\ntoString(bool)\nparseBytes(string)(bytes)\nparseAddress(string)(address)\nparseUint(string)(uint256)\nparseInt(string)(int256)\nparseBytes32(string)(bytes32)\nparseBool(string)(bool)\n\nsnapshot()(uint256)\nrevertTo(uint256)(bool)\ncreateFork(string,uint256)(uint256)\ncreateFork(string,bytes32)(uint256)\ncreateFork(string)(uint256)\ncreateSelectFork(string,uint256)(uint256)\ncreateSelectFork(string,bytes32)(uint256)\ncreateSelectFork(string)(uint256)\nselectFork(uint256)\nactiveFork()(uint256)\ntransact(bytes32)\ntransact(uint256,bytes32)\nmakePersistent(address)\nmakePersistent(address,address)\nmakePersistent(address,address,address)\nmakePersistent(address[])\nrevokePersistent(address)\nrevokePersistent(address[])\nisPersistent(address)(bool)\nrollFork(uint256)\nrollFork(bytes32)\nrollFork(uint256,uint256)\nrollFork(uint256,bytes32)\nrpcUrl(string)(string)\nrpcUrls()(string[2][])\nrpcUrlStructs()(Rpc[])\n\nwriteJson(string, string)\nwriteJson(string, string, string)\nparseJson(string)(bytes)\nparseJson(string, string)(bytes)\nparseJsonUint(string, string)(uint256)\nparseJsonUintArray(string, string)(uint256[])\nparseJsonInt(string, string)(int256)\nparseJsonIntArray(string, string)(int256[])\nparseJsonString(string, string)(string)\nparseJsonStringArray(string, string)(string[])\nparseJsonAddress(string, string)(address)\nparseJsonAddressArray(string, string)(address[])\nparseJsonBool(string, string)(bool)\nparseJsonBoolArray(string, string)(bool[])\nparseJsonBytes(string, string)(bytes)\nparseJsonBytesArray(string, string)(bytes[])\nparseJsonBytes32(string, string)(bytes32)\nparseJsonBytes32Array(string, string)(bytes32[])\nserializeBool(string,string,bool)(string)\nserializeBool(string,string,bool[])(string)\nserializeUint(string,string,uint256)(string)\nserializeUint(string,string,uint256[])(string)\nserializeInt(string,string,int256)(string)\nserializeInt(string,string,int256[])(string)\nserializeAddress(string,string,address)(string)\nserializeAddress(string,string,address[])(string)\nserializeBytes32(string,string,bytes32)(string)\nserializeBytes32(string,string,bytes32[])(string)\nserializeString(string,string,string)(string)\nserializeString(string,string,string[])(string)\nserializeBytes(string,string,bytes)(string)\nserializeBytes(string,string,bytes[])(string)\n\npauseGasMetering()\nresumeGasMetering()\n\n]";
+    const __ABI: &str = "[\nstruct Log { bytes32[] topics; bytes data; }\nstruct Rpc { string name; string url; }\nstruct DirEntry { string errorMessage; string path; uint64 depth; bool isDir; bool isSymlink; }\nstruct FsMetadata { bool isDir; bool isSymlink; uint256 length; bool readOnly; uint256 modified; uint256 accessed; uint256 created; }\nstruct FfiResult { int32 exit_code; bytes stdout; bytes stderr; }\n\nallowCheatcodes(address)\n\ntryFfi(string[])(FfiResult)\nffi(string[])(bytes)\n\nbreakpoint(string)\nbreakpoint(string,bool)\n\nroll(uint256)\nwarp(uint256)\ndifficulty(uint256)\nprevrandao(bytes32)\nfee(uint256)\ncoinbase(address)\nstore(address,bytes32,bytes32)\nload(address,bytes32)(bytes32)\n\nsetEnv(string,string)\nenvBool(string)(bool)\nenvUint(string)(uint256)\nenvInt(string)(int256)\nenvAddress(string)(address)\nenvBytes32(string)(bytes32)\nenvString(string)(string)\nenvBytes(string)(bytes)\nenvBool(string,string)(bool[])\nenvUint(string,string)(uint256[])\nenvInt(string,string)(int256[])\nenvAddress(string,string)(address[])\nenvBytes32(string,string)(bytes32[])\nenvString(string,string)(string[])\nenvBytes(string,string)(bytes[])\nenvOr(string,bool)(bool)\nenvOr(string,uint256)(uint256)\nenvOr(string,int256)(int256)\nenvOr(string,address)(address)\nenvOr(string,bytes32)(bytes32)\nenvOr(string,string)(string)\nenvOr(string,bytes)(bytes)\nenvOr(string,string,bool[])(bool[])\nenvOr(string,string,uint256[])(uint256[])\nenvOr(string,string,int256[])(int256[])\nenvOr(string,string,address[])(address[])\nenvOr(string,string,bytes32[])(bytes32[])\nenvOr(string,string,string[])(string[])\nenvOr(string,string,bytes[])(bytes[])\n\naddr(uint256)(address)\nsign(uint256,bytes32)(uint8,bytes32,bytes32)\nderiveKey(string,uint32)(uint256)\nderiveKey(string,string,uint32)(uint256)\nrememberKey(uint256)(address)\n\nprank(address)\nprank(address,address)\nreadCallers()(uint256,address,address)\nstartPrank(address)\nstartPrank(address,address)\nstopPrank()\n\ndeal(address,uint256)\netch(address,bytes)\nexpectRevert()\nexpectRevert(bytes)\nexpectRevert(bytes4)\nrecord()\naccesses(address)(bytes32[],bytes32[])\n\nrecordLogs()\ngetRecordedLogs()(Log[])\n\nexpectEmit()\nexpectEmit(address)\nexpectEmit(bool,bool,bool,bool)\nexpectEmit(bool,bool,bool,bool,address)\n\nmockCall(address,bytes,bytes)\nmockCall(address,uint256,bytes,bytes)\nmockCallRevert(address,bytes,bytes)\nmockCallRevert(address,uint256,bytes,bytes)\nclearMockedCalls()\n\nexpectCall(address,bytes)\nexpectCall(address,bytes,uint64)\nexpectCall(address,uint256,bytes)\nexpectCall(address,uint256,bytes,uint64)\nexpectCall(address,uint256,uint64,bytes)\nexpectCall(address,uint256,uint64,bytes,uint64)\nexpectCallMinGas(address,uint256,uint64,bytes)\nexpectCallMinGas(address,uint256,uint64,bytes,uint64)\nexpectSafeMemory(uint64,uint64)\nexpectSafeMemoryCall(uint64,uint64)\n\ngetCode(string)\ngetDeployedCode(string)\nlabel(address,string)\ngetLabel(address)(string)\nassume(bool)\nsetNonce(address,uint64)\ngetNonce(address)\nresetNonce(address)\nsetNonceUnsafe(address,uint64)\nchainId(uint256)\ntxGasPrice(uint256)\n\nbroadcast()\nbroadcast(address)\nbroadcast(uint256)\nstartBroadcast()\nstartBroadcast(address)\nstartBroadcast(uint256)\nstopBroadcast()\n\nprojectRoot()(string)\nreadFile(string)(string)\nreadFileBinary(string)(bytes)\nwriteFile(string,string)\nwriteFileBinary(string,bytes)\nopenFile(string)\nreadLine(string)(string)\nwriteLine(string,string)\ncloseFile(string)\nremoveFile(string)\ncreateDir(string, bool)\nremoveDir(string, bool)\nreadDir(string)(DirEntry[])\nreadDir(string, uint64)(DirEntry[])\nreadDir(string, uint64, bool)(DirEntry[])\nreadLink(string)(string)\nfsMetadata(string)(FsMetadata)\n\ntoString(bytes)\ntoString(address)\ntoString(uint256)\ntoString(int256)\ntoString(bytes32)\ntoString(bool)\nparseBytes(string)(bytes)\nparseAddress(string)(address)\nparseUint(string)(uint256)\nparseInt(string)(int256)\nparseBytes32(string)(bytes32)\nparseBool(string)(bool)\n\nsnapshot()(uint256)\nrevertTo(uint256)(bool)\ncreateFork(string,uint256)(uint256)\ncreateFork(string,bytes32)(uint256)\ncreateFork(string)(uint256)\ncreateSelectFork(string,uint256)(uint256)\ncreateSelectFork(string,bytes32)(uint256)\ncreateSelectFork(string)(uint256)\nselectFork(uint256)\nactiveFork()(uint256)\ntransact(bytes32)\ntransact(uint256,bytes32)\nmakePersistent(address)\nmakePersistent(address,address)\nmakePersistent(address,address,address)\nmakePersistent(address[])\nrevokePersistent(address)\nrevokePersistent(address[])\nisPersistent(address)(bool)\nrollFork(uint256)\nrollFork(bytes32)\nrollFork(uint256,uint256)\nrollFork(uint256,bytes32)\nrpcUrl(string)(string)\nrpcUrls()(string[2][])\nrpcUrlStructs()(Rpc[])\n\nwriteJson(string, string)\nwriteJson(string, string, string)\nparseJson(string)(bytes)\nparseJson(string, string)(bytes)\nparseJsonUint(string, string)(uint256)\nparseJsonUintArray(string, string)(uint256[])\nparseJsonInt(string, string)(int256)\nparseJsonIntArray(string, string)(int256[])\nparseJsonString(string, string)(string)\nparseJsonStringArray(string, string)(string[])\nparseJsonAddress(string, string)(address)\nparseJsonAddressArray(string, string)(address[])\nparseJsonBool(string, string)(bool)\nparseJsonBoolArray(string, string)(bool[])\nparseJsonBytes(string, string)(bytes)\nparseJsonBytesArray(string, string)(bytes[])\nparseJsonBytes32(string, string)(bytes32)\nparseJsonBytes32Array(string, string)(bytes32[])\nserializeBool(string,string,bool)(string)\nserializeBool(string,string,bool[])(string)\nserializeUint(string,string,uint256)(string)\nserializeUint(string,string,uint256[])(string)\nserializeInt(string,string,int256)(string)\nserializeInt(string,string,int256[])(string)\nserializeAddress(string,string,address)(string)\nserializeAddress(string,string,address[])(string)\nserializeBytes32(string,string,bytes32)(string)\nserializeBytes32(string,string,bytes32[])(string)\nserializeString(string,string,string)(string)\nserializeString(string,string,string[])(string)\nserializeBytes(string,string,bytes)(string)\nserializeBytes(string,string,bytes[])(string)\n\npauseGasMetering()\nresumeGasMetering()\n\n]";
     ///The parsed human-readable ABI of the contract.
     pub static HEVM_ABI: ::ethers_contract::Lazy<::ethers_core::abi::Abi> = ::ethers_contract::Lazy::new(||
     ::ethers_core::abi::parse_abi_str(__ABI).expect("ABI is always valid"));
@@ -1893,6 +1893,18 @@ pub mod hevm {
         ) -> ::ethers_contract::builders::ContractCall<M, ()> {
             self.0
                 .method_hash([77, 138, 188, 75], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `tryFfi` (0xf45c1ce7) function
+        pub fn try_ffi(
+            &self,
+            p0: ::std::vec::Vec<::std::string::String>,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            (i32, ::ethers_core::types::Bytes, ::ethers_core::types::Bytes),
+        > {
+            self.0
+                .method_hash([244, 92, 28, 231], p0)
                 .expect("method not found (this should never happen)")
         }
         ///Calls the contract's `txGasPrice` (0x48f50c0f) function
@@ -4552,6 +4564,19 @@ pub mod hevm {
     )]
     #[ethcall(name = "transact", abi = "transact(uint256,bytes32)")]
     pub struct Transact1Call(pub ::ethers_core::types::U256, pub [u8; 32]);
+    ///Container type for all input parameters for the `tryFfi` function with signature `tryFfi(string[])` and selector `0xf45c1ce7`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "tryFfi", abi = "tryFfi(string[])")]
+    pub struct TryFfiCall(pub ::std::vec::Vec<::std::string::String>);
     ///Container type for all input parameters for the `txGasPrice` function with signature `txGasPrice(uint256)` and selector `0x48f50c0f`
     #[derive(
         Clone,
@@ -4833,6 +4858,7 @@ pub mod hevm {
         ToString5(ToString5Call),
         Transact0(Transact0Call),
         Transact1(Transact1Call),
+        TryFfi(TryFfiCall),
         TxGasPrice(TxGasPriceCall),
         Warp(WarpCall),
         WriteFile(WriteFileCall),
@@ -5607,6 +5633,10 @@ pub mod hevm {
                 return Ok(Self::Transact1(decoded));
             }
             if let Ok(decoded)
+                = <TryFfiCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+                return Ok(Self::TryFfi(decoded));
+            }
+            if let Ok(decoded)
                 = <TxGasPriceCall as ::ethers_core::abi::AbiDecode>::decode(data) {
                 return Ok(Self::TxGasPrice(decoded));
             }
@@ -6072,6 +6102,7 @@ pub mod hevm {
                 Self::Transact1(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
+                Self::TryFfi(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::TxGasPrice(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
@@ -6291,6 +6322,7 @@ pub mod hevm {
                 Self::ToString5(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Transact0(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Transact1(element) => ::core::fmt::Display::fmt(element, f),
+                Self::TryFfi(element) => ::core::fmt::Display::fmt(element, f),
                 Self::TxGasPrice(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Warp(element) => ::core::fmt::Display::fmt(element, f),
                 Self::WriteFile(element) => ::core::fmt::Display::fmt(element, f),
@@ -7199,6 +7231,11 @@ pub mod hevm {
     impl ::core::convert::From<Transact1Call> for HEVMCalls {
         fn from(value: Transact1Call) -> Self {
             Self::Transact1(value)
+        }
+    }
+    impl ::core::convert::From<TryFfiCall> for HEVMCalls {
+        fn from(value: TryFfiCall) -> Self {
+            Self::TryFfi(value)
         }
     }
     impl ::core::convert::From<TxGasPriceCall> for HEVMCalls {
@@ -8437,6 +8474,20 @@ pub mod hevm {
         Hash
     )]
     pub struct SnapshotReturn(pub ::ethers_core::types::U256);
+    ///Container type for all return fields from the `tryFfi` function with signature `tryFfi(string[])` and selector `0xf45c1ce7`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthAbiType,
+        ::ethers_contract::EthAbiCodec,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    pub struct TryFfiReturn(
+        pub (i32, ::ethers_core::types::Bytes, ::ethers_core::types::Bytes),
+    );
     ///`DirEntry(string,string,uint64,bool,bool)`
     #[derive(
         Clone,
@@ -8454,6 +8505,22 @@ pub mod hevm {
         pub depth: u64,
         pub is_dir: bool,
         pub is_symlink: bool,
+    }
+    ///`FfiResult(int32,bytes,bytes)`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthAbiType,
+        ::ethers_contract::EthAbiCodec,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    pub struct FfiResult {
+        pub exit_code: i32,
+        pub stdout: ::ethers_core::types::Bytes,
+        pub stderr: ::ethers_core::types::Bytes,
     }
     ///`FsMetadata(bool,bool,uint256,bool,uint256,uint256,uint256)`
     #[derive(
