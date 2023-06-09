@@ -1,13 +1,11 @@
 use super::{bail, ensure, fmt_err, Cheatcodes, Result};
-use crate::{
-    abi::{FfiResult, HEVMCalls},
-    executor::inspector::cheatcodes::util,
-};
+use crate::{abi::HEVMCalls, executor::inspector::cheatcodes::util};
 use ethers::{
     abi::{self, AbiEncode, JsonAbi, ParamType, Token},
     prelude::artifacts::CompactContractBytecode,
     types::*,
 };
+use foundry_abi::hevm::FfiResult;
 use foundry_common::{fmt::*, fs, get_artifact_path};
 use foundry_config::fs_permissions::FsAccessKind;
 use hex::FromHex;
@@ -66,7 +64,7 @@ fn try_ffi(state: &Cheatcodes, args: &[String]) -> Result {
     let output = cmd
         .current_dir(&state.config.root)
         .output()
-        .map_err(|err| err!("Failed to execute command: {err}"))?;
+        .map_err(|err| fmt_err!("Failed to execute command: {err}"))?;
 
     let exit_code = output.status.code().unwrap_or(1);
 
@@ -422,7 +420,7 @@ pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result> {
             if state.config.ffi {
                 try_ffi(state, &inner.0)
             } else {
-                Err(err!("FFI disabled: run again with `--ffi` if you want to allow tests to call external scripts."))
+                Err(fmt_err!("FFI disabled: run again with `--ffi` if you want to allow tests to call external scripts."))
             }
         }
         HEVMCalls::GetCode(inner) => get_code(state, &inner.0),
