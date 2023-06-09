@@ -583,7 +583,7 @@ interface Cheats {
 
     function stopMappingRecording() external;
 
-    function getMappingLength(address target, bytes32 slot) external returns (uint);
+    function getMappingLength(address target, bytes32 slot) external returns (uint256);
 
     function getMappingSlotAt(address target, bytes32 slot, uint256 idx) external returns (bytes32);
 
