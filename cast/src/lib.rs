@@ -1309,7 +1309,7 @@ impl SimpleCast {
         let lowercase_address_string = format!("0x{s}");
         let lowercase_address = Address::from_str(&lowercase_address_string)?;
 
-        Ok(utils::to_checksum(&lowercase_address, None))
+        Ok(ethers_core::utils::to_checksum(&lowercase_address, None))
     }
 
     /// Decodes abi-encoded hex input or output
