@@ -4,6 +4,7 @@ use crate::{
     executor::{
         backend::DatabaseExt,
         inspector::cheatcodes::{
+            mapping::{get_mapping_key_and_parent, get_mapping_length, get_mapping_slot_at},
             util::{is_potential_precompile, with_journaled_account},
             DealRecord,
         },

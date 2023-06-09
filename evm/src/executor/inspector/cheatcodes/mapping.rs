@@ -1,14 +1,15 @@
-use std::collections::BTreeMap;
-
-use bytes::Bytes;
+use super::Cheatcodes;
+use crate::utils::{b160_to_h160, ru256_to_u256};
 use ethers::{
     abi::{self, Token},
-    types::{Address, U256},
+    types::{Address, Bytes, U256},
     utils::keccak256,
 };
-use revm::{opcode, Database, EVMData, Interpreter};
-
-use super::Cheatcodes;
+use revm::{
+    interpreter::{opcode, Interpreter},
+    Database, EVMData,
+};
+use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Default)]
 pub struct MappingSlots {
@@ -71,7 +72,7 @@ pub fn get_mapping_slot_at(
             .unwrap_or_default(),
         None => 0.into(),
     };
-    abi::encode(&[Token::Uint(result.into())]).into()
+    abi::encode(&[Token::Uint(result)]).into()
 }
 
 pub fn get_mapping_key_and_parent(state: &mut Cheatcodes, address: Address, slot: U256) -> Bytes {
@@ -86,7 +87,7 @@ pub fn get_mapping_key_and_parent(state: &mut Cheatcodes, address: Address, slot
             },
             None => (false, U256::zero(), U256::zero()),
         };
-    abi::encode(&[Token::Bool(found), Token::Uint(key.into()), Token::Uint(parent.into())]).into()
+    abi::encode(&[Token::Bool(found), Token::Uint(key), Token::Uint(parent)]).into()
 }
 
 pub fn on_evm_step<DB: Database>(
@@ -96,20 +97,26 @@ pub fn on_evm_step<DB: Database>(
 ) {
     match interpreter.contract.bytecode.bytecode()[interpreter.program_counter()] {
         opcode::SHA3 => {
-            if interpreter.stack.peek(1) == Ok(0x40.into()) {
+            if interpreter.stack.peek(1) == Ok(revm::primitives::U256::from(0x40)) {
                 let address = interpreter.contract.address;
-                let offset = interpreter.stack.peek(0).expect("stack size > 1").as_usize();
+                let offset = interpreter.stack.peek(0).expect("stack size > 1").to::<usize>();
                 let low = U256::from(interpreter.memory.get_slice(offset, 0x20));
                 let high = U256::from(interpreter.memory.get_slice(offset + 0x20, 0x20));
                 let result = U256::from(keccak256(interpreter.memory.get_slice(offset, 0x40)));
 
-                mapping_slots.entry(address).or_default().seen_sha3.insert(result, (low, high));
+                mapping_slots
+                    .entry(b160_to_h160(address))
+                    .or_default()
+                    .seen_sha3
+                    .insert(result, (low, high));
             }
         }
         opcode::SSTORE => {
-            if let Some(mapping_slots) = mapping_slots.get_mut(&interpreter.contract.address) {
+            if let Some(mapping_slots) =
+                mapping_slots.get_mut(&b160_to_h160(interpreter.contract.address))
+            {
                 if let Ok(slot) = interpreter.stack.peek(0) {
-                    mapping_slots.insert(slot);
+                    mapping_slots.insert(ru256_to_u256(slot));
                 }
             }
         }

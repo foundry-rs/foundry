@@ -1,7 +1,7 @@
 use self::{
     env::Broadcast,
-    mapping::MappingSlots,
     expect::{handle_expect_emit, handle_expect_revert, ExpectedCallType},
+    mapping::MappingSlots,
     util::{check_if_fixed_gas_limit, process_create, BroadcastableTransactions},
 };
 use crate::{
@@ -181,7 +181,7 @@ pub struct Cheatcodes {
     /// Holds stored gas info for when we pause gas metering, and we're entering/inside
     /// CREATE / CREATE2 frames. This is needed to make gas meter pausing work correctly when
     /// paused and creating new contracts.
-    pub gas_metering_create: Option<Option<revm::Gas>>,
+    pub gas_metering_create: Option<Option<revm::interpreter::Gas>>,
 
     /// Holds mapping slots info
     pub mapping_slots: Option<BTreeMap<Address, MappingSlots>>,
