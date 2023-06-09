@@ -44,10 +44,10 @@ interface Cheats {
         uint256 created;
     }
 
-    struct FfiResult { 
-        int32 exit_code; 
-        bytes stdout; 
-        bytes stderr; 
+    struct FfiResult {
+        int32 exit_code;
+        bytes stdout;
+        bytes stderr;
     }
 
     // Set block.timestamp (newTimestamp)
