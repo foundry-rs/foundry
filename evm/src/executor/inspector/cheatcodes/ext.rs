@@ -1,5 +1,8 @@
 use super::{bail, ensure, fmt_err, Cheatcodes, Result};
-use crate::{abi::{FfiResult, HEVMCalls}, executor::inspector::cheatcodes::util};
+use crate::{
+    abi::{FfiResult, HEVMCalls},
+    executor::inspector::cheatcodes::util,
+};
 use ethers::{
     abi::{self, AbiEncode, JsonAbi, ParamType, Token},
     prelude::artifacts::CompactContractBytecode,
