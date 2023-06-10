@@ -151,13 +151,13 @@ impl SelectorsSubcommands {
                 let first_method_map = first_artifact.method_identifiers.as_ref().unwrap();
                 let second_method_map = second_artifact.method_identifiers.as_ref().unwrap();
 
-                let colliding_methods: Vec<(&String, &String)> = first_method_map
+                let colliding_methods: Vec<(&String, &String, &String)> = first_method_map
                     .iter()
                     .filter_map(|(k1, v1)| {
                         second_method_map
                             .iter()
-                            .find_map(|(k2, v2)| if **v2 == *v1 { Some(k2) } else { None })
-                            .map(|k2| (k1, k2))
+                            .find_map(|(k2, v2)| if **v2 == *v1 { Some((k2, v2)) } else { None })
+                            .map(|(k2, v2)| (v2, k1, k2))
                     })
                     .collect();
 
@@ -171,7 +171,7 @@ impl SelectorsSubcommands {
                         second_contract.name,
                     ]);
                     colliding_methods.iter().for_each(|t| {
-                        table.add_row(vec![first_method_map.get(t.0).unwrap(), t.0, t.1]);
+                        table.add_row(vec![t.0, t.1, t.2]);
                     });
                     println!("{table}");
 
