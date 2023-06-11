@@ -71,9 +71,9 @@ async fn main() -> eyre::Result<()> {
         Subcommands::ConcatHex { data } => {
             if data.is_empty() {
                 let s = stdin::read(true)?;
-                println!("{}", SimpleCast::concat_hex(s.split_whitespace()))
+                println!("{}", SimpleCast::concat_hex(s.split_whitespace())?)
             } else {
-                println!("{}", SimpleCast::concat_hex(data))
+                println!("{}", SimpleCast::concat_hex(data)?)
             }
         }
         Subcommands::FromBin => {

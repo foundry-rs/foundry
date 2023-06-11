@@ -992,19 +992,20 @@ impl SimpleCast {
     /// use cast::SimpleCast as Cast;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Cast::concat_hex(["0x00", "0x01"]), "0x0001");
-    ///     assert_eq!(Cast::concat_hex(["1", "2"]), "0x12");
+    ///     assert_eq!(Cast::concat_hex(["00", "01"])?, "0x0001");
+    ///     assert_eq!(Cast::concat_hex(["1", "2"]).is_err(), true);
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub fn concat_hex<T: AsRef<str>>(values: impl IntoIterator<Item = T>) -> String {
+    pub fn concat_hex<T: AsRef<str>>(values: impl IntoIterator<Item = T>) -> Result<String> {
         let mut out = String::new();
         for s in values {
-            let s = s.as_ref();
-            out.push_str(s.strip_prefix("0x").unwrap_or(s))
+            let s = s.as_ref().strip_prefix("0x").unwrap_or(s.as_ref());
+            hex::decode(s)?;
+            out.push_str(s);
         }
-        format!("0x{out}")
+        Ok(format!("0x{out}"))
     }
 
     /// Converts an Ethereum address to its checksum format
@@ -1793,8 +1794,8 @@ mod tests {
 
     #[test]
     fn concat_hex() {
-        assert_eq!(Cast::concat_hex(["0x00", "0x01"]), "0x0001");
-        assert_eq!(Cast::concat_hex(["1", "2"]), "0x12");
+        assert_eq!(Cast::concat_hex(["0x00", "0x01"]).unwrap(), "0x0001");
+        assert_eq!(Cast::concat_hex(["1", "2"]).is_err(), true);
     }
 
     #[test]
