@@ -28,7 +28,9 @@ use ethers::{
     utils::{format_ether, hex, to_checksum, WEI_IN_ETHER},
 };
 use forge::utils::{h256_to_b256, u256_to_ru256};
-use foundry_common::{ProviderBuilder, ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT};
+use foundry_common::{
+    ProviderBuilder, ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
+};
 use foundry_config::Config;
 use foundry_evm::{
     executor::fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
@@ -827,9 +829,17 @@ impl NodeConfig {
                 block
             } else {
                 if let Ok(latest_block) = provider.get_block_number().await {
-                    panic!(
-                            "Failed to get block for block number: {fork_block_number}\nlatest block number: {latest_block}"
-                        );
+                    let mut message = format!(
+                        "Failed to get block for block number: {fork_block_number}\n\
+                        latest block number: {latest_block}"
+                    );
+                    // If the user is forking from an older block in a non-archive node, the
+                    // `get_block` call will return null.
+                    if fork_block_number < latest_block.as_u64() {
+                        message.push('\n');
+                        message.push_str(NON_ARCHIVE_NODE_WARNING);
+                    }
+                    panic!("{}", message);
                 }
                 panic!("Failed to get block for block number: {fork_block_number}")
             };

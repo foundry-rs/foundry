@@ -12,6 +12,7 @@ use ethers::{
     types::{Address, Block, BlockId, Bytes, Transaction, H256, U256},
     utils::keccak256,
 };
+use foundry_common::NON_ARCHIVE_NODE_WARNING;
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
     stream::Stream,
@@ -712,6 +713,12 @@ impl<'a> DatabaseErrorLog<'a> {
                 ?number,
                 message
             ),
+        };
+        if err.is_possibly_non_archive_node_error() {
+            error!(
+                target: TARGET,
+                "{NON_ARCHIVE_NODE_WARNING}"
+            );
         }
     }
 }

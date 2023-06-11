@@ -6,6 +6,7 @@ use ethers::{
     types::{Address, Block, TxHash, U256},
 };
 use eyre::WrapErr;
+use foundry_common::NON_ARCHIVE_NODE_WARNING;
 use futures::TryFutureExt;
 use revm::primitives::{BlockEnv, CfgEnv, Env, TxEnv};
 
@@ -42,6 +43,11 @@ where
         block
     } else {
         if let Ok(latest_block) = provider.get_block_number().await {
+            // If the user is forking from an older block in a non-archive node, the `get_block`
+            // call will return null.
+            if block_number < latest_block.as_u64() {
+                error!("{NON_ARCHIVE_NODE_WARNING}");
+            }
             eyre::bail!(
                 "Failed to get block for block number: {}\nlatest block number: {}",
                 block_number,
