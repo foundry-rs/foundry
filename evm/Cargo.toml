@@ -57,6 +57,8 @@ url = "2"
 auto_impl = "1"
 itertools = "0.10"
 ordered-float = "3"
+strum = { version = "0.24", features = ["derive"] }
+strum_macros = "0.24"
 walkdir = "2"
 
 # Coverage

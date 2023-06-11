@@ -2462,6 +2462,8 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "strum",
+ "strum_macros",
  "tempfile",
  "thiserror",
  "tokio",
