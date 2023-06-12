@@ -829,7 +829,7 @@ impl NodeConfig {
                     if let Ok(latest_block) = provider.get_block_number().await {
                         let mut message = format!(
                             "Failed to get block for block number: {fork_block_number}\n\
-                        latest block number: {latest_block}"
+latest block number: {latest_block}"
                         );
                         // If the user is forking from an older block in a non-archive node, the
                         // `get_block` call will return null.
