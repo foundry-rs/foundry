@@ -185,18 +185,4 @@ contract ExpectRevertTest is DSTest {
     function testFailExpectRevertDangling() public {
         cheats.expectRevert("dangling");
     }
-
-    // This is now illegal behavior for expectRevert.
-    // This test would've previously passed as expectRevert
-    // would also check reverts at the test level, not only
-    // at the immediate next call.
-    // This allowed cheatcodes to be checked for reverts,
-    // which actually shouldn't have been possible as cheatcodes
-    // are supposed to be bypassed for all expect* checks.
-    // function testExpectRevertInvalidEnv() public {
-    //     cheats.expectRevert(
-    //         "Failed to get environment variable `_testExpectRevertInvalidEnv` as type `string`: environment variable not found"
-    //     );
-    //     string memory val = cheats.envString("_testExpectRevertInvalidEnv");
-    // }
 }

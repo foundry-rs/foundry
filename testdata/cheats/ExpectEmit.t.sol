@@ -75,6 +75,18 @@ contract Emitter {
         this.emitWindow();
     }
 
+    // Used to test matching of consecutive different events
+    // split across subtree calls.
+    function emitSplitWindow() public {
+        this.emitWindow();
+        this.emitWindow();
+    }
+
+    function emitWindowAndOnTest(ExpectEmitTest t) public {
+        this.emitWindow();
+        t.emitLocal();
+    }
+
     /// Ref: issue #1214
     function doesNothing() public pure {}
 
@@ -115,6 +127,10 @@ contract ExpectEmitTest is DSTest {
 
     function setUp() public {
         emitter = new Emitter();
+    }
+
+    function emitLocal() public {
+        emit A(1);
     }
 
     function testFailExpectEmitDanglingNoReference() public {
@@ -474,6 +490,27 @@ contract ExpectEmitTest is DSTest {
         emitter.emitNestedWindow();
     }
 
+    /// emitSplitWindow() emits events [[A, B, C, D, E], [A, B, C, D, E]]. Essentially, in an external call,
+    /// it emits the sequence of events twice at the same depth.
+    /// We should be able to match [A, A, B, C, D, E] as it's all in the next call, no matter
+    /// if they're emitted on subcalls at the same depth (but with correct ordering).
+    function testCanMatchConsecutiveSubtreeEvents() public {
+        cheats.expectEmit(true, false, false, true);
+        emit A(1);
+        cheats.expectEmit(true, false, false, true);
+        emit A(1);
+        cheats.expectEmit(true, false, false, true);
+        emit B(2);
+        cheats.expectEmit(true, false, false, true);
+        emit C(3);
+        cheats.expectEmit(true, false, false, true);
+        emit D(4);
+        cheats.expectEmit(true, false, false, true);
+        emit E(5);
+
+        emitter.emitSplitWindow();
+    }
+
     /// emitWindowNested() emits events A, C, E, A, B, C, D, E, the last 5 on an external call.
     /// We should be able to match [A, C, E, A, C, E] in that order, as these are emitted twice.
     function testCanMatchRepeatedEvents() public {
@@ -519,6 +556,17 @@ contract ExpectEmitTest is DSTest {
         emit A(1);
         emitter.emitWindow();
         emitter.emitWindow();
+    }
+
+    /// emitWindowAndOnTest emits [[A, B, C, D, E], [A]]. The interesting bit is that the
+    /// second call that emits [A] is on this same contract. We should still be able to match
+    /// [A, A] as the call made to this contract is still external.
+    function testEmitWindowAndOnTest() public {
+        cheats.expectEmit(true, false, false, true);
+        emit A(1);
+        cheats.expectEmit(true, false, false, true);
+        emit A(1);
+        emitter.emitWindowAndOnTest(this);
     }
 
     /// This test will fail if we check that all expected logs were emitted
