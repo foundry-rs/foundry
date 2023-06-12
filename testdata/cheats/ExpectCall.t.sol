@@ -254,6 +254,14 @@ contract ExpectCallTest is DSTest {
         cheats.expectCallMinGas(address(inner), 0, 50_001, abi.encodeWithSelector(inner.add.selector, 1, 1));
         this.exposed_addHardGasLimit(target);
     }
+
+    /// Ensure that you cannot use expectCall with an expectRevert.
+    function testFailExpectCallWithRevertDisallowed() public {
+        Contract target = new Contract();
+        cheats.expectRevert();
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector));
+        this.exposed_callTargetNTimes(target, 5, 5, 1);
+    }
 }
 
 contract ExpectCallCountTest is DSTest {

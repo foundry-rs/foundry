@@ -569,6 +569,15 @@ contract ExpectEmitTest is DSTest {
         emitter.emitWindowAndOnTest(this);
     }
 
+    /// We should not be able to expect emits if we're expecting the function reverts, no matter
+    /// if the function reverts or not.
+    function testFailEmitWindowWithRevertDisallowed() public {
+        cheats.expectRevert();
+        cheats.expectEmit(true, false, false, true);
+        emit A(1);
+        emitter.emitWindow();
+    }
+
     /// This test will fail if we check that all expected logs were emitted
     /// after every call from the same depth as the call that invoked the cheatcode.
     ///
