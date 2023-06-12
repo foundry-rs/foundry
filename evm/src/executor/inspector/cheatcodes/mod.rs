@@ -770,6 +770,15 @@ where
 
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
+            // Irrespective of whether a revert will be matched or not, disallow having expected reverts
+            // alongside expected emits or calls.
+            if !self.expected_calls.is_empty() || !self.expected_emits.is_empty() {
+                return (
+                    InstructionResult::Revert,
+                    remaining_gas,
+                    "Cannot expect a function to revert while trying to match expected calls or events.".to_string().encode().into(),
+                )
+            }
             if data.journaled_state.depth() == expected_revert.depth {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match handle_expect_revert(
