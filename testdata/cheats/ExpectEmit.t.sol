@@ -82,6 +82,11 @@ contract Emitter {
         this.emitWindow();
     }
 
+    function emitWindowAndOnTest(ExpectEmitTest t) public {
+        this.emitWindow();
+        t.emitLocal();
+    }
+
     /// Ref: issue #1214
     function doesNothing() public pure {}
 
@@ -122,6 +127,10 @@ contract ExpectEmitTest is DSTest {
 
     function setUp() public {
         emitter = new Emitter();
+    }
+
+    function emitLocal() public {
+        emit A(1);
     }
 
     function testFailExpectEmitDanglingNoReference() public {
@@ -547,6 +556,17 @@ contract ExpectEmitTest is DSTest {
         emit A(1);
         emitter.emitWindow();
         emitter.emitWindow();
+    }
+
+    /// emitWindowAndOnTest emits [[A, B, C, D, E], [A]]. The interesting bit is that the
+    /// second call that emits [A] is on this same contract. We should still be able to match
+    /// [A, A] as the call made to this contract is still external.
+    function testEmitWindowAndOnTest() public {
+        cheats.expectEmit(true, false, false, true);
+        emit A(1);
+        cheats.expectEmit(true, false, false, true);
+        emit A(1);
+        emitter.emitWindowAndOnTest(this);
     }
 
     /// This test will fail if we check that all expected logs were emitted
