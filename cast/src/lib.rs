@@ -1283,7 +1283,7 @@ impl SimpleCast {
     pub fn parse_bytes32_string(s: &str) -> Result<String> {
         let s = strip_0x(s);
         if s.len() != 64 {
-            eyre::bail!("string not 32 bytes");
+            eyre::bail!("expected 64 byte hex-string, got {s}");
         }
 
         let bytes = hex::decode(s)?;
@@ -1291,6 +1291,25 @@ impl SimpleCast {
         buffer.copy_from_slice(&bytes);
 
         Ok(parse_bytes32_string(&buffer)?.to_owned())
+    }
+
+    /// Decodes checksummed address from bytes32 value
+    pub fn parse_bytes32_address(s: &str) -> Result<String> {
+        let s = strip_0x(s);
+        if s.len() != 64 {
+            eyre::bail!("expected 64 byte hex-string, got {s}");
+        }
+
+        let s = if let Some(stripped) = s.strip_prefix("000000000000000000000000") {
+            stripped
+        } else {
+            return Err(eyre::eyre!("Not convertible to address, there are non-zero bytes"))
+        };
+
+        let lowercase_address_string = format!("0x{s}");
+        let lowercase_address = Address::from_str(&lowercase_address_string)?;
+
+        Ok(ethers_core::utils::to_checksum(&lowercase_address, None))
     }
 
     /// Decodes abi-encoded hex input or output

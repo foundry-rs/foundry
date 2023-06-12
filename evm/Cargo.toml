@@ -43,6 +43,7 @@ revm = { version = "3", default-features = false, features = [
   "memory_limit",
   "optional_eip3607",
   "optional_block_gas_limit",
+  "optional_no_base_fee"
 ] }
 
 # Fuzzer

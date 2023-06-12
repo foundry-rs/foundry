@@ -822,6 +822,12 @@ pub enum Subcommands {
         /// The string to parse.
         bytes: Option<String>,
     },
+    #[clap(name = "--parse-bytes32-address")]
+    #[clap(about = "Parses a checksummed address from bytes32 encoding.")]
+    ParseBytes32Address {
+        #[clap(value_name = "BYTES")]
+        bytes: Option<String>,
+    },
 }
 
 /// CLI arguments for `cast --to-base`.
