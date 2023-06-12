@@ -75,6 +75,13 @@ contract Emitter {
         this.emitWindow();
     }
 
+    // Used to test matching of consecutive different events
+    // split across subtree calls.
+    function emitSplitWindow() public {
+        this.emitWindow();
+        this.emitWindow();
+    }
+
     /// Ref: issue #1214
     function doesNothing() public pure {}
 
@@ -472,6 +479,27 @@ contract ExpectEmitTest is DSTest {
         emit E(5);
 
         emitter.emitNestedWindow();
+    }
+
+    /// emitSplitWindow() emits events [[A, B, C, D, E], [A, B, C, D, E]]. Essentially, in an external call,
+    /// it emits the sequence of events twice at the same depth.
+    /// We should be able to match [A, A, B, C, D, E] as it's all in the next call, no matter
+    /// if they're emitted on subcalls at the same depth (but with correct ordering).
+    function testCanMatchConsecutiveSubtreeEvents() public {
+        cheats.expectEmit(true, false, false, true);
+        emit A(1);
+        cheats.expectEmit(true, false, false, true);
+        emit A(1);
+        cheats.expectEmit(true, false, false, true);
+        emit B(2);
+        cheats.expectEmit(true, false, false, true);
+        emit C(3);
+        cheats.expectEmit(true, false, false, true);
+        emit D(4);
+        cheats.expectEmit(true, false, false, true);
+        emit E(5);
+
+        emitter.emitSplitWindow();
     }
 
     /// emitWindowNested() emits events A, C, E, A, B, C, D, E, the last 5 on an external call.

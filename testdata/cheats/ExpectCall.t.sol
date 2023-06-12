@@ -44,6 +44,10 @@ contract NestedContract {
     function hello() public pure returns (string memory) {
         return "hi";
     }
+
+    function sumInPlace(uint256 a, uint256 b) public view returns (uint256) {
+        return a + b + 42;
+    }
 }
 
 contract ExpectCallTest is DSTest {
@@ -131,6 +135,33 @@ contract ExpectCallTest is DSTest {
     function exposed_failExpectInnerCall(NestedContract target) public {
         // this function does not call inner
         target.hello();
+    }
+
+    // We should be able to match whichever function is called inside of the next call.
+    // Even multiple functions.
+    function testExpectCallMultipleFunctions() public {
+        Contract inner = new Contract();
+        NestedContract target = new NestedContract(inner);
+
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.forwardPay.selector));
+        cheats.expectCall(address(inner), abi.encodeWithSelector(inner.pay.selector));
+        this.exposed_forwardPay(target);
+    }
+
+    // We should also be able to match multiple functions that happen one after another,
+    // but inside the next call.
+    function testExpectCallMultipleFunctionsFlattened() public {
+        Contract inner = new Contract();
+        NestedContract target = new NestedContract(inner);
+
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.sumInPlace.selector));
+        cheats.expectCall(address(inner), abi.encodeWithSelector(inner.add.selector));
+        this.exposed_expectCallMultipleFunctionsFlattened(target, inner);
+    }
+
+    function exposed_expectCallMultipleFunctionsFlattened(NestedContract target, Contract inner) public {
+        target.sumInPlace(1, 1);
+        inner.add(1, 1);
     }
 
     function testExpectSelectorCall() public {
