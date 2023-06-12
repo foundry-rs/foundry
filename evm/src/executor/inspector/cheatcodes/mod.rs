@@ -770,8 +770,8 @@ where
 
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
-            // Irrespective of whether a revert will be matched or not, disallow having expected reverts
-            // alongside expected emits or calls.
+            // Irrespective of whether a revert will be matched or not, disallow having expected
+            // reverts alongside expected emits or calls.
             if !self.expected_calls.is_empty() || !self.expected_emits.is_empty() {
                 return (
                     InstructionResult::Revert,
