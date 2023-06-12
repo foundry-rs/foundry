@@ -45,6 +45,16 @@ fn expect_revert(state: &mut Cheatcodes, reason: Option<Bytes>, depth: u64) -> R
     Ok(Bytes::new())
 }
 
+fn expect_emit(
+    state: &mut Cheatcodes,
+    address: Option<H160>,
+    depth: u64,
+    checks: [bool; 4],
+) -> Result {
+    state.expected_emits.push_back(ExpectedEmit { depth, address, checks, ..Default::default() });
+    Ok(Bytes::new())
+}
+
 #[instrument(skip_all, fields(expected_revert, status, retdata = hex::encode(&retdata)))]
 pub fn handle_expect_revert(
     is_create: bool,
@@ -347,39 +357,26 @@ pub fn apply<DB: DatabaseExt>(
             expect_revert(state, Some(inner.0.into()), data.journaled_state.depth())
         }
         HEVMCalls::ExpectEmit0(_) => {
-            state.expected_emits.push_back(ExpectedEmit {
-                depth: data.journaled_state.depth(),
-                checks: [true, true, true, true],
-                ..Default::default()
-            });
-            Ok(Bytes::new())
+            expect_emit(state, None, data.journaled_state.depth(), [true, true, true, true])
         }
-        HEVMCalls::ExpectEmit1(inner) => {
-            state.expected_emits.push_back(ExpectedEmit {
-                depth: data.journaled_state.depth(),
-                checks: [true, true, true, true],
-                address: Some(inner.0),
-                ..Default::default()
-            });
-            Ok(Bytes::new())
-        }
-        HEVMCalls::ExpectEmit2(inner) => {
-            state.expected_emits.push_back(ExpectedEmit {
-                depth: data.journaled_state.depth(),
-                checks: [inner.0, inner.1, inner.2, inner.3],
-                ..Default::default()
-            });
-            Ok(Bytes::new())
-        }
-        HEVMCalls::ExpectEmit3(inner) => {
-            state.expected_emits.push_back(ExpectedEmit {
-                depth: data.journaled_state.depth(),
-                checks: [inner.0, inner.1, inner.2, inner.3],
-                address: Some(inner.4),
-                ..Default::default()
-            });
-            Ok(Bytes::new())
-        }
+        HEVMCalls::ExpectEmit1(inner) => expect_emit(
+            state,
+            Some(inner.0),
+            data.journaled_state.depth(),
+            [true, true, true, true],
+        ),
+        HEVMCalls::ExpectEmit2(inner) => expect_emit(
+            state,
+            None,
+            data.journaled_state.depth(),
+            [inner.0, inner.1, inner.2, inner.3],
+        ),
+        HEVMCalls::ExpectEmit3(inner) => expect_emit(
+            state,
+            Some(inner.4),
+            data.journaled_state.depth(),
+            [inner.0, inner.1, inner.2, inner.3],
+        ),
         HEVMCalls::ExpectCall0(inner) => expect_call(
             state,
             inner.0,
