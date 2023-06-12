@@ -834,8 +834,7 @@ latest block number: {latest_block}"
                         // If the user is forking from an older block in a non-archive node, the
                         // `get_block` call will return null.
                         if fork_block_number < latest_block.as_u64() {
-                            message.push('\n');
-                            message.push_str(NON_ARCHIVE_NODE_WARNING);
+                            message.push_str(format!("\n{}", NON_ARCHIVE_NODE_WARNING));
                         }
                         panic!("{}", message);
                     }
