@@ -646,7 +646,10 @@ impl DatabaseRef for SharedBackend {
     fn basic(&self, address: B160) -> Result<Option<AccountInfo>, Self::Error> {
         trace!( target: "sharedbackend", "request basic {:?}", address);
         self.do_get_basic(b160_to_h160(address)).map_err(|err| {
-            DatabaseErrorLog::Basic(&address).log(&err);
+            error!(target: "sharedbackend",  ?err, ?address,  "Failed to send/recv `basic`");
+            if err.is_possibly_non_archive_node_error() {
+                error!(target: "sharedbackend", "{NON_ARCHIVE_NODE_WARNING}");
+            }
             err
         })
     }
@@ -658,8 +661,11 @@ impl DatabaseRef for SharedBackend {
     fn storage(&self, address: B160, index: rU256) -> Result<rU256, Self::Error> {
         trace!( target: "sharedbackend", "request storage {:?} at {:?}", address, index);
         match self.do_get_storage(b160_to_h160(address), index.into()).map_err(|err| {
-            DatabaseErrorLog::Storage(&address, &index).log(&err);
-            err
+            error!( target: "sharedbackend", ?err, ?address, ?index, "Failed to send/recv `storage`");
+            if err.is_possibly_non_archive_node_error() {
+                error!(target: "sharedbackend", "{NON_ARCHIVE_NODE_WARNING}");
+            }
+          err
         }) {
             Ok(val) => Ok(val.into()),
             Err(err) => Err(err),
@@ -674,51 +680,14 @@ impl DatabaseRef for SharedBackend {
         let number = number.as_u64();
         trace!( target: "sharedbackend", "request block hash for number {:?}", number);
         match self.do_get_block_hash(number).map_err(|err| {
-            DatabaseErrorLog::BlockHash(&number).log(&err);
+            error!(target: "sharedbackend",?err, ?number, "Failed to send/recv `block_hash`");
+            if err.is_possibly_non_archive_node_error() {
+                error!(target: "sharedbackend", "{NON_ARCHIVE_NODE_WARNING}");
+            }
             err
         }) {
             Ok(val) => Ok(h256_to_b256(val)),
             Err(err) => Err(err),
-        }
-    }
-}
-
-/// The purpose of this enum is to let us display a warning to the user if the error is caused by
-/// forking a non-archive node.
-#[derive(Debug, strum_macros::Display)]
-enum DatabaseErrorLog<'a> {
-    Basic(&'a B160),
-    Storage(&'a B160, &'a rU256),
-    BlockHash(&'a u64),
-}
-
-impl<'a> DatabaseErrorLog<'a> {
-    fn log(&self, err: &'a DatabaseError) {
-        static TARGET: &str = "sharedbackend";
-        let message = format!("Failed to send/recv `{self}`");
-        match self {
-            DatabaseErrorLog::Basic(address) => {
-                error!(target: TARGET, ?err, ?address, message)
-            }
-            DatabaseErrorLog::Storage(address, index) => error!(
-                target: TARGET,
-                ?err,
-                ?address,
-                ?index,
-                message
-            ),
-            DatabaseErrorLog::BlockHash(number) => error!(
-                target: TARGET,
-                ?err,
-                ?number,
-                message
-            ),
-        };
-        if err.is_possibly_non_archive_node_error() {
-            error!(
-                target: TARGET,
-                "{NON_ARCHIVE_NODE_WARNING}"
-            );
         }
     }
 }
