@@ -532,6 +532,8 @@ fn test(
             SignaturesIdentifier::new(Config::foundry_cache_dir(), config.offline)?;
 
         'outer: for (contract_name, suite_result) in rx {
+            results.insert(contract_name.clone(), suite_result.clone());
+
             let mut tests = suite_result.test_results.clone();
             println!();
             for warning in suite_result.warnings.iter() {
@@ -617,12 +619,9 @@ fn test(
                     }
                 }
             }
-            let block_outcome = TestOutcome::new(
-                [(contract_name.clone(), suite_result.clone())].into(),
-                allow_failure,
-            );
+            let block_outcome =
+                TestOutcome::new([(contract_name, suite_result)].into(), allow_failure);
             println!("{}", block_outcome.summary());
-            results.insert(contract_name, suite_result);
         }
 
         if gas_reporting {

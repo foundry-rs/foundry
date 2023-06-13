@@ -1381,11 +1381,17 @@ impl SimpleCast {
                     }
                 } else {
                     // we return the `Function` parse error as this case is more likely
-                    return Err(err.into())
+                    eyre::bail!("Could not process human-readable ABI. Please check if you've left the parenthesis unclosed or if some type is incomplete.\nError:\n{}", err)
+                    // return Err(err.into()).wrap_err("Could not process human-readable ABI. Please
+                    // check if you've left the parenthesis unclosed or if some type is
+                    // incomplete.")
                 }
             }
         };
-        let calldata = encode_args(&func, args)?.to_hex::<String>();
+        let calldata = match encode_args(&func, args) {
+            Ok(res) => res.to_hex::<String>(),
+            Err(e) => eyre::bail!("Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}", e),
+        };
         let encoded = &calldata[8..];
         Ok(format!("0x{encoded}"))
     }
