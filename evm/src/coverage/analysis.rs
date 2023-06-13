@@ -129,7 +129,7 @@ impl<'a> ContractVisitor<'a> {
             }
 
             // Return with eventual subcall
-            NodeType::Return  => {
+            NodeType::Return => {
                 self.push_item(CoverageItem {
                     kind: CoverageItemKind::Statement,
                     loc: self.source_location_for(&node.src),
