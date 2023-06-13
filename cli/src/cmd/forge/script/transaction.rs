@@ -7,7 +7,10 @@ use ethers::{
     types::transaction::eip2718::TypedTransaction,
 };
 use eyre::{ContextCompat, WrapErr};
-use foundry_common::{abi::format_token, RpcUrl, SELECTOR_LEN};
+use foundry_common::{
+    abi::{format_token, format_token_raw},
+    RpcUrl, SELECTOR_LEN,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use tracing::error;
@@ -148,7 +151,7 @@ impl TransactionWithMetadata {
                     self.arguments = Some(
                         function
                             .decode_input(&data.0[SELECTOR_LEN..])
-                            .map(|tokens| tokens.iter().map(format_token).collect())
+                            .map(|tokens| tokens.iter().map(format_token_raw).collect())
                             .map_err(|_| eyre::eyre!("Failed to decode CREATE2 call arguments"))?,
                     );
                 }
