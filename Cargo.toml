@@ -62,15 +62,15 @@ codegen-units = 1
 
 [workspace.dependencies]
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", rev = "0d10768", default-features = false }
-ethers-core = { git = "https://github.com/gakonst/ethers-rs", rev = "0d10768", default-features = false }
-ethers-contract = { git = "https://github.com/gakonst/ethers-rs", rev = "0d10768", default-features = false }
-ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs", rev = "0d10768", default-features = false }
-ethers-providers = { git = "https://github.com/gakonst/ethers-rs", rev = "0d10768", default-features = false }
-ethers-signers = { git = "https://github.com/gakonst/ethers-rs", rev = "0d10768", default-features = false }
-ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", rev = "0d10768", default-features = false }
-ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", rev = "0d10768", default-features = false }
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs", rev = "0d10768", default-features = false }
+ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-contract = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-providers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-signers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 
 solang-parser = "=0.3.0"
 
