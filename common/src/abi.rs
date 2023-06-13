@@ -153,15 +153,6 @@ pub fn format_tokens(tokens: &[Token]) -> impl Iterator<Item = String> + '_ {
     tokens.iter().map(format_token)
 }
 
-/// Gets pretty print strings for tokens, without adding
-/// exponential notation hints for large numbers (e.g. [1e7] for 10000000)
-pub fn format_token_raw(param: &Token) -> String {
-    match param {
-        Token::Uint(num) => format!("{}", num),
-        _ => format_token(param),
-    }
-}
-
 /// Gets pretty print strings for tokens
 pub fn format_token(param: &Token) -> String {
     match param {
@@ -184,6 +175,27 @@ pub fn format_token(param: &Token) -> String {
             let string = tokens.iter().map(format_token).collect::<Vec<String>>().join(", ");
             format!("({string})")
         }
+    }
+}
+
+/// Gets pretty print strings for tokens, without adding
+/// exponential notation hints for large numbers (e.g. [1e7] for 10000000)
+pub fn format_token_raw(param: &Token) -> String {
+    match param {
+        Token::Uint(num) => format!("{}", num),
+        Token::FixedArray(tokens) => {
+            let string = tokens.iter().map(format_token_raw).collect::<Vec<String>>().join(", ");
+            format!("[{string}]")
+        }
+        Token::Array(tokens) => {
+            let string = tokens.iter().map(format_token_raw).collect::<Vec<String>>().join(", ");
+            format!("[{string}]")
+        }
+        Token::Tuple(tokens) => {
+            let string = tokens.iter().map(format_token_raw).collect::<Vec<String>>().join(", ");
+            format!("({string})")
+        }
+        _ => format_token(param),
     }
 }
 
