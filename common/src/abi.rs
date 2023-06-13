@@ -183,11 +183,7 @@ pub fn format_token(param: &Token) -> String {
 pub fn format_token_raw(param: &Token) -> String {
     match param {
         Token::Uint(num) => format!("{}", num),
-        Token::FixedArray(tokens) => {
-            let string = tokens.iter().map(format_token_raw).collect::<Vec<String>>().join(", ");
-            format!("[{string}]")
-        }
-        Token::Array(tokens) => {
+        Token::FixedArray(tokens) | Token::Array(tokens) => {
             let string = tokens.iter().map(format_token_raw).collect::<Vec<String>>().join(", ");
             format!("[{string}]")
         }
