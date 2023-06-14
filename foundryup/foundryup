@@ -38,7 +38,9 @@ main() {
   # Print the banner after successfully parsing args
   banner
 
+# If the pr flag is present
   if [ -n "$FOUNDRYUP_PR" ]; then
+    # and if the branch option is not present, then set the branch to the pr head
     if [ -z "$FOUNDRYUP_BRANCH" ]; then
       FOUNDRYUP_BRANCH="refs/pull/$FOUNDRYUP_PR/head"
     else
@@ -75,24 +77,22 @@ main() {
 
   # Install by downloading binaries
   if [[ "$FOUNDRYUP_REPO" == "foundry-rs/foundry" && -z "$FOUNDRYUP_BRANCH" && -z "$FOUNDRYUP_COMMIT" ]]; then
-    FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-nightly}
+    FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-v1}
     FOUNDRYUP_TAG=$FOUNDRYUP_VERSION
 
     # Normalize versions (handle channels, versions without v prefix
-    if [[ "$FOUNDRYUP_VERSION" == "nightly" ]]; then
-      # Locate real nightly tag
-      SHA=$(ensure curl -sSf "https://api.github.com/repos/$FOUNDRYUP_REPO/git/refs/tags/nightly" \
+    if [[ "$FOUNDRYUP_VERSION" == "v1" ]]; then
+      # Locate real v1 tag
+      SHA=$(ensure curl -sSf "https://api.github.com/repos/$FOUNDRYUP_REPO/git/refs/tags/v1" \
         | grep -Eo '"sha"[^,]*' \
         | grep -Eo '[^:]*$' \
         | tr -d '"' \
         | tr -d ' ' \
         | cut -d ':' -f2 )
-      FOUNDRYUP_TAG="nightly-${SHA}"
-    elif [[ "$FOUNDRYUP_VERSION" == nightly* ]]; then
-      FOUNDRYUP_VERSION="nightly"
+      FOUNDRYUP_TAG="v1-${SHA}"
+    elif [[ "$FOUNDRYUP_VERSION" == v1* ]]; then
+      FOUNDRYUP_VERSION="v1"
     elif [[ "$FOUNDRYUP_VERSION" == [[:digit:]]* ]]; then
-      # Add v prefix
-      FOUNDRYUP_VERSION="v${FOUNDRYUP_VERSION}"
       FOUNDRYUP_TAG="${FOUNDRYUP_VERSION}"
     fi
 
