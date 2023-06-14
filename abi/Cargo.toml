@@ -17,5 +17,5 @@ syn = "2.0"
 foundry-macros = { path = "../macros" }
 
 ethers-core = { workspace = true }
-ethers-contract = { workspace = true }
+ethers-contract = { workspace = true, features = ["abigen"] }
 ethers-providers = { workspace = true }

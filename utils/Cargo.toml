@@ -10,7 +10,7 @@ repository = "https://github.com/foundry-rs/foundry"
 forge-fmt = { path = "../fmt" }
 
 ethers-core = { workspace = true }
-ethers-contract = { workspace = true }
+ethers-contract = { workspace = true, features = ["abigen"] }
 ethers-etherscan = { workspace = true }
 ethers-addressbook = { workspace = true }
 ethers-providers = { workspace = true }
