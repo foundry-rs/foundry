@@ -83,6 +83,9 @@ record()
 accesses(address)(bytes32[],bytes32[])
 skip(bool)
 
+recordCalls()
+getRecordedCalls()(address[])
+
 recordLogs()
 getRecordedLogs()(Log[])
 

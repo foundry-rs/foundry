@@ -261,6 +261,23 @@ fn accesses(state: &mut Cheatcodes, address: Address) -> Bytes {
 }
 
 #[derive(Clone, Debug, Default)]
+pub struct RecordedCalls {
+    pub calls: Vec<Address>,
+}
+
+fn start_record_calls(state: &mut Cheatcodes) {
+    state.recorded_calls = Some(Default::default());
+}
+
+fn get_recorded_calls(state: &mut Cheatcodes) -> Bytes {
+    if let Some(recorded_calls) = state.recorded_calls.replace(Default::default()) {
+        abi::encode(&[Token::Array(recorded_calls.calls.into_tokens())]).into()
+    } else {
+        abi::encode(&[Token::Array(vec![])]).into()
+    }
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct RecordedLogs {
     pub entries: Vec<Log>,
 }
@@ -467,6 +484,11 @@ pub fn apply<DB: DatabaseExt>(
             start_record_logs(state);
             Bytes::new()
         }
+        HEVMCalls::RecordCalls(_) => {
+            start_record_calls(state);
+            Bytes::new()
+        }
+        HEVMCalls::GetRecordedCalls(_) => get_recorded_calls(state),
         HEVMCalls::GetRecordedLogs(_) => get_recorded_logs(state),
         HEVMCalls::SetNonce(inner) => {
             with_journaled_account(

@@ -75,6 +75,12 @@ pub fn ru256_to_u256(u: revm::primitives::U256) -> ethers::types::U256 {
     ethers::types::U256::from_little_endian(&u.as_le_bytes())
 }
 
+/// Small helper function to convert revm's [B256] into ethers's [H160].
+#[inline]
+pub fn b256_to_h160(u: revm::primitives::B256) -> ethers::types::H160 {
+    ethers::types::H160::from_slice(&u.0[12..])
+}
+
 /// Small helper function to convert an Eval into an InstructionResult
 #[inline]
 pub fn eval_to_instruction_result(eval: Eval) -> InstructionResult {
@@ -129,12 +135,12 @@ pub fn apply_chain_and_block_specific_env_changes<T>(
                     env.block.difficulty = env.block.prevrandao.unwrap_or_default().into();
                 }
 
-                return
+                return;
             }
-            Chain::Arbitrum |
-            Chain::ArbitrumGoerli |
-            Chain::ArbitrumNova |
-            Chain::ArbitrumTestnet => {
+            Chain::Arbitrum
+            | Chain::ArbitrumGoerli
+            | Chain::ArbitrumNova
+            | Chain::ArbitrumTestnet => {
                 // on arbitrum `block.number` is the L1 block which is included in the
                 // `l1BlockNumber` field
                 if let Some(l1_block_number) = block.other.get("l1BlockNumber").cloned() {
