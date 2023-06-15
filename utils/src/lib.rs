@@ -93,7 +93,7 @@ impl AllArtifactsBySlug {
 pub fn link_with_nonce_or_address<T, U>(
     contracts: ArtifactContracts,
     known_contracts: &mut BTreeMap<ArtifactId, T>,
-    deployed_library_addresses: Libraries,
+    mut deployed_library_addresses: Libraries,
     sender: Address,
     nonce: U256,
     extra: &mut U,
@@ -162,7 +162,7 @@ pub fn link_with_nonce_or_address<T, U>(
                         &artifacts_by_slug,
                         &link_tree,
                         &mut dependencies,
-                        &deployed_library_addresses,
+                        &mut deployed_library_addresses,
                         nonce,
                         sender,
                     );
@@ -207,7 +207,7 @@ fn recurse_link<'a>(
     // library deployment vector (file:contract:address, bytecode)
     deployment: &'a mut Vec<(String, Bytes)>,
     // deployed library addresses fname => adddress
-    deployed_library_addresses: &'a Libraries,
+    deployed_library_addresses: &'a mut Libraries,
     // nonce to start at
     init_nonce: U256,
     // sender
@@ -274,6 +274,7 @@ fn recurse_link<'a>(
 
             if deployed_address.is_none() {
                 let library = format!("{file}:{key}:0x{}", hex::encode(address));
+                deployed_library_addresses.libs.entry(PathBuf::from_str(file).expect("Invalid library path.")).or_default().insert(key.clone(), hex::encode(address));
 
                 // push the dependency into the library deployment vector
                 deployment.push((
