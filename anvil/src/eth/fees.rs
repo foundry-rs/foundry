@@ -123,6 +123,12 @@ impl FeeManager {
         gas_limit: U256,
         last_fee_per_gas: U256,
     ) -> u64 {
+        // It's naturally impossible for base fee to be 0;
+        // It means it was set by the user deliberately and therefore we treat it as a constant.
+        // Therefore, we skip the base fee calculation altogether and we return 0.
+        if self.base_fee() == U256::zero() {
+            return 0
+        }
         calculate_next_block_base_fee(
             gas_used.as_u64(),
             gas_limit.as_u64(),
