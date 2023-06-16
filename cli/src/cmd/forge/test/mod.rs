@@ -107,7 +107,7 @@ pub struct TestArgs {
     pub fuzz_seed: Option<U256>,
 
     #[clap(long, env = "FOUNDRY_FUZZ_RUNS", value_name = "RUNS")]
-    pub fuzz_runs: Option<u64>
+    pub fuzz_runs: Option<u64>,
 }
 
 impl TestArgs {
