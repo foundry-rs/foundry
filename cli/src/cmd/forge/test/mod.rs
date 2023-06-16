@@ -105,6 +105,9 @@ pub struct TestArgs {
     /// Set seed used to generate randomness during your fuzz runs.
     #[clap(long, value_parser = utils::parse_u256)]
     pub fuzz_seed: Option<U256>,
+
+    #[clap(long, env = "FOUNDRY_FUZZ_RUNS", value_name = "RUNS")]
+    pub fuzz_runs: Option<u64>
 }
 
 impl TestArgs {
@@ -278,6 +281,9 @@ impl Provider for TestArgs {
         let mut fuzz_dict = Dict::default();
         if let Some(fuzz_seed) = self.fuzz_seed {
             fuzz_dict.insert("seed".to_string(), fuzz_seed.to_string().into());
+        }
+        if let Some(fuzz_runs) = self.fuzz_runs {
+            fuzz_dict.insert("runs".to_string(), fuzz_runs.into());
         }
         dict.insert("fuzz".to_string(), fuzz_dict.into());
 
