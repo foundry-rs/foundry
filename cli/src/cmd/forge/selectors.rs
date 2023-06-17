@@ -173,9 +173,8 @@ impl SelectorsSubcommands {
                     colliding_methods.iter().for_each(|t| {
                         table.add_row(vec![t.0, t.1, t.2]);
                     });
+                    println!("{} collisions found:", colliding_methods.len());
                     println!("{table}");
-
-                    return Err(eyre::eyre!("At least one collision was found"))
                 }
             }
         }
