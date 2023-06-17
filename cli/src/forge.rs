@@ -96,5 +96,6 @@ fn main() -> eyre::Result<()> {
             Ok(())
         }
         Subcommands::Doc(cmd) => cmd.run(),
+        Subcommands::Selectors { command } => utils::block_on(command.run()),
     }
 }

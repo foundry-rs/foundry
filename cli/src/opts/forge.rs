@@ -16,6 +16,7 @@ use crate::cmd::forge::{
     remappings::RemappingArgs,
     remove::RemoveArgs,
     script::ScriptArgs,
+    selectors::SelectorsSubcommands,
     snapshot, test, tree, update,
     verify::{VerifyArgs, VerifyCheckArgs},
 };
@@ -155,6 +156,13 @@ pub enum Subcommands {
 
     /// Generate documentation for the project.
     Doc(DocArgs),
+
+    /// Function selector utilities
+    #[clap(visible_alias = "se")]
+    Selectors {
+        #[clap(subcommand)]
+        command: SelectorsSubcommands,
+    },
 }
 
 // A set of solc compiler settings that can be set via command line arguments, which are intended

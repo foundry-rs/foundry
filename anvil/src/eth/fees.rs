@@ -29,6 +29,9 @@ pub const INITIAL_GAS_PRICE: u64 = 1_875_000_000;
 /// Bounds the amount the base fee can change between blocks.
 pub const BASE_FEE_CHANGE_DENOMINATOR: u64 = 8;
 
+/// Elasticity multiplier as defined in [EIP-1559](https://eips.ethereum.org/EIPS/eip-1559)
+pub const EIP1559_ELASTICITY_MULTIPLIER: u64 = 2;
+
 pub fn default_elasticity() -> f64 {
     1f64 / BASE_FEE_CHANGE_DENOMINATOR as f64
 }
@@ -120,36 +123,43 @@ impl FeeManager {
         gas_limit: U256,
         last_fee_per_gas: U256,
     ) -> u64 {
-        calc_next_base_fee(gas_used, gas_limit, last_fee_per_gas, *self.elasticity.read())
+        // It's naturally impossible for base fee to be 0;
+        // It means it was set by the user deliberately and therefore we treat it as a constant.
+        // Therefore, we skip the base fee calculation altogether and we return 0.
+        if self.base_fee() == U256::zero() {
+            return 0
+        }
+        calculate_next_block_base_fee(
+            gas_used.as_u64(),
+            gas_limit.as_u64(),
+            last_fee_per_gas.as_u64(),
+        )
     }
 }
 
-/// Calculates the base fee for the next block based on the given block parameters
-pub fn calc_next_base_fee(
-    gas_used: U256,
-    gas_limit: U256,
-    last_fee_per_gas: U256,
-    elasticity: f64,
-) -> u64 {
-    let gas_used = gas_used.as_u64() as f64;
-    let gas_limit = gas_limit.as_u64() as f64;
-    let gas_target = gas_limit / elasticity;
-    let last_gas_used = gas_used / (gas_target * elasticity);
+/// Calculate base fee for next block. [EIP-1559](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1559.md) spec
+pub fn calculate_next_block_base_fee(gas_used: u64, gas_limit: u64, base_fee: u64) -> u64 {
+    let gas_target = gas_limit / EIP1559_ELASTICITY_MULTIPLIER;
 
-    let last_fee_per_gas = last_fee_per_gas.as_u64() as f64;
-    if last_gas_used > 0.5 {
-        // increase base gas
-        let increase = ((last_gas_used - 0.5) * 2f64) * elasticity;
-
-        (last_fee_per_gas + (last_fee_per_gas * increase)) as u64
-    } else if last_gas_used < 0.5 {
-        // decrease gas
-        let increase = ((0.5 - last_gas_used) * 2f64) * elasticity;
-
-        (last_fee_per_gas - (last_fee_per_gas * increase)) as u64
+    if gas_used == gas_target {
+        return base_fee
+    }
+    if gas_used > gas_target {
+        let gas_used_delta = gas_used - gas_target;
+        let base_fee_delta = std::cmp::max(
+            1,
+            base_fee as u128 * gas_used_delta as u128 /
+                gas_target as u128 /
+                BASE_FEE_CHANGE_DENOMINATOR as u128,
+        );
+        base_fee + (base_fee_delta as u64)
     } else {
-        // same base gas
-        last_fee_per_gas as u64
+        let gas_used_delta = gas_target - gas_used;
+        let base_fee_per_gas_delta = base_fee as u128 * gas_used_delta as u128 /
+            gas_target as u128 /
+            BASE_FEE_CHANGE_DENOMINATOR as u128;
+
+        base_fee.saturating_sub(base_fee_per_gas_delta as u64)
     }
 }
 

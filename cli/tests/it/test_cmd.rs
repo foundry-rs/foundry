@@ -366,3 +366,41 @@ contract ContractTest is Test {
             .join("tests/fixtures/can_use_libs_in_multi_fork.stdout"),
     );
 });
+
+static FAILING_TEST: &str = r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.17;
+
+import "forge-std/Test.sol";
+
+contract FailingTest is Test {
+    function testShouldFail() public {
+        assertTrue(false);
+    }
+}
+"#;
+
+forgetest_init!(exit_code_error_on_fail_fast, |prj: TestProject, mut cmd: TestCommand| {
+    prj.wipe_contracts();
+    prj.inner().add_source("failing_test", FAILING_TEST).unwrap();
+
+    // set up command
+    cmd.args(["test", "--fail-fast"]);
+
+    // run command and assert error exit code
+    cmd.assert_err();
+});
+
+forgetest_init!(
+    exit_code_error_on_fail_fast_with_json,
+    |prj: TestProject, mut cmd: TestCommand| {
+        prj.wipe_contracts();
+
+        prj.inner().add_source("failing_test", FAILING_TEST).unwrap();
+        // set up command
+        cmd.args(["test", "--fail-fast", "--json"]);
+
+        // run command and assert error exit code
+        cmd.assert_err();
+    }
+);

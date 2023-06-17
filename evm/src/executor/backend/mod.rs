@@ -25,7 +25,13 @@ use revm::{
     },
     Database, DatabaseCommit, Inspector, JournaledState, EVM,
 };
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 
 mod fuzz;
 pub mod snapshot;
@@ -513,7 +519,11 @@ impl Backend {
     ///
     /// This returns whether there was a reverted snapshot that recorded an error
     pub fn has_snapshot_failure(&self) -> bool {
-        self.inner.has_snapshot_failure
+        self.inner.has_snapshot_failure.load(Ordering::Relaxed)
+    }
+
+    pub fn set_snapshot_failure(&self, has_snapshot_failure: bool) {
+        self.inner.has_snapshot_failure.store(has_snapshot_failure, Ordering::Relaxed);
     }
 
     /// Checks if the test contract associated with this backend failed, See
@@ -848,7 +858,7 @@ impl DatabaseExt for Backend {
                 .map(|addr| self.is_failed_test_contract_state(addr, current_state))
                 .unwrap_or_default()
             {
-                self.inner.has_snapshot_failure = true;
+                self.inner.has_snapshot_failure.store(true, Ordering::Relaxed);
             }
 
             // merge additional logs
@@ -1422,7 +1432,7 @@ pub struct BackendInner {
     /// reverted we get the _current_ `revm::JournaledState` which contains the state that we can
     /// check if the `_failed` variable is set,
     /// additionally
-    pub has_snapshot_failure: bool,
+    pub has_snapshot_failure: Arc<AtomicBool>,
     /// Tracks the address of a Test contract
     ///
     /// This address can be used to inspect the state of the contract when a test is being
@@ -1619,7 +1629,7 @@ impl Default for BackendInner {
             created_forks: Default::default(),
             forks: vec![],
             snapshots: Default::default(),
-            has_snapshot_failure: false,
+            has_snapshot_failure: Arc::new(AtomicBool::new(false)),
             test_contract_address: None,
             caller: None,
             next_fork_id: Default::default(),

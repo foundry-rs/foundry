@@ -4,7 +4,7 @@ use ethers::{
     prelude::TransactionReceipt,
     providers::Middleware,
     types::U256,
-    utils::format_units,
+    utils::{format_units, to_checksum},
 };
 use eyre::Result;
 use foundry_config::{Chain, Config};
@@ -204,7 +204,7 @@ pub fn enable_paint() {
 pub fn print_receipt(chain: Chain, receipt: &TransactionReceipt) {
     let contract_address = receipt
         .contract_address
-        .map(|addr| format!("\nContract Address: 0x{}", hex::encode(addr.as_bytes())))
+        .map(|addr| format!("\nContract Address: {}", to_checksum(&addr, None)))
         .unwrap_or_default();
 
     let gas_used = receipt.gas_used.unwrap_or_default();

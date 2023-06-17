@@ -243,8 +243,8 @@ impl DocBuilder {
             // Grab the root readme.
             let root_readme = self.root.join(Self::README);
 
-            //Check to see if there is a 'homepage' option specified in config.
-            //If not, fall back to src and root readme files, in that order.
+            // Check to see if there is a 'homepage' option specified in config.
+            // If not, fall back to src and root readme files, in that order.
             if homepage_or_src_readme.exists() {
                 fs::read_to_string(homepage_or_src_readme)?
             } else if root_readme.exists() {

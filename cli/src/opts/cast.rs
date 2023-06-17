@@ -2,8 +2,9 @@ use super::{EtherscanOpts, RpcOpts};
 use crate::{
     cmd::cast::{
         access_list::AccessListArgs, bind::BindArgs, call::CallArgs, create2::Create2Args,
-        estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, rpc::RpcArgs,
-        run::RunArgs, send::SendTxArgs, storage::StorageArgs, wallet::WalletSubcommands,
+        estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs,
+        logs::LogsArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs,
+        wallet::WalletSubcommands,
     },
     utils::parse_u256,
 };
@@ -288,6 +289,9 @@ pub enum Subcommands {
     /// Create an access list for a transaction.
     #[clap(name = "access-list", visible_aliases = &["ac", "acl"])]
     AccessList(AccessListArgs),
+    /// Create an access list for a transaction.
+    #[clap(name = "logs")]
+    Logs(LogsArgs),
     /// Get information about a block.
     #[clap(visible_alias = "bl")]
     Block {
@@ -816,6 +820,12 @@ pub enum Subcommands {
     #[clap(name = "--parse-bytes32-string")]
     ParseBytes32String {
         /// The string to parse.
+        bytes: Option<String>,
+    },
+    #[clap(name = "--parse-bytes32-address")]
+    #[clap(about = "Parses a checksummed address from bytes32 encoding.")]
+    ParseBytes32Address {
+        #[clap(value_name = "BYTES")]
         bytes: Option<String>,
     },
 }

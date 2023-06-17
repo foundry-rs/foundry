@@ -1,12 +1,13 @@
-use std::path::Path;
-
 use ethers::solc::ProjectCompileOutput;
 use foundry_config::{
     validate_profiles, Config, FuzzConfig, InlineConfig, InlineConfigError, InlineConfigParser,
     InvariantConfig, NatSpec,
 };
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
-use tracing::trace;
+use std::path::Path;
+
+#[macro_use]
+extern crate tracing;
 
 /// Gas reports
 pub mod gas_report;

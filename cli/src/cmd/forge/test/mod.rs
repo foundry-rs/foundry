@@ -105,6 +105,9 @@ pub struct TestArgs {
     /// Set seed used to generate randomness during your fuzz runs.
     #[clap(long, value_parser = utils::parse_u256)]
     pub fuzz_seed: Option<U256>,
+
+    #[clap(long, env = "FOUNDRY_FUZZ_RUNS", value_name = "RUNS")]
+    pub fuzz_runs: Option<u64>,
 }
 
 impl TestArgs {
@@ -187,7 +190,7 @@ impl TestArgs {
             match runner.count_filtered_tests(&filter) {
                 1 => {
                     // Run the test
-                    let results = runner.test(&filter, None, test_options)?;
+                    let results = runner.test(&filter, None, test_options);
 
                     // Get the result of the single test
                     let (id, sig, test_kind, counterexample, breakpoints) = results.iter().map(|(id, SuiteResult{ test_results, .. })| {
@@ -278,6 +281,9 @@ impl Provider for TestArgs {
         let mut fuzz_dict = Dict::default();
         if let Some(fuzz_seed) = self.fuzz_seed {
             fuzz_dict.insert("seed".to_string(), fuzz_seed.to_string().into());
+        }
+        if let Some(fuzz_runs) = self.fuzz_runs {
+            fuzz_dict.insert("runs".to_string(), fuzz_runs.into());
         }
         dict.insert("fuzz".to_string(), fuzz_dict.into());
 
@@ -510,7 +516,7 @@ fn test(
     }
 
     if json {
-        let results = runner.test(&filter, None, test_options)?;
+        let results = runner.test(&filter, None, test_options);
         println!("{}", serde_json::to_string(&results)?);
         Ok(TestOutcome::new(results, allow_failure))
     } else {
@@ -524,7 +530,7 @@ fn test(
         let (tx, rx) = channel::<(String, SuiteResult)>();
 
         // Run tests
-        let handle = thread::spawn(move || runner.test(&filter, Some(tx), test_options).unwrap());
+        let handle = thread::spawn(move || runner.test(&filter, Some(tx), test_options));
 
         let mut results: BTreeMap<String, SuiteResult> = BTreeMap::new();
         let mut gas_report = GasReport::new(config.gas_reports, config.gas_reports_ignore);
@@ -532,6 +538,8 @@ fn test(
             SignaturesIdentifier::new(Config::foundry_cache_dir(), config.offline)?;
 
         'outer: for (contract_name, suite_result) in rx {
+            results.insert(contract_name.clone(), suite_result.clone());
+
             let mut tests = suite_result.test_results.clone();
             println!();
             for warning in suite_result.warnings.iter() {
@@ -617,12 +625,9 @@ fn test(
                     }
                 }
             }
-            let block_outcome = TestOutcome::new(
-                [(contract_name.clone(), suite_result.clone())].into(),
-                allow_failure,
-            );
+            let block_outcome =
+                TestOutcome::new([(contract_name, suite_result)].into(), allow_failure);
             println!("{}", block_outcome.summary());
-            results.insert(contract_name, suite_result);
         }
 
         if gas_reporting {

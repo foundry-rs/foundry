@@ -67,7 +67,7 @@ impl<'a> TestFunctionExt for &'a str {
     }
 
     fn is_setup(&self) -> bool {
-        self.to_lowercase() == "setup"
+        self.eq_ignore_ascii_case("setup")
     }
 }
 

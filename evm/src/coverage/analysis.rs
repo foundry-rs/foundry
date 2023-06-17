@@ -115,7 +115,6 @@ impl<'a> ContractVisitor<'a> {
             NodeType::Continue |
             NodeType::EmitStatement |
             NodeType::PlaceholderStatement |
-            NodeType::Return |
             NodeType::RevertStatement |
             NodeType::YulAssignment |
             NodeType::YulBreak |
@@ -128,6 +127,20 @@ impl<'a> ContractVisitor<'a> {
                 });
                 Ok(())
             }
+
+            // Return with eventual subcall
+            NodeType::Return => {
+                self.push_item(CoverageItem {
+                    kind: CoverageItemKind::Statement,
+                    loc: self.source_location_for(&node.src),
+                    hits: 0,
+                });
+                if let Some(expr) = node.attribute("expression") {
+                    self.visit_expression(expr)?;
+                }
+                Ok(())
+            }
+
             // Variable declaration
             NodeType::VariableDeclarationStatement => {
                 self.push_item(CoverageItem {

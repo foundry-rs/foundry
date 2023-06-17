@@ -217,7 +217,7 @@ pub trait Visitor {
         loc: Loc,
         _init: &mut Option<Box<Statement>>,
         _cond: &mut Option<Box<Expression>>,
-        _update: &mut Option<Box<Statement>>,
+        _update: &mut Option<Box<Expression>>,
         _body: &mut Option<Box<Statement>>,
     ) -> Result<(), Self::Error> {
         self.visit_source(loc)

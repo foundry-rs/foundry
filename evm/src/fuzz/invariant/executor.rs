@@ -82,7 +82,7 @@ impl<'a> InvariantExecutor<'a> {
     pub fn invariant_fuzz(
         &mut self,
         invariant_contract: InvariantContract,
-    ) -> eyre::Result<Option<InvariantFuzzTestResult>> {
+    ) -> eyre::Result<InvariantFuzzTestResult> {
         let (fuzz_state, targeted_contracts, strat) = self.prepare_fuzzing(&invariant_contract)?;
 
         // Stores the consumed gas and calldata of every successful fuzz call.
@@ -149,7 +149,7 @@ impl<'a> InvariantExecutor<'a> {
 
                     // Collect data for fuzzing from the state changeset.
                     let mut state_changeset =
-                        call_result.state_changeset.to_owned().expect("to have a state changeset.");
+                        call_result.state_changeset.to_owned().expect("no changesets");
 
                     collect_data(
                         &mut state_changeset,
@@ -223,12 +223,12 @@ impl<'a> InvariantExecutor<'a> {
 
         let (reverts, invariants) = failures.into_inner().into_inner();
 
-        Ok(Some(InvariantFuzzTestResult {
+        Ok(InvariantFuzzTestResult {
             invariants,
             cases: fuzz_cases.into_inner(),
             reverts,
             last_call_results: last_call_results.take(),
-        }))
+        })
     }
 
     /// Prepares certain structures to execute the invariant tests:
