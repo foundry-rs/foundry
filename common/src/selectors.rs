@@ -220,7 +220,7 @@ impl SignEthClient {
         Ok(sigs
             .iter()
             .cloned()
-            .filter(|sig| abi_decode(sig, calldata, true).is_ok())
+            .filter(|sig| abi_decode(sig, calldata, true, true).is_ok())
             .collect::<Vec<String>>())
     }
 
@@ -236,7 +236,7 @@ impl SignEthClient {
     /// Pretty print calldata and if available, fetch possible function signatures
     ///
     /// ```no_run
-    /// 
+    ///
     /// use foundry_common::selectors::SignEthClient;
     ///
     /// # async fn foo() -> eyre::Result<()> {
@@ -372,7 +372,7 @@ pub async fn decode_event_topic(topic: &str) -> eyre::Result<Vec<String>> {
 /// Pretty print calldata and if available, fetch possible function signatures
 ///
 /// ```no_run
-/// 
+///
 /// use foundry_common::selectors::pretty_calldata;
 ///
 /// # async fn foo() -> eyre::Result<()> {

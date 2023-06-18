@@ -33,13 +33,17 @@ pub fn encode_args(func: &Function, args: &[impl AsRef<str>]) -> Result<Vec<u8>>
 /// # Panics
 ///
 /// If the `sig` is an invalid function signature
-pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
+pub fn abi_decode(sig: &str, calldata: &str, input: bool, fn_selector: bool) -> Result<Vec<Token>> {
     let func = IntoFunction::into(sig);
     let calldata = calldata.strip_prefix("0x").unwrap_or(calldata);
     let calldata = hex::decode(calldata)?;
     let res = if input {
-        // need to strip the function selector
-        func.decode_input(&calldata[4..])?
+        // If contains function selector, remove it
+        if fn_selector {
+            func.decode_input(&calldata[4..])?
+        } else {
+            func.decode_input(&calldata)?
+        }
     } else {
         func.decode_output(&calldata)?
     };
