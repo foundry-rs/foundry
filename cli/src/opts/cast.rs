@@ -618,7 +618,7 @@ pub enum Subcommands {
     },
 
     /// Get the basefee of a block.
-    #[clap(visible_aliases = &["ba", "fee"])]
+    #[clap(visible_aliases = &["ba", "fee", "basefee"])]
     BaseFee {
         /// The block height to query at.
         ///
