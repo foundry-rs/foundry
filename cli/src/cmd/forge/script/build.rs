@@ -179,8 +179,6 @@ impl ScriptArgs {
 
         let (new_libraries, predeploy_libraries): (Vec<_>, Vec<_>) =
             run_dependencies.into_iter().unzip();
-        dbg!(&new_libraries);
-        dbg!(&predeploy_libraries);
 
         // Merge with user provided libraries
         let mut new_libraries = Libraries::parse(&new_libraries)?;
