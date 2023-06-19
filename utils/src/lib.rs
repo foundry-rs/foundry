@@ -94,6 +94,35 @@ impl AllArtifactsBySlug {
     }
 }
 
+/// Links the given artifacts with a link key constructor function, passing the result of each
+/// linkage to the given callback.
+///
+/// This function will recursively link all artifacts until none are unlinked. It does this by:
+///
+/// 1. Using the specified predeployed library addresses (`deployed_library_addresses`) for known
+/// libraries (specified by the user) 2. Otherwise, computing the address the library would live at
+/// if deployed by `sender`, given a starting nonce of `nonce`.
+///
+/// If the library was already deployed previously in step 2., the linker will re-use the previously
+/// computed address instead of re-computing it.
+///
+/// The linker will call `post_link` for each linked artifact, providing:
+///
+/// 1. User-specified data (`extra`)
+/// 2. The linked artifact's bytecode
+/// 3. The ID of the artifact
+/// 4. The dependencies necessary to deploy the contract
+///
+/// # Note
+///
+/// If you want to collect all dependencies of a set of contracts, you cannot just collect the
+/// `dependencies` passed to the callback in a `Vec`, since the same library contract (with the
+/// exact same address) might show up as a dependency for multiple contracts.
+///
+/// Instead, you must deduplicate *and* preserve the deployment order by pushing the dependencies to
+/// a `Vec` iff it has not been seen before.
+///
+/// For an example of this, see [here](https://github.com/foundry-rs/foundry/blob/c3a8057a2ddf4bb9e4374811cd304f5a1c5efdb9/cli/src/cmd/forge/script/build.rs#L131-L148).
 #[allow(clippy::too_many_arguments)]
 pub fn link_with_nonce_or_address<T, U>(
     contracts: ArtifactContracts,
@@ -104,7 +133,7 @@ pub fn link_with_nonce_or_address<T, U>(
     extra: &mut U,
     link_key_construction: impl Fn(String, String) -> (String, String, String),
     post_link: impl Fn(PostLinkInput<T, U>) -> eyre::Result<()>,
-) -> eyre::Result<()> {
+) -> Result<()> {
     // create a mapping of fname => Vec<(fname, file, key)>,
     let link_tree: BTreeMap<String, ArtifactDependencies> = contracts
         .iter()
@@ -332,10 +361,7 @@ pub fn to_table(value: serde_json::Value) -> String {
 /// Resolves an input to [`NameOrAddress`]. The input could also be a contract/token name supported
 /// by
 /// [`ethers-addressbook`](https://github.com/gakonst/ethers-rs/tree/master/ethers-addressbook).
-pub fn resolve_addr<T: Into<NameOrAddress>>(
-    to: T,
-    chain: Option<Chain>,
-) -> eyre::Result<NameOrAddress> {
+pub fn resolve_addr<T: Into<NameOrAddress>>(to: T, chain: Option<Chain>) -> Result<NameOrAddress> {
     Ok(match to.into() {
         NameOrAddress::Address(addr) => NameOrAddress::Address(addr),
         NameOrAddress::Name(contract_or_ens) => {
