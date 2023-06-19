@@ -331,7 +331,6 @@ struct ExtraLinkingInfo<'a> {
     target_fname: String,
     contract: &'a mut CompactContractBytecode,
     dependencies: &'a mut Vec<(String, ethers::types::Bytes)>,
-    seen_dependencies: HashSet<String>,
     matched: bool,
     target_id: Option<ArtifactId>,
 }
