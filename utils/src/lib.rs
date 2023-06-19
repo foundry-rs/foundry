@@ -11,7 +11,12 @@ use ethers_solc::{
 use eyre::{Result, WrapErr};
 use futures::future::BoxFuture;
 use std::{
-    collections::BTreeMap, env::VarError, fmt::Write, path::PathBuf, str::FromStr, time::Duration,
+    collections::{BTreeMap, HashMap},
+    env::VarError,
+    fmt::Write,
+    path::PathBuf,
+    str::FromStr,
+    time::Duration,
 };
 use tracing::trace;
 
@@ -93,7 +98,7 @@ impl AllArtifactsBySlug {
 pub fn link_with_nonce_or_address<T, U>(
     contracts: ArtifactContracts,
     known_contracts: &mut BTreeMap<ArtifactId, T>,
-    mut deployed_library_addresses: Libraries,
+    deployed_library_addresses: Libraries,
     sender: Address,
     nonce: U256,
     extra: &mut U,
@@ -132,6 +137,8 @@ pub fn link_with_nonce_or_address<T, U>(
             .collect(),
     };
 
+    let mut internally_deployed_libraries = HashMap::new();
+
     for (id, contract) in contracts.into_iter() {
         let (abi, maybe_deployment_bytes, maybe_runtime) = (
             contract.abi.as_ref(),
@@ -162,7 +169,8 @@ pub fn link_with_nonce_or_address<T, U>(
                         &artifacts_by_slug,
                         &link_tree,
                         &mut dependencies,
-                        &mut deployed_library_addresses,
+                        &mut internally_deployed_libraries,
+                        &deployed_library_addresses,
                         nonce,
                         sender,
                     );
@@ -206,8 +214,11 @@ fn recurse_link<'a>(
     dependency_tree: &'a BTreeMap<String, ArtifactDependencies>,
     // library deployment vector (file:contract:address, bytecode)
     deployment: &'a mut Vec<(String, Bytes)>,
+    // libraries we have already deployed during the linking process.
+    // the key is `file:contract` and the value is the address we computed
+    internally_deployed_libraries: &'a mut HashMap<String, Address>,
     // deployed library addresses fname => adddress
-    deployed_library_addresses: &'a mut Libraries,
+    deployed_library_addresses: &'a Libraries,
     // nonce to start at
     init_nonce: U256,
     // sender
@@ -245,6 +256,7 @@ fn recurse_link<'a>(
                         artifacts,
                         dependency_tree,
                         deployment,
+                        internally_deployed_libraries,
                         deployed_library_addresses,
                         init_nonce,
                         sender,
@@ -264,24 +276,40 @@ fn recurse_link<'a>(
                 }
             }
 
-            let address = deployed_address.unwrap_or_else(|| {
-                ethers_core::utils::get_contract_address(sender, init_nonce + deployment.len())
-            });
+            let address = if let Some(deployed_address) = deployed_address {
+                // the user specified the library address
 
-            // link the dependency to the target
-            target_bytecode.0.link(file.clone(), key.clone(), address);
-            target_bytecode.1.link(file.clone(), key.clone(), address);
-
-            if deployed_address.is_none() {
-                let library = format!("{file}:{key}:0x{}", hex::encode(address));
-                deployed_library_addresses.libs.entry(PathBuf::from_str(file).expect("Invalid library path.")).or_default().insert(key.clone(), hex::encode(address));
+                deployed_address
+            } else if let Some(deployed_address) = internally_deployed_libraries.get(&format!("{file}:{key}")) {
+                // we previously deployed the library
+                let library = format!("{file}:{key}:0x{}", hex::encode(deployed_address));
 
                 // push the dependency into the library deployment vector
                 deployment.push((
                     library,
                     next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!( "Bytecode should be linked for {next_target}")),
                 ));
-            }
+                *deployed_address
+            } else {
+                // we need to deploy the library
+                let computed_address = ethers_core::utils::get_contract_address(sender, init_nonce + deployment.len());
+                let library = format!("{file}:{key}:0x{}", hex::encode(computed_address));
+
+                // push the dependency into the library deployment vector
+                deployment.push((
+                    library,
+                    next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!( "Bytecode should be linked for {next_target}")),
+                ));
+
+                // remember this library for later
+                internally_deployed_libraries.insert(format!("{file}:{key}"), computed_address);
+
+                computed_address
+            };
+
+            // link the dependency to the target
+            target_bytecode.0.link(file.clone(), key.clone(), address);
+            target_bytecode.1.link(file.clone(), key.clone(), address);
         });
     }
 }
