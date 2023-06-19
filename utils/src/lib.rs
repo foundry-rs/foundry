@@ -103,7 +103,7 @@ impl AllArtifactsBySlug {
 /// libraries (specified by the user) 2. Otherwise, computing the address the library would live at
 /// if deployed by `sender`, given a starting nonce of `nonce`.
 ///
-/// If the library was already deployed previously in step 2., the linker will re-use the previously
+/// If the library was already deployed previously in step 2, the linker will re-use the previously
 /// computed address instead of re-computing it.
 ///
 /// The linker will call `post_link` for each linked artifact, providing:
