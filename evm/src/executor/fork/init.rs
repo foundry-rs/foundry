@@ -43,9 +43,10 @@ where
         block
     } else {
         if let Ok(latest_block) = provider.get_block_number().await {
-            // If the user is forking from an older block in a non-archive node, the `get_block`
-            // call will return null.
-            if block_number < latest_block.as_u64() {
+            // If the `eth_getBlockByNumber` call succeeds, but returns null instead of
+            // the block, and the block number is less than equal the latest block, then
+            // the user is forking from a non-archive node with an older block number.
+            if block_number <= latest_block.as_u64() {
                 error!("{NON_ARCHIVE_NODE_WARNING}");
             }
             eyre::bail!(
