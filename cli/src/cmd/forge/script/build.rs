@@ -131,7 +131,7 @@ impl ScriptArgs {
                     let mut filtered = Vec::new();
                     let mut seen = HashSet::new();
                     for (dep, bytes) in deps {
-                        if !seen.insert(&dep) {
+                        if !seen.insert(dep.clone()) {
                             continue
                         }
                         filtered.push((dep, bytes));
