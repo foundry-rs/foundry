@@ -97,13 +97,13 @@ impl SignEthClient {
     fn on_reqwest_err(&self, err: &reqwest::Error) {
         fn is_connectivity_err(err: &reqwest::Error) -> bool {
             if err.is_timeout() || err.is_connect() {
-                return true
+                return true;
             }
             // Error HTTP codes (5xx) are considered connectivity issues and will prompt retry
             if let Some(status) = err.status() {
                 let code = status.as_u16();
                 if (500..600).contains(&code) {
-                    return true
+                    return true;
                 }
             }
             false
