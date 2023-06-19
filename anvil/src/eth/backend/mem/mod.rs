@@ -1609,7 +1609,6 @@ impl Backend {
 
                     block.number = block_number.into();
                     block.timestamp = rU256::from(fork.timestamp());
-                    block.difficulty = fork.total_difficulty().into();
                     block.basefee = fork.base_fee().unwrap_or_default().into();
 
                     return Ok(f(Box::new(&gen_db), block))
