@@ -96,7 +96,6 @@ impl ScriptArgs {
             target_fname: target_fname.clone(),
             contract: &mut contract,
             dependencies: &mut run_dependencies,
-            seen_dependencies: HashSet::new(),
             matched: false,
             target_id: None,
         };
@@ -128,23 +127,19 @@ impl ScriptArgs {
                     dependencies,
                 } = post_link_input;
 
-                // note: the linker only makes sure that libraries that need to be deployed have
-                // their address computed once, but we collect all necessary dependencies *in order*
-                // that we need to deploy for a specific contract.
-                //
-                // this list may have duplicate entries (and they are not always adjacent), so we
-                // need to filter dependencies we have already seen.
-                //
-                // since the order of deployment is important, we unfortunately can't just store
-                // this in a `HashSet`.
-                let mut filtered_deps = vec![];
-                for (dep, bytes) in dependencies {
-                    if extra.seen_dependencies.contains(&dep) {
-                        continue
+                fn unique_deps(deps: Vec<(String, Bytes)>) -> Vec<(String, Bytes)> {
+                    let mut filtered = Vec::new();
+                    let mut seen = HashSet::new();
+                    for (dep, bytes) in deps {
+                        if seen.contains(&dep) {
+                            continue
+                        }
+
+                        seen.insert(dep.clone());
+                        filtered.push((dep, bytes));
                     }
 
-                    extra.seen_dependencies.insert(dep.clone());
-                    filtered_deps.push((dep, bytes));
+                    filtered
                 }
 
                 // if it's the target contract, grab the info
@@ -153,7 +148,7 @@ impl ScriptArgs {
                         if extra.matched {
                             eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `--tc ContractName`")
                         }
-                        *extra.dependencies = filtered_deps;
+                        *extra.dependencies = unique_deps(dependencies);
                         *extra.contract = contract.clone();
                         extra.matched = true;
                         extra.target_id = Some(id.clone());
@@ -165,7 +160,7 @@ impl ScriptArgs {
                         .expect("The target specifier is malformed.");
                     let path = std::path::Path::new(path);
                     if path == id.source && name == id.name {
-                        *extra.dependencies = filtered_deps;
+                        *extra.dependencies = unique_deps(dependencies);
                         *extra.contract = contract.clone();
                         extra.matched = true;
                         extra.target_id = Some(id.clone());
