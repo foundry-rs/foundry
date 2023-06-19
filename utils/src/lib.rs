@@ -122,7 +122,7 @@ impl AllArtifactsBySlug {
 /// Instead, you must deduplicate *and* preserve the deployment order by pushing the dependencies to
 /// a `Vec` iff it has not been seen before.
 ///
-/// For an example of this, see [here](https://github.com/foundry-rs/foundry/blob/c3a8057a2ddf4bb9e4374811cd304f5a1c5efdb9/cli/src/cmd/forge/script/build.rs#L131-L148).
+/// For an example of this, see [here](https://github.com/foundry-rs/foundry/blob/2308972dbc3a89c03488a05aceb3c428bb3e08c0/cli/src/cmd/forge/script/build.rs#L130-L151C9).
 #[allow(clippy::too_many_arguments)]
 pub fn link_with_nonce_or_address<T, U>(
     contracts: ArtifactContracts,
