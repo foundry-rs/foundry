@@ -259,6 +259,11 @@ async fn main() -> eyre::Result<()> {
             let provider = utils::get_provider(&config)?;
             println!("{}", Cast::new(provider).code(who, block, disassemble).await?);
         }
+        Subcommands::Codesize { block, who, rpc } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
+            println!("{}", Cast::new(provider).codesize(who, block).await?);
+        }
         Subcommands::ComputeAddress { address, nonce, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;

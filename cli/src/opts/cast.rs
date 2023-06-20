@@ -646,6 +646,23 @@ pub enum Subcommands {
         rpc: RpcOpts,
     },
 
+    /// Get the runtime bytecode size of a contract.
+    #[clap(visible_alias = "cs")]
+    Codesize {
+        /// The block height to query at.
+        /// 
+        /// Can also be the tags earliest, finalized, safe, latest, or pending.
+        #[clap(long, short ='B')]
+        block: Option<BlockId>,
+
+        /// The contract address.
+        #[clap(value_parser = NameOrAddress::from_str)]
+        who: NameOrAddress,
+
+        #[clap(flatten)]
+        rpc: RpcOpts,
+    },
+
     /// Get the current gas price.
     #[clap(name = "gas-price", visible_alias = "g")]
     GasPrice {
