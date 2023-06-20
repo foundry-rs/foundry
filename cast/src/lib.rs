@@ -621,6 +621,32 @@ where
         }
     }
 
+    /// Example
+    ///
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_providers::{Provider, Http};
+    /// use ethers_core::types::Address;
+    /// use std::{str::FromStr, convert::TryFrom};
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    /// let addr = Address::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")?;
+    /// let codesize = cast.codesize(addr, None).await?;
+    /// println!("{}", codesize);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn codesize<T: Into<NameOrAddress> + Send + Sync>(
+        &self,
+        who: T,
+        block: Option<BlockId>,
+    ) -> Result<String> {
+        let code = self.provider.get_code(who, block).await?.to_vec();
+        Ok(format!("{}", code.len()))
+    }
+
     /// # Example
     ///
     /// ```no_run
@@ -1381,11 +1407,17 @@ impl SimpleCast {
                     }
                 } else {
                     // we return the `Function` parse error as this case is more likely
-                    return Err(err.into())
+                    eyre::bail!("Could not process human-readable ABI. Please check if you've left the parenthesis unclosed or if some type is incomplete.\nError:\n{}", err)
+                    // return Err(err.into()).wrap_err("Could not process human-readable ABI. Please
+                    // check if you've left the parenthesis unclosed or if some type is
+                    // incomplete.")
                 }
             }
         };
-        let calldata = encode_args(&func, args)?.to_hex::<String>();
+        let calldata = match encode_args(&func, args) {
+            Ok(res) => res.to_hex::<String>(),
+            Err(e) => eyre::bail!("Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}", e),
+        };
         let encoded = &calldata[8..];
         Ok(format!("0x{encoded}"))
     }

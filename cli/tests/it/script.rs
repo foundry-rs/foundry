@@ -723,11 +723,11 @@ forgetest_async!(
                 .join("../testdata/fixtures/broadcast.log.json"),
         )
         .unwrap();
-        let fixtures_log = re.replace_all(&fixtures_log, "");
+        let _fixtures_log = re.replace_all(&fixtures_log, "");
 
         let run_log =
             std::fs::read_to_string("broadcast/Broadcast.t.sol/31337/run-latest.json").unwrap();
-        let run_log = re.replace_all(&run_log, "");
+        let _run_log = re.replace_all(&run_log, "");
 
         // pretty_assertions::assert_eq!(fixtures_log, run_log);
 
@@ -863,7 +863,7 @@ contract Script0 is Script {
             transactions[0].arguments,
             vec![
                 "0x00a329c0648769A73afAc7F9381E08FB43dBEA72".to_string(),
-                "4294967296 [4.294e9]".to_string(),
+                "4294967296".to_string(),
                 "-4294967296".to_string(),
                 "0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6".to_string(),
                 "true".to_string(),
@@ -954,7 +954,7 @@ contract Script0 is Script {
             transactions[0].arguments,
             vec![
                 "0x00a329c0648769A73afAc7F9381E08FB43dBEA72".to_string(),
-                "4294967296 [4.294e9]".to_string(),
+                "4294967296".to_string(),
                 "-4294967296".to_string(),
                 "0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6".to_string(),
                 "true".to_string(),

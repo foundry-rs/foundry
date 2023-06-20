@@ -178,6 +178,23 @@ pub fn format_token(param: &Token) -> String {
     }
 }
 
+/// Gets pretty print strings for tokens, without adding
+/// exponential notation hints for large numbers (e.g. [1e7] for 10000000)
+pub fn format_token_raw(param: &Token) -> String {
+    match param {
+        Token::Uint(num) => format!("{}", num),
+        Token::FixedArray(tokens) | Token::Array(tokens) => {
+            let string = tokens.iter().map(format_token_raw).collect::<Vec<String>>().join(", ");
+            format!("[{string}]")
+        }
+        Token::Tuple(tokens) => {
+            let string = tokens.iter().map(format_token_raw).collect::<Vec<String>>().join(", ");
+            format!("({string})")
+        }
+        _ => format_token(param),
+    }
+}
+
 /// Formats a U256 number to string, adding an exponential notation _hint_ if it
 /// is larger than `10_000`, with a precision of `4` figures, and trimming the
 /// trailing zeros.

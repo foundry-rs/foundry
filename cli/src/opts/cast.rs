@@ -618,7 +618,7 @@ pub enum Subcommands {
     },
 
     /// Get the basefee of a block.
-    #[clap(visible_aliases = &["ba", "fee"])]
+    #[clap(visible_aliases = &["ba", "fee", "basefee"])]
     BaseFee {
         /// The block height to query at.
         ///
@@ -645,6 +645,23 @@ pub enum Subcommands {
         /// Disassemble bytecodes into individual opcodes.
         #[clap(long, short)]
         disassemble: bool,
+
+        #[clap(flatten)]
+        rpc: RpcOpts,
+    },
+
+    /// Get the runtime bytecode size of a contract.
+    #[clap(visible_alias = "cs")]
+    Codesize {
+        /// The block height to query at.
+        ///
+        /// Can also be the tags earliest, finalized, safe, latest, or pending.
+        #[clap(long, short = 'B')]
+        block: Option<BlockId>,
+
+        /// The contract address.
+        #[clap(value_parser = NameOrAddress::from_str)]
+        who: NameOrAddress,
 
         #[clap(flatten)]
         rpc: RpcOpts,
