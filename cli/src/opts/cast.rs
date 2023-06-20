@@ -30,7 +30,7 @@ pub struct Opts {
 )]
 pub enum Subcommands {
     /// Prints the maximum value of the given integer type.
-    #[clap(name = "max-int", visible_aliases = &["max-int", "maxi"])]
+    #[clap(name = "max-int", visible_aliases = &["--max-int", "maxi"])]
     MaxInt {
         /// The integer type to get the maximum value of.
         #[clap(default_value = "int256")]
@@ -38,7 +38,7 @@ pub enum Subcommands {
     },
 
     /// Prints the minimum value of the given integer type.
-    #[clap(name = "min-int", visible_aliases = &["min-int", "mini"])]
+    #[clap(name = "min-int", visible_aliases = &["--min-int", "mini"])]
     MinInt {
         /// The integer type to get the minimum value of.
         #[clap(default_value = "int256")]
@@ -46,7 +46,7 @@ pub enum Subcommands {
     },
 
     /// Prints the maximum value of the given integer type.
-    #[clap(name = "max-uint", visible_aliases = &["max-uint", "maxu"])]
+    #[clap(name = "max-uint", visible_aliases = &["--max-uint", "maxu"])]
     MaxUint {
         /// The unsigned integer type to get the maximum value of.
         #[clap(default_value = "uint256")]
@@ -54,11 +54,11 @@ pub enum Subcommands {
     },
 
     /// Prints the zero address.
-    #[clap(name = "address-zero", visible_aliases = &["address-zero", "az"])]
+    #[clap(name = "address-zero", visible_aliases = &["--address-zero", "az"])]
     AddressZero,
 
     /// Prints the zero hash.
-    #[clap(name = "hash-zero", visible_aliases = &["hash-zero", "hz"])]
+    #[clap(name = "hash-zero", visible_aliases = &["--hash-zero", "hz"])]
     HashZero,
 
     /// Convert UTF8 text to hex.
@@ -76,14 +76,14 @@ pub enum Subcommands {
     },
 
     /// Concatenate hex strings.
-    #[clap(name = "concat-hex", visible_aliases = &["concat-hex", "ch"])]
+    #[clap(name = "concat-hex", visible_aliases = &["--concat-hex", "ch"])]
     ConcatHex {
         /// The data to concatenate.
         data: Vec<String>,
     },
 
     /// "Convert binary data into hex data."
-    #[clap(name = "from-bin", visible_aliases = &["from-binx", "fb"])]
+    #[clap(name = "from-bin", visible_aliases = &["--from-binx", "fb"])]
     FromBin,
 
     /// Normalize the input to lowercase, 0x-prefixed hex.
@@ -93,7 +93,7 @@ pub enum Subcommands {
     /// - 0x prefixed hex, concatenated with a ':'
     /// - an absolute path to file
     /// - @tag, where the tag is defined in an environment variable
-    #[clap(name = "to-hexdata", visible_aliases = &["to-hexdata", "thd", "2hd"])]
+    #[clap(name = "to-hexdata", visible_aliases = &["--to-hexdata", "thd", "2hd"])]
     ToHexdata {
         /// The input to normalize.
         input: Option<String>,
@@ -114,14 +114,14 @@ pub enum Subcommands {
     },
 
     /// Convert hex data to an ASCII string.
-    #[clap(name = "to-ascii", visible_aliases = &["to-ascii", "tas", "2as"])]
+    #[clap(name = "to-ascii", visible_aliases = &["--to-ascii", "tas", "2as"])]
     ToAscii {
         /// The hex data to convert.
         hexdata: Option<String>,
     },
 
     /// Convert a fixed point number into an integer.
-    #[clap(name = "from-fix", visible_aliases = &["from-fix", "ff"])]
+    #[clap(name = "from-fix", visible_aliases = &["--from-fix", "ff"])]
     FromFixedPoint {
         /// The number of decimals to use.
         decimals: Option<String>,
@@ -132,14 +132,14 @@ pub enum Subcommands {
     },
 
     /// Right-pads hex data to 32 bytes.
-    #[clap(name = "to-bytes32", visible_aliases = &["to-bytes32", "tb", "2b"])]
+    #[clap(name = "to-bytes32", visible_aliases = &["--to-bytes32", "tb", "2b"])]
     ToBytes32 {
         /// The hex data to convert.
         bytes: Option<String>,
     },
 
     /// Convert an integer into a fixed point number.
-    #[clap(name = "to-fix", visible_aliases = &["to-fix", "tf", "2f"])]
+    #[clap(name = "to-fix", visible_aliases = &["--to-fix", "tf", "2f"])]
     ToFixedPoint {
         /// The number of decimals to use.
         decimals: Option<String>,
@@ -150,14 +150,14 @@ pub enum Subcommands {
     },
 
     /// Convert a number to a hex-encoded uint256.
-    #[clap(name = "to-uint256", visible_aliases = &["to-uint256", "tu", "2u"])]
+    #[clap(name = "to-uint256", visible_aliases = &["--to-uint256", "tu", "2u"])]
     ToUint256 {
         /// The value to convert.
         value: Option<String>,
     },
 
     /// Convert a number to a hex-encoded int256.
-    #[clap(name = "to-int256", visible_aliases = &["to-int256", "ti", "2i"])]
+    #[clap(name = "to-int256", visible_aliases = &["--to-int256", "ti", "2i"])]
     ToInt256 {
         /// The value to convert.
         value: Option<String>,
@@ -207,7 +207,7 @@ pub enum Subcommands {
     /// - 1ether
     /// - 1 gwei
     /// - 1gwei ether
-    #[clap(name = "to-unit", visible_aliases = &["to-unit", "tun", "2un"])]
+    #[clap(name = "to-unit", visible_aliases = &["--to-unit", "tun", "2un"])]
     ToUnit {
         /// The value to convert.
         value: Option<String>,
@@ -220,7 +220,7 @@ pub enum Subcommands {
     /// Convert an ETH amount to wei.
     ///
     /// Consider using --to-unit.
-    #[clap(name = "to-wei", visible_aliases = &["to-wei", "tw", "2w"])]
+    #[clap(name = "to-wei", visible_aliases = &["--to-wei", "tw", "2w"])]
     ToWei {
         /// The value to convert.
         #[clap(allow_hyphen_values = true)]
@@ -234,7 +234,7 @@ pub enum Subcommands {
     /// Convert wei into an ETH amount.
     ///
     /// Consider using --to-unit.
-    #[clap(name = "from-wei", visible_aliases = &["from-wei", "fw"])]
+    #[clap(name = "from-wei", visible_aliases = &["--from-wei", "fw"])]
     FromWei {
         /// The value to convert.
         #[clap(allow_hyphen_values = true)]
@@ -246,7 +246,7 @@ pub enum Subcommands {
     },
 
     /// RLP encodes hex data, or an array of hex data
-    #[clap(name = "to-rlp")]
+    #[clap(name = "to-rlp", visible_aliases = &["--to-rlp"])]
     ToRlp {
         /// The value to convert.
         value: Option<String>,
@@ -255,24 +255,24 @@ pub enum Subcommands {
     /// Decodes RLP encoded data.
     ///
     /// Input must be hexadecimal.
-    #[clap(name = "from-rlp")]
+    #[clap(name = "from-rlp", visible_aliases = &["--from-rlp"])]
     FromRlp {
         /// The value to convert.
         value: Option<String>,
     },
 
     /// Converts a number of one base to another
-    #[clap(name = "to-hex", visible_aliases = &["to-hex", "th", "2h"])]
+    #[clap(name = "to-hex", visible_aliases = &["--to-hex", "th", "2h"])]
     ToHex(ToBaseArgs),
 
     /// Converts a number of one base to decimal
-    #[clap(name = "to-dec", visible_aliases = &["to-dec", "td", "2d"])]
+    #[clap(name = "to-dec", visible_aliases = &["--to-dec", "td", "2d"])]
     ToDec(ToBaseArgs),
 
     /// Converts a number of one base to another
     #[clap(
         name = "to-base",
-        visible_aliases = &["to-base",
+        visible_aliases = &["--to-base",
         "--to-radix",
         "to-radix",
         "tr",
@@ -447,7 +447,7 @@ pub enum Subcommands {
     Estimate(EstimateArgs),
 
     /// Decode ABI-encoded input data.
-    #[clap(name = "calldata-decode", visible_alias = "cdd")]
+    #[clap(name = "calldata-decode", visible_aliases = &["--calldata-decode","cdd"])]
     CalldataDecode {
         /// The function signature in the format `<name>(<in-types>)(<out-types>)`.
         sig: String,
@@ -460,7 +460,7 @@ pub enum Subcommands {
     ///
     /// Defaults to decoding output data. To decode input data pass --input or use cast
     /// --calldata-decode.
-    #[clap(name = "abi-decode", visible_alias = "ad")]
+    #[clap(name = "abi-decode", visible_aliases = &["--abi-decode","ad"])]
     AbiDecode {
         /// The function signature in the format `<name>(<in-types>)(<out-types>)`.
         sig: String,
@@ -827,19 +827,19 @@ pub enum Subcommands {
     Rpc(RpcArgs),
 
     /// Formats a string into bytes32 encoding.
-    #[clap(name = "format-bytes32-string")]
+    #[clap(name = "format-bytes32-string", visible_aliases = &["--format-bytes32-string"])]
     FormatBytes32String {
         /// The string to format.
         string: Option<String>,
     },
 
     /// Parses a string from bytes32 encoding.
-    #[clap(name = "parse-bytes32-string")]
+    #[clap(name = "parse-bytes32-string", visible_aliases = &["--parse-bytes32-string"])]
     ParseBytes32String {
         /// The string to parse.
         bytes: Option<String>,
     },
-    #[clap(name = "parse-bytes32-address")]
+    #[clap(name = "parse-bytes32-address", visible_aliases = &["--parse-bytes32-address"])]
     #[clap(about = "Parses a checksummed address from bytes32 encoding.")]
     ParseBytes32Address {
         #[clap(value_name = "BYTES")]
