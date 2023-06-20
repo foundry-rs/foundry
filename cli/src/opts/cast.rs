@@ -83,7 +83,7 @@ pub enum Subcommands {
     },
 
     /// "Convert binary data into hex data."
-    #[clap(name = "from-bin", visible_aliases = &["--from-binx", "fb"])]
+    #[clap(name = "from-bin", visible_aliases = &["--from-bin", "from-binx", "fb"])]
     FromBin,
 
     /// Normalize the input to lowercase, 0x-prefixed hex.
@@ -102,8 +102,8 @@ pub enum Subcommands {
     /// Convert an address to a checksummed format (EIP-55).
     #[clap(
         name = "to-checksum-address",
-        visible_aliases = &["to-checksum-address",
-        "to-checksum",
+        visible_aliases = &["--to-checksum-address",
+        "--to-checksum",
         "to-checksum",
         "ta",
         "2a"]
