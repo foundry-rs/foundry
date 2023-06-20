@@ -1233,7 +1233,7 @@ impl SimpleCast {
         let base_in = Base::unwrap_or_detect(base_in, value)?;
         let base_out: Base = base_out.parse()?;
         if base_in == base_out {
-            return Ok(value.to_string());
+            return Ok(value.to_string())
         }
 
         let mut n = NumberWithBase::parse_int(value, Some(base_in.to_string()))?;
@@ -1303,7 +1303,7 @@ impl SimpleCast {
         let s = if let Some(stripped) = s.strip_prefix("000000000000000000000000") {
             stripped
         } else {
-            return Err(eyre::eyre!("Not convertible to address, there are non-zero bytes"));
+            return Err(eyre::eyre!("Not convertible to address, there are non-zero bytes"))
         };
 
         let lowercase_address_string = format!("0x{s}");
@@ -1763,7 +1763,7 @@ impl SimpleCast {
         }
         if optimize == 0 {
             let selector = HumanReadableParser::parse_function(signature)?.short_signature();
-            return Ok((format!("0x{}", hex::encode(selector)), String::from(signature)));
+            return Ok((format!("0x{}", hex::encode(selector)), String::from(signature)))
         }
         let Some((name, params)) = signature.split_once('(') else {
             eyre::bail!("Invalid signature");
@@ -1785,7 +1785,7 @@ impl SimpleCast {
 
                     if selector.iter().take_while(|&&byte| byte == 0).count() == optimize {
                         found.store(true, Ordering::Relaxed);
-                        return Some((nonce, format!("0x{}", hex::encode(selector)), input));
+                        return Some((nonce, format!("0x{}", hex::encode(selector)), input))
                     }
 
                     nonce += nonce_step;
