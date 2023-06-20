@@ -1870,9 +1870,14 @@ mod tests {
         let decoded = decoded.iter().map(ToString::to_string).collect::<Vec<_>>();
         assert_eq!(
             decoded,
-            vec!["8dbd1b711dc621e1404633da156fcc779e1c6f3e", "d9f3c9cc99548bf3b44a43e0a2d07399eb918adc", "2a", "1", ""]
+            vec![
+                "8dbd1b711dc621e1404633da156fcc779e1c6f3e",
+                "d9f3c9cc99548bf3b44a43e0a2d07399eb918adc",
+                "2a",
+                "1",
+                ""
+            ]
         );
-
     }
 
     #[test]
