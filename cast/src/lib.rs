@@ -621,6 +621,32 @@ where
         }
     }
 
+    /// Example
+    ///
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_providers::{Provider, Http};
+    /// use ethers_core::types::Address;
+    /// use std::{str::FromStr, convert::TryFrom};
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    /// let addr = Address::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")?;
+    /// let codesize = cast.codesize(addr, None).await?;
+    /// println!("{}", codesize);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn codesize<T: Into<NameOrAddress> + Send + Sync>(
+        &self,
+        who: T,
+        block: Option<BlockId>,
+    ) -> Result<String> {
+        let code = self.provider.get_code(who, block).await?.to_vec();
+        Ok(format!("{}", code.len()))
+    }
+
     /// # Example
     ///
     /// ```no_run
