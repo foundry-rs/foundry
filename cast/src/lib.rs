@@ -622,7 +622,7 @@ where
     }
 
     /// Example
-    /// 
+    ///
     /// ```no_run
     /// use cast::Cast;
     /// use ethers_providers::{Provider, Http};
@@ -633,7 +633,7 @@ where
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")?;
-    /// let code = cast.codesize(addr, None).await?;
+    /// let codesize = cast.codesize(addr, None).await?;
     /// println!("{}", codesize);
     /// # Ok(())
     /// # }
@@ -641,11 +641,12 @@ where
     pub async fn codesize<T: Into<NameOrAddress> + Send + Sync>(
         &self,
         who: T,
-        block: Option<BlockId>
+        block: Option<BlockId>,
     ) -> Result<String> {
         let code = self.provider.get_code(who, block).await?.to_vec();
         Ok(format!("{}", code.len()))
     }
+
     /// # Example
     ///
     /// ```no_run

@@ -650,9 +650,9 @@ pub enum Subcommands {
     #[clap(visible_alias = "cs")]
     Codesize {
         /// The block height to query at.
-        /// 
+        ///
         /// Can also be the tags earliest, finalized, safe, latest, or pending.
-        #[clap(long, short ='B')]
+        #[clap(long, short = 'B')]
         block: Option<BlockId>,
 
         /// The contract address.
