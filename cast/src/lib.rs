@@ -1837,6 +1837,28 @@ mod tests {
     }
 
     #[test]
+    fn abi_decode() {
+        let data = "0x0000000000000000000000000000000000000000000000000000000000000001";
+        let sig = "balanceOf(address, uint256)(uint256)";
+        assert_eq!("1", Cast::abi_decode(sig, data, false).unwrap()[0].to_string());
+
+        let data = "0x0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
+        let sig = "safeTransferFrom(address,address,uint256,uint256,bytes)";
+        let decoded = Cast::abi_decode(sig, data, true).unwrap();
+        let decoded = decoded.iter().map(ToString::to_string).collect::<Vec<_>>();
+        assert_eq!(
+            decoded,
+            vec![
+                "8dbd1b711dc621e1404633da156fcc779e1c6f3e",
+                "d9f3c9cc99548bf3b44a43e0a2d07399eb918adc",
+                "2a",
+                "1",
+                ""
+            ]
+        );
+    }
+
+    #[test]
     fn concat_hex() {
         assert_eq!(Cast::concat_hex(["0x00", "0x01"]), "0x0001");
         assert_eq!(Cast::concat_hex(["1", "2"]), "0x12");
