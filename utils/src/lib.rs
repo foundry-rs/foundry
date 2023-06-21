@@ -11,12 +11,7 @@ use ethers_solc::{
 use eyre::{Result, WrapErr};
 use futures::future::BoxFuture;
 use std::{
-    collections::{BTreeMap, HashMap},
-    env::VarError,
-    fmt::Write,
-    path::PathBuf,
-    str::FromStr,
-    time::Duration,
+    collections::BTreeMap, env::VarError, fmt::Write, path::PathBuf, str::FromStr, time::Duration,
 };
 use tracing::trace;
 
@@ -94,35 +89,6 @@ impl AllArtifactsBySlug {
     }
 }
 
-/// Links the given artifacts with a link key constructor function, passing the result of each
-/// linkage to the given callback.
-///
-/// This function will recursively link all artifacts until none are unlinked. It does this by:
-///
-/// 1. Using the specified predeployed library addresses (`deployed_library_addresses`) for known
-/// libraries (specified by the user) 2. Otherwise, computing the address the library would live at
-/// if deployed by `sender`, given a starting nonce of `nonce`.
-///
-/// If the library was already deployed previously in step 2, the linker will re-use the previously
-/// computed address instead of re-computing it.
-///
-/// The linker will call `post_link` for each linked artifact, providing:
-///
-/// 1. User-specified data (`extra`)
-/// 2. The linked artifact's bytecode
-/// 3. The ID of the artifact
-/// 4. The dependencies necessary to deploy the contract
-///
-/// # Note
-///
-/// If you want to collect all dependencies of a set of contracts, you cannot just collect the
-/// `dependencies` passed to the callback in a `Vec`, since the same library contract (with the
-/// exact same address) might show up as a dependency for multiple contracts.
-///
-/// Instead, you must deduplicate *and* preserve the deployment order by pushing the dependencies to
-/// a `Vec` iff it has not been seen before.
-///
-/// For an example of this, see [here](https://github.com/foundry-rs/foundry/blob/2308972dbc3a89c03488a05aceb3c428bb3e08c0/cli/src/cmd/forge/script/build.rs#L130-L151C9).
 #[allow(clippy::too_many_arguments)]
 pub fn link_with_nonce_or_address<T, U>(
     contracts: ArtifactContracts,
@@ -133,7 +99,7 @@ pub fn link_with_nonce_or_address<T, U>(
     extra: &mut U,
     link_key_construction: impl Fn(String, String) -> (String, String, String),
     post_link: impl Fn(PostLinkInput<T, U>) -> eyre::Result<()>,
-) -> Result<()> {
+) -> eyre::Result<()> {
     // create a mapping of fname => Vec<(fname, file, key)>,
     let link_tree: BTreeMap<String, ArtifactDependencies> = contracts
         .iter()
@@ -166,8 +132,6 @@ pub fn link_with_nonce_or_address<T, U>(
             .collect(),
     };
 
-    let mut internally_deployed_libraries = HashMap::new();
-
     for (id, contract) in contracts.into_iter() {
         let (abi, maybe_deployment_bytes, maybe_runtime) = (
             contract.abi.as_ref(),
@@ -198,7 +162,6 @@ pub fn link_with_nonce_or_address<T, U>(
                         &artifacts_by_slug,
                         &link_tree,
                         &mut dependencies,
-                        &mut internally_deployed_libraries,
                         &deployed_library_addresses,
                         nonce,
                         sender,
@@ -243,9 +206,6 @@ fn recurse_link<'a>(
     dependency_tree: &'a BTreeMap<String, ArtifactDependencies>,
     // library deployment vector (file:contract:address, bytecode)
     deployment: &'a mut Vec<(String, Bytes)>,
-    // libraries we have already deployed during the linking process.
-    // the key is `file:contract` and the value is the address we computed
-    internally_deployed_libraries: &'a mut HashMap<String, Address>,
     // deployed library addresses fname => adddress
     deployed_library_addresses: &'a Libraries,
     // nonce to start at
@@ -285,7 +245,6 @@ fn recurse_link<'a>(
                         artifacts,
                         dependency_tree,
                         deployment,
-                        internally_deployed_libraries,
                         deployed_library_addresses,
                         init_nonce,
                         sender,
@@ -305,40 +264,23 @@ fn recurse_link<'a>(
                 }
             }
 
-            let address = if let Some(deployed_address) = deployed_address {
-                // the user specified the library address
-
-                deployed_address
-            } else if let Some(deployed_address) = internally_deployed_libraries.get(&format!("{file}:{key}")) {
-                // we previously deployed the library
-                let library = format!("{file}:{key}:0x{}", hex::encode(deployed_address));
-
-                // push the dependency into the library deployment vector
-                deployment.push((
-                    library,
-                    next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!( "Bytecode should be linked for {next_target}")),
-                ));
-                *deployed_address
-            } else {
-                // we need to deploy the library
-                let computed_address = ethers_core::utils::get_contract_address(sender, init_nonce + deployment.len());
-                let library = format!("{file}:{key}:0x{}", hex::encode(computed_address));
-
-                // push the dependency into the library deployment vector
-                deployment.push((
-                    library,
-                    next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!( "Bytecode should be linked for {next_target}")),
-                ));
-
-                // remember this library for later
-                internally_deployed_libraries.insert(format!("{file}:{key}"), computed_address);
-
-                computed_address
-            };
+            let address = deployed_address.unwrap_or_else(|| {
+                ethers_core::utils::get_contract_address(sender, init_nonce + deployment.len())
+            });
 
             // link the dependency to the target
             target_bytecode.0.link(file.clone(), key.clone(), address);
             target_bytecode.1.link(file.clone(), key.clone(), address);
+
+            if deployed_address.is_none() {
+                let library = format!("{file}:{key}:0x{}", hex::encode(address));
+
+                // push the dependency into the library deployment vector
+                deployment.push((
+                    library,
+                    next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!( "Bytecode should be linked for {next_target}")),
+                ));
+            }
         });
     }
 }
@@ -361,7 +303,10 @@ pub fn to_table(value: serde_json::Value) -> String {
 /// Resolves an input to [`NameOrAddress`]. The input could also be a contract/token name supported
 /// by
 /// [`ethers-addressbook`](https://github.com/gakonst/ethers-rs/tree/master/ethers-addressbook).
-pub fn resolve_addr<T: Into<NameOrAddress>>(to: T, chain: Option<Chain>) -> Result<NameOrAddress> {
+pub fn resolve_addr<T: Into<NameOrAddress>>(
+    to: T,
+    chain: Option<Chain>,
+) -> eyre::Result<NameOrAddress> {
     Ok(match to.into() {
         NameOrAddress::Address(addr) => NameOrAddress::Address(addr),
         NameOrAddress::Name(contract_or_ens) => {

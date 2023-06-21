@@ -127,26 +127,13 @@ impl ScriptArgs {
                     dependencies,
                 } = post_link_input;
 
-                fn unique_deps(deps: Vec<(String, Bytes)>) -> Vec<(String, Bytes)> {
-                    let mut filtered = Vec::new();
-                    let mut seen = HashSet::new();
-                    for (dep, bytes) in deps {
-                        if !seen.insert(dep.clone()) {
-                            continue
-                        }
-                        filtered.push((dep, bytes));
-                    }
-
-                    filtered
-                }
-
                 // if it's the target contract, grab the info
                 if extra.no_target_name {
                     if id.source == std::path::PathBuf::from(&extra.target_fname) {
                         if extra.matched {
                             eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `--tc ContractName`")
                         }
-                        *extra.dependencies = unique_deps(dependencies);
+                        *extra.dependencies = dependencies;
                         *extra.contract = contract.clone();
                         extra.matched = true;
                         extra.target_id = Some(id.clone());
@@ -158,7 +145,7 @@ impl ScriptArgs {
                         .expect("The target specifier is malformed.");
                     let path = std::path::Path::new(path);
                     if path == id.source && name == id.name {
-                        *extra.dependencies = unique_deps(dependencies);
+                        *extra.dependencies = dependencies;
                         *extra.contract = contract.clone();
                         extra.matched = true;
                         extra.target_id = Some(id.clone());
