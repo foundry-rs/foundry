@@ -220,7 +220,7 @@ impl SignEthClient {
         Ok(sigs
             .iter()
             .cloned()
-            .filter(|sig| abi_decode(sig, calldata, true).is_ok())
+            .filter(|sig| abi_decode(sig, calldata, true, true).is_ok())
             .collect::<Vec<String>>())
     }
 

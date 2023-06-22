@@ -1355,7 +1355,8 @@ impl SimpleCast {
     ///     assert_eq!(decoded, "1");
     ///
     ///     // Passing `input = true` will decode the data with the input function signature.
-    ///     let data = "0xf242432a0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
+    ///     // We exclude the "prefixed" function selector from the data field (the first 4 bytes).
+    ///     let data = "0x0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
     ///     let sig = "safeTransferFrom(address, address, uint256, uint256, bytes)";
     ///     let decoded = Cast::abi_decode(sig, data, true)?;
     ///     let decoded = decoded.iter().map(ToString::to_string).collect::<Vec<_>>();
@@ -1369,7 +1370,42 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
-        foundry_common::abi::abi_decode(sig, calldata, input)
+        foundry_common::abi::abi_decode(sig, calldata, input, false)
+    }
+
+    /// Decodes calldata-encoded hex input or output
+    /// Similar to `abi_decode`, but does requires a function signature prefixed for "calldata"
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     // Passing `input = false` will decode the data as the output type.
+    ///     // The input data types and the full function sig are ignored, i.e.
+    ///     // you could also pass `balanceOf()(uint256)` and it'd still work.
+    ///     let data = "0x0000000000000000000000000000000000000000000000000000000000000001";
+    ///     let sig = "balanceOf(address, uint256)(uint256)";
+    ///     let decoded = Cast::calldata_decode(sig, data, false)?[0].to_string();
+    ///     assert_eq!(decoded, "1");
+    ///
+    ///     // Passing `input = true` will decode the data with the input function signature.
+    ///     let data = "0xf242432a0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
+    ///     let sig = "safeTransferFrom(address, address, uint256, uint256, bytes)";
+    ///     let decoded = Cast::calldata_decode(sig, data, true)?;
+    ///     let decoded = decoded.iter().map(ToString::to_string).collect::<Vec<_>>();
+    ///     assert_eq!(
+    ///         decoded,
+    ///         vec!["8dbd1b711dc621e1404633da156fcc779e1c6f3e", "d9f3c9cc99548bf3b44a43e0a2d07399eb918adc", "2a", "1", ""]
+    ///     );
+    ///
+    ///
+    ///     # Ok(())
+    /// }
+    /// ```
+    pub fn calldata_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
+        foundry_common::abi::abi_decode(sig, calldata, input, true)
     }
 
     /// Performs ABI encoding based off of the function signature. Does not include
@@ -1745,7 +1781,7 @@ impl SimpleCast {
     ///
     ///     Ok(())
     /// }
-    /// ```    
+    /// ```
     pub fn get_selector(signature: &str, optimize: Option<usize>) -> Result<(String, String)> {
         let optimize = optimize.unwrap_or(0);
         if optimize > 4 {
@@ -1820,6 +1856,53 @@ mod tests {
         assert_eq!(
             "0x6fae94120000000000000000000000000000000000000000000000000000000000000000",
             Cast::calldata_encode("bar(bool)", &["false"]).unwrap().as_str()
+        );
+    }
+
+    #[test]
+    fn abi_decode() {
+        let data = "0x0000000000000000000000000000000000000000000000000000000000000001";
+        let sig = "balanceOf(address, uint256)(uint256)";
+        assert_eq!("1", Cast::abi_decode(sig, data, false).unwrap()[0].to_string());
+
+        let data = "0x0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
+        let sig = "safeTransferFrom(address,address,uint256,uint256,bytes)";
+        let decoded = Cast::abi_decode(sig, data, true).unwrap();
+        let decoded = decoded.iter().map(ToString::to_string).collect::<Vec<_>>();
+        assert_eq!(
+            decoded,
+            vec![
+                "8dbd1b711dc621e1404633da156fcc779e1c6f3e",
+                "d9f3c9cc99548bf3b44a43e0a2d07399eb918adc",
+                "2a",
+                "1",
+                ""
+            ]
+        );
+    }
+
+    #[test]
+    fn calldata_decode() {
+        let data = "0x0000000000000000000000000000000000000000000000000000000000000001";
+        let sig = "balanceOf(address, uint256)(uint256)";
+        let decoded = Cast::calldata_decode(sig, data, false).unwrap()[0].to_string();
+        assert_eq!(decoded, "1");
+
+        // Passing `input = true` will decode the data with the input function signature.
+        // We exclude the "prefixed" function selector from the data field (the first 4 bytes).
+        let data = "0xf242432a0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
+        let sig = "safeTransferFrom(address, address, uint256, uint256, bytes)";
+        let decoded = Cast::calldata_decode(sig, data, true).unwrap();
+        let decoded = decoded.iter().map(ToString::to_string).collect::<Vec<_>>();
+        assert_eq!(
+            decoded,
+            vec![
+                "8dbd1b711dc621e1404633da156fcc779e1c6f3e",
+                "d9f3c9cc99548bf3b44a43e0a2d07399eb918adc",
+                "2a",
+                "1",
+                ""
+            ]
         );
     }
 

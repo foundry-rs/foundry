@@ -456,7 +456,7 @@ pub enum Subcommands {
     ///
     /// Defaults to decoding output data. To decode input data pass --input or use cast
     /// --calldata-decode.
-    #[clap(visible_aliases = &["--abi-decode","ad"])]
+    #[clap(name = "abi-decode", visible_alias = "ad")]
     AbiDecode {
         /// The function signature in the format `<name>(<in-types>)(<out-types>)`.
         sig: String,
@@ -464,8 +464,8 @@ pub enum Subcommands {
         /// The ABI-encoded calldata.
         calldata: String,
 
-        /// Decode input data.
-        #[clap(long, short)]
+        /// Whether to decode the input or output data.
+        #[clap(long, short, help_heading = "Decode input data instead of output data")]
         input: bool,
     },
 
