@@ -189,7 +189,12 @@ pub(crate) fn install(
 
                     // this changed the .gitmodules files
                     trace!("git add .gitmodules");
-                    Command::new("git").current_dir(&root).args(["add", ".gitmodules"]).exec()?;
+                    let git_root = Command::new("git")
+                        .current_dir(&root)
+                        .args(["rev-parse", "--show-toplevel"])
+                        .get_stdout_lossy()?;
+                    trace!(?git_root, "git root dir");
+                    Command::new("git").current_dir(&git_root).args(["add", ".gitmodules"]).exec()?;
                 }
             }
 
