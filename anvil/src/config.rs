@@ -276,6 +276,17 @@ Chain ID:       {}
                 fork.block_hash(),
                 fork.chain_id()
             );
+        } else {
+            let _ = write!(
+                config_string,
+                r#"
+Chain ID
+==================
+{}
+
+"#,
+                Paint::green(format!("\n{}", self.get_chain_id()))
+            );
         }
 
         config_string
