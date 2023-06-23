@@ -216,6 +216,36 @@ Derivation path:   {}
             );
         }
 
+        if let Some(fork) = fork {
+            let _ = write!(
+                config_string,
+                r#"
+
+Fork
+==================
+Endpoint:       {}
+Block number:   {}
+Block hash:     {:?}
+Chain ID:       {}
+"#,
+                fork.eth_rpc_url(),
+                fork.block_number(),
+                fork.block_hash(),
+                fork.chain_id()
+            );
+        } else {
+            let _ = write!(
+                config_string,
+                r#"
+
+Chain ID
+==================
+{}
+"#,
+                Paint::green(format!("\n{}", self.get_chain_id()))
+            );
+        }
+
         if (SpecId::from(self.get_hardfork()) as u8) < (SpecId::LONDON as u8) {
             let _ = write!(
                 config_string,
@@ -230,7 +260,6 @@ Gas Price
             let _ = write!(
                 config_string,
                 r#"
-
 Base Fee
 ==================
 {}
@@ -258,36 +287,6 @@ Genesis Timestamp
 "#,
             Paint::green(format!("\n{}", self.get_genesis_timestamp()))
         );
-
-        if let Some(fork) = fork {
-            let _ = write!(
-                config_string,
-                r#"
-Fork
-==================
-Endpoint:       {}
-Block number:   {}
-Block hash:     {:?}
-Chain ID:       {}
-
-"#,
-                fork.eth_rpc_url(),
-                fork.block_number(),
-                fork.block_hash(),
-                fork.chain_id()
-            );
-        } else {
-            let _ = write!(
-                config_string,
-                r#"
-Chain ID
-==================
-{}
-
-"#,
-                Paint::green(format!("\n{}", self.get_chain_id()))
-            );
-        }
 
         config_string
     }
