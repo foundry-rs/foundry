@@ -1,9 +1,10 @@
 use crate::{
-    result::{SuiteResult, TestKind, TestResult, TestSetup},
+    result::{SuiteResult, TestKind, TestResult, TestSetup, TestStatus},
     TestFilter, TestOptions,
 };
 use ethers::{
     abi::{Abi, Function},
+    solc::artifacts::Evm,
     types::{Address, Bytes, U256},
 };
 use eyre::Result;
@@ -225,7 +226,7 @@ impl<'a> ContractRunner<'a> {
                 [(
                     "setUp()".to_string(),
                     TestResult {
-                        success: false,
+                        status: TestStatus::Failure,
                         reason: setup.reason,
                         counterexample: None,
                         decoded_logs: decode_console_logs(&setup.logs),
@@ -288,7 +289,8 @@ impl<'a> ContractRunner<'a> {
 
         let duration = start.elapsed();
         if !test_results.is_empty() {
-            let successful = test_results.iter().filter(|(_, tst)| tst.success).count();
+            let successful =
+                test_results.iter().filter(|(_, tst)| tst.status == TestStatus::Success).count();
             info!(
                 duration = ?duration,
                 "done. {}/{} successful",
@@ -347,9 +349,20 @@ impl<'a> ContractRunner<'a> {
                     HashMap::new(),
                 )
             }
+            Err(EvmError::SkipError) => {
+                return TestResult {
+                    status: TestStatus::Skipped,
+                    reason: None,
+                    decoded_logs: decode_console_logs(&logs),
+                    traces,
+                    labeled_addresses,
+                    kind: TestKind::Standard(0),
+                    ..Default::default()
+                }
+            }
             Err(err) => {
                 return TestResult {
-                    success: false,
+                    status: TestStatus::Failure,
                     reason: Some(err.to_string()),
                     decoded_logs: decode_console_logs(&logs),
                     traces,
@@ -375,7 +388,10 @@ impl<'a> ContractRunner<'a> {
         );
 
         TestResult {
-            success,
+            status: match success {
+                true => TestStatus::Success,
+                false => TestStatus::Failure,
+            },
             reason,
             counterexample: None,
             decoded_logs: decode_console_logs(&logs),
@@ -471,9 +487,12 @@ impl<'a> ContractRunner<'a> {
                     calls: cases.iter().map(|sequence| sequence.cases().len()).sum(),
                     reverts,
                 };
-
+                // TODO(evalir): implement skip on invariant tests
                 TestResult {
-                    success,
+                    status: match success {
+                        true => TestStatus::Success,
+                        false => TestStatus::Failure,
+                    },
                     reason,
                     counterexample,
                     decoded_logs: decode_console_logs(&logs),
@@ -521,9 +540,12 @@ impl<'a> ContractRunner<'a> {
             duration = ?start.elapsed(),
             success = %result.success
         );
-
+        // TODO(evalir): implement skip on fuzz tests
         TestResult {
-            success: result.success,
+            status: match result.success {
+                true => TestStatus::Success,
+                false => TestStatus::Failure,
+            },
             reason: result.reason,
             counterexample: result.counterexample,
             decoded_logs: decode_console_logs(&logs),

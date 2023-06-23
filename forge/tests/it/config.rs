@@ -3,7 +3,10 @@
 use crate::test_helpers::{
     filter::Filter, COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT,
 };
-use forge::{result::SuiteResult, MultiContractRunner, MultiContractRunnerBuilder, TestOptions};
+use forge::{
+    result::{SuiteResult, TestStatus},
+    MultiContractRunner, MultiContractRunnerBuilder, TestOptions,
+};
 use foundry_config::{
     fs_permissions::PathPermission, Config, FsPermissions, FuzzConfig, FuzzDictionaryConfig,
     InvariantConfig, RpcEndpoint, RpcEndpoints,
@@ -75,7 +78,9 @@ impl TestConfig {
         }
         for (_, SuiteResult { test_results, .. }) in suite_result {
             for (test_name, result) in test_results {
-                if self.should_fail != !result.success {
+                if self.should_fail && (result.success == TestStatus::Success) ||
+                    !self.should_fail && (result.success == TestStatus::Failure)
+                {
                     let logs = decode_console_logs(&result.logs);
                     let outcome = if self.should_fail { "fail" } else { "pass" };
 
@@ -239,7 +244,7 @@ pub fn assert_multiple(
 
             if *should_pass {
                 assert!(
-                    actuals[*contract_name].test_results[*test_name].success,
+                    actuals[*contract_name].test_results[*test_name].success == TestStatus::Success,
                     "Test {} did not pass as expected.\nReason: {:?}\nLogs:\n{}",
                     test_name,
                     actuals[*contract_name].test_results[*test_name].reason,
@@ -247,7 +252,7 @@ pub fn assert_multiple(
                 );
             } else {
                 assert!(
-                    !actuals[*contract_name].test_results[*test_name].success,
+                    actuals[*contract_name].test_results[*test_name].success == TestStatus::Failure,
                     "Test {} did not fail as expected.\nLogs:\n{}",
                     test_name,
                     logs.join("\n")

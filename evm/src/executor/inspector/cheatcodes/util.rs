@@ -270,7 +270,7 @@ pub fn apply<DB: Database>(
         HEVMCalls::ParseInt(inner) => parse(&inner.0, &ParamType::Int(256)),
         HEVMCalls::ParseBytes32(inner) => parse(&inner.0, &ParamType::FixedBytes(32)),
         HEVMCalls::ParseBool(inner) => parse(&inner.0, &ParamType::Bool),
-        HEVMCalls::Skip(inner) => skip(state, data, inner.0),
+        HEVMCalls::Skip(inner) => skip(state, data.journaled_state.depth(), inner.0),
         _ => return None,
     })
 }

@@ -2,7 +2,7 @@
 
 use crate::{config::*, test_helpers::filter::Filter};
 use ethers::types::U256;
-use forge::result::SuiteResult;
+use forge::result::{SuiteResult, TestStatus};
 use std::collections::BTreeMap;
 
 #[test]
@@ -26,14 +26,14 @@ fn test_fuzz() {
                 "testPositive(int256)" |
                 "testSuccessfulFuzz(uint128,uint128)" |
                 "testToStringFuzz(bytes32)" => assert!(
-                    result.success,
+                    result.status == TestStatus::Success,
                     "Test {} did not pass as expected.\nReason: {:?}\nLogs:\n{}",
                     test_name,
                     result.reason,
                     result.decoded_logs.join("\n")
                 ),
                 _ => assert!(
-                    !result.success,
+                    result.status == TestStatus::Failure,
                     "Test {} did not fail as expected.\nReason: {:?}\nLogs:\n{}",
                     test_name,
                     result.reason,
