@@ -531,7 +531,6 @@ impl<'a> ContractRunner<'a> {
         fuzz_config: FuzzConfig,
     ) -> TestResult {
         let TestSetup { address, mut logs, mut traces, mut labeled_addresses, .. } = setup;
-        println!("running fuzz test");
         // Run fuzz test
         let start = Instant::now();
         let mut result = FuzzedExecutor::new(&self.executor, runner, self.sender, fuzz_config)
