@@ -26,4 +26,9 @@ contract SkipTest is DSTest {
         cheats.skip(false);
         revert("This test should fail");
     }
+
+    function statefulFuzzSkip() public {
+        cheats.skip(true);
+        require(true == false, "Test should not reach invariant");
+    }
 }
