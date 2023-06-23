@@ -2,6 +2,7 @@
 use crate::{
     abi::ConsoleEvents::{self, *},
     error::ERROR_PREFIX,
+    executor::inspector::cheatcodes::util::MAGIC_SKIP_BYTES,
 };
 use ethers::{
     abi::{decode, AbiDecode, Contract as Abi, ParamType, RawLog, Token},
@@ -178,7 +179,10 @@ pub fn decode_revert(
                     }
                 }
             }
-
+            // See if the revert is caused by a skip() call.
+            if err == MAGIC_SKIP_BYTES {
+                return Ok("SKIPPED".to_string())
+            }
             // optimistically try to decode as string, unknown selector or `CheatcodeError`
             String::decode(err)
                 .ok()

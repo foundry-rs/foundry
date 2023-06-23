@@ -1,7 +1,7 @@
 use self::{
     env::Broadcast,
     expect::{handle_expect_emit, handle_expect_revert, ExpectedCallType},
-    util::{check_if_fixed_gas_limit, process_create, BroadcastableTransactions},
+    util::{check_if_fixed_gas_limit, process_create, BroadcastableTransactions, MAGIC_SKIP_BYTES},
 };
 use crate::{
     abi::HEVMCalls,
@@ -114,6 +114,9 @@ pub struct Cheatcodes {
 
     /// Rememebered private keys
     pub script_wallets: Vec<LocalWallet>,
+
+    /// Whether the skip cheatcode was activated
+    pub skip: bool,
 
     /// Prank information
     pub prank: Option<Prank>,
@@ -742,6 +745,14 @@ where
             call.contract == h160_to_b160(HARDHAT_CONSOLE_ADDRESS)
         {
             return (status, remaining_gas, retdata)
+        }
+
+        if data.journaled_state.depth() == 0 && self.skip {
+            return (
+                InstructionResult::Revert,
+                remaining_gas,
+                Error::custom_bytes(MAGIC_SKIP_BYTES).encode_error().0,
+            )
         }
 
         // Clean up pranks

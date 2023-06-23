@@ -1,4 +1,4 @@
-use super::{ensure, fmt_err, Cheatcodes, Result};
+use super::{ensure, fmt_err, Cheatcodes, Error, Result};
 use crate::{
     abi::HEVMCalls,
     executor::backend::{
@@ -31,7 +31,7 @@ use revm::{
     primitives::{Account, TransactTo},
     Database, EVMData, JournaledState,
 };
-use std::{collections::VecDeque, str::FromStr};
+use std::{collections::VecDeque, f32::consts::E, str::FromStr};
 
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 
@@ -39,6 +39,8 @@ const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 pub const DEFAULT_CREATE2_DEPLOYER: H160 = H160([
     78, 89, 180, 72, 71, 179, 121, 87, 133, 136, 146, 12, 167, 143, 191, 38, 192, 180, 149, 108,
 ]);
+
+pub const MAGIC_SKIP_BYTES: &[u8] = b"FOUNDRY::SKIP";
 
 /// Helps collecting transactions from different forks.
 #[derive(Debug, Clone, Default)]
@@ -197,6 +199,14 @@ pub fn parse(s: &str, ty: &ParamType) -> Result {
         .map_err(|e| fmt_err!("Failed to parse `{s}` as type `{ty}`: {e}"))
 }
 
+pub fn skip(state: &mut Cheatcodes, skip: bool) -> Result {
+    if !skip {
+        return Ok(b"".into())
+    }
+    state.skip = true;
+    Err(Error::custom_bytes(MAGIC_SKIP_BYTES))
+}
+
 #[instrument(level = "error", name = "util", target = "evm::cheatcodes", skip_all)]
 pub fn apply<DB: Database>(
     state: &mut Cheatcodes,
@@ -253,6 +263,7 @@ pub fn apply<DB: Database>(
         HEVMCalls::ParseInt(inner) => parse(&inner.0, &ParamType::Int(256)),
         HEVMCalls::ParseBytes32(inner) => parse(&inner.0, &ParamType::FixedBytes(32)),
         HEVMCalls::ParseBool(inner) => parse(&inner.0, &ParamType::Bool),
+        HEVMCalls::Skip(inner) => skip(state, inner.0),
         _ => return None,
     })
 }
