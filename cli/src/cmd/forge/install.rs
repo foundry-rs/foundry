@@ -255,7 +255,7 @@ impl Installer<'_> {
         if self.git.shallow {
             None
         } else {
-            self.git_semver_tags(&path).ok().and_then(|mut tags| tags.pop()).map(|(tag, _)| tag)
+            self.git_semver_tags(path).ok().and_then(|mut tags| tags.pop()).map(|(tag, _)| tag)
         }
     }
 
