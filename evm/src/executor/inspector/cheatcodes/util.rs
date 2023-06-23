@@ -199,10 +199,17 @@ pub fn parse(s: &str, ty: &ParamType) -> Result {
         .map_err(|e| fmt_err!("Failed to parse `{s}` as type `{ty}`: {e}"))
 }
 
-pub fn skip(state: &mut Cheatcodes, skip: bool) -> Result {
+pub fn skip(state: &mut Cheatcodes, depth: u64, skip: bool) -> Result {
     if !skip {
         return Ok(b"".into())
     }
+
+    // Skip should not work if called deeper than at test level.
+    // As we're not returning the magic skip bytes, this will cause a test failure.
+    if depth > 1 {
+        return Err(Error::custom("The skip cheatcode can only be used at test level"))
+    }
+
     state.skip = true;
     Err(Error::custom_bytes(MAGIC_SKIP_BYTES))
 }
@@ -263,7 +270,7 @@ pub fn apply<DB: Database>(
         HEVMCalls::ParseInt(inner) => parse(&inner.0, &ParamType::Int(256)),
         HEVMCalls::ParseBytes32(inner) => parse(&inner.0, &ParamType::FixedBytes(32)),
         HEVMCalls::ParseBool(inner) => parse(&inner.0, &ParamType::Bool),
-        HEVMCalls::Skip(inner) => skip(state, inner.0),
+        HEVMCalls::Skip(inner) => skip(state, data, inner.0),
         _ => return None,
     })
 }
