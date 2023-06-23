@@ -488,10 +488,7 @@ impl<'a> ContractRunner<'a> {
                 };
                 // TODO(evalir): implement skip on invariant tests
                 let must_skip = if let Some(reason) = reason.clone() {
-                    match reason.as_str() {
-                        "SKIPPED" => true,
-                        _ => false,
-                    }
+                    matches!(reason.as_str(), "SKIPPED")
                 } else {
                     false
                 };
@@ -554,10 +551,7 @@ impl<'a> ContractRunner<'a> {
         );
 
         let must_skip = if let Some(reason) = result.reason.clone() {
-            match reason.as_str() {
-                "SKIPPED" => true,
-                _ => false,
-            }
+            matches!(reason.as_str(), "SKIPPED")
         } else {
             false
         };
