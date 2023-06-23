@@ -162,21 +162,19 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
     let node_service =
         tokio::task::spawn(NodeService::new(pool, backend, miner, fee_history_service, filters));
 
-    let servers: Vec<_> = vec!["127.0.0.1".parse::<IpAddr>().unwrap(), "::1".parse().unwrap()]
-        .into_iter()
-        .map(|addr| {
-            let sock_addr = SocketAddr::new(addr, port);
-            server::serve(sock_addr, api.clone(), server_config.clone())
-        })
-        .collect();
+    let mut servers = Vec::new();
+    let mut addrs = Vec::new();
 
-    let addr = servers[0].local_addr();
+    for addr in ["127.0.0.1".parse::<IpAddr>().unwrap(), "::1".parse().unwrap()] {
+        let sock_addr = SocketAddr::new(addr, port);
+        let srv = server::serve(sock_addr, api.clone(), server_config.clone());
 
-    // spawn the server on a new task
-    let servers = servers
-        .into_iter()
-        .map(|server| tokio::task::spawn(server.map_err(NodeError::from)))
-        .collect();
+        addrs.push(srv.local_addr());
+
+        // spawn the server on a new task
+        let srv = tokio::task::spawn(srv.map_err(NodeError::from));
+        servers.push(srv);
+    }
 
     let tokio_handle = Handle::current();
     let (signal, on_shutdown) = shutdown::signal();
@@ -189,7 +187,7 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
         node_service,
         servers,
         ipc_task,
-        address: addr,
+        address: addrs[0],
         _signal: Some(signal),
         task_manager,
     };
