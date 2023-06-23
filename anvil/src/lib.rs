@@ -27,7 +27,7 @@ use parking_lot::Mutex;
 use std::{
     future::Future,
     io,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -162,15 +162,21 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
     let node_service =
         tokio::task::spawn(NodeService::new(pool, backend, miner, fee_history_service, filters));
 
-    let host = config.host.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
-    let mut addr = SocketAddr::new(host, port);
+    let servers: Vec<_> = vec!["127.0.0.1".parse::<IpAddr>().unwrap(), "::1".parse().unwrap()]
+        .into_iter()
+        .map(|addr| {
+            let sock_addr = SocketAddr::new(addr, port);
+            server::serve(sock_addr, api.clone(), server_config.clone())
+        })
+        .collect();
 
-    // configure the rpc server and use its actual local address
-    let server = server::serve(addr, api.clone(), server_config);
-    addr = server.local_addr();
+    let addr = servers[0].local_addr();
 
     // spawn the server on a new task
-    let serve = tokio::task::spawn(server.map_err(NodeError::from));
+    let servers = servers
+        .into_iter()
+        .map(|server| tokio::task::spawn(server.map_err(NodeError::from)))
+        .collect();
 
     let tokio_handle = Handle::current();
     let (signal, on_shutdown) = shutdown::signal();
@@ -181,7 +187,7 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
     let handle = NodeHandle {
         config,
         node_service,
-        server: serve,
+        servers,
         ipc_task,
         address: addr,
         _signal: Some(signal),
@@ -205,7 +211,7 @@ pub struct NodeHandle {
     /// Join handle for the Node Service
     pub node_service: JoinHandle<Result<(), NodeError>>,
     /// Join handle for the Anvil server
-    pub server: JoinHandle<Result<(), NodeError>>,
+    pub servers: Vec<JoinHandle<Result<(), NodeError>>>,
     // The future that joins the ipc server, if any
     ipc_task: Option<IpcTask>,
     /// A signal that fires the shutdown, fired on drop.
@@ -352,7 +358,13 @@ impl Future for NodeHandle {
             return Poll::Ready(res)
         }
 
-        pin.server.poll_unpin(cx)
+        for server in pin.servers.iter_mut() {
+            if let Poll::Ready(res) = server.poll_unpin(cx) {
+                return Poll::Ready(res)
+            }
+        }
+
+        Poll::Pending
     }
 }
 
