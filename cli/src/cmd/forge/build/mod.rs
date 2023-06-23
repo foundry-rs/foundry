@@ -89,7 +89,7 @@ impl Cmd for BuildArgs {
         let mut config = self.try_load_config_emit_warnings()?;
         let mut project = config.project()?;
 
-        if install::install_missing_dependencies(&mut config, &project, self.args.silent) &&
+        if install::install_missing_dependencies(&mut config, self.args.silent) &&
             config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
