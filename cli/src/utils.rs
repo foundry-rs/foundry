@@ -342,7 +342,7 @@ impl<'a> Git<'a> {
     }
 
     #[inline]
-    pub fn root<'b>(self, root: &'b Path) -> Git<'b> {
+    pub fn root(self, root: &Path) -> Git<'_> {
         Git { root, ..self }
     }
 
@@ -370,6 +370,7 @@ impl<'a> Git<'a> {
         self.cmd().arg("init").exec().map(drop)
     }
 
+    #[allow(clippy::should_implement_trait)] // this is not std::ops::Add clippy
     pub fn add<I, S>(self, paths: I) -> Result<()>
     where
         I: IntoIterator<Item = S>,
