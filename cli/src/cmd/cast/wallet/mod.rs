@@ -193,8 +193,8 @@ mod tests {
         match args {
             WalletSubcommands::Sign { message, data, from_file, .. } => {
                 assert_eq!(message, "deadbeef".to_string());
-                assert_eq!(data, false);
-                assert_eq!(from_file, false);
+                assert!(!data);
+                assert!(!from_file);
             }
             _ => panic!("expected WalletSubcommands::Sign"),
         }
@@ -206,8 +206,8 @@ mod tests {
         match args {
             WalletSubcommands::Sign { message, data, from_file, .. } => {
                 assert_eq!(message, "0xdeadbeef".to_string());
-                assert_eq!(data, false);
-                assert_eq!(from_file, false);
+                assert!(!data);
+                assert!(!from_file);
             }
             _ => panic!("expected WalletSubcommands::Sign"),
         }
@@ -219,8 +219,8 @@ mod tests {
         match args {
             WalletSubcommands::Sign { message, data, from_file, .. } => {
                 assert_eq!(message, "{ ... }".to_string());
-                assert_eq!(data, true);
-                assert_eq!(from_file, false);
+                assert!(data);
+                assert!(!from_file);
             }
             _ => panic!("expected WalletSubcommands::Sign"),
         }
@@ -238,8 +238,8 @@ mod tests {
         match args {
             WalletSubcommands::Sign { message, data, from_file, .. } => {
                 assert_eq!(message, "tests/data/typed_data.json".to_string());
-                assert_eq!(data, true);
-                assert_eq!(from_file, true);
+                assert!(data);
+                assert!(from_file);
             }
             _ => panic!("expected WalletSubcommands::Sign"),
         }
