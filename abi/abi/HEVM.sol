@@ -71,6 +71,7 @@ expectRevert(bytes)
 expectRevert(bytes4)
 record()
 accesses(address)(bytes32[],bytes32[])
+skip(bool)
 
 recordLogs()
 getRecordedLogs()(Log[])
