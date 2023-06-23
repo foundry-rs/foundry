@@ -252,11 +252,12 @@ pub trait CommandUtils {
 impl CommandUtils for Command {
     #[track_caller]
     fn exec(&mut self) -> Result<Output> {
-        // eprintln!("$ {self:?}");
         tracing::trace!(command=?self, "executing");
+
         let output = self.output()?;
-        // eprintln!("  {:?} {output:?}", output.status.code());
+
         tracing::trace!(code=?output.status.code(), ?output);
+
         if output.status.success() {
             Ok(output)
         } else {

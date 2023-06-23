@@ -32,7 +32,6 @@ impl Cmd for RemoveArgs {
     fn run(self) -> eyre::Result<Self::Output> {
         let config = self.try_load_config_emit_warnings()?;
         let (root, paths) = super::update::dependencies_paths(&self.dependencies, &config)?;
-        eprintln!("root={root:?} paths={paths:?}");
         let git_modules = root.join(".git/modules");
 
         // remove all the dependencies by invoking `git rm` only once with all the paths

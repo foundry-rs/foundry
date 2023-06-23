@@ -151,20 +151,15 @@ impl DependencyInstallOpts {
                 // Pin branch to submodule if branch is used
                 if let Some(branch) = &installed_tag {
                     // First, check if this tag has a branch
-                    eprintln!("d");
                     if git.has_branch(branch)? {
-                        eprintln!("e");
                         git.cmd()
                             .args(["submodule", "set-branch", "-b", branch.as_str()])
                             .arg(path)
                             .exec()?;
-                        eprintln!("f");
                     }
 
-                    eprintln!("g");
                     // this changed the .gitmodules files
                     git.add(Some(".gitmodules"))?;
-                    eprintln!("h");
                 }
 
                 // commit the installation
@@ -176,9 +171,7 @@ impl DependencyInstallOpts {
                         msg.push_str("\n\n");
                         msg.push_str(tag);
                     }
-                    eprintln!("i");
                     git.commit(&msg)?;
-                    eprintln!("j");
                 }
             }
 
@@ -238,7 +231,6 @@ impl Installer<'_> {
     /// provided or try to find the latest semver, release tag.
     fn install_as_submodule(self, dep: &Dependency, path: &Path) -> Result<Option<String>> {
         // install the dep
-        eprintln!("a");
         self.git_submodule(dep, path)?;
 
         let mut dep = dep.clone();
@@ -249,9 +241,7 @@ impl Installer<'_> {
 
         // checkout the tag if necessary
         if dep.tag.is_some() {
-            eprintln!("b");
             self.git_checkout(&dep, path, true)?;
-            eprintln!("c");
         }
 
         if !self.no_commit {
