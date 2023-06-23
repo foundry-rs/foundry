@@ -4,7 +4,6 @@ use crate::{
 };
 use ethers::{
     abi::{Abi, Function},
-    solc::artifacts::Evm,
     types::{Address, Bytes, U256},
 };
 use eyre::Result;
