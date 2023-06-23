@@ -180,6 +180,9 @@ interface Cheats {
     // Sets an address' code, (who, newCode)
     function etch(address, bytes calldata) external;
 
+    // Skips a test.
+    function skip(bool) external;
+
     // Expects an error on next call
     function expectRevert() external;
 
