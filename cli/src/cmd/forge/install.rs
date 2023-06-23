@@ -121,7 +121,6 @@ impl DependencyInstallOpts {
         let DependencyInstallOpts { no_git, no_commit, quiet, .. } = self;
 
         let git = self.git(config);
-        // let root = Git::root_of(git.root)?;
 
         let install_lib_dir = config.install_lib_dir();
         let libs = git.root.join(install_lib_dir);
@@ -132,7 +131,6 @@ impl DependencyInstallOpts {
         }
         fs::create_dir_all(&libs)?;
 
-        // git.root = &root;
         let installer = Installer { git, no_commit };
         for dep in dependencies {
             let path = libs.join(dep.name());
@@ -158,8 +156,10 @@ impl DependencyInstallOpts {
                             .exec()?;
                     }
 
-                    // this changed the .gitmodules files
-                    git.add(Some(".gitmodules"))?;
+                    // update .gitmodules which is at the root of the repo,
+                    // not necessarily at the root of the current Foundry project
+                    let root = Git::root_of(git.root)?;
+                    git.root(&root).add(Some(".gitmodules"))?;
                 }
 
                 // commit the installation
