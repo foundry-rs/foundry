@@ -78,8 +78,8 @@ impl TestConfig {
         }
         for (_, SuiteResult { test_results, .. }) in suite_result {
             for (test_name, result) in test_results {
-                if self.should_fail && (result.success == TestStatus::Success) ||
-                    !self.should_fail && (result.success == TestStatus::Failure)
+                if self.should_fail && (result.status == TestStatus::Success) ||
+                    !self.should_fail && (result.status == TestStatus::Failure)
                 {
                     let logs = decode_console_logs(&result.logs);
                     let outcome = if self.should_fail { "fail" } else { "pass" };
@@ -244,7 +244,7 @@ pub fn assert_multiple(
 
             if *should_pass {
                 assert!(
-                    actuals[*contract_name].test_results[*test_name].success == TestStatus::Success,
+                    actuals[*contract_name].test_results[*test_name].status == TestStatus::Success,
                     "Test {} did not pass as expected.\nReason: {:?}\nLogs:\n{}",
                     test_name,
                     actuals[*contract_name].test_results[*test_name].reason,
@@ -252,7 +252,7 @@ pub fn assert_multiple(
                 );
             } else {
                 assert!(
-                    actuals[*contract_name].test_results[*test_name].success == TestStatus::Failure,
+                    actuals[*contract_name].test_results[*test_name].status == TestStatus::Failure,
                     "Test {} did not fail as expected.\nLogs:\n{}",
                     test_name,
                     logs.join("\n")

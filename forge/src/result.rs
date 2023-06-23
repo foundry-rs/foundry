@@ -69,10 +69,10 @@ pub enum TestStatus {
 /// The result of an executed solidity test
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TestResult {
-    /// The test status, indicating whether the test case succeeded, failed, or was marked as skipped. 
-    /// This means that the transaction executed properly, the test was marked as skipped with vm.skip(),
-    /// or that there was a revert and that the test was expected to fail
-    /// (prefixed with `testFail`)
+    /// The test status, indicating whether the test case succeeded, failed, or was marked as
+    /// skipped. This means that the transaction executed properly, the test was marked as
+    /// skipped with vm.skip(), or that there was a revert and that the test was expected to
+    /// fail (prefixed with `testFail`)
     pub status: TestStatus,
 
     /// If there was a revert, this field will be populated. Note that the test can

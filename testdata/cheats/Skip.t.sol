@@ -16,4 +16,14 @@ contract SkipTest is DSTest {
         cheats.skip(false);
         revert("This test should fail");
     }
+
+    function testFuzzSkip(uint256 x) public {
+        cheats.skip(true);
+        revert("Should not reach revert");
+    }
+
+    function testFailFuzzSkip(uint256 x) public {
+        cheats.skip(false);
+        revert("This test should fail");
+    }
 }

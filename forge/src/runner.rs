@@ -517,7 +517,7 @@ impl<'a> ContractRunner<'a> {
         fuzz_config: FuzzConfig,
     ) -> TestResult {
         let TestSetup { address, mut logs, mut traces, mut labeled_addresses, .. } = setup;
-
+        println!("running fuzz test");
         // Run fuzz test
         let start = Instant::now();
         let mut result = FuzzedExecutor::new(&self.executor, runner, self.sender, fuzz_config)
@@ -540,12 +540,26 @@ impl<'a> ContractRunner<'a> {
             duration = ?start.elapsed(),
             success = %result.success
         );
-        // TODO(evalir): implement skip on fuzz tests
+
+        let must_skip = if let Some(reason) = result.reason.clone() {
+            match reason.as_str() {
+                "SKIPPED" => true,
+                _ => false,
+            }
+        } else {
+            false
+        };
+
+        let status = if must_skip {
+            TestStatus::Skipped
+        } else if result.success {
+            TestStatus::Success
+        } else {
+            TestStatus::Failure
+        };
+
         TestResult {
-            status: match result.success {
-                true => TestStatus::Success,
-                false => TestStatus::Failure,
-            },
+            status,
             reason: result.reason,
             counterexample: result.counterexample,
             decoded_logs: decode_console_logs(&logs),
