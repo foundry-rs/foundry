@@ -68,9 +68,11 @@ impl Cmd for InstallArgs {
 
 #[derive(Debug, Clone, Default, Copy, Parser)]
 pub struct DependencyInstallOpts {
-    /// Perform deep clones instead of shallow ones.
+    /// Perform shallow clones instead of deep ones.
+    ///
+    /// Improves performance and reduces disk usage, but prevents switching branches or tags.
     #[clap(long)]
-    pub deep: bool,
+    pub shallow: bool,
 
     /// Install without adding the dependency as a submodule.
     #[clap(long)]
@@ -87,7 +89,7 @@ pub struct DependencyInstallOpts {
 
 impl DependencyInstallOpts {
     pub fn git(self, config: &Config) -> Git<'_> {
-        Git::from_config(config).quiet(self.quiet).deep(self.deep)
+        Git::from_config(config).quiet(self.quiet).shallow(self.shallow)
     }
 
     /// Installs all missing dependencies.
@@ -507,20 +509,6 @@ mod tests {
         let submodule = libs.join("openzeppelin-contracts");
         installer.git_submodule(&dep, &submodule).unwrap();
         assert!(submodule.exists());
-
-        // no tags because shallow clone
-        let tags = installer.git_semver_tags(&submodule).unwrap();
-        assert!(tags.is_empty());
-
-        // fetch tags
-        git.root(&submodule)
-            .cmd()
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .stderr(std::process::Stdio::inherit())
-            .args(["fetch", "--tags"])
-            .exec()
-            .unwrap();
 
         let tags = installer.git_semver_tags(&submodule).unwrap();
         assert!(!tags.is_empty());

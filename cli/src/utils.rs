@@ -308,7 +308,7 @@ pub struct Git<'a> {
 impl<'a> Git<'a> {
     #[inline]
     pub fn new(root: &'a Path) -> Self {
-        Self { root, quiet: false, shallow: true }
+        Self { root, quiet: false, shallow: false }
     }
 
     #[inline]
@@ -333,7 +333,6 @@ impl<'a> Git<'a> {
             .stderr(Stdio::inherit())
             .args(["clone", "--recurse-submodules"])
             .args(shallow.then_some("--depth=1"))
-            .args(shallow.then_some("--no-single-branch"))
             .args(shallow.then_some("--shallow-submodules"))
             .arg(from)
             .args(to)
@@ -351,10 +350,10 @@ impl<'a> Git<'a> {
         Self { quiet, ..self }
     }
 
-    /// False to perform shallow clones
+    /// True to perform shallow clones
     #[inline]
-    pub fn deep(self, deep: bool) -> Self {
-        Self { shallow: !deep, ..self }
+    pub fn shallow(self, shallow: bool) -> Self {
+        Self { shallow, ..self }
     }
 
     pub fn checkout(self, recursive: bool, tag: impl AsRef<OsStr>) -> Result<()> {
@@ -491,7 +490,6 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
             .stderr(self.stderr())
             .args(["submodule", "update", "--progress", "--init", "--recursive"])
             .args(self.shallow.then_some("--depth=1"))
-            .args(self.shallow.then_some("--no-single-branch"))
             .args(force.then_some("--force"))
             .args(paths)
             .exec()

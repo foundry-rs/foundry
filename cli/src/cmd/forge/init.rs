@@ -44,14 +44,14 @@ impl Cmd for InitArgs {
 
     fn run(self) -> eyre::Result<Self::Output> {
         let InitArgs { root, template, opts, offline, force, vscode } = self;
-        let DependencyInstallOpts { deep, no_git, no_commit, quiet } = opts;
+        let DependencyInstallOpts { shallow, no_git, no_commit, quiet } = opts;
 
         // create the root dir if it does not exist
         if !root.exists() {
             fs::create_dir_all(&root)?;
         }
         let root = dunce::canonicalize(root)?;
-        let git = Git::new(&root).quiet(quiet).deep(deep);
+        let git = Git::new(&root).quiet(quiet).shallow(shallow);
 
         // if a template is provided, then this command clones the template repo, removes the .git
         // folder, and initializes a new git repo—-this ensures there is no history from the
@@ -64,7 +64,7 @@ impl Cmd for InitArgs {
             };
             p_println!(!quiet => "Initializing {} from {}...", root.display(), template);
 
-            Git::clone(!deep, &template, Some(&root))?;
+            Git::clone(shallow, &template, Some(&root))?;
 
             // Modify the git history.
             let commit_hash = git.commit_hash(true)?;
