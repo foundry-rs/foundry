@@ -578,12 +578,12 @@ impl Config {
     /// Returns the directory in which dependencies should be installed
     ///
     /// Returns the first dir from `libs` that is not `node_modules` or `lib` if `libs` is empty
-    pub fn install_lib_dir(&self) -> &Path {
+    pub fn install_lib_dir(&self) -> PathBuf {
         self.libs
             .iter()
             .find(|p| !p.ends_with("node_modules"))
-            .map(|p| p.as_path())
-            .unwrap_or_else(|| Path::new("lib"))
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("lib"))
     }
 
     /// Serves as the entrypoint for obtaining the project.
@@ -2425,10 +2425,9 @@ impl BasicConfig {
     pub fn to_string_pretty(&self) -> Result<String, toml::ser::Error> {
         let s = toml::to_string_pretty(self)?;
         Ok(format!(
-            "\
-[profile.{}]
+            r#"[profile.{}]
 {s}
-# See more config options https://github.com/foundry-rs/foundry/tree/master/config",
+# See more config options https://github.com/foundry-rs/foundry/tree/master/config"#,
             self.profile
         ))
     }
