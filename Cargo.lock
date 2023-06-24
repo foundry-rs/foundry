@@ -2342,6 +2342,7 @@ dependencies = [
  "vergen",
  "walkdir",
  "watchexec",
+ "which",
  "yansi",
 ]
 

@@ -4,7 +4,8 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use std::str::FromStr;
 
-static GH_REPO_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"[\w-]+/[\w.-]+").unwrap());
+static GH_REPO_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new("[A-Za-z\\d-]+/[A-Za-z\\d_.-]+").unwrap());
 
 /// Git repo prefix regex
 pub static GH_REPO_PREFIX_REGEX: Lazy<Regex> = Lazy::new(|| {
@@ -78,11 +79,11 @@ impl FromStr for Dependency {
             //
             // This is to allow for conveniently removing aliased dependencies
             // using `forge remove <alias>`
-            if GH_REPO_REGEX.is_match(dependency) {
-                Some(format!("https://{GITHUB}/{dependency}"))
-            } else {
+            if !GH_REPO_REGEX.is_match(dependency) {
                 alias = Some(dependency.to_string());
                 None
+            } else {
+                Some(format!("https://{GITHUB}/{dependency}"))
             }
         };
 
@@ -126,11 +127,6 @@ impl Dependency {
     /// Returns the name of the dependency, prioritizing the alias if it exists.
     pub fn name(&self) -> &str {
         self.alias.as_deref().unwrap_or(self.name.as_str())
-    }
-
-    /// Returns the URL of the dependency if it exists, or an error if not.
-    pub fn require_url(&self) -> eyre::Result<&str> {
-        self.url.as_deref().ok_or_else(|| eyre::eyre!("dependency {} has no url", self.name()))
     }
 }
 

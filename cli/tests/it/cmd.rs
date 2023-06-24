@@ -242,7 +242,14 @@ forgetest!(can_detect_dirty_git_status_on_init, |prj: TestProject, mut cmd: Test
     prj.wipe();
 
     // initialize new git repo
-    cmd.git_init();
+    let status = Command::new("git")
+        .arg("init")
+        .current_dir(prj.root())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("could not run git init");
+    assert!(status.success());
 
     std::fs::write(prj.root().join("untracked.text"), "untracked").unwrap();
 
@@ -951,7 +958,7 @@ forgetest!(can_install_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {
 // <https://github.com/openzeppelin/openzeppelin-contracts>
 forgetest!(can_install_latest_release_tag, |prj: TestProject, mut cmd: TestCommand| {
     cmd.git_init();
-    cmd.forge_fuse().args(["install", "--deep", "openzeppelin/openzeppelin-contracts"]);
+    cmd.forge_fuse().args(["install", "openzeppelin/openzeppelin-contracts"]);
     cmd.assert_success();
 
     let dep = prj.paths().libraries[0].join("openzeppelin-contracts");

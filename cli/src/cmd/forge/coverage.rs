@@ -68,9 +68,10 @@ impl Cmd for CoverageArgs {
 
     fn run(self) -> eyre::Result<Self::Output> {
         let (mut config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
+        let project = config.project()?;
 
         // install missing dependencies
-        if install::install_missing_dependencies(&mut config, self.build_args().silent) &&
+        if install::install_missing_dependencies(&mut config, &project, self.build_args().silent) &&
             config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
