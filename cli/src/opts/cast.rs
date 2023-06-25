@@ -444,7 +444,8 @@ pub enum Subcommands {
 
     /// Decode ABI-encoded input data.
     ///
-    /// Similar to `abi-decode --input`, but function selector MUST be prefixed in `calldata` string
+    /// Similar to `abi-decode --input`, but function selector MUST be prefixed in `calldata`
+    /// string
     #[clap(visible_aliases = &["--calldata-decode","cdd"])]
     CalldataDecode {
         /// The function signature in the format `<name>(<in-types>)(<out-types>)`.
