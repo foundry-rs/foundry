@@ -1340,6 +1340,8 @@ impl SimpleCast {
 
     /// Decodes abi-encoded hex input or output
     ///
+    /// When `input=true`, `calldata` string MUST not be prefixed with function selector
+    ///
     /// # Example
     ///
     /// ```
@@ -1374,7 +1376,8 @@ impl SimpleCast {
     }
 
     /// Decodes calldata-encoded hex input or output
-    /// Similar to `abi_decode`, but does requires a function signature prefixed for "calldata"
+    ///
+    /// Similar to `abi_decode`, but `calldata` string MUST be prefixed with function selector
     ///
     /// # Example
     ///
