@@ -481,7 +481,7 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
             .map(drop)
     }
 
-    pub fn submodule_update<I, S>(self, force: bool, paths: I) -> Result<()>
+    pub fn submodule_update<I, S>(self, force: bool, remote: bool, paths: I) -> Result<()>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
@@ -491,6 +491,7 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
             .args(["submodule", "update", "--progress", "--init", "--recursive"])
             .args(self.shallow.then_some("--depth=1"))
             .args(force.then_some("--force"))
+            .args(remote.then_some("--remote"))
             .args(paths)
             .exec()
             .map(drop)

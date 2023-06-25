@@ -129,13 +129,16 @@ impl DependencyInstallOpts {
 
         if dependencies.is_empty() && !self.no_git {
             p_println!(!self.quiet => "Updating dependencies in {}", libs.display());
-            git.submodule_update(false, Some(&libs))?;
+            git.submodule_update(false, false, Some(&libs))?;
         }
         fs::create_dir_all(&libs)?;
 
         let installer = Installer { git, no_commit };
         for dep in dependencies {
             let path = libs.join(dep.name());
+            let rel_path = path
+                .strip_prefix(git.root)
+                .wrap_err("Library directory is not relative to the repository root")?;
             p_println!(!quiet => "Installing {} in {} (url: {:?}, tag: {:?})", dep.name, path.display(), dep.url, dep.tag);
 
             // this tracks the actual installed tag
@@ -152,9 +155,10 @@ impl DependencyInstallOpts {
                 if let Some(branch) = &installed_tag {
                     // First, check if this tag has a branch
                     if git.has_branch(branch)? {
+                        // always work with relative paths when directly modifying submodules
                         git.cmd()
-                            .args(["submodule", "set-branch", "-b", branch.as_str()])
-                            .arg(path)
+                            .args(["submodule", "set-branch", "-b", branch])
+                            .arg(rel_path)
                             .exec()?;
                     }
 
@@ -242,9 +246,7 @@ impl Installer<'_> {
         }
 
         // checkout the tag if necessary
-        if dep.tag.is_some() {
-            self.git_checkout(&dep, path, true)?;
-        }
+        self.git_checkout(&dep, path, true)?;
 
         if !self.no_commit {
             self.git.add(Some(path))?;
@@ -298,16 +300,14 @@ impl Installer<'_> {
     fn git_submodule(self, dep: &Dependency, path: &Path) -> Result<()> {
         let url = dep.require_url()?;
 
-        // make path relative to the git root
-        let path = path
-            .strip_prefix(self.git.root)
-            .wrap_err("Library directory is not relative to the repository root")?;
+        // make path relative to the git root, already checked above
+        let path = path.strip_prefix(self.git.root).unwrap();
 
-        trace!(?dep, ?path, url, "installing git submodule");
+        trace!(?dep, url, ?path, "installing git submodule");
         self.git.submodule_add(true, url, path)?;
 
         trace!("updating submodule recursively");
-        self.git.submodule_update(false, Some(path))
+        self.git.submodule_update(false, false, Some(path))
     }
 
     fn git_checkout(self, dep: &Dependency, path: &Path, recurse: bool) -> Result<String> {
