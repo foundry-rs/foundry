@@ -137,7 +137,7 @@ impl DependencyInstallOpts {
         for dep in dependencies {
             let path = libs.join(dep.name());
             let rel_path = path
-                .strip_prefix(&git.root)
+                .strip_prefix(git.root)
                 .wrap_err("Library directory is not relative to the repository root")?;
             p_println!(!quiet => "Installing {} in {} (url: {:?}, tag: {:?})", dep.name, path.display(), dep.url, dep.tag);
 
