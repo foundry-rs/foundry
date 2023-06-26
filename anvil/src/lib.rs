@@ -163,13 +163,13 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
         tokio::task::spawn(NodeService::new(pool, backend, miner, fee_history_service, filters));
 
     let mut servers = Vec::new();
-    let mut addrs = Vec::new();
+    let mut addresses = Vec::new();
 
     for addr in config.host.iter() {
         let sock_addr = SocketAddr::new(addr.to_owned(), port);
         let srv = server::serve(sock_addr, api.clone(), server_config.clone());
 
-        addrs.push(srv.local_addr());
+        addresses.push(srv.local_addr());
 
         // spawn the server on a new task
         let srv = tokio::task::spawn(srv.map_err(NodeError::from));
@@ -187,7 +187,7 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
         node_service,
         servers,
         ipc_task,
-        address: addrs[0],
+        addresses,
         _signal: Some(signal),
         task_manager,
     };
@@ -205,7 +205,7 @@ type IpcTask = JoinHandle<io::Result<()>>;
 pub struct NodeHandle {
     config: NodeConfig,
     /// The address of the running rpc server
-    address: SocketAddr,
+    addresses: Vec<SocketAddr>,
     /// Join handle for the Node Service
     pub node_service: JoinHandle<Result<(), NodeError>>,
     /// Join handle for the Anvil server
@@ -228,7 +228,14 @@ impl NodeHandle {
     pub(crate) fn print(&self, fork: Option<&ClientFork>) {
         self.config.print(fork);
         if !self.config.silent {
-            println!("Listening on {}", self.socket_address())
+            println!(
+                "Listening on {}",
+                self.addresses
+                    .iter()
+                    .map(|addr| { addr.to_string() })
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            )
         }
     }
 
@@ -237,7 +244,7 @@ impl NodeHandle {
     /// **N.B.** this may not necessarily be the same `host + port` as configured in the
     /// `NodeConfig`, if port was set to 0, then the OS auto picks an available port
     pub fn socket_address(&self) -> &SocketAddr {
-        &self.address
+        &self.addresses[0]
     }
 
     /// Returns the http endpoint
