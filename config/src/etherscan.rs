@@ -163,7 +163,12 @@ impl EtherscanConfig {
         self,
         alias: Option<&str>,
     ) -> Result<ResolvedEtherscanConfig, EtherscanConfigError> {
-        let EtherscanConfig { chain, url, key } = self;
+        let EtherscanConfig { chain, mut url, key } = self;
+
+        if let Some(url) = &mut url {
+            *url = interpolate(url)?;
+        }
+
         let (chain, alias) = match (chain, alias) {
             // fill one with the other
             (Some(chain), None) => (Some(chain), Some(chain.to_string())),

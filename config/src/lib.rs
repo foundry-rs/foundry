@@ -2428,7 +2428,7 @@ impl BasicConfig {
             "\
 [profile.{}]
 {s}
-# See more config options https://github.com/foundry-rs/foundry/tree/master/config",
+# See more config options https://github.com/foundry-rs/foundry/tree/master/config\n",
             self.profile
         ))
     }
