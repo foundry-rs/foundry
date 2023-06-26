@@ -47,6 +47,15 @@ jobs:
               with:
                   name: ${{ matrix.archive.name }}
                   path: ${{ matrix.archive.file }}
+    install-svm-solc:
+        name: install svm and solidity 0.8.19 / ${{ matrix.job.name }}
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        steps:
+          - name: Install svm
+            run: cargo install svm-rs
+          - name: Install Solidity 0.8.19
+            run: svm install 0.8.19
 
     unit:
         name: unit tests / ${{ matrix.job.name }}
