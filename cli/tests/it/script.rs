@@ -753,6 +753,11 @@ forgetest_async!(
             std::fs::read_to_string("cache/Broadcast.t.sol/31337/run-latest.json").unwrap();
         let run_log = re.replace_all(&run_log, "");
 
+        // Clean up carriage return OS differences
+        let re = Regex::new(r#"\\r\\n"#).unwrap();
+        let fixtures_log = re.replace_all(&fixtures_log, "\n");
+        let run_log = re.replace_all(&run_log, "\n");
+
         pretty_assertions::assert_eq!(fixtures_log, run_log);
     }
 );
