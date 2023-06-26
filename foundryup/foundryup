@@ -5,6 +5,7 @@ BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
 FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
 FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
 FOUNDRY_MAN_DIR="$FOUNDRY_DIR/share/man/man1"
+FOUNDRYUP_LEGACY=false
 
 BINS=(forge cast anvil chisel)
 
@@ -24,6 +25,7 @@ main() {
       -p|--path)        shift; FOUNDRYUP_LOCAL_REPO=$1;;
       -P|--pr)          shift; FOUNDRYUP_PR=$1;;
       -C|--commit)      shift; FOUNDRYUP_COMMIT=$1;;
+      -L|--legacy)      shift; FOUNDRYUP_LEGACY=true;;
       -h|--help)
         usage
         exit 0
@@ -38,7 +40,9 @@ main() {
   # Print the banner after successfully parsing args
   banner
 
+# If the pr flag is present
   if [ -n "$FOUNDRYUP_PR" ]; then
+    # and if the branch option is not present, then set the branch to the pr head
     if [ -z "$FOUNDRYUP_BRANCH" ]; then
       FOUNDRYUP_BRANCH="refs/pull/$FOUNDRYUP_PR/head"
     else
@@ -75,24 +79,36 @@ main() {
 
   # Install by downloading binaries
   if [[ "$FOUNDRYUP_REPO" == "foundry-rs/foundry" && -z "$FOUNDRYUP_BRANCH" && -z "$FOUNDRYUP_COMMIT" ]]; then
-    FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-nightly}
-    FOUNDRYUP_TAG=$FOUNDRYUP_VERSION
+
+    # If the user has specified the "legacy" tag, we should install the latest nightly binary released before v1.
+    if [[ "$FOUNDRYUP_LEGACY" == true ]]; then
+      FOUNDRYUP_TAG_QUERY="nightly"
+      FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-nightly}
+      FOUNDRYUP_TAG=$FOUNDRYUP_VERSION
+    else
+      FOUNDRYUP_TAG_QUERY="v1"
+      FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-v1}
+      FOUNDRYUP_TAG=$FOUNDRYUP_VERSION
+    fi
 
     # Normalize versions (handle channels, versions without v prefix
-    if [[ "$FOUNDRYUP_VERSION" == "nightly" ]]; then
-      # Locate real nightly tag
-      SHA=$(ensure curl -sSf "https://api.github.com/repos/$FOUNDRYUP_REPO/git/refs/tags/nightly" \
+    if [[ "$FOUNDRYUP_VERSION" == "v1" || "$FOUNDRYUP_VERSION" == "nightly" ]]; then
+      # Locate real v1 tag
+      SHA=$(ensure curl -sSf "https://api.github.com/repos/$FOUNDRYUP_REPO/git/refs/tags/$FOUNDRYUP_TAG_QUERY" \
         | grep -Eo '"sha"[^,]*' \
         | grep -Eo '[^:]*$' \
         | tr -d '"' \
         | tr -d ' ' \
         | cut -d ':' -f2 )
-      FOUNDRYUP_TAG="nightly-${SHA}"
-    elif [[ "$FOUNDRYUP_VERSION" == nightly* ]]; then
-      FOUNDRYUP_VERSION="nightly"
+      if [[ "$FOUNDRYUP_LEGACY" == true ]]; then
+        FOUNDRYUP_TAG="nightly-${SHA}"
+      else
+        FOUNDRYUP_TAG="v1-${SHA}"
+      fi
+
+    elif [[ "$FOUNDRYUP_VERSION" == v1* ]]; then
+      FOUNDRYUP_VERSION="v1"
     elif [[ "$FOUNDRYUP_VERSION" == [[:digit:]]* ]]; then
-      # Add v prefix
-      FOUNDRYUP_VERSION="v${FOUNDRYUP_VERSION}"
       FOUNDRYUP_TAG="${FOUNDRYUP_VERSION}"
     fi
 
@@ -237,6 +253,7 @@ OPTIONS:
     -b, --branch    Install a specific branch
     -P, --pr        Install a specific Pull Request
     -C, --commit    Install a specific commit
+    -L, --legacy    Install v0 (legacy) Foundry (at commit 1a1d653)
     -r, --repo      Install from a remote GitHub repo (uses default branch if no other options are set)
     -p, --path      Install a local repository
 EOF
