@@ -84,8 +84,14 @@ pub struct NodeArgs {
     pub no_mining: bool,
 
     /// The host the server will listen on.
-    #[clap(long, value_name = "IP_ADDR", env = "ANVIL_IP_ADDR", help_heading = "Server options")]
-    pub host: Option<IpAddr>,
+    #[clap(
+        long,
+        value_name = "IP_ADDR",
+        env = "ANVIL_IP_ADDR",
+        default_value = "127.0.0.1",
+        help_heading = "Server options"
+    )]
+    pub host: Vec<IpAddr>,
 
     /// How transactions are sorted in the mempool.
     #[clap(long, default_value = "fees")]

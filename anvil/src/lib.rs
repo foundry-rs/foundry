@@ -27,7 +27,7 @@ use parking_lot::Mutex;
 use std::{
     future::Future,
     io,
-    net::{IpAddr, SocketAddr},
+    net::SocketAddr,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -165,8 +165,8 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
     let mut servers = Vec::new();
     let mut addrs = Vec::new();
 
-    for addr in ["127.0.0.1".parse::<IpAddr>().unwrap(), "::1".parse().unwrap()] {
-        let sock_addr = SocketAddr::new(addr, port);
+    for addr in config.host.iter() {
+        let sock_addr = SocketAddr::new(addr.to_owned(), port);
         let srv = server::serve(sock_addr, api.clone(), server_config.clone());
 
         addrs.push(srv.local_addr());
