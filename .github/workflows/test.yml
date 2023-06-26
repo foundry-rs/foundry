@@ -56,6 +56,8 @@ jobs:
             run: cargo install svm-rs
           - name: Install Solidity 0.8.19
             run: svm install 0.8.19
+          - name: Use Solidity 0.8.19
+            run: svm use 0.8.19
 
     unit:
         name: unit tests / ${{ matrix.job.name }}
