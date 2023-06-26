@@ -591,7 +591,10 @@ where
                         // The gas matches, if provided
                         expected.gas.map_or(true, |gas| gas == call.gas_limit) &&
                         // The minimum gas matches, if provided
-                        expected.min_gas.map_or(true, |min_gas| min_gas <= call.gas_limit)
+                        expected.min_gas.map_or(true, |min_gas| min_gas <= call.gas_limit) &&
+                        // The expected depth is smaller than the actual depth,
+                        // which means we're in the subcalls of the call were we expect to find the matches.
+                        expected.depth < data.journaled_state.depth()
                     {
                         *actual_count += 1;
                     }
@@ -767,7 +770,16 @@ where
 
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
-            if data.journaled_state.depth() <= expected_revert.depth {
+            // Irrespective of whether a revert will be matched or not, disallow having expected
+            // reverts alongside expected emits or calls.
+            if !self.expected_calls.is_empty() || !self.expected_emits.is_empty() {
+                return (
+                    InstructionResult::Revert,
+                    remaining_gas,
+                    "Cannot expect a function to revert while trying to match expected calls or events.".to_string().encode().into(),
+                )
+            }
+            if data.journaled_state.depth() == expected_revert.depth {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match handle_expect_revert(
                     false,
@@ -818,14 +830,18 @@ where
             }
         }
 
-        // If the depth is 0, then this is the root call terminating
-        if data.journaled_state.depth() == 0 {
-            // Match expected calls
-            for (address, calldatas) in &self.expected_calls {
-                // Loop over each address, and for each address, loop over each calldata it expects.
-                for (calldata, (expected, actual_count)) in calldatas {
-                    // Grab the values we expect to see
-                    let ExpectedCallData { gas, min_gas, value, count, call_type } = expected;
+        // Match expected calls
+        for (address, calldatas) in &self.expected_calls {
+            // Loop over each address, and for each address, loop over each calldata it expects.
+            for (calldata, (expected, actual_count)) in calldatas {
+                // Grab the values we expect to see
+                let ExpectedCallData { gas, min_gas, value, count, call_type, depth } = expected;
+                // Only check calls in the corresponding depth,
+                // or if the expected depth is higher than the current depth. This is correct, as
+                // the expected depth can only be bigger than the current depth if
+                // we're either terminating the root call (the test itself), or exiting the intended
+                // call that contained the calls we expected to see.
+                if depth >= &data.journaled_state.depth() {
                     let calldata = Bytes::from(calldata.clone());
 
                     // We must match differently depending on the type of call we expect.
@@ -883,6 +899,18 @@ where
                         }
                     }
                 }
+            }
+        }
+
+        // If the depth is 0, then this is the root call terminating
+        if data.journaled_state.depth() == 0 {
+            // See if there's a dangling expectRevert that should've been matched.
+            if self.expected_revert.is_some() {
+                return (
+                    InstructionResult::Revert,
+                    remaining_gas,
+                    "A `vm.expectRevert`was left dangling. Make sure that calls you expect to revert are external".encode().into(),
+                )
             }
 
             // Check if we have any leftover expected emits
@@ -1048,7 +1076,7 @@ where
 
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
-            if data.journaled_state.depth() <= expected_revert.depth {
+            if data.journaled_state.depth() == expected_revert.depth {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match handle_expect_revert(
                     true,

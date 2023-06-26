@@ -70,10 +70,29 @@ contract Dummy {
 contract ExpectRevertTest is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
 
+    function shouldRevert() internal {
+        revert();
+    }
+
     function testExpectRevertString() public {
         Reverter reverter = new Reverter();
         cheats.expectRevert("revert");
         reverter.revertWithMessage("revert");
+    }
+
+    function testFailRevertNotOnImmediateNextCall() public {
+        Reverter reverter = new Reverter();
+        // expectRevert should only work for the next call. However,
+        // we do not inmediately revert, so,
+        // we fail.
+        cheats.expectRevert("revert");
+        reverter.doNotRevert();
+        reverter.revertWithMessage("revert");
+    }
+
+    function testFailDanglingOnInternalCall() public {
+        cheats.expectRevert();
+        shouldRevert();
     }
 
     function testExpectRevertConstructor() public {
@@ -165,12 +184,5 @@ contract ExpectRevertTest is DSTest {
 
     function testFailExpectRevertDangling() public {
         cheats.expectRevert("dangling");
-    }
-
-    function testExpectRevertInvalidEnv() public {
-        cheats.expectRevert(
-            "Failed to get environment variable `_testExpectRevertInvalidEnv` as type `string`: environment variable not found"
-        );
-        string memory val = cheats.envString("_testExpectRevertInvalidEnv");
     }
 }
