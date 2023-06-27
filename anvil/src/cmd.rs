@@ -89,7 +89,8 @@ pub struct NodeArgs {
         value_name = "IP_ADDR",
         env = "ANVIL_IP_ADDR",
         default_value = "127.0.0.1",
-        help_heading = "Server options"
+        help_heading = "Server options",
+        value_delimiter = ','
     )]
     pub host: Vec<IpAddr>,
 
@@ -686,8 +687,21 @@ mod tests {
             ["::1", "1.1.1.1", "2.2.2.2"].map(|ip| ip.parse::<IpAddr>().unwrap()).to_vec()
         );
 
+        let args = NodeArgs::parse_from(["anvil", "--host", "::1,1.1.1.1,2.2.2.2"]);
+        assert_eq!(
+            args.host,
+            ["::1", "1.1.1.1", "2.2.2.2"].map(|ip| ip.parse::<IpAddr>().unwrap()).to_vec()
+        );
+
         env::set_var("ANVIL_IP_ADDR", "1.1.1.1");
         let args = NodeArgs::parse_from(["anvil"]);
         assert_eq!(args.host, vec!["1.1.1.1".parse::<IpAddr>().unwrap()]);
+
+        env::set_var("ANVIL_IP_ADDR", "::1,1.1.1.1,2.2.2.2");
+        let args = NodeArgs::parse_from(["anvil"]);
+        assert_eq!(
+            args.host,
+            ["::1", "1.1.1.1", "2.2.2.2"].map(|ip| ip.parse::<IpAddr>().unwrap()).to_vec()
+        );
     }
 }
