@@ -7,6 +7,7 @@ use clap::Parser;
 use ethers::{
     abi::Address,
     prelude::{artifacts::ContractBytecodeSome, ArtifactId, Middleware},
+    types::H160,
 };
 use eyre::WrapErr;
 use forge::{
@@ -25,6 +26,11 @@ use std::{collections::BTreeMap, str::FromStr};
 use tracing::trace;
 use ui::{TUIExitReason, Tui, Ui};
 use yansi::Paint;
+
+const ARBITRUM_SENDER: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x0a, 0x4b, 0x05,
+]);
 
 /// CLI arguments for `cast run`.
 #[derive(Debug, Clone, Parser)]
@@ -125,7 +131,7 @@ impl RunArgs {
                 for (index, tx) in block.transactions.into_iter().enumerate() {
                     // arbitrum L1 transaction at the start of every block that has gas price 0
                     // and gas limit 0 which causes reverts, so we skip it
-                    if tx.from == "0x00000000000000000000000000000000000a4b05".parse::<Address>()? {
+                    if tx.from == ARBITRUM_SENDER.into() {
                         continue
                     }
                     if tx.hash().eq(&tx_hash) {
