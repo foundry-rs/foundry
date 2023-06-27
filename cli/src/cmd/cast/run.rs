@@ -132,6 +132,7 @@ impl RunArgs {
                     // arbitrum L1 transaction at the start of every block that has gas price 0
                     // and gas limit 0 which causes reverts, so we skip it
                     if tx.from == ARBITRUM_SENDER.into() {
+                        update_progress!(pb, index);
                         continue
                     }
                     if tx.hash().eq(&tx_hash) {
