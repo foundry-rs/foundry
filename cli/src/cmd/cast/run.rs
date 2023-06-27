@@ -88,7 +88,10 @@ impl RunArgs {
         evm_opts.fork_block_number = Some(tx_block_number - 1);
 
         // Set up the execution environment
-        let env = evm_opts.evm_env().await;
+        let mut env = evm_opts.evm_env().await;
+        // can safely disable base fee checks on replaying txs because can
+        // assume those checks already passed on confirmed txs
+        env.cfg.disable_base_fee = true;
         let db = Backend::spawn(evm_opts.get_fork(&config, env.clone()));
 
         // configures a bare version of the evm executor: no cheatcode inspector is enabled,
@@ -120,6 +123,11 @@ impl RunArgs {
                 pb.set_position(0);
 
                 for (index, tx) in block.transactions.into_iter().enumerate() {
+                    // arbitrum L1 transaction at the start of every block that has gas price 0
+                    // and gas limit 0 which causes reverts, so we skip it
+                    if tx.from == "0x00000000000000000000000000000000000a4b05".parse::<Address>()? {
+                        continue
+                    }
                     if tx.hash().eq(&tx_hash) {
                         break
                     }
