@@ -614,6 +614,8 @@ impl FromStr for ForkUrl {
 
 #[cfg(test)]
 mod tests {
+    use std::{env, net::Ipv4Addr};
+
     use super::*;
 
     #[test]
@@ -669,5 +671,23 @@ mod tests {
         let args =
             NodeArgs::try_parse_from(["anvil", "--disable-block-gas-limit", "--gas-limit", "100"]);
         assert!(args.is_err());
+    }
+
+    #[test]
+    fn can_parse_host() {
+        let args = NodeArgs::parse_from(["anvil"]);
+        assert_eq!(args.host, vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]);
+
+        let args = NodeArgs::parse_from([
+            "anvil", "--host", "::1", "--host", "1.1.1.1", "--host", "2.2.2.2",
+        ]);
+        assert_eq!(
+            args.host,
+            ["::1", "1.1.1.1", "2.2.2.2"].map(|ip| ip.parse::<IpAddr>().unwrap()).to_vec()
+        );
+
+        env::set_var("ANVIL_IP_ADDR", "1.1.1.1");
+        let args = NodeArgs::parse_from(["anvil"]);
+        assert_eq!(args.host, vec!["1.1.1.1".parse::<IpAddr>().unwrap()]);
     }
 }
