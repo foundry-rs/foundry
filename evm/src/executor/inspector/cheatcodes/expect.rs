@@ -509,6 +509,10 @@ pub fn apply<DB: DatabaseExt>(
             Ok(Bytes::new())
         }
         HEVMCalls::MockCall1(inner) => {
+            if let Err(err) = data.journaled_state.load_account(h160_to_b160(inner.0), data.db) {
+                return Some(Err(err.into()))
+            }
+
             state.mocked_calls.entry(inner.0).or_default().insert(
                 MockCallDataContext { calldata: inner.2.to_vec().into(), value: Some(inner.1) },
                 MockCallReturnData {
