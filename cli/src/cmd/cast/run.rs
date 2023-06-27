@@ -7,6 +7,7 @@ use clap::Parser;
 use ethers::{
     abi::Address,
     prelude::{artifacts::ContractBytecodeSome, ArtifactId, Middleware},
+    types::H160,
 };
 use eyre::WrapErr;
 use forge::{
@@ -25,6 +26,11 @@ use std::{collections::BTreeMap, str::FromStr};
 use tracing::trace;
 use ui::{TUIExitReason, Tui, Ui};
 use yansi::Paint;
+
+const ARBITRUM_SENDER: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x0a, 0x4b, 0x05,
+]);
 
 /// CLI arguments for `cast run`.
 #[derive(Debug, Clone, Parser)]
@@ -88,7 +94,10 @@ impl RunArgs {
         evm_opts.fork_block_number = Some(tx_block_number - 1);
 
         // Set up the execution environment
-        let env = evm_opts.evm_env().await;
+        let mut env = evm_opts.evm_env().await;
+        // can safely disable base fee checks on replaying txs because can
+        // assume those checks already passed on confirmed txs
+        env.cfg.disable_base_fee = true;
         let db = Backend::spawn(evm_opts.get_fork(&config, env.clone()));
 
         // configures a bare version of the evm executor: no cheatcode inspector is enabled,
@@ -120,6 +129,12 @@ impl RunArgs {
                 pb.set_position(0);
 
                 for (index, tx) in block.transactions.into_iter().enumerate() {
+                    // arbitrum L1 transaction at the start of every block that has gas price 0
+                    // and gas limit 0 which causes reverts, so we skip it
+                    if tx.from == ARBITRUM_SENDER {
+                        update_progress!(pb, index);
+                        continue
+                    }
                     if tx.hash().eq(&tx_hash) {
                         break
                     }
