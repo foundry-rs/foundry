@@ -164,6 +164,23 @@ impl Cmd for InspectArgs {
                     ))?
                 );
             }
+            ContractArtifactField::Errors => {
+                let mut out = serde_json::Map::new();
+                if let Some(LosslessAbi { abi, .. }) = &artifact.abi {
+                    // Print the signature of all errors
+                    for er in abi.errors.iter().flat_map(|(_, errors)| errors) {
+                        let types =
+                            er.inputs.iter().map(|p| p.kind.to_string()).collect::<Vec<_>>();
+                        let sig = format!("{:x}", er.signature());
+                        let sig_trimmed = &sig[0..8];
+                        out.insert(
+                            format!("{}({})", er.name, types.join(",")),
+                            sig_trimmed.to_string().into(),
+                        );
+                    }
+                }
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            }
             ContractArtifactField::Events => {
                 let mut out = serde_json::Map::new();
                 if let Some(LosslessAbi { abi, .. }) = &artifact.abi {
@@ -238,6 +255,7 @@ pub enum ContractArtifactField {
     Metadata,
     UserDoc,
     Ewasm,
+    Errors,
     Events,
 }
 
@@ -323,6 +341,7 @@ impl_value_enum! {
         Metadata          => "metadata" | "meta",
         UserDoc           => "userdoc" | "userDoc" | "user-doc",
         Ewasm             => "ewasm" | "e-wasm",
+        Errors            => "errors" | "er",
         Events            => "events" | "ev",
     }
 }
@@ -346,6 +365,7 @@ impl From<ContractArtifactField> for ContractOutputSelection {
             Caf::Metadata => Self::Metadata,
             Caf::UserDoc => Self::UserDoc,
             Caf::Ewasm => Self::Ewasm(EwasmOutputSelection::All),
+            Caf::Errors => Self::Abi,
             Caf::Events => Self::Abi,
         }
     }
@@ -358,6 +378,7 @@ impl PartialEq<ContractOutputSelection> for ContractArtifactField {
         matches!(
             (self, other),
             (Self::Abi | Self::Events, Cos::Abi) |
+                (Self::Errors, Cos::Abi) |
                 (Self::Bytecode, Cos::Evm(Eos::ByteCode(_))) |
                 (Self::DeployedBytecode, Cos::Evm(Eos::DeployedByteCode(_))) |
                 (Self::Assembly | Self::AssemblyOptimized, Cos::Evm(Eos::Assembly)) |
