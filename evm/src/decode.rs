@@ -162,6 +162,10 @@ pub fn decode_revert(
             eyre::bail!("Unknown error selector")
         }
         _ => {
+            // See if the revert is caused by a skip() call.
+            if err == MAGIC_SKIP_BYTES {
+                return Ok("SKIPPED".to_string())
+            }
             // try to decode a custom error if provided an abi
             if let Some(abi) = maybe_abi {
                 for abi_error in abi.errors() {
@@ -178,10 +182,6 @@ pub fn decode_revert(
                         }
                     }
                 }
-            }
-            // See if the revert is caused by a skip() call.
-            if err == MAGIC_SKIP_BYTES {
-                return Ok("SKIPPED".to_string())
             }
             // optimistically try to decode as string, unknown selector or `CheatcodeError`
             String::decode(err)
