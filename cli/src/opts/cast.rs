@@ -443,6 +443,9 @@ pub enum Subcommands {
     Estimate(EstimateArgs),
 
     /// Decode ABI-encoded input data.
+    ///
+    /// Similar to `abi-decode --input`, but function selector MUST be prefixed in `calldata`
+    /// string
     #[clap(visible_aliases = &["--calldata-decode","cdd"])]
     CalldataDecode {
         /// The function signature in the format `<name>(<in-types>)(<out-types>)`.
@@ -454,8 +457,9 @@ pub enum Subcommands {
 
     /// Decode ABI-encoded input or output data.
     ///
-    /// Defaults to decoding output data. To decode input data pass --input or use cast
-    /// --calldata-decode.
+    /// Defaults to decoding output data. To decode input data pass --input.
+    ///
+    /// When passing `--input`, function selector must NOT be prefixed in `calldata` string
     #[clap(name = "abi-decode", visible_alias = "ad")]
     AbiDecode {
         /// The function signature in the format `<name>(<in-types>)(<out-types>)`.

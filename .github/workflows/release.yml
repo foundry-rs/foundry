@@ -23,8 +23,7 @@ jobs:
             changelog: ${{ steps.build_changelog.outputs.changelog }}
 
         steps:
-            - name: Checkout sources
-              uses: actions/checkout@v2
+            - uses: actions/checkout@v3
               with:
                   fetch-depth: 0
 
@@ -106,20 +105,11 @@ jobs:
                       svm_target_platform: windows-amd64
 
         steps:
-            - name: Checkout sources
-              uses: actions/checkout@v2
-
-            - name: Install toolchain
-              uses: actions-rs/toolchain@v1
+            - uses: actions/checkout@v3
+            - uses: dtolnay/rust-toolchain@stable
               with:
-                  profile: minimal
-                  toolchain: stable
-                  target: ${{ matrix.job.target }}
-                  override: true
-
-            - uses: Swatinem/rust-cache@v1
-              with:
-                  cache-on-failure: true
+                  targets: ${{ matrix.job.target }}
+            - uses: Swatinem/rust-cache@v2
 
             - name: Apple M1 setup
               if: ${{ matrix.job.target == 'aarch64-apple-darwin' }}
@@ -218,12 +208,11 @@ jobs:
             - uses: JasonEtco/create-an-issue@v2
               if: ${{ failure() }}
               env:
-                GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-                WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
               with:
-                update_existing: true
-                filename: .github/RELEASE_FAILURE_ISSUE_TEMPLATE.md
-
+                  update_existing: true
+                  filename: .github/RELEASE_FAILURE_ISSUE_TEMPLATE.md
 
     cleanup:
         name: Release cleanup
@@ -231,8 +220,7 @@ jobs:
         needs: release
 
         steps:
-            - name: Checkout sources
-              uses: actions/checkout@v2
+            - uses: actions/checkout@v3
 
             # Moves the `nightly` tag to `HEAD`
             - name: Move nightly tag
