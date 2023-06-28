@@ -850,9 +850,9 @@ impl Backend {
             // Difficulty is removed and not used after Paris (aka TheMerge). Value is replaced with prevrandao.
             // https://github.com/bluealloy/revm/blob/1839b3fce8eaeebb85025576f2519b80615aca1e/crates/interpreter/src/instructions/host_env.rs#L27
             if self.is_post_merge() {
-                storage.total_difficulty = storage.total_difficulty.saturating_add(header.difficulty);
-            } else {
                 storage.total_difficulty = header.difficulty;
+            } else {
+                storage.total_difficulty = storage.total_difficulty.saturating_add(header.difficulty);
             }
 
             storage.blocks.insert(block_hash, block);
