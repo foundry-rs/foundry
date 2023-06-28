@@ -116,11 +116,11 @@ pub fn build_initial_state<DB: DatabaseRef>(
                 state.values_mut().insert(utils::u256_to_h256_be(value).into());
                 // also add the value below and above the storage value to the dictionary.
                 if value != U256::zero() {
-                    let below_value = U256::from(value) - U256::one();
+                    let below_value = value - U256::one();
                     state.values_mut().insert(utils::u256_to_h256_be(below_value).into());
                 }
                 if value != U256::max_value() {
-                    let above_value = U256::from(value) + U256::one();
+                    let above_value = value + U256::one();
                     state.values_mut().insert(utils::u256_to_h256_be(above_value).into());
                 }
             }
@@ -172,11 +172,11 @@ pub fn collect_state_from_call(
                 state.values_mut().insert(utils::u256_to_h256_be(value).into());
                 // also add the value below and above the storage value to the dictionary.
                 if value != U256::zero() {
-                    let below_value = U256::from(value) - U256::one();
+                    let below_value = value - U256::one();
                     state.values_mut().insert(utils::u256_to_h256_be(below_value).into());
                 }
                 if value != U256::max_value() {
-                    let above_value = U256::from(value) + U256::one();
+                    let above_value = value + U256::one();
                     state.values_mut().insert(utils::u256_to_h256_be(above_value).into());
                 }
             }
