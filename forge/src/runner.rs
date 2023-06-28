@@ -418,6 +418,31 @@ impl<'a> ContractRunner<'a> {
         let project_contracts = known_contracts.unwrap_or(&empty);
         let TestSetup { address, logs, traces, labeled_addresses, .. } = setup;
 
+        // First, run the test normally to see if it needs to be skipped.
+        let _ = match self.executor.execute_test::<(), _, _>(
+            self.sender,
+            address,
+            functions[0].clone(),
+            (),
+            0.into(),
+            self.errors,
+        ) {
+            Err(EvmError::SkipError) => {
+                return vec![TestResult {
+                    status: TestStatus::Skipped,
+                    reason: None,
+                    decoded_logs: decode_console_logs(&logs),
+                    traces,
+                    labeled_addresses,
+                    kind: TestKind::Standard(0),
+                    ..Default::default()
+                }]
+            }
+            // If it does not need to be skipped, scrap the result,
+            // and proceed to invariant fuzz normally.
+            _ => {}
+        };
+
         let mut evm = InvariantExecutor::new(
             &mut self.executor,
             runner,
@@ -486,23 +511,12 @@ impl<'a> ContractRunner<'a> {
                     calls: cases.iter().map(|sequence| sequence.cases().len()).sum(),
                     reverts,
                 };
-                // TODO(evalir): implement skip on invariant tests
-                let must_skip = if let Some(reason) = reason.clone() {
-                    matches!(reason.as_str(), "SKIPPED")
-                } else {
-                    false
-                };
-
-                let status = if must_skip {
-                    TestStatus::Skipped
-                } else if success {
-                    TestStatus::Success
-                } else {
-                    TestStatus::Failure
-                };
 
                 TestResult {
-                    status,
+                    status: match success {
+                        true => TestStatus::Success,
+                        false => TestStatus::Failure,
+                    },
                     reason,
                     counterexample,
                     decoded_logs: decode_console_logs(&logs),
@@ -527,6 +541,27 @@ impl<'a> ContractRunner<'a> {
         fuzz_config: FuzzConfig,
     ) -> TestResult {
         let TestSetup { address, mut logs, mut traces, mut labeled_addresses, .. } = setup;
+
+        let skip_fuzz_config = FuzzConfig { runs: 1, ..Default::default() };
+
+        // Fuzz the test with only 1 run to check if it needs to be skipped.
+        let result =
+            FuzzedExecutor::new(&self.executor, runner.clone(), self.sender, skip_fuzz_config)
+                .fuzz(func, address, should_fail, self.errors);
+        if let Some(reason) = result.reason {
+            if matches!(reason.as_str(), "SKIPPED") {
+                return TestResult {
+                    status: TestStatus::Skipped,
+                    reason: None,
+                    decoded_logs: decode_console_logs(&logs),
+                    traces,
+                    labeled_addresses,
+                    kind: TestKind::Standard(0),
+                    ..Default::default()
+                }
+            }
+        }
+
         // Run fuzz test
         let start = Instant::now();
         let mut result = FuzzedExecutor::new(&self.executor, runner, self.sender, fuzz_config)
@@ -550,22 +585,11 @@ impl<'a> ContractRunner<'a> {
             success = %result.success
         );
 
-        let must_skip = if let Some(reason) = result.reason.clone() {
-            matches!(reason.as_str(), "SKIPPED")
-        } else {
-            false
-        };
-
-        let status = if must_skip {
-            TestStatus::Skipped
-        } else if result.success {
-            TestStatus::Success
-        } else {
-            TestStatus::Failure
-        };
-
         TestResult {
-            status,
+            status: match result.success {
+                true => TestStatus::Success,
+                false => TestStatus::Failure,
+            },
             reason: result.reason,
             counterexample: result.counterexample,
             decoded_logs: decode_console_logs(&logs),
