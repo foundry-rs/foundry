@@ -509,7 +509,7 @@ impl Backend {
     }
 
     /// Returns true for post Merge
-    pub fn is_post_merge(&self) -> bool {
+    pub fn is_eip3675(&self) -> bool {
         (self.spec_id() as u8) >= (SpecId::MERGE as u8)
     }
 
@@ -849,7 +849,7 @@ impl Backend {
             storage.best_hash = block_hash;
             // Difficulty is removed and not used after Paris (aka TheMerge). Value is replaced with prevrandao.
             // https://github.com/bluealloy/revm/blob/1839b3fce8eaeebb85025576f2519b80615aca1e/crates/interpreter/src/instructions/host_env.rs#L27
-            if self.is_post_merge() {
+            if self.is_eip3675() {
                 storage.total_difficulty = header.difficulty;
             } else {
                 storage.total_difficulty = storage.total_difficulty.saturating_add(header.difficulty);
