@@ -356,6 +356,10 @@ impl TestOutcome {
         self.tests().filter(|(_, t)| t.status == TestStatus::Failure)
     }
 
+    pub fn skips(&self) -> impl Iterator<Item = (&String, &TestResult)> {
+        self.tests().filter(|(_, t)| t.status == TestStatus::Skipped)
+    }
+
     /// Iterator over all tests and their names
     pub fn tests(&self) -> impl Iterator<Item = (&String, &TestResult)> {
         self.results.values().flat_map(|suite| suite.tests())
@@ -418,10 +422,11 @@ impl TestOutcome {
         let failed = self.failures().count();
         let result = if failed == 0 { Paint::green("ok") } else { Paint::red("FAILED") };
         format!(
-            "Test result: {}. {} passed; {} failed; finished in {:.2?}",
+            "Test result: {}. {} passed; {} failed; {} skipped; finished in {:.2?}",
             result,
             self.successes().count(),
             failed,
+            self.skips().count(),
             self.duration()
         )
     }
