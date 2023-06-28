@@ -849,9 +849,7 @@ impl Backend {
             storage.best_hash = block_hash;
             // Difficulty is removed and not used after Paris (aka TheMerge). Value is replaced with prevrandao.
             // https://github.com/bluealloy/revm/blob/1839b3fce8eaeebb85025576f2519b80615aca1e/crates/interpreter/src/instructions/host_env.rs#L27
-            if self.is_eip3675() {
-                storage.total_difficulty = header.difficulty;
-            } else {
+            if !self.is_eip3675() {
                 storage.total_difficulty = storage.total_difficulty.saturating_add(header.difficulty);
             }
 
