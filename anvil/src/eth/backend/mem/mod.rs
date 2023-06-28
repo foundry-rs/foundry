@@ -508,6 +508,11 @@ impl Backend {
         (self.spec_id() as u8) >= (SpecId::LONDON as u8)
     }
 
+    /// Returns true for post Merge
+    pub fn is_post_merge(&self) -> bool {
+        (self.spec_id() as u8) >= (SpecId::MERGE as u8)
+    }
+
     /// Returns true for post Berlin
     pub fn is_eip2930(&self) -> bool {
         (self.spec_id() as u8) >= (SpecId::BERLIN as u8)
@@ -842,7 +847,11 @@ impl Backend {
             // update block metadata
             storage.best_number = block_number;
             storage.best_hash = block_hash;
-            storage.total_difficulty = storage.total_difficulty.saturating_add(header.difficulty);
+            // Difficulty is removed and not used after Paris (aka TheMerge). Value is replaced with prevrandao.
+            // https://github.com/bluealloy/revm/blob/1839b3fce8eaeebb85025576f2519b80615aca1e/crates/interpreter/src/instructions/host_env.rs#L27
+            if !self.is_post_merge() {
+                storage.total_difficulty = storage.total_difficulty.saturating_add(header.difficulty);
+            }
 
             storage.blocks.insert(block_hash, block);
             storage.hashes.insert(block_number, block_hash);
