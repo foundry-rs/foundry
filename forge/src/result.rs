@@ -34,12 +34,12 @@ impl SuiteResult {
 
     /// Iterator over all succeeding tests and their names
     pub fn successes(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| t.success)
+        self.tests().filter(|(_, t)| t.status == TestStatus::Success)
     }
 
     /// Iterator over all failing tests and their names
     pub fn failures(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| !t.success)
+        self.tests().filter(|(_, t)| t.status == TestStatus::Failure)
     }
 
     /// Iterator over all tests and their names
@@ -58,13 +58,22 @@ impl SuiteResult {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub enum TestStatus {
+    Success,
+    #[default]
+    Failure,
+    Skipped,
+}
+
 /// The result of an executed solidity test
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TestResult {
-    /// Whether the test case was successful. This means that the transaction executed
-    /// properly, or that there was a revert and that the test was expected to fail
-    /// (prefixed with `testFail`)
-    pub success: bool,
+    /// The test status, indicating whether the test case succeeded, failed, or was marked as
+    /// skipped. This means that the transaction executed properly, the test was marked as
+    /// skipped with vm.skip(), or that there was a revert and that the test was expected to
+    /// fail (prefixed with `testFail`)
+    pub status: TestStatus,
 
     /// If there was a revert, this field will be populated. Note that the test can
     /// still be successful (i.e self.success == true) when it's expected to fail.
@@ -99,7 +108,7 @@ pub struct TestResult {
 
 impl TestResult {
     pub fn fail(reason: String) -> Self {
-        Self { success: false, reason: Some(reason), ..Default::default() }
+        Self { status: TestStatus::Failure, reason: Some(reason), ..Default::default() }
     }
 
     /// Returns `true` if this is the result of a fuzz test

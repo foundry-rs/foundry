@@ -4211,6 +4211,24 @@ pub mod hevm {
                     ],
                 ),
                 (
+                    ::std::borrow::ToOwned::to_owned("skip"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned("skip"),
+                            inputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Bool,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            outputs: ::std::vec![],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
                     ::std::borrow::ToOwned::to_owned("snapshot"),
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
@@ -6395,6 +6413,15 @@ pub mod hevm {
         ) -> ::ethers_contract::builders::ContractCall<M, (u8, [u8; 32], [u8; 32])> {
             self.0
                 .method_hash([227, 65, 234, 164], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `skip` (0xdd82d13e) function
+        pub fn skip(
+            &self,
+            p0: bool,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([221, 130, 209, 62], p0)
                 .expect("method not found (this should never happen)")
         }
         ///Calls the contract's `snapshot` (0x9711715a) function
@@ -9016,6 +9043,19 @@ pub mod hevm {
     )]
     #[ethcall(name = "sign", abi = "sign(uint256,bytes32)")]
     pub struct SignCall(pub ::ethers_core::types::U256, pub [u8; 32]);
+    ///Container type for all input parameters for the `skip` function with signature `skip(bool)` and selector `0xdd82d13e`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "skip", abi = "skip(bool)")]
+    pub struct SkipCall(pub bool);
     ///Container type for all input parameters for the `snapshot` function with signature `snapshot()` and selector `0x9711715a`
     #[derive(
         Clone,
@@ -9506,6 +9546,7 @@ pub mod hevm {
         SetNonce(SetNonceCall),
         SetNonceUnsafe(SetNonceUnsafeCall),
         Sign(SignCall),
+        Skip(SkipCall),
         Snapshot(SnapshotCall),
         StartBroadcast0(StartBroadcast0Call),
         StartBroadcast1(StartBroadcast1Call),
@@ -10237,6 +10278,10 @@ pub mod hevm {
                 return Ok(Self::Sign(decoded));
             }
             if let Ok(decoded)
+                = <SkipCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+                return Ok(Self::Skip(decoded));
+            }
+            if let Ok(decoded)
                 = <SnapshotCall as ::ethers_core::abi::AbiDecode>::decode(data) {
                 return Ok(Self::Snapshot(decoded));
             }
@@ -10729,6 +10774,7 @@ pub mod hevm {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
                 Self::Sign(element) => ::ethers_core::abi::AbiEncode::encode(element),
+                Self::Skip(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::Snapshot(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::StartBroadcast0(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
@@ -10980,6 +11026,7 @@ pub mod hevm {
                 Self::SetNonce(element) => ::core::fmt::Display::fmt(element, f),
                 Self::SetNonceUnsafe(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Sign(element) => ::core::fmt::Display::fmt(element, f),
+                Self::Skip(element) => ::core::fmt::Display::fmt(element, f),
                 Self::Snapshot(element) => ::core::fmt::Display::fmt(element, f),
                 Self::StartBroadcast0(element) => ::core::fmt::Display::fmt(element, f),
                 Self::StartBroadcast1(element) => ::core::fmt::Display::fmt(element, f),
@@ -11830,6 +11877,11 @@ pub mod hevm {
     impl ::core::convert::From<SignCall> for HEVMCalls {
         fn from(value: SignCall) -> Self {
             Self::Sign(value)
+        }
+    }
+    impl ::core::convert::From<SkipCall> for HEVMCalls {
+        fn from(value: SkipCall) -> Self {
+            Self::Skip(value)
         }
     }
     impl ::core::convert::From<SnapshotCall> for HEVMCalls {
