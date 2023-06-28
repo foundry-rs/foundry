@@ -419,7 +419,7 @@ impl<'a> ContractRunner<'a> {
         let TestSetup { address, logs, traces, labeled_addresses, .. } = setup;
 
         // First, run the test normally to see if it needs to be skipped.
-        let _ = match self.executor.execute_test::<(), _, _>(
+        if let Err(EvmError::SkipError) = self.executor.execute_test::<(), _, _>(
             self.sender,
             address,
             functions[0].clone(),
@@ -427,20 +427,15 @@ impl<'a> ContractRunner<'a> {
             0.into(),
             self.errors,
         ) {
-            Err(EvmError::SkipError) => {
-                return vec![TestResult {
-                    status: TestStatus::Skipped,
-                    reason: None,
-                    decoded_logs: decode_console_logs(&logs),
-                    traces,
-                    labeled_addresses,
-                    kind: TestKind::Standard(0),
-                    ..Default::default()
-                }]
-            }
-            // If it does not need to be skipped, scrap the result,
-            // and proceed to invariant fuzz normally.
-            _ => {}
+            return vec![TestResult {
+                status: TestStatus::Skipped,
+                reason: None,
+                decoded_logs: decode_console_logs(&logs),
+                traces,
+                labeled_addresses,
+                kind: TestKind::Standard(0),
+                ..Default::default()
+            }]
         };
 
         let mut evm = InvariantExecutor::new(
