@@ -337,7 +337,12 @@ fn parse_json_keys(json_str: &str, key: &str) -> Result {
         "You can only get keys for JSON-object. The key '{key}' does not return an object",
     );
 
-    let res = value.as_object().unwrap().keys().map(|key| Token::String(key.to_owned())).collect::<Vec<Token>>();
+    let res = value
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(|key| Token::String(key.to_owned()))
+        .collect::<Vec<Token>>();
 
     // encode the bytes as the 'bytes' solidity type
     let abi_encoded = abi::encode(&[Token::Array(res)]);
