@@ -286,7 +286,8 @@ pub enum Subcommands {
     /// Create an access list for a transaction.
     #[clap(visible_aliases = &["ac", "acl"])]
     AccessList(AccessListArgs),
-    /// Create an access list for a transaction.
+    /// Get logs by signature or topic.
+    #[clap(visible_alias = "l")]
     Logs(LogsArgs),
     /// Get information about a block.
     #[clap(visible_alias = "bl")]
@@ -703,7 +704,7 @@ pub enum Subcommands {
     },
 
     /// Perform an ENS reverse lookup.
-    #[clap(visible_alias = "l")]
+    #[clap(visible_alias = "la")]
     LookupAddress {
         /// The account to perform the lookup for.
         who: Option<Address>,
