@@ -525,6 +525,8 @@ interface Vm {
 
     function parseJson(string calldata) external returns (bytes memory);
 
+    function parseJsonKeys(string calldata, string calldata) external returns (string[] memory);
+
     function parseJsonUint(string calldata, string calldata) external returns (uint256);
 
     function parseJsonUintArray(string calldata, string calldata) external returns (uint256[] memory);

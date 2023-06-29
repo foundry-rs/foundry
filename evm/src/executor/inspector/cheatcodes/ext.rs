@@ -319,6 +319,31 @@ fn parse_json(json_str: &str, key: &str, coerce: Option<ParamType>) -> Result {
     }
 }
 
+// returns JSON keys of given object as a string array
+fn parse_json_keys(json_str: &str, key: &str) -> Result {
+    let json = serde_json::from_str(json_str)?;
+    let values = jsonpath_lib::select(&json, &canonicalize_json_key(key))?;
+
+    // We need to check that values contains just one JSON-object and not an array of objects
+    ensure!(
+        values.len() == 1,
+        "You can only get keys for a single JSON-object. The key '{key}' returns a value or an array of JSON-objects",
+    );
+
+    let value = values[0];
+
+    ensure!(
+        value.is_object(),
+        "You can only get keys for JSON-object. The key '{key}' does not return an object",
+    );
+
+    let res = value.as_object().unwrap().keys().map(|key| Token::String(key.to_owned())).collect::<Vec<Token>>();
+
+    // encode the bytes as the 'bytes' solidity type
+    let abi_encoded = abi::encode(&[Token::Array(res)]);
+    Ok(abi_encoded.into())
+}
+
 /// Serializes a key:value pair to a specific object. By calling this function multiple times,
 /// the user can serialize multiple KV pairs to the same object. The value can be of any type, even
 /// a new object in itself. The function will return
@@ -523,6 +548,7 @@ pub fn apply(state: &mut Cheatcodes, call: &HEVMCalls) -> Option<Result> {
         HEVMCalls::ParseJson0(inner) => parse_json(&inner.0, "$", None),
         HEVMCalls::ParseJson1(inner) => parse_json(&inner.0, &inner.1, None),
         HEVMCalls::ParseJsonBool(inner) => parse_json(&inner.0, &inner.1, Some(ParamType::Bool)),
+        HEVMCalls::ParseJsonKeys(inner) => parse_json_keys(&inner.0, &inner.1),
         HEVMCalls::ParseJsonBoolArray(inner) => {
             parse_json(&inner.0, &inner.1, Some(ParamType::Bool))
         }
