@@ -164,11 +164,10 @@ contract ParseJsonTest is DSTest {
         string memory jsonString =
             '{"some_key_to_value": "some_value", "some_key_to_array": [1, 2, 3], "some_key_to_object": {"key1": "value1", "key2": 2}}';
         string[] memory keys = vm.parseJsonKeys(jsonString, "$");
-
-        assertEq(keys, ["some_key_to_value", "some_key_to_array", "some_key_to_object"]);
+        assertEq(abi.encode(keys), abi.encode(["some_key_to_value", "some_key_to_array", "some_key_to_object"]));
 
         keys = vm.parseJsonKeys(jsonString, ".some_key_to_object");
-        assertEq(keys, ["key1", "key2"]);
+        assertEq(abi.encode(keys), abi.encode(["key1", "key2"]));
 
         vm.expectRevert("You can only get keys for JSON-object. The key '.some_key_to_array' does not return an object");
         vm.parseJsonKeys(jsonString, ".some_key_to_array");
