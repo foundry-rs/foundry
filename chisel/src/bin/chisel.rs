@@ -8,8 +8,10 @@ use chisel::{
     prelude::{ChiselCommand, ChiselDispatcher, DispatchResult, SolidityHelper},
 };
 use clap::Parser;
-use foundry_cli::cmd::{forge::build::BuildArgs, LoadConfig};
-use foundry_cli::{utils};
+use foundry_cli::{
+    cmd::{forge::build::BuildArgs, LoadConfig},
+    utils,
+};
 use foundry_common::evm::EvmArgs;
 use foundry_config::{
     figment::{
