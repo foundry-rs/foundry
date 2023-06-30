@@ -57,7 +57,7 @@ jobs:
               uses: mikepenz/release-changelog-builder-action@v2
               with:
                   configuration: "./.github/changelog.json"
-                  fromTag: ${{ env.IS_NIGHTLY && 'nightly' || '' }}
+                  fromTag: ${{ env.IS_NIGHTLY == true && 'nightly' || '' }}
                   toTag: ${{ steps.release_info.outputs.tag_name }}
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -183,7 +183,7 @@ jobs:
               with:
                   name: ${{ needs.prepare.outputs.release_name }}
                   tag_name: ${{ needs.prepare.outputs.tag_name }}
-                  prerelease: ${{ env.IS_NIGHTLY }}
+                  prerelease: ${{ env.IS_NIGHTLY == true }}
                   body: ${{ needs.prepare.outputs.changelog }}
                   files: |
                       ${{ steps.artifacts.outputs.file_name }}
