@@ -43,7 +43,7 @@ jobs:
             # which allows users to roll back. It is also used to build
             # the changelog.
             - name: Create build-specific nightly tag
-              if: ${{ env.IS_NIGHTLY }}
+              if: ${{ env.IS_NIGHTLY == true }}
               uses: actions/github-script@v5
               env:
                   TAG_NAME: ${{ steps.release_info.outputs.tag_name }}
@@ -192,7 +192,7 @@ jobs:
             # If this is a nightly release, it also updates the release
             # tagged `nightly` for compatibility with `foundryup`
             - name: Update nightly release
-              if: ${{ env.IS_NIGHTLY }}
+              if: ${{ env.IS_NIGHTLY == true }}
               uses: softprops/action-gh-release@v1
               with:
                   name: "Nightly"
@@ -224,7 +224,7 @@ jobs:
 
             # Moves the `nightly` tag to `HEAD`
             - name: Move nightly tag
-              if: ${{ env.IS_NIGHTLY }}
+              if: ${{ env.IS_NIGHTLY == true }}
               uses: actions/github-script@v5
               with:
                   script: |
