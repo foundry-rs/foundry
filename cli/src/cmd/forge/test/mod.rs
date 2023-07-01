@@ -2,13 +2,13 @@
 use crate::{
     cmd::{
         forge::{build::CoreBuildArgs, debug::DebugArgs, install, watch::WatchArgs},
-        Cmd, LoadConfig,
+        LoadConfig,
     },
     suggestions, utils,
 };
 use cast::fuzz::CounterExample;
 use clap::Parser;
-use ethers::{solc::utils::RuntimeOrHandle, types::U256};
+use ethers::types::U256;
 use forge::{
     decode::decode_console_logs,
     executor::inspector::CheatsConfig,
@@ -27,7 +27,7 @@ use foundry_common::{
 };
 use foundry_config::{figment, get_available_profiles, Config};
 use regex::Regex;
-use std::{collections::BTreeMap, path::PathBuf, sync::mpsc::channel, thread, time::Duration};
+use std::{collections::BTreeMap, path::PathBuf, sync::mpsc::channel, time::Duration};
 use tracing::trace;
 use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
@@ -116,13 +116,19 @@ impl TestArgs {
         &self.opts
     }
 
+    pub async fn run(self) -> eyre::Result<TestOutcome> {
+        trace!(target: "forge::test", "executing test command");
+        shell::set_shell(shell::Shell::from_args(self.opts.silent, self.json))?;
+        self.execute_tests().await
+    }
+
     /// Executes all the tests in the project.
     ///
     /// This will trigger the build process first. On success all test contracts that match the
     /// configured filter will be executed
     ///
     /// Returns the test results for all matching tests.
-    pub fn execute_tests(self) -> eyre::Result<TestOutcome> {
+    pub async fn execute_tests(self) -> eyre::Result<TestOutcome> {
         // Merge all configs
         let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
@@ -170,7 +176,7 @@ impl TestArgs {
             evm_opts.verbosity = 3;
         }
 
-        let env = evm_opts.evm_env_blocking()?;
+        let env = evm_opts.evm_env().await;
 
         // Prepare the test builder
         let evm_spec = evm_spec(&config.evm_version);
@@ -190,7 +196,7 @@ impl TestArgs {
             match runner.count_filtered_tests(&filter) {
                 1 => {
                     // Run the test
-                    let results = runner.test(&filter, None, test_options);
+                    let results = runner.test(&filter, None, test_options).await;
 
                     // Get the result of the single test
                     let (id, sig, test_kind, counterexample, breakpoints) = results.iter().map(|(id, SuiteResult{ test_results, .. })| {
@@ -247,6 +253,7 @@ impl TestArgs {
                 self.gas_report,
                 self.fail_fast,
             )
+            .await
         }
     }
 
@@ -292,16 +299,6 @@ impl Provider for TestArgs {
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
-    }
-}
-
-impl Cmd for TestArgs {
-    type Output = TestOutcome;
-
-    fn run(self) -> eyre::Result<Self::Output> {
-        trace!(target: "forge::test", "executing test command");
-        shell::set_shell(shell::Shell::from_args(self.opts.silent, self.json))?;
-        self.execute_tests()
     }
 }
 
@@ -490,7 +487,7 @@ fn list(
 
 /// Runs all the tests
 #[allow(clippy::too_many_arguments)]
-fn test(
+async fn test(
     config: Config,
     mut runner: MultiContractRunner,
     verbosity: u8,
@@ -523,7 +520,7 @@ fn test(
     }
 
     if json {
-        let results = runner.test(&filter, None, test_options);
+        let results = runner.test(filter, None, test_options).await;
         println!("{}", serde_json::to_string(&results)?);
         Ok(TestOutcome::new(results, allow_failure))
     } else {
@@ -537,7 +534,8 @@ fn test(
         let (tx, rx) = channel::<(String, SuiteResult)>();
 
         // Run tests
-        let handle = thread::spawn(move || runner.test(&filter, Some(tx), test_options));
+        let handle =
+            tokio::task::spawn(async move { runner.test(filter, Some(tx), test_options).await });
 
         let mut results: BTreeMap<String, SuiteResult> = BTreeMap::new();
         let mut gas_report = GasReport::new(config.gas_reports, config.gas_reports_ignore);
@@ -592,7 +590,6 @@ fn test(
 
                     // Decode the traces
                     let mut decoded_traces = Vec::new();
-                    let rt = RuntimeOrHandle::new();
                     for (kind, trace) in &mut result.traces {
                         decoder.identify(trace, &mut local_identifier);
                         decoder.identify(trace, &mut etherscan_identifier);
@@ -616,7 +613,7 @@ fn test(
                         // We decode the trace if we either need to build a gas report or we need
                         // to print it
                         if should_include || gas_reporting {
-                            rt.block_on(decoder.decode(trace));
+                            decoder.decode(trace).await;
                         }
 
                         if should_include {
@@ -644,7 +641,7 @@ fn test(
         }
 
         // reattach the thread
-        let _ = handle.join();
+        let _results = handle.await?;
 
         trace!(target: "forge::test", "received {} results", results.len());
         Ok(TestOutcome::new(results, allow_failure))

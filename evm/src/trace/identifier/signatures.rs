@@ -161,7 +161,7 @@ pub struct CachedSignatures {
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn can_query_signatures() {
         let tmp = tempfile::tempdir().unwrap();
         {

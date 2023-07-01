@@ -295,7 +295,7 @@ async fn rejects_different_chain_id() {
     assert!(err.to_string().contains("signed for another chain"));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn rejects_invalid_chain_id() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap().with_chain_id(99u64);

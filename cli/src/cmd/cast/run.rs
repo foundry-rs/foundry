@@ -98,7 +98,7 @@ impl RunArgs {
         // can safely disable base fee checks on replaying txs because can
         // assume those checks already passed on confirmed txs
         env.cfg.disable_base_fee = true;
-        let db = Backend::spawn(evm_opts.get_fork(&config, env.clone()));
+        let db = Backend::spawn(evm_opts.get_fork(&config, env.clone())).await;
 
         // configures a bare version of the evm executor: no cheatcode inspector is enabled,
         // tracing will be enabled only for the targeted transaction

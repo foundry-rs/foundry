@@ -550,7 +550,7 @@ impl SharedBackend {
 
         // spawn a light-weight thread with a thread-local async runtime just for
         // sending and receiving data from the remote client
-        let _ = std::thread::Builder::new()
+        std::thread::Builder::new()
             .name("fork-backend-thread".to_string())
             .spawn(move || {
                 let rt = tokio::runtime::Builder::new_current_thread()
@@ -775,7 +775,7 @@ mod tests {
             evm_opts,
         };
 
-        let backend = Backend::spawn(Some(fork));
+        let backend = Backend::spawn(Some(fork)).await;
 
         // some rng contract from etherscan
         let address: B160 = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();

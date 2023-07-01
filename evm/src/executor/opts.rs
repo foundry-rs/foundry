@@ -67,19 +67,6 @@ impl EvmOpts {
         }
     }
 
-    /// Convenience implementation to configure a `revm::Env` from non async code
-    ///
-    /// This only attaches are creates a temporary tokio runtime if `fork_url` is set
-    ///
-    /// Returns an error if a RPC request failed, or the fork url is not a valid url
-    pub fn evm_env_blocking(&self) -> eyre::Result<revm::primitives::Env> {
-        if let Some(ref fork_url) = self.fork_url {
-            RuntimeOrHandle::new().block_on(self.fork_evm_env(fork_url)).map(|res| res.0)
-        } else {
-            Ok(self.local_evm_env())
-        }
-    }
-
     /// Returns the `revm::Env` that is configured with settings retrieved from the endpoint.
     /// And the block that was used to configure the environment.
     pub async fn fork_evm_env(

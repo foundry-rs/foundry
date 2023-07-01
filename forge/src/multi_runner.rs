@@ -115,16 +115,17 @@ impl MultiContractRunner {
     /// before executing all contracts and their tests in _parallel_.
     ///
     /// Each Executor gets its own instance of the `Backend`.
-    pub fn test(
+    pub async fn test(
         &mut self,
-        filter: &impl TestFilter,
+        filter: impl TestFilter,
         stream_result: Option<Sender<(String, SuiteResult)>>,
         test_options: TestOptions,
     ) -> BTreeMap<String, SuiteResult> {
         trace!("running all tests");
 
         // the db backend that serves all the data, each contract gets its own instance
-        let db = Backend::spawn(self.fork.take());
+        let db = Backend::spawn(self.fork.take()).await;
+        let filter = &filter;
 
         self.contracts
             .par_iter()
@@ -143,7 +144,7 @@ impl MultiContractRunner {
                     .set_coverage(self.coverage)
                     .build(db.clone());
                 let identifier = id.identifier();
-                trace!(contract= ?identifier, "start executing all tests in contract");
+                trace!(contract=%identifier, "start executing all tests in contract");
 
                 let result = self.run_tests(
                     &identifier,
@@ -174,7 +175,7 @@ impl MultiContractRunner {
         executor: Executor,
         deploy_code: Bytes,
         libs: &[Bytes],
-        filter: &impl TestFilter,
+        filter: impl TestFilter,
         test_options: TestOptions,
     ) -> SuiteResult {
         let runner = ContractRunner::new(
