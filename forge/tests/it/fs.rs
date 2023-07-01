@@ -6,7 +6,7 @@ use crate::{
 };
 use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_fs_disabled() {
     let mut config = Config::with_root(PROJECT.root());
     config.fs_permissions = FsPermissions::new(vec![PathPermission::none("./")]);
@@ -15,7 +15,7 @@ async fn test_fs_disabled() {
     TestConfig::with_filter(runner, filter).run().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_fs_default() {
     let mut config = Config::with_root(PROJECT.root());
     config.fs_permissions = FsPermissions::new(vec![PathPermission::read("./fixtures")]);

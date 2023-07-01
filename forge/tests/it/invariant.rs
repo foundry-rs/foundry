@@ -5,7 +5,7 @@ use ethers::types::U256;
 use forge::fuzz::CounterExample;
 use std::collections::BTreeMap;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_invariant() {
     let mut runner = runner().await;
 
@@ -84,7 +84,7 @@ async fn test_invariant() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_invariant_override() {
     let mut runner = runner().await;
 
@@ -109,7 +109,7 @@ async fn test_invariant_override() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_invariant_storage() {
     let mut runner = runner().await;
 
@@ -140,7 +140,7 @@ async fn test_invariant_storage() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 // for some reason there's different rng
 #[cfg(not(windows))]
 async fn test_invariant_shrink() {

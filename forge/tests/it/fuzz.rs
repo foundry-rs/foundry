@@ -5,7 +5,7 @@ use ethers::types::U256;
 use forge::result::{SuiteResult, TestStatus};
 use std::collections::BTreeMap;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_fuzz() {
     let mut runner = runner().await;
 
@@ -48,7 +48,7 @@ async fn test_fuzz() {
 
 /// Test that showcases PUSH collection on normal fuzzing. Ignored until we collect them in a
 /// smarter way.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn test_fuzz_collection() {
     let mut runner = runner().await;

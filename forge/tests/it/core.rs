@@ -7,7 +7,7 @@ use forge::result::SuiteResult;
 use foundry_evm::trace::TraceKind;
 use std::{collections::BTreeMap, env};
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_core() {
     let mut runner = runner().await;
     let results = runner.test(&Filter::new(".*", ".*", ".*core"), None, test_opts()).await;
@@ -83,7 +83,7 @@ async fn test_core() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_logs() {
     let mut runner = runner().await;
     let results = runner.test(&Filter::new(".*", ".*", ".*logs"), None, test_opts()).await;
@@ -643,7 +643,7 @@ async fn test_logs() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_env_vars() {
     let mut runner = runner().await;
 
@@ -660,7 +660,7 @@ Reason: `setEnv` failed to set an environment variable `{env_var_key}={env_var_v
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_doesnt_run_abstract_contract() {
     let mut runner = runner().await;
     let results = runner
@@ -670,7 +670,7 @@ async fn test_doesnt_run_abstract_contract() {
     assert!(results.get("core/Abstract.t.sol:AbstractTest").is_some());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_trace() {
     let mut runner = tracing_runner().await;
     let suite_result = runner.test(&Filter::new(".*", ".*", ".*trace"), None, test_opts()).await;

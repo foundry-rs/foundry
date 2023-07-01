@@ -319,7 +319,7 @@ mod tests {
             }
         }
     }
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn builder_new_non_legacy() -> eyre::Result<()> {
         let provider = MyProvider {};
         let builder =
@@ -338,7 +338,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn builder_new_legacy() -> eyre::Result<()> {
         let provider = MyProvider {};
         let builder =
@@ -354,7 +354,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn builder_fields() -> eyre::Result<()> {
         let provider = MyProvider {};
         let mut builder =
@@ -376,7 +376,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn builder_args() -> eyre::Result<()> {
         let provider = MyProvider {};
         let mut builder =

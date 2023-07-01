@@ -10,7 +10,7 @@ mod tests {
     };
     use foundry_config::{FuzzConfig, InvariantConfig};
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn inline_config_run_fuzz() {
         let opts = test_options();
 
@@ -34,7 +34,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn inline_config_run_invariant() {
         const ROOT: &str = "inline/InvariantInlineConf.t.sol";
 

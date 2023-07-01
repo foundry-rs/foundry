@@ -7,7 +7,7 @@ use crate::{
 use forge::result::SuiteResult;
 
 /// Executes reverting fork test
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_cheats_fork_revert() {
     let mut runner = runner().await;
     let suite_result = runner
@@ -34,7 +34,7 @@ async fn test_cheats_fork_revert() {
 }
 
 /// Executes all non-reverting fork cheatcodes
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_cheats_fork() {
     let filter = Filter::new(".*", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}Fork"))
         .exclude_tests(".*Revert");
@@ -42,7 +42,7 @@ async fn test_cheats_fork() {
 }
 
 /// Tests that we can launch in forking mode
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_launch_fork() {
     let rpc_url = foundry_utils::rpc::next_http_archive_rpc_endpoint();
     let runner = forked_runner(&rpc_url).await;
@@ -51,14 +51,14 @@ async fn test_launch_fork() {
 }
 
 /// Tests that we can transact transactions in forking mode
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_transact_fork() {
     let filter = Filter::new(".*", ".*", &format!(".*fork{RE_PATH_SEPARATOR}Transact"));
     TestConfig::filter(filter).await.run().await;
 }
 
 /// Tests that we can create the same fork (provider,block) concurretnly in different tests
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_create_same_fork() {
     let filter = Filter::new(".*", ".*", &format!(".*fork{RE_PATH_SEPARATOR}ForkSame"));
     TestConfig::filter(filter).await.run().await;
