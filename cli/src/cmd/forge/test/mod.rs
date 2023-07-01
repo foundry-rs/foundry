@@ -13,7 +13,7 @@ use forge::{
     decode::decode_console_logs,
     executor::inspector::CheatsConfig,
     gas_report::GasReport,
-    result::{SuiteResult, TestKind, TestResult},
+    result::{SuiteResult, TestKind, TestResult, TestStatus},
     trace::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
         CallTraceDecoderBuilder, TraceKind,
@@ -134,7 +134,7 @@ impl TestArgs {
         let mut project = config.project()?;
 
         // install missing dependencies
-        if install::install_missing_dependencies(&mut config, &project, self.build_args().silent) &&
+        if install::install_missing_dependencies(&mut config, self.build_args().silent) &&
             config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
@@ -348,12 +348,16 @@ impl TestOutcome {
 
     /// Iterator over all succeeding tests and their names
     pub fn successes(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| t.success)
+        self.tests().filter(|(_, t)| t.status == TestStatus::Success)
     }
 
     /// Iterator over all failing tests and their names
     pub fn failures(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| !t.success)
+        self.tests().filter(|(_, t)| t.status == TestStatus::Failure)
+    }
+
+    pub fn skips(&self) -> impl Iterator<Item = (&String, &TestResult)> {
+        self.tests().filter(|(_, t)| t.status == TestStatus::Skipped)
     }
 
     /// Iterator over all tests and their names
@@ -418,18 +422,21 @@ impl TestOutcome {
         let failed = self.failures().count();
         let result = if failed == 0 { Paint::green("ok") } else { Paint::red("FAILED") };
         format!(
-            "Test result: {}. {} passed; {} failed; finished in {:.2?}",
+            "Test result: {}. {} passed; {} failed; {} skipped; finished in {:.2?}",
             result,
             self.successes().count(),
             failed,
+            self.skips().count(),
             self.duration()
         )
     }
 }
 
 fn short_test_result(name: &str, result: &TestResult) {
-    let status = if result.success {
+    let status = if result.status == TestStatus::Success {
         Paint::green("[PASS]".to_string())
+    } else if result.status == TestStatus::Skipped {
+        Paint::yellow("[SKIP]".to_string())
     } else {
         let reason = result
             .reason
@@ -553,7 +560,7 @@ fn test(
                 short_test_result(name, result);
 
                 // If the test failed, we want to stop processing the rest of the tests
-                if fail_fast && !result.success {
+                if fail_fast && result.status == TestStatus::Failure {
                     break 'outer
                 }
 
@@ -596,10 +603,12 @@ fn test(
                             // tests At verbosity level 5, we display
                             // all traces for all tests
                             TraceKind::Setup => {
-                                (verbosity >= 5) || (verbosity == 4 && !result.success)
+                                (verbosity >= 5) ||
+                                    (verbosity == 4 && result.status == TestStatus::Failure)
                             }
                             TraceKind::Execution => {
-                                verbosity > 3 || (verbosity == 3 && !result.success)
+                                verbosity > 3 ||
+                                    (verbosity == 3 && result.status == TestStatus::Failure)
                             }
                             _ => false,
                         };

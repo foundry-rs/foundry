@@ -37,20 +37,11 @@ jobs:
                       target: x86_64-pc-windows-msvc
 
         steps:
-            - name: Checkout sources
-              uses: actions/checkout@v2
-
-            - name: Install Rust toolchain
-              uses: actions-rs/toolchain@v1
+            - uses: actions/checkout@v3
+            - uses: dtolnay/rust-toolchain@stable
               with:
-                  toolchain: stable
-                  target: ${{ matrix.job.target }}
-                  override: true
-                  profile: minimal
-
-            - uses: Swatinem/rust-cache@v1
-              with:
-                  cache-on-failure: true
+                  targets: ${{ matrix.job.target }}
+            - uses: Swatinem/rust-cache@v2
             - name: Install nextest
               uses: taiki-e/install-action@nextest
 
@@ -78,11 +69,14 @@ jobs:
               if: ${{ matrix.job.target == 'x86_64-pc-windows-msvc' }}
               uses: Vampire/setup-wsl@v1
               with:
-                distribution: Ubuntu-20.04
-                set-as-default: true
+                  distribution: Ubuntu-20.04
+                  set-as-default: true
 
             - name: Build archive (unit tests)
-              run: cargo nextest archive --locked ${{ matrix.job.flags }} --archive-file ${{ matrix.job.target }}-${{ matrix.archive.file }}
+              run: |
+                  cargo nextest archive \
+                  --locked ${{ matrix.job.flags }} \
+                  --archive-file ${{ matrix.job.target }}-${{ matrix.archive.file }}
             - name: Upload archive
               uses: actions/upload-artifact@v3
               with:
@@ -119,11 +113,11 @@ jobs:
         env:
             ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
         steps:
-            - name: Checkout sources
-              uses: actions/checkout@v2
+            - uses: actions/checkout@v3
             - uses: dtolnay/rust-toolchain@stable
-            - name: Install nextest
-              uses: taiki-e/install-action@nextest
+              with:
+                  targets: ${{ matrix.job.target }}
+            - uses: taiki-e/install-action@nextest
             - name: Download archives
               uses: actions/download-artifact@v3
               with:
@@ -136,12 +130,14 @@ jobs:
             - name: cargo nextest
               shell: bash
               run: |
-                # see https://github.com/foundry-rs/foundry/pull/3959
-                export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib"
-                cargo nextest run --retries 3 --archive-file  ${{ matrix.job.target }}-${{ matrix.archive.file }} -E '${{ matrix.nextest.filter }}'
+                  # see https://github.com/foundry-rs/foundry/pull/3959
+                  export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib"
+                  cargo nextest run --retries 3 --archive-file  ${{ matrix.job.target }}-${{ matrix.archive.file }} -E '${{ matrix.nextest.filter }}'
 
     integration:
-        name: integration tests ${{ matrix.job.target }} (${{ matrix.job.os }}) / ${{ matrix.archive.name }} / ${{ matrix.nextest.name }}
+        name:
+            integration tests ${{ matrix.job.target }} (${{ matrix.job.os }}) / ${{
+            matrix.archive.name }} / ${{ matrix.nextest.name }}
         runs-on: ${{ matrix.job.os }}
         timeout-minutes: 60
         needs: build-tests
@@ -173,11 +169,9 @@ jobs:
         env:
             ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
         steps:
-            - name: Checkout sources
-              uses: actions/checkout@v2
+            - uses: actions/checkout@v3
             - uses: dtolnay/rust-toolchain@stable
-            - name: Install nextest
-              uses: taiki-e/install-action@nextest
+            - uses: taiki-e/install-action@nextest
             - name: Download archives
               uses: actions/download-artifact@v3
               with:
@@ -198,14 +192,14 @@ jobs:
               if: ${{ matrix.job.target == 'aarch64-apple-darwin' }}
               shell: bash
               run: |
-                # see https://github.com/foundry-rs/foundry/pull/3959
-                export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib"
-                cargo nextest run --retries 3 --archive-file ${{ matrix.job.target }}-${{ matrix.archive.file }} -E '${{ matrix.nextest.macos-aarch-filter }}'
+                  # see https://github.com/foundry-rs/foundry/pull/3959
+                  export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib"
+                  cargo nextest run --retries 3 --archive-file ${{ matrix.job.target }}-${{ matrix.archive.file }} -E '${{ matrix.nextest.macos-aarch-filter }}'
 
             - name: cargo nextest
               if: ${{ matrix.job.target != 'aarch64-apple-darwin' }}
               shell: bash
               run: |
-                # see https://github.com/foundry-rs/foundry/pull/3959
-                export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib"
-                cargo nextest run --retries 3 --archive-file ${{ matrix.job.target }}-${{ matrix.archive.file }} -E '${{ matrix.nextest.filter }}'
+                  # see https://github.com/foundry-rs/foundry/pull/3959
+                  export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib"
+                  cargo nextest run --retries 3 --archive-file ${{ matrix.job.target }}-${{ matrix.archive.file }} -E '${{ matrix.nextest.filter }}'

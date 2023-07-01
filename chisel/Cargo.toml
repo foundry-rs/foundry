@@ -2,11 +2,22 @@
 name = "chisel"
 version = "0.1.1"
 edition = "2021"
-authors = ["clabby <https://github.com/clabby>", "asnared <https://github.com/abigger87>"]
+authors = [
+  "clabby <https://github.com/clabby>",
+  "asnared <https://github.com/abigger87>",
+]
 description = "Solidity REPL"
 repository = "https://github.com/foundry-rs/foundry/tree/main/chisel"
 license = "MIT"
-keywords = ["Rust", "Ethereum", "Foundry", "Chisel", "REPL", "Solidity", "Solang"]
+keywords = [
+  "Rust",
+  "Ethereum",
+  "Foundry",
+  "Chisel",
+  "REPL",
+  "Solidity",
+  "Solang",
+]
 
 [lib]
 name = "chisel"
@@ -39,7 +50,7 @@ clap = { version = "4", features = ["derive", "env", "wrap_help"] }
 rustyline = "11"
 solang-parser.workspace = true
 yansi = "0.5"
-strum = { version = "0.24", features = ["derive"] }
+strum = { version = "0.25", features = ["derive"] }
 serde = "1"
 serde_json = { version = "1", features = ["raw_value"] }
 semver = "1"
@@ -56,7 +67,11 @@ serial_test = "2"
 once_cell = "1"
 
 [build-dependencies]
-vergen = { version = "8", default-features = false, features = ["build", "git", "git2"] }
+vergen = { version = "8", default-features = false, features = [
+  "build",
+  "git",
+  "git2",
+] }
 
 [[bench]]
 name = "session_source"

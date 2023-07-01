@@ -166,14 +166,13 @@ pub fn link_with_nonce_or_address<T, U>(
             .collect(),
     };
 
-    let mut internally_deployed_libraries = HashMap::new();
-
     for (id, contract) in contracts.into_iter() {
         let (abi, maybe_deployment_bytes, maybe_runtime) = (
             contract.abi.as_ref(),
             contract.bytecode.as_ref(),
             contract.deployed_bytecode.as_ref(),
         );
+        let mut internally_deployed_libraries = HashMap::new();
 
         if let (Some(abi), Some(bytecode), Some(runtime)) =
             (abi, maybe_deployment_bytes, maybe_runtime)
