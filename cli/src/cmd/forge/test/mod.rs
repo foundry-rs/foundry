@@ -466,6 +466,20 @@ fn short_test_result(name: &str, result: &TestResult) {
     println!("{status} {name} {}", result.kind.report());
 }
 
+/**
+ * Formats the aggregated summary of all test suites into a string (for printing)
+ */
+fn format_aggregated_summary(
+    num_test_suites: usize,
+    total_passed: usize,
+    total_failed: usize,
+) -> String {
+    format!(
+        "Test suites: {}. Total passed: {}. Total failed: {}",
+        num_test_suites, total_passed, total_failed
+    )
+}
+
 /// Lists all matching tests
 fn list(
     runner: MultiContractRunner,
@@ -543,6 +557,10 @@ fn test(
         let mut gas_report = GasReport::new(config.gas_reports, config.gas_reports_ignore);
         let sig_identifier =
             SignaturesIdentifier::new(Config::foundry_cache_dir(), config.offline)?;
+
+        let mut num_test_suites = 0;
+        let mut total_passed = 0;
+        let mut total_failed = 0;
 
         'outer: for (contract_name, suite_result) in rx {
             results.insert(contract_name.clone(), suite_result.clone());
@@ -636,12 +654,20 @@ fn test(
             }
             let block_outcome =
                 TestOutcome::new([(contract_name, suite_result)].into(), allow_failure);
+
+            num_test_suites += 1;
+
+            total_passed += block_outcome.successes().count();
+            total_failed += block_outcome.failures().count();
+
             println!("{}", block_outcome.summary());
         }
 
         if gas_reporting {
             println!("{}", gas_report.finalize());
         }
+
+        println!("{}", format_aggregated_summary(num_test_suites, total_passed, total_failed));
 
         // reattach the thread
         let _ = handle.join();
