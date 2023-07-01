@@ -9,7 +9,7 @@ use ethers::{
 use eyre::Result;
 use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
-    TestFunctionExt,
+    shell, TestFunctionExt,
 };
 use foundry_config::{FuzzConfig, InvariantConfig};
 use foundry_evm::{
@@ -30,6 +30,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     time::Instant,
 };
+use yansi::Paint;
 
 /// A type that executes all tests of a contract
 #[derive(Debug, Clone)]
@@ -140,6 +141,7 @@ impl<'a> ContractRunner<'a> {
         // Optionally call the `setUp` function
         let setup = if setup {
             trace!("setting up");
+            shell::println(Paint::yellow("Warning! You seem to be trying to use a setUp function to set up your tests. This will be removed in a future version. Use a constructor instead."))?;
             let (setup_logs, setup_traces, labeled_addresses, reason) =
                 match self.executor.setup(None, address) {
                     Ok(CallResult { traces, labels, logs, .. }) => {
