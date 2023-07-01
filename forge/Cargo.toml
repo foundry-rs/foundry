@@ -11,7 +11,7 @@ foundry-config = { path = "./../config" }
 foundry-evm = { path = "./../evm" }
 
 # TODO: Trim down
-ethers = { workspace = true, features = ["solc-full"] }
+ethers = { workspace = true, features = ["solc-full", "rustls"] }
 
 comfy-table = "6"
 eyre = "0.6"
