@@ -1,3 +1,5 @@
+name: deny
+
 on:
     push:
         branches: [master]
@@ -18,3 +20,4 @@ jobs:
             - uses: EmbarkStudios/cargo-deny-action@v1
               with:
                   command: check all
+                  arguments: "" # removing this would pass `--all-features` to `cargo deny`
