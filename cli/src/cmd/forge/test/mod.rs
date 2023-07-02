@@ -473,10 +473,11 @@ fn format_aggregated_summary(
     num_test_suites: usize,
     total_passed: usize,
     total_failed: usize,
+    total_skipped: usize,
 ) -> String {
     format!(
-        "Test suites: {}. Total passed: {}. Total failed: {}",
-        num_test_suites, total_passed, total_failed
+        "Test suites: {}. Total passed: {}. Total failed: {}. Total skipped: {}",
+        num_test_suites, total_passed, total_failed, total_skipped
     )
 }
 
@@ -561,6 +562,7 @@ fn test(
         let mut num_test_suites = 0;
         let mut total_passed = 0;
         let mut total_failed = 0;
+        let mut total_skipped = 0;
 
         'outer: for (contract_name, suite_result) in rx {
             results.insert(contract_name.clone(), suite_result.clone());
@@ -659,6 +661,7 @@ fn test(
 
             total_passed += block_outcome.successes().count();
             total_failed += block_outcome.failures().count();
+            total_skipped += block_outcome.skips().count();
 
             println!("{}", block_outcome.summary());
         }
@@ -667,7 +670,10 @@ fn test(
             println!("{}", gas_report.finalize());
         }
 
-        println!("{}", format_aggregated_summary(num_test_suites, total_passed, total_failed));
+        println!(
+            "{}",
+            format_aggregated_summary(num_test_suites, total_passed, total_failed, total_skipped)
+        );
 
         // reattach the thread
         let _ = handle.join();
