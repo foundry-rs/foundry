@@ -559,7 +559,6 @@ fn test(
         let sig_identifier =
             SignaturesIdentifier::new(Config::foundry_cache_dir(), config.offline)?;
 
-        let mut num_test_suites = 0;
         let mut total_passed = 0;
         let mut total_failed = 0;
         let mut total_skipped = 0;
@@ -657,8 +656,6 @@ fn test(
             let block_outcome =
                 TestOutcome::new([(contract_name, suite_result)].into(), allow_failure);
 
-            num_test_suites += 1;
-
             total_passed += block_outcome.successes().count();
             total_failed += block_outcome.failures().count();
             total_skipped += block_outcome.skips().count();
@@ -670,10 +667,14 @@ fn test(
             println!("{}", gas_report.finalize());
         }
 
-        println!(
-            "{}",
-            format_aggregated_summary(num_test_suites, total_passed, total_failed, total_skipped)
-        );
+        let num_test_suites = results.len();
+
+        if num_test_suites > 0 {
+            println!(
+                "{}",
+                format_aggregated_summary(num_test_suites, total_passed, total_failed, total_skipped)
+            );
+        }
 
         // reattach the thread
         let _ = handle.join();
