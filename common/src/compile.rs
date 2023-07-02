@@ -1,5 +1,5 @@
 //! Support for compiling [ethers::solc::Project]
-use crate::{term, TestFunctionExt};
+use crate::{glob::GlobMatcher, term, TestFunctionExt};
 use comfy_table::{presets::ASCII_MARKDOWN, *};
 use ethers_etherscan::contract::Metadata;
 use ethers_solc::{
@@ -528,8 +528,9 @@ impl FileFilter for SkipBuildFilter {
     /// This is returns the inverse of `file.name.contains(pattern)`
     fn is_match(&self, file: &Path) -> bool {
         fn exclude(file: &Path, pattern: &str) -> Option<bool> {
+            let matcher: GlobMatcher = pattern.parse().unwrap();
             let file_name = file.file_name()?.to_str()?;
-            Some(file_name.contains(pattern))
+            Some(file_name.contains(pattern) || matcher.is_match(file.as_os_str().to_str()?))
         }
 
         !exclude(file, self.file_pattern()).unwrap_or_default()
@@ -551,5 +552,10 @@ mod tests {
         assert!(SkipBuildFilter::Tests.is_match(file));
         assert!(!SkipBuildFilter::Scripts.is_match(file));
         assert!(!SkipBuildFilter::Custom("A.s".to_string()).is_match(file));
+
+        let file = Path::new("/private/var/folders/test/Foo.sol");
+        assert!(!SkipBuildFilter::Custom("*/test/**".to_string()).is_match(file));
+        let file = Path::new("script/Contract.sol");
+        assert!(!SkipBuildFilter::Custom("*/script/**".to_string()).is_match(file));
     }
 }
