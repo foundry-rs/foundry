@@ -68,7 +68,7 @@ use parking_lot::RwLock;
 use std::{sync::Arc, time::Duration};
 use tracing::{trace, warn};
 
-use super::backend::mem::BlockRequest;
+use super::{backend::mem::BlockRequest, sign::build_typed_transaction};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
@@ -200,6 +200,7 @@ impl EthApi {
                 self.get_proof(addr, keys, block).await.to_rpc_result()
             }
             EthRequest::EthSign(addr, content) => self.sign(addr, content).await.to_rpc_result(),
+            EthRequest::EthSignTransaction(request) => self.sign_transaction(*request).await.to_rpc_result(),
             EthRequest::EthSignTypedData(addr, data) => {
                 self.sign_typed_data(addr, data).await.to_rpc_result()
             }
@@ -363,7 +364,8 @@ impl EthApi {
     ) -> Result<TypedTransaction> {
         for signer in self.signers.iter() {
             if signer.accounts().contains(from) {
-                return signer.sign_transaction(request, from)
+                let signature = signer.sign_transaction(request.clone(), from)?;
+                return build_typed_transaction(request, signature)
             }
         }
         Err(BlockchainError::NoSignerAvailable)
@@ -738,6 +740,25 @@ impl EthApi {
         node_info!("eth_sign");
         let signer = self.get_signer(address).ok_or(BlockchainError::NoSignerAvailable)?;
         let signature = signer.sign(address, content.as_ref()).await?;
+        Ok(format!("0x{signature}"))
+    }
+
+    /// The sign method calculates an Ethereum specific signature
+    ///
+    /// Handler for ETH RPC call: `eth_signTransaction`
+    pub async fn sign_transaction(&self, request: EthTransactionRequest) -> Result<String> {
+        node_info!("eth_signTransaction");
+
+        let from = request.from.map(Ok).unwrap_or_else(|| {
+            self.accounts()?.get(0).cloned().ok_or(BlockchainError::NoSignerAvailable)
+        })?;
+
+        let (nonce, _) = self.request_nonce(&request, from).await?;
+
+        let request = self.build_typed_tx_request(request, nonce)?;
+
+        let signer = self.get_signer(from).ok_or(BlockchainError::NoSignerAvailable)?;
+        let signature = signer.sign_transaction(request, &from)?;
         Ok(format!("0x{signature}"))
     }
 
