@@ -4,3 +4,4 @@ Running 2 tests for test/Counter.t.sol:CounterTest
 [PASS] testIncrement() (gas: 28334)
 [PASS] testSetNumber(uint256) (runs: 256, μ: 26521, ~: 28387)
 Test result: ok. 2 passed; 0 failed; 0 skipped; finished in 9.42ms
+Test suites: 1. Total passed: 2. Total failed: 0. Total skipped: 0
