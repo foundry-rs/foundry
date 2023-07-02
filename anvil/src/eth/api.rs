@@ -743,7 +743,7 @@ impl EthApi {
         Ok(format!("0x{signature}"))
     }
 
-    /// The sign method calculates an Ethereum specific signature
+    /// Signs a transaction
     ///
     /// Handler for ETH RPC call: `eth_signTransaction`
     pub async fn sign_transaction(&self, request: EthTransactionRequest) -> Result<String> {
