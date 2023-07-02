@@ -141,7 +141,7 @@ pub enum EthRequest {
     /// The sign method calculates an Ethereum specific signature with:
     #[cfg_attr(feature = "serde", serde(rename = "eth_sign"))]
     EthSign(Address, Bytes),
-    
+
     #[cfg_attr(feature = "serde", serde(rename = "eth_signTransaction"))]
     EthSignTransaction(Box<EthTransactionRequest>),
 

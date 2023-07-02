@@ -200,7 +200,9 @@ impl EthApi {
                 self.get_proof(addr, keys, block).await.to_rpc_result()
             }
             EthRequest::EthSign(addr, content) => self.sign(addr, content).await.to_rpc_result(),
-            EthRequest::EthSignTransaction(request) => self.sign_transaction(*request).await.to_rpc_result(),
+            EthRequest::EthSignTransaction(request) => {
+                self.sign_transaction(*request).await.to_rpc_result()
+            }
             EthRequest::EthSignTypedData(addr, data) => {
                 self.sign_typed_data(addr, data).await.to_rpc_result()
             }
