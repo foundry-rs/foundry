@@ -85,8 +85,10 @@ main() {
       FOUNDRYUP_TAG_QUERY="nightly"
       FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-nightly}
       FOUNDRYUP_TAG=$FOUNDRYUP_VERSION
-    else
-      FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-v1}
+    # The user has not specified neither the legacy flag, nor an specific version.
+    # Therefore we assume they want to install the latest foundry flag.
+    elif [[ -z "$FOUNDRYUP_VERSION" ]]; then
+      FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-latest}
       FOUNDRYUP_TAG=$FOUNDRYUP_VERSION
     fi
 
@@ -103,7 +105,7 @@ main() {
         FOUNDRYUP_TAG="nightly-${SHA}"
       fi
 
-    elif [[ "$FOUNDRYUP_VERSION" == v1* ]]; then
+    elif [[ "$FOUNDRYUP_VERSION" == latest* ]]; then
       # Locate latest v1 release
       FOUNDRYUP_TAG=$(ensure curl -sSf "https://api.github.com/repos/$FOUNDRYUP_REPO/releases/latest" \
         | grep -Eo '"tag_name"[^,]*' \
@@ -111,8 +113,12 @@ main() {
         | tr -d '"' \
         | tr -d ' ' \
         | cut -d ':' -f2 )
+    elif [[ "$FOUNDRYUP_VERSION" == "v"* ]]; then
+      FOUNDRYUP_TAG="${FOUNDRYUP_VERSION}"
+    # Try to match an user inputting just the semver tag, without v
     elif [[ "$FOUNDRYUP_VERSION" == [[:digit:]]* ]]; then
       FOUNDRYUP_TAG="v${FOUNDRYUP_VERSION}"
+      FOUNDRYUP_VERSION="v${FOUNDRYUP_VERSION}"
     fi
 
     say "installing foundry (version ${FOUNDRYUP_VERSION}, tag ${FOUNDRYUP_TAG})"
@@ -154,7 +160,7 @@ main() {
     if [[ "$FOUNDRYUP_VERSION" == "nightly" ]]; then
       BIN_ARCHIVE_URL="${RELEASE_URL}foundry_${FOUNDRYUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.$EXT"
       MAN_TARBALL_URL="${RELEASE_URL}foundry_man_${FOUNDRYUP_VERSION}.tar.gz"
-    elif [[ "$FOUNDRYUP_VERSION" == "v1" ]]; then
+    elif [[ "$FOUNDRYUP_VERSION" == "latest" || "$FOUNDRYUP_VERSION" == "v"* ]]; then
       BIN_ARCHIVE_URL="${RELEASE_URL}foundry_${FOUNDRYUP_TAG}_${PLATFORM}_${ARCHITECTURE}.$EXT"
       MAN_TARBALL_URL="${RELEASE_URL}foundry_man_${FOUNDRYUP_TAG}.tar.gz"
     fi
