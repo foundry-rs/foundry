@@ -450,7 +450,10 @@ impl<'a> ContractRunner<'a> {
             InvariantContract { address, invariant_functions: functions, abi: self.contract };
 
         let Ok(InvariantFuzzTestResult { invariants, cases, reverts, mut last_call_results }) =
-            evm.invariant_fuzz(invariant_contract) else { return vec![] };
+            evm.invariant_fuzz(invariant_contract)
+        else {
+            return vec![]
+        };
 
         invariants
             .into_iter()
