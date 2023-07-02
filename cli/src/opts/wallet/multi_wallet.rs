@@ -133,7 +133,7 @@ pub struct MultiWallet {
 
     /// Use the private key from the given mnemonic index.
     ///
-    /// Used with --mnemonics.
+    /// Can be used with --mnemonics, --ledger, --aws and --trezor.
     #[clap(
         long,
         conflicts_with = "hd_paths",
