@@ -229,7 +229,7 @@ impl TestArgs {
                         opts,
                         evm_opts: self.evm_opts,
                     };
-                    utils::block_on(debugger.debug(breakpoints))?;
+                    debugger.debug(breakpoints).await?;
 
                     Ok(TestOutcome::new(results, self.allow_failure))
                 }
