@@ -463,6 +463,22 @@ fn short_test_result(name: &str, result: &TestResult) {
     println!("{status} {name} {}", result.kind.report());
 }
 
+/**
+ * Formats the aggregated summary of all test suites into a string (for printing)
+ */
+fn format_aggregated_summary(
+    num_test_suites: usize,
+    total_passed: usize,
+    total_failed: usize,
+    total_skipped: usize,
+) -> String {
+    let total_tests = total_passed + total_failed + total_skipped;
+    format!(
+        "Ran {} test suites: {} tests passed, {} failed, {} skipped ({} total tests)",
+        num_test_suites, total_passed, total_failed, total_skipped, total_tests
+    )
+}
+
 /// Lists all matching tests
 fn list(
     runner: MultiContractRunner,
@@ -541,6 +557,10 @@ async fn test(
         let mut gas_report = GasReport::new(config.gas_reports, config.gas_reports_ignore);
         let sig_identifier =
             SignaturesIdentifier::new(Config::foundry_cache_dir(), config.offline)?;
+
+        let mut total_passed = 0;
+        let mut total_failed = 0;
+        let mut total_skipped = 0;
 
         'outer: for (contract_name, suite_result) in rx {
             results.insert(contract_name.clone(), suite_result.clone());
@@ -633,11 +653,30 @@ async fn test(
             }
             let block_outcome =
                 TestOutcome::new([(contract_name, suite_result)].into(), allow_failure);
+
+            total_passed += block_outcome.successes().count();
+            total_failed += block_outcome.failures().count();
+            total_skipped += block_outcome.skips().count();
+
             println!("{}", block_outcome.summary());
         }
 
         if gas_reporting {
             println!("{}", gas_report.finalize());
+        }
+
+        let num_test_suites = results.len();
+
+        if num_test_suites > 0 {
+            println!(
+                "{}",
+                format_aggregated_summary(
+                    num_test_suites,
+                    total_passed,
+                    total_failed,
+                    total_skipped
+                )
+            );
         }
 
         // reattach the thread
