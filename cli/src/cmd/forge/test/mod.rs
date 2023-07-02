@@ -672,7 +672,12 @@ fn test(
         if num_test_suites > 0 {
             println!(
                 "{}",
-                format_aggregated_summary(num_test_suites, total_passed, total_failed, total_skipped)
+                format_aggregated_summary(
+                    num_test_suites,
+                    total_passed,
+                    total_failed,
+                    total_skipped
+                )
             );
         }
 
