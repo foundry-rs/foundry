@@ -476,7 +476,7 @@ fn format_aggregated_summary(
     total_skipped: usize,
 ) -> String {
     let total_tests = total_passed + total_failed + total_skipped;
-    return format!(
+    format!(
         "Ran {} test suites. {} tests passed, {} failed, {} skipped ({} total tests)",
         num_test_suites, total_passed, total_failed, total_skipped, total_tests
     )
