@@ -133,11 +133,10 @@ pub struct MultiWallet {
 
     /// Use the private key from the given mnemonic index.
     ///
-    /// Used with --mnemonics.
+    /// Can be used with --mnemonics, --ledger, --aws and --trezor.
     #[clap(
         long,
         conflicts_with = "hd_paths",
-        requires = "mnemonics",
         help_heading = "Wallet options - raw",
         default_value = "0",
         value_name = "INDEXES"
@@ -458,5 +457,36 @@ mod tests {
             wallets[0].address(),
             "ec554aeafe75601aaab43bd4621a22284db566c2".parse().unwrap()
         );
+    }
+
+    // https://github.com/foundry-rs/foundry/issues/5179
+    #[test]
+    fn should_not_require_the_mnemonics_flag_with_mnemonic_indexes() {
+        let wallet_options = vec![
+            ("ledger", "--mnemonic-indexes", 1),
+            ("trezor", "--mnemonic-indexes", 2),
+            ("aws", "--mnemonic-indexes", 10),
+        ];
+
+        for test_case in wallet_options {
+            let args: MultiWallet = MultiWallet::parse_from([
+                "foundry-cli",
+                &format!("--{}", test_case.0),
+                test_case.1,
+                &test_case.2.to_string(),
+            ]);
+
+            match test_case.0 {
+                "ledger" => assert!(args.ledger),
+                "trezor" => assert!(args.trezor),
+                "aws" => assert!(args.aws),
+                _ => panic!("Should have matched one of the previous wallet options"),
+            }
+
+            assert_eq!(
+                args.mnemonic_indexes.expect("--mnemonic-indexes should have been set")[0],
+                test_case.2
+            )
+        }
     }
 }
