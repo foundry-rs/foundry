@@ -109,8 +109,7 @@ impl ScriptRunner {
                     script_wallets,
                     ..
                 }) => {
-                    traces
-                        .extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
+                    traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
                     logs.extend_from_slice(&setup_logs);
 
                     self.maybe_correct_nonce(sender_nonce, libraries.len())?;
@@ -136,8 +135,7 @@ impl ScriptRunner {
                         script_wallets,
                         ..
                     } = *err;
-                    traces
-                        .extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
+                    traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
                     logs.extend_from_slice(&setup_logs);
 
                     self.maybe_correct_nonce(sender_nonce, libraries.len())?;
