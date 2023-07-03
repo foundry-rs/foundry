@@ -461,7 +461,7 @@ pub enum Subcommands {
     /// Defaults to decoding output data. To decode input data pass --input.
     ///
     /// When passing `--input`, function selector must NOT be prefixed in `calldata` string
-    #[clap(name = "abi-decode", visible_alias = "ad")]
+    #[clap(name = "abi-decode", visible_aliases = &["ad", "--abi-decode"])]
     AbiDecode {
         /// The function signature in the format `<name>(<in-types>)(<out-types>)`.
         sig: String,
