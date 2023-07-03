@@ -170,7 +170,7 @@ impl<'a> ContractRunner<'a> {
     /// Runs all tests for a contract whose names match the provided regular expression
     pub fn run_tests(
         mut self,
-        filter: &impl TestFilter,
+        filter: impl TestFilter,
         test_options: TestOptions,
         known_contracts: Option<&ContractsByArtifact>,
     ) -> SuiteResult {
@@ -450,7 +450,10 @@ impl<'a> ContractRunner<'a> {
             InvariantContract { address, invariant_functions: functions, abi: self.contract };
 
         let Ok(InvariantFuzzTestResult { invariants, cases, reverts, mut last_call_results }) =
-            evm.invariant_fuzz(invariant_contract) else { return vec![] };
+            evm.invariant_fuzz(invariant_contract)
+        else {
+            return vec![]
+        };
 
         invariants
             .into_iter()
@@ -537,30 +540,24 @@ impl<'a> ContractRunner<'a> {
     ) -> TestResult {
         let TestSetup { address, mut logs, mut traces, mut labeled_addresses, .. } = setup;
 
-        let skip_fuzz_config = FuzzConfig { runs: 1, ..Default::default() };
-
-        // Fuzz the test with only 1 run to check if it needs to be skipped.
-        let result =
-            FuzzedExecutor::new(&self.executor, runner.clone(), self.sender, skip_fuzz_config)
-                .fuzz(func, address, should_fail, self.errors);
-        if let Some(reason) = result.reason {
-            if matches!(reason.as_str(), "SKIPPED") {
-                return TestResult {
-                    status: TestStatus::Skipped,
-                    reason: None,
-                    decoded_logs: decode_console_logs(&logs),
-                    traces,
-                    labeled_addresses,
-                    kind: TestKind::Standard(0),
-                    ..Default::default()
-                }
-            }
-        }
-
         // Run fuzz test
         let start = Instant::now();
         let mut result = FuzzedExecutor::new(&self.executor, runner, self.sender, fuzz_config)
             .fuzz(func, address, should_fail, self.errors);
+
+        // Check the last test result and skip the test
+        // if it's marked as so.
+        if let Some("SKIPPED") = result.reason.as_deref() {
+            return TestResult {
+                status: TestStatus::Skipped,
+                reason: None,
+                decoded_logs: decode_console_logs(&logs),
+                traces,
+                labeled_addresses,
+                kind: TestKind::Standard(0),
+                ..Default::default()
+            }
+        }
 
         let kind = TestKind::Fuzz {
             median_gas: result.median_gas(false),

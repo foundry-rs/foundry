@@ -38,8 +38,8 @@ impl TestConfig {
         Self { runner, should_fail: false, filter, opts: test_opts() }
     }
 
-    pub fn filter(filter: Filter) -> Self {
-        Self { filter, ..Default::default() }
+    pub async fn filter(filter: Filter) -> Self {
+        Self::with_filter(runner().await, filter)
     }
 
     pub fn evm_spec(mut self, spec: SpecId) -> Self {
@@ -57,13 +57,12 @@ impl TestConfig {
     }
 
     /// Executes the test runner
-    pub fn test(&mut self) -> BTreeMap<String, SuiteResult> {
-        self.runner.test(&self.filter, None, self.opts.clone())
+    pub async fn test(&mut self) -> BTreeMap<String, SuiteResult> {
+        self.runner.test(&self.filter, None, self.opts.clone()).await
     }
 
-    #[track_caller]
-    pub fn run(&mut self) {
-        self.try_run().unwrap()
+    pub async fn run(&mut self) {
+        self.try_run().await.unwrap()
     }
 
     /// Executes the test case
@@ -71,8 +70,8 @@ impl TestConfig {
     /// Returns an error if
     ///    * filter matched 0 test cases
     ///    * a test results deviates from the configured `should_fail` setting
-    pub fn try_run(&mut self) -> eyre::Result<()> {
-        let suite_result = self.runner.test(&self.filter, None, self.opts.clone());
+    pub async fn try_run(&mut self) -> eyre::Result<()> {
+        let suite_result = self.runner.test(&self.filter, None, self.opts.clone()).await;
         if suite_result.is_empty() {
             eyre::bail!("empty test result");
         }
@@ -96,12 +95,6 @@ impl TestConfig {
         }
 
         Ok(())
-    }
-}
-
-impl Default for TestConfig {
-    fn default() -> Self {
-        TestConfig::new(runner())
     }
 }
 
@@ -154,46 +147,41 @@ pub fn base_runner() -> MultiContractRunnerBuilder {
 }
 
 /// Builds a non-tracing runner
-pub fn runner() -> MultiContractRunner {
+pub async fn runner() -> MultiContractRunner {
     let mut config = Config::with_root(PROJECT.root());
     config.fs_permissions = FsPermissions::new(vec![PathPermission::read_write(manifest_root())]);
-    runner_with_config(config)
+    runner_with_config(config).await
 }
 
 /// Builds a non-tracing runner
-pub fn runner_with_config(mut config: Config) -> MultiContractRunner {
+pub async fn runner_with_config(mut config: Config) -> MultiContractRunner {
     config.rpc_endpoints = rpc_endpoints();
     config.allow_paths.push(manifest_root());
 
     base_runner()
         .with_cheats_config(CheatsConfig::new(&config, &EVM_OPTS))
         .sender(config.sender)
-        .build(
-            &PROJECT.paths.root,
-            (*COMPILED).clone(),
-            EVM_OPTS.evm_env_blocking().unwrap(),
-            EVM_OPTS.clone(),
-        )
+        .build(&PROJECT.paths.root, (*COMPILED).clone(), EVM_OPTS.evm_env().await, EVM_OPTS.clone())
         .unwrap()
 }
 
 /// Builds a tracing runner
-pub fn tracing_runner() -> MultiContractRunner {
+pub async fn tracing_runner() -> MultiContractRunner {
     let mut opts = EVM_OPTS.clone();
     opts.verbosity = 5;
     base_runner()
-        .build(&PROJECT.paths.root, (*COMPILED).clone(), EVM_OPTS.evm_env_blocking().unwrap(), opts)
+        .build(&PROJECT.paths.root, (*COMPILED).clone(), EVM_OPTS.evm_env().await, opts)
         .unwrap()
 }
 
 // Builds a runner that runs against forked state
-pub fn forked_runner(rpc: &str) -> MultiContractRunner {
+pub async fn forked_runner(rpc: &str) -> MultiContractRunner {
     let mut opts = EVM_OPTS.clone();
 
     opts.env.chain_id = None; // clear chain id so the correct one gets fetched from the RPC
     opts.fork_url = Some(rpc.to_string());
 
-    let env = opts.evm_env_blocking().unwrap();
+    let env = opts.evm_env().await;
     let fork = opts.get_fork(&Default::default(), env.clone());
 
     base_runner()

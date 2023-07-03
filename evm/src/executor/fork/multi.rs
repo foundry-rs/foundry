@@ -81,16 +81,14 @@ impl MultiFork {
         (Self { handler, _shutdown }, MultiForkHandler::new(handler_rx))
     }
 
-    /// Creates a new pair and spawns the `MultiForkHandler` on a background thread
-    ///
-    /// Also returns the `JoinHandle` of the spawned thread.
-    pub fn spawn() -> Self {
+    /// Creates a new pair and spawns the `MultiForkHandler` on a background thread.
+    pub async fn spawn() -> Self {
         trace!(target: "fork::multi", "spawning multifork");
 
         let (fork, mut handler) = Self::new();
         // spawn a light-weight thread with a thread-local async runtime just for
         // sending and receiving data from the remote client(s)
-        let _ = std::thread::Builder::new()
+        std::thread::Builder::new()
             .name("multi-fork-backend-thread".to_string())
             .spawn(move || {
                 let rt = tokio::runtime::Builder::new_current_thread()
