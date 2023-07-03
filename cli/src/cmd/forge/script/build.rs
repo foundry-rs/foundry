@@ -181,7 +181,7 @@ impl ScriptArgs {
         // Merge with user provided libraries
         let mut new_libraries = Libraries::parse(&new_libraries)?;
         for (file, libraries) in libraries_addresses.libs.into_iter() {
-            new_libraries.libs.entry(file).or_default().extend(libraries.into_iter())
+            new_libraries.libs.entry(file).or_default().extend(libraries)
         }
 
         Ok(BuildOutput {

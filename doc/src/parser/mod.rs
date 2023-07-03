@@ -114,7 +114,7 @@ impl Parser {
         for comment in parse_doccomments(&self.comments, start, end) {
             match comment {
                 DocComment::Line { comment } => res.push(comment),
-                DocComment::Block { comments } => res.extend(comments.into_iter()),
+                DocComment::Block { comments } => res.extend(comments),
             }
         }
 
