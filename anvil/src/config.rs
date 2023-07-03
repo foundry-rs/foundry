@@ -71,14 +71,14 @@ pub const VERSION_MESSAGE: &str = concat!(
     ")"
 );
 
-const BANNER: &str = r#"
+const BANNER: &str = r"
                              _   _
                             (_) | |
       __ _   _ __   __   __  _  | |
      / _` | | '_ \  \ \ / / | | | |
     | (_| | | | | |  \ V /  | | | |
      \__,_| |_| |_|   \_/   |_| |_|
-"#;
+";
 
 /// Configurations of the EVM node
 #[derive(Debug, Clone)]

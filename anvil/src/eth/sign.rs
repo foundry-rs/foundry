@@ -54,7 +54,7 @@ pub struct DevSigner {
 impl DevSigner {
     pub fn new(accounts: Vec<Wallet<SigningKey>>) -> Self {
         let addresses = accounts.iter().map(|wallet| wallet.address()).collect::<Vec<_>>();
-        let accounts = addresses.iter().cloned().zip(accounts.into_iter()).collect();
+        let accounts = addresses.iter().cloned().zip(accounts).collect();
         Self { addresses, accounts }
     }
 }

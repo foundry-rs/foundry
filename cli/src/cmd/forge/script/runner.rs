@@ -81,7 +81,7 @@ impl ScriptRunner {
             .deploy(CALLER, code.0, 0u32.into(), None)
             .map_err(|err| eyre::eyre!("Failed to deploy script:\n{}", err))?;
 
-        traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)).into_iter());
+        traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)));
         self.executor.set_balance(address, self.initial_balance)?;
 
         // Optionally call the `setUp` function
@@ -109,8 +109,7 @@ impl ScriptRunner {
                     script_wallets,
                     ..
                 }) => {
-                    traces
-                        .extend(setup_traces.map(|traces| (TraceKind::Setup, traces)).into_iter());
+                    traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
                     logs.extend_from_slice(&setup_logs);
 
                     self.maybe_correct_nonce(sender_nonce, libraries.len())?;
@@ -136,8 +135,7 @@ impl ScriptRunner {
                         script_wallets,
                         ..
                     } = *err;
-                    traces
-                        .extend(setup_traces.map(|traces| (TraceKind::Setup, traces)).into_iter());
+                    traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
                     logs.extend_from_slice(&setup_logs);
 
                     self.maybe_correct_nonce(sender_nonce, libraries.len())?;
