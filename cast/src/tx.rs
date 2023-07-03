@@ -297,7 +297,7 @@ mod tests {
             _method: &str,
             _params: T,
         ) -> Result<R, Self::Error> {
-            Err(ProviderError::CustomError(format!("There is no request")))
+            Err(ProviderError::CustomError("There is no request".to_string()))
         }
     }
     #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
