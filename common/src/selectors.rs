@@ -526,7 +526,7 @@ pub fn parse_signatures(tokens: Vec<String>) -> ParsedSignatures {
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_decode_selector() {
         let sigs = decode_function_selector("0xa9059cbb").await;
         assert_eq!(sigs.unwrap()[0], "transfer(address,uint256)".to_string());
@@ -542,7 +542,7 @@ mod tests {
             .ok();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_decode_calldata() {
         let decoded = decode_calldata("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79").await;
         assert_eq!(decoded.unwrap()[0], "transfer(address,uint256)".to_string());
@@ -551,7 +551,7 @@ mod tests {
         assert_eq!(decoded.unwrap()[0], "transfer(address,uint256)".to_string());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_import_selectors() {
         let mut data = RawSelectorImportData::default();
         data.function.push("transfer(address,uint256)".to_string());
@@ -569,7 +569,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_parse_signatures() {
         let result = parse_signatures(vec!["transfer(address,uint256)".to_string()]);
         assert_eq!(
@@ -625,7 +625,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_decode_event_topic() {
         let decoded = decode_event_topic(
             "0x7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6",

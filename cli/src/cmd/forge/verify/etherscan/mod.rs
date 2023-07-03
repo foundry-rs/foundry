@@ -534,7 +534,7 @@ mod tests {
         assert!(format!("{client:?}").contains("dummykey"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn fails_on_disabled_cache_and_missing_info() {
         let temp = tempdir().unwrap();
         let root = temp.path();

@@ -312,9 +312,7 @@ impl Installer<'_> {
 
     fn git_checkout(self, dep: &Dependency, path: &Path, recurse: bool) -> Result<String> {
         // no need to checkout if there is no tag
-        let Some(mut tag) = dep.tag.clone() else {
-            return Ok(String::new())
-        };
+        let Some(mut tag) = dep.tag.clone() else { return Ok(String::new()) };
 
         let mut is_branch = false;
         // only try to match tag if current terminal is a tty

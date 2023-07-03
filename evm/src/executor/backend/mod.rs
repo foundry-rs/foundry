@@ -390,9 +390,9 @@ pub struct Backend {
 // === impl Backend ===
 
 impl Backend {
-    /// Creates a new Backend with a spawned multi fork thread
-    pub fn spawn(fork: Option<CreateFork>) -> Self {
-        Self::new(MultiFork::spawn(), fork)
+    /// Creates a new Backend with a spawned multi fork thread.
+    pub async fn spawn(fork: Option<CreateFork>) -> Self {
+        Self::new(MultiFork::spawn().await, fork)
     }
 
     /// Creates a new instance of `Backend`
@@ -435,8 +435,12 @@ impl Backend {
 
     /// Creates a new instance of `Backend` with fork added to the fork database and sets the fork
     /// as active
-    pub(crate) fn new_with_fork(id: &ForkId, fork: Fork, journaled_state: JournaledState) -> Self {
-        let mut backend = Self::spawn(None);
+    pub(crate) async fn new_with_fork(
+        id: &ForkId,
+        fork: Fork,
+        journaled_state: JournaledState,
+    ) -> Self {
+        let mut backend = Self::spawn(None).await;
         let fork_ids = backend.inner.insert_new_fork(id.clone(), fork.db, journaled_state);
         backend.inner.launched_with_fork = Some((id.clone(), fork_ids.0, fork_ids.1));
         backend.active_fork_ids = Some(fork_ids);
@@ -1752,7 +1756,10 @@ fn commit_transaction(
         let mut evm = EVM::new();
         evm.env = env;
 
-        let db = Backend::new_with_fork(fork_id, fork.clone(), journaled_state.clone());
+        let fork = fork.clone();
+        let journaled_state = journaled_state.clone();
+        let db = crate::utils::RuntimeOrHandle::new()
+            .block_on(async move { Backend::new_with_fork(fork_id, fork, journaled_state).await });
         evm.database(db);
 
         if let Some(inspector) = cheatcodes_inspector {
