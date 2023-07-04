@@ -1575,6 +1575,29 @@ forgetest_init!(can_build_skip_contracts, |prj: TestProject, mut cmd: TestComman
     assert!(out.trim().contains("No files changed, compilation skipped"), "{}", out);
 });
 
+forgetest_init!(can_build_skip_glob, |prj: TestProject, mut cmd: TestCommand| {
+    // explicitly set to run with 0.8.17 for consistent output
+    let config = Config { solc: Some("0.8.17".into()), ..Default::default() };
+    prj.write_config(config);
+    prj.inner()
+        .add_test(
+            "Foo",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.17;
+contract TestDemo {
+function test_run() external {}
+}"#,
+        )
+        .unwrap();
+    // only builds the single template contract `src/*` even if `*.t.sol` or `.s.sol` is absent
+    cmd.args(["build", "--skip", "*/test/**", "--skip", "*/script/**"]);
+
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_build_skip_glob.stdout"),
+    );
+});
+
 // checks that build --sizes includes all contracts even if unchanged
 forgetest_init!(can_build_sizes_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {
     cmd.args(["build", "--sizes"]);

@@ -2380,6 +2380,7 @@ dependencies = [
  "eyre",
  "foundry-config",
  "foundry-macros",
+ "globset",
  "is-terminal",
  "once_cell",
  "regex",
