@@ -8,9 +8,9 @@ use crate::{
     utils::b160_to_h160,
     CallKind,
 };
-use foundry_utils::error::SolError;
 use bytes::Bytes;
 use ethers::types::Address;
+use foundry_utils::error::SolError;
 use revm::{
     inspectors::GasInspector,
     interpreter::{

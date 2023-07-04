@@ -1,5 +1,5 @@
-use foundry_utils::error::SolError;
 use ethers::types::{Address, BlockId, H256, U256};
+use foundry_utils::error::SolError;
 use futures::channel::mpsc::{SendError, TrySendError};
 use std::{
     convert::Infallible,

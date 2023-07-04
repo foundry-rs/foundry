@@ -11,7 +11,6 @@ use crate::{
     },
     utils::{b160_to_h160, b256_to_h256, h160_to_b160, ru256_to_u256},
 };
-use foundry_utils::error::SolError;
 use ethers::{
     abi::{AbiDecode, AbiEncode, RawLog},
     signers::LocalWallet,
@@ -21,6 +20,7 @@ use ethers::{
     },
 };
 use foundry_common::evm::Breakpoints;
+use foundry_utils::error::SolError;
 use itertools::Itertools;
 use revm::{
     interpreter::{opcode, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},

@@ -1,14 +1,10 @@
 use super::{bail, ensure, fmt_err, Cheatcodes, Result};
-use crate::{
-    abi::HEVMCalls,
-    executor::backend::DatabaseExt,
-    utils::h160_to_b160,
-};
-use foundry_utils::error::{ERROR_PREFIX, REVERT_PREFIX};
+use crate::{abi::HEVMCalls, executor::backend::DatabaseExt, utils::h160_to_b160};
 use ethers::{
     abi::{AbiDecode, RawLog},
     types::{Address, Bytes, H160, U256},
 };
+use foundry_utils::error::{ERROR_PREFIX, REVERT_PREFIX};
 use revm::{
     interpreter::{return_ok, InstructionResult},
     primitives::Bytecode,

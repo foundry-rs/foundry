@@ -4,7 +4,7 @@ use ethers::{
 };
 use foundry_common::errors::FsPathError;
 use foundry_config::UnresolvedEnvVarError;
-use foundry_utils::error::{SolError, encode_error};
+use foundry_utils::error::{encode_error, SolError};
 use std::{borrow::Cow, fmt::Arguments};
 
 /// Type alias with a default Ok type of [`Bytes`], and default Err type of [`Error`].
