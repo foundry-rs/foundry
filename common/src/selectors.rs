@@ -196,9 +196,13 @@ impl SignEthClient {
 
     /// Fetches a function signature given the selector using sig.eth.samczsun.com
     pub async fn decode_function_selector(&self, selector: &str) -> eyre::Result<Vec<String>> {
-        let prefixed_selector = format!("0x{}", selector.strip_prefix("0x").unwrap_or(selector));
+        let stripped_selector = selector.strip_prefix("0x").unwrap_or(selector);
+        let prefixed_selector = format!("0x{}", stripped_selector);
         if prefixed_selector.len() != 10 {
-            eyre::bail!("Invalid selector: expected 8 characters (excluding 0x prefix), got {} characters (including 0x prefix).", prefixed_selector.len())
+            eyre::bail!(
+                "Invalid selector: expected 8 characters (excluding 0x prefix), got {}.",
+                stripped_selector.len()
+            )
         }
 
         self.decode_selector(&prefixed_selector[..10], SelectorType::Function).await
