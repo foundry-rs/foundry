@@ -314,6 +314,8 @@ pub struct Config {
     /// Multiple rpc endpoints and their aliases
     #[serde(default, skip_serializing_if = "RpcEndpoints::is_empty")]
     pub rpc_endpoints: RpcEndpoints,
+    /// Whether to store the referenced sources in the metadata as literal data.
+    pub use_literal_content: bool,
     /// Whether to include the metadata hash.
     ///
     /// The metadata hash is machine dependent. By default, this is set to [BytecodeHash::None] to allow for deterministic code, See: <https://docs.soliditylang.org/en/latest/metadata.html>
@@ -1003,7 +1005,11 @@ impl Config {
             optimizer,
             evm_version: Some(self.evm_version),
             libraries,
-            metadata: Some(SettingsMetadata::new(self.bytecode_hash, self.cbor_metadata)),
+            metadata: Some(SettingsMetadata {
+                use_literal_content: Some(self.use_literal_content),
+                bytecode_hash: Some(self.bytecode_hash),
+                cbor_metadata: Some(self.cbor_metadata),
+            }),
             debug: self.revert_strings.map(|revert_strings| DebuggingSettings {
                 revert_strings: Some(revert_strings),
                 debug_info: Vec::new(),
@@ -1780,6 +1786,7 @@ impl Default for Config {
             etherscan: Default::default(),
             no_storage_caching: false,
             no_rpc_rate_limit: false,
+            use_literal_content: false,
             bytecode_hash: BytecodeHash::Ipfs,
             cbor_metadata: true,
             revert_strings: None,
@@ -3227,6 +3234,7 @@ mod tests {
                 remappings = ["ds-test=lib/ds-test/"]
                 via_ir = true
                 rpc_storage_caching = { chains = [1, "optimism", 999999], endpoints = "all"}
+                use_literal_content = false
                 bytecode_hash = "ipfs"
                 cbor_metadata = true
                 revert_strings = "strip"
@@ -3260,6 +3268,7 @@ mod tests {
                         ]),
                         endpoints: CachedEndpoints::All
                     },
+                    use_literal_content: false,
                     bytecode_hash: BytecodeHash::Ipfs,
                     cbor_metadata: true,
                     revert_strings: Some(RevertStrings::Strip),
@@ -3325,6 +3334,7 @@ mod tests {
                 block_prevrandao = '0x0000000000000000000000000000000000000000000000000000000000000000'
                 block_number = 1
                 block_timestamp = 1
+                use_literal_content = false
                 bytecode_hash = 'ipfs'
                 cbor_metadata = true
                 cache = true
