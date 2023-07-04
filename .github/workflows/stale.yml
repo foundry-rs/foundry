@@ -7,7 +7,7 @@ name: Mark stale issues and pull requests
 
 on:
   schedule:
-  - cron: '00 12 * * *'
+  - cron: '00 1 * * *'
 
 jobs:
   stale:
@@ -27,5 +27,7 @@ jobs:
         days-before-pr-stale: 30
         days-before-close: 15
         exempt-issue-labels: 'P-high,T-feature,T-debt,T-meta,T-perf,T-question,good first issue'
-        stale-issue-label: 'stale'
-        stale-pr-label: 'stale'
+        stale-issue-label: 'S-stale'
+        stale-pr-label: 'S-stale'
+        exempt-all-milestones: true
+        exempt-all-assignees: true
