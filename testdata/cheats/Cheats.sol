@@ -202,6 +202,9 @@ interface Cheats {
     // Gets all the recorded logs
     function getRecordedLogs() external returns (Log[] memory);
 
+    // Gets all the logs according to specified filter
+    function getLogs(uint256, uint256, address, bytes32[] memory) external returns (Log[] memory);
+
     // Prepare an expected log with all four checks enabled.
     // Call this function, then emit an event, then call a function. Internally after the call, we check if
     // logs were emitted in the expected order with the expected topics and data.

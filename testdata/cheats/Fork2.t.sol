@@ -165,6 +165,13 @@ contract ForkTest is DSTest {
         // this will revert since `dummy` does not exists on the currently active fork
         string memory msg2 = dummy.hello();
     }
+
+    function testGetLogs() public {
+        cheats.selectFork(mainnetFork);
+        Cheats.Log[] memory logs = cheats.getLogs(0, 1000, address(0), new bytes32[](0));
+        assert(logs.length > 0);
+        // TODO add more assertions here
+    }
 }
 
 contract DummyContract {

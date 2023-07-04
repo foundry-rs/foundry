@@ -1967,6 +1967,62 @@ pub mod hevm {
                     ],
                 ),
                 (
+                    ::std::borrow::ToOwned::to_owned("getLogs"),
+                    ::std::vec![
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned("getLogs"),
+                            inputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
+                                    internal_type: ::core::option::Option::None,
+                                },
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Uint(256usize),
+                                    internal_type: ::core::option::Option::None,
+                                },
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Address,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Array(
+                                        ::std::boxed::Box::new(
+                                            ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize),
+                                        ),
+                                    ),
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            outputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Array(
+                                        ::std::boxed::Box::new(
+                                            ::ethers_core::abi::ethabi::ParamType::Tuple(
+                                                ::std::vec![
+                                                    ::ethers_core::abi::ethabi::ParamType::Array(
+                                                        ::std::boxed::Box::new(
+                                                            ::ethers_core::abi::ethabi::ParamType::FixedBytes(32usize),
+                                                        ),
+                                                    ),
+                                                    ::ethers_core::abi::ethabi::ParamType::Bytes,
+                                                ],
+                                            ),
+                                        ),
+                                    ),
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                    ],
+                ),
+                (
                     ::std::borrow::ToOwned::to_owned("getNonce"),
                     ::std::vec![
                         ::ethers_core::abi::ethabi::Function {
@@ -5530,6 +5586,21 @@ pub mod hevm {
                 .method_hash([40, 162, 73, 176], p0)
                 .expect("method not found (this should never happen)")
         }
+        ///Calls the contract's `getLogs` (0x0f784183) function
+        pub fn get_logs(
+            &self,
+            p0: ::ethers_core::types::U256,
+            p1: ::ethers_core::types::U256,
+            p2: ::ethers_core::types::Address,
+            p3: ::std::vec::Vec<[u8; 32]>,
+        ) -> ::ethers_contract::builders::ContractCall<
+            M,
+            ::std::vec::Vec<(::std::vec::Vec<[u8; 32]>, ::ethers_core::types::Bytes)>,
+        > {
+            self.0
+                .method_hash([15, 120, 65, 131], (p0, p1, p2, p3))
+                .expect("method not found (this should never happen)")
+        }
         ///Calls the contract's `getNonce` (0x2d0335ab) function
         pub fn get_nonce(
             &self,
@@ -7787,6 +7858,24 @@ pub mod hevm {
     )]
     #[ethcall(name = "getLabel", abi = "getLabel(address)")]
     pub struct GetLabelCall(pub ::ethers_core::types::Address);
+    ///Container type for all input parameters for the `getLogs` function with signature `getLogs(uint256,uint256,address,bytes32[])` and selector `0x0f784183`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "getLogs", abi = "getLogs(uint256,uint256,address,bytes32[])")]
+    pub struct GetLogsCall(
+        pub ::ethers_core::types::U256,
+        pub ::ethers_core::types::U256,
+        pub ::ethers_core::types::Address,
+        pub ::std::vec::Vec<[u8; 32]>,
+    );
     ///Container type for all input parameters for the `getNonce` function with signature `getNonce(address)` and selector `0x2d0335ab`
     #[derive(
         Clone,
@@ -9460,6 +9549,7 @@ pub mod hevm {
         GetCode(GetCodeCall),
         GetDeployedCode(GetDeployedCodeCall),
         GetLabel(GetLabelCall),
+        GetLogs(GetLogsCall),
         GetNonce(GetNonceCall),
         GetRecordedLogs(GetRecordedLogsCall),
         IsPersistent(IsPersistentCall),
@@ -9904,6 +9994,10 @@ pub mod hevm {
             if let Ok(decoded)
                 = <GetLabelCall as ::ethers_core::abi::AbiDecode>::decode(data) {
                 return Ok(Self::GetLabel(decoded));
+            }
+            if let Ok(decoded)
+                = <GetLogsCall as ::ethers_core::abi::AbiDecode>::decode(data) {
+                return Ok(Self::GetLogs(decoded));
             }
             if let Ok(decoded)
                 = <GetNonceCall as ::ethers_core::abi::AbiDecode>::decode(data) {
@@ -10558,6 +10652,7 @@ pub mod hevm {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
                 Self::GetLabel(element) => ::ethers_core::abi::AbiEncode::encode(element),
+                Self::GetLogs(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::GetNonce(element) => ::ethers_core::abi::AbiEncode::encode(element),
                 Self::GetRecordedLogs(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
@@ -10928,6 +11023,7 @@ pub mod hevm {
                 Self::GetCode(element) => ::core::fmt::Display::fmt(element, f),
                 Self::GetDeployedCode(element) => ::core::fmt::Display::fmt(element, f),
                 Self::GetLabel(element) => ::core::fmt::Display::fmt(element, f),
+                Self::GetLogs(element) => ::core::fmt::Display::fmt(element, f),
                 Self::GetNonce(element) => ::core::fmt::Display::fmt(element, f),
                 Self::GetRecordedLogs(element) => ::core::fmt::Display::fmt(element, f),
                 Self::IsPersistent(element) => ::core::fmt::Display::fmt(element, f),
@@ -11447,6 +11543,11 @@ pub mod hevm {
     impl ::core::convert::From<GetLabelCall> for HEVMCalls {
         fn from(value: GetLabelCall) -> Self {
             Self::GetLabel(value)
+        }
+    }
+    impl ::core::convert::From<GetLogsCall> for HEVMCalls {
+        fn from(value: GetLogsCall) -> Self {
+            Self::GetLogs(value)
         }
     }
     impl ::core::convert::From<GetNonceCall> for HEVMCalls {
@@ -12545,6 +12646,20 @@ pub mod hevm {
         Hash
     )]
     pub struct GetLabelReturn(pub ::std::string::String);
+    ///Container type for all return fields from the `getLogs` function with signature `getLogs(uint256,uint256,address,bytes32[])` and selector `0x0f784183`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthAbiType,
+        ::ethers_contract::EthAbiCodec,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    pub struct GetLogsReturn(
+        pub ::std::vec::Vec<(::std::vec::Vec<[u8; 32]>, ::ethers_core::types::Bytes)>,
+    );
     ///Container type for all return fields from the `getRecordedLogs` function with signature `getRecordedLogs()` and selector `0x191553a4`
     #[derive(
         Clone,

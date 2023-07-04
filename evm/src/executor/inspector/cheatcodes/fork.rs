@@ -2,12 +2,15 @@ use super::{fmt_err, Cheatcodes, Error, Result};
 use crate::{
     abi::HEVMCalls,
     executor::{backend::DatabaseExt, fork::CreateFork},
+    utils::{b160_to_h160, h160_to_b160, RuntimeOrHandle},
 };
 use ethers::{
-    abi::AbiEncode,
+    abi::{self, AbiEncode, Token, Tokenizable, Tokenize},
     prelude::U256,
-    types::{Bytes, H256},
+    providers::Middleware,
+    types::{Bytes, Filter, H256},
 };
+use foundry_common::ProviderBuilder;
 use revm::EVMData;
 
 fn empty<T>(_: T) -> Bytes {
@@ -140,6 +143,36 @@ pub fn apply<DB: DatabaseExt>(
             )
             .map(empty)
             .map_err(Into::into),
+        HEVMCalls::GetLogs(inner) => {
+            let url = data.db.active_fork_url()?;
+            if inner.0 > U256::from(u64::MAX) || inner.1 > U256::from(u64::MAX) {
+                return Some(Err(fmt_err!("Blocks in block range must be less than 2^64 - 1")));
+            }
+
+            // Taken from https://www.gakonst.com/ethers-rs/events/logs-and-filtering.html?highlight=logs#logs-and-filtering
+            let provider = ProviderBuilder::new(url).build().unwrap();
+            let filter = Filter::new()
+                .address(b160_to_h160(inner.2.into()))
+                .from_block(inner.0.as_u64())
+                .to_block(inner.1.as_u64());
+            let logs = RuntimeOrHandle::new().block_on(provider.get_logs(&filter)).unwrap();
+            println!("{} logs found!", logs.iter().len());
+            let result = abi::encode(
+                &logs
+                    .iter()
+                    .map(|entry| {
+                        Token::Tuple(vec![
+                            entry.topics.clone().into_token(),
+                            Token::Bytes(entry.data.to_vec()),
+                            h160_to_b160(entry.address).into_token(),
+                        ])
+                    })
+                    .collect::<Vec<Token>>()
+                    .into_tokens(),
+            )
+            .into();
+            Ok(result)
+        }
         _ => return None,
     };
     Some(result)
@@ -152,7 +185,7 @@ fn select_fork<DB: DatabaseExt>(
     fork_id: U256,
 ) -> Result {
     if state.broadcast.is_some() {
-        return Err(Error::SelectForkDuringBroadcast)
+        return Err(Error::SelectForkDuringBroadcast);
     }
 
     // No need to correct since the sender's nonce does not get incremented when selecting a fork.
@@ -170,7 +203,7 @@ fn create_select_fork<DB: DatabaseExt>(
     block: Option<u64>,
 ) -> Result {
     if state.broadcast.is_some() {
-        return Err(Error::SelectForkDuringBroadcast)
+        return Err(Error::SelectForkDuringBroadcast);
     }
 
     // No need to correct since the sender's nonce does not get incremented when selecting a fork.
@@ -200,7 +233,7 @@ fn create_select_fork_at_transaction<DB: DatabaseExt>(
     transaction: H256,
 ) -> Result {
     if state.broadcast.is_some() {
-        return Err(Error::SelectForkDuringBroadcast)
+        return Err(Error::SelectForkDuringBroadcast);
     }
 
     // No need to correct since the sender's nonce does not get incremented when selecting a fork.

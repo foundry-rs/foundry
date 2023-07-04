@@ -75,6 +75,7 @@ skip(bool)
 
 recordLogs()
 getRecordedLogs()(Log[])
+getLogs(uint256,uint256,address,bytes32[])(Log[])
 
 expectEmit()
 expectEmit(address)
