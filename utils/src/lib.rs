@@ -21,6 +21,7 @@ use std::{
 use tracing::trace;
 
 pub mod abi;
+pub mod error;
 pub mod glob;
 pub mod rpc;
 
