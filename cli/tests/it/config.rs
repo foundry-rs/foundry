@@ -99,6 +99,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         },
         no_storage_caching: true,
         no_rpc_rate_limit: true,
+        use_literal_content: false,
         bytecode_hash: Default::default(),
         cbor_metadata: true,
         revert_strings: Some(RevertStrings::Strip),

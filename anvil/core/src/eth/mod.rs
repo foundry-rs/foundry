@@ -142,6 +142,9 @@ pub enum EthRequest {
     #[cfg_attr(feature = "serde", serde(rename = "eth_sign"))]
     EthSign(Address, Bytes),
 
+    #[cfg_attr(feature = "serde", serde(rename = "eth_signTransaction"))]
+    EthSignTransaction(Box<EthTransactionRequest>),
+
     /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md).
     #[cfg_attr(feature = "serde", serde(rename = "eth_signTypedData"))]
     EthSignTypedData(Address, serde_json::Value),

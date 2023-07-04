@@ -5,7 +5,6 @@ use self::{
 };
 use crate::{
     abi::HEVMCalls,
-    error::SolError,
     executor::{
         backend::DatabaseExt, inspector::cheatcodes::env::RecordedLogs, CHEATCODE_ADDRESS,
         HARDHAT_CONSOLE_ADDRESS,
@@ -21,6 +20,7 @@ use ethers::{
     },
 };
 use foundry_common::evm::Breakpoints;
+use foundry_utils::error::SolError;
 use itertools::Itertools;
 use revm::{
     interpreter::{opcode, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},

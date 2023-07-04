@@ -55,7 +55,6 @@ async-trait = "0.1"
 # disk / paths
 walkdir = "2"
 dunce = "1"
-globset = "0.4"
 path-slash = "0.2"
 tempfile = "3"
 
@@ -89,6 +88,7 @@ toml = "0.7"
 serial_test = "2"
 criterion = "0.4"
 svm = { package = "svm-rs", version = "0.2", default-features = false, features = ["rustls"] }
+globset = "0.4"
 
 [features]
 default = ["rustls"]

@@ -413,7 +413,7 @@ mod tests {
 
     #[test]
     fn test_preserves_original_content_with_default_settings() -> std::fmt::Result {
-        let contents = vec![
+        let contents = [
             "simple line",
             r#"
             some 

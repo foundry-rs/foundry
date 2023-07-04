@@ -12,7 +12,7 @@ async fn test_fuzz() {
     let suite_result = runner
         .test(
             &Filter::new(".*", ".*", ".*fuzz/")
-                .exclude_tests(r#"invariantCounter|testIncrement\(address\)|testNeedle\(uint256\)"#)
+                .exclude_tests(r"invariantCounter|testIncrement\(address\)|testNeedle\(uint256\)")
                 .exclude_paths("invariant"),
             None,
             test_opts(),
