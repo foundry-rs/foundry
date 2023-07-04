@@ -1,7 +1,6 @@
 //! Various utilities to decode test results
 use crate::{
     abi::ConsoleEvents::{self, *},
-    error::ERROR_PREFIX,
     executor::inspector::cheatcodes::util::MAGIC_SKIP_BYTES,
 };
 use ethers::{
@@ -11,6 +10,7 @@ use ethers::{
     types::Log,
 };
 use foundry_common::{abi::format_token, SELECTOR_LEN};
+use foundry_utils::error::ERROR_PREFIX;
 use itertools::Itertools;
 use once_cell::sync::Lazy;
 use revm::interpreter::{return_ok, InstructionResult};

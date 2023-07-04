@@ -1,5 +1,4 @@
-use crate::error::SolError;
-
+use foundry_utils::error::SolError;
 use ethers::types::{Address, BlockId, H256, U256};
 use futures::channel::mpsc::{SendError, TrySendError};
 use std::{

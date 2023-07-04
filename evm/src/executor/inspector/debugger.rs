@@ -1,6 +1,5 @@
 use crate::{
     debug::{DebugArena, DebugNode, DebugStep, Instruction},
-    error::SolError,
     executor::{
         backend::DatabaseExt,
         inspector::utils::{gas_used, get_create_address},
@@ -9,6 +8,7 @@ use crate::{
     utils::b160_to_h160,
     CallKind,
 };
+use foundry_utils::error::SolError;
 use bytes::Bytes;
 use ethers::types::Address;
 use revm::{

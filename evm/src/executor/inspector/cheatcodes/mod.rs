@@ -5,13 +5,13 @@ use self::{
 };
 use crate::{
     abi::HEVMCalls,
-    error::SolError,
     executor::{
         backend::DatabaseExt, inspector::cheatcodes::env::RecordedLogs, CHEATCODE_ADDRESS,
         HARDHAT_CONSOLE_ADDRESS,
     },
     utils::{b160_to_h160, b256_to_h256, h160_to_b160, ru256_to_u256},
 };
+use foundry_utils::error::SolError;
 use ethers::{
     abi::{AbiDecode, AbiEncode, RawLog},
     signers::LocalWallet,

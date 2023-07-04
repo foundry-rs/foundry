@@ -9,6 +9,7 @@ keywords = ["ethereum", "web3", "evm"]
 
 [dependencies]
 foundry-abi = { path = "../abi" }
+foundry-utils = { path = "../utils" }
 foundry-common = { path = "../common" }
 foundry-config = { path = "../config" }
 foundry-macros = { path = "../macros" }
