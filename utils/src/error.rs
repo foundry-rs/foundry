@@ -1,6 +1,6 @@
 //! error handling and support
 
-use ethers::{abi::AbiEncode, types::Bytes};
+use ethers_core::{abi::AbiEncode, types::Bytes};
 use std::fmt::Display;
 
 /// Solidity revert prefix.

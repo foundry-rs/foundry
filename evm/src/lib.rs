@@ -26,8 +26,6 @@ pub mod fuzz;
 /// utils for working with revm
 pub mod utils;
 
-pub mod error;
-
 // Re-exports
 pub use ethers::types::Address;
 pub use hashbrown::{self, HashMap};
