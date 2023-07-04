@@ -6,7 +6,7 @@ use std::{fmt, str::FromStr};
 pub struct GlobMatcher {
     /// The parsed glob
     pub glob: globset::Glob,
-    /// The compiled `glob`
+    /// The compiled glob
     pub matcher: globset::GlobMatcher,
 }
 
