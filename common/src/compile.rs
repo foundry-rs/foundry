@@ -525,7 +525,7 @@ impl FromStr for SkipBuildFilter {
 impl FileFilter for SkipBuildFilter {
     /// Matches file only if the filter does not apply
     ///
-    /// This is returns the inverse of `file.name.contains(pattern)`
+    /// This is returns the inverse of `file.name.contains(pattern) || matcher.is_match(file)`
     fn is_match(&self, file: &Path) -> bool {
         fn exclude(file: &Path, pattern: &str) -> Option<bool> {
             let matcher: GlobMatcher = pattern.parse().unwrap();
@@ -553,9 +553,9 @@ mod tests {
         assert!(!SkipBuildFilter::Scripts.is_match(file));
         assert!(!SkipBuildFilter::Custom("A.s".to_string()).is_match(file));
 
-        let file = Path::new("/private/var/folders/test/Foo.sol");
+        let file = Path::new("/home/test/Foo.sol");
         assert!(!SkipBuildFilter::Custom("*/test/**".to_string()).is_match(file));
-        let file = Path::new("script/Contract.sol");
+        let file = Path::new("/home/script/Contract.sol");
         assert!(!SkipBuildFilter::Custom("*/script/**".to_string()).is_match(file));
     }
 }
