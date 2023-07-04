@@ -168,9 +168,90 @@ contract ForkTest is DSTest {
 
     function testGetLogs() public {
         cheats.selectFork(mainnetFork);
-        Cheats.Log[] memory logs = cheats.getLogs(0, 1000, address(0), new bytes32[](0));
-        assert(logs.length > 0);
-        // TODO add more assertions here
+        address weth = address(0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2);
+        bytes32 withdrawalTopic = 0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65; 
+        uint256 blockNumber = 17623835;
+
+        // getLogs call
+        // {
+        //     "jsonrpc": "2.0",
+        //     "method": "eth_getLogs",
+        //     "id": "1",
+        //     "params": [
+        //         {
+        //             "address": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+        //             "fromBlock": "0x10CEB1B",
+        //             "toBlock": "0x10CEB1B",
+        //             "topics": [
+        //                 "0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65"
+        //             ]
+        //         }
+        //     ]
+        // }
+
+        bytes32[] memory topics = new bytes32[](1);
+        topics[0] = withdrawalTopic;
+
+        Cheats.Log[] memory logs = cheats.getLogs(blockNumber, blockNumber, weth, topics);
+        assertEq(logs.length, 3);
+
+        // check that the logs are correct
+        for (uint256 i = 0; i < logs.length; i++) {
+            Cheats.Log memory log = logs[i];
+            assertEq(log.emitter, weth);
+            assertEq(log.topics.length, 2);
+            assertEq(log.topics[0], withdrawalTopic);
+            // TODO check that log.topics[1] and log.data match the response once the
+            // response is fixture-ized
+        }
+
+        /* The response from the above eth_call
+        // TODO put into a fixture
+        [
+            {
+                "address": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+                "topics": [
+                    "0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65",
+                    "0x0000000000000000000000007a250d5630b4cf539739df2c5dacb4c659f2488d"
+                ],
+                "data": "0x0000000000000000000000000000000000000000000000000186faccfe3e2bcc",
+                "blockNumber": "0x10ceb1b",
+                "transactionHash": "0xa08f7b4aaa57cb2baec601ad96878d227ae3289a8dd48df98cce30c168588ce7",
+                "transactionIndex": "0xc",
+                "blockHash": "0xe4299c95a140ddad351e9831cfb16c35cc0014e8cbd8465de2e5112847d70465",
+                "logIndex": "0x42",
+                "removed": false
+            },
+            {
+                "address": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+                "topics": [
+                    "0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65",
+                    "0x0000000000000000000000002ec705d306b51e486b1bc0d6ebee708e0661add1"
+                ],
+                "data": "0x000000000000000000000000000000000000000000000000004befaedcfaea00",
+                "blockNumber": "0x10ceb1b",
+                "transactionHash": "0x2cd5355bd917ec5c28194735ad539a4cb58e4b08815a038f6e2373290caeee1d",
+                "transactionIndex": "0x11",
+                "blockHash": "0xe4299c95a140ddad351e9831cfb16c35cc0014e8cbd8465de2e5112847d70465",
+                "logIndex": "0x56",
+                "removed": false
+            },
+            {
+                "address": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+                "topics": [
+                    "0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65",
+                    "0x0000000000000000000000007a250d5630b4cf539739df2c5dacb4c659f2488d"
+                ],
+                "data": "0x000000000000000000000000000000000000000000000000003432a29cd0ed22",
+                "blockNumber": "0x10ceb1b",
+                "transactionHash": "0x4e762d9a572084e0ec412ddf6c4e6d0b746b10e9714d4e786c13579e2e3c3187",
+                "transactionIndex": "0x16",
+                "blockHash": "0xe4299c95a140ddad351e9831cfb16c35cc0014e8cbd8465de2e5112847d70465",
+                "logIndex": "0x68",
+                "removed": false
+            }
+        ]
+        */
     }
 }
 
