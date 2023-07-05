@@ -41,6 +41,14 @@ async fn test_cheats_fork() {
     TestConfig::filter(filter).await.run().await;
 }
 
+/// Executes getLogs cheatcode
+#[tokio::test(flavor = "multi_thread")]
+async fn test_get_logs_fork() {
+    let filter = Filter::new("testGetLogs", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}Fork"))
+        .exclude_tests(".*Revert");
+    TestConfig::filter(filter).await.run().await;
+}
+
 /// Tests that we can launch in forking mode
 #[tokio::test(flavor = "multi_thread")]
 async fn test_launch_fork() {

@@ -2,7 +2,7 @@ use super::{fmt_err, Cheatcodes, Error, Result};
 use crate::{
     abi::HEVMCalls,
     executor::{backend::DatabaseExt, fork::CreateFork},
-    utils::{b160_to_h160, h160_to_b160, RuntimeOrHandle},
+    utils::{b160_to_h160, RuntimeOrHandle},
 };
 use ethers::{
     abi::{self, AbiEncode, Token, Tokenizable, Tokenize},
@@ -156,14 +156,30 @@ pub fn apply<DB: DatabaseExt>(
             // Taken from https://www.gakonst.com/ethers-rs/events/logs-and-filtering.html?highlight=logs#logs-and-filtering
             // TODO: don't use `unwrap` below
             let provider = ProviderBuilder::new(url).build().unwrap();
-            let filter = Filter::new()
+            let mut filter = Filter::new()
                 .address(b160_to_h160(inner.2.into()))
                 .from_block(inner.0.as_u64())
                 .to_block(inner.1.as_u64());
-            // TODO add topics to filter
+            for (i, item) in inner.3.iter().enumerate() {
+                match i {
+                    0 => filter = filter.topic0(U256::from(item)),
+                    1 => filter = filter.topic1(U256::from(item)),
+                    2 => filter = filter.topic2(U256::from(item)),
+                    3 => filter = filter.topic3(U256::from(item)),
+                    _ => unreachable!(),
+                };
+            }
 
             // TODO: don't use `unwrap` below
+            // If logs is empty: return empty bytes array
+            /*
+                let empty: Bytes = abi::encode(&[Token::Array(vec![])]).into();
+                return Some(Ok(empty));
+            */
+
             let logs = RuntimeOrHandle::new().block_on(provider.get_logs(&filter)).unwrap();
+            // println!("Logs: {:?}", logs);
+
             let result = abi::encode(
                 &logs
                     .iter()
@@ -171,7 +187,7 @@ pub fn apply<DB: DatabaseExt>(
                         Token::Tuple(vec![
                             entry.topics.clone().into_token(),
                             Token::Bytes(entry.data.to_vec()),
-                            h160_to_b160(entry.address).into_token(),
+                            entry.address.into_token(),
                         ])
                     })
                     .collect::<Vec<Token>>()

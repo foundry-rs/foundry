@@ -168,8 +168,8 @@ contract ForkTest is DSTest {
 
     function testGetLogs() public {
         cheats.selectFork(mainnetFork);
-        address weth = address(0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2);
-        bytes32 withdrawalTopic = 0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65; 
+        address weth = address(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
+        bytes32 withdrawalTopic = 0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65;
         uint256 blockNumber = 17623835;
 
         // getLogs call
