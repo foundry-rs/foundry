@@ -5,6 +5,7 @@ use crate::{
 use clap::Parser;
 use comfy_table::{presets::ASCII_MARKDOWN, Table};
 use ethers::{
+    abi::RawAbi,
     prelude::{
         artifacts::output_selection::{
             BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
@@ -91,7 +92,7 @@ impl Cmd for InspectArgs {
         // Match on ContractArtifactFields and Pretty Print
         match field {
             ContractArtifactField::Abi => {
-                println!("{}", serde_json::to_string_pretty(&to_value(&artifact.abi)?)?);
+                print_abi(&artifact.abi, pretty)?;
             }
             ContractArtifactField::Bytecode => {
                 let tval: Value = to_value(&artifact.bytecode)?;
@@ -200,6 +201,24 @@ impl Cmd for InspectArgs {
 
         Ok(())
     }
+}
+
+pub fn print_abi(abi: &Option<LosslessAbi>, pretty: bool) -> eyre::Result<()> {
+    if abi.is_none() {
+        eyre::bail!("Could not get abi")
+    }
+
+    let abi_json = to_value(abi)?;
+    if !pretty {
+        println!("{}", serde_json::to_string_pretty(&abi_json)?);
+        return Ok(())
+    }
+
+    let abi_json: RawAbi = serde_json::from_value(abi_json)?;
+    let source = foundry_utils::abi::abi_to_solidity(&abi_json, "")?;
+    println!("{}", source);
+
+    Ok(())
 }
 
 pub fn print_storage_layout(
