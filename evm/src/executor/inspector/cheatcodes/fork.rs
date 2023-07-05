@@ -144,19 +144,26 @@ pub fn apply<DB: DatabaseExt>(
             .map(empty)
             .map_err(Into::into),
         HEVMCalls::GetLogs(inner) => {
+            // TODO: return error if active_fork_url is None
             let url = data.db.active_fork_url()?;
             if inner.0 > U256::from(u64::MAX) || inner.1 > U256::from(u64::MAX) {
                 return Some(Err(fmt_err!("Blocks in block range must be less than 2^64 - 1")));
             }
+            if inner.3.len() > 4 {
+                return Some(Err(fmt_err!("Topics array must be less than 4 elements")));
+            }
 
             // Taken from https://www.gakonst.com/ethers-rs/events/logs-and-filtering.html?highlight=logs#logs-and-filtering
+            // TODO: don't use `unwrap` below
             let provider = ProviderBuilder::new(url).build().unwrap();
             let filter = Filter::new()
                 .address(b160_to_h160(inner.2.into()))
                 .from_block(inner.0.as_u64())
                 .to_block(inner.1.as_u64());
+            // TODO add topics to filter
+
+            // TODO: don't use `unwrap` below
             let logs = RuntimeOrHandle::new().block_on(provider.get_logs(&filter)).unwrap();
-            println!("{} logs found!", logs.iter().len());
             let result = abi::encode(
                 &logs
                     .iter()
