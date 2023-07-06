@@ -15,8 +15,8 @@ use std::{
 };
 use tracing::warn;
 
-static SELECTOR_DATABASE_URL: &str = "https://sig.eth.samczsun.com/api/v1/signatures";
-static SELECTOR_IMPORT_URL: &str = "https://sig.eth.samczsun.com/api/v1/import";
+static SELECTOR_DATABASE_URL: &str = "https://api.openchain.xyz/signature-database/v1/";
+static SELECTOR_IMPORT_URL: &str = "https://api.openchain.xyz/signature-database/v1/import";
 
 /// The standard request timeout for API requests
 const REQ_TIMEOUT: Duration = Duration::from_secs(15);
@@ -165,8 +165,8 @@ impl SignEthClient {
         // using samczsun signature database over 4byte
         // see https://github.com/foundry-rs/foundry/issues/1672
         let url = match selector_type {
-            SelectorType::Function => format!("{SELECTOR_DATABASE_URL}?function={selector}"),
-            SelectorType::Event => format!("{SELECTOR_DATABASE_URL}?event={selector}"),
+            SelectorType::Function => format!("{SELECTOR_DATABASE_URL}lookup?function={selector}"),
+            SelectorType::Event => format!("{SELECTOR_DATABASE_URL}lookup?event={selector}"),
         };
 
         let res = self.get_text(&url).await?;
