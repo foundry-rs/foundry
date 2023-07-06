@@ -517,7 +517,8 @@ impl ScriptArgs {
         Ok((func.clone(), data))
     }
 
-    /// Checks if the transaction is a deployment with either a size above the `CONTRACT_MAX_SIZE` or specified `code_size_limit`.
+    /// Checks if the transaction is a deployment with either a size above the `CONTRACT_MAX_SIZE`
+    /// or specified `code_size_limit`.
     ///
     /// If `self.broadcast` is enabled, it asks confirmation of the user. Otherwise, it just warns
     /// the user.
@@ -855,7 +856,7 @@ mod tests {
             "http://localhost:8545",
             "--broadcast",
             "--code-size-limit",
-            "50000"
+            "50000",
         ]);
         assert_eq!(args.evm_opts.env.code_size_limit, Some(50000));
     }
