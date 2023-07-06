@@ -295,15 +295,14 @@ impl SignEthClient {
             SelectorImportData::Abi(abis) => {
                 let names: Vec<String> = abis
                     .iter()
-                    .map(|abi| {
+                    .flat_map(|abi| {
                         abi.abi
                             .functions()
                             .map(|func| {
-                                func.signature().split(":").next().unwrap_or("").to_string()
+                                func.signature().split(':').next().unwrap_or("").to_string()
                             })
                             .collect::<Vec<_>>()
                     })
-                    .flatten()
                     .collect();
                 SelectorImportRequest { function: names, event: Default::default() }
             }
