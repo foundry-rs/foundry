@@ -142,7 +142,7 @@ pub enum Subcommands {
     #[clap(visible_alias = "in")]
     Inspect(inspect::InspectArgs),
 
-    /// Uploads abi of given contract to the https://sig.eth.samczsun.com
+    /// Uploads abi of given contract to the https://api.openchain.xyz
     /// function selector database.
     #[clap(visible_alias = "up")]
     UploadSelectors(UploadSelectorsArgs),
