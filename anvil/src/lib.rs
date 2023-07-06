@@ -208,7 +208,7 @@ pub struct NodeHandle {
     addresses: Vec<SocketAddr>,
     /// Join handle for the Node Service
     pub node_service: JoinHandle<Result<(), NodeError>>,
-    /// Join handle for the Anvil server
+    /// Join handles (one per socket) for the Anvil server.
     pub servers: Vec<JoinHandle<Result<(), NodeError>>>,
     // The future that joins the ipc server, if any
     ipc_task: Option<IpcTask>,

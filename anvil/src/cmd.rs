@@ -83,7 +83,7 @@ pub struct NodeArgs {
     #[clap(long, visible_alias = "no-mine", conflicts_with = "block-time")]
     pub no_mining: bool,
 
-    /// The host the server will listen on.
+    /// The hosts the server will listen on.
     #[clap(
         long,
         value_name = "IP_ADDR",
