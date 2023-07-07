@@ -4,8 +4,6 @@ on:
     push:
       tags:
         - "v*.*.*"
-    schedule:
-      - cron: "0 0 * * *"
     # Trigger without any parameters a proactive rebuild
     workflow_dispatch: {}
     workflow_call:
