@@ -532,23 +532,21 @@ pub enum Subcommands {
         rpc: RpcOpts,
     },
 
-    /// Get the function signatures for the given selector from https://sig.eth.samczsun.com.
+    /// Get the function signatures for the given selector from https://openchain.xyz.
     #[clap(name = "4byte", visible_aliases = &["4", "4b"])]
     FourByte {
         /// The function selector.
         selector: Option<String>,
     },
 
-    /// Decode ABI-encoded calldata using https://sig.eth.samczsun.com.
+    /// Decode ABI-encoded calldata using https://openchain.xyz.
     #[clap(name = "4byte-decode", visible_aliases = &["4d", "4bd"])]
     FourByteDecode {
         /// The ABI-encoded calldata.
         calldata: Option<String>,
     },
 
-    /// Get the event signature for a given topic 0 from https://sig.
-    ///
-    /// eth.samczsun.com.
+    /// Get the event signature for a given topic 0 from https://openchain.xyz.
     #[clap(name = "4byte-event", visible_aliases = &["4e", "4be"])]
     FourByteEvent {
         /// Topic 0
@@ -556,7 +554,7 @@ pub enum Subcommands {
         topic: Option<String>,
     },
 
-    /// Upload the given signatures to https://sig.eth.samczsun.com.
+    /// Upload the given signatures to https://openchain.xyz.
     ///
     /// Example inputs:
     /// - "transfer(address,uint256)"
@@ -574,13 +572,13 @@ pub enum Subcommands {
 
     /// Pretty print calldata.
     ///
-    /// Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline is passed.
+    /// Tries to decode the calldata using https://openchain.xyz unless --offline is passed.
     #[clap(visible_alias = "pc")]
     PrettyCalldata {
         /// The calldata.
         calldata: Option<String>,
 
-        /// Skip the https://sig.eth.samczsun.com lookup.
+        /// Skip the https://openchain.xyz lookup.
         #[clap(long, short)]
         offline: bool,
     },
