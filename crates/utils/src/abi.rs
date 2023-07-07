@@ -343,9 +343,7 @@ mod tests {
         ))
         .unwrap();
         pretty_assertions::assert_eq!(
-            include_str!(
-                "../../testdata/fixtures/SolidityGeneration/GeneratedNamedInterface.sol"
-            ),
+            include_str!("../../testdata/fixtures/SolidityGeneration/GeneratedNamedInterface.sol"),
             abi_to_solidity(&contract_abi, "test").unwrap()
         );
         pretty_assertions::assert_eq!(
@@ -363,9 +361,7 @@ mod tests {
         ))
         .unwrap();
         pretty_assertions::assert_eq!(
-            include_str!(
-                "../../testdata/fixtures/SolidityGeneration/GeneratedGaugeController.sol"
-            ),
+            include_str!("../../testdata/fixtures/SolidityGeneration/GeneratedGaugeController.sol"),
             abi_to_solidity(&contract_abi, "test").unwrap()
         );
     }
