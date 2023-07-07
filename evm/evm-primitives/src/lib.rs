@@ -1,3 +1,5 @@
+#[macro_use]
+extern crate tracing;
 /// Debugger data structures
 pub mod debug;
 
@@ -8,9 +10,21 @@ pub mod utils;
 
 pub mod abi;
 
+/// Coverage data structures
+pub mod coverage;
+
+/// Invariant data structures
+pub mod invariant;
+
+/// Fuzz data structures
+pub mod fuzz;
+
+/// Important EVM runtime-related primitive types
+pub mod types;
+
 // Re-exports
 pub use ethers::types::Address;
-use ethers::types::{H160, ActionType, CallType};
+use ethers::types::{ActionType, CallType, H160};
 pub use hashbrown::{self, HashMap};
 pub use revm;
 use revm::interpreter::{CallScheme, CreateScheme};

@@ -15,6 +15,7 @@ foundry-config = { path = "../../config" }
 foundry-macros = { path = "../../macros" }
 
 ethers = { workspace = true, features = ["ethers-solc"] }
+ethers-core = { workspace = true }
 
 # Encoding/decoding
 serde_json = "1"

@@ -13,6 +13,7 @@ foundry-utils = { path = "../utils" }
 foundry-common = { path = "../common" }
 foundry-config = { path = "../config" }
 foundry-macros = { path = "../macros" }
+foundry-evm-inspectors = { path = "./evm-inspectors" }
 
 ethers = { workspace = true, features = ["ethers-solc"] }
 
