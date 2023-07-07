@@ -754,7 +754,7 @@ forgetest_async!(
         let run_log = re.replace_all(&run_log, "");
 
         // Clean up carriage return OS differences
-        let re = Regex::new(r#"\\r\\n"#).unwrap();
+        let re = Regex::new(r"\\r\\n").unwrap();
         let fixtures_log = re.replace_all(&fixtures_log, "\n");
         let run_log = re.replace_all(&run_log, "\n");
 
