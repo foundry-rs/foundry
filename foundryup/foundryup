@@ -78,7 +78,7 @@ main() {
   FOUNDRYUP_REPO=${FOUNDRYUP_REPO:-foundry-rs/foundry}
 
   # Install by downloading binaries
-  if [[ "$FOUNDRYUP_REPO" == "SygilGroup/foundry" && -z "$FOUNDRYUP_BRANCH" && -z "$FOUNDRYUP_COMMIT" ]]; then
+  if [[ "$FOUNDRYUP_REPO" == "foundry-rs/foundry" && -z "$FOUNDRYUP_BRANCH" && -z "$FOUNDRYUP_COMMIT" ]]; then
 
     # If the user has specified the "legacy" tag, we should install the latest nightly binary released before v1.
     if [[ "$FOUNDRYUP_LEGACY" == true ]]; then
