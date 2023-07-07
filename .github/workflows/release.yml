@@ -4,12 +4,12 @@ on:
     push:
         tags:
             - "v*.*.*"
-    schedule:
-        - cron: "0 0 * * *"
+    # schedule:
+    #     - cron: "0 0 * * *"
     workflow_dispatch:
 
 env:
-    IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    IS_NIGHTLY: ${{ github.event_name == 'schedule' }}
     CARGO_TERM_COLOR: always
 
 jobs:
@@ -31,9 +31,11 @@ jobs:
               id: release_info
               run: |
                   if [[ $IS_NIGHTLY == true ]]; then
+                    echo "ISSUING NIGHTLY RELEASE"
                     echo "::set-output name=tag_name::nightly-${GITHUB_SHA}"
                     echo "::set-output name=release_name::Nightly ($(date '+%Y-%m-%d'))"
                   else
+                    echo "ISSUING STABLE RELEASE"
                     echo "::set-output name=tag_name::${GITHUB_REF_NAME}"
                     echo "::set-output name=release_name::${GITHUB_REF_NAME}"
                   fi
@@ -213,27 +215,3 @@ jobs:
               with:
                   update_existing: true
                   filename: .github/RELEASE_FAILURE_ISSUE_TEMPLATE.md
-
-    cleanup:
-        name: Release cleanup
-        runs-on: ubuntu-20.04
-        needs: release
-
-        steps:
-            - uses: actions/checkout@v3
-
-            # Moves the `nightly` tag to `HEAD`
-            - name: Move nightly tag
-              if: ${{ env.IS_NIGHTLY == true }}
-              uses: actions/github-script@v5
-              with:
-                  script: |
-                      const moveTag = require('./.github/scripts/move-tag.js')
-                      await moveTag({ github, context }, 'nightly')
-
-            - name: Delete old nightlies
-              uses: actions/github-script@v5
-              with:
-                  script: |
-                      const prunePrereleases = require('./.github/scripts/prune-prereleases.js')
-                      await prunePrereleases({github, context})
