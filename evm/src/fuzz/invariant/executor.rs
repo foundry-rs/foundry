@@ -100,6 +100,7 @@ impl<'a> InvariantExecutor<'a> {
                 &blank_executor.borrow(),
                 &[],
                 &mut failures.borrow_mut(),
+                self.config.shrink_sequence,
             )
             .ok(),
         );
@@ -562,7 +563,9 @@ fn can_continue(
 ) -> (bool, Option<BTreeMap<String, RawCallResult>>) {
     let mut call_results = None;
     if !call_result.reverted {
-        call_results = assert_invariants(invariant_contract, executor, calldata, failures).ok();
+        call_results =
+            assert_invariants(invariant_contract, executor, calldata, failures, shrink_sequence)
+                .ok();
         if call_results.is_none() {
             return (false, None)
         }
