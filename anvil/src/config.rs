@@ -713,7 +713,7 @@ impl NodeConfig {
     /// Sets the host the server will listen on
     #[must_use]
     pub fn with_host(mut self, host: Vec<IpAddr>) -> Self {
-        self.host = host;
+        self.host = if host.is_empty() { vec![IpAddr::V4(Ipv4Addr::LOCALHOST)] } else { host };
         self
     }
 
