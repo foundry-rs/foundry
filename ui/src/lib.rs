@@ -364,26 +364,10 @@ impl Tui {
 
     fn draw_footer<B: Backend>(f: &mut Frame<B>, area: Rect) {
         let block_controls = Block::default();
-        let dim = Style::default().add_modifier(Modifier::DIM);
-
-        let _text_output = vec![
-            Spans::from(
-                Span::styled(
-                    "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end",
-                    dim,
-                ),
-            ),
-            Spans::from(
-                Span::styled(
-                    "[t]: stack labels | [m]: memory decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll memory | ['<char>]: goto breakpoint | [h] close help",
-                    dim,
-                )
-            )
-        ];
 
         let text_output = Text::from(Span::styled(
             "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end\n
-[t]: stack labels | [m]: memory decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll memory | ['<char>]: goto breakpoint",
+[t]: stack labels | [m]: memory decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll memory | ['<char>]: goto breakpoint | [h] close help",
             Style::default().add_modifier(Modifier::DIM),
         ));
 
