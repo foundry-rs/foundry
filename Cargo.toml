@@ -14,6 +14,8 @@ members = [
     "config",
     "doc",
     "evm",
+    "evm/evm-inspectors",
+    "evm/evm-primitives",
     "fmt",
     "forge",
     "macros",
