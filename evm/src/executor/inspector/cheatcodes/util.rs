@@ -12,7 +12,11 @@ use ethers::{
     abi::{AbiEncode, Address, ParamType, Token},
     core::k256::elliptic_curve::Curve,
     prelude::{
-        k256::{ecdsa::SigningKey, elliptic_curve::bigint::Encoding, Secp256k1},
+        k256::{
+            ecdsa::SigningKey,
+            elliptic_curve::{bigint::Encoding, sec1::ToEncodedPoint},
+            Secp256k1,
+        },
         LocalWallet, Signer, H160, *,
     },
     signers::{
@@ -23,7 +27,7 @@ use ethers::{
         MnemonicBuilder,
     },
     types::{transaction::eip2718::TypedTransaction, NameOrAddress, H256, U256},
-    utils,
+    utils::{self, keccak256},
 };
 use foundry_common::{fmt::*, RpcUrl};
 use revm::{
@@ -118,6 +122,20 @@ fn sign(private_key: U256, digest: H256, chain_id: U256) -> Result {
     sig.s.to_big_endian(&mut s_bytes);
 
     Ok((sig.v, r_bytes, s_bytes).encode().into())
+}
+
+fn create_wallet(private_key: U256) -> std::result::Result<(H160, U256, U256, U256), Error> {
+    let key = parse_private_key(private_key)?;
+    let addr = utils::secret_key_to_address(&key);
+
+    let pub_key = key.verifying_key().as_affine().to_encoded_point(false);
+    let pub_key_x = pub_key.x().ok_or("No x coordinate was found")?;
+    let pub_key_y = pub_key.y().ok_or("No y coordinate was found")?;
+
+    let pub_key_x = U256::from(pub_key_x.as_slice());
+    let pub_key_y = U256::from(pub_key_y.as_slice());
+
+    Ok((addr, pub_key_x, pub_key_y, private_key))
 }
 
 enum WordlistLang {
@@ -222,7 +240,21 @@ pub fn apply<DB: Database>(
 ) -> Option<Result> {
     Some(match call {
         HEVMCalls::Addr(inner) => addr(inner.0),
-        HEVMCalls::Sign(inner) => sign(inner.0, inner.1.into(), data.env.cfg.chain_id.into()),
+        HEVMCalls::Sign0(inner) => sign(inner.0, inner.1.into(), data.env.cfg.chain_id.into()),
+        HEVMCalls::CreateWallet0(inner) => {
+            let res = create_wallet(U256::from(keccak256(&inner.0))).unwrap();
+            state.labels.insert(res.0, inner.0.clone());
+            Ok(res.encode().into())
+        }
+        HEVMCalls::CreateWallet1(inner) => Ok(create_wallet(inner.0).unwrap().encode().into()),
+        HEVMCalls::CreateWallet2(inner) => {
+            let res = create_wallet(inner.0).unwrap();
+            state.labels.insert(res.0, inner.1.clone());
+            Ok(res.encode().into())
+        }
+        HEVMCalls::Sign1(inner) => {
+            sign(inner.0.private_key, inner.1.into(), data.env.cfg.chain_id.into())
+        }
         HEVMCalls::DeriveKey0(inner) => {
             derive_key::<English>(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1)
         }
