@@ -52,9 +52,7 @@ contract WalletTest is DSTest {
         assertEq(recovered, wallet.addr);
     }
 
-    function testSignWithWalletMessage(uint248 pk, bytes memory message)
-        public
-    {
+    function testSignWithWalletMessage(uint248 pk, bytes memory message) public {
         testSignWithWalletDigest(pk, keccak256(message));
     }
 
