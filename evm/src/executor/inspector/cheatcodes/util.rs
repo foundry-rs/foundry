@@ -124,7 +124,7 @@ fn sign(private_key: U256, digest: H256, chain_id: U256) -> Result {
     Ok((sig.v, r_bytes, s_bytes).encode().into())
 }
 
-fn create_wallet(private_key: U256) -> std::result::Result<(H160, U256, U256, U256), Error> {
+fn create_wallet(private_key: U256, label: Option<String>, state: &mut Cheatcodes) -> Result {
     let key = parse_private_key(private_key)?;
     let addr = utils::secret_key_to_address(&key);
 
@@ -135,7 +135,11 @@ fn create_wallet(private_key: U256) -> std::result::Result<(H160, U256, U256, U2
     let pub_key_x = U256::from(pub_key_x.as_slice());
     let pub_key_y = U256::from(pub_key_y.as_slice());
 
-    Ok((addr, pub_key_x, pub_key_y, private_key))
+    if let Some(label) = label {
+        state.labels.insert(addr, label);
+    }
+
+    Ok((addr, pub_key_x, pub_key_y, private_key).encode().into())
 }
 
 enum WordlistLang {
@@ -242,16 +246,10 @@ pub fn apply<DB: Database>(
         HEVMCalls::Addr(inner) => addr(inner.0),
         HEVMCalls::Sign0(inner) => sign(inner.0, inner.1.into(), data.env.cfg.chain_id.into()),
         HEVMCalls::CreateWallet0(inner) => {
-            let res = create_wallet(U256::from(keccak256(&inner.0))).unwrap();
-            state.labels.insert(res.0, inner.0.clone());
-            Ok(res.encode().into())
+            create_wallet(U256::from(keccak256(&inner.0)), Some(inner.0.clone()), state)
         }
-        HEVMCalls::CreateWallet1(inner) => Ok(create_wallet(inner.0).unwrap().encode().into()),
-        HEVMCalls::CreateWallet2(inner) => {
-            let res = create_wallet(inner.0).unwrap();
-            state.labels.insert(res.0, inner.1.clone());
-            Ok(res.encode().into())
-        }
+        HEVMCalls::CreateWallet1(inner) => create_wallet(inner.0, None, state),
+        HEVMCalls::CreateWallet2(inner) => create_wallet(inner.0, Some(inner.1.clone()), state),
         HEVMCalls::Sign1(inner) => {
             sign(inner.0.private_key, inner.1.into(), data.env.cfg.chain_id.into())
         }
