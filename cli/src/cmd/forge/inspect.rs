@@ -92,7 +92,11 @@ impl Cmd for InspectArgs {
         // Match on ContractArtifactFields and Pretty Print
         match field {
             ContractArtifactField::Abi => {
-                print_abi(&artifact.abi, pretty)?;
+                let abi = artifact
+                    .abi
+                    .as_ref()
+                    .ok_or_else(|| eyre::eyre!("Failed to fetch lossless ABI"))?;
+                print_abi(abi, pretty)?;
             }
             ContractArtifactField::Bytecode => {
                 let tval: Value = to_value(&artifact.bytecode)?;
@@ -203,11 +207,7 @@ impl Cmd for InspectArgs {
     }
 }
 
-pub fn print_abi(abi: &Option<LosslessAbi>, pretty: bool) -> eyre::Result<()> {
-    if abi.is_none() {
-        eyre::bail!("Could not get abi")
-    }
-
+pub fn print_abi(abi: &LosslessAbi, pretty: bool) -> eyre::Result<()> {
     let abi_json = to_value(abi)?;
     if !pretty {
         println!("{}", serde_json::to_string_pretty(&abi_json)?);
