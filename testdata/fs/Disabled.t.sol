@@ -2,10 +2,10 @@
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "../cheats/Cheats.sol";
+import "../cheats/Vm.sol";
 
 contract DisabledTest is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
     bytes constant FOUNDRY_READ_ERR =
         "The path \"../testdata/fixtures/File/read.txt\" is not allowed to be accessed for read operations.";
     bytes constant FOUNDRY_WRITE_ERR =
@@ -13,33 +13,33 @@ contract DisabledTest is DSTest {
 
     function testReadFile() public {
         string memory path = "../testdata/fixtures/File/read.txt";
-        cheats.expectRevert(FOUNDRY_READ_ERR);
-        cheats.readFile(path);
+        vm.expectRevert(FOUNDRY_READ_ERR);
+        vm.readFile(path);
     }
 
     function testReadLine() public {
         string memory path = "../testdata/fixtures/File/read.txt";
-        cheats.expectRevert(FOUNDRY_READ_ERR);
-        cheats.readLine(path);
+        vm.expectRevert(FOUNDRY_READ_ERR);
+        vm.readLine(path);
     }
 
     function testWriteFile() public {
         string memory path = "../testdata/fixtures/File/write_file.txt";
         string memory data = "hello writable world";
-        cheats.expectRevert(FOUNDRY_WRITE_ERR);
-        cheats.writeFile(path, data);
+        vm.expectRevert(FOUNDRY_WRITE_ERR);
+        vm.writeFile(path, data);
     }
 
     function testWriteLine() public {
         string memory path = "../testdata/fixtures/File/write_file.txt";
         string memory data = "hello writable world";
-        cheats.expectRevert(FOUNDRY_WRITE_ERR);
-        cheats.writeLine(path, data);
+        vm.expectRevert(FOUNDRY_WRITE_ERR);
+        vm.writeLine(path, data);
     }
 
     function testRemoveFile() public {
         string memory path = "../testdata/fixtures/File/write_file.txt";
-        cheats.expectRevert(FOUNDRY_WRITE_ERR);
-        cheats.removeFile(path);
+        vm.expectRevert(FOUNDRY_WRITE_ERR);
+        vm.removeFile(path);
     }
 }

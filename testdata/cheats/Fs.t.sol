@@ -2,16 +2,16 @@
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "./Cheats.sol";
+import "./Vm.sol";
 
 contract FsTest is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
     bytes constant FOUNDRY_TOML_ACCESS_ERR = "Access to foundry.toml is not allowed.";
     bytes constant FOUNDRY_READ_ERR = "The path \"/etc/hosts\" is not allowed to be accessed for read operations.";
     bytes constant FOUNDRY_READ_DIR_ERR = "The path \"/etc\" is not allowed to be accessed for read operations.";
     bytes constant FOUNDRY_WRITE_ERR = "The path \"/etc/hosts\" is not allowed to be accessed for write operations.";
 
-    function assertEntry(Cheats.DirEntry memory entry, uint64 depth, bool dir) private {
+    function assertEntry(Vm.DirEntry memory entry, uint64 depth, bool dir) private {
         assertEq(entry.errorMessage, "");
         assertEq(entry.depth, depth);
         assertEq(entry.isDir, dir);
@@ -21,185 +21,185 @@ contract FsTest is DSTest {
     function testReadFile() public {
         string memory path = "../testdata/fixtures/File/read.txt";
 
-        assertEq(cheats.readFile(path), "hello readable world\nthis is the second line!");
+        assertEq(vm.readFile(path), "hello readable world\nthis is the second line!");
 
-        cheats.expectRevert(FOUNDRY_READ_ERR);
-        cheats.readFile("/etc/hosts");
+        vm.expectRevert(FOUNDRY_READ_ERR);
+        vm.readFile("/etc/hosts");
 
-        cheats.expectRevert(FOUNDRY_READ_ERR);
-        cheats.readFileBinary("/etc/hosts");
+        vm.expectRevert(FOUNDRY_READ_ERR);
+        vm.readFileBinary("/etc/hosts");
     }
 
     function testReadLine() public {
         string memory path = "../testdata/fixtures/File/read.txt";
 
-        assertEq(cheats.readLine(path), "hello readable world");
-        assertEq(cheats.readLine(path), "this is the second line!");
-        assertEq(cheats.readLine(path), "");
+        assertEq(vm.readLine(path), "hello readable world");
+        assertEq(vm.readLine(path), "this is the second line!");
+        assertEq(vm.readLine(path), "");
 
-        cheats.expectRevert(FOUNDRY_READ_ERR);
-        cheats.readLine("/etc/hosts");
+        vm.expectRevert(FOUNDRY_READ_ERR);
+        vm.readLine("/etc/hosts");
     }
 
     function testWriteFile() public {
         string memory path = "../testdata/fixtures/File/write_file.txt";
         string memory data = "hello writable world";
-        cheats.writeFile(path, data);
+        vm.writeFile(path, data);
 
-        assertEq(cheats.readFile(path), data);
+        assertEq(vm.readFile(path), data);
 
-        cheats.removeFile(path);
+        vm.removeFile(path);
 
-        cheats.expectRevert(FOUNDRY_WRITE_ERR);
-        cheats.writeFile("/etc/hosts", "malicious stuff");
-        cheats.expectRevert(FOUNDRY_WRITE_ERR);
-        cheats.writeFileBinary("/etc/hosts", "malicious stuff");
+        vm.expectRevert(FOUNDRY_WRITE_ERR);
+        vm.writeFile("/etc/hosts", "malicious stuff");
+        vm.expectRevert(FOUNDRY_WRITE_ERR);
+        vm.writeFileBinary("/etc/hosts", "malicious stuff");
     }
 
     function testWriteLine() public {
         string memory path = "../testdata/fixtures/File/write_line.txt";
 
         string memory line1 = "first line";
-        cheats.writeLine(path, line1);
+        vm.writeLine(path, line1);
 
         string memory line2 = "second line";
-        cheats.writeLine(path, line2);
+        vm.writeLine(path, line2);
 
-        assertEq(cheats.readFile(path), string.concat(line1, "\n", line2, "\n"));
+        assertEq(vm.readFile(path), string.concat(line1, "\n", line2, "\n"));
 
-        cheats.removeFile(path);
+        vm.removeFile(path);
 
-        cheats.expectRevert(FOUNDRY_WRITE_ERR);
-        cheats.writeLine("/etc/hosts", "malicious stuff");
+        vm.expectRevert(FOUNDRY_WRITE_ERR);
+        vm.writeLine("/etc/hosts", "malicious stuff");
     }
 
     function testCloseFile() public {
         string memory path = "../testdata/fixtures/File/read.txt";
 
-        assertEq(cheats.readLine(path), "hello readable world");
-        cheats.closeFile(path);
-        assertEq(cheats.readLine(path), "hello readable world");
+        assertEq(vm.readLine(path), "hello readable world");
+        vm.closeFile(path);
+        assertEq(vm.readLine(path), "hello readable world");
     }
 
     function testRemoveFile() public {
         string memory path = "../testdata/fixtures/File/remove_file.txt";
         string memory data = "hello writable world";
 
-        cheats.writeFile(path, data);
-        assertEq(cheats.readLine(path), data);
+        vm.writeFile(path, data);
+        assertEq(vm.readLine(path), data);
 
-        cheats.removeFile(path);
-        cheats.writeLine(path, data);
-        assertEq(cheats.readLine(path), data);
+        vm.removeFile(path);
+        vm.writeLine(path, data);
+        assertEq(vm.readLine(path), data);
 
-        cheats.removeFile(path);
+        vm.removeFile(path);
 
-        cheats.expectRevert(FOUNDRY_WRITE_ERR);
-        cheats.removeFile("/etc/hosts");
+        vm.expectRevert(FOUNDRY_WRITE_ERR);
+        vm.removeFile("/etc/hosts");
     }
 
     function testWriteLineFoundrytoml() public {
-        string memory root = cheats.projectRoot();
+        string memory root = vm.projectRoot();
         string memory foundryToml = string.concat(root, "/", "foundry.toml");
-        cheats.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
-        cheats.writeLine(foundryToml, "\nffi = true\n");
+        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        vm.writeLine(foundryToml, "\nffi = true\n");
 
-        cheats.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
-        cheats.writeLine("foundry.toml", "\nffi = true\n");
+        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        vm.writeLine("foundry.toml", "\nffi = true\n");
 
-        cheats.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
-        cheats.writeLine("./foundry.toml", "\nffi = true\n");
+        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        vm.writeLine("./foundry.toml", "\nffi = true\n");
 
-        cheats.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
-        cheats.writeLine("./Foundry.toml", "\nffi = true\n");
+        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        vm.writeLine("./Foundry.toml", "\nffi = true\n");
 
-        cheats.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
-        cheats.writeLine("./../foundry.toml", "\nffi = true\n");
+        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        vm.writeLine("./../foundry.toml", "\nffi = true\n");
     }
 
     function testWriteFoundrytoml() public {
-        string memory root = cheats.projectRoot();
+        string memory root = vm.projectRoot();
         string memory foundryToml = string.concat(root, "/", "foundry.toml");
-        cheats.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
-        cheats.writeFile(foundryToml, "\nffi = true\n");
+        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        vm.writeFile(foundryToml, "\nffi = true\n");
 
-        cheats.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
-        cheats.writeFile("foundry.toml", "\nffi = true\n");
+        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        vm.writeFile("foundry.toml", "\nffi = true\n");
 
-        cheats.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
-        cheats.writeFile("./foundry.toml", "\nffi = true\n");
+        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        vm.writeFile("./foundry.toml", "\nffi = true\n");
 
-        cheats.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
-        cheats.writeFile("./Foundry.toml", "\nffi = true\n");
+        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        vm.writeFile("./Foundry.toml", "\nffi = true\n");
 
-        cheats.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
-        cheats.writeFile("./../foundry.toml", "\nffi = true\n");
+        vm.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        vm.writeFile("./../foundry.toml", "\nffi = true\n");
     }
 
     function testReadDir() public {
         string memory path = "../testdata/fixtures/Dir";
 
         {
-            Cheats.DirEntry[] memory entries = cheats.readDir(path);
+            Vm.DirEntry[] memory entries = vm.readDir(path);
             assertEq(entries.length, 2);
             assertEntry(entries[0], 1, false);
             assertEntry(entries[1], 1, true);
 
-            Cheats.DirEntry[] memory entries2 = cheats.readDir(path, 1);
+            Vm.DirEntry[] memory entries2 = vm.readDir(path, 1);
             assertEq(entries2.length, 2);
             assertEq(entries[0].path, entries2[0].path);
             assertEq(entries[1].path, entries2[1].path);
 
-            string memory contents = cheats.readFile(entries[0].path);
+            string memory contents = vm.readFile(entries[0].path);
             assertEq(contents, unicode"Wow! 😀\n");
         }
 
         {
-            Cheats.DirEntry[] memory entries = cheats.readDir(path, 2);
+            Vm.DirEntry[] memory entries = vm.readDir(path, 2);
             assertEq(entries.length, 4);
             assertEntry(entries[2], 2, false);
             assertEntry(entries[3], 2, true);
         }
 
         {
-            Cheats.DirEntry[] memory entries = cheats.readDir(path, 3);
+            Vm.DirEntry[] memory entries = vm.readDir(path, 3);
             assertEq(entries.length, 5);
             assertEntry(entries[4], 3, true);
         }
 
-        cheats.expectRevert(FOUNDRY_READ_DIR_ERR);
-        cheats.readDir("/etc");
+        vm.expectRevert(FOUNDRY_READ_DIR_ERR);
+        vm.readDir("/etc");
     }
 
     function testCreateRemoveDir() public {
         string memory path = "../testdata/fixtures/Dir/remove_dir";
         string memory child = string.concat(path, "/child");
 
-        cheats.createDir(path, false);
-        assertEq(cheats.fsMetadata(path).isDir, true);
+        vm.createDir(path, false);
+        assertEq(vm.fsMetadata(path).isDir, true);
 
-        cheats.removeDir(path, false);
-        cheats.expectRevert();
-        cheats.fsMetadata(path);
+        vm.removeDir(path, false);
+        vm.expectRevert();
+        vm.fsMetadata(path);
 
         // reverts because not recursive
-        cheats.expectRevert();
-        cheats.createDir(child, false);
+        vm.expectRevert();
+        vm.createDir(child, false);
 
-        cheats.createDir(child, true);
-        assertEq(cheats.fsMetadata(child).isDir, true);
+        vm.createDir(child, true);
+        assertEq(vm.fsMetadata(child).isDir, true);
 
         // deleted both, recursively
-        cheats.removeDir(path, true);
-        cheats.expectRevert();
-        cheats.fsMetadata(path);
-        cheats.expectRevert();
-        cheats.fsMetadata(child);
+        vm.removeDir(path, true);
+        vm.expectRevert();
+        vm.fsMetadata(path);
+        vm.expectRevert();
+        vm.fsMetadata(child);
     }
 
     function testFsMetadata() public {
         string memory path = "../testdata/fixtures/File";
-        Cheats.FsMetadata memory metadata = cheats.fsMetadata(path);
+        Vm.FsMetadata memory metadata = vm.fsMetadata(path);
         assertEq(metadata.isDir, true);
         assertEq(metadata.isSymlink, false);
         assertEq(metadata.readOnly, false);
@@ -210,23 +210,23 @@ contract FsTest is DSTest {
         // assertGt(metadata.created, 0);
 
         path = "../testdata/fixtures/File/read.txt";
-        metadata = cheats.fsMetadata(path);
+        metadata = vm.fsMetadata(path);
         assertEq(metadata.isDir, false);
 
         path = "../testdata/fixtures/File/symlink";
-        metadata = cheats.fsMetadata(path);
+        metadata = vm.fsMetadata(path);
         assertEq(metadata.isSymlink, true);
 
-        cheats.expectRevert();
-        cheats.fsMetadata("../not-found");
+        vm.expectRevert();
+        vm.fsMetadata("../not-found");
 
-        cheats.expectRevert(FOUNDRY_READ_ERR);
-        cheats.fsMetadata("/etc/hosts");
+        vm.expectRevert(FOUNDRY_READ_ERR);
+        vm.fsMetadata("/etc/hosts");
     }
 
     // not testing file cheatcodes per se
     function testCheatCodeErrorPrefix() public {
-        try cheats.readFile("/etc/hosts") {
+        try vm.readFile("/etc/hosts") {
             emit log("Error: reading /etc/hosts should revert");
             fail();
         } catch (bytes memory err) {

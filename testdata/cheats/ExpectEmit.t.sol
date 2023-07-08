@@ -2,7 +2,7 @@
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "./Cheats.sol";
+import "./Vm.sol";
 
 contract Emitter {
     uint256 public thing;
@@ -76,7 +76,7 @@ contract LowLevelCaller {
 }
 
 contract ExpectEmitTest is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
     Emitter emitter;
 
     event Something(uint256 indexed topic1, uint256 indexed topic2, uint256 indexed topic3, uint256 data);
@@ -90,11 +90,11 @@ contract ExpectEmitTest is DSTest {
     }
 
     function testFailExpectEmitDanglingNoReference() public {
-        cheats.expectEmit(false, false, false, false);
+        vm.expectEmit(false, false, false, false);
     }
 
     function testFailExpectEmitDanglingWithReference() public {
-        cheats.expectEmit(false, false, false, false);
+        vm.expectEmit(false, false, false, false);
         emit Something(1, 2, 3, 4);
     }
 
@@ -115,7 +115,7 @@ contract ExpectEmitTest is DSTest {
         uint256 transformedTopic3 = checkTopic3 ? uint256(topic3) : uint256(topic3) + 1;
         uint256 transformedData = checkData ? uint256(data) : uint256(data) + 1;
 
-        cheats.expectEmit(checkTopic1, checkTopic2, checkTopic3, checkData);
+        vm.expectEmit(checkTopic1, checkTopic2, checkTopic3, checkData);
 
         emit Something(topic1, topic2, topic3, data);
         emitter.emitEvent(transformedTopic1, transformedTopic2, transformedTopic3, transformedData);
@@ -133,14 +133,14 @@ contract ExpectEmitTest is DSTest {
         uint128 topic3,
         uint128 data
     ) public {
-        cheats.assume(checkTopic1 || checkTopic2 || checkTopic3 || checkData);
+        vm.assume(checkTopic1 || checkTopic2 || checkTopic3 || checkData);
 
         uint256 transformedTopic1 = checkTopic1 ? uint256(topic1) + 1 : uint256(topic1);
         uint256 transformedTopic2 = checkTopic2 ? uint256(topic2) + 1 : uint256(topic2);
         uint256 transformedTopic3 = checkTopic3 ? uint256(topic3) + 1 : uint256(topic3);
         uint256 transformedData = checkData ? uint256(data) + 1 : uint256(data);
 
-        cheats.expectEmit(checkTopic1, checkTopic2, checkTopic3, checkData);
+        vm.expectEmit(checkTopic1, checkTopic2, checkTopic3, checkData);
 
         emit Something(topic1, topic2, topic3, data);
         emitter.emitEvent(transformedTopic1, transformedTopic2, transformedTopic3, transformedData);
@@ -165,7 +165,7 @@ contract ExpectEmitTest is DSTest {
         uint256 transformedTopic3 = checkTopic3 ? uint256(topic3) : uint256(topic3) + 1;
         uint256 transformedData = checkData ? uint256(data) : uint256(data) + 1;
 
-        cheats.expectEmit(checkTopic1, checkTopic2, checkTopic3, checkData);
+        vm.expectEmit(checkTopic1, checkTopic2, checkTopic3, checkData);
 
         emit Something(topic1, topic2, topic3, data);
         emitter.emitNested(inner, transformedTopic1, transformedTopic2, transformedTopic3, transformedData);
@@ -183,7 +183,7 @@ contract ExpectEmitTest is DSTest {
         uint128 topic3,
         uint128 data
     ) public {
-        cheats.assume(checkTopic1 || checkTopic2 || checkTopic3 || checkData);
+        vm.assume(checkTopic1 || checkTopic2 || checkTopic3 || checkData);
         Emitter inner = new Emitter();
 
         uint256 transformedTopic1 = checkTopic1 ? uint256(topic1) + 1 : uint256(topic1);
@@ -191,16 +191,16 @@ contract ExpectEmitTest is DSTest {
         uint256 transformedTopic3 = checkTopic3 ? uint256(topic3) + 1 : uint256(topic3);
         uint256 transformedData = checkData ? uint256(data) + 1 : uint256(data);
 
-        cheats.expectEmit(checkTopic1, checkTopic2, checkTopic3, checkData);
+        vm.expectEmit(checkTopic1, checkTopic2, checkTopic3, checkData);
 
         emit Something(topic1, topic2, topic3, data);
         emitter.emitNested(inner, transformedTopic1, transformedTopic2, transformedTopic3, transformedData);
     }
 
     function testExpectEmitMultiple() public {
-        cheats.expectEmit();
+        vm.expectEmit();
         emit Something(1, 2, 3, 4);
-        cheats.expectEmit();
+        vm.expectEmit();
         emit Something(5, 6, 7, 8);
 
         emitter.emitMultiple(
@@ -209,18 +209,18 @@ contract ExpectEmitTest is DSTest {
     }
 
     function testExpectedEmitMultipleNested() public {
-        cheats.expectEmit();
+        vm.expectEmit();
         emit Something(1, 2, 3, 4);
-        cheats.expectEmit();
+        vm.expectEmit();
         emit Something(1, 2, 3, 4);
 
         emitter.emitAndNest();
     }
 
     function testExpectEmitMultipleWithArgs() public {
-        cheats.expectEmit(true, true, true, true);
+        vm.expectEmit(true, true, true, true);
         emit Something(1, 2, 3, 4);
-        cheats.expectEmit(true, true, true, true);
+        vm.expectEmit(true, true, true, true);
         emit Something(5, 6, 7, 8);
 
         emitter.emitMultiple(
@@ -229,59 +229,59 @@ contract ExpectEmitTest is DSTest {
     }
 
     function testExpectEmitCanMatchWithoutExactOrder() public {
-        cheats.expectEmit(true, true, true, true);
+        vm.expectEmit(true, true, true, true);
         emit Something(1, 2, 3, 4);
-        cheats.expectEmit(true, true, true, true);
+        vm.expectEmit(true, true, true, true);
         emit Something(1, 2, 3, 4);
 
         emitter.emitOutOfExactOrder();
     }
 
     function testFailExpectEmitCanMatchWithoutExactOrder() public {
-        cheats.expectEmit(true, true, true, true);
+        vm.expectEmit(true, true, true, true);
         emit Something(1, 2, 3, 4);
         // This should fail, as this event is never emitted
         // in between the other two Something events.
-        cheats.expectEmit(true, true, true, true);
+        vm.expectEmit(true, true, true, true);
         emit SomethingElse(1);
-        cheats.expectEmit(true, true, true, true);
+        vm.expectEmit(true, true, true, true);
         emit Something(1, 2, 3, 4);
 
         emitter.emitOutOfExactOrder();
     }
 
     function testExpectEmitCanMatchWithoutExactOrder2() public {
-        cheats.expectEmit(true, true, true, true);
+        vm.expectEmit(true, true, true, true);
         emit SomethingNonIndexed(1);
-        cheats.expectEmit(true, true, true, true);
+        vm.expectEmit(true, true, true, true);
         emit Something(1, 2, 3, 4);
 
         emitter.emitOutOfExactOrder();
     }
 
     function testExpectEmitAddress() public {
-        cheats.expectEmit(address(emitter));
+        vm.expectEmit(address(emitter));
         emit Something(1, 2, 3, 4);
 
         emitter.emitEvent(1, 2, 3, 4);
     }
 
     function testExpectEmitAddressWithArgs() public {
-        cheats.expectEmit(true, true, true, true, address(emitter));
+        vm.expectEmit(true, true, true, true, address(emitter));
         emit Something(1, 2, 3, 4);
 
         emitter.emitEvent(1, 2, 3, 4);
     }
 
     function testFailExpectEmitAddress() public {
-        cheats.expectEmit(address(0));
+        vm.expectEmit(address(0));
         emit Something(1, 2, 3, 4);
 
         emitter.emitEvent(1, 2, 3, 4);
     }
 
     function testFailExpectEmitAddressWithArgs() public {
-        cheats.expectEmit(true, true, true, true, address(0));
+        vm.expectEmit(true, true, true, true, address(0));
         emit Something(1, 2, 3, 4);
 
         emitter.emitEvent(1, 2, 3, 4);
@@ -291,7 +291,7 @@ contract ExpectEmitTest is DSTest {
     function testFailLowLevelWithoutEmit() public {
         LowLevelCaller caller = new LowLevelCaller();
 
-        cheats.expectEmit(true, true, true, true);
+        vm.expectEmit(true, true, true, true);
         emit Something(1, 2, 3, 4);
 
         // This does not emit an event, so this test should fail
@@ -301,7 +301,7 @@ contract ExpectEmitTest is DSTest {
     function testFailNoEmitDirectlyOnNextCall() public {
         LowLevelCaller caller = new LowLevelCaller();
 
-        cheats.expectEmit(true, true, true, true);
+        vm.expectEmit(true, true, true, true);
         emit Something(1, 2, 3, 4);
 
         // This call does not emit. As emit expects the next call to emit, this should fail.
@@ -312,7 +312,7 @@ contract ExpectEmitTest is DSTest {
 
     /// Ref: issue #760
     function testFailDifferentIndexedParameters() public {
-        cheats.expectEmit(true, false, false, false);
+        vm.expectEmit(true, false, false, false);
         emit SomethingElse(1);
 
         // This should fail since `SomethingElse` in the test
@@ -322,7 +322,7 @@ contract ExpectEmitTest is DSTest {
     }
 
     function testCanDoStaticCall() public {
-        cheats.expectEmit(true, true, true, true);
+        vm.expectEmit(true, true, true, true);
         emit Something(emitter.getVar(), 2, 3, 4);
 
         emitter.emitEvent(1, 2, 3, 4);
@@ -331,7 +331,7 @@ contract ExpectEmitTest is DSTest {
     /// Tests for additive behavior.
     // As long as we match the event we want in order, it doesn't matter which events are emitted afterwards.
     function testAdditiveBehavior() public {
-        cheats.expectEmit(true, true, true, true, address(emitter));
+        vm.expectEmit(true, true, true, true, address(emitter));
         emit Something(1, 2, 3, 4);
 
         emitter.emitMultiple(
@@ -342,7 +342,7 @@ contract ExpectEmitTest is DSTest {
     /// This test should fail, as the call to `changeThing` is not a static call.
     /// While we can ignore static calls, we cannot ignore normal calls.
     function testFailEmitOnlyAppliesToNextCall() public {
-        cheats.expectEmit(true, true, true, true);
+        vm.expectEmit(true, true, true, true);
         emit Something(1, 2, 3, 4);
         // This works because it's a staticcall.
         emitter.doesNothing();
@@ -361,7 +361,7 @@ contract ExpectEmitTest is DSTest {
     /// Ref: issue #1214
     /// NOTE: This is now invalid behavior.
     // function testExpectEmitIsCheckedWhenCurrentCallTerminates() public {
-    //     cheats.expectEmit(true, true, true, true);
+    //     vm.expectEmit(true, true, true, true);
     //     emitter.doesNothing();
     //     emit Something(1, 2, 3, 4);
 

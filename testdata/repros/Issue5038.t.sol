@@ -2,7 +2,7 @@
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "../cheats/Cheats.sol";
+import "../cheats/Vm.sol";
 
 struct Value {
     uint256 value;
@@ -10,7 +10,7 @@ struct Value {
 
 // https://github.com/foundry-rs/foundry/issues/5038
 contract Issue5038Test is DSTest {
-    Cheats constant vm = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testParseMaxUint64() public {
         string memory json = '{"value": 18446744073709551615}';

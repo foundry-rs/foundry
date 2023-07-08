@@ -219,15 +219,15 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     ///
     /// ```solidity
     /// function testCanDeploy() public {
-    ///    cheats.selectFork(mainnetFork);
+    ///    vm.selectFork(mainnetFork);
     ///    // contract created while on `mainnetFork`
     ///    DummyContract dummy = new DummyContract();
     ///    // this will succeed
     ///    dummy.hello();
     ///
-    ///    cheats.selectFork(optimismFork);
+    ///    vm.selectFork(optimismFork);
     ///
-    ///    cheats.expectRevert();
+    ///    vm.expectRevert();
     ///    // this will revert since `dummy` contract only exists on `mainnetFork`
     ///    dummy.hello();
     /// }

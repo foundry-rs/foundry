@@ -19,7 +19,7 @@ use std::{collections::HashMap, fs, path::PathBuf};
 use yansi::Paint;
 
 /// Solidity source for the `Vm` interface in [forge-std](https://github.com/foundry-rs/forge-std)
-static VM_SOURCE: &str = include_str!("../../testdata/cheats/Cheats.sol");
+static VM_SOURCE: &str = include_str!("../../testdata/cheats/Vm.sol");
 
 /// Intermediate output for the compiled [SessionSource]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -476,11 +476,11 @@ contract {} is Script {{
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^{major}.{minor}.{patch};
 
-import {{Cheats}} from "forge-std/Vm.sol";
+import {{Vm}} from "forge-std/Vm.sol";
 {}
 
 contract {} {{
-    Cheats internal constant vm = Cheats(address(uint160(uint256(keccak256("hevm cheat code")))));
+    Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
     {}
   
     /// @notice REPL contract entry point

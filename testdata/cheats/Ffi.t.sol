@@ -2,10 +2,10 @@
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "./Cheats.sol";
+import "./Vm.sol";
 
 contract FfiTest is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testFfi() public {
         string[] memory inputs = new string[](3);
@@ -14,7 +14,7 @@ contract FfiTest is DSTest {
         inputs[2] =
             "echo -n 0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000966666920776f726b730000000000000000000000000000000000000000000000";
 
-        bytes memory res = cheats.ffi(inputs);
+        bytes memory res = vm.ffi(inputs);
         (string memory output) = abi.decode(res, (string));
         assertEq(output, "ffi works", "ffi failed");
     }
@@ -25,7 +25,7 @@ contract FfiTest is DSTest {
         inputs[1] = "-n";
         inputs[2] = "gm";
 
-        bytes memory res = cheats.ffi(inputs);
+        bytes memory res = vm.ffi(inputs);
         assertEq(string(res), "gm");
     }
 }
