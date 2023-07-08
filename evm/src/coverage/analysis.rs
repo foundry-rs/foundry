@@ -516,55 +516,54 @@ impl SourceAnalyzer {
         // Flatten the data
         let mut flattened: HashMap<ContractId, Vec<usize>> = HashMap::new();
         for contract_id in self.contract_items.keys() {
-
             let mut item_ids: Vec<usize> = Vec::new();
 
-            // 
-            // for a specific contract (id == contract_id): 
             //
-            // self.contract_bases.get(contract_id) includes the following contracts: 
-            //   1. all the ancestors of this contract (including parent, grandparent, ... contracts)
-            //   2. the libraries **directly** used by this contract 
-            // 
-            // The missing contracts are: 
-            //   1. libraries used in ancestors of this contracts 
+            // for a specific contract (id == contract_id):
+            //
+            // self.contract_bases.get(contract_id) includes the following contracts:
+            //   1. all the ancestors of this contract (including parent, grandparent, ...
+            //      contracts)
+            //   2. the libraries **directly** used by this contract
+            //
+            // The missing contracts are:
+            //   1. libraries used in ancestors of this contracts
             //   2. libraries used in libaries (i.e libs indirectly used by this contract)
-            // 
+            //
             // We want to find out all the above contracts and libraries related to this contract.
 
-
             for contract_or_lib in {
-
-                // A set of contracts and libraries related to this contract (will include "this" contract itself)
+                // A set of contracts and libraries related to this contract (will include "this"
+                // contract itself)
                 let mut contracts_libraries: HashSet<&ContractId> = HashSet::new();
 
-                // we use a stack for depth-first search. 
+                // we use a stack for depth-first search.
                 let mut stack: Vec<&ContractId> = Vec::new();
 
                 // push "this" contract onto the stack
                 stack.push(contract_id);
 
-
-                while let Some(contract_or_lib) = stack.pop(){
-
+                while let Some(contract_or_lib) = stack.pop() {
                     // whenever a contract_or_lib is removed from the stack, it is added to the set
                     contracts_libraries.insert(contract_or_lib);
 
-                    // push all ancestors of contract_or_lib and libraries used by contract_or_lib onto the stack
+                    // push all ancestors of contract_or_lib and libraries used by contract_or_lib
+                    // onto the stack
                     if let Some(bases) = self.contract_bases.get(contract_or_lib) {
-                        stack.extend(bases.iter().filter(|base|!contracts_libraries.contains(base)));
+                        stack.extend(
+                            bases.iter().filter(|base| !contracts_libraries.contains(base)),
+                        );
                     }
-
                 }
-  
+
                 contracts_libraries
-            }{
+            } {
                 // get items of each contract or library
                 if let Some(items) = self.contract_items.get(contract_or_lib) {
                     item_ids.extend(items.iter());
                 }
             }
-            
+
             // If there are no items for this contract, then it was most likely filtered
             if !item_ids.is_empty() {
                 flattened.insert(contract_id.clone(), item_ids);
