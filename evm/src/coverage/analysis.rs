@@ -555,7 +555,7 @@ impl SourceAnalyzer {
 
                     // push all ancestors of contract_or_lib and libraries used by contract_or_lib onto the stack
                     if let Some(bases) = self.contract_bases.get(contract_or_lib) {
-                        stack.extend(bases.iter());
+                        stack.extend(bases.iter().filter(|base|!contracts_libraries.contains(base)));
                     }
 
                 }
