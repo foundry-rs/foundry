@@ -316,9 +316,8 @@ impl Backend {
     }
 
     /// If set to true will make every account impersonated
-    pub async fn auto_impersonate_account(&self, enabled: bool) -> DatabaseResult<()> {
+    pub async fn auto_impersonate_account(&self, enabled: bool) {
         self.cheats.set_auto_impersonate_account(enabled);
-        Ok(())
     }
 
     /// Returns the configured fork, if any
