@@ -311,25 +311,24 @@ impl SessionSource {
     /// source.
     pub fn compiler_input(&self) -> CompilerInput {
         let mut sources = Sources::new();
-        sources.insert(PathBuf::from("forge-std/Vm.sol"), Source::new(VM_SOURCE.to_owned()));
         sources.insert(self.file_name.clone(), Source::new(self.to_repl_source()));
+        
+        // Include Vm.sol if forge-std remapping is not available
+        if !self.config.foundry_config.get_all_remappings().into_iter().any(|r| r.name.starts_with("forge-std")) {
+            sources.insert(PathBuf::from("forge-std/Vm.sol"), Source::new(VM_SOURCE.to_owned()));
+        }
+        
         // we only care about the solidity source, so we can safely unwrap
         let mut compiler_input = CompilerInput::with_sources(sources)
             .into_iter()
             .next()
             .expect("Solidity source not found");
 
-        // get all remappings from the config so libraries can be found, but remove the forge-std
-        // remapping
-        // NOTE(mattsse): perhaps the better solution is to not add the Vm.sol
-        // file
+        // get all remappings from the config
         compiler_input.settings.remappings = self
             .config
             .foundry_config
-            .get_all_remappings()
-            .into_iter()
-            .filter(|remapping| !remapping.name.starts_with("forge-std"))
-            .collect();
+            .get_all_remappings();
 
         // We also need to enforce the EVM version that the user has specified.
         compiler_input.settings.evm_version = Some(self.config.foundry_config.evm_version);
