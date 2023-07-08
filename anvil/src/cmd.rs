@@ -197,7 +197,7 @@ impl NodeArgs {
             .with_transaction_order(self.order)
             .with_genesis(self.init)
             .with_steps_tracing(self.evm_opts.steps_tracing)
-            .with_unlocked(self.evm_opts.unlocked)
+            .with_auto_impersonate(self.evm_opts.auto_impersonate)
             .with_ipc(self.ipc)
             .with_code_size_limit(self.evm_opts.code_size_limit)
             .set_pruned_history(self.prune_history)
@@ -445,8 +445,8 @@ pub struct AnvilEvmArgs {
     pub steps_tracing: bool,
 
     /// Enable autoImpersonate on startup
-    #[clap(long, short, visible_alias = "unlocked")]
-    pub unlocked: bool,
+    #[clap(long, visible_alias = "auto-impersonate")]
+    pub auto_impersonate: bool,
 }
 
 /// Resolves an alias passed as fork-url to the matching url defined in the rpc_endpoints section
