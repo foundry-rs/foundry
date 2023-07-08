@@ -105,8 +105,7 @@ contract ParseJson is DSTest {
     }
 
     function parseJsonUint(string memory json, string memory path) public returns (uint256) {
-        bytes memory data = vm.parseJsonUint(json, path);
-        return abi.decode(data, (uint256));
+        uint data = vm.parseJsonUint(json, path);
     }
 
     function test_coercionUint() public {

@@ -20,6 +20,6 @@ contract EtchTest is DSTest {
     //     vm.expectRevert(
     //         bytes("Etch cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead")
     //     );
-    //     cheats.etch(target, code);
+    //     vm.etch(target, code);
     // }
 }

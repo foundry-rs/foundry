@@ -6,7 +6,7 @@ import "../cheats/Vm.sol";
 
 // https://github.com/foundry-rs/foundry/issues/3220
 contract Issue3220Test is DSTest {
-    Vm constant vm = vm(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
     IssueRepro repro;
 
     uint256 fork1;
