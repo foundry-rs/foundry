@@ -1384,7 +1384,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `anvil_autoImpersonateAccount`
     pub async fn anvil_auto_impersonate_account(&self, enabled: bool) -> Result<()> {
         node_info!("anvil_autoImpersonateAccount");
-        self.backend.auto_impersonate_account(enabled).await?;
+        self.backend.auto_impersonate_account(enabled).await;
         Ok(())
     }
 

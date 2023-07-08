@@ -305,8 +305,8 @@ pub enum EthRequest {
             with = "sequence"
         )
     )]
-    /// Will make every account impersonated
     StopImpersonatingAccount(Address),
+    /// Will make every account impersonated
     #[cfg_attr(
         feature = "serde",
         serde(

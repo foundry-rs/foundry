@@ -147,6 +147,8 @@ pub struct NodeConfig {
     pub ipc_path: Option<Option<String>>,
     /// Enable transaction/call steps tracing for debug calls returning geth-style traces
     pub enable_steps_tracing: bool,
+    /// Enable auto impersonation of accounts on startup
+    pub enable_auto_impersonate: bool,
     /// Configure the code size limit
     pub code_size_limit: Option<usize>,
     /// Configures how to remove historic state.
@@ -374,6 +376,7 @@ impl Default for NodeConfig {
             base_fee: None,
             enable_tracing: true,
             enable_steps_tracing: false,
+            enable_auto_impersonate: false,
             no_storage_caching: false,
             server_config: Default::default(),
             host: None,
@@ -696,6 +699,13 @@ impl NodeConfig {
     #[must_use]
     pub fn with_steps_tracing(mut self, enable_steps_tracing: bool) -> Self {
         self.enable_steps_tracing = enable_steps_tracing;
+        self
+    }
+
+    /// Sets whether to enable autoImpersonate
+    #[must_use]
+    pub fn with_auto_impersonate(mut self, enable_auto_impersonate: bool) -> Self {
+        self.enable_auto_impersonate = enable_auto_impersonate;
         self
     }
 
