@@ -515,7 +515,7 @@ impl SourceAnalyzer {
 
         // Flatten the data
         let mut flattened: HashMap<ContractId, Vec<usize>> = HashMap::new();
-        for (contract_id, _ ) in &self.contract_items {
+        for contract_id in self.contract_items.keys() {
 
             let mut item_ids: Vec<usize> = Vec::new();
 
@@ -545,10 +545,7 @@ impl SourceAnalyzer {
                 stack.push(contract_id);
 
 
-                while !stack.is_empty(){
-
-                    // pop the last element from the stack
-                    let contract_or_lib = stack.pop().unwrap();
+                while let Some(contract_or_lib) = stack.pop(){
 
                     // whenever a contract_or_lib is removed from the stack, it is added to the set
                     contracts_libraries.insert(contract_or_lib);
