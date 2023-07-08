@@ -5,50 +5,50 @@ import "ds-test/test.sol";
 import "../cheats/Vm.sol";
 
 contract FsProxy is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     function readFile(string calldata path) external returns (string memory) {
-        return cheats.readFile(path);
+        return vm.readFile(path);
     }
 
-    function readDir(string calldata path) external returns (Cheats.DirEntry[] memory) {
-        return cheats.readDir(path);
+    function readDir(string calldata path) external returns (Vm.DirEntry[] memory) {
+        return vm.readDir(path);
     }
 
     function readFileBinary(string calldata path) external returns (bytes memory) {
-        return cheats.readFileBinary(path);
+        return vm.readFileBinary(path);
     }
 
     function readLine(string calldata path) external returns (string memory) {
-        return cheats.readLine(path);
+        return vm.readLine(path);
     }
 
     function writeLine(string calldata path, string calldata data) external {
-        return cheats.writeLine(path, data);
+        return vm.writeLine(path, data);
     }
 
     function writeFile(string calldata path, string calldata data) external {
-        return cheats.writeLine(path, data);
+        return vm.writeLine(path, data);
     }
 
     function writeFileBinary(string calldata path, bytes calldata data) external {
-        return cheats.writeFileBinary(path, data);
+        return vm.writeFileBinary(path, data);
     }
 
     function removeFile(string calldata path) external {
-        return cheats.removeFile(path);
+        return vm.removeFile(path);
     }
 
-    function fsMetadata(string calldata path) external returns (Cheats.FsMetadata memory) {
-        return cheats.fsMetadata(path);
+    function fsMetadata(string calldata path) external returns (Vm.FsMetadata memory) {
+        return vm.fsMetadata(path);
     }
 
     function createDir(string calldata path) external {
-        return cheats.createDir(path, false);
+        return vm.createDir(path, false);
     }
 
     function createDir(string calldata path, bool recursive) external {
-        return cheats.createDir(path, recursive);
+        return vm.createDir(path, recursive);
     }
 }
 

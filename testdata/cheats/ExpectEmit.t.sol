@@ -399,15 +399,15 @@ contract ExpectEmitTest is DSTest {
     /// emitWindow() emits events A, B, C, D, E.
     /// We should be able to match [A, B, C, D, E] in the correct order.
     function testCanMatchConsecutiveEvents() public {
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit A(1);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit B(2);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit C(3);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit D(4);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit E(5);
 
         emitter.emitWindow();
@@ -417,11 +417,11 @@ contract ExpectEmitTest is DSTest {
     /// We should be able to match [A, C, E], as they're in the right order,
     /// even if they're not consecutive.
     function testCanMatchConsecutiveEventsSkipped() public {
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit A(1);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit C(3);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit E(5);
 
         emitter.emitWindow();
@@ -431,9 +431,9 @@ contract ExpectEmitTest is DSTest {
     /// We should be able to match [C, E], as they're in the right order,
     /// even if they're not consecutive.
     function testCanMatchConsecutiveEventsSkipped2() public {
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit C(3);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit E(5);
 
         emitter.emitWindow();
@@ -443,7 +443,7 @@ contract ExpectEmitTest is DSTest {
     /// We should be able to match [C], as it's contained in the events emitted,
     /// even if we don't match the previous or following ones.
     function testCanMatchSingleEventFromConsecutive() public {
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit C(3);
 
         emitter.emitWindow();
@@ -452,15 +452,15 @@ contract ExpectEmitTest is DSTest {
     /// emitWindow() emits events A, B, C, D, E.
     /// We should not be able to match [B, A, C, D, E] as B and A are flipped.
     function testFailCanMatchConsecutiveEvents() public {
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit B(2);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit A(1);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit C(3);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit D(4);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit E(5);
 
         emitter.emitWindow();
@@ -470,21 +470,21 @@ contract ExpectEmitTest is DSTest {
     /// We should be able to match the whole event sequence in order no matter if the events
     /// were emitted deeper into the call tree.
     function testCanMatchConsecutiveNestedEvents() public {
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit A(1);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit C(3);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit E(5);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit A(1);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit B(2);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit C(3);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit D(4);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit E(5);
 
         emitter.emitNestedWindow();
@@ -495,17 +495,17 @@ contract ExpectEmitTest is DSTest {
     /// We should be able to match [A, A, B, C, D, E] as it's all in the next call, no matter
     /// if they're emitted on subcalls at the same depth (but with correct ordering).
     function testCanMatchConsecutiveSubtreeEvents() public {
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit A(1);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit A(1);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit B(2);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit C(3);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit D(4);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit E(5);
 
         emitter.emitSplitWindow();
@@ -514,17 +514,17 @@ contract ExpectEmitTest is DSTest {
     /// emitWindowNested() emits events A, C, E, A, B, C, D, E, the last 5 on an external call.
     /// We should be able to match [A, C, E, A, C, E] in that order, as these are emitted twice.
     function testCanMatchRepeatedEvents() public {
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit A(1);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit C(3);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit E(5);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit A(1);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit C(3);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit E(5);
 
         emitter.emitNestedWindow();
@@ -534,13 +534,13 @@ contract ExpectEmitTest is DSTest {
     /// We should NOT be able to match [A, A, E, E], as while we're matching the correct amount
     /// of events, they're not in the correct order. It should be [A, E, A, E].
     function testFailMatchRepeatedEventsOutOfOrder() public {
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit A(1);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit A(1);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit E(5);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit E(5);
 
         emitter.emitNestedWindow();
@@ -550,9 +550,9 @@ contract ExpectEmitTest is DSTest {
     /// We should not be able to match [A, A] even if emitWindow() is called twice,
     /// as expectEmit() only works for the next call.
     function testFailEventsOnTwoCalls() public {
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit A(1);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit A(1);
         emitter.emitWindow();
         emitter.emitWindow();
@@ -562,9 +562,9 @@ contract ExpectEmitTest is DSTest {
     /// second call that emits [A] is on this same contract. We should still be able to match
     /// [A, A] as the call made to this contract is still external.
     function testEmitWindowAndOnTest() public {
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit A(1);
-        cheats.expectEmit(true, false, false, true);
+        vm.expectEmit(true, false, false, true);
         emit A(1);
         emitter.emitWindowAndOnTest(this);
     }
@@ -572,8 +572,8 @@ contract ExpectEmitTest is DSTest {
     /// We should not be able to expect emits if we're expecting the function reverts, no matter
     /// if the function reverts or not.
     function testFailEmitWindowWithRevertDisallowed() public {
-        cheats.expectRevert();
-        cheats.expectEmit(true, false, false, true);
+        vm.expectRevert();
+        vm.expectEmit(true, false, false, true);
         emit A(1);
         emitter.emitWindow();
     }

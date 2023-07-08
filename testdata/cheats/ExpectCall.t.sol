@@ -142,8 +142,8 @@ contract ExpectCallTest is DSTest {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
 
-        cheats.expectCall(address(target), abi.encodeWithSelector(target.forwardPay.selector));
-        cheats.expectCall(address(inner), abi.encodeWithSelector(inner.pay.selector));
+        vm.expectCall(address(target), abi.encodeWithSelector(target.forwardPay.selector));
+        vm.expectCall(address(inner), abi.encodeWithSelector(inner.pay.selector));
         this.exposed_forwardPay(target);
     }
 
@@ -153,8 +153,8 @@ contract ExpectCallTest is DSTest {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
 
-        cheats.expectCall(address(target), abi.encodeWithSelector(target.sumInPlace.selector));
-        cheats.expectCall(address(inner), abi.encodeWithSelector(inner.add.selector));
+        vm.expectCall(address(target), abi.encodeWithSelector(target.sumInPlace.selector));
+        vm.expectCall(address(inner), abi.encodeWithSelector(inner.add.selector));
         this.exposed_expectCallMultipleFunctionsFlattened(target, inner);
     }
 

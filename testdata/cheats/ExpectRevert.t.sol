@@ -85,13 +85,13 @@ contract ExpectRevertTest is DSTest {
         // expectRevert should only work for the next call. However,
         // we do not inmediately revert, so,
         // we fail.
-        cheats.expectRevert("revert");
+        vm.expectRevert("revert");
         reverter.doNotRevert();
         reverter.revertWithMessage("revert");
     }
 
     function testFailDanglingOnInternalCall() public {
-        cheats.expectRevert();
+        vm.expectRevert();
         shouldRevert();
     }
 
