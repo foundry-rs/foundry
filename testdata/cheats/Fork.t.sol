@@ -24,8 +24,7 @@ contract ForkTest is DSTest {
     // this will create two _different_ forks during setup
     function setUp() public {
         forkA = vm.createFork("https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf", mainblock);
-        forkB =
-            vm.createFork("https://eth-mainnet.alchemyapi.io/v2/9VWGraLx0tMiSWx05WH-ywgSVmMxs66W", mainblock - 1);
+        forkB = vm.createFork("https://eth-mainnet.alchemyapi.io/v2/9VWGraLx0tMiSWx05WH-ywgSVmMxs66W", mainblock - 1);
         testValue = 999;
     }
 
