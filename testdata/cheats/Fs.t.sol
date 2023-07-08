@@ -73,7 +73,7 @@ contract FsTest is DSTest {
         string memory path = "../testdata/fixtures/File/read.txt";
 
         assertEq(vm.readFile(path), "hello readable world\nthis is the second line!");
-        
+
         vm.expectRevert(FOUNDRY_READ_ERR);
         fsProxy.readFile("/etc/hosts");
 
@@ -89,7 +89,7 @@ contract FsTest is DSTest {
         assertEq(vm.readLine(path), "hello readable world");
         assertEq(vm.readLine(path), "this is the second line!");
         assertEq(vm.readLine(path), "");
-        
+
         vm.expectRevert(FOUNDRY_READ_ERR);
         fsProxy.readLine("/etc/hosts");
     }
@@ -104,12 +104,11 @@ contract FsTest is DSTest {
         assertEq(vm.readFile(path), data);
 
         vm.removeFile(path);
-        
+
         vm.expectRevert(FOUNDRY_WRITE_ERR);
         fsProxy.writeFile("/etc/hosts", "malicious stuff");
         vm.expectRevert(FOUNDRY_WRITE_ERR);
         fsProxy.writeFileBinary("/etc/hosts", "malicious stuff");
-
     }
 
     function testWriteLine() public {

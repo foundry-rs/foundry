@@ -55,7 +55,7 @@ contract FsProxy is DSTest {
 contract DefaultAccessTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
     FsProxy public fsProxy;
-    
+
     bytes constant FOUNDRY_WRITE_ERR =
         "The path \"../testdata/fixtures/File/write_file.txt\" is not allowed to be accessed for write operations.";
 
@@ -89,7 +89,7 @@ contract DefaultAccessTest is DSTest {
 
         string memory path = "../testdata/fixtures/File/write_file.txt";
         string memory data = "hello writable world";
-        
+
         vm.expectRevert(FOUNDRY_WRITE_ERR);
         fsProxy.writeLine(path, data);
     }

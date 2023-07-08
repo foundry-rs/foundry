@@ -97,12 +97,12 @@ contract ParseJson is DSTest {
         assertEq(whole.strArray[1], "there");
     }
 
-     function test_coercionRevert() public {
-         cheats.expectRevert(
-             "You can only coerce values or arrays, not JSON objects. The key '.nestedObject' returns an object"
-         );
-         uint256 number = this.parseJsonUint(json, ".nestedObject");
-     }
+    function test_coercionRevert() public {
+        cheats.expectRevert(
+            "You can only coerce values or arrays, not JSON objects. The key '.nestedObject' returns an object"
+        );
+        uint256 number = this.parseJsonUint(json, ".nestedObject");
+    }
 
     function parseJsonUint(string memory json, string memory path) public returns (uint256) {
         bytes memory data = vm.parseJsonUint(json, path);
