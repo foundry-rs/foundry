@@ -96,6 +96,10 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
 
     let backend = Arc::new(config.setup().await);
 
+    if config.enable_auto_impersonate {
+        backend.auto_impersonate_account(true).await;
+    }
+
     let fork = backend.get_fork().cloned();
 
     let NodeConfig {

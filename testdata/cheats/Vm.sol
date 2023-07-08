@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Unlicense
 pragma solidity >=0.8.0;
 
-interface Cheats {
+interface Vm {
     // Possible caller modes for readCallers()
     enum CallerMode {
         None,

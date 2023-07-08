@@ -2,7 +2,7 @@
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "../cheats/Cheats.sol";
+import "../cheats/Vm.sol";
 
 contract FsProxy is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
@@ -53,7 +53,7 @@ contract FsProxy is DSTest {
 }
 
 contract DisabledTest is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
     FsProxy public fsProxy;
 
     bytes constant FOUNDRY_READ_ERR =
@@ -65,14 +65,14 @@ contract DisabledTest is DSTest {
         fsProxy = new FsProxy();
 
         string memory path = "../testdata/fixtures/File/read.txt";
-        cheats.expectRevert(FOUNDRY_READ_ERR);
+        vm.expectRevert(FOUNDRY_READ_ERR);
         fsProxy.readFile(path);
     }
 
     function testReadLine() public {
         fsProxy = new FsProxy();
         string memory path = "../testdata/fixtures/File/read.txt";
-        cheats.expectRevert(FOUNDRY_READ_ERR);
+        vm.expectRevert(FOUNDRY_READ_ERR);
         fsProxy.readLine(path);
     }
 
@@ -80,7 +80,7 @@ contract DisabledTest is DSTest {
         fsProxy = new FsProxy();
         string memory path = "../testdata/fixtures/File/write_file.txt";
         string memory data = "hello writable world";
-        cheats.expectRevert(FOUNDRY_WRITE_ERR);
+        vm.expectRevert(FOUNDRY_WRITE_ERR);
         fsProxy.writeFile(path, data);
     }
 
@@ -88,14 +88,14 @@ contract DisabledTest is DSTest {
         fsProxy = new FsProxy();
         string memory path = "../testdata/fixtures/File/write_file.txt";
         string memory data = "hello writable world";
-        cheats.expectRevert(FOUNDRY_WRITE_ERR);
+        vm.expectRevert(FOUNDRY_WRITE_ERR);
         fsProxy.writeLine(path, data);
     }
 
     function testRemoveFile() public {
         fsProxy = new FsProxy();
         string memory path = "../testdata/fixtures/File/write_file.txt";
-        cheats.expectRevert(FOUNDRY_WRITE_ERR);
+        vm.expectRevert(FOUNDRY_WRITE_ERR);
         fsProxy.removeFile(path);
     }
 }

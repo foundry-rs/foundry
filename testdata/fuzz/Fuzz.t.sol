@@ -3,7 +3,7 @@ pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
 
-interface Cheats {
+interface Vm {
     function toString(bytes32) external returns (string memory);
 }
 
@@ -27,7 +27,7 @@ contract FuzzTest is DSTest {
     }
 
     function testToStringFuzz(bytes32 data) public {
-        Cheats cheats = Cheats(HEVM_ADDRESS);
-        cheats.toString(data);
+        Vm vm = Vm(HEVM_ADDRESS);
+        vm.toString(data);
     }
 }

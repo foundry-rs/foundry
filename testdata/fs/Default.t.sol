@@ -2,7 +2,7 @@
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "../cheats/Cheats.sol";
+import "../cheats/Vm.sol";
 
 contract FsProxy is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
@@ -53,22 +53,22 @@ contract FsProxy is DSTest {
 }
 
 contract DefaultAccessTest is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
     FsProxy public fsProxy;
-
+    
     bytes constant FOUNDRY_WRITE_ERR =
         "The path \"../testdata/fixtures/File/write_file.txt\" is not allowed to be accessed for write operations.";
 
     function testReadFile() public {
         string memory path = "../testdata/fixtures/File/read.txt";
-        cheats.readFile(path);
+        vm.readFile(path);
 
-        cheats.readFileBinary(path);
+        vm.readFileBinary(path);
     }
 
     function testReadLine() public {
         string memory path = "../testdata/fixtures/File/read.txt";
-        cheats.readLine(path);
+        vm.readLine(path);
     }
 
     function testWriteFile() public {
@@ -77,10 +77,10 @@ contract DefaultAccessTest is DSTest {
         string memory path = "../testdata/fixtures/File/write_file.txt";
         string memory data = "hello writable world";
 
-        cheats.expectRevert(FOUNDRY_WRITE_ERR);
+        vm.expectRevert(FOUNDRY_WRITE_ERR);
         fsProxy.writeFile(path, data);
 
-        cheats.expectRevert(FOUNDRY_WRITE_ERR);
+        vm.expectRevert(FOUNDRY_WRITE_ERR);
         fsProxy.writeFileBinary(path, bytes(data));
     }
 
@@ -89,8 +89,8 @@ contract DefaultAccessTest is DSTest {
 
         string memory path = "../testdata/fixtures/File/write_file.txt";
         string memory data = "hello writable world";
-
-        cheats.expectRevert(FOUNDRY_WRITE_ERR);
+        
+        vm.expectRevert(FOUNDRY_WRITE_ERR);
         fsProxy.writeLine(path, data);
     }
 
@@ -99,7 +99,7 @@ contract DefaultAccessTest is DSTest {
 
         string memory path = "../testdata/fixtures/File/write_file.txt";
 
-        cheats.expectRevert(FOUNDRY_WRITE_ERR);
+        vm.expectRevert(FOUNDRY_WRITE_ERR);
         fsProxy.removeFile(path);
     }
 }
