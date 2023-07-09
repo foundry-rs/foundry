@@ -11,8 +11,8 @@ Prior to creating a release commit and tagging it for release, we carefully test
 ## Step 2 - Create release commit
 
 Creating a release commit involves the following steps:
-- The `CHANGELOG.md` file is double-checked to be updated, and a new section indicating the new stable version is created, with the changes included.
-- This `CHANGELO.md` is committed along with the tag name, e.g `v1.0.0`.
+- Crates are version-bumped accordingly.
+- This crate bump gets committed along with the new corresponding tag, e.g `v1.0.0` or `v1.1.3`.
 
 ## Step 3 - Create tag and dispatch release workflow
 
