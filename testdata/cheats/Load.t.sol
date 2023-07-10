@@ -30,7 +30,11 @@ contract LoadTest is DSTest {
         vm.expectRevert(
             bytes("Load cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead")
         );
-        uint256 val = uint256(vm.load(address(1), bytes32(0)));
+        uint256 val = this.load(address(1), bytes32(0));
+    }
+
+    function load(address target, bytes32 slot) public returns (uint256) {
+        return uint256(vm.load(target, slot));
     }
 
     function testLoadOtherStorage() public {

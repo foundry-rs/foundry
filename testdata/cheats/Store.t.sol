@@ -33,7 +33,11 @@ contract StoreTest is DSTest {
         vm.expectRevert(
             bytes("Store cannot be used on precompile addresses (N < 10). Please use an address bigger than 10 instead")
         );
-        vm.store(address(1), bytes32(0), bytes32(uint256(1)));
+        this._store(address(1), bytes32(0), bytes32(uint256(1)));
+    }
+
+    function _store(address target, bytes32 slot, bytes32 value) public {
+        vm.store(target, slot, value);
     }
 
     function testStoreFuzzed(uint256 slot0, uint256 slot1) public {

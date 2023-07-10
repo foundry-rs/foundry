@@ -101,7 +101,11 @@ contract ParseJson is DSTest {
         vm.expectRevert(
             "You can only coerce values or arrays, not JSON objects. The key '.nestedObject' returns an object"
         );
-        uint256 number = vm.parseJsonUint(json, ".nestedObject");
+        uint256 number = this.parseJsonUint(json, ".nestedObject");
+    }
+
+    function parseJsonUint(string memory json, string memory path) public returns (uint256) {
+        uint256 data = vm.parseJsonUint(json, path);
     }
 
     function test_coercionUint() public {
