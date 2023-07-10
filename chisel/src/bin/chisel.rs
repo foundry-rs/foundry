@@ -8,7 +8,10 @@ use chisel::{
     prelude::{ChiselCommand, ChiselDispatcher, DispatchResult, SolidityHelper},
 };
 use clap::Parser;
-use foundry_cli::cmd::{forge::build::BuildArgs, LoadConfig};
+use foundry_cli::{
+    cmd::{forge::build::BuildArgs, LoadConfig},
+    utils,
+};
 use foundry_common::evm::EvmArgs;
 use foundry_config::{
     figment::{
@@ -75,6 +78,8 @@ async fn main() -> eyre::Result<()> {
     if !Paint::enable_windows_ascii() {
         Paint::disable()
     }
+
+    utils::load_dotenv();
 
     // Parse command args
     let args = ChiselParser::parse();

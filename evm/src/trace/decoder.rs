@@ -127,7 +127,7 @@ impl CallTraceDecoder {
                 0x05: modexp(Bsize: Uint(256), Esize: Uint(256), Msize: Uint(256), BEM: Bytes) -> (value: Bytes),
                 0x06: ecadd(x1: Uint(256), y1: Uint(256), x2: Uint(256), y2: Uint(256)) -> (x: Uint(256), y: Uint(256)),
                 0x07: ecmul(x1: Uint(256), y1: Uint(256), s: Uint(256)) -> (x: Uint(256), y: Uint(256)),
-                0x08: ecpairing(x1: Uint(256), y1: Uint(256), x3: Uint(256), x2: Uint(256), y3: Uint(256), y2: Uint(256)) -> (success: Uint(256)),
+                0x08: ecpairing(x1: Uint(256), y1: Uint(256), x2: Uint(256), y2: Uint(256), x3: Uint(256), y3: Uint(256)) -> (success: Uint(256)),
                 0x09: blake2f(rounds: Uint(4), h: FixedBytes(64), m: FixedBytes(128), t: FixedBytes(16), f: FixedBytes(1)) -> (h: FixedBytes(64)),
             ).into(),
 

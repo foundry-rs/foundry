@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.18;
+pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "../cheats/Cheats.sol";
+import "../cheats/Vm.sol";
 import "../logs/console.sol";
 
 interface IERC20 {
@@ -12,7 +12,7 @@ interface IERC20 {
 }
 
 contract TransactOnForkTest is DSTest {
-    Cheats constant vm = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     IERC20 constant USDT = IERC20(0xdAC17F958D2ee523a2206206994597C13D831ec7);
 
@@ -82,7 +82,7 @@ contract TransactOnForkTest is DSTest {
         vm.transact(tx);
 
         // extract recorded logs
-        Cheats.Log[] memory logs = vm.getRecordedLogs();
+        Vm.Log[] memory logs = vm.getRecordedLogs();
 
         senderBalance = USDT.balanceOf(sender);
         recipientBalance = USDT.balanceOf(recipient);

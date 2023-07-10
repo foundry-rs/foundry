@@ -314,6 +314,8 @@ pub struct Config {
     /// Multiple rpc endpoints and their aliases
     #[serde(default, skip_serializing_if = "RpcEndpoints::is_empty")]
     pub rpc_endpoints: RpcEndpoints,
+    /// Whether to store the referenced sources in the metadata as literal data.
+    pub use_literal_content: bool,
     /// Whether to include the metadata hash.
     ///
     /// The metadata hash is machine dependent. By default, this is set to [BytecodeHash::None] to allow for deterministic code, See: <https://docs.soliditylang.org/en/latest/metadata.html>
@@ -578,12 +580,12 @@ impl Config {
     /// Returns the directory in which dependencies should be installed
     ///
     /// Returns the first dir from `libs` that is not `node_modules` or `lib` if `libs` is empty
-    pub fn install_lib_dir(&self) -> PathBuf {
+    pub fn install_lib_dir(&self) -> &Path {
         self.libs
             .iter()
             .find(|p| !p.ends_with("node_modules"))
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("lib"))
+            .map(|p| p.as_path())
+            .unwrap_or_else(|| Path::new("lib"))
     }
 
     /// Serves as the entrypoint for obtaining the project.
@@ -1003,7 +1005,11 @@ impl Config {
             optimizer,
             evm_version: Some(self.evm_version),
             libraries,
-            metadata: Some(SettingsMetadata::new(self.bytecode_hash, self.cbor_metadata)),
+            metadata: Some(SettingsMetadata {
+                use_literal_content: Some(self.use_literal_content),
+                bytecode_hash: Some(self.bytecode_hash),
+                cbor_metadata: Some(self.cbor_metadata),
+            }),
             debug: self.revert_strings.map(|revert_strings| DebuggingSettings {
                 revert_strings: Some(revert_strings),
                 debug_info: Vec::new(),
@@ -1723,7 +1729,7 @@ impl Default for Config {
             allow_paths: vec![],
             include_paths: vec![],
             force: false,
-            evm_version: Default::default(),
+            evm_version: EvmVersion::Paris,
             gas_reports: vec!["*".to_string()],
             gas_reports_ignore: vec![],
             solc: None,
@@ -1771,6 +1777,7 @@ impl Default for Config {
             ignored_error_codes: vec![
                 SolidityErrorCode::SpdxLicenseNotProvided,
                 SolidityErrorCode::ContractExceeds24576Bytes,
+                SolidityErrorCode::ContractInitCodeSizeExceeds49152Bytes,
             ],
             deny_warnings: false,
             via_ir: false,
@@ -1779,6 +1786,7 @@ impl Default for Config {
             etherscan: Default::default(),
             no_storage_caching: false,
             no_rpc_rate_limit: false,
+            use_literal_content: false,
             bytecode_hash: BytecodeHash::Ipfs,
             cbor_metadata: true,
             revert_strings: None,
@@ -2424,9 +2432,10 @@ impl BasicConfig {
     pub fn to_string_pretty(&self) -> Result<String, toml::ser::Error> {
         let s = toml::to_string_pretty(self)?;
         Ok(format!(
-            r#"[profile.{}]
+            "\
+[profile.{}]
 {s}
-# See more config options https://github.com/foundry-rs/foundry/tree/master/config"#,
+# See more config options https://github.com/foundry-rs/foundry/tree/master/config\n",
             self.profile
         ))
     }
@@ -3225,6 +3234,7 @@ mod tests {
                 remappings = ["ds-test=lib/ds-test/"]
                 via_ir = true
                 rpc_storage_caching = { chains = [1, "optimism", 999999], endpoints = "all"}
+                use_literal_content = false
                 bytecode_hash = "ipfs"
                 cbor_metadata = true
                 revert_strings = "strip"
@@ -3258,6 +3268,7 @@ mod tests {
                         ]),
                         endpoints: CachedEndpoints::All
                     },
+                    use_literal_content: false,
                     bytecode_hash: BytecodeHash::Ipfs,
                     cbor_metadata: true,
                     revert_strings: Some(RevertStrings::Strip),
@@ -3323,6 +3334,7 @@ mod tests {
                 block_prevrandao = '0x0000000000000000000000000000000000000000000000000000000000000000'
                 block_number = 1
                 block_timestamp = 1
+                use_literal_content = false
                 bytecode_hash = 'ipfs'
                 cbor_metadata = true
                 cache = true
@@ -3969,6 +3981,8 @@ mod tests {
                     show_unproved: None,
                     div_mod_with_slacks: None,
                     solvers: None,
+                    show_unsupported: None,
+                    show_proved_safe: None,
                 })
             );
 
@@ -4029,6 +4043,8 @@ mod tests {
                     show_unproved: None,
                     div_mod_with_slacks: None,
                     solvers: None,
+                    show_unsupported: None,
+                    show_proved_safe: None,
                 })
             );
 
@@ -4240,7 +4256,7 @@ mod tests {
         fake_block_cache(chain_dir.path(), "2", 500);
         // Pollution file that should not show up in the cached block
         let mut pol_file = File::create(chain_dir.path().join("pol.txt")).unwrap();
-        writeln!(pol_file, "{}", vec![' '; 10].iter().collect::<String>()).unwrap();
+        writeln!(pol_file, "{}", [' '; 10].iter().collect::<String>()).unwrap();
 
         let result = Config::get_cached_blocks(chain_dir.path())?;
 

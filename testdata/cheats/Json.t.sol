@@ -1,67 +1,67 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.18;
+pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "./Cheats.sol";
+import "./Vm.sol";
 import "../logs/console.sol";
 
 contract ParseJson is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
     string json;
 
     function setUp() public {
         string memory path = "../testdata/fixtures/Json/test.json";
-        json = cheats.readFile(path);
+        json = vm.readFile(path);
     }
 
     function test_uintArray() public {
-        bytes memory data = cheats.parseJson(json, ".uintArray");
+        bytes memory data = vm.parseJson(json, ".uintArray");
         uint256[] memory decodedData = abi.decode(data, (uint256[]));
         assertEq(42, decodedData[0]);
         assertEq(43, decodedData[1]);
     }
 
     function test_str() public {
-        bytes memory data = cheats.parseJson(json, ".str");
+        bytes memory data = vm.parseJson(json, ".str");
         string memory decodedData = abi.decode(data, (string));
         assertEq("hai", decodedData);
     }
 
     function test_strArray() public {
-        bytes memory data = cheats.parseJson(json, ".strArray");
+        bytes memory data = vm.parseJson(json, ".strArray");
         string[] memory decodedData = abi.decode(data, (string[]));
         assertEq("hai", decodedData[0]);
         assertEq("there", decodedData[1]);
     }
 
     function test_bool() public {
-        bytes memory data = cheats.parseJson(json, ".bool");
+        bytes memory data = vm.parseJson(json, ".bool");
         bool decodedData = abi.decode(data, (bool));
         assertTrue(decodedData);
     }
 
     function test_boolArray() public {
-        bytes memory data = cheats.parseJson(json, ".boolArray");
+        bytes memory data = vm.parseJson(json, ".boolArray");
         bool[] memory decodedData = abi.decode(data, (bool[]));
         assertTrue(decodedData[0]);
         assertTrue(!decodedData[1]);
     }
 
     function test_address() public {
-        bytes memory data = cheats.parseJson(json, ".address");
+        bytes memory data = vm.parseJson(json, ".address");
         address decodedData = abi.decode(data, (address));
         assertEq(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, decodedData);
     }
 
     function test_addressArray() public {
-        bytes memory data = cheats.parseJson(json, ".addressArray");
+        bytes memory data = vm.parseJson(json, ".addressArray");
         address[] memory decodedData = abi.decode(data, (address[]));
         assertEq(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, decodedData[0]);
         assertEq(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, decodedData[1]);
     }
 
     function test_H160ButNotaddress() public {
-        string memory data = abi.decode(cheats.parseJson(json, ".H160NotAddress"), (string));
+        string memory data = abi.decode(vm.parseJson(json, ".H160NotAddress"), (string));
         assertEq("0000000000000000000000000000000000001337", data);
     }
 
@@ -71,7 +71,7 @@ contract ParseJson is DSTest {
     }
 
     function test_nestedObject() public {
-        bytes memory data = cheats.parseJson(json, ".nestedObject");
+        bytes memory data = vm.parseJson(json, ".nestedObject");
         Nested memory nested = abi.decode(data, (Nested));
         assertEq(nested.number, 115792089237316195423570985008687907853269984665640564039457584007913129639935);
         assertEq(nested.str, "NEST");
@@ -87,8 +87,8 @@ contract ParseJson is DSTest {
         // we need to make the path relative to the crate that's running tests for it (forge crate)
         string memory path = "../testdata/fixtures/Json/wholeJson.json";
         console.log(path);
-        json = cheats.readFile(path);
-        bytes memory data = cheats.parseJson(json);
+        json = vm.readFile(path);
+        bytes memory data = vm.parseJson(json);
         Whole memory whole = abi.decode(data, (Whole));
         assertEq(whole.str, "hai");
         assertEq(whole.uintArray[0], 42);
@@ -98,56 +98,56 @@ contract ParseJson is DSTest {
     }
 
     function test_coercionRevert() public {
-        cheats.expectRevert(
+        vm.expectRevert(
             "You can only coerce values or arrays, not JSON objects. The key '.nestedObject' returns an object"
         );
-        uint256 number = cheats.parseJsonUint(json, ".nestedObject");
+        uint256 number = vm.parseJsonUint(json, ".nestedObject");
     }
 
     function test_coercionUint() public {
-        uint256 number = cheats.parseJsonUint(json, ".hexUint");
+        uint256 number = vm.parseJsonUint(json, ".hexUint");
         assertEq(number, 1231232);
-        number = cheats.parseJsonUint(json, ".stringUint");
+        number = vm.parseJsonUint(json, ".stringUint");
         assertEq(number, 115792089237316195423570985008687907853269984665640564039457584007913129639935);
-        number = cheats.parseJsonUint(json, ".numberUint");
+        number = vm.parseJsonUint(json, ".numberUint");
         assertEq(number, 115792089237316195423570985008687907853269984665640564039457584007913129639935);
-        uint256[] memory numbers = cheats.parseJsonUintArray(json, ".arrayUint");
+        uint256[] memory numbers = vm.parseJsonUintArray(json, ".arrayUint");
         assertEq(numbers[0], 1231232);
         assertEq(numbers[1], 1231232);
         assertEq(numbers[2], 1231232);
     }
 
     function test_coercionInt() public {
-        int256 number = cheats.parseJsonInt(json, ".hexInt");
+        int256 number = vm.parseJsonInt(json, ".hexInt");
         assertEq(number, -12);
-        number = cheats.parseJsonInt(json, ".stringInt");
+        number = vm.parseJsonInt(json, ".stringInt");
         assertEq(number, -12);
     }
 
     function test_coercionBool() public {
-        bool boolean = cheats.parseJsonBool(json, ".booleanString");
+        bool boolean = vm.parseJsonBool(json, ".booleanString");
         assertEq(boolean, true);
-        bool[] memory booleans = cheats.parseJsonBoolArray(json, ".booleanArray");
+        bool[] memory booleans = vm.parseJsonBoolArray(json, ".booleanArray");
         assert(booleans[0]);
         assert(!booleans[1]);
     }
 
     function test_advancedJsonPath() public {
-        bytes memory data = cheats.parseJson(json, ".advancedJsonPath[*].id");
+        bytes memory data = vm.parseJson(json, ".advancedJsonPath[*].id");
         uint256[] memory numbers = abi.decode(data, (uint256[]));
         assertEq(numbers[0], 1);
         assertEq(numbers[1], 2);
     }
 
     function test_canonicalizePath() public {
-        bytes memory data = cheats.parseJson(json, "$.str");
+        bytes memory data = vm.parseJson(json, "$.str");
         string memory decodedData = abi.decode(data, (string));
         assertEq("hai", decodedData);
     }
 }
 
 contract WriteJson is DSTest {
-    Cheats constant vm = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     string json1;
     string json2;

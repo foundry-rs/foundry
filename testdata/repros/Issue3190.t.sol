@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.18;
+pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "../cheats/Cheats.sol";
+import "../cheats/Vm.sol";
 import "../logs/console.sol";
 
 // https://github.com/foundry-rs/foundry/issues/3190
 contract Issue3190Test is DSTest {
-    Cheats constant vm = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     function setUp() public {
         vm.chainId(99);

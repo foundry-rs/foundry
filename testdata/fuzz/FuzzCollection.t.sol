@@ -36,13 +36,13 @@ contract SampleContract {
     }
 }
 
-interface Cheats {
+interface Vm {
     function startPrank(address) external;
     function expectRevert(bytes calldata msg) external;
 }
 
 contract SampleContractTest is DSTest {
-    Cheats hevm = Cheats(HEVM_ADDRESS);
+    Vm hevm = Vm(HEVM_ADDRESS);
 
     event Incremented(uint256 counter);
 

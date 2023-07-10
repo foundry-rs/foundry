@@ -16,6 +16,7 @@ use crate::cmd::forge::{
     remappings::RemappingArgs,
     remove::RemoveArgs,
     script::ScriptArgs,
+    selectors::SelectorsSubcommands,
     snapshot, test, tree, update,
     verify::{VerifyArgs, VerifyCheckArgs},
 };
@@ -141,7 +142,7 @@ pub enum Subcommands {
     #[clap(visible_alias = "in")]
     Inspect(inspect::InspectArgs),
 
-    /// Uploads abi of given contract to the https://sig.eth.samczsun.com
+    /// Uploads abi of given contract to the https://api.openchain.xyz
     /// function selector database.
     #[clap(visible_alias = "up")]
     UploadSelectors(UploadSelectorsArgs),
@@ -155,6 +156,13 @@ pub enum Subcommands {
 
     /// Generate documentation for the project.
     Doc(DocArgs),
+
+    /// Function selector utilities
+    #[clap(visible_alias = "se")]
+    Selectors {
+        #[clap(subcommand)]
+        command: SelectorsSubcommands,
+    },
 }
 
 // A set of solc compiler settings that can be set via command line arguments, which are intended

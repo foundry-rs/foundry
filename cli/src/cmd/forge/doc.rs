@@ -1,6 +1,6 @@
 use crate::{cmd::Cmd, opts::GH_REPO_PREFIX_REGEX};
 use clap::{Parser, ValueHint};
-use forge_doc::{ContractInheritance, DocBuilder, GitSource, Inheritdoc, Server};
+use forge_doc::{ContractInheritance, Deployments, DocBuilder, GitSource, Inheritdoc, Server};
 use foundry_config::{find_project_root_path, load_config_with_root};
 use std::{path::PathBuf, process::Command};
 
@@ -39,6 +39,11 @@ pub struct DocArgs {
     /// Port for serving documentation.
     #[clap(long, short, requires = "serve")]
     port: Option<usize>,
+
+    /// The relative path to the `hardhat-deploy` or `forge-deploy` artifact directory. Leave blank
+    /// for default.
+    #[clap(long)]
+    deployments: Option<Option<PathBuf>>,
 }
 
 impl Cmd for DocArgs {
@@ -70,27 +75,26 @@ impl Cmd for DocArgs {
             }
         }
 
-        let commit =
-            Command::new("git").args(["rev-parse", "HEAD"]).output().ok().and_then(|output| {
-                if !output.stdout.is_empty() {
-                    String::from_utf8(output.stdout).ok().map(|commit| commit.trim().to_owned())
-                } else {
-                    None
-                }
-            });
+        let commit = crate::utils::Git::new(&root).commit_hash(false).ok();
 
-        DocBuilder::new(root.clone(), config.project_paths().sources)
+        let mut builder = DocBuilder::new(root.clone(), config.project_paths().sources)
             .with_should_build(self.build)
             .with_config(doc_config.clone())
             .with_fmt(config.fmt)
             .with_preprocessor(ContractInheritance::default())
             .with_preprocessor(Inheritdoc::default())
             .with_preprocessor(GitSource {
-                root,
+                root: root.clone(),
                 commit,
                 repository: doc_config.repository.clone(),
-            })
-            .build()?;
+            });
+
+        // If deployment docgen is enabled, add the [Deployments] preprocessor
+        if let Some(deployments) = self.deployments {
+            builder = builder.with_preprocessor(Deployments { root, deployments });
+        }
+
+        builder.build()?;
 
         if self.serve {
             Server::new(doc_config.out)

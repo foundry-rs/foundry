@@ -8,13 +8,15 @@ use crate::cmd::{
     },
     needs_setup,
 };
-use cast::executor::inspector::cheatcodes::util::BroadcastableTransactions;
 use ethers::{
     solc::artifacts::CompactContractBytecode,
     types::{transaction::eip2718::TypedTransaction, Address, U256},
 };
 use forge::{
-    executor::{inspector::CheatsConfig, Backend, ExecutorBuilder},
+    executor::{
+        inspector::{cheatcodes::util::BroadcastableTransactions, CheatsConfig},
+        Backend, ExecutorBuilder,
+    },
     revm::primitives::U256 as rU256,
     trace::{CallTraceDecoder, Traces},
     CallKind,
@@ -289,7 +291,8 @@ impl ScriptArgs {
                 None => {
                     let backend = Backend::spawn(
                         script_config.evm_opts.get_fork(&script_config.config, env.clone()),
-                    );
+                    )
+                    .await;
                     script_config.backends.insert(url.clone(), backend);
                     script_config.backends.get(url).unwrap().clone()
                 }
@@ -299,6 +302,7 @@ impl ScriptArgs {
                 // no need to cache it, since there won't be any onchain simulation that we'd need
                 // to cache the backend for.
                 Backend::spawn(script_config.evm_opts.get_fork(&script_config.config, env.clone()))
+                    .await
             }
         };
 

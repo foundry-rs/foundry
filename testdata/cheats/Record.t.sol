@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.18;
+pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "./Cheats.sol";
+import "./Vm.sol";
 
 contract RecordAccess {
     function record() public returns (NestedRecordAccess) {
@@ -26,18 +26,18 @@ contract NestedRecordAccess {
 }
 
 contract RecordTest is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testRecordAccess() public {
         RecordAccess target = new RecordAccess();
 
         // Start recording
-        cheats.record();
+        vm.record();
         NestedRecordAccess inner = target.record();
 
         // Verify Records
-        (bytes32[] memory reads, bytes32[] memory writes) = cheats.accesses(address(target));
-        (bytes32[] memory innerReads, bytes32[] memory innerWrites) = cheats.accesses(address(inner));
+        (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(address(target));
+        (bytes32[] memory innerReads, bytes32[] memory innerWrites) = vm.accesses(address(inner));
 
         assertEq(reads.length, 2, "number of reads is incorrect");
         assertEq(reads[0], bytes32(uint256(1)), "key for read 0 is incorrect");

@@ -146,7 +146,7 @@ impl Tui {
         draw_memory: &mut DrawMemory,
         stack_labels: bool,
         mem_utf: bool,
-        help: bool,
+        show_shortcuts: bool,
     ) {
         let total_size = f.size();
         if total_size.width < 225 {
@@ -164,7 +164,7 @@ impl Tui {
                 draw_memory,
                 stack_labels,
                 mem_utf,
-                help,
+                show_shortcuts,
             );
         } else {
             Tui::square_layout(
@@ -181,7 +181,7 @@ impl Tui {
                 draw_memory,
                 stack_labels,
                 mem_utf,
-                help,
+                show_shortcuts,
             );
         }
     }
@@ -201,10 +201,10 @@ impl Tui {
         draw_memory: &mut DrawMemory,
         stack_labels: bool,
         mem_utf: bool,
-        help: bool,
+        show_shortcuts: bool,
     ) {
         let total_size = f.size();
-        let h_height = if help { 4 } else { 0 };
+        let h_height = if show_shortcuts { 4 } else { 0 };
 
         if let [app, footer] = Layout::default()
             .constraints(
@@ -226,7 +226,7 @@ impl Tui {
                 )
                 .split(app)[..]
             {
-                if help {
+                if show_shortcuts {
                     Tui::draw_footer(f, footer);
                 }
                 Tui::draw_src(
@@ -281,10 +281,10 @@ impl Tui {
         draw_memory: &mut DrawMemory,
         stack_labels: bool,
         mem_utf: bool,
-        help: bool,
+        show_shortcuts: bool,
     ) {
         let total_size = f.size();
-        let h_height = if help { 4 } else { 0 };
+        let h_height = if show_shortcuts { 4 } else { 0 };
 
         // split in 2 vertically
 
@@ -311,7 +311,7 @@ impl Tui {
                         .constraints([Constraint::Ratio(1, 4), Constraint::Ratio(3, 4)].as_ref())
                         .split(right_pane)[..]
                     {
-                        if help {
+                        if show_shortcuts {
                             Tui::draw_footer(f, footer)
                         };
                         Tui::draw_src(
@@ -364,28 +364,10 @@ impl Tui {
 
     fn draw_footer<B: Backend>(f: &mut Frame<B>, area: Rect) {
         let block_controls = Block::default();
-        let dim = Style::default().add_modifier(Modifier::DIM);
 
-        let _text_output = vec![
-            Spans::from(
-                Span::styled(
-                    "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end",
-                    dim,
-                ),
-            ),
-            Spans::from(
-                Span::styled(
-                    "[t]: stack labels | [m]: memory decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll memory | ['<char>]: goto breakpoint | [h] close help",
-                    dim,
-                )
-            )
-        ];
-
-        let text_output = Text::from(Span::styled(
-            "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end\n
-[t]: stack labels | [m]: memory decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll memory | ['<char>]: goto breakpoint",
-            Style::default().add_modifier(Modifier::DIM),
-        ));
+        let text_output = vec![Spans::from(Span::styled(
+            "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end", Style::default().add_modifier(Modifier::DIM))),
+Spans::from(Span::styled("[t]: stack labels | [m]: memory decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll memory | ['<char>]: goto breakpoint | [h] toggle help", Style::default().add_modifier(Modifier::DIM)))];
 
         let paragraph = Paragraph::new(text_output)
             .block(block_controls)
@@ -1052,7 +1034,7 @@ impl Ui for Tui {
 
         let mut stack_labels = false;
         let mut mem_utf = false;
-        let mut help = false;
+        let mut show_shortcuts = true;
         // UI thread that manages drawing
         loop {
             if last_index != draw_memory.inner_call_index {
@@ -1249,7 +1231,7 @@ impl Ui for Tui {
                         }
                         // toggle help notice
                         KeyCode::Char('h') => {
-                            help = !help;
+                            show_shortcuts = !show_shortcuts;
                         }
                         KeyCode::Char(other) => match other {
                             '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '\'' => {
@@ -1313,7 +1295,7 @@ impl Ui for Tui {
                     &mut draw_memory,
                     stack_labels,
                     mem_utf,
-                    help,
+                    show_shortcuts,
                 )
             })?;
         }

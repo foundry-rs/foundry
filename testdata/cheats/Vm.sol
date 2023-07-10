@@ -1,7 +1,16 @@
 // SPDX-License-Identifier: Unlicense
 pragma solidity >=0.8.0;
 
-interface Cheats {
+interface Vm {
+    // Possible caller modes for readCallers()
+    enum CallerMode {
+        None,
+        Broadcast,
+        RecurrentBroadcast,
+        Prank,
+        RecurrentPrank
+    }
+
     // This allows us to getRecordedLogs()
     struct Log {
         bytes32[] topics;
@@ -66,11 +75,17 @@ interface Cheats {
     // Gets address for a given private key, (privateKey) => (address)
     function addr(uint256) external returns (address);
 
-    // Derive a private key from a provided mnemonic string (or mnemonic file path) at the derivation path m/44'/60'/0'/0/{index}
+    // Derive a private key from a provided English mnemonic string (or mnemonic file path) at the derivation path m/44'/60'/0'/0/{index}
     function deriveKey(string calldata, uint32) external returns (uint256);
 
-    // Derive a private key from a provided mnemonic string (or mnemonic file path) at the derivation path {path}{index}
+    // Derive a private key from a provided English mnemonic string (or mnemonic file path) at the derivation path {path}{index}
     function deriveKey(string calldata, string calldata, uint32) external returns (uint256);
+
+    // Derive a private key from a provided mnemonic string (or mnemonic file path) of specified language at the derivation path m/44'/60'/0'/0/{index}
+    function deriveKey(string calldata, uint32, string calldata) external returns (uint256);
+
+    // Derive a private key from a provided mnemonic string (or mnemonic file path) of specified language at the derivation path {path}{index}
+    function deriveKey(string calldata, string calldata, uint32, string calldata) external returns (uint256);
 
     // Adds a private key to the local forge wallet and returns the address
     function rememberKey(uint256) external returns (address);
@@ -156,11 +171,17 @@ interface Cheats {
     // Resets subsequent calls' msg.sender to be `address(this)`
     function stopPrank() external;
 
+    // Reads the current msg.sender and tx.origin from state
+    function readCallers() external returns (CallerMode, address, address);
+
     // Sets an address' balance, (who, newBalance)
     function deal(address, uint256) external;
 
     // Sets an address' code, (who, newCode)
     function etch(address, bytes calldata) external;
+
+    // Skips a test.
+    function skip(bool) external;
 
     // Expects an error on next call
     function expectRevert() external;
@@ -370,8 +391,10 @@ interface Cheats {
     // Follows symbolic links if `follow_links` is true.
     // (path) => (entries)
     function readDir(string calldata) external returns (DirEntry[] memory);
+
     // (path, max_depth) => (entries)
     function readDir(string calldata, uint64) external returns (DirEntry[] memory);
+
     // (path, max_depth, follow_links) => (entries)
     function readDir(string calldata, uint64, bool) external returns (DirEntry[] memory);
 

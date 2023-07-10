@@ -157,6 +157,10 @@ async fn main() -> eyre::Result<()> {
             let value = stdin::unwrap_line(bytes)?;
             println!("{}", SimpleCast::parse_bytes32_string(&value)?);
         }
+        Subcommands::ParseBytes32Address { bytes } => {
+            let value = stdin::unwrap_line(bytes)?;
+            println!("{}", SimpleCast::parse_bytes32_address(&value)?);
+        }
 
         // ABI encoding & decoding
         Subcommands::AbiDecode { sig, calldata, input } => {
@@ -168,7 +172,7 @@ async fn main() -> eyre::Result<()> {
             println!("{}", SimpleCast::abi_encode(&sig, &args)?);
         }
         Subcommands::CalldataDecode { sig, calldata } => {
-            let tokens = SimpleCast::abi_decode(&sig, &calldata, true)?;
+            let tokens = SimpleCast::calldata_decode(&sig, &calldata, true)?;
             let tokens = format_tokens(&tokens);
             tokens.for_each(|t| println!("{t}"));
         }
@@ -258,6 +262,11 @@ async fn main() -> eyre::Result<()> {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             println!("{}", Cast::new(provider).code(who, block, disassemble).await?);
+        }
+        Subcommands::Codesize { block, who, rpc } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
+            println!("{}", Cast::new(provider).codesize(who, block).await?);
         }
         Subcommands::ComputeAddress { address, nonce, rpc } => {
             let config = Config::from(&rpc);
@@ -364,7 +373,7 @@ async fn main() -> eyre::Result<()> {
                 }
             };
 
-            let tokens = SimpleCast::abi_decode(sig, &calldata, true)?;
+            let tokens = SimpleCast::calldata_decode(sig, &calldata, true)?;
             for token in format_tokens(&tokens) {
                 println!("{token}");
             }
@@ -483,6 +492,7 @@ async fn main() -> eyre::Result<()> {
             "cast",
             &mut std::io::stdout(),
         ),
+        Subcommands::Logs(cmd) => cmd.run().await?,
     };
     Ok(())
 }

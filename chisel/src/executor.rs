@@ -239,13 +239,17 @@ impl SessionSource {
         let env = self.config.evm_opts.evm_env().await;
 
         // Create an in-memory backend
-        let backend = self.config.backend.take().unwrap_or_else(|| {
-            let backend = Backend::spawn(
-                self.config.evm_opts.get_fork(&self.config.foundry_config, env.clone()),
-            );
-            self.config.backend = Some(backend.clone());
-            backend
-        });
+        let backend = match self.config.backend.take() {
+            Some(backend) => backend,
+            None => {
+                let backend = Backend::spawn(
+                    self.config.evm_opts.get_fork(&self.config.foundry_config, env.clone()),
+                )
+                .await;
+                self.config.backend = Some(backend.clone());
+                backend
+            }
+        };
 
         // Build a new executor
         let executor = ExecutorBuilder::default()
@@ -408,7 +412,6 @@ impl Type {
             pt::Expression::Type(_, ty) => Self::from_type(ty),
 
             pt::Expression::Variable(ident) => Some(Self::Custom(vec![ident.name.clone()])),
-            pt::Expression::This(_) => Some(Self::Custom(vec!["this".to_string()])),
 
             // array
             pt::Expression::ArraySubscript(_, expr, num) => {

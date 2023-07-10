@@ -22,6 +22,7 @@ use ethers::{
 };
 use foundry_common::{abi::IntoFunction, evm::Breakpoints};
 use hashbrown::HashMap;
+use revm::primitives::hex_literal::hex;
 /// Reexport commonly used revm types
 pub use revm::primitives::{Env, SpecId};
 pub use revm::{
@@ -63,6 +64,8 @@ pub use builder::ExecutorBuilder;
 
 /// A mapping of addresses to their changed state.
 pub type StateChangeset = HashMap<B160, Account>;
+
+pub const DEFAULT_CREATE2_DEPLOYER_CODE: &[u8] = &hex!("604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3");
 
 /// A type that can execute calls
 ///
@@ -147,21 +150,16 @@ impl Executor {
             .basic(h160_to_b160(DEFAULT_CREATE2_DEPLOYER))?
             .ok_or(DatabaseError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
 
-        if create2_deployer_account.code.is_none() ||
-            create2_deployer_account.code.as_ref().unwrap().is_empty()
-        {
+        // if the deployer is not currently deployed, deploy the default one
+        if create2_deployer_account.code.map_or(true, |code| code.is_empty()) {
             let creator = "0x3fAB184622Dc19b6109349B94811493BF2a45362".parse().unwrap();
 
             // Probably 0, but just in case.
             let initial_balance = self.get_balance(creator)?;
 
             self.set_balance(creator, U256::MAX)?;
-            let res = self.deploy(
-                creator,
-                hex::decode("604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("valid hex").into(),
-                U256::zero(),
-                None
-            )?;
+            let res =
+                self.deploy(creator, DEFAULT_CREATE2_DEPLOYER_CODE.into(), U256::zero(), None)?;
             trace!(create2=?res.address, "deployed local create2 deployer");
 
             self.set_balance(creator, initial_balance)?;
@@ -322,7 +320,6 @@ impl Executor {
             value,
         );
         let call_result = self.call_raw_with_env(env)?;
-
         convert_call_result(abi, &func, call_result)
     }
 
@@ -637,7 +634,6 @@ pub struct ExecutionErr {
 }
 
 #[derive(thiserror::Error, Debug)]
-#[allow(clippy::large_enum_variant)]
 pub enum EvmError {
     /// Error which occurred during execution of a transaction
     #[error(transparent)]
@@ -645,6 +641,9 @@ pub enum EvmError {
     /// Error which occurred during ABI encoding/decoding
     #[error(transparent)]
     AbiError(#[from] ethers::contract::AbiError),
+    /// Error caused which occurred due to calling the skip() cheatcode.
+    #[error("Skipped")]
+    SkipError,
     /// Any other error.
     #[error(transparent)]
     Eyre(#[from] eyre::Error),
@@ -672,6 +671,7 @@ pub struct DeployResult {
 /// The result of a call.
 #[derive(Debug)]
 pub struct CallResult<D: Detokenize> {
+    pub skipped: bool,
     /// Whether the call reverted or not
     pub reverted: bool,
     /// The decoded result of the call
@@ -801,7 +801,6 @@ fn convert_executed_result(
             (halt_to_instruction_result(reason), 0_u64, gas_used, None)
         }
     };
-
     let stipend = calc_stipend(&env.tx.data, env.cfg.spec_id);
 
     let result = match out {
@@ -900,11 +899,15 @@ fn convert_call_result<D: Detokenize>(
                 script_wallets,
                 env,
                 breakpoints,
+                skipped: false,
             })
         }
         _ => {
             let reason = decode::decode_revert(result.as_ref(), abi, Some(status))
                 .unwrap_or_else(|_| format!("{status:?}"));
+            if reason == "SKIPPED" {
+                return Err(EvmError::SkipError)
+            }
             Err(EvmError::Execution(Box::new(ExecutionErr {
                 reverted,
                 reason,

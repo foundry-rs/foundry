@@ -98,7 +98,7 @@ impl ScriptTester {
     /// Initialises the test contracts by copying them into the workspace
     fn copy_testdata(current_dir: &Path) -> eyre::Result<()> {
         let testdata = Self::testdata_path();
-        std::fs::copy(testdata.clone() + "/cheats/Cheats.sol", current_dir.join("src/Cheats.sol"))?;
+        std::fs::copy(testdata.clone() + "/cheats/Vm.sol", current_dir.join("src/Vm.sol"))?;
         std::fs::copy(testdata + "/lib/ds-test/src/test.sol", current_dir.join("lib/test.sol"))?;
 
         Ok(())

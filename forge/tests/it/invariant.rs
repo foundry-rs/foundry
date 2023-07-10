@@ -5,9 +5,9 @@ use ethers::types::U256;
 use forge::fuzz::CounterExample;
 use std::collections::BTreeMap;
 
-#[test]
-fn test_invariant() {
-    let mut runner = runner();
+#[tokio::test(flavor = "multi_thread")]
+async fn test_invariant() {
+    let mut runner = runner().await;
 
     let results = runner
         .test(
@@ -15,7 +15,7 @@ fn test_invariant() {
             None,
             test_opts(),
         )
-        .unwrap();
+        .await;
 
     assert_multiple(
         &results,
@@ -84,9 +84,9 @@ fn test_invariant() {
     );
 }
 
-#[test]
-fn test_invariant_override() {
-    let mut runner = runner();
+#[tokio::test(flavor = "multi_thread")]
+async fn test_invariant_override() {
+    let mut runner = runner().await;
 
     let mut opts = test_opts();
     opts.invariant.call_override = true;
@@ -98,7 +98,7 @@ fn test_invariant_override() {
             None,
             opts,
         )
-        .unwrap();
+        .await;
 
     assert_multiple(
         &results,
@@ -109,9 +109,9 @@ fn test_invariant_override() {
     );
 }
 
-#[test]
-fn test_invariant_storage() {
-    let mut runner = runner();
+#[tokio::test(flavor = "multi_thread")]
+async fn test_invariant_storage() {
+    let mut runner = runner().await;
 
     let mut opts = test_opts();
     opts.invariant.depth = 100;
@@ -124,7 +124,7 @@ fn test_invariant_storage() {
             None,
             opts,
         )
-        .unwrap();
+        .await;
 
     assert_multiple(
         &results,
@@ -140,11 +140,11 @@ fn test_invariant_storage() {
     );
 }
 
-#[test]
+#[tokio::test(flavor = "multi_thread")]
 // for some reason there's different rng
 #[cfg(not(windows))]
-fn test_invariant_shrink() {
-    let mut runner = runner();
+async fn test_invariant_shrink() {
+    let mut runner = runner().await;
 
     let mut opts = test_opts();
     opts.fuzz.seed = Some(U256::from(102u32));
@@ -156,7 +156,7 @@ fn test_invariant_shrink() {
             None,
             opts,
         )
-        .unwrap();
+        .await;
 
     let results =
         results.values().last().expect("`InvariantInnerContract.t.sol` should be testable.");

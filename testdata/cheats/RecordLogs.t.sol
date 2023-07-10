@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.18;
+pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "./Cheats.sol";
+import "./Vm.sol";
 
 contract Emitter {
     event LogAnonymous(bytes data) anonymous;
@@ -49,7 +49,7 @@ contract Emitterv2 {
 }
 
 contract RecordLogsTest is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
     Emitter emitter;
     bytes32 internal seedTestData = keccak256(abi.encodePacked("Some data"));
 
@@ -75,14 +75,14 @@ contract RecordLogsTest is DSTest {
 
     function testRecordOffGetsNothing() public {
         emitter.emitEvent(1, 2, 3, generateTestData(48));
-        Cheats.Log[] memory entries = cheats.getRecordedLogs();
+        Vm.Log[] memory entries = vm.getRecordedLogs();
 
         assertEq(entries.length, 0);
     }
 
     function testRecordOnNoLogs() public {
-        cheats.recordLogs();
-        Cheats.Log[] memory entries = cheats.getRecordedLogs();
+        vm.recordLogs();
+        Vm.Log[] memory entries = vm.getRecordedLogs();
 
         assertEq(entries.length, 0);
     }
@@ -90,9 +90,9 @@ contract RecordLogsTest is DSTest {
     function testRecordOnSingleLog() public {
         bytes memory testData = "Event Data in String";
 
-        cheats.recordLogs();
+        vm.recordLogs();
         emitter.emitEvent(1, 2, 3, testData);
-        Cheats.Log[] memory entries = cheats.getRecordedLogs();
+        Vm.Log[] memory entries = vm.getRecordedLogs();
 
         assertEq(entries.length, 1);
         assertEq(entries[0].topics.length, 4);
@@ -112,9 +112,9 @@ contract RecordLogsTest is DSTest {
     function NOtestRecordOnAnonymousEvent() public {
         bytes memory testData = generateTestData(48);
 
-        cheats.recordLogs();
+        vm.recordLogs();
         emitter.emitAnonymousEvent(testData);
-        Cheats.Log[] memory entries = cheats.getRecordedLogs();
+        Vm.Log[] memory entries = vm.getRecordedLogs();
 
         assertEq(entries.length, 1);
     }
@@ -122,9 +122,9 @@ contract RecordLogsTest is DSTest {
     function testRecordOnSingleLogTopic0() public {
         bytes memory testData = generateTestData(48);
 
-        cheats.recordLogs();
+        vm.recordLogs();
         emitter.emitEvent(testData);
-        Cheats.Log[] memory entries = cheats.getRecordedLogs();
+        Vm.Log[] memory entries = vm.getRecordedLogs();
 
         assertEq(entries.length, 1);
         assertEq(entries[0].topics.length, 1);
@@ -138,10 +138,10 @@ contract RecordLogsTest is DSTest {
         bytes memory testData0 = generateTestData(32);
         emitter.emitEvent(1, 2, testData0);
 
-        cheats.recordLogs();
+        vm.recordLogs();
         bytes memory testData1 = generateTestData(16);
         emitter.emitEvent(3, testData1);
-        Cheats.Log[] memory entries = cheats.getRecordedLogs();
+        Vm.Log[] memory entries = vm.getRecordedLogs();
 
         assertEq(entries.length, 1);
         assertEq(entries[0].topics.length, 2);
@@ -152,7 +152,7 @@ contract RecordLogsTest is DSTest {
     }
 
     function testRecordOnEmitDifferentDepths() public {
-        cheats.recordLogs();
+        vm.recordLogs();
 
         bytes memory testData0 = generateTestData(16);
         emit LogTopic(1, testData0);
@@ -164,7 +164,7 @@ contract RecordLogsTest is DSTest {
         Emitterv2 emitter2 = new Emitterv2();
         emitter2.emitEvent(4, 5, 6, testData2);
 
-        Cheats.Log[] memory entries = cheats.getRecordedLogs();
+        Vm.Log[] memory entries = vm.getRecordedLogs();
 
         assertEq(entries.length, 3);
 
@@ -191,20 +191,20 @@ contract RecordLogsTest is DSTest {
     }
 
     function testRecordsConsumednAsRead() public {
-        Cheats.Log[] memory entries;
+        Vm.Log[] memory entries;
 
         emitter.emitEvent(1, generateTestData(16));
 
         // hit record now
-        cheats.recordLogs();
+        vm.recordLogs();
 
-        entries = cheats.getRecordedLogs();
+        entries = vm.getRecordedLogs();
         assertEq(entries.length, 0);
 
         // emit after calling .getRecordedLogs()
         emitter.emitEvent(2, 3, generateTestData(24));
 
-        entries = cheats.getRecordedLogs();
+        entries = vm.getRecordedLogs();
         assertEq(entries.length, 1);
         assertEq(entries[0].topics.length, 3);
         assertEq(entries[0].emitter, address(emitter));
@@ -213,7 +213,7 @@ contract RecordLogsTest is DSTest {
         emitter.emitEvent(4, 5, 6, generateTestData(20));
         emitter.emitEvent(generateTestData(32));
 
-        entries = cheats.getRecordedLogs();
+        entries = vm.getRecordedLogs();
         assertEq(entries.length, 2);
         assertEq(entries[0].topics.length, 4);
         assertEq(entries[1].topics.length, 1);
@@ -223,7 +223,7 @@ contract RecordLogsTest is DSTest {
         // the last one
         emitter.emitEvent(7, 8, 9, generateTestData(24));
 
-        entries = cheats.getRecordedLogs();
+        entries = vm.getRecordedLogs();
         assertEq(entries.length, 1);
         assertEq(entries[0].topics.length, 4);
         assertEq(entries[0].emitter, address(emitter));

@@ -2,7 +2,7 @@
 use crate::{
     cmd::{
         forge::{build::CoreBuildArgs, install, test::FilterArgs},
-        Cmd, LoadConfig,
+        LoadConfig,
     },
     utils::{p_println, STATIC_FUZZ_SEED},
 };
@@ -31,7 +31,7 @@ use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs};
 use foundry_config::Config;
 use foundry_evm::utils::evm_spec;
 use semver::Version;
-use std::{collections::HashMap, sync::mpsc::channel, thread};
+use std::{collections::HashMap, sync::mpsc::channel};
 use tracing::trace;
 
 // Loads project's figment and merges the build cli arguments into it
@@ -61,17 +61,12 @@ impl CoverageArgs {
     pub fn build_args(&self) -> &CoreBuildArgs {
         &self.opts
     }
-}
 
-impl Cmd for CoverageArgs {
-    type Output = ();
-
-    fn run(self) -> eyre::Result<Self::Output> {
+    pub async fn run(self) -> eyre::Result<()> {
         let (mut config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
-        let project = config.project()?;
 
         // install missing dependencies
-        if install::install_missing_dependencies(&mut config, &project, self.build_args().silent) &&
+        if install::install_missing_dependencies(&mut config, self.build_args().silent) &&
             config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
@@ -86,7 +81,7 @@ impl Cmd for CoverageArgs {
         let report = self.prepare(&config, output.clone())?;
 
         p_println!(!self.opts.silent => "Running tests...");
-        self.collect(project, output, report, config, evm_opts)
+        self.collect(project, output, report, config, evm_opts).await
     }
 }
 
@@ -256,7 +251,7 @@ impl CoverageArgs {
     }
 
     /// Runs tests, collects coverage data and generates the final report.
-    fn collect(
+    async fn collect(
         self,
         project: Project,
         output: ProjectCompileOutput,
@@ -268,7 +263,7 @@ impl CoverageArgs {
 
         // Build the contract runner
         let evm_spec = evm_spec(&config.evm_version);
-        let env = evm_opts.evm_env_blocking()?;
+        let env = evm_opts.evm_env().await;
         let mut runner = MultiContractRunnerBuilder::default()
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(evm_spec)
@@ -281,9 +276,12 @@ impl CoverageArgs {
 
         // Run tests
         let known_contracts = runner.known_contracts.clone();
+        let filter = self.filter;
         let (tx, rx) = channel::<(String, SuiteResult)>();
         let handle =
-            thread::spawn(move || runner.test(&self.filter, Some(tx), Default::default()).unwrap());
+            tokio::task::spawn(
+                async move { runner.test(filter, Some(tx), Default::default()).await },
+            );
 
         // Add hit data to the coverage report
         for (artifact_id, hits) in rx
@@ -315,7 +313,7 @@ impl CoverageArgs {
         }
 
         // Reattach the thread
-        let _ = handle.join();
+        let _ = handle.await;
 
         // Output final report
         for report_kind in self.report {

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.18;
+pragma solidity 0.8.20;
 
 import "ds-test/test.sol";
-import "../cheats/Cheats.sol";
+import "../cheats/Vm.sol";
 
 contract ShanghaiCompat is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testPush0() public {
         address target = address(uint160(uint256(0xc4f3)));
@@ -20,7 +20,7 @@ contract ShanghaiCompat is DSTest {
         // 5F PUSH0
         // F3 RETURN -> returns mem[0..calldatasize]
 
-        cheats.etch(target, bytecode);
+        vm.etch(target, bytecode);
 
         (bool success, bytes memory result) = target.call(bytes("hello PUSH0"));
         assertTrue(success);

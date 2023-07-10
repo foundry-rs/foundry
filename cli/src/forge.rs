@@ -22,7 +22,7 @@ fn main() -> eyre::Result<()> {
             if cmd.is_watch() {
                 utils::block_on(watch::watch_test(cmd))
             } else {
-                let outcome = cmd.run()?;
+                let outcome = utils::block_on(cmd.run())?;
                 outcome.ensure_ok()
             }
         }
@@ -34,7 +34,7 @@ fn main() -> eyre::Result<()> {
             ))?;
             utils::block_on(cmd.run_script(Default::default()))
         }
-        Subcommands::Coverage(cmd) => cmd.run(),
+        Subcommands::Coverage(cmd) => utils::block_on(cmd.run()),
         Subcommands::Bind(cmd) => cmd.run(),
         Subcommands::Build(cmd) => {
             if cmd.is_watch() {
@@ -78,7 +78,7 @@ fn main() -> eyre::Result<()> {
             if cmd.is_watch() {
                 utils::block_on(watch::watch_snapshot(cmd))
             } else {
-                cmd.run()
+                utils::block_on(cmd.run())
             }
         }
         Subcommands::Fmt(cmd) => cmd.run(),
@@ -96,5 +96,6 @@ fn main() -> eyre::Result<()> {
             Ok(())
         }
         Subcommands::Doc(cmd) => cmd.run(),
+        Subcommands::Selectors { command } => utils::block_on(command.run()),
     }
 }

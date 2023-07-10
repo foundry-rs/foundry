@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.18;
+pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "../cheats/Cheats.sol";
+import "../cheats/Vm.sol";
 
 // https://github.com/foundry-rs/foundry/issues/3708
 contract Issue3708Test is DSTest {
     // https://optimistic.etherscan.io/address/0x4e59b44847b379578588920ca78fbf26c0b4956c#code
     address constant CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
-    Cheats constant vm = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     function setUp() public {
         string memory RPC_URL = "https://mainnet.optimism.io";

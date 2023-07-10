@@ -12,6 +12,7 @@ use ethers::{
     types::{Address, Block, BlockId, Bytes, Transaction, H256, U256},
     utils::keccak256,
 };
+use foundry_common::NON_ARCHIVE_NODE_WARNING;
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
     stream::Stream,
@@ -549,7 +550,7 @@ impl SharedBackend {
 
         // spawn a light-weight thread with a thread-local async runtime just for
         // sending and receiving data from the remote client
-        let _ = std::thread::Builder::new()
+        std::thread::Builder::new()
             .name("fork-backend-thread".to_string())
             .spawn(move || {
                 let rt = tokio::runtime::Builder::new_current_thread()
@@ -646,6 +647,9 @@ impl DatabaseRef for SharedBackend {
         trace!( target: "sharedbackend", "request basic {:?}", address);
         self.do_get_basic(b160_to_h160(address)).map_err(|err| {
             error!(target: "sharedbackend",  ?err, ?address,  "Failed to send/recv `basic`");
+            if err.is_possibly_non_archive_node_error() {
+                error!(target: "sharedbackend", "{NON_ARCHIVE_NODE_WARNING}");
+            }
             err
         })
     }
@@ -658,6 +662,9 @@ impl DatabaseRef for SharedBackend {
         trace!( target: "sharedbackend", "request storage {:?} at {:?}", address, index);
         match self.do_get_storage(b160_to_h160(address), index.into()).map_err(|err| {
             error!( target: "sharedbackend", ?err, ?address, ?index, "Failed to send/recv `storage`");
+            if err.is_possibly_non_archive_node_error() {
+                error!(target: "sharedbackend", "{NON_ARCHIVE_NODE_WARNING}");
+            }
           err
         }) {
             Ok(val) => Ok(val.into()),
@@ -674,6 +681,9 @@ impl DatabaseRef for SharedBackend {
         trace!( target: "sharedbackend", "request block hash for number {:?}", number);
         match self.do_get_block_hash(number).map_err(|err| {
             error!(target: "sharedbackend",?err, ?number, "Failed to send/recv `block_hash`");
+            if err.is_possibly_non_archive_node_error() {
+                error!(target: "sharedbackend", "{NON_ARCHIVE_NODE_WARNING}");
+            }
             err
         }) {
             Ok(val) => Ok(h256_to_b256(val)),
@@ -765,7 +775,7 @@ mod tests {
             evm_opts,
         };
 
-        let backend = Backend::spawn(Some(fork));
+        let backend = Backend::spawn(Some(fork)).await;
 
         // some rng contract from etherscan
         let address: B160 = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();

@@ -1,12 +1,10 @@
-use crate::{
-    error::SolError,
-    executor::backend::{error::NoCheatcodeAccessError, DatabaseError},
-};
+use crate::executor::backend::{error::NoCheatcodeAccessError, DatabaseError};
 use ethers::{
     abi::AbiEncode, prelude::k256::ecdsa::signature::Error as SignatureError, types::Bytes,
 };
 use foundry_common::errors::FsPathError;
 use foundry_config::UnresolvedEnvVarError;
+use foundry_utils::error::{encode_error, SolError};
 use std::{borrow::Cow, fmt::Arguments};
 
 /// Type alias with a default Ok type of [`Bytes`], and default Err type of [`Error`].
@@ -174,7 +172,7 @@ impl SolError for Error {
     fn encode_error(&self) -> Bytes {
         match self {
             Self::CustomBytes(cow) => cow_to_bytes(cow),
-            e => crate::error::encode_error(e),
+            e => encode_error(e),
         }
     }
 

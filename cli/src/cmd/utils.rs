@@ -174,15 +174,7 @@ pub fn has_different_gas_calc(chain: u64) -> bool {
 /// True if it supports broadcasting in batches.
 pub fn has_batch_support(chain: u64) -> bool {
     if let ConfigChain::Named(chain) = ConfigChain::from(chain) {
-        return !matches!(
-            chain,
-            Chain::Arbitrum |
-                Chain::ArbitrumTestnet |
-                Chain::ArbitrumGoerli |
-                Chain::Optimism |
-                Chain::OptimismKovan |
-                Chain::OptimismGoerli
-        )
+        return !matches!(chain, Chain::Arbitrum | Chain::ArbitrumTestnet | Chain::ArbitrumGoerli)
     }
     true
 }
