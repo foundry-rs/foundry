@@ -655,7 +655,7 @@ impl Backend {
     }
 
     /// Returns the currently active `ForkDB`, if any
-    fn active_fork_db_mut(&mut self) -> Option<&mut ForkDB> {
+    pub fn active_fork_db_mut(&mut self) -> Option<&mut ForkDB> {
         self.active_fork_mut().map(|f| &mut f.db)
     }
 
