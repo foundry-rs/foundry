@@ -9,11 +9,20 @@ contract Foo {}
 contract WalletTest is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
 
+    function addressOf(uint256 x, uint256 y) internal pure returns (address) {
+        return address(uint160(uint256(keccak256(abi.encode(x, y)))));
+    }
+
     function testCreateWalletStringPrivAndLabel() public {
         bytes memory privKey = "this is a priv key";
         Cheats.Wallet memory wallet = cheats.createWallet(string(privKey));
 
+        // check wallet.addr against recovered address using private key
         address expectedAddr = cheats.addr(wallet.privateKey);
+        assertEq(expectedAddr, wallet.addr);
+
+        // check wallet.addr against recovered address using x and y coordinates
+        expectedAddr = addressOf(wallet.publicKeyX, wallet.publicKeyY);
         assertEq(expectedAddr, wallet.addr);
 
         string memory label = cheats.getLabel(wallet.addr);
@@ -25,7 +34,12 @@ contract WalletTest is DSTest {
 
         Cheats.Wallet memory wallet = cheats.createWallet(uint256(pk));
 
+        // check wallet.addr against recovered address using private key
         address expectedAddr = cheats.addr(wallet.privateKey);
+        assertEq(expectedAddr, wallet.addr);
+
+        // check wallet.addr against recovered address using x and y coordinates
+        expectedAddr = addressOf(wallet.publicKeyX, wallet.publicKeyY);
         assertEq(expectedAddr, wallet.addr);
     }
 
@@ -35,7 +49,12 @@ contract WalletTest is DSTest {
         cheats.assume(pk != 0);
         Cheats.Wallet memory wallet = cheats.createWallet(pk, label);
 
+        // check wallet.addr against recovered address using private key
         address expectedAddr = cheats.addr(wallet.privateKey);
+        assertEq(expectedAddr, wallet.addr);
+
+        // check wallet.addr against recovered address using x and y coordinates
+        expectedAddr = addressOf(wallet.publicKeyX, wallet.publicKeyY);
         assertEq(expectedAddr, wallet.addr);
 
         string memory expectedLabel = cheats.getLabel(wallet.addr);
