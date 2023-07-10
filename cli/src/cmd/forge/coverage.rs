@@ -109,9 +109,10 @@ impl CoverageArgs {
             if self.ir_minimum {
                 // Enable viaIR with minimum optimization
                 // https://github.com/ethereum/solidity/issues/12533#issuecomment-1013073350
+                // And also in new releases of solidity:
+                // https://github.com/ethereum/solidity/issues/13972#issuecomment-1628632202
 
-                project.solc_config.settings.optimizer.enable();
-                project.solc_config.settings.optimizer.runs = Some(200);
+                project.solc_config.settings.optimizer.disable(); // disable bytecode optimizer
                 project.solc_config.settings.optimizer.details = Some(OptimizerDetails {
                     peephole: Some(false),
                     inliner: Some(false),
@@ -120,10 +121,11 @@ impl CoverageArgs {
                     deduplicate: Some(false),
                     cse: Some(false),
                     constant_optimizer: Some(false),
-                    yul: Some(true),
+                    yul: Some(true), // enable yul optimizer
                     yul_details: Some(YulDetails {
                         stack_allocation: Some(true),
-                        optimizer_steps: Some(":".to_string()),
+                        // with only unused prunner step
+                        optimizer_steps: Some("u".to_string()),
                     }),
                 });
                 project.solc_config.settings.via_ir = Some(true);
