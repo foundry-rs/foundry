@@ -467,6 +467,23 @@ impl Backend {
         }
     }
 
+    pub fn insert_account_storage(
+        &mut self,
+        address: H160,
+        slot: U256,
+        value: U256,
+    ) -> Result<(), DatabaseError> {
+        let ret = if let Some(db) = self.active_fork_db_mut() {
+            db.insert_account_storage(h160_to_b160(address), slot.into(), value.into())
+        } else {
+            self.mem_db.insert_account_storage(h160_to_b160(address), slot.into(), value.into())
+        };
+
+        debug_assert!(self.storage(h160_to_b160(address), slot.into()).unwrap() == value.into());
+
+        ret
+    }
+
     /// Returns all snapshots created in this backend
     pub fn snapshots(&self) -> &Snapshots<BackendSnapshot<BackendDatabaseSnapshot>> {
         &self.inner.snapshots
