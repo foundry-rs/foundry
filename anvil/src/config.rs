@@ -41,7 +41,12 @@ use foundry_evm::{
 use parking_lot::RwLock;
 use serde_json::{json, to_writer, Value};
 use std::{
-    collections::HashMap, fmt::Write as FmtWrite, fs::File, net::IpAddr, path::PathBuf, sync::Arc,
+    collections::HashMap,
+    fmt::Write as FmtWrite,
+    fs::File,
+    net::{IpAddr, Ipv4Addr},
+    path::PathBuf,
+    sync::Arc,
     time::Duration,
 };
 use yansi::Paint;
@@ -128,7 +133,7 @@ pub struct NodeConfig {
     /// How to configure the server
     pub server_config: ServerConfig,
     /// The host the server will listen on
-    pub host: Option<IpAddr>,
+    pub host: Vec<IpAddr>,
     /// How transactions are sorted in the mempool
     pub transaction_order: TransactionOrder,
     /// Filename to write anvil output as json
@@ -379,7 +384,7 @@ impl Default for NodeConfig {
             enable_auto_impersonate: false,
             no_storage_caching: false,
             server_config: Default::default(),
-            host: None,
+            host: vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
             transaction_order: Default::default(),
             config_out: None,
             genesis: None,
@@ -717,8 +722,8 @@ impl NodeConfig {
 
     /// Sets the host the server will listen on
     #[must_use]
-    pub fn with_host(mut self, host: Option<IpAddr>) -> Self {
-        self.host = host;
+    pub fn with_host(mut self, host: Vec<IpAddr>) -> Self {
+        self.host = if host.is_empty() { vec![IpAddr::V4(Ipv4Addr::LOCALHOST)] } else { host };
         self
     }
 
