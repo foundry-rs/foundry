@@ -72,7 +72,7 @@ ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", default-feat
 ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 
-solang-parser = "=0.3.0"
+solang-parser = "=0.3.1"
 
 [patch.crates-io]
 # ethers = { path = "../ethers-rs/ethers" }
