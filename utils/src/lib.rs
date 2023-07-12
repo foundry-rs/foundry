@@ -118,10 +118,6 @@ impl std::fmt::Display for ResolvedDependency {
     }
 }
 
-pub struct LinkedArtifact {
-    id: ArtifactId,
-}
-
 /// Links the given artifacts with a link key constructor function, passing the result of each
 /// linkage to the given callback.
 ///
