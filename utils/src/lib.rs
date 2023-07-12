@@ -70,35 +70,17 @@ impl std::fmt::Debug for ArtifactCode {
 
 #[derive(Debug)]
 struct AllArtifactsBySlug {
-    /// all artifacts grouped by slug
+    /// all artifacts grouped by identifier
     inner: BTreeMap<String, ArtifactCode>,
 }
 
 impl AllArtifactsBySlug {
     /// Finds the code for the target of the artifact and the matching key.
-    ///
-    /// In multi-version builds the identifier also includes the version number. So we try to find
-    /// that artifact first. If there's no matching, versioned artifact we continue with the
-    /// `target_slug`
-    fn find_code(
-        &self,
-        artifact: &ArtifactId,
-        target_slug: &str,
-        key: &str,
-    ) -> Option<(String, CompactContractBytecode)> {
-        // try to find by versioned slug first to match the exact version
-        let major = artifact.version.major;
-        let minor = artifact.version.minor;
-        let patch = artifact.version.patch;
-        let version_slug =
-            format!("{key}.{major}.{minor}.{patch}.json:{key}.{major}.{minor}.{patch}");
-        let (identifier, code) = if let Some(code) = self.inner.get(&version_slug) {
-            (version_slug, code)
-        } else {
-            let code = self.inner.get(target_slug)?;
-            (target_slug.to_string(), code)
-        };
-        Some((identifier, code.code.clone()))
+    fn find_code(&self, identifier: &String) -> Option<CompactContractBytecode> {
+        trace!(target : "forge::link", identifier, "fetching artifact by identifier");
+        let code = self.inner.get(identifier)?;
+
+        Some(code.code.clone())
     }
 }
 
@@ -162,7 +144,7 @@ pub fn link_with_nonce_or_address<T, U>(
     let link_tree: BTreeMap<String, ArtifactDependencies> = contracts
         .iter()
         .map(|(id, contract)| {
-            let key = id.slug();
+            let key = id.identifier();
             let references = contract
                 .all_link_references()
                 .iter()
@@ -183,7 +165,7 @@ pub fn link_with_nonce_or_address<T, U>(
             .iter()
             .map(|(artifact_id, c)| {
                 (
-                    artifact_id.slug(),
+                    artifact_id.identifier(),
                     ArtifactCode { code: c.clone(), artifact_id: artifact_id.clone() },
                 )
             })
@@ -212,11 +194,11 @@ pub fn link_with_nonce_or_address<T, U>(
 
             match bytecode.object {
                 BytecodeObject::Unlinked(_) => {
-                    trace!(target : "forge::link", target=id.slug(), version=?id.version, "unlinked contract");
+                    trace!(target : "forge::link", target=id.identifier(), version=?id.version, "unlinked contract");
 
                     // link needed
                     recurse_link(
-                        id.slug(),
+                        id.identifier(),
                         (&mut target_bytecode, &mut target_bytecode_runtime),
                         &artifacts_by_slug,
                         &link_tree,
@@ -285,8 +267,8 @@ fn recurse_link<'a>(
             let ArtifactDependency { file_name: next_target, file, key } = dep;
             // get the dependency
             trace!(target : "forge::link", dependency = next_target, file, key, version=?dependencies.artifact_id.version,  "get dependency");
-            let (next_identifier, artifact) = artifacts
-                .find_code(&dependencies.artifact_id, next_target, key)
+            let  artifact = artifacts
+                .find_code(&format!("{file}:{key}"))
                 .unwrap_or_else(|| panic!("No target contract named {next_target}"))
                 ;
             let mut next_target_bytecode = artifact
@@ -299,11 +281,13 @@ fn recurse_link<'a>(
                 .expect("No target runtime");
 
             // make sure dependency is fully linked
-            if let Some(deps) = dependency_tree.get(&next_identifier) {
+            if let Some(deps) = dependency_tree.get(&format!("{file}:{key}")) {
                 if !deps.dependencies.is_empty() {
+                    trace!(target : "forge::link", dependency = next_target, file, key, version=?dependencies.artifact_id.version,  "dependency has dependencies");
+
                     // actually link the nested dependencies to this dependency
                     recurse_link(
-                        next_identifier,
+                        format!("{file}:{key}"),
                         (&mut next_target_bytecode, &mut next_target_runtime_bytecode),
                         artifacts,
                         dependency_tree,
@@ -329,10 +313,13 @@ fn recurse_link<'a>(
             }
 
             let address = if let Some(deployed_address) = deployed_address {
-                // the user specified the library address
+                trace!(target : "forge::link", dependency = next_target, file, key, "dependency has pre-defined address");
 
+                // the user specified the library address
                 deployed_address
             } else if let Some((cached_nonce, deployed_address)) = internally_deployed_libraries.get(&format!("{file}:{key}")) {
+                trace!(target : "forge::link", dependency = next_target, file, key, "dependency was previously deployed");
+
                 // we previously deployed the library
                 let library = format!("{file}:{key}:0x{}", hex::encode(deployed_address));
 
@@ -345,6 +332,8 @@ fn recurse_link<'a>(
                 });
                 *deployed_address
             } else {
+                trace!(target : "forge::link", dependency = next_target, file, key, "dependency has to be deployed");
+
                 // we need to deploy the library
                 let used_nonce = *nonce;
                 let computed_address = ethers_core::utils::get_contract_address(sender, used_nonce);
@@ -368,6 +357,7 @@ fn recurse_link<'a>(
             // link the dependency to the target
             target_bytecode.0.link(file.clone(), key.clone(), address);
             target_bytecode.1.link(file.clone(), key.clone(), address);
+            trace!(target : "forge::link", ?target, dependency = next_target, file, key, "linking dependency done");
         });
     }
 }
@@ -497,6 +487,41 @@ mod tests {
         types::{Address, Bytes},
     };
     use foundry_common::ContractsByArtifact;
+
+    struct LinkerTest<'a> {
+        files: &'a [&'static str],
+        dep_assertions: HashMap<String, &'a [(&'static str, U256)]>,
+    }
+
+    impl<'a> LinkerTest<'a> {
+        fn new(files: &[&'static str]) -> Self {
+            Self { files, dep_assertions: HashMap::new() }
+        }
+
+        fn assert_deps(mut self, artifact: &'static str, deps: &'a [(&'static str, U256)]) -> Self {
+            self
+        }
+
+        fn run_with_sender_and_nonce(self, sender: Address, nonce: U256) {
+            // todo
+        }
+    }
+
+    /*#[test]
+    fn simple_linking() {
+        // A single library
+        LinkerTest::new(&[
+            "DSTest.json:DSTest",
+            "Lib.json:Lib",
+            "LibraryConsumer.json:LibraryConsumer",
+            "SimpleLibraryLinkingTest.json:SimpleLibraryLinkingTest",
+        ])
+        .assert_deps("DSTest.json:DSTest", &[])
+        .assert_deps("Lib.json:Lib", &[])
+        .assert_deps("LibraryConsumer.json:LibraryConsumer", &[("Lib.json:Lib", 1)])
+        .assert_deps("SimpleLibraryLinkingTest.json:SimpleLibraryLinkingTest", &[])
+        .run_with_sender_and_nonce(Address::default(), U256::one());
+    }*/
 
     #[test]
     fn test_linking() {
