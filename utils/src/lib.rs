@@ -332,7 +332,7 @@ fn recurse_link<'a>(
                 // the user specified the library address
 
                 deployed_address
-            } else if let Some((nonce, deployed_address)) = internally_deployed_libraries.get(&format!("{file}:{key}")) {
+            } else if let Some((cached_nonce, deployed_address)) = internally_deployed_libraries.get(&format!("{file}:{key}")) {
                 // we previously deployed the library
                 let library = format!("{file}:{key}:0x{}", hex::encode(deployed_address));
 
@@ -340,13 +340,14 @@ fn recurse_link<'a>(
                 deployment.push(ResolvedDependency {
                     id: library,
                     address: *deployed_address,
-                    nonce: *nonce,
+                    nonce: *cached_nonce,
                     bytecode: next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!( "Bytecode should be linked for {next_target}")),
                 });
                 *deployed_address
             } else {
                 // we need to deploy the library
-                let computed_address = ethers_core::utils::get_contract_address(sender, *nonce);
+                let used_nonce = *nonce;
+                let computed_address = ethers_core::utils::get_contract_address(sender, used_nonce);
                 *nonce += 1.into();
                 let library = format!("{file}:{key}:0x{}", hex::encode(computed_address));
 
@@ -354,7 +355,7 @@ fn recurse_link<'a>(
                 deployment.push(ResolvedDependency {
                     id: library,
                     address: computed_address,
-                    nonce: *nonce,
+                    nonce: used_nonce,
                     bytecode: next_target_bytecode.object.into_bytes().unwrap_or_else(|| panic!( "Bytecode should be linked for {next_target}")),
                 });
 
