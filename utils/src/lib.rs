@@ -541,7 +541,7 @@ mod tests {
                     let assertions = self
                         .dependency_assertions
                         .get(&identifier)
-                        .expect(&format!("Unexpected artifact: {identifier}"));
+                        .unwrap_or_else(|| panic!("Unexpected artifact: {identifier}"));
 
                     assert_eq!(
                         post_link_input.dependencies.len(),
