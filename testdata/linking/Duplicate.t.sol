@@ -38,7 +38,7 @@ library D {
 
 library E {
     function pow(uint256 number, uint256 exponent) external pure returns (uint256) {
-        return number**exponent;
+        return number ** exponent;
     }
 
     function quadruple(uint256 number) external pure returns (uint256) {
