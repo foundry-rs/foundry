@@ -264,11 +264,12 @@ fn recurse_link<'a>(
 
         // for each dependency, try to link
         dependencies.dependencies.iter().for_each(|dep| {
-            let ArtifactDependency { file_name: next_target, file, key } = dep;
+            let ArtifactDependency {  file, key, .. } = dep;
+            let next_target = format!("{file}:{key}");
             // get the dependency
             trace!(target : "forge::link", dependency = next_target, file, key, version=?dependencies.artifact_id.version,  "get dependency");
             let  artifact = artifacts
-                .find_code(&format!("{file}:{key}"))
+                .find_code(&next_target)
                 .unwrap_or_else(|| panic!("No target contract named {next_target}"))
                 ;
             let mut next_target_bytecode = artifact
@@ -349,7 +350,7 @@ fn recurse_link<'a>(
                 });
 
                 // remember this library for later
-                internally_deployed_libraries.insert(format!("{file}:{key}"), (*nonce, computed_address));
+                internally_deployed_libraries.insert(format!("{file}:{key}"), (used_nonce, computed_address));
 
                 computed_address
             };
@@ -481,181 +482,326 @@ pub async fn next_nonce(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethers::{
-        abi::Abi,
-        solc::{Project, ProjectPathsConfig},
-        types::{Address, Bytes},
-    };
-    use foundry_common::ContractsByArtifact;
+    use ethers_core::types::{Address, Bytes};
+    use ethers_solc::{Project, ProjectPathsConfig};
+    use foundry_common::{abi::IntoFunction, ContractsByArtifact};
 
-    struct LinkerTest<'a> {
-        files: &'a [&'static str],
-        dep_assertions: HashMap<String, &'a [(&'static str, U256)]>,
+    struct LinkerTest {
+        root: PathBuf,
+        contracts: ArtifactContracts,
+        dependency_assertions: HashMap<String, Vec<(String, U256, Address)>>,
     }
 
-    impl<'a> LinkerTest<'a> {
-        fn new(files: &[&'static str]) -> Self {
-            Self { files, dep_assertions: HashMap::new() }
+    impl LinkerTest {
+        fn new(path: impl Into<PathBuf>) -> Self {
+            let path = path.into();
+            let paths = ProjectPathsConfig::builder()
+                .root("../testdata/linking")
+                .lib("../testdata/lib")
+                .sources(path.clone())
+                .tests(path)
+                .build()
+                .unwrap();
+
+            let project =
+                Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap();
+            let contracts = project
+                .compile()
+                .unwrap()
+                .with_stripped_file_prefixes(project.root())
+                .into_artifacts()
+                .map(|(id, c)| (id, c.into_contract_bytecode()))
+                .collect::<ArtifactContracts>();
+
+            Self { root: project.root().clone(), contracts, dependency_assertions: HashMap::new() }
         }
 
-        fn assert_deps(mut self, artifact: &'static str, deps: &'a [(&'static str, U256)]) -> Self {
+        fn assert_dependencies(
+            mut self,
+            artifact_id: String,
+            deps: Vec<(String, U256, Address)>,
+        ) -> Self {
+            self.dependency_assertions.insert(artifact_id, deps);
             self
         }
 
-        fn run_with_sender_and_nonce(self, sender: Address, nonce: U256) {
-            // todo
+        fn test_with_sender_and_nonce(self, sender: Address, initial_nonce: U256) {
+            let mut called_once = false;
+            link_with_nonce_or_address(
+                self.contracts,
+                &mut ContractsByArtifact::default(),
+                Default::default(),
+                sender,
+                initial_nonce,
+                &mut called_once,
+                |file, key| (format!("{key}.json:{key}"), file, key),
+                |post_link_input| {
+                    *post_link_input.extra = true;
+                    let identifier = post_link_input.id.identifier();
+
+                    // Skip ds-test as it always has no dependencies etc. (and the path is outside root so is not sanitized)
+                    if identifier.contains("DSTest") {
+                        return Ok(())
+                    }
+
+                    let assertions = self
+                        .dependency_assertions
+                        .get(&identifier)
+                        .expect(&format!("Unexpected artifact: {identifier}"));
+
+                    assert_eq!(
+                        post_link_input.dependencies.len(),
+                        assertions.len(),
+                        "artifact {identifier} has more/less dependencies than expected ({} vs {}): {:#?}",
+                        post_link_input.dependencies.len(),
+                        assertions.len(),
+                        post_link_input.dependencies
+                    );
+
+                    for (expected, actual) in assertions.iter().zip(post_link_input.dependencies.iter()) {
+                        let expected_lib_id = format!("{}:{:?}", expected.0, expected.2);
+                        assert_eq!(expected_lib_id, actual.id, "unexpected dependency, expected: {}, got: {}", expected_lib_id, actual.id);
+                        assert_eq!(actual.nonce, expected.1, "nonce wrong for dependency, expected: {}, got: {}", expected.1, actual.nonce);
+                        assert_eq!(actual.address, expected.2, "address wrong for dependency, expected: {}, got: {}", expected.2, actual.address);
+                    }
+
+                    Ok(())
+                },
+            )
+            .expect("Linking failed");
+
+            assert!(called_once, "linker did nothing");
         }
     }
 
-    /*#[test]
-    fn simple_linking() {
-        // A single library
-        LinkerTest::new(&[
-            "DSTest.json:DSTest",
-            "Lib.json:Lib",
-            "LibraryConsumer.json:LibraryConsumer",
-            "SimpleLibraryLinkingTest.json:SimpleLibraryLinkingTest",
-        ])
-        .assert_deps("DSTest.json:DSTest", &[])
-        .assert_deps("Lib.json:Lib", &[])
-        .assert_deps("LibraryConsumer.json:LibraryConsumer", &[("Lib.json:Lib", 1)])
-        .assert_deps("SimpleLibraryLinkingTest.json:SimpleLibraryLinkingTest", &[])
-        .run_with_sender_and_nonce(Address::default(), U256::one());
-    }*/
+    #[test]
+    fn link_simple() {
+        LinkerTest::new("../testdata/linking/simple")
+            .assert_dependencies("simple/Simple.t.sol:Lib".to_string(), vec![])
+            .assert_dependencies(
+                "simple/Simple.t.sol:LibraryConsumer".to_string(),
+                vec![(
+                    "simple/Simple.t.sol:Lib".to_string(),
+                    U256::one(),
+                    Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                )],
+            )
+            .assert_dependencies(
+                "simple/Simple.t.sol:SimpleLibraryLinkingTest".to_string(),
+                vec![(
+                    "simple/Simple.t.sol:Lib".to_string(),
+                    U256::one(),
+                    Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                )],
+            )
+            .test_with_sender_and_nonce(Address::default(), U256::one());
+    }
 
     #[test]
-    fn test_linking() {
-        let mut contract_names = [
-            "DSTest.json:DSTest",
-            "Lib.json:Lib",
-            "LibraryConsumer.json:LibraryConsumer",
-            "NestedLibraryLinkingTest.json:NestedLibraryLinkingTest",
-            "NestedLib.json:NestedLib",
-        ];
-        contract_names.sort_unstable();
+    fn link_nested() {
+        LinkerTest::new("../testdata/linking/nested")
+            .assert_dependencies("nested/Nested.t.sol:Lib".to_string(), vec![])
+            .assert_dependencies(
+                "nested/Nested.t.sol:NestedLib".to_string(),
+                vec![(
+                    "nested/Nested.t.sol:Lib".to_string(),
+                    U256::one(),
+                    Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                )],
+            )
+            .assert_dependencies(
+                "nested/Nested.t.sol:LibraryConsumer".to_string(),
+                vec![
+                    // Lib shows up here twice, because the linker sees it twice, but it should
+                    // have the same address and nonce.
+                    (
+                        "nested/Nested.t.sol:Lib".to_string(),
+                        U256::one(),
+                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                    ),
+                    (
+                        "nested/Nested.t.sol:Lib".to_string(),
+                        U256::one(),
+                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                    ),
+                    (
+                        "nested/Nested.t.sol:NestedLib".to_string(),
+                        U256::from(2),
+                        Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d").unwrap(),
+                    ),
+                ],
+            )
+            .assert_dependencies(
+                "nested/Nested.t.sol:NestedLibraryLinkingTest".to_string(),
+                vec![
+                    (
+                        "nested/Nested.t.sol:Lib".to_string(),
+                        U256::one(),
+                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                    ),
+                    (
+                        "nested/Nested.t.sol:Lib".to_string(),
+                        U256::one(),
+                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                    ),
+                    (
+                        "nested/Nested.t.sol:NestedLib".to_string(),
+                        U256::from(2),
+                        Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d").unwrap(),
+                    ),
+                ],
+            )
+            .test_with_sender_and_nonce(Address::default(), U256::one());
+    }
 
-        let paths = ProjectPathsConfig::builder()
-            .root("../testdata")
-            .sources("../testdata/linking")
-            .build()
-            .unwrap();
-
-        let project = Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap();
-
-        let output = project.compile().unwrap();
-        let contracts = output
-            .into_artifacts()
-            .filter(|(i, _)| contract_names.contains(&i.slug().as_str()))
-            .map(|(id, c)| (id, c.into_contract_bytecode()))
-            .collect::<ArtifactContracts>();
-
-        let mut known_contracts = ContractsByArtifact::default();
-        let mut deployable_contracts: BTreeMap<String, (Abi, Bytes, Vec<Bytes>)> =
-            Default::default();
-
-        let mut res = contracts.keys().map(|i| i.slug()).collect::<Vec<String>>();
-        res.sort_unstable();
-        assert_eq!(&res[..], &contract_names[..]);
-
-        let lib_linked = hex::encode(
-            &contracts
-                .iter()
-                .find(|(i, _)| i.slug() == "Lib.json:Lib")
-                .unwrap()
-                .1
-                .bytecode
-                .clone()
-                .expect("library had no bytecode")
-                .object
-                .into_bytes()
-                .expect("could not get bytecode as bytes"),
-        );
-        let nested_lib_unlinked = &contracts
-            .iter()
-            .find(|(i, _)| i.slug() == "NestedLib.json:NestedLib")
-            .unwrap()
-            .1
-            .bytecode
-            .as_ref()
-            .expect("nested library had no bytecode")
-            .object
-            .as_str()
-            .expect("could not get bytecode as str")
-            .to_string();
-
-        link_with_nonce_or_address(
-            contracts,
-            &mut known_contracts,
-            Default::default(),
-            Address::default(),
-            U256::one(),
-            &mut deployable_contracts,
-            |file, key| (format!("{key}.json:{key}"), file, key),
-            |post_link_input| {
-                match post_link_input.id.slug().as_str() {
-                    "DSTest.json:DSTest" => {
-                        assert_eq!(post_link_input.dependencies.len(), 0);
-                    }
-                    "LibraryLinkingTest.json:LibraryLinkingTest" => {
-                        assert_eq!(post_link_input.dependencies.len(), 3);
-
-                        // shows up twice because the test contract depends on it, and the library
-                        // `NestedLib` depends on it
-                        assert_eq!(
-                            hex::encode(&post_link_input.dependencies[0].bytecode),
-                            lib_linked
-                        );
-                        assert_eq!(
-                            hex::encode(&post_link_input.dependencies[1].bytecode),
-                            lib_linked
-                        );
-
-                        // ensure the duplicate uses the same nonce
-                        assert_eq!(
-                            post_link_input.dependencies[0].nonce,
-                            post_link_input.dependencies[1].nonce
-                        );
-                        assert_eq!(
-                            post_link_input.dependencies[0].address,
-                            post_link_input.dependencies[1].address
-                        );
-
-                        assert_ne!(
-                            hex::encode(&post_link_input.dependencies[2].bytecode),
-                            *nested_lib_unlinked
-                        );
-                    }
-                    "Lib.json:Lib" => {
-                        assert_eq!(post_link_input.dependencies.len(), 0);
-                    }
-                    "NestedLib.json:NestedLib" => {
-                        assert_eq!(post_link_input.dependencies.len(), 1);
-                        assert_eq!(
-                            hex::encode(&post_link_input.dependencies[0].bytecode),
-                            lib_linked
-                        );
-                    }
-                    "LibraryConsumer.json:LibraryConsumer" => {
-                        assert_eq!(post_link_input.dependencies.len(), 3);
-                        assert_eq!(
-                            hex::encode(&post_link_input.dependencies[0].bytecode),
-                            lib_linked
-                        );
-                        assert_eq!(
-                            hex::encode(&post_link_input.dependencies[1].bytecode),
-                            lib_linked
-                        );
-                        assert_ne!(
-                            hex::encode(&post_link_input.dependencies[2].bytecode),
-                            *nested_lib_unlinked
-                        );
-                    }
-                    s => panic!("unexpected slug {s}"),
-                }
-                Ok(())
-            },
-        )
-        .unwrap();
+    /// This test ensures that complicated setups with many libraries, some of which are referenced
+    /// in more than one place, result in correct linking.
+    ///
+    /// Each `assert_dependencies` should be considered in isolation, i.e. read it as "if I wanted
+    /// to deploy this contract, I would have to deploy the dependencies in this order with this
+    /// nonce".
+    ///
+    /// A library may show up more than once, but it should *always* have the same nonce and address
+    /// with respect to the single `assert_dependencies` call. There should be no gaps in the nonce
+    /// otherwise, i.e. whenever a new dependency is encountered, the nonce should be a single
+    /// increment larger than the previous largest nonce.
+    #[test]
+    fn link_duplicate() {
+        LinkerTest::new("../testdata/linking/duplicate")
+            .assert_dependencies("duplicate/Duplicate.t.sol:A".to_string(), vec![])
+            .assert_dependencies("duplicate/Duplicate.t.sol:B".to_string(), vec![])
+            .assert_dependencies(
+                "duplicate/Duplicate.t.sol:C".to_string(),
+                vec![(
+                    "duplicate/Duplicate.t.sol:A".to_string(),
+                    U256::one(),
+                    Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                )],
+            )
+            .assert_dependencies(
+                "duplicate/Duplicate.t.sol:D".to_string(),
+                vec![(
+                    "duplicate/Duplicate.t.sol:B".to_string(),
+                    U256::one(),
+                    Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                )],
+            )
+            .assert_dependencies(
+                "duplicate/Duplicate.t.sol:E".to_string(),
+                vec![
+                    (
+                        "duplicate/Duplicate.t.sol:A".to_string(),
+                        U256::one(),
+                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                    ),
+                    (
+                        "duplicate/Duplicate.t.sol:C".to_string(),
+                        U256::from(2),
+                        Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d").unwrap(),
+                    ),
+                ],
+            )
+            .assert_dependencies(
+                "duplicate/Duplicate.t.sol:LibraryConsumer".to_string(),
+                vec![
+                    (
+                        "duplicate/Duplicate.t.sol:A".to_string(),
+                        U256::one(),
+                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                    ),
+                    (
+                        "duplicate/Duplicate.t.sol:B".to_string(),
+                        U256::from(2),
+                        Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d").unwrap(),
+                    ),
+                    (
+                        "duplicate/Duplicate.t.sol:A".to_string(),
+                        U256::one(),
+                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                    ),
+                    (
+                        "duplicate/Duplicate.t.sol:C".to_string(),
+                        U256::from(3),
+                        Address::from_str("0x8be503bcded90ed42eff31f56199399b2b0154ca").unwrap(),
+                    ),
+                    (
+                        "duplicate/Duplicate.t.sol:B".to_string(),
+                        U256::from(2),
+                        Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d").unwrap(),
+                    ),
+                    (
+                        "duplicate/Duplicate.t.sol:D".to_string(),
+                        U256::from(4),
+                        Address::from_str("0x47c5e40890bce4a473a49d7501808b9633f29782").unwrap(),
+                    ),
+                    (
+                        "duplicate/Duplicate.t.sol:A".to_string(),
+                        U256::one(),
+                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                    ),
+                    (
+                        "duplicate/Duplicate.t.sol:C".to_string(),
+                        U256::from(3),
+                        Address::from_str("0x8be503bcded90ed42eff31f56199399b2b0154ca").unwrap(),
+                    ),
+                    (
+                        "duplicate/Duplicate.t.sol:E".to_string(),
+                        U256::from(5),
+                        Address::from_str("0x29b2440db4a256b0c1e6d3b4cdcaa68e2440a08f").unwrap(),
+                    ),
+                ],
+            )
+            .assert_dependencies(
+                "duplicate/Duplicate.t.sol:DuplicateLibraryLinkingTest".to_string(),
+                vec![
+                    (
+                        "duplicate/Duplicate.t.sol:A".to_string(),
+                        U256::one(),
+                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                    ),
+                    (
+                        "duplicate/Duplicate.t.sol:B".to_string(),
+                        U256::from(2),
+                        Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d").unwrap(),
+                    ),
+                    (
+                        "duplicate/Duplicate.t.sol:A".to_string(),
+                        U256::one(),
+                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                    ),
+                    (
+                        "duplicate/Duplicate.t.sol:C".to_string(),
+                        U256::from(3),
+                        Address::from_str("0x8be503bcded90ed42eff31f56199399b2b0154ca").unwrap(),
+                    ),
+                    (
+                        "duplicate/Duplicate.t.sol:B".to_string(),
+                        U256::from(2),
+                        Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d").unwrap(),
+                    ),
+                    (
+                        "duplicate/Duplicate.t.sol:D".to_string(),
+                        U256::from(4),
+                        Address::from_str("0x47c5e40890bce4a473a49d7501808b9633f29782").unwrap(),
+                    ),
+                    (
+                        "duplicate/Duplicate.t.sol:A".to_string(),
+                        U256::one(),
+                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                    ),
+                    (
+                        "duplicate/Duplicate.t.sol:C".to_string(),
+                        U256::from(3),
+                        Address::from_str("0x8be503bcded90ed42eff31f56199399b2b0154ca").unwrap(),
+                    ),
+                    (
+                        "duplicate/Duplicate.t.sol:E".to_string(),
+                        U256::from(5),
+                        Address::from_str("0x29b2440db4a256b0c1e6d3b4cdcaa68e2440a08f").unwrap(),
+                    ),
+                ],
+            )
+            .test_with_sender_and_nonce(Address::default(), U256::one());
     }
 
     #[test]

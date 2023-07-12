@@ -85,18 +85,18 @@ async fn test_linking() {
         &results,
         BTreeMap::from([
             (
-                "linking/Simple.t.sol:SimpleLibraryLinkingTest",
+                "linking/simple/Simple.t.sol:SimpleLibraryLinkingTest",
                 vec![("testCall()", true, None, None, None)],
             ),
             (
-                "linking/Nested.t.sol:NestedLibraryLinkingTest",
+                "linking/nested/Nested.t.sol:NestedLibraryLinkingTest",
                 vec![
                     ("testDirect()", true, None, None, None),
                     ("testNested()", true, None, None, None),
                 ],
             ),
             (
-                "linking/Duplicate.t.sol:DuplicateLibraryLinkingTest",
+                "linking/duplicate/Duplicate.t.sol:DuplicateLibraryLinkingTest",
                 vec![
                     ("testA()", true, None, None, None),
                     ("testB()", true, None, None, None),
