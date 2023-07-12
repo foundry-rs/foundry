@@ -504,14 +504,14 @@ mod tests {
             "DSTest.json:DSTest",
             "Lib.json:Lib",
             "LibraryConsumer.json:LibraryConsumer",
-            "LibraryLinkingTest.json:LibraryLinkingTest",
+            "NestedLibraryLinkingTest.json:NestedLibraryLinkingTest",
             "NestedLib.json:NestedLib",
         ];
         contract_names.sort_unstable();
 
         let paths = ProjectPathsConfig::builder()
             .root("../testdata")
-            .sources("../testdata/core")
+            .sources("../testdata/linking")
             .build()
             .unwrap();
 
@@ -573,6 +573,9 @@ mod tests {
                     }
                     "LibraryLinkingTest.json:LibraryLinkingTest" => {
                         assert_eq!(post_link_input.dependencies.len(), 3);
+
+                        // shows up twice because the test contract depends on it, and the library
+                        // `NestedLib` depends on it
                         assert_eq!(
                             hex::encode(&post_link_input.dependencies[0].bytecode),
                             lib_linked
@@ -581,6 +584,17 @@ mod tests {
                             hex::encode(&post_link_input.dependencies[1].bytecode),
                             lib_linked
                         );
+
+                        // ensure the duplicate uses the same nonce
+                        assert_eq!(
+                            post_link_input.dependencies[0].nonce,
+                            post_link_input.dependencies[1].nonce
+                        );
+                        assert_eq!(
+                            post_link_input.dependencies[0].address,
+                            post_link_input.dependencies[1].address
+                        );
+
                         assert_ne!(
                             hex::encode(&post_link_input.dependencies[2].bytecode),
                             *nested_lib_unlinked
