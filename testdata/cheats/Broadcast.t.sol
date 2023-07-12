@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity 0.8.19;
+pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
 import "./Vm.sol";
+
+library F {
+    function t2() public pure returns (uint256) {
+        return 1;
+    }
+}
 
 contract Test is DSTest {
     uint256 public changed = 0;
@@ -27,11 +33,6 @@ contract Test is DSTest {
     }
 }
 
-library F {
-    function t2() public pure returns (uint256) {
-        return 1;
-    }
-}
 
 contract BroadcastTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
@@ -148,10 +149,9 @@ contract BroadcastTest is DSTest {
     }
 
     function deployNoArgs() public {
-        vm.broadcast();
+        vm.startBroadcast();
         Test test1 = new Test();
 
-        vm.startBroadcast();
         Test test2 = new Test();
         vm.stopBroadcast();
     }

@@ -29,6 +29,7 @@ impl ScriptArgs {
     /// Compiles the file with auto-detection and compiler params.
     pub fn build(&mut self, script_config: &mut ScriptConfig) -> eyre::Result<BuildOutput> {
         let (project, output) = self.get_project_and_output(script_config)?;
+        let output = output.with_stripped_file_prefixes(project.root());
 
         let mut sources: BTreeMap<u32, String> = BTreeMap::new();
 
@@ -80,6 +81,8 @@ impl ScriptArgs {
 
         let mut target_fname = dunce::canonicalize(&self.path)
             .wrap_err("Couldn't convert contract path to absolute path.")?
+            .strip_prefix(project.root())
+            .wrap_err("Couldn't strip project root from contract path.")?
             .to_str()
             .wrap_err("Bad path to string.")?
             .to_string();
