@@ -163,7 +163,7 @@ dependencies = [
 
 [[package]]
 name = "anvil"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "anvil-core",
  "anvil-rpc",
@@ -666,13 +666,7 @@ checksum = "df8670b8c7b9dae1793364eafadf7239c40d669904660c5960d74cfd80b46a53"
 
 [[package]]
 name = "cast"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
-
-[[package]]
-name = "cast"
-version = "1.0.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -701,6 +695,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "cast"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
+
+[[package]]
 name = "cc"
 version = "1.0.79"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -717,7 +717,7 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "chisel"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "bytes",
  "clap 4.3.11",
@@ -2169,7 +2169,7 @@ checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 
 [[package]]
 name = "forge"
-version = "1.0.0"
+version = "0.2.0"
 dependencies = [
  "comfy-table",
  "ethers",
@@ -2226,7 +2226,7 @@ dependencies = [
 
 [[package]]
 name = "forge-fmt"
-version = "1.0.0"
+version = "0.2.0"
 dependencies = [
  "ariadne",
  "ethers-core",
@@ -2252,7 +2252,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-abi"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "ethers-contract",
  "ethers-contract-abigen",
@@ -2265,7 +2265,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-binder"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "curl",
  "ethers-contract",
@@ -2280,12 +2280,12 @@ dependencies = [
 
 [[package]]
 name = "foundry-cli"
-version = "1.0.0"
+version = "0.2.0"
 dependencies = [
  "anvil",
  "async-trait",
  "bytes",
- "cast 1.0.0",
+ "cast 0.2.0",
  "clap 4.3.11",
  "clap_complete",
  "clap_complete_fig",
@@ -2366,7 +2366,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-common"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "auto_impl",
  "clap 4.3.11",
@@ -2398,7 +2398,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-config"
-version = "1.0.0"
+version = "0.2.0"
 dependencies = [
  "Inflector",
  "dirs-next",
@@ -2429,7 +2429,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-evm"
-version = "1.0.0"
+version = "0.2.0"
 dependencies = [
  "auto_impl",
  "bytes",
@@ -2464,7 +2464,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-macros"
-version = "1.0.0"
+version = "0.2.0"
 dependencies = [
  "ethers-core",
  "foundry-macros-impl",
@@ -2483,7 +2483,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-utils"
-version = "1.0.0"
+version = "0.2.0"
 dependencies = [
  "ethers",
  "ethers-addressbook",
@@ -6797,7 +6797,7 @@ checksum = "ed646292ffc8188ef8ea4d1e0e0150fb15a5c2e12ad9b8fc191ae7a8a7f3c4b9"
 
 [[package]]
 name = "ui"
-version = "1.0.0"
+version = "0.2.0"
 dependencies = [
  "crossterm 0.26.1",
  "ethers",
