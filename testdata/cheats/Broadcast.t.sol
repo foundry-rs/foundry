@@ -33,7 +33,6 @@ contract Test is DSTest {
     }
 }
 
-
 contract BroadcastTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
