@@ -576,10 +576,16 @@ mod tests {
                     }
                     "LibraryLinkingTest.json:LibraryLinkingTest" => {
                         assert_eq!(post_link_input.dependencies.len(), 3);
-                        assert_eq!(hex::encode(&post_link_input.dependencies[0].1), lib_linked);
-                        assert_eq!(hex::encode(&post_link_input.dependencies[1].1), lib_linked);
+                        assert_eq!(
+                            hex::encode(&post_link_input.dependencies[0].bytecode),
+                            lib_linked
+                        );
+                        assert_eq!(
+                            hex::encode(&post_link_input.dependencies[1].bytecode),
+                            lib_linked
+                        );
                         assert_ne!(
-                            hex::encode(&post_link_input.dependencies[2].1),
+                            hex::encode(&post_link_input.dependencies[2].bytecode),
                             *nested_lib_unlinked
                         );
                     }
@@ -588,14 +594,23 @@ mod tests {
                     }
                     "NestedLib.json:NestedLib" => {
                         assert_eq!(post_link_input.dependencies.len(), 1);
-                        assert_eq!(hex::encode(&post_link_input.dependencies[0].1), lib_linked);
+                        assert_eq!(
+                            hex::encode(&post_link_input.dependencies[0].bytecode),
+                            lib_linked
+                        );
                     }
                     "LibraryConsumer.json:LibraryConsumer" => {
                         assert_eq!(post_link_input.dependencies.len(), 3);
-                        assert_eq!(hex::encode(&post_link_input.dependencies[0].1), lib_linked);
-                        assert_eq!(hex::encode(&post_link_input.dependencies[1].1), lib_linked);
+                        assert_eq!(
+                            hex::encode(&post_link_input.dependencies[0].bytecode),
+                            lib_linked
+                        );
+                        assert_eq!(
+                            hex::encode(&post_link_input.dependencies[1].bytecode),
+                            lib_linked
+                        );
                         assert_ne!(
-                            hex::encode(&post_link_input.dependencies[2].1),
+                            hex::encode(&post_link_input.dependencies[2].bytecode),
                             *nested_lib_unlinked
                         );
                     }
