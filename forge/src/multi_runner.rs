@@ -14,10 +14,14 @@ use foundry_evm::{
     },
     revm,
 };
-use foundry_utils::PostLinkInput;
+use foundry_utils::{PostLinkInput, ResolvedDependency};
 use rayon::prelude::*;
 use revm::primitives::SpecId;
-use std::{collections::BTreeMap, path::Path, sync::mpsc::Sender};
+use std::{
+    collections::{BTreeMap, HashSet},
+    path::Path,
+    sync::mpsc::Sender,
+};
 
 pub type DeployableContracts = BTreeMap<ArtifactId, (Abi, Bytes, Vec<Bytes>)>;
 
@@ -242,6 +246,19 @@ impl MultiContractRunnerBuilder {
         // create a mapping of name => (abi, deployment code, Vec<library deployment code>)
         let mut deployable_contracts = DeployableContracts::default();
 
+        fn unique_deps(deps: Vec<ResolvedDependency>) -> Vec<ResolvedDependency> {
+            let mut filtered = Vec::new();
+            let mut seen = HashSet::new();
+            for dep in deps {
+                if !seen.insert(dep.id.clone()) {
+                    continue
+                }
+                filtered.push(dep);
+            }
+
+            filtered
+        }
+
         foundry_utils::link_with_nonce_or_address(
             ArtifactContracts::from_iter(contracts),
             &mut known_contracts,
@@ -258,6 +275,7 @@ impl MultiContractRunnerBuilder {
                     extra: deployable_contracts,
                     dependencies,
                 } = post_link_input;
+                let dependencies = unique_deps(dependencies);
 
                 // get bytes
                 let bytecode =
