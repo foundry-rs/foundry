@@ -38,7 +38,7 @@ pub struct TermSettings {
 impl TermSettings {
     #[allow(missing_docs)]
     pub fn from_env() -> TermSettings {
-        if is_terminal::is_terminal(&std::io::stdout()) {
+        if is_terminal::is_terminal(std::io::stdout()) {
             TermSettings { indicate_progress: true }
         } else {
             TermSettings { indicate_progress: false }
