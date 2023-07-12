@@ -4,12 +4,12 @@ on:
     push:
         tags:
             - "v*.*.*"
-    # schedule:
-    #     - cron: "0 0 * * *"
+    schedule:
+        - cron: "0 0 * * *"
     workflow_dispatch:
 
 env:
-    IS_NIGHTLY: ${{ github.event_name == 'schedule' }}
+    IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     CARGO_TERM_COLOR: always
 
 jobs:
@@ -30,12 +30,10 @@ jobs:
             - name: Compute release name and tag
               id: release_info
               run: |
-                  if [[ $IS_NIGHTLY == true ]]; then
-                    echo "ISSUING NIGHTLY RELEASE"
+                  if [[ $IS_NIGHTLY ]]; then
                     echo "::set-output name=tag_name::nightly-${GITHUB_SHA}"
                     echo "::set-output name=release_name::Nightly ($(date '+%Y-%m-%d'))"
                   else
-                    echo "ISSUING STABLE RELEASE"
                     echo "::set-output name=tag_name::${GITHUB_REF_NAME}"
                     echo "::set-output name=release_name::${GITHUB_REF_NAME}"
                   fi
@@ -45,7 +43,7 @@ jobs:
             # which allows users to roll back. It is also used to build
             # the changelog.
             - name: Create build-specific nightly tag
-              if: ${{ env.IS_NIGHTLY == true }}
+              if: ${{ env.IS_NIGHTLY }}
               uses: actions/github-script@v5
               env:
                   TAG_NAME: ${{ steps.release_info.outputs.tag_name }}
@@ -59,7 +57,7 @@ jobs:
               uses: mikepenz/release-changelog-builder-action@v2
               with:
                   configuration: "./.github/changelog.json"
-                  fromTag: ${{ env.IS_NIGHTLY == true && 'nightly' || '' }}
+                  fromTag: ${{ env.IS_NIGHTLY && 'nightly' || '' }}
                   toTag: ${{ steps.release_info.outputs.tag_name }}
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -185,7 +183,7 @@ jobs:
               with:
                   name: ${{ needs.prepare.outputs.release_name }}
                   tag_name: ${{ needs.prepare.outputs.tag_name }}
-                  prerelease: ${{ env.IS_NIGHTLY == true }}
+                  prerelease: ${{ env.IS_NIGHTLY }}
                   body: ${{ needs.prepare.outputs.changelog }}
                   files: |
                       ${{ steps.artifacts.outputs.file_name }}
@@ -194,7 +192,7 @@ jobs:
             # If this is a nightly release, it also updates the release
             # tagged `nightly` for compatibility with `foundryup`
             - name: Update nightly release
-              if: ${{ env.IS_NIGHTLY == true }}
+              if: ${{ env.IS_NIGHTLY }}
               uses: softprops/action-gh-release@v1
               with:
                   name: "Nightly"
@@ -215,3 +213,27 @@ jobs:
               with:
                   update_existing: true
                   filename: .github/RELEASE_FAILURE_ISSUE_TEMPLATE.md
+
+    cleanup:
+        name: Release cleanup
+        runs-on: ubuntu-20.04
+        needs: release
+
+        steps:
+            - uses: actions/checkout@v3
+
+            # Moves the `nightly` tag to `HEAD`
+            - name: Move nightly tag
+              if: ${{ env.IS_NIGHTLY }}
+              uses: actions/github-script@v5
+              with:
+                  script: |
+                      const moveTag = require('./.github/scripts/move-tag.js')
+                      await moveTag({ github, context }, 'nightly')
+
+            - name: Delete old nightlies
+              uses: actions/github-script@v5
+              with:
+                  script: |
+                      const prunePrereleases = require('./.github/scripts/prune-prereleases.js')
+                      await prunePrereleases({github, context})
