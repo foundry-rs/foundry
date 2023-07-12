@@ -52,7 +52,6 @@ struct ArtifactDependencies {
 /// A dependency of an artifact.
 #[derive(Debug)]
 struct ArtifactDependency {
-    file_name: String,
     file: String,
     key: String,
 }
@@ -137,7 +136,6 @@ pub fn link_with_nonce_or_address<T, U>(
     sender: Address,
     nonce: U256,
     extra: &mut U,
-    link_key_construction: impl Fn(String, String) -> (String, String, String),
     post_link: impl Fn(PostLinkInput<T, U>) -> eyre::Result<()>,
 ) -> Result<()> {
     // create a mapping of fname => Vec<(fname, file, key)>,
@@ -148,10 +146,8 @@ pub fn link_with_nonce_or_address<T, U>(
             let references = contract
                 .all_link_references()
                 .iter()
-                .flat_map(|(file, link)| {
-                    link.keys().map(|key| link_key_construction(file.to_string(), key.to_string()))
-                })
-                .map(|(file_name, file, key)| ArtifactDependency { file_name, file, key })
+                .flat_map(|(file, link)| link.keys().map(|key| (file.to_string(), key.to_string())))
+                .map(|(file, key)| ArtifactDependency { file, key })
                 .collect();
 
             let references =
@@ -482,12 +478,11 @@ pub async fn next_nonce(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethers_core::types::{Address, Bytes};
+    use ethers_core::types::Address;
     use ethers_solc::{Project, ProjectPathsConfig};
-    use foundry_common::{abi::IntoFunction, ContractsByArtifact};
+    use foundry_common::ContractsByArtifact;
 
     struct LinkerTest {
-        root: PathBuf,
         contracts: ArtifactContracts,
         dependency_assertions: HashMap<String, Vec<(String, U256, Address)>>,
     }
@@ -513,7 +508,7 @@ mod tests {
                 .map(|(id, c)| (id, c.into_contract_bytecode()))
                 .collect::<ArtifactContracts>();
 
-            Self { root: project.root().clone(), contracts, dependency_assertions: HashMap::new() }
+            Self { contracts, dependency_assertions: HashMap::new() }
         }
 
         fn assert_dependencies(
@@ -534,7 +529,6 @@ mod tests {
                 sender,
                 initial_nonce,
                 &mut called_once,
-                |file, key| (format!("{key}.json:{key}"), file, key),
                 |post_link_input| {
                     *post_link_input.extra = true;
                     let identifier = post_link_input.id.identifier();
