@@ -13,10 +13,7 @@ use ethers::{
         artifacts::{Ast, CompactBytecode, CompactDeployedBytecode},
         Artifact, Bytes, Project, ProjectCompileOutput, U256,
     },
-    solc::{
-        artifacts::{contract::CompactContractBytecode, OptimizerDetails, YulDetails},
-        sourcemap::SourceMap,
-    },
+    solc::{artifacts::contract::CompactContractBytecode, sourcemap::SourceMap},
 };
 use eyre::Context;
 use forge::{
@@ -31,11 +28,12 @@ use forge::{
     MultiContractRunnerBuilder, TestOptions,
 };
 use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs};
-use foundry_config::Config;
+use foundry_config::{Config, SolcReq};
 use foundry_evm::utils::evm_spec;
 use semver::Version;
 use std::{collections::HashMap, sync::mpsc::channel};
 use tracing::trace;
+use yansi::Paint;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(CoverageArgs, opts, evm_opts);
@@ -107,28 +105,34 @@ impl CoverageArgs {
             let mut project = config.ephemeral_no_artifacts_project()?;
 
             if self.ir_minimum {
+                // TODO: How to detect solc version if the user does not specify a solc version in
+                // config  case1: specify local installed solc ?
+                //  case2: mutliple solc versions used and  auto_detect_solc == true
+                if let Some(SolcReq::Version(version)) = &config.solc {
+                    if *version < Version::new(0, 8, 13) {
+                        return Err(eyre::eyre!(
+                            "viaIR with minimum optimization is only available in Solidity 0.8.13 and above."
+                        ));
+                    }
+                }
+
+                // print warning message
+                p_println!(!self.opts.silent => "{}",
+                Paint::yellow(
+                concat!(
+                "Warning! \"--ir-minimum\" flag enables viaIR with minimum optimization, which can result in inaccurate source mappings.\n",
+                "Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n",
+                "Note that \"viaIR\" is only available in Solidity 0.8.13 and above.\n",
+                "See more:\n",
+                "https://github.com/foundry-rs/foundry/issues/3357\n"
+                )));
+
                 // Enable viaIR with minimum optimization
                 // https://github.com/ethereum/solidity/issues/12533#issuecomment-1013073350
                 // And also in new releases of solidity:
                 // https://github.com/ethereum/solidity/issues/13972#issuecomment-1628632202
-
-                project.solc_config.settings.optimizer.disable(); // disable bytecode optimizer
-                project.solc_config.settings.optimizer.details = Some(OptimizerDetails {
-                    peephole: Some(false),
-                    inliner: Some(false),
-                    jumpdest_remover: Some(false),
-                    order_literals: Some(false),
-                    deduplicate: Some(false),
-                    cse: Some(false),
-                    constant_optimizer: Some(false),
-                    yul: Some(true), // enable yul optimizer
-                    yul_details: Some(YulDetails {
-                        stack_allocation: Some(true),
-                        // with only unused prunner step
-                        optimizer_steps: Some("u".to_string()),
-                    }),
-                });
-                project.solc_config.settings.via_ir = Some(true);
+                project.solc_config.settings =
+                    project.solc_config.settings.with_via_ir_minimum_optimization()
             } else {
                 project.solc_config.settings.optimizer.disable();
                 project.solc_config.settings.optimizer.runs = None;
