@@ -14,7 +14,7 @@ use ethers::{
 };
 use eyre::{Context, ContextCompat};
 use foundry_common::compile;
-use foundry_utils::PostLinkInput;
+use foundry_utils::{PostLinkInput, ResolvedDependency};
 use std::{collections::BTreeMap, fs, str::FromStr};
 use tracing::{trace, warn};
 
@@ -127,14 +127,14 @@ impl ScriptArgs {
                     dependencies,
                 } = post_link_input;
 
-                fn unique_deps(deps: Vec<(String, Bytes)>) -> Vec<(String, Bytes)> {
+                fn unique_deps(deps: Vec<ResolvedDependency>) -> Vec<(String, Bytes)> {
                     let mut filtered = Vec::new();
                     let mut seen = HashSet::new();
-                    for (dep, bytes) in deps {
-                        if !seen.insert(dep.clone()) {
+                    for dep in deps {
+                        if !seen.insert(dep.id.clone()) {
                             continue
                         }
-                        filtered.push((dep, bytes));
+                        filtered.push((dep.id, dep.bytecode));
                     }
 
                     filtered

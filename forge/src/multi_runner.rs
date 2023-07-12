@@ -278,10 +278,7 @@ impl MultiContractRunnerBuilder {
                         (
                             abi.clone(),
                             bytecode,
-                            dependencies
-                                .into_iter()
-                                .map(|(_, bytecode)| bytecode)
-                                .collect::<Vec<_>>(),
+                            dependencies.into_iter().map(|dep| dep.bytecode).collect::<Vec<_>>(),
                         ),
                     );
                 }
