@@ -2506,6 +2506,7 @@ dependencies = [
  "rustc-hex",
  "serde",
  "serde_json",
+ "thiserror",
  "tokio",
  "tracing",
 ]

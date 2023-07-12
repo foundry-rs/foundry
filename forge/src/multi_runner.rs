@@ -5,7 +5,7 @@ use ethers::{
     solc::{contracts::ArtifactContracts, Artifact, ProjectCompileOutput},
     types::{Address, Bytes, U256},
 };
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use foundry_common::{ContractsByArtifact, TestFunctionExt};
 use foundry_evm::{
     executor::{
@@ -14,7 +14,7 @@ use foundry_evm::{
     },
     revm,
 };
-use foundry_utils::PostLinkInput;
+use foundry_utils::linker;
 use rayon::prelude::*;
 use revm::primitives::SpecId;
 use std::{collections::BTreeMap, path::Path, sync::mpsc::Sender};
@@ -242,55 +242,42 @@ impl MultiContractRunnerBuilder {
         // create a mapping of name => (abi, deployment code, Vec<library deployment code>)
         let mut deployable_contracts = DeployableContracts::default();
 
-        foundry_utils::link_with_nonce_or_address(
-            ArtifactContracts::from_iter(contracts),
-            &mut known_contracts,
-            Default::default(),
-            evm_opts.sender,
-            U256::one(),
-            &mut deployable_contracts,
-            |file, key| (format!("{key}.json:{key}"), file, key),
-            |post_link_input| {
-                let PostLinkInput {
-                    contract,
-                    known_contracts,
-                    id,
-                    extra: deployable_contracts,
-                    dependencies,
-                } = post_link_input;
+        let contracts = ArtifactContracts::from_iter(contracts);
+        let linked_artifacts =
+            linker::link_all(&contracts, &Default::default(), evm_opts.sender, U256::one())
+                .wrap_err("linking failed")?;
 
-                // get bytes
-                let bytecode =
-                    if let Some(b) = contract.bytecode.expect("No bytecode").object.into_bytes() {
-                        b
-                    } else {
-                        return Ok(())
-                    };
+        for (id, linked_artifact) in linked_artifacts.into_iter() {
+            let contract = contracts.get(&id).unwrap();
+            let abi = contract.abi.as_ref().expect("We should have an abi by now");
 
-                let abi = contract.abi.expect("We should have an abi by now");
-                // if it's a test, add it to deployable contracts
-                if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
-                    abi.functions()
-                        .any(|func| func.name.is_test() || func.name.is_invariant_test())
-                {
-                    deployable_contracts.insert(
-                        id.clone(),
-                        (
-                            abi.clone(),
-                            bytecode,
-                            dependencies.into_iter().map(|dep| dep.bytecode).collect::<Vec<_>>(),
-                        ),
-                    );
-                }
+            // if it's a test, add it to deployable contracts
+            if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
+                abi.functions().any(|func| func.name.is_test() || func.name.is_invariant_test())
+            {
+                deployable_contracts.insert(
+                    id.clone(),
+                    (
+                        abi.clone(),
+                        linked_artifact.bytecode.object.into_bytes().unwrap(),
+                        linked_artifact
+                            .dependencies
+                            .into_iter()
+                            .map(|dep| dep.bytecode)
+                            .collect::<Vec<_>>(),
+                    ),
+                );
+            }
 
-                contract
-                    .deployed_bytecode
-                    .and_then(|d_bcode| d_bcode.bytecode)
-                    .and_then(|bcode| bcode.object.into_bytes())
-                    .and_then(|bytes| known_contracts.insert(id.clone(), (abi, bytes.to_vec())));
-                Ok(())
-            },
-        )?;
+            //
+            if let Some(bytes) = linked_artifact
+                .deployed_bytecode
+                .bytecode
+                .and_then(|bytecode| bytecode.object.into_bytes())
+            {
+                known_contracts.insert(id.clone(), (abi.clone(), bytes.to_vec()));
+            }
+        }
 
         let execution_info = known_contracts.flatten();
         Ok(MultiContractRunner {
