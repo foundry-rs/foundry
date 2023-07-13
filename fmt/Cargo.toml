@@ -1,6 +1,6 @@
 [package]
 name = "forge-fmt"
-version = "1.0.0"
+version = "0.2.0"
 edition = "2021"
 description = "Foundry's solidity formatting and linting support"
 license = "MIT OR Apache-2.0"
