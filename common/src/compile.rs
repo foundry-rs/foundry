@@ -464,6 +464,7 @@ pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> 
 
     Ok(Project::builder()
         .solc_config(SolcConfig::builder().settings(settings).build())
+        .no_auto_detect()
         .paths(paths)
         .solc(solc)
         .ephemeral()
