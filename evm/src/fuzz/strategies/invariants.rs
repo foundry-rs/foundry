@@ -179,6 +179,9 @@ pub fn fuzz_contract_with_calldata(
 ) -> impl Strategy<Value = (Address, Bytes)> {
     // We need to compose all the strategies generated for each parameter in all
     // possible combinations
+
+    // `prop_oneof!` / `TupleUnion` `Arc`s for cheap cloning
+    #[allow(clippy::arc_with_non_send_sync)]
     let strats = prop_oneof![
         60 => fuzz_calldata(func.clone()),
         40 => fuzz_calldata_from_state(func, fuzz_state),
