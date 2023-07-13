@@ -385,7 +385,8 @@ pub enum Subcommands {
         /// The transaction hash.
         tx_hash: String,
 
-        /// If specified, only get the given field of the transaction.
+        /// If specified, only get the given field of the transaction. If "raw", the RLP encoded
+        /// transaction will be printed.
         field: Option<String>,
 
         /// Print as JSON.

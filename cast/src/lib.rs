@@ -676,8 +676,13 @@ where
             .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
 
         Ok(if let Some(ref field) = field {
-            get_pretty_tx_attr(&tx, field)
-                .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field))?
+            match field.as_ref() {
+                "raw" => {
+                    format!("0x{}", hex::encode(tx.rlp()))
+                }
+                _ => get_pretty_tx_attr(&tx, field)
+                    .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.to_string()))?,
+            }
         } else if to_json {
             // to_value first to sort json object keys
             serde_json::to_value(&tx)?.to_string()

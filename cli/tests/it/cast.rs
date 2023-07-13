@@ -480,3 +480,24 @@ casttest!(cast_logs_sig_2, |_: TestProject, mut cmd: TestCommand| {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cast_logs.stdout"),
     );
 });
+
+// tests that the raw encoded transaction is returned
+casttest!(cast_tx_raw, |_: TestProject, mut cmd: TestCommand| {
+    let rpc = next_http_rpc_endpoint();
+
+    // <https://etherscan.io/tx/0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e>
+    cmd.cast_fuse().args([
+        "tx",
+        "0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e",
+        "raw",
+        "--rpc-url",
+        rpc.as_str(),
+    ]);
+    let output = cmd.stdout_lossy();
+
+    // <https://etherscan.io/getRawTx?tx=0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e>
+    assert_eq!(
+        output.trim(),
+        "0xf86d824c548502743b65088275309491da5bf3f8eb72724e6f50ec6c3d199c6355c59c87a0a73f33e9e4cc8025a0428518b1748a08bbeb2392ea055b418538944d30adfc2accbbfa8362a401d3a4a07d6093ab2580efd17c11b277de7664fce56e6953cae8e925bec3313399860470"
+    );
+});
