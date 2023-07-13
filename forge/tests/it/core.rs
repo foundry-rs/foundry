@@ -61,13 +61,6 @@ async fn test_core() {
                 "core/PaymentFailure.t.sol:PaymentFailureTest",
                 vec![("testCantPay()", false, Some("EvmError: Revert".to_string()), None, None)],
             ),
-            (
-                "core/LibraryLinking.t.sol:LibraryLinkingTest",
-                vec![
-                    ("testDirect()", true, None, None, None),
-                    ("testNested()", true, None, None, None),
-                ],
-            ),
             ("core/Abstract.t.sol:AbstractTest", vec![("testSomething()", true, None, None, None)]),
             (
                 "core/FailingTestAfterFailedSetup.t.sol:FailingTestAfterFailedSetupTest",
@@ -78,6 +71,39 @@ async fn test_core() {
                     None,
                     None,
                 )],
+            ),
+        ]),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_linking() {
+    let mut runner = runner().await;
+    let results = runner.test(&Filter::new(".*", ".*", ".*linking"), None, test_opts()).await;
+
+    assert_multiple(
+        &results,
+        BTreeMap::from([
+            (
+                "linking/simple/Simple.t.sol:SimpleLibraryLinkingTest",
+                vec![("testCall()", true, None, None, None)],
+            ),
+            (
+                "linking/nested/Nested.t.sol:NestedLibraryLinkingTest",
+                vec![
+                    ("testDirect()", true, None, None, None),
+                    ("testNested()", true, None, None, None),
+                ],
+            ),
+            (
+                "linking/duplicate/Duplicate.t.sol:DuplicateLibraryLinkingTest",
+                vec![
+                    ("testA()", true, None, None, None),
+                    ("testB()", true, None, None, None),
+                    ("testC()", true, None, None, None),
+                    ("testD()", true, None, None, None),
+                    ("testE()", true, None, None, None),
+                ],
             ),
         ]),
     );
