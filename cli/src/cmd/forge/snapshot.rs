@@ -33,14 +33,6 @@ pub static RE_BASIC_SNAPSHOT_ENTRY: Lazy<Regex> = Lazy::new(|| {
 /// CLI arguments for `forge snapshot`.
 #[derive(Debug, Clone, Parser)]
 pub struct SnapshotArgs {
-    /// All test arguments are supported
-    #[clap(flatten)]
-    pub(crate) test: test::TestArgs,
-
-    /// Additional configs for test results
-    #[clap(flatten)]
-    config: SnapshotConfig,
-
     /// Output a diff against a pre-existing snapshot.
     ///
     /// By default, the comparison is done with .gas-snapshot.
@@ -86,6 +78,14 @@ pub struct SnapshotArgs {
         value_name = "SNAPSHOT_THRESHOLD"
     )]
     tolerance: Option<u32>,
+
+    /// All test arguments are supported
+    #[clap(flatten)]
+    pub(crate) test: test::TestArgs,
+
+    /// Additional configs for test results
+    #[clap(flatten)]
+    config: SnapshotConfig,
 }
 
 impl SnapshotArgs {

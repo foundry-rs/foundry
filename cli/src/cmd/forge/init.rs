@@ -22,9 +22,6 @@ pub struct InitArgs {
     #[clap(long, short)]
     template: Option<String>,
 
-    #[clap(flatten)]
-    opts: DependencyInstallOpts,
-
     /// Do not install dependencies from the network.
     #[clap(long, conflicts_with = "template", visible_alias = "no-deps")]
     offline: bool,
@@ -37,6 +34,9 @@ pub struct InitArgs {
     /// file.
     #[clap(long, conflicts_with = "template")]
     vscode: bool,
+
+    #[clap(flatten)]
+    opts: DependencyInstallOpts,
 }
 
 impl Cmd for InitArgs {

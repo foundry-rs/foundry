@@ -28,9 +28,6 @@ use tracing::{error, trace};
 
 #[derive(Clone, Debug, Parser)]
 pub struct NodeArgs {
-    #[clap(flatten)]
-    pub evm_opts: AnvilEvmArgs,
-
     /// Port number to listen on.
     #[clap(long, short, default_value = "8545", value_name = "NUM")]
     pub port: u16,
@@ -56,9 +53,6 @@ pub struct NodeArgs {
     /// [default: m/44'/60'/0'/0/]
     #[clap(long)]
     pub derivation_path: Option<String>,
-
-    #[clap(flatten)]
-    pub server_config: ServerConfig,
 
     /// Don't print anything on startup and don't print logs
     #[clap(long)]
@@ -150,6 +144,12 @@ pub struct NodeArgs {
     /// Number of blocks with transactions to keep in memory.
     #[clap(long)]
     pub transaction_block_keeper: Option<usize>,
+
+    #[clap(flatten)]
+    pub evm_opts: AnvilEvmArgs,
+
+    #[clap(flatten)]
+    pub server_config: ServerConfig,
 }
 
 #[cfg(windows)]

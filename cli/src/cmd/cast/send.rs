@@ -31,12 +31,6 @@ pub struct SendTxArgs {
     #[clap(name = "async", long = "async", alias = "cast-async", env = "CAST_ASYNC")]
     cast_async: bool,
 
-    #[clap(flatten)]
-    tx: TransactionOpts,
-
-    #[clap(flatten)]
-    eth: EthereumOpts,
-
     /// The number of confirmations until the receipt is fetched.
     #[clap(long, default_value = "1")]
     confirmations: usize,
@@ -55,6 +49,12 @@ pub struct SendTxArgs {
     /// Send via `eth_sendTransaction using the `--from` argument or $ETH_FROM as sender
     #[clap(long, requires = "from")]
     unlocked: bool,
+
+    #[clap(flatten)]
+    tx: TransactionOpts,
+
+    #[clap(flatten)]
+    eth: EthereumOpts,
 }
 
 #[derive(Debug, Parser)]

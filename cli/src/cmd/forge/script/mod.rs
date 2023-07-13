@@ -134,15 +134,6 @@ pub struct ScriptArgs {
     #[clap(long, short, default_value = "130")]
     pub gas_estimate_multiplier: u64,
 
-    #[clap(flatten)]
-    pub opts: BuildArgs,
-
-    #[clap(flatten)]
-    pub wallets: MultiWallet,
-
-    #[clap(flatten)]
-    pub evm_opts: EvmArgs,
-
     /// Send via `eth_sendTransaction` using the `--from` argument or `$ETH_FROM` as sender
     #[clap(
         long,
@@ -183,9 +174,6 @@ pub struct ScriptArgs {
     #[clap(long)]
     pub verify: bool,
 
-    #[clap(flatten)]
-    pub verifier: super::verify::VerifierArgs,
-
     /// Output results in JSON format.
     #[clap(long)]
     pub json: bool,
@@ -198,6 +186,18 @@ pub struct ScriptArgs {
         value_name = "PRICE",
     )]
     pub with_gas_price: Option<U256>,
+
+    #[clap(flatten)]
+    pub opts: BuildArgs,
+
+    #[clap(flatten)]
+    pub wallets: MultiWallet,
+
+    #[clap(flatten)]
+    pub evm_opts: EvmArgs,
+
+    #[clap(flatten)]
+    pub verifier: super::verify::VerifierArgs,
 
     #[clap(flatten)]
     pub retry: RetryArgs,
