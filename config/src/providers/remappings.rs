@@ -47,8 +47,15 @@ impl<'a> RemappingsProvider<'a> {
         trace!("get all remappings from {:?}", self.root);
         /// prioritizes remappings that are closer: shorter `path`
         ///   - ("a", "1/2") over ("a", "1/2/3")
-        fn insert_closest(mappings: &mut HashMap<String, PathBuf>, key: String, path: PathBuf) {
-            match mappings.entry(key) {
+        /// grouped by remapping context
+        fn insert_closest(
+            mappings: &mut HashMap<Option<String>, HashMap<String, PathBuf>>,
+            context: Option<String>,
+            key: String,
+            path: PathBuf,
+        ) {
+            let context_mappings = mappings.entry(context).or_default();
+            match context_mappings.entry(key) {
                 Entry::Occupied(mut e) => {
                     if e.get().components().count() > path.components().count() {
                         e.insert(path);
@@ -86,12 +93,10 @@ impl<'a> RemappingsProvider<'a> {
         // todo: if a lib specifies contexts for remappings manually, we need to figure out how to
         // resolve that
         if self.auto_detect_remappings {
-            //let mut lib_remappings = HashMap::new();
-            let mut lib_remappings = Vec::new();
+            let mut lib_remappings = HashMap::new();
             // find all remappings of from libs that use a foundry.toml
             for r in self.lib_foundry_toml_remappings() {
-                lib_remappings.push(r);
-                //insert_closest(&mut lib_remappings, r.name, r.path.into());
+                insert_closest(&mut lib_remappings, r.context, r.name, r.path.into());
             }
             // use auto detection for all libs
             for r in self
@@ -105,17 +110,24 @@ impl<'a> RemappingsProvider<'a> {
             {
                 // this is an additional safety check for weird auto-detected remappings
                 if ["lib/", "src/", "contracts/"].contains(&r.name.as_str()) {
+                    println!("- skipping the remapping");
                     continue
                 }
-                lib_remappings.push(r);
+                insert_closest(&mut lib_remappings, r.context, r.name, r.path.into());
             }
 
-            new_remappings.extend(lib_remappings);
+            new_remappings.extend(lib_remappings.into_iter().flat_map(|(context, remappings)| {
+                remappings.into_iter().map(move |(name, path)| Remapping {
+                    context: context.clone(),
+                    name,
+                    path: path.to_string_lossy().into(),
+                })
+            }));
         }
 
         // remove duplicates at this point
-        new_remappings.sort_by(|a, b| a.name.cmp(&b.name));
-        new_remappings.dedup_by(|a, b| a.name.eq(&b.name));
+        new_remappings.sort_by(|a, b| (&a.context, &a.name).cmp(&(&b.context, &b.name)));
+        new_remappings.dedup_by(|a, b| (&a.context, &a.name).eq(&(&b.context, &b.name)));
 
         Ok(new_remappings)
     }
