@@ -90,7 +90,6 @@ impl<'a> RemappingsProvider<'a> {
             let mut lib_remappings = Vec::new();
             // find all remappings of from libs that use a foundry.toml
             for r in self.lib_foundry_toml_remappings() {
-                println!("{:#?}", r);
                 lib_remappings.push(r);
                 //insert_closest(&mut lib_remappings, r.name, r.path.into());
             }
@@ -195,7 +194,6 @@ impl<'a> Provider for RemappingsProvider<'a> {
             .into_iter()
             .map(|r| RelativeRemapping::new(r, self.root).to_string())
             .collect::<Vec<_>>();
-        println!("relative remappings: {:#?}", remappings);
 
         Ok(Map::from([(
             Config::selected_profile(),

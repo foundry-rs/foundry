@@ -1,7 +1,9 @@
 //! remappings command
 
 use crate::cmd::{Cmd, LoadConfig};
+use cast::HashMap;
 use clap::{Parser, ValueHint};
+use ethers::solc::remappings::RelativeRemapping;
 use foundry_config::impl_figment_convert_basic;
 use std::path::PathBuf;
 
@@ -20,9 +22,30 @@ impl_figment_convert_basic!(RemappingArgs);
 impl Cmd for RemappingArgs {
     type Output = ();
 
+    // TODO: Do people use `forge remappings >> file`?
     fn run(self) -> eyre::Result<Self::Output> {
         let config = self.try_load_config_emit_warnings()?;
-        config.remappings.iter().for_each(|x| println!("{x}"));
+
+        let groups = config.remappings.into_iter().fold(
+            HashMap::new(),
+            |mut groups: HashMap<Option<String>, Vec<RelativeRemapping>>, remapping| {
+                groups.entry(remapping.context.clone()).or_default().push(remapping);
+                groups
+            },
+        );
+        for (group, remappings) in groups.into_iter() {
+            if let Some(group) = group {
+                println!("Context: {group}");
+            } else {
+                println!("Global:");
+            }
+
+            for mut remapping in remappings.into_iter() {
+                remapping.context = None; // avoid writing context twice
+                println!("- {remapping}");
+            }
+            println!();
+        }
         Ok(())
     }
 }
