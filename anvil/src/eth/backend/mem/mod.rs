@@ -69,7 +69,7 @@ use forge::{
 };
 use foundry_evm::{
     decode::{decode_custom_error_args, decode_revert},
-    executor::backend::{DatabaseError, DatabaseResult},
+    executor::{backend::{DatabaseError, DatabaseResult}, inspector::DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_CODE},
     revm::{
         self,
         db::CacheDB,
@@ -87,7 +87,7 @@ use std::{
     io::{Read, Write},
     ops::Deref,
     sync::Arc,
-    time::Duration,
+    time::Duration
 };
 use storage::{Blockchain, MinedTransaction};
 use tokio::sync::RwLock as AsyncRwLock;
@@ -237,6 +237,12 @@ impl Backend {
         // Note: this can only fail in forking mode, in which case we can't recover
         backend.apply_genesis().await.expect("Failed to create genesis");
         backend
+    }
+
+    pub async fn set_create2_deployer(&self, address: Address) -> DatabaseResult<()> {
+        self.set_code(address, Bytes::from_static(DEFAULT_CREATE2_DEPLOYER_CODE)).await?;
+
+        Ok(())
     }
 
     /// Updates memory limits that should be more strict when auto-mine is enabled
