@@ -1745,6 +1745,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "2.0.7"
+source = "git+https://github.com/onbjerg/ethers-rs?branch=onbjerg/remapping-context#67147d56c4ce3ce3f2c30d089747b59ab7d2df4f"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1759,6 +1760,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "2.0.7"
+source = "git+https://github.com/onbjerg/ethers-rs?branch=onbjerg/remapping-context#67147d56c4ce3ce3f2c30d089747b59ab7d2df4f"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1769,6 +1771,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "2.0.7"
+source = "git+https://github.com/onbjerg/ethers-rs?branch=onbjerg/remapping-context#67147d56c4ce3ce3f2c30d089747b59ab7d2df4f"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1787,6 +1790,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "2.0.7"
+source = "git+https://github.com/onbjerg/ethers-rs?branch=onbjerg/remapping-context#67147d56c4ce3ce3f2c30d089747b59ab7d2df4f"
 dependencies = [
  "Inflector",
  "dunce",
@@ -1809,6 +1813,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "2.0.7"
+source = "git+https://github.com/onbjerg/ethers-rs?branch=onbjerg/remapping-context#67147d56c4ce3ce3f2c30d089747b59ab7d2df4f"
 dependencies = [
  "Inflector",
  "ethers-contract-abigen",
@@ -1823,6 +1828,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "2.0.7"
+source = "git+https://github.com/onbjerg/ethers-rs?branch=onbjerg/remapping-context#67147d56c4ce3ce3f2c30d089747b59ab7d2df4f"
 dependencies = [
  "arrayvec",
  "bytes",
@@ -1851,6 +1857,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "2.0.7"
+source = "git+https://github.com/onbjerg/ethers-rs?branch=onbjerg/remapping-context#67147d56c4ce3ce3f2c30d089747b59ab7d2df4f"
 dependencies = [
  "ethers-core",
  "ethers-solc",
@@ -1865,6 +1872,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "2.0.7"
+source = "git+https://github.com/onbjerg/ethers-rs?branch=onbjerg/remapping-context#67147d56c4ce3ce3f2c30d089747b59ab7d2df4f"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1890,6 +1898,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "2.0.7"
+source = "git+https://github.com/onbjerg/ethers-rs?branch=onbjerg/remapping-context#67147d56c4ce3ce3f2c30d089747b59ab7d2df4f"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1926,6 +1935,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "2.0.7"
+source = "git+https://github.com/onbjerg/ethers-rs?branch=onbjerg/remapping-context#67147d56c4ce3ce3f2c30d089747b59ab7d2df4f"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1952,6 +1962,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "2.0.7"
+source = "git+https://github.com/onbjerg/ethers-rs?branch=onbjerg/remapping-context#67147d56c4ce3ce3f2c30d089747b59ab7d2df4f"
 dependencies = [
  "cfg-if",
  "dunce",
