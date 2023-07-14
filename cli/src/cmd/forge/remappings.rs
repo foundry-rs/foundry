@@ -16,6 +16,9 @@ pub struct RemappingArgs {
     /// or the current working directory.
     #[clap(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     root: Option<PathBuf>,
+    /// Pretty-print the remappings, grouping each of them by context.
+    #[clap(long)]
+    pretty: bool,
 }
 impl_figment_convert_basic!(RemappingArgs);
 
@@ -26,26 +29,33 @@ impl Cmd for RemappingArgs {
     fn run(self) -> eyre::Result<Self::Output> {
         let config = self.try_load_config_emit_warnings()?;
 
-        let groups = config.remappings.into_iter().fold(
-            HashMap::new(),
-            |mut groups: HashMap<Option<String>, Vec<RelativeRemapping>>, remapping| {
-                groups.entry(remapping.context.clone()).or_default().push(remapping);
-                groups
-            },
-        );
-        for (group, remappings) in groups.into_iter() {
-            if let Some(group) = group {
-                println!("Context: {group}");
-            } else {
-                println!("Global:");
-            }
+        if self.pretty {
+            let groups = config.remappings.into_iter().fold(
+                HashMap::new(),
+                |mut groups: HashMap<Option<String>, Vec<RelativeRemapping>>, remapping| {
+                    groups.entry(remapping.context.clone()).or_default().push(remapping);
+                    groups
+                },
+            );
+            for (group, remappings) in groups.into_iter() {
+                if let Some(group) = group {
+                    println!("Context: {group}");
+                } else {
+                    println!("Global:");
+                }
 
-            for mut remapping in remappings.into_iter() {
-                remapping.context = None; // avoid writing context twice
-                println!("- {remapping}");
+                for mut remapping in remappings.into_iter() {
+                    remapping.context = None; // avoid writing context twice
+                    println!("- {remapping}");
+                }
+                println!();
             }
-            println!();
+        } else {
+            for remapping in config.remappings.into_iter() {
+                println!("{remapping}");
+            }
         }
+
         Ok(())
     }
 }
