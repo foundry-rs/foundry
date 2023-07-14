@@ -444,6 +444,7 @@ pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> 
     // add missing remappings
     if !settings.remappings.iter().any(|remapping| remapping.name.starts_with("@openzeppelin/")) {
         let oz = Remapping {
+            context: None,
             name: "@openzeppelin/".into(),
             path: sources_path.join("@openzeppelin").display().to_string(),
         };

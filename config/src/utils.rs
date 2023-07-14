@@ -159,7 +159,11 @@ pub fn foundry_toml_dirs(root: impl AsRef<Path>) -> Vec<PathBuf> {
 pub(crate) fn get_dir_remapping(dir: impl AsRef<Path>) -> Option<Remapping> {
     let dir = dir.as_ref();
     if let Some(dir_name) = dir.file_name().and_then(|s| s.to_str()).filter(|s| !s.is_empty()) {
-        let mut r = Remapping { name: format!("{dir_name}/"), path: format!("{}", dir.display()) };
+        let mut r = Remapping {
+            context: None,
+            name: format!("{dir_name}/"),
+            path: format!("{}", dir.display()),
+        };
         if !r.path.ends_with('/') {
             r.path.push('/')
         }

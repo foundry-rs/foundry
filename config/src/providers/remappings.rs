@@ -83,11 +83,16 @@ impl<'a> RemappingsProvider<'a> {
         new_remappings.extend(remappings);
 
         // scan all library dirs and autodetect remappings
+        // todo: if a lib specifies contexts for remappings manually, we need to figure out how to
+        // resolve that
         if self.auto_detect_remappings {
-            let mut lib_remappings = HashMap::new();
+            //let mut lib_remappings = HashMap::new();
+            let mut lib_remappings = Vec::new();
             // find all remappings of from libs that use a foundry.toml
             for r in self.lib_foundry_toml_remappings() {
-                insert_closest(&mut lib_remappings, r.name, r.path.into());
+                println!("{:#?}", r);
+                lib_remappings.push(r);
+                //insert_closest(&mut lib_remappings, r.name, r.path.into());
             }
             // use auto detection for all libs
             for r in self
@@ -103,14 +108,10 @@ impl<'a> RemappingsProvider<'a> {
                 if ["lib/", "src/", "contracts/"].contains(&r.name.as_str()) {
                     continue
                 }
-                insert_closest(&mut lib_remappings, r.name, r.path.into());
+                lib_remappings.push(r);
             }
 
-            new_remappings.extend(
-                lib_remappings
-                    .into_iter()
-                    .map(|(name, path)| Remapping { name, path: path.to_string_lossy().into() }),
-            );
+            new_remappings.extend(lib_remappings);
         }
 
         // remove duplicates at this point
@@ -142,6 +143,7 @@ impl<'a> RemappingsProvider<'a> {
                 {
                     if let Some(name) = lib.file_name().and_then(|s| s.to_str()) {
                         let mut r = Remapping {
+                            context: None,
                             name: format!("{name}/"),
                             path: format!("{}", lib.join(&config.src).display()),
                         };
@@ -152,8 +154,16 @@ impl<'a> RemappingsProvider<'a> {
                     }
                 }
 
-                let mut remappings =
-                    config.remappings.into_iter().map(|m| m.into()).collect::<Vec<Remapping>>();
+                let mut remappings = config
+                    .remappings
+                    .into_iter()
+                    .map(Remapping::from)
+                    .map(|mut r| {
+                        // todo: windows/mac/linux
+                        r.context = Some(lib.to_string_lossy().to_string());
+                        r
+                    })
+                    .collect::<Vec<Remapping>>();
 
                 if let Some(r) = src_remapping {
                     remappings.push(r);
@@ -185,6 +195,7 @@ impl<'a> Provider for RemappingsProvider<'a> {
             .into_iter()
             .map(|r| RelativeRemapping::new(r, self.root).to_string())
             .collect::<Vec<_>>();
+        println!("relative remappings: {:#?}", remappings);
 
         Ok(Map::from([(
             Config::selected_profile(),

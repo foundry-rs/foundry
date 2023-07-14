@@ -61,21 +61,21 @@ panic = "abort"
 codegen-units = 1
 
 [workspace.dependencies]
-ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-contract = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-providers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-signers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers = { path = "../../gakonst/ethers-rs/ethers", default-features = false }
+ethers-addressbook = { path = "../../gakonst/ethers-rs/ethers-addressbook", default-features = false }
+ethers-core = { path = "../../gakonst/ethers-rs/ethers-core", default-features = false }
+ethers-contract = { path = "../../gakonst/ethers-rs/ethers-contract", default-features = false }
+ethers-contract-abigen = { path = "../../gakonst/ethers-rs/ethers-contract/ethers-contract-abigen", default-features = false }
+ethers-providers = { path = "../../gakonst/ethers-rs/ethers-providers", default-features = false }
+ethers-signers = { path = "../../gakonst/ethers-rs/ethers-signers", default-features = false }
+ethers-middleware = { path = "../../gakonst/ethers-rs/ethers-middleware", default-features = false }
+ethers-etherscan = { path = "../../gakonst/ethers-rs/ethers-etherscan", default-features = false }
+ethers-solc = { path = "../../gakonst/ethers-rs/ethers-solc", default-features = false }
 
 solang-parser = "=0.3.1"
 
 [patch.crates-io]
-# ethers = { path = "../ethers-rs/ethers" }
+# ethers = { path = "../../gakonst/ethers-rs/ethers" }
 # ethers-addressbook = { path = "../ethers-rs/ethers-addressbook" }
 # ethers-contract = { path = "../ethers-rs/ethers-contract" }
 # ethers-contract-abigen = { path = "../ethers-rs/ethers-contract/ethers-contract-abigen" }
@@ -84,5 +84,5 @@ solang-parser = "=0.3.1"
 # ethers-middleware = { path = "../ethers-rs/ethers-middleware" }
 # ethers-providers = { path = "../ethers-rs/ethers-providers" }
 # ethers-signers = { path = "../ethers-rs/ethers-signers" }
-# ethers-solc = { path = "../ethers-rs/ethers-solc" }
+# ethers-solc = { path = "../../gakonst/ethers-rs/ethers-solc" }
 revm = { git = "https://github.com/bluealloy/revm/", branch = "release/v25" }
