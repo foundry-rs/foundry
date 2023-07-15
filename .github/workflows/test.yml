@@ -12,7 +12,7 @@ env:
 jobs:
     build-tests:
         if: false
-        name: build tests / ${{ matrix.archive.name }}
+        name: build (${{ matrix.archive.name }})
         runs-on: ubuntu-latest
         strategy:
             matrix:
@@ -45,22 +45,24 @@ jobs:
 
     install-svm-solc:
         if: false
-        name: install svm and solidity / ${{ matrix.job.name }}
+        name: install solc with svm (${{ matrix.version }})
         runs-on: ubuntu-latest
         timeout-minutes: 30
+        strategy:
+          fail-fast: false
+          matrix:
+            version: ["0.8.19", "0.8.20"]
         steps:
             - name: Install svm
               run: cargo install svm-rs
-            - name: Install Solidity 0.8.19
-              run: svm install 0.8.19
-            - name: Install Solidity 0.8.20
-              run: svm install 0.8.20
-            - name: Use Solidity 0.8.19
-              run: svm use 0.8.19
+            - name: Install solc ${{ matrix.version }}
+              run: svm install ${{ matrix.version }}
+            - name: Use Solidity ${{ matrix.version }}
+              run: svm use ${{ matrix.version }}
 
     unit:
         if: false
-        name: unit tests / ${{ matrix.job.name }}
+        name: unit tests (${{ matrix.job.name }})
         runs-on: ubuntu-latest
         needs: build-tests
         timeout-minutes: 60
@@ -89,14 +91,11 @@ jobs:
 
     issue-repros-tests:
         if: false
-        name: issue reproduction tests / ${{ matrix.job.name }} / ${{ matrix.job.partition }}
+        name: reproduction tests (partition ${{ matrix.job.partition }})
         runs-on: ubuntu-latest
         needs: build-tests
         strategy:
             matrix:
-                job:
-                    - name: issue-repros
-                      filter: "test(~issue)"
                 partition: [1, 2]
         env:
             ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
@@ -124,18 +123,13 @@ jobs:
               run: |
                   # see https://github.com/foundry-rs/foundry/pull/3959
                   export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib"
-                  cargo nextest run --partition count:${{ matrix.partition }}/2 --retries 3 --archive-file nextest-integration.tar.zst -E '${{ matrix.job.filter }}'
+                  cargo nextest run --partition count:${{ matrix.partition }}/2 --retries 3 --archive-file nextest-integration.tar.zst -E 'test(~issue)'
 
     forge-std-tests:
         if: false
-        name: forge std tests / ${{ matrix.job.name }}
+        name: forge std tests
         runs-on: ubuntu-latest
         needs: build-tests
-        strategy:
-            matrix:
-                job:
-                    - name: forge-std-test
-                      filter: "test(~forge_std)"
         env:
             ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
         steps:
@@ -149,7 +143,6 @@ jobs:
 
             - name: Forge RPC cache
               uses: actions/cache@v3
-              if: matrix.job.name != 'forge-std-test'
               with:
                   path: "$HOME/.foundry/cache"
                   key: rpc-cache-${{ hashFiles('cli/tests/rpc-cache-keyfile') }}
@@ -162,11 +155,11 @@ jobs:
               run: |
                   # see https://github.com/foundry-rs/foundry/pull/3959
                   export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib"
-                  cargo nextest run --retries 3 --archive-file nextest-integration.tar.zst -E '${{ matrix.job.filter }}'
+                  cargo nextest run --retries 3 --archive-file nextest-integration.tar.zst -E 'test(~forge_std)'
 
     integration:
         if: false
-        name: integration tests / ${{ matrix.job.name }}
+        name: integration tests (${{ matrix.job.name }}, partition ${{ matrix.partition }})
         runs-on: ubuntu-latest
         needs: build-tests
         strategy:
@@ -207,7 +200,7 @@ jobs:
 
     external-integration:
         if: false
-        name: external integration tests / ${{ matrix.job.name }}
+        name: external integration tests (${{ matrix.job.name }})
         runs-on: ubuntu-latest
         needs: build-tests
         strategy:
