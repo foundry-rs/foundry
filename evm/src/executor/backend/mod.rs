@@ -877,7 +877,12 @@ impl DatabaseExt for Backend {
             // stored a failure on hevm's keccak256("failed") slot.
             // We do this instead of checking the usual _failed slot to avoid false positives or
             // negatives due to any shift in storage due to a wrong inheritance order.
-            if self.is_global_failure() {
+            if self
+                .test_contract_address()
+                .map(|addr| self.is_failed_test_contract_state(addr, current_state))
+                .unwrap_or_default() ||
+                self.is_global_failure()
+            {
                 self.inner.has_snapshot_failure.store(true, Ordering::Relaxed);
             }
 
