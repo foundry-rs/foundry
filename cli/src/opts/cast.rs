@@ -390,7 +390,7 @@ pub enum Subcommands {
         field: Option<String>,
 
         /// Print the raw RLP encoded transaction.
-        #[clap(long)]
+        #[clap(long, conflicts_with = "field")]
         raw: bool,
 
         /// Print as JSON.
