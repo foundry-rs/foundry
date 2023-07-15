@@ -44,11 +44,12 @@ jobs:
 
     install-svm-solc:
         name: install solc with svm (${{ matrix.version }})
-        runs-on: ubuntu-latest
+        runs-on: ${{ matrix.os }}
         timeout-minutes: 30
         strategy:
           fail-fast: false
           matrix:
+            os: ["ubuntu-latest", "windows-latest", "macos-latest"]
             version: ["0.8.19", "0.8.20"]
         steps:
             - name: Install svm
