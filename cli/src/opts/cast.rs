@@ -276,12 +276,12 @@ pub enum Subcommands {
         "2r"]
     )]
     ToBase {
+        #[clap(flatten)]
+        base: ToBaseArgs,
+
         /// The output base.
         #[clap(value_name = "BASE")]
         base_out: Option<String>,
-
-        #[clap(flatten)]
-        base: ToBaseArgs,
     },
     /// Create an access list for a transaction.
     #[clap(visible_aliases = &["ac", "acl"])]
