@@ -873,10 +873,9 @@ impl DatabaseExt for Backend {
     ) -> Option<JournaledState> {
         trace!(?id, "revert snapshot");
         if let Some(mut snapshot) = self.inner.snapshots.remove(id) {
-            // We first check if there's a "global failure", meaning that the ds-test contract
-            // stored a failure on hevm's keccak256("failed") slot.
-            // We do this instead of checking the usual _failed slot to avoid false positives or
-            // negatives due to any shift in storage due to a wrong inheritance order.
+            // need to check whether DSTest's `failed` variable is set to `true` or if there's a
+            // global failure which means an error occurred either during the snapshot
+            // or even before
             if self
                 .test_contract_address()
                 .map(|addr| self.is_failed_test_contract_state(addr, current_state))
