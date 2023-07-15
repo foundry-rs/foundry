@@ -9,7 +9,7 @@ env:
 
 jobs:
     build-tests:
-        name: building ${{ matrix.job.target }} (${{ matrix.job.os }}) / ${{ matrix.archive.name }}
+        name: build (${{ matrix.job.target }}, ${{ matrix.archive.name }})
         runs-on: ${{ matrix.job.os }}
         timeout-minutes: 60
         strategy:
@@ -74,7 +74,7 @@ jobs:
                   path: ${{ matrix.job.target }}-${{ matrix.archive.file }}
 
     unit:
-        name: unit tests ${{ matrix.job.target }} (${{ matrix.job.os }}) / ${{ matrix.archive.name }} / ${{ matrix.nextest.name }}
+        name: unit tests (${{ matrix.job.target }}, ${{ matrix.archive.name }}, ${{ matrix.nextest.name }})
         runs-on: ${{ matrix.job.os }}
         needs: build-tests
         timeout-minutes: 60
@@ -125,9 +125,7 @@ jobs:
                   cargo nextest run --retries 3 --archive-file  ${{ matrix.job.target }}-${{ matrix.archive.file }} -E '${{ matrix.nextest.filter }}'
 
     integration:
-        name:
-            integration tests ${{ matrix.job.target }} (${{ matrix.job.os }}) / ${{
-            matrix.archive.name }} / ${{ matrix.nextest.name }}
+        name: integration tests (${{ matrix.job.target }}, ${{ matrix.archive.name }}, ${{ matrix.nextest.name }})
         runs-on: ${{ matrix.job.os }}
         timeout-minutes: 60
         needs: build-tests

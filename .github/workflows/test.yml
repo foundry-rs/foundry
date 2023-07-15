@@ -261,7 +261,7 @@ jobs:
               run: cargo test --locked --workspace --all-features --doc
 
     cross-platform:
-        name: Cross-platform tests
+        name: cross-platform tests
         #if: github.event_name != 'pull_request'
         #needs: [unit, integration, doctests]
         uses: ./.github/workflows/cross-platform.yml
