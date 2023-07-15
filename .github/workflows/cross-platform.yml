@@ -42,6 +42,8 @@ jobs:
               with:
                   targets: ${{ matrix.job.target }}
             - uses: Swatinem/rust-cache@v2
+              with:
+                key: ${{ matrix.job.target }}
             - name: Install nextest
               uses: taiki-e/install-action@nextest
 
