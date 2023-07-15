@@ -66,7 +66,7 @@ jobs:
 
             - name: Build archive (unit tests)
               run: |
-                  cargo nextest archive --target ${{ matrix.target }} --locked ${{ matrix.job.flags }} --archive-file ${{ matrix.job.target }}-${{ matrix.archive.file }}
+                  cargo nextest archive --target ${{ matrix.job.target }} --locked ${{ matrix.job.flags }} --archive-file ${{ matrix.job.target }}-${{ matrix.archive.file }}
             - name: Upload archive
               uses: actions/upload-artifact@v3
               with:
