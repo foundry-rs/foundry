@@ -87,7 +87,7 @@ jobs:
                   cargo nextest run --retries 3 --archive-file nextest-unit.tar.zst -E '${{ matrix.job.filter }}'
 
     issue-repros-tests:
-        name: reproduction tests (partition ${{ matrix.job.partition }})
+        name: reproduction tests (partition ${{ matrix.partition }})
         runs-on: ubuntu-latest
         needs: build-tests
         strategy:
