@@ -45,12 +45,6 @@ jobs:
             - name: Install nextest
               uses: taiki-e/install-action@nextest
 
-            # Required for forge commands that use git
-            - name: Setup git
-              run: |
-                  git config --global user.name "GitHub Actions Bot"
-                  git config --global user.email "<>"
-
             - name: Apple M1 setup
               if: ${{ matrix.job.target == 'aarch64-apple-darwin' }}
               run: |
