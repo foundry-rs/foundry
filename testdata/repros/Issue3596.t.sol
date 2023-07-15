@@ -2,11 +2,11 @@
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "../cheats/Cheats.sol";
+import "../cheats/Vm.sol";
 
 // https://github.com/foundry-rs/foundry/issues/3596
 contract Issue3596Test is DSTest {
-    Cheats constant vm = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testDealTransfer() public {
         address addr = vm.addr(1337);

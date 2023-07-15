@@ -216,6 +216,7 @@ impl ShellOut {
     /// Creates a new shell that writes to memory
     pub fn memory() -> Self {
         #[allow(clippy::box_default)]
+        #[allow(clippy::arc_with_non_send_sync)]
         ShellOut::Write(WriteShellOut(Arc::new(Mutex::new(Box::new(Vec::new())))))
     }
 

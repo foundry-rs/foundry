@@ -1,5 +1,5 @@
 use crate::{
-    result::{SuiteResult, TestKind, TestResult, TestSetup},
+    result::{SuiteResult, TestKind, TestResult, TestSetup, TestStatus},
     TestFilter, TestOptions,
 };
 use ethers::{
@@ -170,7 +170,7 @@ impl<'a> ContractRunner<'a> {
     /// Runs all tests for a contract whose names match the provided regular expression
     pub fn run_tests(
         mut self,
-        filter: &impl TestFilter,
+        filter: impl TestFilter,
         test_options: TestOptions,
         known_contracts: Option<&ContractsByArtifact>,
     ) -> SuiteResult {
@@ -225,7 +225,7 @@ impl<'a> ContractRunner<'a> {
                 [(
                     "setUp()".to_string(),
                     TestResult {
-                        success: false,
+                        status: TestStatus::Failure,
                         reason: setup.reason,
                         counterexample: None,
                         decoded_logs: decode_console_logs(&setup.logs),
@@ -288,7 +288,8 @@ impl<'a> ContractRunner<'a> {
 
         let duration = start.elapsed();
         if !test_results.is_empty() {
-            let successful = test_results.iter().filter(|(_, tst)| tst.success).count();
+            let successful =
+                test_results.iter().filter(|(_, tst)| tst.status == TestStatus::Success).count();
             info!(
                 duration = ?duration,
                 "done. {}/{} successful",
@@ -347,9 +348,20 @@ impl<'a> ContractRunner<'a> {
                     HashMap::new(),
                 )
             }
+            Err(EvmError::SkipError) => {
+                return TestResult {
+                    status: TestStatus::Skipped,
+                    reason: None,
+                    decoded_logs: decode_console_logs(&logs),
+                    traces,
+                    labeled_addresses,
+                    kind: TestKind::Standard(0),
+                    ..Default::default()
+                }
+            }
             Err(err) => {
                 return TestResult {
-                    success: false,
+                    status: TestStatus::Failure,
                     reason: Some(err.to_string()),
                     decoded_logs: decode_console_logs(&logs),
                     traces,
@@ -375,7 +387,10 @@ impl<'a> ContractRunner<'a> {
         );
 
         TestResult {
-            success,
+            status: match success {
+                true => TestStatus::Success,
+                false => TestStatus::Failure,
+            },
             reason,
             counterexample: None,
             decoded_logs: decode_console_logs(&logs),
@@ -403,6 +418,26 @@ impl<'a> ContractRunner<'a> {
         let project_contracts = known_contracts.unwrap_or(&empty);
         let TestSetup { address, logs, traces, labeled_addresses, .. } = setup;
 
+        // First, run the test normally to see if it needs to be skipped.
+        if let Err(EvmError::SkipError) = self.executor.execute_test::<(), _, _>(
+            self.sender,
+            address,
+            functions[0].clone(),
+            (),
+            0.into(),
+            self.errors,
+        ) {
+            return vec![TestResult {
+                status: TestStatus::Skipped,
+                reason: None,
+                decoded_logs: decode_console_logs(&logs),
+                traces,
+                labeled_addresses,
+                kind: TestKind::Standard(0),
+                ..Default::default()
+            }]
+        };
+
         let mut evm = InvariantExecutor::new(
             &mut self.executor,
             runner,
@@ -415,7 +450,10 @@ impl<'a> ContractRunner<'a> {
             InvariantContract { address, invariant_functions: functions, abi: self.contract };
 
         let Ok(InvariantFuzzTestResult { invariants, cases, reverts, mut last_call_results }) =
-            evm.invariant_fuzz(invariant_contract) else { return vec![] };
+            evm.invariant_fuzz(invariant_contract)
+        else {
+            return vec![]
+        };
 
         invariants
             .into_iter()
@@ -473,7 +511,10 @@ impl<'a> ContractRunner<'a> {
                 };
 
                 TestResult {
-                    success,
+                    status: match success {
+                        true => TestStatus::Success,
+                        false => TestStatus::Failure,
+                    },
                     reason,
                     counterexample,
                     decoded_logs: decode_console_logs(&logs),
@@ -504,6 +545,20 @@ impl<'a> ContractRunner<'a> {
         let mut result = FuzzedExecutor::new(&self.executor, runner, self.sender, fuzz_config)
             .fuzz(func, address, should_fail, self.errors);
 
+        // Check the last test result and skip the test
+        // if it's marked as so.
+        if let Some("SKIPPED") = result.reason.as_deref() {
+            return TestResult {
+                status: TestStatus::Skipped,
+                reason: None,
+                decoded_logs: decode_console_logs(&logs),
+                traces,
+                labeled_addresses,
+                kind: TestKind::Standard(0),
+                ..Default::default()
+            }
+        }
+
         let kind = TestKind::Fuzz {
             median_gas: result.median_gas(false),
             mean_gas: result.mean_gas(false),
@@ -523,7 +578,10 @@ impl<'a> ContractRunner<'a> {
         );
 
         TestResult {
-            success: result.success,
+            status: match result.success {
+                true => TestStatus::Success,
+                false => TestStatus::Failure,
+            },
             reason: result.reason,
             counterexample: result.counterexample,
             decoded_logs: decode_console_logs(&logs),

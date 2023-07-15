@@ -176,16 +176,38 @@ fn value_to_token(value: &Value) -> Result<Token> {
         }
         Value::Number(number) => {
             if let Some(f) = number.as_f64() {
+                // Check if the number has decimal digits because the EVM does not support floating
+                // point math
                 if f.fract() == 0.0 {
+                    // Use the string representation of the `serde_json` Number type instead of
+                    // calling f.to_string(), because some numbers are wrongly rounded up after
+                    // being convented to f64.
+                    // Example: 18446744073709551615 becomes 18446744073709552000 after parsing it
+                    // to f64.
                     let s = number.to_string();
+
+                    // Calling Number::to_string with powers of ten formats the number using
+                    // scientific notation and causes from_dec_str to fail. Using format! with f64
+                    // keeps the full number representation.
+                    // Example: 100000000000000000000 becomes 1e20 when Number::to_string is
+                    // used.
+                    let fallback_s = format!("{f}");
+
                     if let Ok(n) = U256::from_dec_str(&s) {
                         return Ok(Token::Uint(n))
                     }
                     if let Ok(n) = I256::from_dec_str(&s) {
                         return Ok(Token::Int(n.into_raw()))
                     }
+                    if let Ok(n) = U256::from_dec_str(&fallback_s) {
+                        return Ok(Token::Uint(n))
+                    }
+                    if let Ok(n) = I256::from_dec_str(&fallback_s) {
+                        return Ok(Token::Int(n.into_raw()))
+                    }
                 }
             }
+
             Err(fmt_err!("Unsupported value: {number:?}"))
         }
         Value::String(string) => {

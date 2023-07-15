@@ -395,7 +395,7 @@ derive_ast_eq! { U256 }
 derive_ast_eq! { struct Identifier { loc, name } }
 derive_ast_eq! { struct HexLiteral { loc, hex } }
 derive_ast_eq! { struct StringLiteral { loc, unicode, string } }
-derive_ast_eq! { struct Parameter { loc, ty, storage, name } }
+derive_ast_eq! { struct Parameter { loc, annotation, ty, storage, name } }
 derive_ast_eq! { struct NamedArgument { loc, name, expr } }
 derive_ast_eq! { struct YulBlock { loc, statements } }
 derive_ast_eq! { struct YulFunctionCall { loc, id, arguments } }

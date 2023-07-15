@@ -1,14 +1,10 @@
 use super::{bail, ensure, fmt_err, Cheatcodes, Result};
-use crate::{
-    abi::HEVMCalls,
-    error::{ERROR_PREFIX, REVERT_PREFIX},
-    executor::backend::DatabaseExt,
-    utils::h160_to_b160,
-};
+use crate::{abi::HEVMCalls, executor::backend::DatabaseExt, utils::h160_to_b160};
 use ethers::{
     abi::{AbiDecode, RawLog},
     types::{Address, Bytes, H160, U256},
 };
+use foundry_utils::error::{ERROR_PREFIX, REVERT_PREFIX};
 use revm::{
     interpreter::{return_ok, InstructionResult},
     primitives::Bytecode,
@@ -257,6 +253,7 @@ impl PartialOrd for MockCallDataContext {
 
 fn expect_safe_memory(state: &mut Cheatcodes, start: u64, end: u64, depth: u64) -> Result {
     ensure!(start < end, "Invalid memory range: [{start}:{end}]");
+    #[allow(clippy::single_range_in_vec_init)]
     let offsets = state.allowed_mem_writes.entry(depth).or_insert_with(|| vec![0..0x60]);
     offsets.push(start..end);
     Ok(Bytes::new())
@@ -509,6 +506,10 @@ pub fn apply<DB: DatabaseExt>(
             Ok(Bytes::new())
         }
         HEVMCalls::MockCall1(inner) => {
+            if let Err(err) = data.journaled_state.load_account(h160_to_b160(inner.0), data.db) {
+                return Some(Err(err.into()))
+            }
+
             state.mocked_calls.entry(inner.0).or_default().insert(
                 MockCallDataContext { calldata: inner.2.to_vec().into(), value: Some(inner.1) },
                 MockCallReturnData {

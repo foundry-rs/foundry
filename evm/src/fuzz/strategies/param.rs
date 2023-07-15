@@ -1,7 +1,7 @@
 use super::state::EvmFuzzState;
 use ethers::{
     abi::{ParamType, Token, Tokenizable},
-    types::{Address, Bytes, I256, U256},
+    types::{Address, Bytes, H160, I256, U256},
 };
 use proptest::prelude::*;
 
@@ -11,12 +11,12 @@ pub const MAX_ARRAY_LEN: usize = 256;
 /// Given a parameter type, returns a strategy for generating values for that type.
 ///
 /// Works with ABI Encoder v2 tuples.
-pub fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
+pub fn fuzz_param(param: &ParamType) -> BoxedStrategy<Token> {
     match param {
         ParamType::Address => {
             // The key to making this work is the `boxed()` call which type erases everything
             // https://altsysrq.github.io/proptest-book/proptest/tutorial/transforming-strategies.html
-            any::<[u8; 20]>().prop_map(|x| Address::from_slice(&x).into_token()).boxed()
+            any::<[u8; 20]>().prop_map(|x| H160(x).into_token()).boxed()
         }
         ParamType::Bytes => any::<Vec<u8>>().prop_map(|x| Bytes::from(x).into_token()).boxed(),
         ParamType::Int(n) => {
@@ -27,22 +27,16 @@ pub fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
         }
         ParamType::Bool => any::<bool>().prop_map(|x| x.into_token()).boxed(),
         ParamType::String => any::<Vec<u8>>()
-            .prop_map(|x| Token::String(unsafe { std::str::from_utf8_unchecked(&x).to_string() }))
+            .prop_map(|x| Token::String(unsafe { String::from_utf8_unchecked(x) }))
             .boxed(),
         ParamType::Array(param) => proptest::collection::vec(fuzz_param(param), 0..MAX_ARRAY_LEN)
             .prop_map(Token::Array)
             .boxed(),
-        ParamType::FixedBytes(size) => (0..*size as u64)
-            .map(|_| any::<u8>())
-            .collect::<Vec<_>>()
-            .prop_map(Token::FixedBytes)
-            .boxed(),
+        ParamType::FixedBytes(size) => {
+            prop::collection::vec(any::<u8>(), *size).prop_map(Token::FixedBytes).boxed()
+        }
         ParamType::FixedArray(param, size) => {
-            std::iter::repeat_with(|| fuzz_param(param).prop_map(|param| param.into_token()))
-                .take(*size)
-                .collect::<Vec<_>>()
-                .prop_map(Token::FixedArray)
-                .boxed()
+            prop::collection::vec(fuzz_param(param), *size).prop_map(Token::FixedArray).boxed()
         }
         ParamType::Tuple(params) => {
             params.iter().map(fuzz_param).collect::<Vec<_>>().prop_map(Token::Tuple).boxed()

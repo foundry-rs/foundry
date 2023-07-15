@@ -114,6 +114,15 @@ pub fn build_initial_state<DB: DatabaseRef>(
                 let value = (*value).into();
                 state.values_mut().insert(utils::u256_to_h256_be(slot).into());
                 state.values_mut().insert(utils::u256_to_h256_be(value).into());
+                // also add the value below and above the storage value to the dictionary.
+                if value != U256::zero() {
+                    let below_value = value - U256::one();
+                    state.values_mut().insert(utils::u256_to_h256_be(below_value).into());
+                }
+                if value != U256::max_value() {
+                    let above_value = value + U256::one();
+                    state.values_mut().insert(utils::u256_to_h256_be(above_value).into());
+                }
             }
         }
     }
@@ -161,6 +170,15 @@ pub fn collect_state_from_call(
                 let value = ru256_to_u256(value.present_value());
                 state.values_mut().insert(utils::u256_to_h256_be(slot).into());
                 state.values_mut().insert(utils::u256_to_h256_be(value).into());
+                // also add the value below and above the storage value to the dictionary.
+                if value != U256::zero() {
+                    let below_value = value - U256::one();
+                    state.values_mut().insert(utils::u256_to_h256_be(below_value).into());
+                }
+                if value != U256::max_value() {
+                    let above_value = value + U256::one();
+                    state.values_mut().insert(utils::u256_to_h256_be(above_value).into());
+                }
             }
         } else {
             return
@@ -210,7 +228,15 @@ fn collect_push_bytes(code: Bytes) -> Vec<[u8; 32]> {
                 return bytes
             }
 
-            bytes.push(U256::from_big_endian(&code[push_start..push_end]).into());
+            let push_value = U256::from_big_endian(&code[push_start..push_end]);
+            bytes.push(push_value.into());
+            // also add the value below and above the push value to the dictionary.
+            if push_value != U256::zero() {
+                bytes.push((push_value - U256::one()).into());
+            }
+            if push_value != U256::max_value() {
+                bytes.push((push_value + U256::one()).into());
+            }
 
             i += push_size;
         }

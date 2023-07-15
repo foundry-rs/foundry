@@ -41,6 +41,7 @@
 -   [x] `chain-id`
 -   [x] `client`
 -   [x] `code`
+-   [x] `codesize`
 -   [ ] `debug`
 -   [x] `estimate`
 -   [x] `etherscan-source`

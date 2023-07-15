@@ -83,9 +83,16 @@ pub struct NodeArgs {
     #[clap(long, visible_alias = "no-mine", conflicts_with = "block-time")]
     pub no_mining: bool,
 
-    /// The host the server will listen on.
-    #[clap(long, value_name = "IP_ADDR", env = "ANVIL_IP_ADDR", help_heading = "Server options")]
-    pub host: Option<IpAddr>,
+    /// The hosts the server will listen on.
+    #[clap(
+        long,
+        value_name = "IP_ADDR",
+        env = "ANVIL_IP_ADDR",
+        default_value = "127.0.0.1",
+        help_heading = "Server options",
+        value_delimiter = ','
+    )]
+    pub host: Vec<IpAddr>,
 
     /// How transactions are sorted in the mempool.
     #[clap(long, default_value = "fees")]
@@ -197,6 +204,7 @@ impl NodeArgs {
             .with_transaction_order(self.order)
             .with_genesis(self.init)
             .with_steps_tracing(self.evm_opts.steps_tracing)
+            .with_auto_impersonate(self.evm_opts.auto_impersonate)
             .with_ipc(self.ipc)
             .with_code_size_limit(self.evm_opts.code_size_limit)
             .set_pruned_history(self.prune_history)
@@ -442,6 +450,10 @@ pub struct AnvilEvmArgs {
     /// Enable steps tracing used for debug calls returning geth-style traces
     #[clap(long, visible_alias = "tracing")]
     pub steps_tracing: bool,
+
+    /// Enable autoImpersonate on startup
+    #[clap(long, visible_alias = "auto-impersonate")]
+    pub auto_impersonate: bool,
 }
 
 /// Resolves an alias passed as fork-url to the matching url defined in the rpc_endpoints section
@@ -608,6 +620,8 @@ impl FromStr for ForkUrl {
 
 #[cfg(test)]
 mod tests {
+    use std::{env, net::Ipv4Addr};
+
     use super::*;
 
     #[test]
@@ -663,5 +677,36 @@ mod tests {
         let args =
             NodeArgs::try_parse_from(["anvil", "--disable-block-gas-limit", "--gas-limit", "100"]);
         assert!(args.is_err());
+    }
+
+    #[test]
+    fn can_parse_host() {
+        let args = NodeArgs::parse_from(["anvil"]);
+        assert_eq!(args.host, vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]);
+
+        let args = NodeArgs::parse_from([
+            "anvil", "--host", "::1", "--host", "1.1.1.1", "--host", "2.2.2.2",
+        ]);
+        assert_eq!(
+            args.host,
+            ["::1", "1.1.1.1", "2.2.2.2"].map(|ip| ip.parse::<IpAddr>().unwrap()).to_vec()
+        );
+
+        let args = NodeArgs::parse_from(["anvil", "--host", "::1,1.1.1.1,2.2.2.2"]);
+        assert_eq!(
+            args.host,
+            ["::1", "1.1.1.1", "2.2.2.2"].map(|ip| ip.parse::<IpAddr>().unwrap()).to_vec()
+        );
+
+        env::set_var("ANVIL_IP_ADDR", "1.1.1.1");
+        let args = NodeArgs::parse_from(["anvil"]);
+        assert_eq!(args.host, vec!["1.1.1.1".parse::<IpAddr>().unwrap()]);
+
+        env::set_var("ANVIL_IP_ADDR", "::1,1.1.1.1,2.2.2.2");
+        let args = NodeArgs::parse_from(["anvil"]);
+        assert_eq!(
+            args.host,
+            ["::1", "1.1.1.1", "2.2.2.2"].map(|ip| ip.parse::<IpAddr>().unwrap()).to_vec()
+        );
     }
 }

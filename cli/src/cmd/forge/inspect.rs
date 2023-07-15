@@ -5,6 +5,7 @@ use crate::{
 use clap::Parser;
 use comfy_table::{presets::ASCII_MARKDOWN, Table};
 use ethers::{
+    abi::RawAbi,
     prelude::{
         artifacts::output_selection::{
             BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
@@ -91,7 +92,11 @@ impl Cmd for InspectArgs {
         // Match on ContractArtifactFields and Pretty Print
         match field {
             ContractArtifactField::Abi => {
-                println!("{}", serde_json::to_string_pretty(&to_value(&artifact.abi)?)?);
+                let abi = artifact
+                    .abi
+                    .as_ref()
+                    .ok_or_else(|| eyre::eyre!("Failed to fetch lossless ABI"))?;
+                print_abi(abi, pretty)?;
             }
             ContractArtifactField::Bytecode => {
                 let tval: Value = to_value(&artifact.bytecode)?;
@@ -164,6 +169,23 @@ impl Cmd for InspectArgs {
                     ))?
                 );
             }
+            ContractArtifactField::Errors => {
+                let mut out = serde_json::Map::new();
+                if let Some(LosslessAbi { abi, .. }) = &artifact.abi {
+                    // Print the signature of all errors
+                    for er in abi.errors.iter().flat_map(|(_, errors)| errors) {
+                        let types =
+                            er.inputs.iter().map(|p| p.kind.to_string()).collect::<Vec<_>>();
+                        let sig = format!("{:x}", er.signature());
+                        let sig_trimmed = &sig[0..8];
+                        out.insert(
+                            format!("{}({})", er.name, types.join(",")),
+                            sig_trimmed.to_string().into(),
+                        );
+                    }
+                }
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            }
             ContractArtifactField::Events => {
                 let mut out = serde_json::Map::new();
                 if let Some(LosslessAbi { abi, .. }) = &artifact.abi {
@@ -183,6 +205,20 @@ impl Cmd for InspectArgs {
 
         Ok(())
     }
+}
+
+pub fn print_abi(abi: &LosslessAbi, pretty: bool) -> eyre::Result<()> {
+    let abi_json = to_value(abi)?;
+    if !pretty {
+        println!("{}", serde_json::to_string_pretty(&abi_json)?);
+        return Ok(())
+    }
+
+    let abi_json: RawAbi = serde_json::from_value(abi_json)?;
+    let source = foundry_utils::abi::abi_to_solidity(&abi_json, "")?;
+    println!("{}", source);
+
+    Ok(())
 }
 
 pub fn print_storage_layout(
@@ -238,6 +274,7 @@ pub enum ContractArtifactField {
     Metadata,
     UserDoc,
     Ewasm,
+    Errors,
     Events,
 }
 
@@ -323,6 +360,7 @@ impl_value_enum! {
         Metadata          => "metadata" | "meta",
         UserDoc           => "userdoc" | "userDoc" | "user-doc",
         Ewasm             => "ewasm" | "e-wasm",
+        Errors            => "errors" | "er",
         Events            => "events" | "ev",
     }
 }
@@ -346,6 +384,7 @@ impl From<ContractArtifactField> for ContractOutputSelection {
             Caf::Metadata => Self::Metadata,
             Caf::UserDoc => Self::UserDoc,
             Caf::Ewasm => Self::Ewasm(EwasmOutputSelection::All),
+            Caf::Errors => Self::Abi,
             Caf::Events => Self::Abi,
         }
     }
@@ -358,6 +397,7 @@ impl PartialEq<ContractOutputSelection> for ContractArtifactField {
         matches!(
             (self, other),
             (Self::Abi | Self::Events, Cos::Abi) |
+                (Self::Errors, Cos::Abi) |
                 (Self::Bytecode, Cos::Evm(Eos::ByteCode(_))) |
                 (Self::DeployedBytecode, Cos::Evm(Eos::DeployedByteCode(_))) |
                 (Self::Assembly | Self::AssemblyOptimized, Cos::Evm(Eos::Assembly)) |

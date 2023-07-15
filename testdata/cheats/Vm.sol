@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Unlicense
 pragma solidity >=0.8.0;
 
-interface Cheats {
+interface Vm {
     // Possible caller modes for readCallers()
     enum CallerMode {
         None,
@@ -75,11 +75,17 @@ interface Cheats {
     // Gets address for a given private key, (privateKey) => (address)
     function addr(uint256) external returns (address);
 
-    // Derive a private key from a provided mnemonic string (or mnemonic file path) at the derivation path m/44'/60'/0'/0/{index}
+    // Derive a private key from a provided English mnemonic string (or mnemonic file path) at the derivation path m/44'/60'/0'/0/{index}
     function deriveKey(string calldata, uint32) external returns (uint256);
 
-    // Derive a private key from a provided mnemonic string (or mnemonic file path) at the derivation path {path}{index}
+    // Derive a private key from a provided English mnemonic string (or mnemonic file path) at the derivation path {path}{index}
     function deriveKey(string calldata, string calldata, uint32) external returns (uint256);
+
+    // Derive a private key from a provided mnemonic string (or mnemonic file path) of specified language at the derivation path m/44'/60'/0'/0/{index}
+    function deriveKey(string calldata, uint32, string calldata) external returns (uint256);
+
+    // Derive a private key from a provided mnemonic string (or mnemonic file path) of specified language at the derivation path {path}{index}
+    function deriveKey(string calldata, string calldata, uint32, string calldata) external returns (uint256);
 
     // Adds a private key to the local forge wallet and returns the address
     function rememberKey(uint256) external returns (address);
@@ -173,6 +179,9 @@ interface Cheats {
 
     // Sets an address' code, (who, newCode)
     function etch(address, bytes calldata) external;
+
+    // Skips a test.
+    function skip(bool) external;
 
     // Expects an error on next call
     function expectRevert() external;

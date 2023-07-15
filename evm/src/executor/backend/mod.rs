@@ -219,15 +219,15 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     ///
     /// ```solidity
     /// function testCanDeploy() public {
-    ///    cheats.selectFork(mainnetFork);
+    ///    vm.selectFork(mainnetFork);
     ///    // contract created while on `mainnetFork`
     ///    DummyContract dummy = new DummyContract();
     ///    // this will succeed
     ///    dummy.hello();
     ///
-    ///    cheats.selectFork(optimismFork);
+    ///    vm.selectFork(optimismFork);
     ///
-    ///    cheats.expectRevert();
+    ///    vm.expectRevert();
     ///    // this will revert since `dummy` contract only exists on `mainnetFork`
     ///    dummy.hello();
     /// }
@@ -390,9 +390,9 @@ pub struct Backend {
 // === impl Backend ===
 
 impl Backend {
-    /// Creates a new Backend with a spawned multi fork thread
-    pub fn spawn(fork: Option<CreateFork>) -> Self {
-        Self::new(MultiFork::spawn(), fork)
+    /// Creates a new Backend with a spawned multi fork thread.
+    pub async fn spawn(fork: Option<CreateFork>) -> Self {
+        Self::new(MultiFork::spawn().await, fork)
     }
 
     /// Creates a new instance of `Backend`
@@ -435,8 +435,12 @@ impl Backend {
 
     /// Creates a new instance of `Backend` with fork added to the fork database and sets the fork
     /// as active
-    pub(crate) fn new_with_fork(id: &ForkId, fork: Fork, journaled_state: JournaledState) -> Self {
-        let mut backend = Self::spawn(None);
+    pub(crate) async fn new_with_fork(
+        id: &ForkId,
+        fork: Fork,
+        journaled_state: JournaledState,
+    ) -> Self {
+        let mut backend = Self::spawn(None).await;
         let fork_ids = backend.inner.insert_new_fork(id.clone(), fork.db, journaled_state);
         backend.inner.launched_with_fork = Some((id.clone(), fork_ids.0, fork_ids.1));
         backend.active_fork_ids = Some(fork_ids);
@@ -461,6 +465,24 @@ impl Backend {
         } else {
             self.mem_db.insert_account_info(h160_to_b160(address), account)
         }
+    }
+
+    /// Inserts a value on an account's storage without overriding account info
+    pub fn insert_account_storage(
+        &mut self,
+        address: H160,
+        slot: U256,
+        value: U256,
+    ) -> Result<(), DatabaseError> {
+        let ret = if let Some(db) = self.active_fork_db_mut() {
+            db.insert_account_storage(h160_to_b160(address), slot.into(), value.into())
+        } else {
+            self.mem_db.insert_account_storage(h160_to_b160(address), slot.into(), value.into())
+        };
+
+        debug_assert!(self.storage(h160_to_b160(address), slot.into()).unwrap() == value.into());
+
+        ret
     }
 
     /// Returns all snapshots created in this backend
@@ -651,7 +673,7 @@ impl Backend {
     }
 
     /// Returns the currently active `ForkDB`, if any
-    fn active_fork_db_mut(&mut self) -> Option<&mut ForkDB> {
+    pub fn active_fork_db_mut(&mut self) -> Option<&mut ForkDB> {
         self.active_fork_mut().map(|f| &mut f.db)
     }
 
@@ -1752,7 +1774,10 @@ fn commit_transaction(
         let mut evm = EVM::new();
         evm.env = env;
 
-        let db = Backend::new_with_fork(fork_id, fork.clone(), journaled_state.clone());
+        let fork = fork.clone();
+        let journaled_state = journaled_state.clone();
+        let db = crate::utils::RuntimeOrHandle::new()
+            .block_on(async move { Backend::new_with_fork(fork_id, fork, journaled_state).await });
         evm.database(db);
 
         if let Some(inspector) = cheatcodes_inspector {
