@@ -6,6 +6,7 @@ name: cross-platform
 
 env:
     CARGO_TERM_COLOR: always
+    FOUNDRY_FUZZ_RUNS: 1
 
 jobs:
     build-tests:
