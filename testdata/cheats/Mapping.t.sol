@@ -2,7 +2,7 @@
 pragma solidity >=0.8.0;
 
 import "ds-test/test.sol";
-import "./Cheats.sol";
+import "./Vm.sol";
 
 contract RecordMapping {
     int256 length;
@@ -19,13 +19,13 @@ contract RecordMapping {
 }
 
 contract RecordMappingTest is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testRecordMapping() public {
         RecordMapping target = new RecordMapping();
 
         // Start recording
-        cheats.startMappingRecording();
+        vm.startMappingRecording();
 
         // Verify Records
         target.setData(address(this), 100);
@@ -37,36 +37,32 @@ contract RecordMappingTest is DSTest {
 
         bytes32 dataSlot = bytes32(uint256(1));
         bytes32 nestDataSlot = bytes32(uint256(2));
-        assertEq(uint256(cheats.getMappingLength(address(target), dataSlot)), 1, "number of data is incorrect");
-        assertEq(uint256(cheats.getMappingLength(address(this), dataSlot)), 0, "number of data is incorrect");
-        assertEq(
-            uint256(cheats.getMappingLength(address(target), nestDataSlot)), 2, "number of nestedData is incorrect"
-        );
+        assertEq(uint256(vm.getMappingLength(address(target), dataSlot)), 1, "number of data is incorrect");
+        assertEq(uint256(vm.getMappingLength(address(this), dataSlot)), 0, "number of data is incorrect");
+        assertEq(uint256(vm.getMappingLength(address(target), nestDataSlot)), 2, "number of nestedData is incorrect");
 
-        bytes32 dataValueSlot = cheats.getMappingSlotAt(address(target), dataSlot, 0);
-        (found, key, parent) = cheats.getMappingKeyAndParentOf(address(target), dataValueSlot);
+        bytes32 dataValueSlot = vm.getMappingSlotAt(address(target), dataSlot, 0);
+        (found, key, parent) = vm.getMappingKeyAndParentOf(address(target), dataValueSlot);
         assert(found);
         assertEq(address(uint160(uint256(key))), address(this), "key of data[i] is incorrect");
         assertEq(parent, dataSlot, "parent of data[i] is incorrect");
         assertGt(uint256(dataValueSlot), 0);
-        assertEq(uint256(cheats.load(address(target), dataValueSlot)), 100);
+        assertEq(uint256(vm.load(address(target), dataValueSlot)), 100);
 
-        for (uint256 k; k < cheats.getMappingLength(address(target), nestDataSlot); k++) {
-            bytes32 subSlot = cheats.getMappingSlotAt(address(target), nestDataSlot, k);
-            (found, key, parent) = cheats.getMappingKeyAndParentOf(address(target), subSlot);
+        for (uint256 k; k < vm.getMappingLength(address(target), nestDataSlot); k++) {
+            bytes32 subSlot = vm.getMappingSlotAt(address(target), nestDataSlot, k);
+            (found, key, parent) = vm.getMappingKeyAndParentOf(address(target), subSlot);
             uint256 i = uint256(key);
             assertEq(parent, nestDataSlot, "parent of nestedData[i][j] is incorrect");
-            assertEq(
-                uint256(cheats.getMappingLength(address(target), subSlot)), 1, "number of nestedData[i] is incorrect"
-            );
-            bytes32 leafSlot = cheats.getMappingSlotAt(address(target), subSlot, 0);
-            (found, key, parent) = cheats.getMappingKeyAndParentOf(address(target), leafSlot);
+            assertEq(uint256(vm.getMappingLength(address(target), subSlot)), 1, "number of nestedData[i] is incorrect");
+            bytes32 leafSlot = vm.getMappingSlotAt(address(target), subSlot, 0);
+            (found, key, parent) = vm.getMappingKeyAndParentOf(address(target), leafSlot);
             uint256 j = uint256(key);
             assertEq(parent, subSlot, "parent of nestedData[i][j] is incorrect");
             assertEq(j, 10);
-            assertEq(uint256(cheats.load(address(target), leafSlot)), i * j, "value of nestedData[i][j] is incorrect");
+            assertEq(uint256(vm.load(address(target), leafSlot)), i * j, "value of nestedData[i][j] is incorrect");
         }
-        cheats.stopMappingRecording();
-        assertEq(uint256(cheats.getMappingLength(address(target), dataSlot)), 0, "number of data is incorrect");
+        vm.stopMappingRecording();
+        assertEq(uint256(vm.getMappingLength(address(target), dataSlot)), 0, "number of data is incorrect");
     }
 }
