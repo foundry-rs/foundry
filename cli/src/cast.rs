@@ -10,7 +10,7 @@ use ethers::{
 use foundry_cli::{
     cmd::Cmd,
     handler,
-    opts::cast::{Opts, Subcommands, ToBaseArgs},
+    opts::cast::{Opts, Subcommands, ToBaseArgs, TransactionFields},
     prompt, stdin, utils,
 };
 use foundry_common::{
@@ -342,10 +342,17 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::Run(cmd) => cmd.run().await?,
         Subcommands::SendTx(cmd) => cmd.run().await?,
-        Subcommands::Tx { tx_hash, field, json, rpc } => {
+        Subcommands::Tx { tx_hash, field, raw, json, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(&provider).transaction(tx_hash, field, json).await?)
+
+            let raw = raw || matches!(field, Some(TransactionFields::Raw));
+
+            let field = field.and_then(|field| match field {
+                TransactionFields::Other(field) => Some(field),
+                _ => None,
+            });
+            println!("{}", Cast::new(&provider).transaction(tx_hash, field, raw, json).await?)
         }
 
         // 4Byte

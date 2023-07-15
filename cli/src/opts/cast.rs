@@ -387,7 +387,11 @@ pub enum Subcommands {
 
         /// If specified, only get the given field of the transaction. If "raw", the RLP encoded
         /// transaction will be printed.
-        field: Option<String>,
+        field: Option<TransactionFields>,
+
+        /// Print the raw RLP encoded transaction.
+        #[clap(long)]
+        raw: bool,
 
         /// Print as JSON.
         #[clap(long, short, help_heading = "Display options")]
@@ -845,6 +849,24 @@ pub enum Subcommands {
         #[clap(value_name = "BYTES")]
         bytes: Option<String>,
     },
+}
+
+/// Known transaction fields with special handling.
+#[derive(Debug, Clone)]
+pub enum TransactionFields {
+    Raw, // Raw transaction data as hex-encoded RLP.
+    Other(String),
+}
+
+impl FromStr for TransactionFields {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "raw" => Ok(TransactionFields::Raw),
+            _ => Ok(TransactionFields::Other(s.to_string())),
+        }
+    }
 }
 
 /// CLI arguments for `cast --to-base`.

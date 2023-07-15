@@ -666,6 +666,7 @@ where
         &self,
         tx_hash: String,
         field: Option<String>,
+        raw: bool,
         to_json: bool,
     ) -> Result<String> {
         let tx_hash = H256::from_str(&tx_hash).wrap_err("invalid tx hash")?;
@@ -675,14 +676,11 @@ where
             .await?
             .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
 
-        Ok(if let Some(ref field) = field {
-            match field.as_ref() {
-                "raw" => {
-                    format!("0x{}", hex::encode(tx.rlp()))
-                }
-                _ => get_pretty_tx_attr(&tx, field)
-                    .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.to_string()))?,
-            }
+        Ok(if raw {
+            format!("0x{}", hex::encode(tx.rlp()))
+        } else if let Some(field) = field {
+            get_pretty_tx_attr(&tx, field.as_str())
+                .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.to_string()))?
         } else if to_json {
             // to_value first to sort json object keys
             serde_json::to_value(&tx)?.to_string()
