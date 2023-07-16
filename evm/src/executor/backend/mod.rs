@@ -873,8 +873,8 @@ impl DatabaseExt for Backend {
     ) -> Option<JournaledState> {
         trace!(?id, "revert snapshot");
         if let Some(mut snapshot) = self.inner.snapshots.remove(id) {
-            // need to check whether there's a global failure which means an error occurred either during the snapshot
-            // or even before
+            // need to check whether there's a global failure which means an error occurred either
+            // during the snapshot or even before
             if self.is_global_failure() {
                 self.inner.has_snapshot_failure.store(true, Ordering::Relaxed);
             }
