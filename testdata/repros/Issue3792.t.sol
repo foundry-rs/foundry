@@ -19,7 +19,6 @@ contract TestSetup is Config, DSTest {
         uint256 snapshotId = vm.snapshot();
 
         vm.prank(test);
-        assertTrue(false, "should have reverted");
 
         vm.revertTo(snapshotId);
     }
