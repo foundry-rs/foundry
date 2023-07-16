@@ -106,14 +106,11 @@ pub enum EthRequest {
     )]
     EthGetTransactionCountByHash(H256),
 
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            rename = "eth_getBlockTransactionCountByNumber",
-            deserialize_with = "lenient_block_number_seq"
-        )
-    )]
-    EthGetTransactionCountByNumber(BlockNumber),
+    #[cfg_attr(feature = "serde", serde(rename = "eth_getBlockTransactionCountByNumber",))]
+    EthGetTransactionCountByNumber(
+        #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number"))]
+        BlockNumber,
+    ),
 
     #[cfg_attr(
         feature = "serde",
@@ -121,14 +118,11 @@ pub enum EthRequest {
     )]
     EthGetUnclesCountByHash(H256),
 
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            rename = "eth_getUncleCountByBlockNumber",
-            deserialize_with = "lenient_block_number_seq"
-        )
-    )]
-    EthGetUnclesCountByNumber(BlockNumber),
+    #[cfg_attr(feature = "serde", serde(rename = "eth_getUncleCountByBlockNumber",))]
+    EthGetUnclesCountByNumber(
+        #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number"))]
+        BlockNumber,
+    ),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_getCode"))]
     EthGetCodeAt(Address, Option<BlockId>),
@@ -279,11 +273,11 @@ pub enum EthRequest {
     TraceTransaction(H256),
 
     /// Trace transaction endpoint for parity's `trace_block`
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "trace_block", deserialize_with = "lenient_block_number_seq")
-    )]
-    TraceBlock(BlockNumber),
+    #[cfg_attr(feature = "serde", serde(rename = "trace_block"))]
+    TraceBlock(
+        #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number"))]
+        BlockNumber,
+    ),
 
     // Custom endpoints, they're not extracted to a separate type out of serde convenience
     /// send transactions impersonating specific account and contract addresses.
@@ -600,6 +594,79 @@ pub enum EthRequest {
     /// Ref: [Here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_content)
     #[cfg_attr(feature = "serde", serde(rename = "txpool_content", with = "empty_params"))]
     TxPoolContent(()),
+
+    /// Otterscan's `ots_getApiLevel` endpoint
+    #[cfg(feature = "otterscan")]
+    #[cfg_attr(feature = "serde", serde(rename = "erigon_getHeaderByNumber"))]
+    ErigonGetHeaderByNumber(
+        #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number_seq"))]
+        BlockNumber,
+    ),
+
+    /// Otterscan's `ots_getApiLevel` endpoint
+    #[cfg(feature = "otterscan")]
+    #[cfg_attr(feature = "serde", serde(rename = "ots_getApiLevel", with = "empty_params"))]
+    OtsGetApiLevel(()),
+
+    /// Otterscan's `ots_getInternalOperations` endpoint
+    #[cfg(feature = "otterscan")]
+    #[cfg_attr(feature = "serde", serde(rename = "ots_getInternalOperations", with = "sequence"))]
+    OtsGetInternalOperations(H256),
+
+    /// Otterscan's `ots_hasCode` endpoint
+    #[cfg(feature = "otterscan")]
+    #[cfg_attr(feature = "serde", serde(rename = "ots_hasCode"))]
+    OtsHasCode(
+        Address,
+        #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number", default))]
+        BlockNumber,
+    ),
+
+    /// Otterscan's `ots_traceTransaction` endpoint
+    #[cfg(feature = "otterscan")]
+    #[cfg_attr(feature = "serde", serde(rename = "ots_traceTransaction", with = "sequence"))]
+    OtsTraceTransaction(H256),
+
+    /// Otterscan's `ots_getTransactionError` endpoint
+    #[cfg(feature = "otterscan")]
+    #[cfg_attr(feature = "serde", serde(rename = "ots_getTransactionError", with = "sequence"))]
+    OtsGetTransactionError(H256),
+
+    /// Otterscan's `ots_getBlockDetails` endpoint
+    #[cfg(feature = "otterscan")]
+    #[cfg_attr(feature = "serde", serde(rename = "ots_getBlockDetails"))]
+    OtsGetBlockDetails(
+        #[cfg_attr(feature = "serde", serde(deserialize_with = "lenient_block_number_seq"))]
+        BlockNumber,
+    ),
+
+    /// Otterscan's `ots_getBlockTransactions` endpoint
+    #[cfg(feature = "otterscan")]
+    #[cfg_attr(feature = "serde", serde(rename = "ots_getBlockTransactions"))]
+    OtsGetBlockTransactions(u64, usize, usize),
+
+    /// Otterscan's `ots_searchTransactionsBefore` endpoint
+    #[cfg(feature = "otterscan")]
+    #[cfg_attr(feature = "serde", serde(rename = "ots_searchTransactionsBefore"))]
+    OtsSearchTransactionsBefore(Address, u64, usize),
+
+    /// Otterscan's `ots_searchTransactionsAfter` endpoint
+    #[cfg(feature = "otterscan")]
+    #[cfg_attr(feature = "serde", serde(rename = "ots_searchTransactionsAfter"))]
+    OtsSearchTransactionsAfter(Address, u64, usize),
+
+    /// Otterscan's `ots_getTransactionBySenderAndNonce` endpoint
+    #[cfg(feature = "otterscan")]
+    #[cfg_attr(feature = "serde", serde(rename = "ots_getTransactionBySenderAndNonce",))]
+    OtsGetTransactionBySenderAndNonce(
+        Address,
+        #[cfg_attr(feature = "serde", serde(deserialize_with = "deserialize_number"))] U256,
+    ),
+
+    /// Otterscan's `ots_getTransactionBySenderAndNonce` endpoint
+    #[cfg(feature = "otterscan")]
+    #[cfg_attr(feature = "serde", serde(rename = "ots_getContractCreator", with = "sequence"))]
+    OtsGetContractCreator(Address),
 }
 
 /// Represents ethereum JSON-RPC API

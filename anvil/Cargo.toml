@@ -17,7 +17,7 @@ vergen = { version = "8", default-features = false, features = ["build", "git", 
 [dependencies]
 # foundry internal
 foundry-evm = { path = "../evm" }
-anvil-core = { path = "core", features = ["fastrlp", "serde", "impersonated-tx"] }
+anvil-core = { path = "core", features = ["otterscan", "fastrlp", "serde", "impersonated-tx"] }
 anvil-rpc = { path = "rpc" }
 anvil-server = { path = "server" }
 foundry-utils = { path = "../utils" }
@@ -55,6 +55,7 @@ serde = { version = "1", features = ["derive"] }
 thiserror = "1"
 yansi = "0.5"
 tempfile = "3"
+itertools = "0.10"
 
 # cli
 clap = { version = "4", features = ["derive", "env", "wrap_help"], optional = true }
@@ -75,6 +76,7 @@ tokio = { version = "1", features = ["full"] }
 crc = "3.0.1"
 
 [features]
-default = ["cli"]
+default = ["cli", "otterscan"]
 cmd = ["foundry-common", "forge", "clap", "clap_complete", "ctrlc", "anvil-server/clap"]
 cli = ["tokio/full", "cmd", "fdlimit"]
+otterscan = []

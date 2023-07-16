@@ -51,9 +51,10 @@ use ethers::{
             eip2930::{AccessList, AccessListWithGasUsed},
             eip712::TypedData,
         },
-        Address, Block, BlockId, BlockNumber, Bytes, FeeHistory, Filter, FilteredParams,
-        GethDebugTracingOptions, GethTrace, Log, Trace, Transaction, TransactionReceipt, TxHash,
-        TxpoolContent, TxpoolInspectSummary, TxpoolStatus, H256, U256, U64,
+        Action, Address, Block, BlockId, BlockNumber, Bytes, Call, Create, CreateResult,
+        FeeHistory, Filter, FilteredParams, GethDebugTracingOptions, GethTrace, Log, Res, Reward,
+        Trace, Transaction, TransactionReceipt, TxHash, TxpoolContent, TxpoolInspectSummary,
+        TxpoolStatus, H256, U256, U64,
     },
     utils::rlp,
 };
@@ -64,6 +65,7 @@ use foundry_evm::{
     revm::interpreter::{return_ok, return_revert, InstructionResult},
 };
 use futures::channel::mpsc::Receiver;
+use itertools::Itertools;
 use parking_lot::RwLock;
 use std::{sync::Arc, time::Duration};
 use tracing::{trace, warn};
@@ -356,6 +358,62 @@ impl EthApi {
             EthRequest::TxPoolStatus(_) => self.txpool_status().await.to_rpc_result(),
             EthRequest::TxPoolInspect(_) => self.txpool_inspect().await.to_rpc_result(),
             EthRequest::TxPoolContent(_) => self.txpool_content().await.to_rpc_result(),
+
+            #[cfg(feature = "otterscan")]
+            EthRequest::ErigonGetHeaderByNumber(num) => {
+                self.erigon_get_header_by_number(num).await.to_rpc_result()
+            }
+
+            #[cfg(feature = "otterscan")]
+            EthRequest::OtsGetApiLevel(_) => self.ots_get_api_level().await.to_rpc_result(),
+
+            #[cfg(feature = "otterscan")]
+            EthRequest::OtsGetInternalOperations(hash) => {
+                self.ots_get_internal_operations(hash).await.to_rpc_result()
+            }
+
+            #[cfg(feature = "otterscan")]
+            EthRequest::OtsHasCode(addr, num) => self.ots_has_code(addr, num).await.to_rpc_result(),
+
+            #[cfg(feature = "otterscan")]
+            EthRequest::OtsTraceTransaction(hash) => {
+                self.ots_trace_transaction(hash).await.to_rpc_result()
+            }
+
+            #[cfg(feature = "otterscan")]
+            EthRequest::OtsGetTransactionError(hash) => {
+                self.ots_get_transaction_error(hash).await.to_rpc_result()
+            }
+
+            #[cfg(feature = "otterscan")]
+            EthRequest::OtsGetBlockDetails(num) => {
+                self.ots_get_block_details(num).await.to_rpc_result()
+            }
+
+            #[cfg(feature = "otterscan")]
+            EthRequest::OtsGetBlockTransactions(num, page, page_size) => {
+                self.ots_get_block_transactions(num, page, page_size).await.to_rpc_result()
+            }
+
+            #[cfg(feature = "otterscan")]
+            EthRequest::OtsSearchTransactionsBefore(address, num, page_size) => {
+                self.ots_search_transactions_before(address, num, page_size).await.to_rpc_result()
+            }
+
+            #[cfg(feature = "otterscan")]
+            EthRequest::OtsSearchTransactionsAfter(address, num, page_size) => {
+                self.ots_search_transactions_after(address, num, page_size).await.to_rpc_result()
+            }
+
+            #[cfg(feature = "otterscan")]
+            EthRequest::OtsGetTransactionBySenderAndNonce(address, nonce) => {
+                self.ots_get_transaction_by_sender_and_nonce(address, nonce).await.to_rpc_result()
+            }
+
+            #[cfg(feature = "otterscan")]
+            EthRequest::OtsGetContractCreator(address) => {
+                self.ots_get_contract_creator(address).await.to_rpc_result()
+            }
         }
     }
 
@@ -1928,6 +1986,249 @@ impl EthApi {
         }
 
         Ok(content)
+    }
+}
+
+// === impl EthApi Otterscan endpoints ===
+use super::otterscan::*;
+
+impl EthApi {
+    pub async fn erigon_get_header_by_number(
+        &self,
+        number: BlockNumber,
+    ) -> Result<Option<Block<TxHash>>> {
+        node_info!("ots_getApiLevel");
+
+        // this endpoint only exists to be faster than eth_getBlockByNumber by not returning uncle
+        // blocks
+        // we don't care about that in this context
+        // TODO: probably only return blocks from before the fork?
+        self.backend.block_by_number(number).await
+    }
+
+    pub async fn ots_get_api_level(&self) -> Result<u64> {
+        node_info!("ots_getApiLevel");
+        // as required by current otterscan's source code
+        Ok(8)
+    }
+
+    pub async fn ots_get_internal_operations(&self, hash: H256) -> Result<()> {
+        node_info!("ots_getInternalOperations");
+        //Err(BlockchainError::Internal("not implemented".into()));
+
+        // TODO:
+        // if let Some(traces) = self.backend.mined_parity_trace_transaction(hash) {
+        //     let actions: Vec<_> = traces.into_iter().map(|t| t.action).collect();
+        // }
+
+        Err(BlockchainError::BlockNotFound)
+    }
+
+    pub async fn ots_has_code(&self, address: Address, block_number: BlockNumber) -> Result<bool> {
+        node_info!("ots_hasCode");
+        let block_id = Some(BlockId::Number(block_number));
+        Ok(self.get_code(address, block_id).await?.len() > 0)
+    }
+
+    // TODO: how much does this return type actually matches the expected one?
+    pub async fn ots_trace_transaction(&self, tx_hash: H256) -> Result<GethTrace> {
+        node_info!("ots_traceTransaction");
+        self.backend.debug_trace_transaction(tx_hash, Default::default()).await
+    }
+
+    pub async fn ots_get_transaction_error(&self, hash: H256) -> Result<()> {
+        node_info!("ots_getTransactionError");
+        Err(BlockchainError::Internal("not implemented".into()))
+    }
+
+    pub async fn ots_get_block_details(
+        &self,
+        number: BlockNumber,
+    ) -> Result<Option<OtsBlockDetails<TxHash>>> {
+        node_info!("ots_getBlockDetails");
+
+        // this endpoint only exists to be faster than eth_getBlockByNumber by not returning uncle
+        // blocks
+        // we don't care about that in this context
+        // TODO: probably only return blocks from before the fork?
+        //tracing::debug!("{:?}", BlockNumber::Number(number.into()));
+        let block = self.backend.block_by_number(number).await?.map(Into::into);
+
+        Ok(block)
+    }
+
+    pub async fn ots_get_block_transactions(
+        &self,
+        number: u64,
+        page: usize,
+        page_size: usize,
+    ) -> Result<OtsBlockTransactions> {
+        node_info!("ots_getBlockTransactions");
+
+        match self.backend.block_by_number_full(number.into()).await? {
+            Some(block) => OtsBlockTransactions::build(block, &self.backend, page, page_size).await,
+            None => Err(BlockchainError::BlockNotFound),
+        }
+    }
+
+    pub async fn ots_search_transactions_before(
+        &self,
+        address: Address,
+        block_number: u64,
+        page_size: usize,
+    ) -> Result<OtsSearchTransactions> {
+        node_info!("ots_searchTransactionsBefore");
+
+        let best = self.backend.best_number().as_u64();
+        // we go from given block (defaulting to best) down to first block
+        // considering only post-fork
+        let from = if block_number == 0 { best } else { block_number };
+        let to = self.get_fork().map(|f| f.block_number() + 1).unwrap_or(1);
+
+        let first_page = from == best;
+        let mut last_page = false;
+
+        let mut res: Vec<_> = vec![];
+
+        for n in (to..=from).rev() {
+            if n == to {
+                last_page = true;
+            }
+
+            if let Some(traces) = self.backend.mined_parity_trace_block(n) {
+                let hashes = traces
+                    .into_iter()
+                    .rev()
+                    .filter_map(|trace| match trace.action {
+                        Action::Call(Call { from, to, .. }) if from == address || to == address => {
+                            trace.transaction_hash
+                        }
+                        _ => None,
+                    })
+                    .unique();
+
+                res.extend(hashes);
+
+                if res.len() >= page_size {
+                    break
+                }
+            }
+        }
+
+        OtsSearchTransactions::build(res, &self.backend, first_page, last_page).await
+    }
+
+    pub async fn ots_search_transactions_after(
+        &self,
+        address: Address,
+        block_number: u64,
+        page_size: usize,
+    ) -> Result<OtsSearchTransactions> {
+        node_info!("ots_searchTransactionsAfter");
+
+        let best = self.backend.best_number().as_u64();
+        // we go from the first post-fork block, up to the tip
+        let from = if block_number == 0 {
+            self.get_fork().map(|f| f.block_number() + 1).unwrap_or(1)
+        } else {
+            block_number
+        };
+        let to = best;
+
+        let first_page = from == best;
+        let mut last_page = false;
+
+        let mut res: Vec<_> = vec![];
+
+        for n in from..=to {
+            if n == to {
+                last_page = true;
+            }
+
+            if let Some(traces) = self.backend.mined_parity_trace_block(n) {
+                let hashes = traces
+                    .into_iter()
+                    .rev()
+                    .filter_map(|trace| match trace.action {
+                        Action::Call(Call { from, to, .. }) if from == address || to == address => {
+                            trace.transaction_hash
+                        }
+                        Action::Create(Create { from, .. }) if from == address => {
+                            trace.transaction_hash
+                        }
+                        Action::Reward(Reward { author, .. }) if author == address => {
+                            trace.transaction_hash
+                        }
+                        _ => None,
+                    })
+                    .unique();
+
+                res.extend(hashes);
+
+                if res.len() >= page_size {
+                    break
+                }
+            }
+        }
+
+        OtsSearchTransactions::build(res, &self.backend, first_page, last_page).await
+    }
+
+    pub async fn ots_get_transaction_by_sender_and_nonce(
+        &self,
+        address: Address,
+        nonce: U256,
+    ) -> Result<Option<Transaction>> {
+        node_info!("ots_getTransactionBySenderAndNonce");
+
+        let from = self.get_fork().map(|f| f.block_number() + 1).unwrap_or_default();
+        let to = self.backend.best_number().as_u64();
+
+        for n in (from..=to).rev() {
+            if let Some(txs) = self.backend.mined_transactions_by_block_number(n.into()).await {
+                for tx in txs {
+                    if tx.nonce == nonce && tx.from == address {
+                        return Ok(Some(tx))
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Looks through all transactions, finding the trace where a given contract was deployed
+    /// search goes in reverse direction, because selfdestruct+create2 contracts can be-redeployed.
+    /// We want the latest one.
+    pub async fn ots_get_contract_creator(
+        &self,
+        addr: Address,
+    ) -> Result<Option<OtsContractCreator>> {
+        node_info!("ots_getContractCreator");
+
+        let from = self.get_fork().map(|f| f.block_number() + 1).unwrap_or_default();
+        let to = self.backend.best_number().as_u64();
+
+        for n in (from..=to).rev() {
+            if let Some(traces) = self.backend.mined_parity_trace_block(n) {
+                for trace in traces.into_iter().rev() {
+                    match (trace.action, trace.result) {
+                        (
+                            Action::Create(Create { from, .. }),
+                            Some(Res::Create(CreateResult { address, .. })),
+                        ) if address == addr => {
+                            return Ok(Some(OtsContractCreator {
+                                hash: trace.transaction_hash.unwrap(),
+                                creator: from,
+                            }))
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        Ok(None)
     }
 }
 

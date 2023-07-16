@@ -191,6 +191,7 @@ dependencies = [
  "futures",
  "hash-db",
  "hyper",
+ "itertools",
  "memory-db",
  "parking_lot",
  "pretty_assertions",
