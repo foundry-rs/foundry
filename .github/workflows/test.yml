@@ -133,8 +133,9 @@ jobs:
                       filter: "test(~forge_std)"
         env:
             ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
-        steps:
-            - uses: actions/checkout@v3
+    
+            - uses:  checkout@v3
+            
             - uses: taiki-e/install-action@nextest
             - uses: dtolnay/rust-toolchain@stable
             - name: Download archives
