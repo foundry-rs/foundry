@@ -277,7 +277,7 @@ fn recurse_link<'a>(
                         // In this case, imported dependencies from outside the root might not have their paths tripped correctly.
                         // Therefore, we fall back to a manual path join to locate the file.
                         let fallback_path =  dunce::canonicalize(root.join(file)).unwrap_or_else(|e| panic!("No artifact for contract \"{next_target}\". Attempted to compose fallback path but got got error {e}"));
-                        let fallback_path = fallback_path.to_str().unwrap_or_else(|| "No artifact for contract \"{next_target}\". Attempted to compose fallback path but could not create valid string");
+                        let fallback_path = fallback_path.to_str().unwrap_or("No artifact for contract \"{next_target}\". Attempted to compose fallback path but could not create valid string");
                         let fallback_target = format!("{fallback_path}:{key}");
 
                         trace!(target : "forge::link", fallback_dependency = fallback_target, file, key, version=?dependencies.artifact_id.version,  "get dependency with fallback path");
