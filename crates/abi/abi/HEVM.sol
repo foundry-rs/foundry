@@ -79,6 +79,9 @@ etch(address,bytes)
 expectRevert()
 expectRevert(bytes)
 expectRevert(bytes4)
+expectRevert(bytes,address)
+expectRevert(bytes4, address);
+expectRevert(address);
 record()
 accesses(address)(bytes32[],bytes32[])
 skip(bool)

@@ -1950,6 +1950,57 @@ pub mod hevm {
                             constant: ::core::option::Option::None,
                             state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
                         },
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned("expectRevert"),
+                            inputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Bytes,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Address,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            outputs: ::std::vec![],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned("expectRevert"),
+                            inputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::FixedBytes(
+                                        4usize,
+                                    ),
+                                    internal_type: ::core::option::Option::None,
+                                },
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Address,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            outputs: ::std::vec![],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
+                        ::ethers_core::abi::ethabi::Function {
+                            name: ::std::borrow::ToOwned::to_owned("expectRevert"),
+                            inputs: ::std::vec![
+                                ::ethers_core::abi::ethabi::Param {
+                                    name: ::std::string::String::new(),
+                                    kind: ::ethers_core::abi::ethabi::ParamType::Address,
+                                    internal_type: ::core::option::Option::None,
+                                },
+                            ],
+                            outputs: ::std::vec![],
+                            constant: ::core::option::Option::None,
+                            state_mutability: ::ethers_core::abi::ethabi::StateMutability::NonPayable,
+                        },
                     ],
                 ),
                 (
@@ -6034,6 +6085,35 @@ pub mod hevm {
                 .method_hash([195, 30, 176, 224], p0)
                 .expect("method not found (this should never happen)")
         }
+        ///Calls the contract's `expectRevert` (0x61ebcf12) function
+        pub fn expect_revert_4(
+            &self,
+            p0: ::ethers_core::types::Bytes,
+            p1: ::ethers_core::types::Address,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([97, 235, 207, 18], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `expectRevert` (0x260bc5de) function
+        pub fn expect_revert_5(
+            &self,
+            p0: [u8; 4],
+            p1: ::ethers_core::types::Address,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([38, 11, 197, 222], (p0, p1))
+                .expect("method not found (this should never happen)")
+        }
+        ///Calls the contract's `expectRevert` (0xd814f38a) function
+        pub fn expect_revert_3(
+            &self,
+            p0: ::ethers_core::types::Address,
+        ) -> ::ethers_contract::builders::ContractCall<M, ()> {
+            self.0
+                .method_hash([216, 20, 243, 138], p0)
+                .expect("method not found (this should never happen)")
+        }
         ///Calls the contract's `expectSafeMemory` (0x6d016688) function
         pub fn expect_safe_memory(
             &self,
@@ -8465,6 +8545,48 @@ pub mod hevm {
     )]
     #[ethcall(name = "expectRevert", abi = "expectRevert(bytes4)")]
     pub struct ExpectRevert2Call(pub [u8; 4]);
+    ///Container type for all input parameters for the `expectRevert` function with signature `expectRevert(bytes,address)` and selector `0x61ebcf12`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "expectRevert", abi = "expectRevert(bytes,address)")]
+    pub struct ExpectRevert4Call(
+        pub ::ethers_core::types::Bytes,
+        pub ::ethers_core::types::Address,
+    );
+    ///Container type for all input parameters for the `expectRevert` function with signature `expectRevert(bytes4,address)` and selector `0x260bc5de`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "expectRevert", abi = "expectRevert(bytes4,address)")]
+    pub struct ExpectRevert5Call(pub [u8; 4], pub ::ethers_core::types::Address);
+    ///Container type for all input parameters for the `expectRevert` function with signature `expectRevert(address)` and selector `0xd814f38a`
+    #[derive(
+        Clone,
+        ::ethers_contract::EthCall,
+        ::ethers_contract::EthDisplay,
+        Default,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash
+    )]
+    #[ethcall(name = "expectRevert", abi = "expectRevert(address)")]
+    pub struct ExpectRevert3Call(pub ::ethers_core::types::Address);
     ///Container type for all input parameters for the `expectSafeMemory` function with signature `expectSafeMemory(uint64,uint64)` and selector `0x6d016688`
     #[derive(
         Clone,
@@ -10411,6 +10533,9 @@ pub mod hevm {
         ExpectRevert0(ExpectRevert0Call),
         ExpectRevert1(ExpectRevert1Call),
         ExpectRevert2(ExpectRevert2Call),
+        ExpectRevert4(ExpectRevert4Call),
+        ExpectRevert5(ExpectRevert5Call),
+        ExpectRevert3(ExpectRevert3Call),
         ExpectSafeMemory(ExpectSafeMemoryCall),
         ExpectSafeMemoryCall(ExpectSafeMemoryCallCall),
         Fee(FeeCall),
@@ -10861,6 +10986,18 @@ pub mod hevm {
             if let Ok(decoded)
                 = <ExpectRevert2Call as ::ethers_core::abi::AbiDecode>::decode(data) {
                 return Ok(Self::ExpectRevert2(decoded));
+            }
+            if let Ok(decoded)
+                = <ExpectRevert4Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+                return Ok(Self::ExpectRevert4(decoded));
+            }
+            if let Ok(decoded)
+                = <ExpectRevert5Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+                return Ok(Self::ExpectRevert5(decoded));
+            }
+            if let Ok(decoded)
+                = <ExpectRevert3Call as ::ethers_core::abi::AbiDecode>::decode(data) {
+                return Ok(Self::ExpectRevert3(decoded));
             }
             if let Ok(decoded)
                 = <ExpectSafeMemoryCall as ::ethers_core::abi::AbiDecode>::decode(data) {
@@ -11600,6 +11737,15 @@ pub mod hevm {
                 Self::ExpectRevert2(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
+                Self::ExpectRevert4(element) => {
+                    ::ethers_core::abi::AbiEncode::encode(element)
+                }
+                Self::ExpectRevert5(element) => {
+                    ::ethers_core::abi::AbiEncode::encode(element)
+                }
+                Self::ExpectRevert3(element) => {
+                    ::ethers_core::abi::AbiEncode::encode(element)
+                }
                 Self::ExpectSafeMemory(element) => {
                     ::ethers_core::abi::AbiEncode::encode(element)
                 }
@@ -12011,6 +12157,9 @@ pub mod hevm {
                 Self::ExpectRevert0(element) => ::core::fmt::Display::fmt(element, f),
                 Self::ExpectRevert1(element) => ::core::fmt::Display::fmt(element, f),
                 Self::ExpectRevert2(element) => ::core::fmt::Display::fmt(element, f),
+                Self::ExpectRevert4(element) => ::core::fmt::Display::fmt(element, f),
+                Self::ExpectRevert5(element) => ::core::fmt::Display::fmt(element, f),
+                Self::ExpectRevert3(element) => ::core::fmt::Display::fmt(element, f),
                 Self::ExpectSafeMemory(element) => ::core::fmt::Display::fmt(element, f),
                 Self::ExpectSafeMemoryCall(element) => {
                     ::core::fmt::Display::fmt(element, f)
@@ -12543,6 +12692,21 @@ pub mod hevm {
     impl ::core::convert::From<ExpectRevert2Call> for HEVMCalls {
         fn from(value: ExpectRevert2Call) -> Self {
             Self::ExpectRevert2(value)
+        }
+    }
+    impl ::core::convert::From<ExpectRevert4Call> for HEVMCalls {
+        fn from(value: ExpectRevert4Call) -> Self {
+            Self::ExpectRevert4(value)
+        }
+    }
+    impl ::core::convert::From<ExpectRevert5Call> for HEVMCalls {
+        fn from(value: ExpectRevert5Call) -> Self {
+            Self::ExpectRevert5(value)
+        }
+    }
+    impl ::core::convert::From<ExpectRevert3Call> for HEVMCalls {
+        fn from(value: ExpectRevert3Call) -> Self {
+            Self::ExpectRevert3(value)
         }
     }
     impl ::core::convert::From<ExpectSafeMemoryCall> for HEVMCalls {
