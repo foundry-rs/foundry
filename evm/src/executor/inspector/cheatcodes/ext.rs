@@ -273,6 +273,9 @@ fn parse_json(json_str: &str, key: &str, coerce: Option<ParamType>) -> Result {
         } else {
             util::parse(&to_string(values[0]), &coercion_type)
         }
+    } else {
+        // If the user did not specify a coercion type, we should ensure it exists as sanity check.
+        ensure!(!values.is_empty(), "No matching value or array found for key {key}");
     }
 
     let res = values
