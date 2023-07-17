@@ -4,6 +4,7 @@ members = [
     "anvil/core",
     "anvil/rpc",
     "anvil/server",
+    "abi",
     "binder",
     "cast",
     "chisel",
@@ -20,6 +21,7 @@ members = [
     "ui",
     "utils",
 ]
+resolver = "2"
 
 [profile.dev]
 # Disabling debug info speeds up builds a bunch,
@@ -58,16 +60,31 @@ strip = true
 panic = "abort"
 codegen-units = 1
 
-# # Patch ethers-rs with a local checkout then run `cargo update -p ethers`
-# [patch."https://github.com/gakonst/ethers-rs"]
-# ethers = { path = "../ethers-rs" }
-# ethers-addressbook = { path = "../ethers-rs/ethers-addressbook" }
-# ethers-core = { path = "../ethers-rs/ethers-core" }
-# ethers-contract = { path = "../ethers-rs/ethers-contract" }
-# ethers-providers = { path = "../ethers-rs/ethers-providers" }
-# ethers-signers = { path = "../ethers-rs/ethers-signers" }
-# ethers-etherscan = { path = "../ethers-rs/ethers-etherscan" }
-# ethers-solc = { path = "../ethers-rs/ethers-solc" }
+[workspace.dependencies]
+ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-contract = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-contract-abigen = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-providers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-signers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-middleware = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 
-# [patch.crates-io]
-# revm = { path = "../revm/crates/revm" }
+solang-parser = "=0.3.1"
+
+#[patch."https://github.com/gakonst/ethers-rs"]
+#ethers = { path = "../ethers-rs/ethers" }
+#ethers-addressbook = { path = "../ethers-rs/ethers-addressbook" }
+#ethers-contract = { path = "../ethers-rs/ethers-contract" }
+#ethers-contract-abigen = { path = "../ethers-rs/ethers-contract/ethers-contract-abigen" }
+#ethers-core = { path = "../ethers-rs/ethers-core" }
+#ethers-etherscan = { path = "../ethers-rs/ethers-etherscan" }
+#ethers-middleware = { path = "../ethers-rs/ethers-middleware" }
+#ethers-providers = { path = "../ethers-rs/ethers-providers" }
+#ethers-signers = { path = "../ethers-rs/ethers-signers" }
+#ethers-solc = { path = "../ethers-rs/ethers-solc" }
+
+[patch.crates-io]
+revm = { git = "https://github.com/bluealloy/revm/", branch = "release/v25" }

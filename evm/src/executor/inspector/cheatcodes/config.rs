@@ -1,7 +1,5 @@
+use super::{ensure, fmt_err, Result};
 use crate::executor::opts::EvmOpts;
-use bytes::Bytes;
-
-use crate::error;
 use ethers::solc::{utils::canonicalize, ProjectPathsConfig};
 use foundry_common::fs::normalize_path;
 use foundry_config::{
@@ -9,7 +7,6 @@ use foundry_config::{
     ResolvedRpcEndpoints,
 };
 use std::path::{Path, PathBuf};
-use tracing::trace;
 
 /// Additional, configurable context the `Cheatcodes` inspector has access to
 ///
@@ -81,20 +78,18 @@ impl CheatsConfig {
 
     /// Returns an error if no access is granted to access `path`, See also [Self::is_path_allowed]
     ///
-    /// Returns the normalized version of `path`, see [`Self::normalized_path`]
+    /// Returns the normalized version of `path`, see [`CheatsConfig::normalized_path`]
     pub fn ensure_path_allowed(
         &self,
         path: impl AsRef<Path>,
         kind: FsAccessKind,
-    ) -> Result<PathBuf, String> {
+    ) -> Result<PathBuf> {
         let path = path.as_ref();
         let normalized = self.normalized_path(path);
-        if !self.is_normalized_path_allowed(&normalized, kind) {
-            return Err(format!(
-                "The path {path:?} is not allowed to be accessed for {kind} operations."
-            ))
-        }
-
+        ensure!(
+            self.is_normalized_path_allowed(&normalized, kind),
+            "The path {path:?} is not allowed to be accessed for {kind} operations."
+        );
         Ok(normalized)
     }
 
@@ -113,10 +108,8 @@ impl CheatsConfig {
 
     /// Same as [`Self::is_foundry_toml`] but returns an `Err` if [`Self::is_foundry_toml`] returns
     /// true
-    pub fn ensure_not_foundry_toml(&self, path: impl AsRef<Path>) -> Result<(), String> {
-        if self.is_foundry_toml(path) {
-            return Err("Access to foundry.toml is not allowed.".to_string())
-        }
+    pub fn ensure_not_foundry_toml(&self, path: impl AsRef<Path>) -> Result<()> {
+        ensure!(!self.is_foundry_toml(path), "Access to foundry.toml is not allowed.");
         Ok(())
     }
 
@@ -131,20 +124,17 @@ impl CheatsConfig {
     ///  - Returns an error if `url_or_alias` is a known alias but references an unresolved env var.
     ///  - Returns an error if `url_or_alias` is not an alias but does not start with a `http` or
     ///    `scheme`
-    pub fn get_rpc_url(&self, url_or_alias: impl Into<String>) -> Result<String, Bytes> {
+    pub fn get_rpc_url(&self, url_or_alias: impl Into<String>) -> Result<String> {
         let url_or_alias = url_or_alias.into();
         match self.rpc_endpoints.get(&url_or_alias) {
             Some(Ok(url)) => Ok(url.clone()),
             Some(Err(err)) => {
                 // try resolve again, by checking if env vars are now set
-                if let Ok(url) = err.try_resolve() {
-                    return Ok(url)
-                }
-                Err(error::encode_error(err))
+                err.try_resolve().map_err(Into::into)
             }
             None => {
                 if !url_or_alias.starts_with("http") && !url_or_alias.starts_with("ws") {
-                    Err(error::encode_error(format!("invalid rpc url {url_or_alias}")))
+                    Err(fmt_err!("invalid rpc url {url_or_alias}"))
                 } else {
                     Ok(url_or_alias)
                 }

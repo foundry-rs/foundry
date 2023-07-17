@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.0;
+pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "./Cheats.sol";
+import "./Vm.sol";
 
 contract GetCodeTest is DSTest {
-    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testGetCode() public {
-        bytes memory fullPath = cheats.getCode("../testdata/fixtures/GetCode/WorkingContract.json");
-        //bytes memory fileOnly = cheats.getCode("WorkingContract.sol");
-        //bytes memory fileAndContractName = cheats.getCode("WorkingContract.sol:WorkingContract");
+        bytes memory fullPath = vm.getCode("../testdata/fixtures/GetCode/WorkingContract.json");
+        //bytes memory fileOnly = vm.getCode("WorkingContract.sol");
+        //bytes memory fileAndContractName = vm.getCode("WorkingContract.sol:WorkingContract");
 
         string memory expected = string(
             bytes(
@@ -33,7 +33,7 @@ contract GetCodeTest is DSTest {
     }
 
     function testGetCodeHardhatArtifact() public {
-        bytes memory fullPath = cheats.getCode("../testdata/fixtures/GetCode/HardhatWorkingContract.json");
+        bytes memory fullPath = vm.getCode("../testdata/fixtures/GetCode/HardhatWorkingContract.json");
 
         string memory expected = string(
             bytes(
@@ -45,7 +45,7 @@ contract GetCodeTest is DSTest {
 
     function testGetCodeHuffArtifact() public {
         string memory path = "../testdata/fixtures/GetCode/HuffWorkingContract.json";
-        bytes memory bytecode = cheats.getCode(path);
+        bytes memory bytecode = vm.getCode(path);
         string memory expected = string(
             bytes(
                 hex"602d8060093d393df33d3560e01c63d1efd30d14610012573d3dfd5b6f656d6f2e6574682077757a206865726560801b3d523d6020f3"
@@ -59,12 +59,12 @@ contract GetCodeTest is DSTest {
             deployed := create(0, add(bytecode, 0x20), mload(bytecode))
         }
         // get the deployed code using the cheatcode
-        bytes memory deployedCode = cheats.getDeployedCode(path);
+        bytes memory deployedCode = vm.getDeployedCode(path);
         // compare the loaded code to the actual deployed code
         assertEq(string(deployedCode), string(deployed.code), "deployedCode for path was incorrect");
     }
 
     function testFailGetUnlinked() public {
-        cheats.getCode("UnlinkedContract.sol");
+        vm.getCode("UnlinkedContract.sol");
     }
 }

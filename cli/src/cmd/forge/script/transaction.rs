@@ -7,7 +7,7 @@ use ethers::{
     types::transaction::eip2718::TypedTransaction,
 };
 use eyre::{ContextCompat, WrapErr};
-use foundry_common::{abi::format_token, RpcUrl, SELECTOR_LEN};
+use foundry_common::{abi::format_token_raw, RpcUrl, SELECTOR_LEN};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use tracing::error;
@@ -37,6 +37,7 @@ pub struct TransactionWithMetadata {
     pub function: Option<String>,
     #[serde(default = "default_vec_of_strings")]
     pub arguments: Option<Vec<String>>,
+    #[serde(skip)]
     pub rpc: Option<RpcUrl>,
     pub transaction: TypedTransaction,
     pub additional_contracts: Vec<AdditionalContract>,
@@ -147,7 +148,7 @@ impl TransactionWithMetadata {
                     self.arguments = Some(
                         function
                             .decode_input(&data.0[SELECTOR_LEN..])
-                            .map(|tokens| tokens.iter().map(format_token).collect())
+                            .map(|tokens| tokens.iter().map(format_token_raw).collect())
                             .map_err(|_| eyre::eyre!("Failed to decode CREATE2 call arguments"))?,
                     );
                 }
@@ -180,7 +181,8 @@ impl TransactionWithMetadata {
                             let constructor_args = &data.0[info.code.len()..];
 
                             if let Ok(arguments) = abi::decode(&params, constructor_args) {
-                                self.arguments = Some(arguments.iter().map(format_token).collect());
+                                self.arguments =
+                                    Some(arguments.iter().map(format_token_raw).collect());
                             } else {
                                 let (signature, bytecode) = on_err();
                                 error!(constructor=?signature, contract=?self.contract_name, bytecode, "Failed to decode constructor arguments")
@@ -217,7 +219,7 @@ impl TransactionWithMetadata {
                         self.arguments = Some(
                             function
                                 .decode_input(&data.0[SELECTOR_LEN..])
-                                .map(|tokens| tokens.iter().map(format_token).collect())?,
+                                .map(|tokens| tokens.iter().map(format_token_raw).collect())?,
                         );
                     }
                 } else {
@@ -235,7 +237,7 @@ impl TransactionWithMetadata {
                         self.arguments = Some(
                             function
                                 .decode_input(&data.0[SELECTOR_LEN..])
-                                .map(|tokens| tokens.iter().map(format_token).collect())?,
+                                .map(|tokens| tokens.iter().map(format_token_raw).collect())?,
                         );
                     }
                 }
@@ -406,10 +408,10 @@ pub mod wrapper {
         /// Number of the block this transaction was included within.
         #[serde(rename = "blockNumber")]
         pub block_number: Option<U64>,
-        /// address of the sender.
+        /// The address of the sender.
         #[serde(serialize_with = "serialize_addr")]
         pub from: Address,
-        // address of the receiver. null when its a contract creation transaction.
+        // The address of the receiver. `None` when its a contract creation transaction.
         #[serde(serialize_with = "serialize_opt_addr")]
         pub to: Option<Address>,
         /// Cumulative gas used within the block after this was executed.

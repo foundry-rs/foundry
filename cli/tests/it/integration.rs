@@ -1,6 +1,9 @@
 use foundry_cli_test_utils::{forgetest_external, util::setup_forge_remote};
 
 forgetest_external!(solmate, "transmissions11/solmate");
+forgetest_external!(prb_math, "PaulRBerg/prb-math");
+forgetest_external!(prb_proxy, "PaulRBerg/prb-proxy");
+forgetest_external!(solady, "Vectorized/solady");
 forgetest_external!(
     geb,
     "reflexer-labs/geb",
@@ -30,4 +33,5 @@ mod fork_integration {
     );
     forgetest_external!(gunilev, "hexonaut/guni-lev", 13633752);
     forgetest_external!(convex, "mds1/convex-shutdown-simulation", 14445961);
+    forgetest_external!(sparklend, "marsfoundation/sparklend");
 }

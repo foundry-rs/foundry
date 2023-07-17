@@ -687,7 +687,7 @@ forgetest_async!(fail_broadcast_staticcall, |prj: TestProject, cmd: TestCommand|
 });
 
 forgetest_async!(
-    #[ignore]
+    #[serial_test::serial]
     check_broadcast_log,
     |prj: TestProject, cmd: TestCommand| async move {
         let (api, handle) = spawn(NodeConfig::test()).await;
@@ -701,33 +701,64 @@ forgetest_async!(
         tester
             .load_private_keys(vec![0])
             .await
-            .add_sig("BroadcastTestLog", "run()")
-            .slow()
+            .add_sig("BroadcastTestSetup", "run()")
             .simulate(ScriptOutcome::OkSimulation)
             .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment(vec![(0, 7)])
+            .assert_nonce_increment(vec![(0, 6)])
             .await;
 
-        // Uncomment to recreate log
-        // std::fs::copy("broadcast/Broadcast.t.sol/31337/run-latest.json",
-        // PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/fixtures/broadcast.log.json"
-        // ));
+        // Uncomment to recreate the broadcast log
+        // std::fs::copy(
+        //     "broadcast/Broadcast.t.sol/31337/run-latest.json",
+        //     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/fixtures/broadcast.log.
+        // json" ), );
 
-        // Ignore blockhash and timestamp since they can change inbetween runs.
-        let re = Regex::new(r#"(blockHash.*?blockNumber)|((timestamp":)[0-9]*)"#).unwrap();
+        // Check broadcast logs
+        // Ignore timestamp, blockHash, blockNumber, cumulativeGasUsed, effectiveGasPrice,
+        // transactionIndex and logIndex values since they can change inbetween runs
+        let re = Regex::new(r#"((timestamp":).[0-9]*)|((blockHash":).*)|((blockNumber":).*)|((cumulativeGasUsed":).*)|((effectiveGasPrice":).*)|((transactionIndex":).*)|((logIndex":).*)"#).unwrap();
 
         let fixtures_log = std::fs::read_to_string(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("../testdata/fixtures/broadcast.log.json"),
         )
         .unwrap();
-        let fixtures_log = re.replace_all(&fixtures_log, "");
+        let _fixtures_log = re.replace_all(&fixtures_log, "");
 
         let run_log =
             std::fs::read_to_string("broadcast/Broadcast.t.sol/31337/run-latest.json").unwrap();
+        let _run_log = re.replace_all(&run_log, "");
+
+        // pretty_assertions::assert_eq!(fixtures_log, run_log);
+
+        // Uncomment to recreate the sensitive log
+        // std::fs::copy(
+        //     "cache/Broadcast.t.sol/31337/run-latest.json",
+        //     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        //         .join("../testdata/fixtures/broadcast.sensitive.log.json"),
+        // );
+
+        // Check sensitive logs
+        // Ignore port number since it can change inbetween runs
+        let re = Regex::new(r#":[0-9]+"#).unwrap();
+
+        let fixtures_log = std::fs::read_to_string(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../testdata/fixtures/broadcast.sensitive.log.json"),
+        )
+        .unwrap();
+        let fixtures_log = re.replace_all(&fixtures_log, "");
+
+        let run_log =
+            std::fs::read_to_string("cache/Broadcast.t.sol/31337/run-latest.json").unwrap();
         let run_log = re.replace_all(&run_log, "");
 
-        assert!(fixtures_log == run_log);
+        // Clean up carriage return OS differences
+        let re = Regex::new(r"\\r\\n").unwrap();
+        let fixtures_log = re.replace_all(&fixtures_log, "\n");
+        let run_log = re.replace_all(&run_log, "\n");
+
+        pretty_assertions::assert_eq!(fixtures_log, run_log);
     }
 );
 
@@ -1048,6 +1079,58 @@ contract ContractC {
             .unwrap();
 
         cmd.arg("script").arg(script).args(["--tc", "ScriptTxOrigin"]);
+        assert!(cmd.stdout_lossy().contains("Script ran successfully."));
+    }
+);
+
+forgetest_async!(
+    assert_can_create_multiple_contracts_with_correct_nonce,
+    |prj: TestProject, mut cmd: TestCommand| async move {
+        cmd.args(["init", "--force"]).arg(prj.root());
+        cmd.assert_non_empty_stdout();
+        cmd.forge_fuse();
+
+        let script = prj
+            .inner()
+            .add_script(
+                "ScriptTxOrigin.s.sol",
+                r#"
+pragma solidity ^0.8.17;
+
+import {Script, console} from "forge-std/Script.sol";
+
+contract Contract {
+  constructor() {
+    console.log(tx.origin);
+  }
+}
+contract SubContract {
+  constructor() {
+    console.log(tx.origin);
+  }
+}
+contract BadContract {
+  constructor() {
+    // new SubContract();
+    console.log(tx.origin);
+  }
+}
+contract NestedCreateFail is Script {
+  function run() public {
+    address sender = address(uint160(uint(keccak256("woops"))));
+
+    vm.broadcast(sender);
+    new BadContract();
+
+    vm.broadcast(sender);
+    new Contract();
+  }
+}
+   "#,
+            )
+            .unwrap();
+
+        cmd.arg("script").arg(script).args(["--tc", "NestedCreateFail"]);
         assert!(cmd.stdout_lossy().contains("Script ran successfully."));
     }
 );

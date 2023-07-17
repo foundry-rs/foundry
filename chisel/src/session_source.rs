@@ -6,19 +6,20 @@
 
 use ethers_solc::{
     artifacts::{Source, Sources},
-    CompilerInput, CompilerOutput, Solc,
+    CompilerInput, CompilerOutput, EvmVersion, Solc,
 };
 use eyre::Result;
 use forge::executor::{opts::EvmOpts, Backend};
 use forge_fmt::solang_ext::SafeUnwrap;
-use foundry_config::Config;
+use foundry_config::{Config, SolcReq};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use solang_parser::pt;
 use std::{collections::HashMap, fs, path::PathBuf};
+use yansi::Paint;
 
 /// Solidity source for the `Vm` interface in [forge-std](https://github.com/foundry-rs/forge-std)
-static VM_SOURCE: &str = include_str!("../../testdata/cheats/Cheats.sol");
+static VM_SOURCE: &str = include_str!("../../testdata/cheats/Vm.sol");
 
 /// Intermediate output for the compiled [SessionSource]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,6 +74,70 @@ pub struct SessionSourceConfig {
     pub backend: Option<Backend>,
     /// Optionally enable traces for the REPL contract execution
     pub traces: bool,
+    /// Optionally set calldata for the REPL contract execution
+    pub calldata: Option<Vec<u8>>,
+}
+
+impl SessionSourceConfig {
+    /// Returns the solc version to use
+    ///
+    /// Solc version precedence
+    /// - Foundry configuration / `--use` flag
+    /// - Latest installed version via SVM
+    /// - Default: Latest 0.8.19
+    pub(crate) fn solc(&self) -> Result<Solc> {
+        let solc_req = if let Some(solc_req) = self.foundry_config.solc.clone() {
+            solc_req
+        } else if let Some(version) = Solc::installed_versions().into_iter().max() {
+            SolcReq::Version(version.into())
+        } else {
+            if !self.foundry_config.offline {
+                print!("{}", Paint::green("No solidity versions installed! "));
+            }
+            // use default
+            SolcReq::Version("0.8.19".parse().unwrap())
+        };
+
+        match solc_req {
+            SolcReq::Version(version) => {
+                // We now need to verify if the solc version provided is supported by the evm
+                // version set. If not, we bail and ask the user to provide a newer version.
+                // 1. Do we need solc 0.8.18 or higher?
+                let evm_version = self.foundry_config.evm_version;
+                let needs_post_merge_solc = evm_version >= EvmVersion::Paris;
+                // 2. Check if the version provided is less than 0.8.18 and bail,
+                // or leave it as-is if we don't need a post merge solc version or the version we
+                // have is good enough.
+                let v = if needs_post_merge_solc && version < Version::new(0, 8, 18) {
+                    eyre::bail!("solc {version} is not supported by the set evm version: {evm_version}. Please install and use a version of solc higher or equal to 0.8.18.
+You can also set the solc version in your foundry.toml.")
+                } else {
+                    version.to_string()
+                };
+
+                let mut solc = Solc::find_svm_installed_version(&v)?;
+
+                if solc.is_none() {
+                    if self.foundry_config.offline {
+                        eyre::bail!("can't install missing solc {version} in offline mode")
+                    }
+                    println!(
+                        "{}",
+                        Paint::green(format!("Installing solidity version {version}..."))
+                    );
+                    Solc::blocking_install(&version)?;
+                    solc = Solc::find_svm_installed_version(&v)?;
+                }
+                solc.ok_or_else(|| eyre::eyre!("Failed to install {version}"))
+            }
+            SolcReq::Local(solc) => {
+                if !solc.is_file() {
+                    eyre::bail!("`solc` {} does not exist", solc.display());
+                }
+                Ok(Solc::new(solc))
+            }
+        }
+    }
 }
 
 /// REPL Session Source wrapper
@@ -93,7 +158,7 @@ pub struct SessionSource {
     pub global_code: String,
     /// Top level solidity code
     ///
-    /// Typically, this is code seen above the contructor
+    /// Typically, this is code seen above the constructor
     pub top_level_code: String,
     /// Code existing within the "run()" function's scope
     pub run_code: String,
@@ -246,9 +311,32 @@ impl SessionSource {
     /// source.
     pub fn compiler_input(&self) -> CompilerInput {
         let mut sources = Sources::new();
-        sources.insert(PathBuf::from("forge-std/Vm.sol"), Source::new(VM_SOURCE.to_owned()));
         sources.insert(self.file_name.clone(), Source::new(self.to_repl_source()));
-        CompilerInput::with_sources(sources).pop().unwrap()
+
+        // Include Vm.sol if forge-std remapping is not available
+        if !self
+            .config
+            .foundry_config
+            .get_all_remappings()
+            .into_iter()
+            .any(|r| r.name.starts_with("forge-std"))
+        {
+            sources.insert(PathBuf::from("forge-std/Vm.sol"), Source::new(VM_SOURCE.to_owned()));
+        }
+
+        // we only care about the solidity source, so we can safely unwrap
+        let mut compiler_input = CompilerInput::with_sources(sources)
+            .into_iter()
+            .next()
+            .expect("Solidity source not found");
+
+        // get all remappings from the config
+        compiler_input.settings.remappings = self.config.foundry_config.get_all_remappings();
+
+        // We also need to enforce the EVM version that the user has specified.
+        compiler_input.settings.evm_version = Some(self.config.foundry_config.evm_version);
+
+        compiler_input
     }
 
     /// Compiles the source using [solang_parser]
@@ -390,11 +478,11 @@ contract {} is Script {{
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^{major}.{minor}.{patch};
 
-import {{Cheats}} from "forge-std/Vm.sol";
+import {{Vm}} from "forge-std/Vm.sol";
 {}
 
 contract {} {{
-    Cheats internal constant vm = Cheats(address(uint160(uint256(keccak256("hevm cheat code")))));
+    Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
     {}
   
     /// @notice REPL contract entry point

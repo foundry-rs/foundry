@@ -9,16 +9,18 @@ use std::path::PathBuf;
 /// CLI arguments for `forge flatten`.
 #[derive(Debug, Clone, Parser)]
 pub struct FlattenArgs {
-    #[clap(help = "The path to the contract to flatten.", value_hint = ValueHint::FilePath, value_name = "TARGET_PATH")]
+    /// The path to the contract to flatten.
+    #[clap(value_hint = ValueHint::FilePath, value_name = "PATH")]
     pub target_path: PathBuf,
 
+    /// The path to output the flattened contract.
+    ///
+    /// If not specified, the flattened contract will be output to stdout.
     #[clap(
         long,
         short,
-        help = "The path to output the flattened contract.",
-        long_help = "The path to output the flattened contract. If not specified, the flattened contract will be output to stdout.",
         value_hint = ValueHint::FilePath,
-        value_name = "FILE"
+        value_name = "PATH",
     )]
     pub output: Option<PathBuf>,
 

@@ -1,7 +1,7 @@
-pragma solidity >=0.8.0;
+pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "../cheats/Cheats.sol";
+import "../cheats/Vm.sol";
 
 contract ReturnsNothing {
     function func() public pure {}

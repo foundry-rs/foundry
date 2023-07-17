@@ -1,4 +1,4 @@
-use crate::cmd::forge::geiger::find::CheatcodeCounter;
+use super::find::UnsafeCheatcodes;
 use forge_fmt::{Visitable, Visitor};
 use solang_parser::pt::{
     ContractDefinition, Expression, FunctionDefinition, IdentifierPath, Loc, Parameter, SourceUnit,
@@ -9,7 +9,7 @@ use std::convert::Infallible;
 /// a [`forge_fmt::Visitor` that scans for invocations of cheatcodes
 #[derive(Default)]
 pub struct CheatcodeVisitor {
-    pub cheatcodes: CheatcodeCounter,
+    pub cheatcodes: UnsafeCheatcodes,
 }
 
 impl Visitor for CheatcodeVisitor {
@@ -92,7 +92,7 @@ impl Visitor for CheatcodeVisitor {
             Expression::Not(_, expr) => {
                 expr.visit(self)?;
             }
-            Expression::Complement(_, expr) => {
+            Expression::BitwiseNot(_, expr) => {
                 expr.visit(self)?;
             }
             Expression::Delete(_, expr) => {
@@ -260,17 +260,12 @@ impl Visitor for CheatcodeVisitor {
         _: Loc,
         declaration: &mut VariableDeclaration,
         expr: &mut Option<Expression>,
-        _semicolon: bool,
     ) -> Result<(), Self::Error> {
         declaration.visit(self)?;
         expr.visit(self)
     }
 
-    fn visit_var_declaration(
-        &mut self,
-        var: &mut VariableDeclaration,
-        _is_assignment: bool,
-    ) -> Result<(), Self::Error> {
+    fn visit_var_declaration(&mut self, var: &mut VariableDeclaration) -> Result<(), Self::Error> {
         var.ty.visit(self)
     }
 
@@ -311,7 +306,7 @@ impl Visitor for CheatcodeVisitor {
         _loc: Loc,
         init: &mut Option<Box<Statement>>,
         cond: &mut Option<Box<Expression>>,
-        update: &mut Option<Box<Statement>>,
+        update: &mut Option<Box<Expression>>,
         body: &mut Option<Box<Statement>>,
     ) -> Result<(), Self::Error> {
         init.visit(self)?;

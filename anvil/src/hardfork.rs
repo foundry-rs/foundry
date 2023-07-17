@@ -1,6 +1,6 @@
 use ethereum_forkid::{ForkHash, ForkId};
 use ethers::types::BlockNumber;
-use foundry_evm::revm::SpecId;
+use foundry_evm::revm::primitives::SpecId;
 use std::str::FromStr;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
@@ -19,6 +19,8 @@ pub enum Hardfork {
     London,
     ArrowGlacier,
     GrayGlacier,
+    Paris,
+    Shanghai,
     #[default]
     Latest,
 }
@@ -39,7 +41,9 @@ impl Hardfork {
             Hardfork::Berlin => 12244000,
             Hardfork::London => 12965000,
             Hardfork::ArrowGlacier => 13773000,
-            Hardfork::GrayGlacier | Hardfork::Latest => 15050000,
+            Hardfork::GrayGlacier => 15050000,
+            Hardfork::Paris => 15537394,
+            Hardfork::Shanghai | Hardfork::Latest => 17034870,
         }
     }
 
@@ -80,9 +84,13 @@ impl Hardfork {
             Hardfork::ArrowGlacier => {
                 ForkId { hash: ForkHash([0x20, 0xc3, 0x27, 0xfc]), next: 15050000 }
             }
-            Hardfork::Latest | Hardfork::GrayGlacier => {
+            Hardfork::GrayGlacier => {
+                ForkId { hash: ForkHash([0xf0, 0xaf, 0xd0, 0xe3]), next: 15537394 }
+            }
+            Hardfork::Paris => ForkId { hash: ForkHash([0x4f, 0xb8, 0xa8, 0x72]), next: 17034870 },
+            Hardfork::Shanghai | Hardfork::Latest => {
                 // update `next` when another fork block num is known
-                ForkId { hash: ForkHash([0xf0, 0xaf, 0xd0, 0xe3]), next: 0 }
+                ForkId { hash: ForkHash([0xc1, 0xfd, 0xf1, 0x81]), next: 0 }
             }
         }
     }
@@ -107,8 +115,11 @@ impl FromStr for Hardfork {
             "berlin" | "11" => Hardfork::Berlin,
             "london" | "12" => Hardfork::London,
             "arrowglacier" | "13" => Hardfork::ArrowGlacier,
-            "grayglacier" => Hardfork::GrayGlacier,
-            "latest" | "14" => Hardfork::Latest,
+            "grayglacier" | "14" => Hardfork::GrayGlacier,
+            "paris" | "merge" | "15" => Hardfork::Paris,
+            "shanghai" | "16" => Hardfork::Shanghai,
+            // "cancun" | "17"=> Hardfork::Cancun,
+            "latest" => Hardfork::Latest,
             _ => return Err(format!("Unknown hardfork {s}")),
         };
         Ok(hardfork)
@@ -131,7 +142,9 @@ impl From<Hardfork> for SpecId {
             Hardfork::Berlin => SpecId::BERLIN,
             Hardfork::London => SpecId::LONDON,
             Hardfork::ArrowGlacier => SpecId::LONDON,
-            Hardfork::GrayGlacier | Hardfork::Latest => SpecId::LATEST,
+            Hardfork::GrayGlacier => SpecId::GRAY_GLACIER,
+            Hardfork::Paris => SpecId::MERGE,
+            Hardfork::Shanghai | Hardfork::Latest => SpecId::SHANGHAI,
         }
     }
 }
@@ -157,7 +170,7 @@ impl<T: Into<BlockNumber>> From<T> for Hardfork {
             _i if num < 12_965_000 => Hardfork::Berlin,
             _i if num < 13_773_000 => Hardfork::London,
             _i if num < 15_050_000 => Hardfork::ArrowGlacier,
-
+            _i if num < 17_034_870 => Hardfork::Paris,
             _ => Hardfork::Latest,
         }
     }

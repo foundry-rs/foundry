@@ -7,7 +7,7 @@ use crate::prelude::{
     ChiselCommand, ChiselResult, ChiselSession, CmdCategory, CmdDescriptor, SessionSourceConfig,
     SolidityHelper,
 };
-use ethers::{abi::ParamType, contract::Lazy, types::H160, utils::hex};
+use ethers::{abi::ParamType, contract::Lazy, types::Address, utils::hex};
 use forge::{
     decode::decode_console_logs,
     trace::{
@@ -21,7 +21,7 @@ use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use solang_parser::diagnostics::Diagnostic;
-use std::{borrow::Cow, error::Error, io::Write, path::PathBuf, process::Command, str::FromStr};
+use std::{borrow::Cow, error::Error, io::Write, path::PathBuf, process::Command};
 use strum::IntoEnumIterator;
 use yansi::Paint;
 
@@ -375,6 +375,40 @@ impl ChiselDispatcher {
                         "{} traces!",
                         if session_source.config.traces { "Enabled" } else { "Disabled" }
                     )))
+                } else {
+                    DispatchResult::CommandFailed(Self::make_error("Session not present."))
+                }
+            }
+            ChiselCommand::Calldata => {
+                if let Some(session_source) = self.session.session_source.as_mut() {
+                    // remove empty space, double quotes, and 0x prefix
+                    let arg = args
+                        .first()
+                        .map(|s| {
+                            s.trim_matches(|c: char| c.is_whitespace() || c == '"' || c == '\'')
+                        })
+                        .map(|s| s.strip_prefix("0x").unwrap_or(s))
+                        .unwrap_or("");
+
+                    if arg.is_empty() {
+                        session_source.config.calldata = None;
+                        return DispatchResult::CommandSuccess(Some("Calldata cleared.".to_string()))
+                    }
+
+                    let calldata = hex::decode(arg);
+                    match calldata {
+                        Ok(calldata) => {
+                            session_source.config.calldata = Some(calldata);
+                            DispatchResult::CommandSuccess(Some(format!(
+                                "Set calldata to '{}'",
+                                Paint::yellow(arg)
+                            )))
+                        }
+                        Err(e) => DispatchResult::CommandFailed(Self::make_error(format!(
+                            "Invalid calldata: {}",
+                            e
+                        ))),
+                    }
                 } else {
                     DispatchResult::CommandFailed(Self::make_error("Session not present."))
                 }
@@ -808,7 +842,7 @@ impl ChiselDispatcher {
             // Convert the match to a string slice
             let match_str = m.as_str();
             // We can always safely unwrap here due to the regex matching.
-            let addr = H160::from_str(match_str).unwrap();
+            let addr: Address = match_str.parse().expect("Valid address regex");
             // Replace all occurrences of the address with a checksummed version
             heap_input = heap_input.replace(match_str, &ethers::utils::to_checksum(&addr, None));
         });

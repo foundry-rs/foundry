@@ -1,6 +1,6 @@
 use super::{WalletSigner, WalletTrait};
 use cast::{AwsChainProvider, AwsClient, AwsHttpClient, AwsRegion, KmsClient};
-use clap::{ArgAction, Parser};
+use clap::Parser;
 use ethers::{
     prelude::{Middleware, Signer},
     signers::{AwsSigner, HDPath as LedgerHDPath, Ledger, LocalWallet, Trezor, TrezorHDPath},
@@ -59,155 +59,134 @@ macro_rules! create_hw_wallets {
     };
 }
 
+/// The wallet options can either be:
+/// 1. Ledger
+/// 2. Trezor
+/// 3. Mnemonics (via file path)
+/// 4. Keystores (via file path)
+/// 5. Private Keys (cleartext in CLI)
+/// 6. Private Keys (interactively via secure prompt)
+/// 7. AWS KMS
 #[derive(Parser, Debug, Clone, Serialize, Default)]
-#[cfg_attr(not(doc), allow(missing_docs))]
-#[cfg_attr(
-    doc,
-    doc = r#"
-The wallet options can either be:
-1. Ledger
-2. Trezor
-3. Mnemonics (via file path)
-4. Keystores (via file path)
-5. Private Keys (cleartext in CLI)
-6. Private Keys (interactively via secure prompt)
-"#
-)]
+#[clap(next_help_heading = "Wallet options", about = None, long_about = None)]
 pub struct MultiWallet {
+    /// The sender accounts.
+    #[clap(
+        long,
+        short = 'a',
+        help_heading = "Wallet options - raw",
+        value_name = "ADDRESSES",
+        env = "ETH_FROM",
+        num_args(0..),
+    )]
+    pub froms: Option<Vec<Address>>,
+
+    /// Open an interactive prompt to enter your private key.
+    ///
+    /// Takes a value for the number of keys to enter.
     #[clap(
         long,
         short,
         help_heading = "Wallet options - raw",
-        help = "Open an interactive prompt to enter your private key. Takes a value for the number of keys to enter",
         default_value = "0",
         value_name = "NUM"
     )]
     pub interactives: u32,
 
+    /// Use the provided private keys.
     #[clap(
-        long = "private-keys",
+        long,
         help_heading = "Wallet options - raw",
-        help = "Use the provided private keys.",
         value_name = "RAW_PRIVATE_KEYS",
         value_parser = foundry_common::clap_helpers::strip_0x_prefix,
-        action = ArgAction::Append,
     )]
     pub private_keys: Option<Vec<String>>,
 
+    /// Use the provided private key.
     #[clap(
-        long = "private-key",
+        long,
         help_heading = "Wallet options - raw",
-        help = "Use the provided private key.",
         conflicts_with = "private_keys",
         value_name = "RAW_PRIVATE_KEY",
         value_parser = foundry_common::clap_helpers::strip_0x_prefix,
     )]
     pub private_key: Option<String>,
 
-    #[clap(
-        long = "mnemonics",
-        alias = "mnemonic-paths",
-        help_heading = "Wallet options - raw",
-        help = "Use the mnemonic phrases or mnemonic files at the specified paths.",
-        value_name = "PATHS",
-        action = ArgAction::Append,
-    )]
+    /// Use the mnemonic phrases of mnemonic files at the specified paths.
+    #[clap(long, alias = "mnemonic-paths", help_heading = "Wallet options - raw")]
     pub mnemonics: Option<Vec<String>>,
 
-    #[clap(
-        long = "mnemonic-passphrases",
-        help_heading = "Wallet options - raw",
-        help = "Use a BIP39 passphrases for the mnemonic.",
-        value_name = "PASSPHRASE",
-        action = ArgAction::Append,
-    )]
+    /// Use a BIP39 passphrases for the mnemonic.
+    #[clap(long, help_heading = "Wallet options - raw", value_name = "PASSPHRASE")]
     pub mnemonic_passphrases: Option<Vec<String>>,
 
+    /// The wallet derivation path.
+    ///
+    /// Works with both --mnemonic-path and hardware wallets.
     #[clap(
         long = "mnemonic-derivation-paths",
         alias = "hd-paths",
         help_heading = "Wallet options - raw",
-        help = "The wallet derivation path. Works with both --mnemonic-path and hardware wallets.",
-        value_name = "PATHS",
-        action = ArgAction::Append,
+        value_name = "PATH"
     )]
     pub hd_paths: Option<Vec<String>>,
 
+    /// Use the private key from the given mnemonic index.
+    ///
+    /// Can be used with --mnemonics, --ledger, --aws and --trezor.
     #[clap(
-        long = "mnemonic-indexes",
+        long,
         conflicts_with = "hd_paths",
         help_heading = "Wallet options - raw",
-        help = "Use the private key from the given mnemonic index. Used with --mnemonic-paths.",
         default_value = "0",
-        value_name = "INDEXES",
-        action = ArgAction::Append,
+        value_name = "INDEXES"
     )]
     pub mnemonic_indexes: Option<Vec<u32>>,
 
+    /// Use the keystore in the given folder or file.
     #[clap(
-        env = "ETH_KEYSTORE",
         long = "keystore",
         visible_alias = "keystores",
         help_heading = "Wallet options - keystore",
-        help = "Use the keystore in the given folder or file.",
-        action = ArgAction::Append,
         value_name = "PATHS",
+        env = "ETH_KEYSTORE"
     )]
     pub keystore_paths: Option<Vec<String>>,
 
+    /// The keystore password.
+    ///
+    /// Used with --keystore.
     #[clap(
         long = "password",
         help_heading = "Wallet options - keystore",
-        help = "The keystore password. Used with --keystore.",
         requires = "keystore_paths",
-        value_name = "PASSWORDS",
-        action = ArgAction::Append,
+        value_name = "PASSWORDS"
     )]
     pub keystore_passwords: Option<Vec<String>>,
 
+    /// The keystore password file path.
+    ///
+    /// Used with --keystore.
     #[clap(
-        env = "ETH_PASSWORD",
         long = "password-file",
         help_heading = "Wallet options - keystore",
-        help = "The keystore password file path. Used with --keystore.",
         requires = "keystore_paths",
-        value_name = "PASSWORD_FILE"
+        value_name = "PATHS",
+        env = "ETH_PASSWORD"
     )]
-    pub keystore_password_file: Option<Vec<String>>,
+    pub keystore_password_files: Option<Vec<String>>,
 
-    #[clap(
-        short,
-        long = "ledger",
-        help_heading = "Wallet options - hardware wallet",
-        help = "Use a Ledger hardware wallet."
-    )]
+    /// Use a Ledger hardware wallet.
+    #[clap(long, short, help_heading = "Wallet options - hardware wallet")]
     pub ledger: bool,
 
-    #[clap(
-        short,
-        long = "trezor",
-        help_heading = "Wallet options - hardware wallet",
-        help = "Use a Trezor hardware wallet."
-    )]
+    /// Use a Trezor hardware wallet.
+    #[clap(long, short, help_heading = "Wallet options - hardware wallet")]
     pub trezor: bool,
 
-    #[clap(
-        long = "aws",
-        help_heading = "WALLET OPTIONS - KEYSTORE",
-        help = "Use AWS Key Management Service"
-    )]
+    /// Use AWS Key Management Service.
+    #[clap(long, help_heading = "Wallet options - remote")]
     pub aws: bool,
-
-    #[clap(
-        env = "ETH_FROM",
-        short = 'a',
-        long = "froms",
-        help_heading = "Wallet options - remote",
-        help = "The sender account.",
-        value_name = "ADDRESSES",
-        action = ArgAction::Append,
-    )]
-    pub froms: Option<Vec<Address>>,
 }
 
 impl WalletTrait for MultiWallet {
@@ -310,7 +289,7 @@ impl MultiWallet {
                 self.keystore_passwords.clone().unwrap_or_default().into_iter();
 
             let mut password_files_iter =
-                self.keystore_password_file.clone().unwrap_or_default().into_iter();
+                self.keystore_password_files.clone().unwrap_or_default().into_iter();
 
             for path in keystore_paths {
                 wallets.push(self.get_from_keystore(Some(path), passwords_iter.next().as_ref(), password_files_iter.next().as_ref())?.wrap_err("Keystore paths do not have the same length as provided passwords or password files.")?);
@@ -468,7 +447,7 @@ mod tests {
             keystore_password_file.to_str().unwrap(),
         ]);
         assert_eq!(
-            args.keystore_password_file,
+            args.keystore_password_files,
             Some(vec![keystore_password_file.to_str().unwrap().to_string()])
         );
 
@@ -478,5 +457,36 @@ mod tests {
             wallets[0].address(),
             "ec554aeafe75601aaab43bd4621a22284db566c2".parse().unwrap()
         );
+    }
+
+    // https://github.com/foundry-rs/foundry/issues/5179
+    #[test]
+    fn should_not_require_the_mnemonics_flag_with_mnemonic_indexes() {
+        let wallet_options = vec![
+            ("ledger", "--mnemonic-indexes", 1),
+            ("trezor", "--mnemonic-indexes", 2),
+            ("aws", "--mnemonic-indexes", 10),
+        ];
+
+        for test_case in wallet_options {
+            let args: MultiWallet = MultiWallet::parse_from([
+                "foundry-cli",
+                &format!("--{}", test_case.0),
+                test_case.1,
+                &test_case.2.to_string(),
+            ]);
+
+            match test_case.0 {
+                "ledger" => assert!(args.ledger),
+                "trezor" => assert!(args.trezor),
+                "aws" => assert!(args.aws),
+                _ => panic!("Should have matched one of the previous wallet options"),
+            }
+
+            assert_eq!(
+                args.mnemonic_indexes.expect("--mnemonic-indexes should have been set")[0],
+                test_case.2
+            )
+        }
     }
 }

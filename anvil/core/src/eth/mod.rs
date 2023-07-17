@@ -142,6 +142,9 @@ pub enum EthRequest {
     #[cfg_attr(feature = "serde", serde(rename = "eth_sign"))]
     EthSign(Address, Bytes),
 
+    #[cfg_attr(feature = "serde", serde(rename = "eth_signTransaction"))]
+    EthSignTransaction(Box<EthTransactionRequest>),
+
     /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md).
     #[cfg_attr(feature = "serde", serde(rename = "eth_signTypedData"))]
     EthSignTypedData(Address, serde_json::Value),
@@ -303,6 +306,16 @@ pub enum EthRequest {
         )
     )]
     StopImpersonatingAccount(Address),
+    /// Will make every account impersonated
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            rename = "anvil_autoImpersonateAccount",
+            alias = "hardhat_autoImpersonateAccount",
+            with = "sequence"
+        )
+    )]
+    AutoImpersonateAccount(bool),
     /// Returns true if automatic mining is enabled, and false.
     #[cfg_attr(
         feature = "serde",
@@ -699,6 +712,13 @@ mod tests {
     #[test]
     fn test_custom_stop_impersonate_account() {
         let s = r#"{"method": "anvil_stopImpersonatingAccount",  "params": ["0x364d6D0333432C3Ac016Ca832fb8594A8cE43Ca6"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_custom_auto_impersonate_account() {
+        let s = r#"{"method": "anvil_autoImpersonateAccount",  "params": [true]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

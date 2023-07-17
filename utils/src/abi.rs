@@ -45,9 +45,8 @@ pub fn abi_to_solidity(contract_abi: &RawAbi, mut contract_name: &str) -> eyre::
             .collect::<eyre::Result<Vec<String>>>()?
             .join(", ");
 
-        let event_final = format!("event {}({inputs})", event.name);
-
-        events.push(format!("{event_final};"));
+        let event_string = format!("event {}({inputs});", event.name);
+        events.push(event_string);
     }
 
     let mut functions = Vec::with_capacity(contract_abi.functions.len());
@@ -152,7 +151,7 @@ fn expand_input_param_type(
             let ty = if let Some(struct_name) =
                 structs.get_function_input_struct_solidity_id(&fun.name, param)
             {
-                struct_name.to_string()
+                struct_name.rsplit('.').next().unwrap().to_string()
             } else {
                 kind.to_string()
             };
@@ -187,7 +186,7 @@ fn expand_output_param_type(
                     &fun.name,
                     param.internal_type.as_ref().unwrap(),
                 ) {
-                    struct_name.to_string()
+                    struct_name.rsplit('.').next().unwrap().to_string()
                 } else {
                     kind.to_string()
                 };
@@ -260,7 +259,7 @@ fn expand_event_param_type(
             let ty = if let Some(struct_name) =
                 structs.get_event_input_struct_solidity_id(&event.name, idx)
             {
-                struct_name.to_string()
+                struct_name.rsplit('.').next().unwrap().to_string()
             } else {
                 kind.to_string()
             };

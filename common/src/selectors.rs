@@ -15,8 +15,8 @@ use std::{
 };
 use tracing::warn;
 
-static SELECTOR_DATABASE_URL: &str = "https://sig.eth.samczsun.com/api/v1/signatures";
-static SELECTOR_IMPORT_URL: &str = "https://sig.eth.samczsun.com/api/v1/import";
+static SELECTOR_DATABASE_URL: &str = "https://api.openchain.xyz/signature-database/v1/";
+static SELECTOR_IMPORT_URL: &str = "https://api.openchain.xyz/signature-database/v1/import";
 
 /// The standard request timeout for API requests
 const REQ_TIMEOUT: Duration = Duration::from_secs(15);
@@ -24,7 +24,7 @@ const REQ_TIMEOUT: Duration = Duration::from_secs(15);
 /// How many request can time out before we decide this is a spurious connection
 const MAX_TIMEDOUT_REQ: usize = 4usize;
 
-/// A client that can request API data from `https://sig.eth.samczsun.com/api`
+/// A client that can request API data from `https://api.openchain.xyz`
 #[derive(Debug, Clone)]
 pub struct SignEthClient {
     inner: reqwest::Client,
@@ -110,7 +110,7 @@ impl SignEthClient {
         }
 
         if is_connectivity_err(err) {
-            warn!("spurious network detected for sig.eth.samczsun.com");
+            warn!("spurious network detected for https://api.openchain.xyz");
             let previous = self.timedout_requests.fetch_add(1, Ordering::SeqCst);
             if previous >= self.max_timedout_requests {
                 self.set_spurious();
@@ -135,7 +135,7 @@ impl SignEthClient {
         Ok(())
     }
 
-    /// Decodes the given function or event selector using sig.eth.samczsun.com
+    /// Decodes the given function or event selector using https://api.openchain.xyz
     pub async fn decode_selector(
         &self,
         selector: &str,
@@ -162,11 +162,11 @@ impl SignEthClient {
             result: ApiResult,
         }
 
-        // using samczsun signature database over 4byte
+        // using openchain.xyz signature database over 4byte
         // see https://github.com/foundry-rs/foundry/issues/1672
         let url = match selector_type {
-            SelectorType::Function => format!("{SELECTOR_DATABASE_URL}?function={selector}"),
-            SelectorType::Event => format!("{SELECTOR_DATABASE_URL}?event={selector}"),
+            SelectorType::Function => format!("{SELECTOR_DATABASE_URL}lookup?function={selector}"),
+            SelectorType::Event => format!("{SELECTOR_DATABASE_URL}lookup?event={selector}"),
         };
 
         let res = self.get_text(&url).await?;
@@ -194,11 +194,15 @@ impl SignEthClient {
             .collect::<Vec<String>>())
     }
 
-    /// Fetches a function signature given the selector using sig.eth.samczsun.com
+    /// Fetches a function signature given the selector using https://api.openchain.xyz
     pub async fn decode_function_selector(&self, selector: &str) -> eyre::Result<Vec<String>> {
-        let prefixed_selector = format!("0x{}", selector.strip_prefix("0x").unwrap_or(selector));
+        let stripped_selector = selector.strip_prefix("0x").unwrap_or(selector);
+        let prefixed_selector = format!("0x{}", stripped_selector);
         if prefixed_selector.len() != 10 {
-            eyre::bail!("Invalid selector: expected 8 characters (excluding 0x prefix), got {} characters (including 0x prefix).", prefixed_selector.len())
+            eyre::bail!(
+                "Invalid selector: expected 8 characters (excluding 0x prefix), got {}.",
+                stripped_selector.len()
+            )
         }
 
         self.decode_selector(&prefixed_selector[..10], SelectorType::Function).await
@@ -220,11 +224,11 @@ impl SignEthClient {
         Ok(sigs
             .iter()
             .cloned()
-            .filter(|sig| abi_decode(sig, calldata, true).is_ok())
+            .filter(|sig| abi_decode(sig, calldata, true, true).is_ok())
             .collect::<Vec<String>>())
     }
 
-    /// Fetches an event signature given the 32 byte topic using sig.eth.samczsun.com
+    /// Fetches an event signature given the 32 byte topic using https://api.openchain.xyz
     pub async fn decode_event_topic(&self, topic: &str) -> eyre::Result<Vec<String>> {
         let prefixed_topic = format!("0x{}", topic.strip_prefix("0x").unwrap_or(topic));
         if prefixed_topic.len() != 66 {
@@ -280,19 +284,30 @@ impl SignEthClient {
         Ok(possible_info)
     }
 
-    /// uploads selectors to sig.eth.samczsun.com using the given data
+    /// uploads selectors to https://api.openchain.xyz using the given data
     pub async fn import_selectors(
         &self,
         data: SelectorImportData,
     ) -> eyre::Result<SelectorImportResponse> {
         self.ensure_not_spurious()?;
 
-        let request = match &data {
-            SelectorImportData::Abi(_) => {
-                SelectorImportRequest { import_type: "abi".to_string(), data }
+        let request = match data {
+            SelectorImportData::Abi(abis) => {
+                let names: Vec<String> = abis
+                    .iter()
+                    .flat_map(|abi| {
+                        abi.abi
+                            .functions()
+                            .map(|func| {
+                                func.signature().split(':').next().unwrap_or("").to_string()
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                SelectorImportRequest { function: names, event: Default::default() }
             }
-            SelectorImportData::Raw(_) => {
-                SelectorImportRequest { import_type: "raw".to_string(), data }
+            SelectorImportData::Raw(raw) => {
+                SelectorImportRequest { function: raw.function, event: raw.event }
             }
         };
 
@@ -346,7 +361,7 @@ pub enum SelectorType {
     Event,
 }
 
-/// Decodes the given function or event selector using sig.eth.samczsun.com
+/// Decodes the given function or event selector using https://api.openchain.xyz
 pub async fn decode_selector(
     selector: &str,
     selector_type: SelectorType,
@@ -354,7 +369,7 @@ pub async fn decode_selector(
     SignEthClient::new()?.decode_selector(selector, selector_type).await
 }
 
-/// Fetches a function signature given the selector using sig.eth.samczsun.com
+/// Fetches a function signature given the selector https://api.openchain.xyz
 pub async fn decode_function_selector(selector: &str) -> eyre::Result<Vec<String>> {
     SignEthClient::new()?.decode_function_selector(selector).await
 }
@@ -364,7 +379,7 @@ pub async fn decode_calldata(calldata: &str) -> eyre::Result<Vec<String>> {
     SignEthClient::new()?.decode_calldata(calldata).await
 }
 
-/// Fetches an event signature given the 32 byte topic using sig.eth.samczsun.com
+/// Fetches an event signature given the 32 byte topic using https://api.openchain.xyz
 pub async fn decode_event_topic(topic: &str) -> eyre::Result<Vec<String>> {
     SignEthClient::new()?.decode_event_topic(topic).await
 }
@@ -409,26 +424,25 @@ pub enum SelectorImportData {
     Raw(RawSelectorImportData),
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Default, Serialize)]
 struct SelectorImportRequest {
-    #[serde(rename = "type")]
-    import_type: String,
-    data: SelectorImportData,
+    function: Vec<String>,
+    event: Vec<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct SelectorImportEffect {
     imported: HashMap<String, String>,
     duplicated: HashMap<String, String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct SelectorImportResult {
     function: SelectorImportEffect,
     event: SelectorImportEffect,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct SelectorImportResponse {
     result: SelectorImportResult,
 }
@@ -453,11 +467,11 @@ impl SelectorImportResponse {
             .iter()
             .for_each(|(k, v)| println!("Duplicated: Event {k}: {v}"));
 
-        println!("Selectors successfully uploaded to https://sig.eth.samczsun.com");
+        println!("Selectors successfully uploaded to https://api.openchain.xyz");
     }
 }
 
-/// uploads selectors to sig.eth.samczsun.com using the given data
+/// uploads selectors to https://api.openchain.xyz using the given data
 pub async fn import_selectors(data: SelectorImportData) -> eyre::Result<SelectorImportResponse> {
     SignEthClient::new()?.import_selectors(data).await
 }
@@ -526,7 +540,7 @@ pub fn parse_signatures(tokens: Vec<String>) -> ParsedSignatures {
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_decode_selector() {
         let sigs = decode_function_selector("0xa9059cbb").await;
         assert_eq!(sigs.unwrap()[0], "transfer(address,uint256)".to_string());
@@ -537,12 +551,17 @@ mod tests {
         // invalid signature
         decode_function_selector("0xa9059c")
             .await
-            .map_err(|e| assert_eq!(e.to_string(), "Invalid selector: expected 8 characters (excluding 0x prefix), got 8 characters (including 0x prefix)."))
+            .map_err(|e| {
+                assert_eq!(
+                    e.to_string(),
+                    "Invalid selector: expected 8 characters (excluding 0x prefix), got 6."
+                )
+            })
             .map(|_| panic!("Expected fourbyte error"))
             .ok();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_decode_calldata() {
         let decoded = decode_calldata("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79").await;
         assert_eq!(decoded.unwrap()[0], "transfer(address,uint256)".to_string());
@@ -551,7 +570,7 @@ mod tests {
         assert_eq!(decoded.unwrap()[0], "transfer(address,uint256)".to_string());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_import_selectors() {
         let mut data = RawSelectorImportData::default();
         data.function.push("transfer(address,uint256)".to_string());
@@ -561,15 +580,16 @@ mod tests {
             "0xa9059cbb"
         );
 
-        let abi: LosslessAbi = serde_json::from_str(r#"[{"constant":false,"inputs":[{"name":"_to","type":"address"},{"name":"_value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"}]"#).unwrap();
+        let abi: LosslessAbi = serde_json::from_str(r#"[{"constant":false,"inputs":[{"name":"_to","type":"address"},{"name":"_value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function", "methodIdentifiers": {"transfer(address,uint256)(uint256)": "0xa9059cbb"}}]"#).unwrap();
         let result = import_selectors(SelectorImportData::Abi(vec![abi])).await;
+        println!("{:?}", result);
         assert_eq!(
             result.unwrap().result.function.duplicated.get("transfer(address,uint256)").unwrap(),
             "0xa9059cbb"
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_parse_signatures() {
         let result = parse_signatures(vec!["transfer(address,uint256)".to_string()]);
         assert_eq!(
@@ -621,14 +641,11 @@ mod tests {
         let result = parse_signatures(vec!["event".to_string()]);
         assert_eq!(
             result,
-            ParsedSignatures {
-                signatures: RawSelectorImportData { ..Default::default() },
-                ..Default::default()
-            }
+            ParsedSignatures { signatures: Default::default(), ..Default::default() }
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_decode_event_topic() {
         let decoded = decode_event_topic(
             "0x7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6",

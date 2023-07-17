@@ -3,6 +3,7 @@
 use ethers_core::abi::Function;
 
 /// Extension trait for matching tests
+#[auto_impl::auto_impl(&)]
 pub trait TestFilter: Send + Sync {
     /// Returns whether the test should be included
     fn matches_test(&self, test_name: impl AsRef<str>) -> bool;
@@ -13,6 +14,7 @@ pub trait TestFilter: Send + Sync {
 }
 
 /// Extension trait for `Function`
+#[auto_impl::auto_impl(&)]
 pub trait TestFunctionExt {
     /// Whether this function should be executed as invariant test
     fn is_invariant_test(&self) -> bool;
@@ -51,7 +53,7 @@ impl TestFunctionExt for Function {
 
 impl<'a> TestFunctionExt for &'a str {
     fn is_invariant_test(&self) -> bool {
-        self.starts_with("invariant")
+        self.starts_with("invariant") || self.starts_with("statefulFuzz")
     }
 
     fn is_fuzz_test(&self) -> bool {
@@ -67,7 +69,7 @@ impl<'a> TestFunctionExt for &'a str {
     }
 
     fn is_setup(&self) -> bool {
-        self.to_lowercase() == "setup"
+        self.eq_ignore_ascii_case("setup")
     }
 }
 

@@ -3,9 +3,15 @@
 //! This module contains the core readline loop for the Chisel CLI as well as the
 //! executable's `main` function.
 
-use chisel::prelude::{ChiselCommand, ChiselDispatcher, DispatchResult, SolidityHelper};
+use chisel::{
+    history::chisel_history_file,
+    prelude::{ChiselCommand, ChiselDispatcher, DispatchResult, SolidityHelper},
+};
 use clap::Parser;
-use foundry_cli::cmd::{forge::build::BuildArgs, LoadConfig};
+use foundry_cli::{
+    cmd::{forge::build::BuildArgs, LoadConfig},
+    utils,
+};
 use foundry_common::evm::EvmArgs;
 use foundry_config::{
     figment::{
@@ -14,7 +20,7 @@ use foundry_config::{
     },
     Config,
 };
-use rustyline::{error::ReadlineError, Editor};
+use rustyline::{config::Configurer, error::ReadlineError, Editor};
 use yansi::Paint;
 
 // Loads project's figment and merges the build cli arguments into it
@@ -24,7 +30,7 @@ foundry_config::merge_impl_figment_convert!(ChiselParser, opts, evm_opts);
 pub(crate) const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     " (",
-    env!("VERGEN_GIT_SHA_SHORT"),
+    env!("VERGEN_GIT_SHA"),
     " ",
     env!("VERGEN_BUILD_TIMESTAMP"),
     ")"
@@ -34,14 +40,14 @@ pub(crate) const VERSION_MESSAGE: &str = concat!(
 #[derive(Debug, Parser)]
 #[clap(name = "chisel", version = VERSION_MESSAGE)]
 pub struct ChiselParser {
+    #[command(subcommand)]
+    pub sub: Option<ChiselParserSub>,
+
     #[clap(flatten)]
     pub opts: BuildArgs,
 
     #[clap(flatten)]
     pub evm_opts: EvmArgs,
-
-    #[command(subcommand)]
-    pub sub: Option<ChiselParserSub>,
 }
 
 /// Chisel binary subcommands
@@ -49,10 +55,19 @@ pub struct ChiselParser {
 pub enum ChiselParserSub {
     /// List all cached sessions
     List,
+
     /// Load a cached session
-    Load { id: String },
+    Load {
+        /// The ID of the session to load.
+        id: String,
+    },
+
     /// View the source of a cached session
-    View { id: String },
+    View {
+        /// The ID of the session to load.
+        id: String,
+    },
+
     /// Clear all cached chisel sessions from the cache directory
     ClearCache,
 }
@@ -63,6 +78,8 @@ async fn main() -> eyre::Result<()> {
     if !Paint::enable_windows_ascii() {
         Paint::disable()
     }
+
+    utils::load_dotenv();
 
     // Parse command args
     let args = ChiselParser::parse();
@@ -80,6 +97,7 @@ async fn main() -> eyre::Result<()> {
         foundry_config: config,
         evm_opts,
         backend: None,
+        calldata: None,
     })?;
 
     // Check for chisel subcommands
@@ -129,8 +147,16 @@ async fn main() -> eyre::Result<()> {
     }
 
     // Create a new rustyline Editor
-    let mut rl = Editor::<SolidityHelper>::new()?;
+    let mut rl = Editor::<SolidityHelper, _>::new()?;
     rl.set_helper(Some(SolidityHelper::default()));
+
+    // automatically add lines to history
+    rl.set_auto_add_history(true);
+
+    // load history
+    if let Some(chisel_history) = chisel_history_file() {
+        let _ = rl.load_history(&chisel_history);
+    }
 
     // Print welcome header
     println!("Welcome to Chisel! Type `{}` to show available commands.", Paint::green("!help"));
@@ -150,9 +176,6 @@ async fn main() -> eyre::Result<()> {
             Ok(line) => {
                 // Clear interrupt flag
                 interrupt = false;
-
-                // Add line to history
-                rl.add_history_entry(&line);
 
                 // Dispatch and match results
                 match dispatcher.dispatch(&line).await {
@@ -183,6 +206,10 @@ async fn main() -> eyre::Result<()> {
                 break
             }
         }
+    }
+
+    if let Some(chisel_history) = chisel_history_file() {
+        let _ = rl.save_history(&chisel_history);
     }
 
     Ok(())

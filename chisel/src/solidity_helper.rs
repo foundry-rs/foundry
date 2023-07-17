@@ -15,7 +15,7 @@ use rustyline::{
     Helper,
 };
 use solang_parser::{
-    lexer::{Lexer, LexicalError, Token},
+    lexer::{Lexer, Token},
     pt,
 };
 use std::{borrow::Cow, str::FromStr};
@@ -60,7 +60,6 @@ impl SolidityHelper {
         let mut comments = Vec::with_capacity(DEFAULT_COMMENTS);
         let mut errors = Vec::with_capacity(5);
         let mut out = Lexer::new(input, 0, &mut comments, &mut errors)
-            .flatten()
             .map(|(start, token, end)| (start, token.style(), end))
             .collect::<Vec<_>>();
 
@@ -103,7 +102,7 @@ impl SolidityHelper {
 
     /// Highlights a solidity source string
     pub fn highlight(input: &str) -> Cow<str> {
-        if !Paint::is_enabled() || Self::skip_input(input) {
+        if !Paint::is_enabled() {
             return Cow::Borrowed(input)
         }
 
@@ -150,46 +149,33 @@ impl SolidityHelper {
 
     /// Validate that a source snippet is closed (i.e., all braces and parenthesis are matched).
     fn validate_closed(input: &str) -> ValidationResult {
-        if Self::skip_input(input) {
-            let msg = Paint::red("\nInput must not start with `.<number>`");
-            return ValidationResult::Invalid(Some(msg.to_string()))
-        }
-
         let mut bracket_depth = 0usize;
         let mut paren_depth = 0usize;
         let mut brace_depth = 0usize;
         let mut comments = Vec::with_capacity(DEFAULT_COMMENTS);
         // returns on any encountered error, so allocate for just one
         let mut errors = Vec::with_capacity(1);
-        for res in Lexer::new(input, 0, &mut comments, &mut errors) {
-            match res {
-                Err(err) => match err {
-                    LexicalError::EndOfFileInComment(_) |
-                    LexicalError::EndofFileInHex(_) |
-                    LexicalError::EndOfFileInString(_) => return ValidationResult::Incomplete,
-                    _ => return ValidationResult::Valid(None),
-                },
-                Ok((_, token, _)) => match token {
-                    Token::OpenBracket => {
-                        bracket_depth += 1;
-                    }
-                    Token::OpenCurlyBrace => {
-                        brace_depth += 1;
-                    }
-                    Token::OpenParenthesis => {
-                        paren_depth += 1;
-                    }
-                    Token::CloseBracket => {
-                        bracket_depth = bracket_depth.saturating_sub(1);
-                    }
-                    Token::CloseCurlyBrace => {
-                        brace_depth = brace_depth.saturating_sub(1);
-                    }
-                    Token::CloseParenthesis => {
-                        paren_depth = paren_depth.saturating_sub(1);
-                    }
-                    _ => {}
-                },
+        for (_, token, _) in Lexer::new(input, 0, &mut comments, &mut errors) {
+            match token {
+                Token::OpenBracket => {
+                    bracket_depth += 1;
+                }
+                Token::OpenCurlyBrace => {
+                    brace_depth += 1;
+                }
+                Token::OpenParenthesis => {
+                    paren_depth += 1;
+                }
+                Token::CloseBracket => {
+                    bracket_depth = bracket_depth.saturating_sub(1);
+                }
+                Token::CloseCurlyBrace => {
+                    brace_depth = brace_depth.saturating_sub(1);
+                }
+                Token::CloseParenthesis => {
+                    paren_depth = paren_depth.saturating_sub(1);
+                }
+                _ => {}
             }
         }
         if (bracket_depth | brace_depth | paren_depth) == 0 {
@@ -217,14 +203,6 @@ impl SolidityHelper {
         let mut out = String::with_capacity(MAX_ANSI_LEN + string.len());
         Self::paint_unchecked(string, style, &mut out);
         out
-    }
-
-    /// Whether to skip parsing this input due to known errors or panics
-    #[inline]
-    fn skip_input(input: &str) -> bool {
-        // input.startsWith(/\.[0-9]/)
-        let mut chars = input.chars();
-        chars.next() == Some('.') && chars.next().map(|c| c.is_ascii_digit()).unwrap_or_default()
     }
 }
 
@@ -308,8 +286,7 @@ impl<'a> TokenStyle for Token<'a> {
             RationalNumber(_, _, _) |
             HexNumber(_) |
             True |
-            False |
-            This => Color::Yellow.style(),
+            False => Color::Yellow.style(),
 
             Memory | Storage | Calldata | Public | Private | Internal | External | Constant |
             Pure | View | Payable | Anonymous | Indexed | Abstract | Virtual | Override |

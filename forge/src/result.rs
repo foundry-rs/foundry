@@ -2,10 +2,12 @@
 
 use crate::Address;
 use ethers::prelude::Log;
+use foundry_common::evm::Breakpoints;
 use foundry_evm::{
     coverage::HitMaps,
-    fuzz::{CounterExample, FuzzedCases},
-    trace::Traces,
+    executor::EvmError,
+    fuzz::{CounterExample, FuzzCase},
+    trace::{TraceKind, Traces},
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt, time::Duration};
@@ -32,12 +34,12 @@ impl SuiteResult {
 
     /// Iterator over all succeeding tests and their names
     pub fn successes(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| t.success)
+        self.tests().filter(|(_, t)| t.status == TestStatus::Success)
     }
 
     /// Iterator over all failing tests and their names
     pub fn failures(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| !t.success)
+        self.tests().filter(|(_, t)| t.status == TestStatus::Failure)
     }
 
     /// Iterator over all tests and their names
@@ -56,13 +58,22 @@ impl SuiteResult {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub enum TestStatus {
+    Success,
+    #[default]
+    Failure,
+    Skipped,
+}
+
 /// The result of an executed solidity test
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TestResult {
-    /// Whether the test case was successful. This means that the transaction executed
-    /// properly, or that there was a revert and that the test was expected to fail
-    /// (prefixed with `testFail`)
-    pub success: bool,
+    /// The test status, indicating whether the test case succeeded, failed, or was marked as
+    /// skipped. This means that the transaction executed properly, the test was marked as
+    /// skipped with vm.skip(), or that there was a revert and that the test was expected to
+    /// fail (prefixed with `testFail`)
+    pub status: TestStatus,
 
     /// If there was a revert, this field will be populated. Note that the test can
     /// still be successful (i.e self.success == true) when it's expected to fail.
@@ -90,12 +101,19 @@ pub struct TestResult {
 
     /// Labeled addresses
     pub labeled_addresses: BTreeMap<Address, String>,
+
+    /// pc breakpoint char map
+    pub breakpoints: Breakpoints,
 }
 
 impl TestResult {
+    pub fn fail(reason: String) -> Self {
+        Self { status: TestStatus::Failure, reason: Some(reason), ..Default::default() }
+    }
+
     /// Returns `true` if this is the result of a fuzz test
     pub fn is_fuzz(&self) -> bool {
-        matches!(self.kind, TestKind::Fuzz(_))
+        matches!(self.kind, TestKind::Fuzz { .. })
     }
 }
 
@@ -144,9 +162,21 @@ pub enum TestKind {
     /// Holds the consumed gas
     Standard(u64),
     /// A solidity fuzz test, that stores all test cases
-    Fuzz(FuzzedCases),
+    Fuzz {
+        /// we keep this for the debugger
+        first_case: FuzzCase,
+        runs: usize,
+        mean_gas: u64,
+        median_gas: u64,
+    },
     /// A solidity invariant test, that stores all test cases
-    Invariant(Vec<FuzzedCases>, usize),
+    Invariant { runs: usize, calls: usize, reverts: usize },
+}
+
+impl Default for TestKind {
+    fn default() -> Self {
+        Self::Standard(0)
+    }
 }
 
 impl TestKind {
@@ -154,16 +184,12 @@ impl TestKind {
     pub fn report(&self) -> TestKindReport {
         match self {
             TestKind::Standard(gas) => TestKindReport::Standard { gas: *gas },
-            TestKind::Fuzz(fuzzed) => TestKindReport::Fuzz {
-                runs: fuzzed.cases().len(),
-                median_gas: fuzzed.median_gas(false),
-                mean_gas: fuzzed.mean_gas(false),
-            },
-            TestKind::Invariant(fuzzed, reverts) => TestKindReport::Invariant {
-                runs: fuzzed.len(),
-                calls: fuzzed.iter().map(|sequence| sequence.cases().len()).sum(),
-                reverts: *reverts,
-            },
+            TestKind::Fuzz { runs, mean_gas, median_gas, .. } => {
+                TestKindReport::Fuzz { runs: *runs, mean_gas: *mean_gas, median_gas: *median_gas }
+            }
+            TestKind::Invariant { runs, calls, reverts } => {
+                TestKindReport::Invariant { runs: *runs, calls: *calls, reverts: *reverts }
+            }
         }
     }
 }
@@ -178,8 +204,53 @@ pub struct TestSetup {
     pub traces: Traces,
     /// Addresses labeled during setup
     pub labeled_addresses: BTreeMap<Address, String>,
-    /// Whether the setup failed
-    pub setup_failed: bool,
-    /// The reason the setup failed
+    /// The reason the setup failed, if it did
     pub reason: Option<String>,
+}
+
+impl TestSetup {
+    pub fn from_evm_error_with(
+        error: EvmError,
+        mut logs: Vec<Log>,
+        mut traces: Traces,
+        mut labeled_addresses: BTreeMap<Address, String>,
+    ) -> Self {
+        match error {
+            EvmError::Execution(err) => {
+                // force the tracekind to be setup so a trace is shown.
+                traces.extend(err.traces.map(|traces| (TraceKind::Setup, traces)));
+                logs.extend(err.logs);
+                labeled_addresses.extend(err.labels);
+                Self::failed_with(logs, traces, labeled_addresses, err.reason)
+            }
+            e => Self::failed_with(
+                logs,
+                traces,
+                labeled_addresses,
+                format!("Failed to deploy contract: {e}"),
+            ),
+        }
+    }
+
+    pub fn success(
+        address: Address,
+        logs: Vec<Log>,
+        traces: Traces,
+        labeled_addresses: BTreeMap<Address, String>,
+    ) -> Self {
+        Self { address, logs, traces, labeled_addresses, reason: None }
+    }
+
+    pub fn failed_with(
+        logs: Vec<Log>,
+        traces: Traces,
+        labeled_addresses: BTreeMap<Address, String>,
+        reason: String,
+    ) -> Self {
+        Self { address: Address::zero(), logs, traces, labeled_addresses, reason: Some(reason) }
+    }
+
+    pub fn failed(reason: String) -> Self {
+        Self { reason: Some(reason), ..Default::default() }
+    }
 }

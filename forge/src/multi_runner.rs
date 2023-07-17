@@ -10,13 +10,18 @@ use foundry_common::{ContractsByArtifact, TestFunctionExt};
 use foundry_evm::{
     executor::{
         backend::Backend, fork::CreateFork, inspector::CheatsConfig, opts::EvmOpts, Executor,
-        ExecutorBuilder, SpecId,
+        ExecutorBuilder,
     },
     revm,
 };
-use foundry_utils::PostLinkInput;
+use foundry_utils::{PostLinkInput, ResolvedDependency};
 use rayon::prelude::*;
-use std::{collections::BTreeMap, path::Path, sync::mpsc::Sender};
+use revm::primitives::SpecId;
+use std::{
+    collections::{BTreeMap, HashSet},
+    path::Path,
+    sync::mpsc::Sender,
+};
 
 pub type DeployableContracts = BTreeMap<ArtifactId, (Abi, Bytes, Vec<Bytes>)>;
 
@@ -31,7 +36,7 @@ pub struct MultiContractRunner {
     /// The EVM instance used in the test runner
     pub evm_opts: EvmOpts,
     /// The configured evm
-    pub env: revm::Env,
+    pub env: revm::primitives::Env,
     /// The EVM spec
     pub evm_spec: SpecId,
     /// All known errors, used for decoding reverts
@@ -114,84 +119,71 @@ impl MultiContractRunner {
     /// before executing all contracts and their tests in _parallel_.
     ///
     /// Each Executor gets its own instance of the `Backend`.
-    pub fn test(
+    pub async fn test(
         &mut self,
-        filter: &impl TestFilter,
+        filter: impl TestFilter,
         stream_result: Option<Sender<(String, SuiteResult)>>,
         test_options: TestOptions,
-    ) -> Result<BTreeMap<String, SuiteResult>> {
-        tracing::trace!("start all tests");
+    ) -> BTreeMap<String, SuiteResult> {
+        trace!("running all tests");
 
-        let db = Backend::spawn(self.fork.take());
+        // the db backend that serves all the data, each contract gets its own instance
+        let db = Backend::spawn(self.fork.take()).await;
+        let filter = &filter;
 
-        let results =
-            // the db backend that serves all the data, each contract gets its own instance
+        self.contracts
+            .par_iter()
+            .filter(|(id, _)| {
+                filter.matches_path(id.source.to_string_lossy()) &&
+                    filter.matches_contract(&id.name)
+            })
+            .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
+            .map_with(stream_result, |stream_result, (id, (abi, deploy_code, libs))| {
+                let executor = ExecutorBuilder::default()
+                    .with_cheatcodes(self.cheats_config.clone())
+                    .with_config(self.env.clone())
+                    .with_spec(self.evm_spec)
+                    .with_gas_limit(self.evm_opts.gas_limit())
+                    .set_tracing(self.evm_opts.verbosity >= 3)
+                    .set_coverage(self.coverage)
+                    .build(db.clone());
+                let identifier = id.identifier();
+                trace!(contract=%identifier, "start executing all tests in contract");
 
-             self
-                .contracts
-                .par_iter()
-                .filter(|(id, _)| {
-                    filter.matches_path(id.source.to_string_lossy()) &&
-                        filter.matches_contract(&id.name)
-                })
-                .filter(|(_, (abi, _, _))| {
-                    abi.functions().any(|func| filter.matches_test(&func.name))
-                })
-                .map(|(id, (abi, deploy_code, libs))| {
-                    let executor = ExecutorBuilder::default()
-                        .with_cheatcodes(self.cheats_config.clone())
-                        .with_config(self.env.clone())
-                        .with_spec(self.evm_spec)
-                        .with_gas_limit(self.evm_opts.gas_limit())
-                        .set_tracing(self.evm_opts.verbosity >= 3)
-                        .set_coverage(self.coverage)
-                        .build(db.clone());
-                    let identifier = id.identifier();
-                    tracing::trace!(contract= ?identifier, "start executing all tests in contract");
+                let result = self.run_tests(
+                    &identifier,
+                    abi,
+                    executor,
+                    deploy_code.clone(),
+                    libs,
+                    filter,
+                    test_options.clone(),
+                );
+                trace!(contract= ?identifier, "executed all tests in contract");
 
-                    let result = self.run_tests(
-                        &identifier,
-                        abi,
-                        executor,
-                        deploy_code.clone(),
-                        libs,
-                        (filter, test_options),
-                    )?;
+                if let Some(stream_result) = stream_result {
+                    let _ = stream_result.send((identifier.clone(), result.clone()));
+                }
 
-                    tracing::trace!(contract= ?identifier, "executed all tests in contract");
-                    Ok((identifier, result))
-                })
-                .filter_map(Result::<_>::ok)
-                .filter(|(_, results)| !results.is_empty())
-                .map_with(stream_result, |stream_result, (name, result)| {
-                    if let Some(stream_result) = stream_result.as_ref() {
-                        stream_result.send((name.clone(), result.clone())).unwrap();
-                    }
-                    (name, result)
-                })
-                .collect::<BTreeMap<_, _>>()
-        ;
-
-        Ok(results)
+                (identifier, result)
+            })
+            .collect()
     }
 
-    // The _name field is unused because we only want it for tracing
-    #[tracing::instrument(
-        name = "contract",
-        skip_all,
-        err,
-        fields(name = %_name)
-    )]
+    #[instrument(skip_all, fields(name = %name))]
+    #[allow(clippy::too_many_arguments)]
     fn run_tests(
         &self,
-        _name: &str,
+        name: &str,
         contract: &Abi,
         executor: Executor,
         deploy_code: Bytes,
         libs: &[Bytes],
-        (filter, test_options): (&impl TestFilter, TestOptions),
-    ) -> Result<SuiteResult> {
+        filter: impl TestFilter,
+        test_options: TestOptions,
+    ) -> SuiteResult {
         let runner = ContractRunner::new(
+            name,
             executor,
             contract,
             deploy_code,
@@ -231,7 +223,7 @@ impl MultiContractRunnerBuilder {
         self,
         root: impl AsRef<Path>,
         output: ProjectCompileOutput<A>,
-        env: revm::Env,
+        env: revm::primitives::Env,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner>
     where
@@ -250,9 +242,21 @@ impl MultiContractRunnerBuilder {
             .iter()
             .map(|(i, _)| (i.identifier(), root.as_ref().join(&i.source).to_string_lossy().into()))
             .collect::<BTreeMap<String, String>>();
-
         // create a mapping of name => (abi, deployment code, Vec<library deployment code>)
         let mut deployable_contracts = DeployableContracts::default();
+
+        fn unique_deps(deps: Vec<ResolvedDependency>) -> Vec<ResolvedDependency> {
+            let mut filtered = Vec::new();
+            let mut seen = HashSet::new();
+            for dep in deps {
+                if !seen.insert(dep.id.clone()) {
+                    continue
+                }
+                filtered.push(dep);
+            }
+
+            filtered
+        }
 
         foundry_utils::link_with_nonce_or_address(
             ArtifactContracts::from_iter(contracts),
@@ -261,7 +265,6 @@ impl MultiContractRunnerBuilder {
             evm_opts.sender,
             U256::one(),
             &mut deployable_contracts,
-            |file, key| (format!("{key}.json:{key}"), file, key),
             |post_link_input| {
                 let PostLinkInput {
                     contract,
@@ -270,6 +273,7 @@ impl MultiContractRunnerBuilder {
                     extra: deployable_contracts,
                     dependencies,
                 } = post_link_input;
+                let dependencies = unique_deps(dependencies);
 
                 // get bytes
                 let bytecode =
@@ -290,10 +294,7 @@ impl MultiContractRunnerBuilder {
                         (
                             abi.clone(),
                             bytecode,
-                            dependencies
-                                .into_iter()
-                                .map(|(_, bytecode)| bytecode)
-                                .collect::<Vec<_>>(),
+                            dependencies.into_iter().map(|dep| dep.bytecode).collect::<Vec<_>>(),
                         ),
                     );
                 }
@@ -305,6 +306,7 @@ impl MultiContractRunnerBuilder {
                     .and_then(|bytes| known_contracts.insert(id.clone(), (abi, bytes.to_vec())));
                 Ok(())
             },
+            root,
         )?;
 
         let execution_info = known_contracts.flatten();
@@ -313,7 +315,7 @@ impl MultiContractRunnerBuilder {
             known_contracts,
             evm_opts,
             env,
-            evm_spec: self.evm_spec.unwrap_or(SpecId::LONDON),
+            evm_spec: self.evm_spec.unwrap_or(SpecId::MERGE),
             sender: self.sender,
             errors: Some(execution_info.2),
             source_paths,

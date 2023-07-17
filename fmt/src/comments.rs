@@ -1,7 +1,4 @@
-use crate::{
-    inline_config::{InlineConfigItem, InvalidInlineConfigItem},
-    solang_ext::*,
-};
+use crate::inline_config::{InlineConfigItem, InvalidInlineConfigItem};
 use itertools::Itertools;
 use solang_parser::pt::*;
 use std::collections::VecDeque;
@@ -269,7 +266,7 @@ impl Comments {
     pub(crate) fn remove_all_comments_before(&mut self, byte: usize) -> Vec<CommentWithMetadata> {
         self.remove_prefixes_before(byte)
             .into_iter()
-            .merge(self.remove_postfixes_before(byte).into_iter())
+            .merge(self.remove_postfixes_before(byte))
             .collect()
     }
 

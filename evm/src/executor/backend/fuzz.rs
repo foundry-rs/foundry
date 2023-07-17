@@ -9,13 +9,13 @@ use crate::{
     Address,
 };
 use ethers::prelude::{H256, U256};
-use hashbrown::HashMap as Map;
+
 use revm::{
-    db::DatabaseRef, Account, AccountInfo, Bytecode, Database, Env, ExecutionResult, Inspector,
-    JournaledState,
+    db::DatabaseRef,
+    primitives::{AccountInfo, Bytecode, Env, ResultAndState, B160, B256, U256 as rU256},
+    Database, Inspector, JournaledState,
 };
 use std::borrow::Cow;
-use tracing::trace;
 
 /// A wrapper around `Backend` that ensures only `revm::DatabaseRef` functions are called.
 ///
@@ -41,13 +41,18 @@ pub struct FuzzBackendWrapper<'a> {
     pub backend: Cow<'a, Backend>,
     /// Keeps track of whether the backed is already intialized
     is_initialized: bool,
+    /// Keeps track of wheter there was a snapshot failure.
+    ///
+    /// Necessary as the backend is dropped after usage, but we'll need to persist
+    /// the snapshot failure anyhow.
+    has_snapshot_failure: bool,
 }
 
 // === impl FuzzBackendWrapper ===
 
 impl<'a> FuzzBackendWrapper<'a> {
     pub fn new(backend: &'a Backend) -> Self {
-        Self { backend: Cow::Borrowed(backend), is_initialized: false }
+        Self { backend: Cow::Borrowed(backend), is_initialized: false, has_snapshot_failure: false }
     }
 
     /// Executes the configured transaction of the `env` without committing state changes
@@ -55,14 +60,31 @@ impl<'a> FuzzBackendWrapper<'a> {
         &mut self,
         env: &mut Env,
         mut inspector: INSP,
-    ) -> (ExecutionResult, Map<Address, Account>)
+    ) -> eyre::Result<ResultAndState>
     where
         INSP: Inspector<Self>,
     {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
         self.is_initialized = false;
-        revm::evm_inner::<Self, true>(env, self, &mut inspector).transact()
+        match revm::evm_inner::<Self, true>(env, self, &mut inspector).transact() {
+            Ok(result) => Ok(result),
+            Err(e) => eyre::bail!("fuzz: failed to inspect: {:?}", e),
+        }
+    }
+
+    /// Returns whether there was a snapshot failure in the fuzz backend.
+    ///
+    /// This is bubbled up from the underlying Copy-On-Write backend when a revert occurs.
+    pub fn has_snapshot_failure(&self) -> bool {
+        self.has_snapshot_failure
+    }
+
+    /// Sets whether there was a snapshot failure in the fuzz backend.
+    ///
+    /// This is bubbled up from the underlying Copy-On-Write backend when a revert occurs.
+    pub fn set_snapshot_failure(&mut self, has_snapshot_failure: bool) {
+        self.has_snapshot_failure = has_snapshot_failure;
     }
 
     /// Returns a mutable instance of the Backend.
@@ -92,7 +114,11 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         current: &mut Env,
     ) -> Option<JournaledState> {
         trace!(?id, "fuzz: revert snapshot");
-        self.backend_mut(current).revert(id, journaled_state, current)
+        let journaled_state = self.backend_mut(current).revert(id, journaled_state, current);
+        // Persist the snapshot failure in the fuzz backend, as the underlying backend state is lost
+        // after the call.
+        self.set_snapshot_failure(self.has_snapshot_failure || self.backend.has_snapshot_failure());
+        journaled_state
     }
 
     fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<LocalForkId> {
@@ -205,19 +231,19 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
 impl<'a> DatabaseRef for FuzzBackendWrapper<'a> {
     type Error = DatabaseError;
 
-    fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+    fn basic(&self, address: B160) -> Result<Option<AccountInfo>, Self::Error> {
         DatabaseRef::basic(self.backend.as_ref(), address)
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> Result<Bytecode, Self::Error> {
+    fn code_by_hash(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
         DatabaseRef::code_by_hash(self.backend.as_ref(), code_hash)
     }
 
-    fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+    fn storage(&self, address: B160, index: rU256) -> Result<rU256, Self::Error> {
         DatabaseRef::storage(self.backend.as_ref(), address, index)
     }
 
-    fn block_hash(&self, number: U256) -> Result<H256, Self::Error> {
+    fn block_hash(&self, number: rU256) -> Result<B256, Self::Error> {
         DatabaseRef::block_hash(self.backend.as_ref(), number)
     }
 }
@@ -225,19 +251,19 @@ impl<'a> DatabaseRef for FuzzBackendWrapper<'a> {
 impl<'a> Database for FuzzBackendWrapper<'a> {
     type Error = DatabaseError;
 
-    fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+    fn basic(&mut self, address: B160) -> Result<Option<AccountInfo>, Self::Error> {
         DatabaseRef::basic(self, address)
     }
 
-    fn code_by_hash(&mut self, code_hash: H256) -> Result<Bytecode, Self::Error> {
+    fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
         DatabaseRef::code_by_hash(self, code_hash)
     }
 
-    fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
+    fn storage(&mut self, address: B160, index: rU256) -> Result<rU256, Self::Error> {
         DatabaseRef::storage(self, address, index)
     }
 
-    fn block_hash(&mut self, number: U256) -> Result<H256, Self::Error> {
+    fn block_hash(&mut self, number: rU256) -> Result<B256, Self::Error> {
         DatabaseRef::block_hash(self, number)
     }
 }

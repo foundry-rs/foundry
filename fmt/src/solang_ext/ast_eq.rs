@@ -1,4 +1,3 @@
-use super::AttrSortKeyIteratorExt;
 use ethers_core::types::{H160, I256, U256};
 use solang_parser::pt::*;
 use std::str::FromStr;
@@ -52,25 +51,28 @@ impl AstEq for SourceUnit {
 
 impl AstEq for VariableDefinition {
     fn ast_eq(&self, other: &Self) -> bool {
-        let sort_attrs =
-            |def: &Self| def.attrs.clone().into_iter().attr_sorted().collect::<Vec<_>>();
-        let left_sorted_attrs = sort_attrs(self);
-        let right_sorted_attrs = sort_attrs(other);
+        let sorted_attrs = |def: &Self| {
+            let mut attrs = def.attrs.clone();
+            attrs.sort();
+            attrs
+        };
         self.ty.ast_eq(&other.ty) &&
             self.name.ast_eq(&other.name) &&
             self.initializer.ast_eq(&other.initializer) &&
-            left_sorted_attrs.ast_eq(&right_sorted_attrs)
+            sorted_attrs(self).ast_eq(&sorted_attrs(other))
     }
 }
 
 impl AstEq for FunctionDefinition {
     fn ast_eq(&self, other: &Self) -> bool {
         // attributes
-        let sort_attrs =
-            |def: &Self| def.attributes.clone().into_iter().attr_sorted().collect::<Vec<_>>();
-        let left_sorted_attrs = sort_attrs(self);
-        let right_sorted_attrs = sort_attrs(other);
+        let sorted_attrs = |def: &Self| {
+            let mut attrs = def.attributes.clone();
+            attrs.sort();
+            attrs
+        };
 
+        // params
         let left_params = filter_params(&self.params);
         let right_params = filter_params(&other.params);
         let left_returns = filter_params(&self.returns);
@@ -82,7 +84,7 @@ impl AstEq for FunctionDefinition {
             self.return_not_returns.ast_eq(&other.return_not_returns) &&
             left_returns.ast_eq(&right_returns) &&
             self.body.ast_eq(&other.body) &&
-            left_sorted_attrs.ast_eq(&right_sorted_attrs)
+            sorted_attrs(self).ast_eq(&sorted_attrs(other))
     }
 }
 
@@ -393,7 +395,7 @@ derive_ast_eq! { U256 }
 derive_ast_eq! { struct Identifier { loc, name } }
 derive_ast_eq! { struct HexLiteral { loc, hex } }
 derive_ast_eq! { struct StringLiteral { loc, unicode, string } }
-derive_ast_eq! { struct Parameter { loc, ty, storage, name } }
+derive_ast_eq! { struct Parameter { loc, annotation, ty, storage, name } }
 derive_ast_eq! { struct NamedArgument { loc, name, expr } }
 derive_ast_eq! { struct YulBlock { loc, statements } }
 derive_ast_eq! { struct YulFunctionCall { loc, id, arguments } }
@@ -420,15 +422,15 @@ derive_ast_eq! { struct StructDefinition { loc, name, fields } }
 derive_ast_eq! { struct EnumDefinition { loc, name, values } }
 derive_ast_eq! { struct Annotation { loc, id, value } }
 derive_ast_eq! { enum UsingList {
+    Error,
     _
     Library(expr),
     Functions(exprs),
-    Error(),
     _
 }}
 derive_ast_eq! { enum UserDefinedOperator {
     BitwiseAnd,
-    Complement,
+    BitwiseNot,
     Negate,
     BitwiseOr,
     BitwiseXor,
@@ -513,7 +515,7 @@ derive_ast_eq! { enum Expression {
     FunctionCallBlock(loc, expr1, stmt),
     NamedFunctionCall(loc, expr1, args),
     Not(loc, expr1),
-    Complement(loc, expr1),
+    BitwiseNot(loc, expr1),
     Delete(loc, expr1),
     PreIncrement(loc, expr1),
     PreDecrement(loc, expr1),
@@ -567,7 +569,6 @@ derive_ast_eq! { enum Expression {
     Variable(ident1),
     List(loc, params1),
     ArrayLiteral(loc, exprs1),
-    This(loc),
     Parenthesis(loc, expr)
     _
 }}

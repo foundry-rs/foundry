@@ -1,7 +1,7 @@
 //! Various utilities to decode test results
 use crate::{
     abi::ConsoleEvents::{self, *},
-    error::ERROR_PREFIX,
+    executor::inspector::cheatcodes::util::MAGIC_SKIP_BYTES,
 };
 use ethers::{
     abi::{decode, AbiDecode, Contract as Abi, ParamType, RawLog, Token},
@@ -10,9 +10,10 @@ use ethers::{
     types::Log,
 };
 use foundry_common::{abi::format_token, SELECTOR_LEN};
+use foundry_utils::error::ERROR_PREFIX;
 use itertools::Itertools;
 use once_cell::sync::Lazy;
-use revm::Return;
+use revm::interpreter::{return_ok, InstructionResult};
 
 /// Decode a set of logs, only returning logs from DSTest logging events and Hardhat's `console.log`
 pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
@@ -70,11 +71,11 @@ pub fn decode_console_log(log: &Log) -> Option<String> {
 pub fn decode_revert(
     err: &[u8],
     maybe_abi: Option<&Abi>,
-    status: Option<Return>,
+    status: Option<InstructionResult>,
 ) -> eyre::Result<String> {
     if err.len() < SELECTOR_LEN {
         if let Some(status) = status {
-            if !matches!(status, revm::return_ok!()) {
+            if !matches!(status, return_ok!()) {
                 return Ok(format!("EvmError: {status:?}"))
             }
         }
@@ -161,6 +162,10 @@ pub fn decode_revert(
             eyre::bail!("Unknown error selector")
         }
         _ => {
+            // See if the revert is caused by a skip() call.
+            if err == MAGIC_SKIP_BYTES {
+                return Ok("SKIPPED".to_string())
+            }
             // try to decode a custom error if provided an abi
             if let Some(abi) = maybe_abi {
                 for abi_error in abi.errors() {
@@ -178,7 +183,6 @@ pub fn decode_revert(
                     }
                 }
             }
-
             // optimistically try to decode as string, unknown selector or `CheatcodeError`
             String::decode(err)
                 .ok()

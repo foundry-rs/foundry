@@ -3,7 +3,7 @@
 use super::*;
 use ethers::{
     prelude::{artifacts::Settings, Lazy, ProjectCompileOutput, SolcConfig},
-    solc::{artifacts::Libraries, utils::RuntimeOrHandle, Project, ProjectPathsConfig},
+    solc::{artifacts::Libraries, Project, ProjectPathsConfig},
     types::{Address, U256},
 };
 use foundry_config::Config;
@@ -63,7 +63,7 @@ pub static COMPILED_WITH_LIBS: Lazy<ProjectCompileOutput> = Lazy::new(|| {
 pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
     env: Env {
         gas_limit: 18446744073709551615,
-        chain_id: Some(foundry_common::DEV_CHAIN_ID),
+        chain_id: None,
         tx_origin: Config::DEFAULT_SENDER,
         block_number: 1,
         block_timestamp: 1,
@@ -83,7 +83,7 @@ pub fn fuzz_executor<DB: DatabaseRef>(executor: &Executor) -> FuzzedExecutor {
         executor,
         proptest::test_runner::TestRunner::new(cfg),
         CALLER,
-        config::TEST_OPTS.fuzz,
+        config::test_opts().fuzz,
     )
 }
 

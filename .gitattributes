@@ -1,0 +1,4 @@
+# auto-detection may fail for human-readable files, like the ones in abi/abi/*.sol
+**/*.sol linguist-language=Solidity
+
+abi/src/bindings/*.rs linguist-generated

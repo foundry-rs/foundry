@@ -310,17 +310,31 @@ interface Hevm {
     // Mocks a call to an address with a specific msg.value, returning specified data.
     // Calldata match takes precedence over msg.value in case of ambiguity.
     function mockCall(address,uint256,bytes calldata,bytes calldata) external;
-    // Clears all mocked calls
+    // Reverts a call to an address with specified revert data.
+    function mockCallRevert(address, bytes calldata, bytes calldata) external;
+    // Reverts a call to an address with a specific msg.value, with specified revert data.
+    function mockCallRevert(address, uint256 msgValue, bytes calldata, bytes calldata) external;
+    // Clears all mocked and reverted mocked calls
     function clearMockedCalls() external;
     // Expect a call to an address with the specified calldata.
     // Calldata can either be strict or a partial match
-    function expectCall(address,bytes calldata) external;
+    function expectCall(address, bytes calldata) external;
+    // Expect given number of calls to an address with the specified calldata.
+    // Calldata can either be strict or a partial match
+    function expectCall(address, bytes calldata, uint64) external;
     // Expect a call to an address with the specified msg.value and calldata
-    function expectCall(address,uint256,bytes calldata) external;
+    function expectCall(address, uint256, bytes calldata) external;
+    // Expect a given number of calls to an address with the specified msg.value and calldata
+    function expectCall(address, uint256, bytes calldata, uint64) external;
     // Expect a call to an address with the specified msg.value, gas, and calldata.
     function expectCall(address, uint256, uint64, bytes calldata) external;
+    // Expect a given number of calls to an address with the specified msg.value, gas, and calldata.
+    function expectCall(address, uint256, uint64, bytes calldata, uint64) external;
     // Expect a call to an address with the specified msg.value and calldata, and a *minimum* amount of gas.
     function expectCallMinGas(address, uint256, uint64, bytes calldata) external;
+    // Expect a given number of calls to an address with the specified msg.value and calldata, and a *minimum* amount of gas.
+    function expectCallMinGas(address, uint256, uint64, bytes calldata, uint64) external;
+
     // Only allows memory writes to offsets [0x00, 0x60) ∪ [min, max) in the current subcontext. If any other
     // memory is written to, the test will fail.
     function expectSafeMemory(uint64, uint64) external;

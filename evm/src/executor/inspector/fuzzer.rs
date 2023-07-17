@@ -1,9 +1,12 @@
 use crate::{
     fuzz::{invariant::RandomCallGenerator, strategies::EvmFuzzState},
-    utils,
+    utils::{self, b160_to_h160, h160_to_b160},
 };
 use bytes::Bytes;
-use revm::{db::Database, CallInputs, CallScheme, EVMData, Gas, Inspector, Interpreter, Return};
+use revm::{
+    interpreter::{CallInputs, CallScheme, Gas, InstructionResult, Interpreter},
+    Database, EVMData, Inspector,
+};
 
 /// An inspector that can fuzz and collect data for that effect.
 #[derive(Clone, Debug)]
@@ -20,12 +23,26 @@ impl<DB> Inspector<DB> for Fuzzer
 where
     DB: Database,
 {
+    fn step(
+        &mut self,
+        interpreter: &mut Interpreter,
+        _: &mut EVMData<'_, DB>,
+        _is_static: bool,
+    ) -> InstructionResult {
+        // We only collect `stack` and `memory` data before and after calls.
+        if self.collect {
+            self.collect_data(interpreter);
+            self.collect = false;
+        }
+        InstructionResult::Continue
+    }
+
     fn call(
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
         _: bool,
-    ) -> (Return, Gas, Bytes) {
+    ) -> (InstructionResult, Gas, Bytes) {
         // We don't want to override the very first call made to the test contract.
         if self.call_generator.is_some() && data.env.tx.caller != call.context.caller {
             self.override_call(call);
@@ -35,21 +52,7 @@ where
         // this will be turned off on the next `step`
         self.collect = true;
 
-        (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
-    }
-
-    fn step(
-        &mut self,
-        interpreter: &mut Interpreter,
-        _: &mut EVMData<'_, DB>,
-        _is_static: bool,
-    ) -> Return {
-        // We only collect `stack` and `memory` data before and after calls.
-        if self.collect {
-            self.collect_data(interpreter);
-            self.collect = false;
-        }
-        Return::Continue
+        (InstructionResult::Continue, Gas::new(call.gas_limit), Bytes::new())
     }
 
     fn call_end(
@@ -57,10 +60,10 @@ where
         _: &mut EVMData<'_, DB>,
         _: &CallInputs,
         remaining_gas: Gas,
-        status: Return,
+        status: InstructionResult,
         retdata: Bytes,
         _: bool,
-    ) -> (Return, Gas, Bytes) {
+    ) -> (InstructionResult, Gas, Bytes) {
         if let Some(ref mut call_generator) = self.call_generator {
             call_generator.used = false;
         }
@@ -79,7 +82,7 @@ impl Fuzzer {
         let mut state = self.fuzz_state.write();
 
         for slot in interpreter.stack().data() {
-            state.insert(utils::u256_to_h256_be(*slot).into());
+            state.values_mut().insert(utils::u256_to_h256_be(utils::ru256_to_u256(*slot)).into());
         }
 
         // TODO: disabled for now since it's flooding the dictionary
@@ -95,21 +98,21 @@ impl Fuzzer {
     fn override_call(&mut self, call: &mut CallInputs) {
         if let Some(ref mut call_generator) = self.call_generator {
             // We only override external calls which are not coming from the test contract.
-            if call.context.caller != call_generator.test_address &&
+            if call.context.caller != h160_to_b160(call_generator.test_address) &&
                 call.context.scheme == CallScheme::Call &&
                 !call_generator.used
             {
                 // There's only a 30% chance that an override happens.
-                if let Some((sender, (contract, input))) =
-                    call_generator.next(call.context.caller, call.contract)
+                if let Some((sender, (contract, input))) = call_generator
+                    .next(b160_to_h160(call.context.caller), b160_to_h160(call.contract))
                 {
                     call.input = input.0;
-                    call.context.caller = sender;
-                    call.contract = contract;
+                    call.context.caller = h160_to_b160(sender);
+                    call.contract = h160_to_b160(contract);
 
                     // TODO: in what scenarios can the following be problematic
-                    call.context.code_address = contract;
-                    call.context.address = contract;
+                    call.context.code_address = h160_to_b160(contract);
+                    call.context.address = h160_to_b160(contract);
 
                     call_generator.used = true;
                 }

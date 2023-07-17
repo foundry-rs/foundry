@@ -8,7 +8,7 @@ repository = "https://github.com/foundry-rs/foundry"
 keywords = ["ethereum", "web3"]
 
 [build-dependencies]
-vergen = { version = "7.0", default-features = false, features = ["build", "rustc", "git"] }
+vergen = { version = "8", default-features = false, features = ["build", "git", "git2"] }
 
 [dependencies]
 # foundry internal
@@ -18,81 +18,80 @@ foundry-utils = { path = "../utils" }
 forge = { path = "../forge" }
 foundry-config = { path = "../config" }
 foundry-common = { path = "../common" }
+foundry-evm = { path = "../evm" }
 cast = { path = "../cast" }
 ui = { path = "../ui" }
 
 # eth
-ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["rustls"] }
-solang-parser = "=0.2.3"
+ethers = { workspace = true, features = ["rustls"] }
+solang-parser.workspace = true
 
 # cli
-clap = { version = "4.0", features = ["derive", "env", "unicode", "wrap_help"] }
-clap_complete = "4.0"
-clap_complete_fig = "4.0"
-yansi = "0.5.1"
-tracing-error = "0.2.0"
+clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
+clap_complete = "4"
+clap_complete_fig = "4"
+yansi = "0.5"
+tracing-error = "0.2"
 tracing-subscriber = { version = "0.3", features = ["registry", "env-filter", "fmt"] }
 tracing = "0.1"
-console = "0.15.0"
-watchexec = "2.0"
-atty = "0.2.14"
-comfy-table = "6.0.0"
-reqwest = { version = "0.11.8", default-features = false, features = [
-    "json",
-    "rustls",
-    "rustls-native-certs",
+console = "0.15"
+watchexec = "2"
+is-terminal = "0.4"
+comfy-table = "6"
+reqwest = { version = "0.11", default-features = false, features = [
+  "json",
+  "rustls",
+  "rustls-tls-native-roots",
 ] }
 dotenvy = "0.15"
-dialoguer = { version = "0.10.2", default-features = false }
+dialoguer = { version = "0.10", default-features = false }
 
 # async / parallel
 tokio = { version = "1", features = ["macros"] }
-futures = "0.3.17"
-rayon = "1.6.1"
-async-trait = "0.1.53"
+futures = "0.3"
+rayon = "1"
+async-trait = "0.1"
 
 # disk / paths
-walkdir = "2.3.2"
-dunce = "1.0.2"
-globset = "0.4.8"
-path-slash = "0.2.0"
-tempfile = "3.3.0"
+walkdir = "2"
+dunce = "1"
+path-slash = "0.2"
+tempfile = "3"
 
 # misc
 eyre = "0.6"
 color-eyre = "0.6"
-rustc-hex = "2.1.0"
-serde_json = "1.0.67"
-regex = { version = "1.5.4", default-features = false }
-rpassword = "7.0.0"
-hex = "0.4.3"
-serde = { version = "1.0.133", features = ["derive"] }
-itertools = "0.10.3"
-proptest = "1.0.0"
-semver = "1.0.5"
-once_cell = "1.13"
-similar = { version = "2.1.0", features = ["inline"] }
-strsim = "0.10.0"
-bytes = "1.1.0"
-strum = { version = "0.24", features = ["derive"] }
-thiserror = "1.0.30"
-indicatif = "0.17.1"
-which = "4.2.5"
+rustc-hex = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+regex = { version = "1", default-features = false }
+rpassword = "7"
+hex = "0.4"
+itertools = "0.10"
+proptest = "1"
+semver = "1"
+once_cell = "1"
+similar = { version = "2", features = ["inline"] }
+strsim = "0.10"
+bytes = "1.4"
+strum = { version = "0.25", features = ["derive"] }
+thiserror = "1"
+indicatif = "0.17"
 parking_lot = "0.12"
 
 [dev-dependencies]
 anvil = { path = "../anvil" }
-foundry-utils = { path = "./../utils", features = ["test"] }
+foundry-utils = { path = "./../utils" }
 foundry-cli-test-utils = { path = "./test-utils" }
-pretty_assertions = "1.0.0"
-toml = "0.7.0"
-serial_test = "1.0.0"
-criterion = "0.4.0"
+pretty_assertions = "1"
+toml = "0.7"
+serial_test = "2"
+criterion = "0.4"
 svm = { package = "svm-rs", version = "0.2", default-features = false, features = ["rustls"] }
+globset = "0.4"
 
 [features]
 default = ["rustls"]
-solc-asm = ["ethers/solc-sha2-asm"]
 rustls = ["ethers/rustls"]
 openssl = ["ethers/openssl"]
 

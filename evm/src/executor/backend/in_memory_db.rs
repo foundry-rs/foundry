@@ -1,13 +1,10 @@
 //! The in memory DB
 use crate::executor::backend::error::DatabaseError;
-use ethers::{
-    prelude::{H256, U256},
-    types::Address,
-};
 use hashbrown::HashMap as Map;
 use revm::{
     db::{CacheDB, DatabaseRef, EmptyDB},
-    Account, AccountInfo, Bytecode, Database, DatabaseCommit,
+    primitives::{Account, AccountInfo, Bytecode, B160, B256, U256},
+    Database, DatabaseCommit,
 };
 
 use crate::executor::snapshot::Snapshots;
@@ -34,19 +31,19 @@ impl Default for MemDb {
 
 impl DatabaseRef for MemDb {
     type Error = DatabaseError;
-    fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+    fn basic(&self, address: B160) -> Result<Option<AccountInfo>, Self::Error> {
         DatabaseRef::basic(&self.inner, address)
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> Result<Bytecode, Self::Error> {
+    fn code_by_hash(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
         DatabaseRef::code_by_hash(&self.inner, code_hash)
     }
 
-    fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+    fn storage(&self, address: B160, index: U256) -> Result<U256, Self::Error> {
         DatabaseRef::storage(&self.inner, address, index)
     }
 
-    fn block_hash(&self, number: U256) -> Result<H256, Self::Error> {
+    fn block_hash(&self, number: U256) -> Result<B256, Self::Error> {
         DatabaseRef::block_hash(&self.inner, number)
     }
 }
@@ -54,26 +51,26 @@ impl DatabaseRef for MemDb {
 impl Database for MemDb {
     type Error = DatabaseError;
 
-    fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+    fn basic(&mut self, address: B160) -> Result<Option<AccountInfo>, Self::Error> {
         // Note: this will always return `Some(AccountInfo)`, See `EmptyDBWrapper`
         Database::basic(&mut self.inner, address)
     }
 
-    fn code_by_hash(&mut self, code_hash: H256) -> Result<Bytecode, Self::Error> {
+    fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
         Database::code_by_hash(&mut self.inner, code_hash)
     }
 
-    fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
+    fn storage(&mut self, address: B160, index: U256) -> Result<U256, Self::Error> {
         Database::storage(&mut self.inner, address, index)
     }
 
-    fn block_hash(&mut self, number: U256) -> Result<H256, Self::Error> {
+    fn block_hash(&mut self, number: U256) -> Result<B256, Self::Error> {
         Database::block_hash(&mut self.inner, number)
     }
 }
 
 impl DatabaseCommit for MemDb {
-    fn commit(&mut self, changes: Map<Address, Account>) {
+    fn commit(&mut self, changes: Map<B160, Account>) {
         DatabaseCommit::commit(&mut self.inner, changes)
     }
 }
@@ -96,18 +93,18 @@ pub struct EmptyDBWrapper(EmptyDB);
 impl DatabaseRef for EmptyDBWrapper {
     type Error = DatabaseError;
 
-    fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+    fn basic(&self, address: B160) -> Result<Option<AccountInfo>, Self::Error> {
         // Note: this will always return `Some(AccountInfo)`, for the reason explained above
         Ok(Some(self.0.basic(address)?.unwrap_or_default()))
     }
-    fn code_by_hash(&self, code_hash: H256) -> Result<Bytecode, Self::Error> {
+    fn code_by_hash(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
         Ok(self.0.code_by_hash(code_hash)?)
     }
-    fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+    fn storage(&self, address: B160, index: U256) -> Result<U256, Self::Error> {
         Ok(self.0.storage(address, index)?)
     }
 
-    fn block_hash(&self, number: U256) -> Result<H256, Self::Error> {
+    fn block_hash(&self, number: U256) -> Result<B256, Self::Error> {
         Ok(self.0.block_hash(number)?)
     }
 }
@@ -122,13 +119,12 @@ mod tests {
     #[test]
     fn cache_db_insert_basic_non_existing() {
         let mut db = CacheDB::new(EmptyDB::default());
-        let address = Address::random();
-
+        let address = B160::random();
         // call `basic` on a non-existing account
         let info = Database::basic(&mut db, address).unwrap();
         assert!(info.is_none());
         let mut info = info.unwrap_or_default();
-        info.balance = 500u64.into();
+        info.balance = U256::from(500u64);
 
         // insert the modified account info
         db.insert_account_info(address, info);
@@ -142,12 +138,12 @@ mod tests {
     #[test]
     fn cache_db_insert_basic_default() {
         let mut db = CacheDB::new(EmptyDB::default());
-        let address = Address::random();
+        let address = B160::random();
 
         let info = DatabaseRef::basic(&db, address).unwrap();
         assert!(info.is_none());
         let mut info = info.unwrap_or_default();
-        info.balance = 500u64.into();
+        info.balance = U256::from(500u64);
 
         // insert the modified account info
         db.insert_account_info(address, info.clone());
@@ -161,12 +157,12 @@ mod tests {
     #[test]
     fn mem_db_insert_basic_default() {
         let mut db = MemDb::default();
-        let address = Address::random();
+        let address = B160::random();
 
         let info = Database::basic(&mut db, address).unwrap();
         assert!(info.is_some());
         let mut info = info.unwrap();
-        info.balance = 500u64.into();
+        info.balance = U256::from(500u64);
 
         // insert the modified account info
         db.inner.insert_account_info(address, info.clone());

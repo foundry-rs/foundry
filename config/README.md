@@ -66,6 +66,7 @@ test = 'test'
 script = 'script'
 out = 'out'
 libs = ['lib']
+auto_detect_remappings = true # recursive auto-detection of remappings
 remappings = []
 # list of libraries to link in the form of `<path to lib>:<lib name>:<address>`: `"src/MyLib.sol:MyLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"`
 # the <path to lib> supports remappings
@@ -78,7 +79,7 @@ allow_paths = []
 # additional solc include paths
 include_paths = []
 force = false
-evm_version = 'london'
+evm_version = 'shanghai'
 gas_reports = ['*']
 gas_reports_ignore = []
 ## Sets the concrete solc version to use, this overrides the `auto_detect_solc` value
@@ -113,8 +114,9 @@ no_match_contract = "Bar"
 match_path = "*/Foo*"
 no_match_path = "*/Bar*"
 ffi = false
-sender = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
-tx_origin = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
+# These are the default callers, generated using `address(uint160(uint256(keccak256("foundry default caller"))))`
+sender = '0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38'
+tx_origin = '0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38'
 initial_balance = '0xffffffffffffffffffffffff'
 block_number = 0
 fork_block_number = 0
@@ -142,6 +144,8 @@ via_ir = false
 rpc_storage_caching = { chains = "all", endpoints = "all" }
 # this overrides `rpc_storage_caching` entirely
 no_storage_caching = false
+# Whether to store the referenced sources in the metadata as literal data.
+use_literal_content = false
 # use ipfs method to generate the metadata hash, solc's default.
 # To not include the metadata hash, to allow for deterministic code: https://docs.soliditylang.org/en/latest/metadata.html, use "none"
 bytecode_hash = "ipfs"
@@ -187,6 +191,7 @@ call_override = false
 dictionary_weight = 80
 include_storage = true
 include_push_bytes = true
+shrink_sequence = true
 
 [fmt]
 line_length = 100

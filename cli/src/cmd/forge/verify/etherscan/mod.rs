@@ -14,6 +14,7 @@ use ethers::{
         verify::{CodeFormat, VerifyContract},
         Client,
     },
+    prelude::errors::EtherscanError,
     solc::{artifacts::CompactContract, cache::CacheEntry, Project, Solc},
 };
 use eyre::{eyre, Context};
@@ -32,7 +33,7 @@ use std::{
 use tracing::{error, trace, warn};
 
 pub static RE_BUILD_COMMIT: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"(?P<commit>commit\.[0-9,a-f]{8})"#).unwrap());
+    Lazy::new(|| Regex::new(r"(?P<commit>commit\.[0-9,a-f]{8})").unwrap());
 
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
@@ -63,6 +64,16 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
     async fn verify(&mut self, args: VerifyArgs) -> eyre::Result<()> {
         let (etherscan, verify_args) = self.prepare_request(&args).await?;
+
+        if self.is_contract_verified(&etherscan, &verify_args).await? {
+            println!(
+                "\nContract [{}] {:?} is already verified. Skipping verification.",
+                verify_args.contract_name,
+                SimpleCast::to_checksum_address(&verify_args.address)
+            );
+
+            return Ok(())
+        }
 
         trace!(target : "forge::verify", ?verify_args,  "submitting verification request");
 
@@ -229,6 +240,24 @@ impl EtherscanVerificationProvider {
         let verify_args = self.create_verify_request(args, Some(config)).await?;
 
         Ok((etherscan, verify_args))
+    }
+
+    /// Queries the etherscan API to verify if the contract is already verified.
+    async fn is_contract_verified(
+        &self,
+        etherscan: &Client,
+        verify_contract: &VerifyContract,
+    ) -> eyre::Result<bool> {
+        let check = etherscan.contract_abi(verify_contract.address).await;
+
+        if let Err(err) = check {
+            match err {
+                EtherscanError::ContractCodeNotVerified(_) => return Ok(false),
+                error => return Err(error.into()),
+            }
+        }
+
+        Ok(true)
     }
 
     /// Create an etherscan client
@@ -505,7 +534,7 @@ mod tests {
         assert!(format!("{client:?}").contains("dummykey"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn fails_on_disabled_cache_and_missing_info() {
         let temp = tempdir().unwrap();
         let root = temp.path();

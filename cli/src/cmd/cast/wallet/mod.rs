@@ -11,66 +11,92 @@ use clap::Parser;
 use ethers::{
     core::rand::thread_rng,
     signers::{LocalWallet, Signer},
-    types::{Address, Signature},
+    types::{transaction::eip712::TypedData, Address, Signature},
 };
 use eyre::Context;
 
-/// CLI arguments for `cast send`.
+/// CLI arguments for `cast wallet`.
 #[derive(Debug, Parser)]
 pub enum WalletSubcommands {
-    #[clap(name = "new", visible_alias = "n", about = "Create a new random keypair.")]
+    /// Create a new random keypair.
+    #[clap(visible_alias = "n")]
     New {
-        #[clap(
-            help = "If provided, then keypair will be written to an encrypted JSON keystore.",
-            value_name = "PATH"
-        )]
+        /// If provided, then keypair will be written to an encrypted JSON keystore.
         path: Option<String>,
-        #[clap(
-            long,
-            short,
-            help = r#"Deprecated: prompting for a hidden password is now the default.
-            Triggers a hidden password prompt for the JSON keystore."#,
-            conflicts_with = "unsafe_password",
-            requires = "path"
-        )]
+
+        /// Triggers a hidden password prompt for the JSON keystore.
+        ///
+        /// Deprecated: prompting for a hidden password is now the default.
+        #[clap(long, short, requires = "path", conflicts_with = "unsafe_password")]
         password: bool,
-        #[clap(
-            long,
-            help = "Password for the JSON keystore in cleartext. This is UNSAFE to use and we recommend using the --password.",
-            requires = "path",
-            env = "CAST_PASSWORD",
-            value_name = "PASSWORD"
-        )]
+
+        /// Password for the JSON keystore in cleartext.
+        ///
+        /// This is UNSAFE to use and we recommend using the --password.
+        #[clap(long, requires = "path", env = "CAST_PASSWORD", value_name = "PASSWORD")]
         unsafe_password: Option<String>,
     },
-    #[clap(name = "vanity", visible_alias = "va", about = "Generate a vanity address.")]
+
+    /// Generate a vanity address.
+    #[clap(visible_alias = "va")]
     Vanity(VanityArgs),
-    #[clap(name = "address", visible_aliases = &["a", "addr"], about = "Convert a private key to an address.")]
+
+    /// Convert a private key to an address.
+    #[clap(visible_aliases = &["a", "addr"])]
     Address {
+        /// If provided, the address will be derived from the specified private key.
         #[clap(
-            help = "If provided, the address will be derived from the specified private key.",
             value_name = "PRIVATE_KEY",
-            value_parser = foundry_common::clap_helpers::strip_0x_prefix
+            value_parser = foundry_common::clap_helpers::strip_0x_prefix,
         )]
         private_key_override: Option<String>,
+
         #[clap(flatten)]
         wallet: Wallet,
     },
-    #[clap(name = "sign", visible_alias = "s", about = "Sign a message.")]
+
+    /// Sign a message or typed data.
+    #[clap(visible_alias = "s")]
     Sign {
-        #[clap(help = "message to sign", value_name = "MESSAGE")]
+        /// The message or typed data to sign.
+        ///
+        /// Messages starting with 0x are expected to be hex encoded,
+        /// which get decoded before being signed.
+        /// The message will be prefixed with the Ethereum Signed Message header and hashed before
+        /// signing.
+        ///
+        /// Typed data can be provided as a json string or a file name.
+        /// Use --data flag to denote the message is a string of typed data.
+        /// Use --data --from-file to denote the message is a file name containing typed data.
+        /// The data will be combined and hashed using the EIP712 specification before signing.
+        /// The data should be formatted as JSON.
         message: String,
+
+        /// If provided, the message will be treated as typed data.
+        #[clap(long)]
+        data: bool,
+
+        /// If provided, the message will be treated as a file name containing typed data. Requires
+        /// --data.
+        #[clap(long, requires = "data")]
+        from_file: bool,
+
         #[clap(flatten)]
         wallet: Wallet,
     },
-    #[clap(name = "verify", visible_alias = "v", about = "Verify the signature of a message.")]
+
+    /// Verify the signature of a message.
+    #[clap(visible_alias = "v")]
     Verify {
-        #[clap(help = "The original message.", value_name = "MESSAGE")]
+        /// The original message.
         message: String,
-        #[clap(help = "The signature to verify.", value_name = "SIGNATURE")]
-        signature: String,
-        #[clap(long, short, help = "The address of the message signer.", value_name = "ADDRESS")]
-        address: String,
+
+        /// The signature to verify.
+        signature: Signature,
+
+        /// The address of the message signer.
+        #[clap(long, short)]
+        address: Address,
     },
 }
 
@@ -84,7 +110,7 @@ impl WalletSubcommands {
                     let path = dunce::canonicalize(path)?;
                     if !path.is_dir() {
                         // we require path to be an existing directory
-                        eyre::bail!("`{}` is not a directory.", path.display());
+                        eyre::bail!("`{}` is not a directory", path.display());
                     }
 
                     let password = if let Some(password) = unsafe_password {
@@ -118,15 +144,24 @@ impl WalletSubcommands {
                 let addr = wallet.address();
                 println!("{}", SimpleCast::to_checksum_address(&addr));
             }
-            WalletSubcommands::Sign { message, wallet } => {
+            WalletSubcommands::Sign { message, data, from_file, wallet } => {
                 let wallet = wallet.signer(0).await?;
-                let sig = wallet.sign_message(message).await?;
-                println!("Signature: 0x{sig}");
+                let sig = if data {
+                    let typed_data: TypedData = if from_file {
+                        // data is a file name, read json from file
+                        foundry_common::fs::read_json_file(message.as_ref())?
+                    } else {
+                        // data is a json string
+                        serde_json::from_str(&message)?
+                    };
+                    wallet.sign_typed_data(&typed_data).await?
+                } else {
+                    wallet.sign_message(Self::hex_str_to_bytes(&message)?).await?
+                };
+                println!("0x{sig}");
             }
             WalletSubcommands::Verify { message, signature, address } => {
-                let pubkey: Address = address.parse().wrap_err("Invalid address")?;
-                let signature: Signature = signature.parse().wrap_err("Invalid signature")?;
-                match signature.verify(message, pubkey) {
+                match signature.verify(Self::hex_str_to_bytes(&message)?, address) {
                     Ok(_) => {
                         println!("Validation succeeded. Address {address} signed this message.")
                     }
@@ -138,5 +173,75 @@ impl WalletSubcommands {
         };
 
         Ok(())
+    }
+
+    fn hex_str_to_bytes(s: &str) -> eyre::Result<Vec<u8>> {
+        Ok(match s.strip_prefix("0x") {
+            Some(data) => hex::decode(data).wrap_err("Could not decode 0x-prefixed string.")?,
+            None => s.as_bytes().to_vec(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_parse_wallet_sign_message() {
+        let args = WalletSubcommands::parse_from(["foundry-cli", "sign", "deadbeef"]);
+        match args {
+            WalletSubcommands::Sign { message, data, from_file, .. } => {
+                assert_eq!(message, "deadbeef".to_string());
+                assert!(!data);
+                assert!(!from_file);
+            }
+            _ => panic!("expected WalletSubcommands::Sign"),
+        }
+    }
+
+    #[test]
+    fn can_parse_wallet_sign_hex_message() {
+        let args = WalletSubcommands::parse_from(["foundry-cli", "sign", "0xdeadbeef"]);
+        match args {
+            WalletSubcommands::Sign { message, data, from_file, .. } => {
+                assert_eq!(message, "0xdeadbeef".to_string());
+                assert!(!data);
+                assert!(!from_file);
+            }
+            _ => panic!("expected WalletSubcommands::Sign"),
+        }
+    }
+
+    #[test]
+    fn can_parse_wallet_sign_data() {
+        let args = WalletSubcommands::parse_from(["foundry-cli", "sign", "--data", "{ ... }"]);
+        match args {
+            WalletSubcommands::Sign { message, data, from_file, .. } => {
+                assert_eq!(message, "{ ... }".to_string());
+                assert!(data);
+                assert!(!from_file);
+            }
+            _ => panic!("expected WalletSubcommands::Sign"),
+        }
+    }
+
+    #[test]
+    fn can_parse_wallet_sign_data_file() {
+        let args = WalletSubcommands::parse_from([
+            "foundry-cli",
+            "sign",
+            "--data",
+            "--from-file",
+            "tests/data/typed_data.json",
+        ]);
+        match args {
+            WalletSubcommands::Sign { message, data, from_file, .. } => {
+                assert_eq!(message, "tests/data/typed_data.json".to_string());
+                assert!(data);
+                assert!(from_file);
+            }
+            _ => panic!("expected WalletSubcommands::Sign"),
+        }
     }
 }

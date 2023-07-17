@@ -297,7 +297,7 @@ mod tests {
             _method: &str,
             _params: T,
         ) -> Result<R, Self::Error> {
-            unreachable!("There is no `request`");
+            Err(ProviderError::CustomError("There is no request".to_string()))
         }
     }
     #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -319,7 +319,7 @@ mod tests {
             }
         }
     }
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn builder_new_non_legacy() -> eyre::Result<()> {
         let provider = MyProvider {};
         let builder =
@@ -338,7 +338,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn builder_new_legacy() -> eyre::Result<()> {
         let provider = MyProvider {};
         let builder =
@@ -354,7 +354,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn builder_fields() -> eyre::Result<()> {
         let provider = MyProvider {};
         let mut builder =
@@ -376,7 +376,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn builder_args() -> eyre::Result<()> {
         let provider = MyProvider {};
         let mut builder =

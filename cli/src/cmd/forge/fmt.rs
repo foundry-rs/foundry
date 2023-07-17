@@ -21,32 +21,26 @@ use tracing::log::warn;
 /// CLI arguments for `forge fmt`.
 #[derive(Debug, Clone, Parser)]
 pub struct FmtArgs {
-    #[clap(
-        help = "path to the file, directory or '-' to read from stdin",
-        conflicts_with = "root",
-        value_hint = ValueHint::FilePath,
-        value_name = "PATH",
-        num_args(1..)
-    )]
+    /// Path to the file, directory or '-' to read from stdin.
+    #[clap(value_hint = ValueHint::FilePath, value_name = "PATH", num_args(1..))]
     paths: Vec<PathBuf>,
-    #[clap(
-        help = "The project's root path.",
-        long_help = "The project's root path. By default, this is the root directory of the current Git repository, or the current working directory.",
-        long,
-        value_hint = ValueHint::DirPath,
-        value_name = "PATH"
-    )]
+
+    /// The project's root path.
+    ///
+    /// By default root of the Git repository, if in one,
+    /// or the current working directory.
+    #[clap(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     root: Option<PathBuf>,
-    #[clap(
-        help = "run in 'check' mode. Exits with 0 if input is formatted correctly. Exits with 1 if formatting is required.",
-        long
-    )]
+
+    /// Run in 'check' mode.
+    ///
+    /// Exits with 0 if input is formatted correctly.
+    /// Exits with 1 if formatting is required.
+    #[clap(long)]
     check: bool,
-    #[clap(
-        help = "in 'check' and stdin modes, outputs raw formatted code instead of diff",
-        long = "raw",
-        short
-    )]
+
+    /// In 'check' and stdin modes, outputs raw formatted code instead of the diff.
+    #[clap(long, short)]
     raw: bool,
 }
 
@@ -64,9 +58,10 @@ impl FmtArgs {
         let mut paths = self.paths.iter().peekable();
 
         if let Some(path) = paths.peek() {
-            if *path == Path::new("-") && !atty::is(atty::Stream::Stdin) {
+            let mut stdin = io::stdin();
+            if *path == Path::new("-") && !is_terminal::is_terminal(&stdin) {
                 let mut buf = String::new();
-                io::stdin().read_to_string(&mut buf).expect("Failed to read from stdin");
+                stdin.read_to_string(&mut buf).expect("Failed to read from stdin");
                 return vec![Input::Stdin(buf)]
             }
         }
@@ -154,10 +149,11 @@ impl Cmd for FmtArgs {
 
                 solang_parser::parse(&output, 0).map_err(|diags| {
                     eyre::eyre!(
-                            "Failed to construct valid Solidity code for {}. Leaving source unchanged.\nDebug info: {:?}",
-                            input,
-                            diags
-                        )
+                        "Failed to construct valid Solidity code for {}. Leaving source unchanged.\n\
+                         Debug info: {:?}",
+                        input,
+                        diags,
+                    )
                 })?;
 
                 if self.check || matches!(input, Input::Stdin(_)) {

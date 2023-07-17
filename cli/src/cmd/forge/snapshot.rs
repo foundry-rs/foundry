@@ -1,12 +1,9 @@
 //! Snapshot command
 use crate::{
-    cmd::{
-        forge::{
-            build::CoreBuildArgs,
-            test,
-            test::{Test, TestOutcome},
-        },
-        Cmd,
+    cmd::forge::{
+        build::CoreBuildArgs,
+        test,
+        test::{Test, TestOutcome},
     },
     utils::STATIC_FUZZ_SEED,
 };
@@ -36,14 +33,6 @@ pub static RE_BASIC_SNAPSHOT_ENTRY: Lazy<Regex> = Lazy::new(|| {
 /// CLI arguments for `forge snapshot`.
 #[derive(Debug, Clone, Parser)]
 pub struct SnapshotArgs {
-    /// All test arguments are supported
-    #[clap(flatten)]
-    pub(crate) test: test::TestArgs,
-
-    /// Additional configs for test results
-    #[clap(flatten)]
-    config: SnapshotConfig,
-
     /// Output a diff against a pre-existing snapshot.
     ///
     /// By default, the comparison is done with .gas-snapshot.
@@ -69,24 +58,34 @@ pub struct SnapshotArgs {
     check: Option<Option<PathBuf>>,
 
     // Hidden because there is only one option
-    #[clap(help = "How to format the output.", long, hide(true))]
+    /// How to format the output.
+    #[clap(long, hide(true))]
     format: Option<Format>,
 
+    /// Output file for the snapshot.
     #[clap(
-        help = "Output file for the snapshot.",
-        default_value = ".gas-snapshot",
         long,
-        value_name = "SNAPSHOT_FILE"
+        default_value = ".gas-snapshot",
+        value_hint = ValueHint::FilePath,
+        value_name = "FILE",
     )]
     snap: PathBuf,
 
+    /// Tolerates gas deviations up to the specified percentage.
     #[clap(
-        help = "Tolerates gas deviations up to the specified percentage.",
         long,
         value_parser = RangedU64ValueParser::<u32>::new().range(0..100),
         value_name = "SNAPSHOT_THRESHOLD"
     )]
     tolerance: Option<u32>,
+
+    /// All test arguments are supported
+    #[clap(flatten)]
+    pub(crate) test: test::TestArgs,
+
+    /// Additional configs for test results
+    #[clap(flatten)]
+    config: SnapshotConfig,
 }
 
 impl SnapshotArgs {
@@ -105,16 +104,12 @@ impl SnapshotArgs {
     pub fn build_args(&self) -> &CoreBuildArgs {
         self.test.build_args()
     }
-}
 
-impl Cmd for SnapshotArgs {
-    type Output = ();
-
-    fn run(mut self) -> eyre::Result<()> {
+    pub async fn run(mut self) -> eyre::Result<()> {
         // Set fuzz seed so gas snapshots are deterministic
         self.test.fuzz_seed = Some(U256::from_big_endian(&STATIC_FUZZ_SEED));
 
-        let outcome = self.test.execute_tests()?;
+        let outcome = self.test.execute_tests().await?;
         outcome.ensure_ok()?;
         let tests = self.config.apply(outcome);
 
@@ -157,21 +152,20 @@ impl FromStr for Format {
 /// Additional filters that can be applied on the test results
 #[derive(Debug, Clone, Parser, Default)]
 struct SnapshotConfig {
-    #[clap(help = "Sort results by gas used (ascending).", long)]
+    /// Sort results by gas used (ascending).
+    #[clap(long)]
     asc: bool,
-    #[clap(help = "Sort results by gas used (descending).", conflicts_with = "asc", long)]
+
+    /// Sort results by gas used (descending).
+    #[clap(conflicts_with = "asc", long)]
     desc: bool,
-    #[clap(
-        help = "Only include tests that used more gas that the given amount.",
-        long,
-        value_name = "MIN_GAS"
-    )]
+
+    /// Only include tests that used more gas that the given amount.
+    #[clap(long, value_name = "MIN_GAS")]
     min: Option<u64>,
-    #[clap(
-        help = "Only include tests that used less gas that the given amount.",
-        long,
-        value_name = "MAX_GAS"
-    )]
+
+    /// Only include tests that used less gas that the given amount.
+    #[clap(long, value_name = "MAX_GAS")]
     max: Option<u64>,
 }
 

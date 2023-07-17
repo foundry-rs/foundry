@@ -7,10 +7,11 @@ use crate::{
     decode,
     executor::inspector::DEFAULT_CREATE2_DEPLOYER,
     trace::{node::CallTraceNode, utils},
+    CALLER, TEST_CONTRACT_ADDRESS,
 };
 use ethers::{
     abi::{Abi, Address, Event, Function, Param, ParamType, Token},
-    types::H256,
+    types::{H160, H256},
 };
 use foundry_common::{abi::get_indexed_event, SELECTOR_LEN};
 use hashbrown::HashSet;
@@ -28,24 +29,24 @@ impl CallTraceDecoderBuilder {
     }
 
     /// Add known labels to the decoder.
-    pub fn with_labels(mut self, labels: BTreeMap<Address, String>) -> Self {
-        for (address, label) in labels.into_iter() {
-            self.decoder.labels.insert(address, label);
-        }
+    pub fn with_labels(mut self, labels: impl IntoIterator<Item = (Address, String)>) -> Self {
+        self.decoder.labels.extend(labels);
         self
     }
 
     /// Add known events to the decoder.
-    pub fn with_events(mut self, events: Vec<Event>) -> Self {
-        events
-            .into_iter()
-            .map(|event| ((event.signature(), indexed_inputs(&event)), event))
-            .for_each(|(sig, event)| {
-                self.decoder.events.entry(sig).or_default().push(event);
-            });
+    pub fn with_events(mut self, events: impl IntoIterator<Item = Event>) -> Self {
+        for event in events {
+            self.decoder
+                .events
+                .entry((event.signature(), indexed_inputs(&event)))
+                .or_default()
+                .push(event);
+        }
         self
     }
 
+    /// Sets the verbosity level of the decoder.
     pub fn with_verbosity(mut self, level: u8) -> Self {
         self.decoder.verbosity = level;
         self
@@ -88,107 +89,74 @@ pub struct CallTraceDecoder {
     pub verbosity: u8,
 }
 
+/// Returns an expression of the type `[(Address, Function); N]`
+macro_rules! precompiles {
+    ($($number:literal : $name:ident($( $name_in:ident : $in:expr ),* $(,)?) -> ($( $name_out:ident : $out:expr ),* $(,)?)),+ $(,)?) => {{
+        use std::string::String as RustString;
+        use ParamType::*;
+        [$(
+            (
+                H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, $number]),
+                #[allow(deprecated)]
+                Function {
+                    name: RustString::from(stringify!($name)),
+                    inputs: vec![$(Param { name: RustString::from(stringify!($name_in)), kind: $in, internal_type: None, }),*],
+                    outputs: vec![$(Param { name: RustString::from(stringify!($name_out)), kind: $out, internal_type: None, }),*],
+                    constant: None,
+                    state_mutability: ethers::abi::StateMutability::Pure,
+                },
+            ),
+        )+]
+    }};
+}
+
 impl CallTraceDecoder {
     /// Creates a new call trace decoder.
     ///
     /// The call trace decoder always knows how to decode calls to the cheatcode address, as well
     /// as DSTest-style logs.
     pub fn new() -> Self {
-        let functions = HARDHAT_CONSOLE_ABI
-            .functions()
-            .map(|func| (func.short_signature(), vec![func.clone()]))
-            .chain(HEVM_ABI.functions().map(|func| (func.short_signature(), vec![func.clone()])))
-            .collect::<BTreeMap<[u8; 4], Vec<Function>>>();
-
         Self {
             // TODO: These are the Ethereum precompiles. We should add a way to support precompiles
             // for other networks, too.
-            precompiles: [
-                precompile(
-                    1,
-                    "ecrecover",
-                    [
-                        ParamType::FixedBytes(32),
-                        ParamType::Uint(256),
-                        ParamType::Uint(256),
-                        ParamType::Uint(256),
-                    ],
-                    [ParamType::Address],
-                ),
-                precompile(2, "keccak", [ParamType::Bytes], [ParamType::FixedBytes(32)]),
-                precompile(3, "ripemd", [ParamType::Bytes], [ParamType::FixedBytes(32)]),
-                precompile(4, "identity", [ParamType::Bytes], [ParamType::Bytes]),
-                precompile(
-                    5,
-                    "modexp",
-                    [
-                        ParamType::Uint(256),
-                        ParamType::Uint(256),
-                        ParamType::Uint(256),
-                        ParamType::Bytes,
-                    ],
-                    [ParamType::Bytes],
-                ),
-                precompile(
-                    6,
-                    "ecadd",
-                    [
-                        ParamType::Uint(256),
-                        ParamType::Uint(256),
-                        ParamType::Uint(256),
-                        ParamType::Uint(256),
-                    ],
-                    [ParamType::Uint(256), ParamType::Uint(256)],
-                ),
-                precompile(
-                    7,
-                    "ecmul",
-                    [ParamType::Uint(256), ParamType::Uint(256), ParamType::Uint(256)],
-                    [ParamType::Uint(256), ParamType::Uint(256)],
-                ),
-                precompile(
-                    8,
-                    "ecpairing",
-                    [
-                        ParamType::Uint(256),
-                        ParamType::Uint(256),
-                        ParamType::Uint(256),
-                        ParamType::Uint(256),
-                        ParamType::Uint(256),
-                        ParamType::Uint(256),
-                    ],
-                    [ParamType::Uint(256)],
-                ),
-                precompile(
-                    9,
-                    "blake2f",
-                    [
-                        ParamType::Uint(4),
-                        ParamType::FixedBytes(64),
-                        ParamType::FixedBytes(128),
-                        ParamType::FixedBytes(16),
-                        ParamType::FixedBytes(1),
-                    ],
-                    [ParamType::FixedBytes(64)],
-                ),
-            ]
-            .into(),
+            precompiles: precompiles!(
+                0x01: ecrecover(hash: FixedBytes(32), v: Uint(256), r: Uint(256), s: Uint(256)) -> (publicAddress: Address),
+                0x02: sha256(data: Bytes) -> (hash: FixedBytes(32)),
+                0x03: ripemd(data: Bytes) -> (hash: FixedBytes(32)),
+                0x04: identity(data: Bytes) -> (data: Bytes),
+                0x05: modexp(Bsize: Uint(256), Esize: Uint(256), Msize: Uint(256), BEM: Bytes) -> (value: Bytes),
+                0x06: ecadd(x1: Uint(256), y1: Uint(256), x2: Uint(256), y2: Uint(256)) -> (x: Uint(256), y: Uint(256)),
+                0x07: ecmul(x1: Uint(256), y1: Uint(256), s: Uint(256)) -> (x: Uint(256), y: Uint(256)),
+                0x08: ecpairing(x1: Uint(256), y1: Uint(256), x2: Uint(256), y2: Uint(256), x3: Uint(256), y3: Uint(256)) -> (success: Uint(256)),
+                0x09: blake2f(rounds: Uint(4), h: FixedBytes(64), m: FixedBytes(128), t: FixedBytes(16), f: FixedBytes(1)) -> (h: FixedBytes(64)),
+            ).into(),
+
             contracts: Default::default(),
+
             labels: [
                 (CHEATCODE_ADDRESS, "VM".to_string()),
                 (HARDHAT_CONSOLE_ADDRESS, "console".to_string()),
                 (DEFAULT_CREATE2_DEPLOYER, "Create2Deployer".to_string()),
+                (CALLER, "DefaultSender".to_string()),
+                (TEST_CONTRACT_ADDRESS, "DefaultTestContract".to_string()),
             ]
             .into(),
-            functions,
+
+            functions: HARDHAT_CONSOLE_ABI
+                .functions()
+                .chain(HEVM_ABI.functions())
+                .map(|func| (func.short_signature(), vec![func.clone()]))
+                .collect(),
+
             events: CONSOLE_ABI
                 .events()
                 .map(|event| ((event.signature(), indexed_inputs(event)), vec![event.clone()]))
-                .collect::<BTreeMap<(H256, usize), Vec<Event>>>(),
-            errors: Abi::default(),
+                .collect(),
+
+            errors: Default::default(),
             signature_identifier: None,
             receive_contracts: Default::default(),
-            verbosity: u8::default(),
+            verbosity: 0,
         }
     }
 
@@ -382,30 +350,6 @@ fn patch_nameless_params(event: &mut Event) -> HashSet<String> {
         }
     }
     patches
-}
-
-fn precompile<I, O>(number: u8, name: impl ToString, inputs: I, outputs: O) -> (Address, Function)
-where
-    I: IntoIterator<Item = ParamType>,
-    O: IntoIterator<Item = ParamType>,
-{
-    (
-        Address::from_slice(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, number]),
-        #[allow(deprecated)]
-        Function {
-            name: name.to_string(),
-            inputs: inputs
-                .into_iter()
-                .map(|kind| Param { name: "".to_string(), kind, internal_type: None })
-                .collect(),
-            outputs: outputs
-                .into_iter()
-                .map(|kind| Param { name: "".to_string(), kind, internal_type: None })
-                .collect(),
-            constant: None,
-            state_mutability: ethers::abi::StateMutability::Pure,
-        },
-    )
 }
 
 fn indexed_inputs(event: &Event) -> usize {

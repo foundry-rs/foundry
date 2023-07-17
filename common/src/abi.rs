@@ -11,6 +11,9 @@ use ethers_core::{
 use ethers_etherscan::{contract::ContractMetadata, errors::EtherscanError, Client};
 use eyre::{ContextCompat, Result, WrapErr};
 use std::{future::Future, pin::Pin, str::FromStr};
+use yansi::Paint;
+
+use crate::calc::to_exponential_notation;
 
 /// Given a function and a vector of string arguments, it proceeds to convert the args to ethabi
 /// Tokens and then ABI encode them.
@@ -30,13 +33,17 @@ pub fn encode_args(func: &Function, args: &[impl AsRef<str>]) -> Result<Vec<u8>>
 /// # Panics
 ///
 /// If the `sig` is an invalid function signature
-pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
+pub fn abi_decode(sig: &str, calldata: &str, input: bool, fn_selector: bool) -> Result<Vec<Token>> {
     let func = IntoFunction::into(sig);
     let calldata = calldata.strip_prefix("0x").unwrap_or(calldata);
     let calldata = hex::decode(calldata)?;
     let res = if input {
-        // need to strip the function selector
-        func.decode_input(&calldata[4..])?
+        // If function selector is prefixed in "calldata", remove it (first 4 bytes)
+        if fn_selector {
+            func.decode_input(&calldata[4..])?
+        } else {
+            func.decode_input(&calldata)?
+        }
     } else {
         func.decode_output(&calldata)?
     };
@@ -157,7 +164,7 @@ pub fn format_token(param: &Token) -> String {
         Token::FixedBytes(bytes) => format!("0x{}", hex::encode(bytes)),
         Token::Bytes(bytes) => format!("0x{}", hex::encode(bytes)),
         Token::Int(num) => format!("{}", I256::from_raw(*num)),
-        Token::Uint(num) => num.to_string(),
+        Token::Uint(num) => format_uint_with_exponential_notation_hint(*num),
         Token::Bool(b) => format!("{b}"),
         Token::String(s) => s.to_string(),
         Token::FixedArray(tokens) => {
@@ -173,6 +180,45 @@ pub fn format_token(param: &Token) -> String {
             format!("({string})")
         }
     }
+}
+
+/// Gets pretty print strings for tokens, without adding
+/// exponential notation hints for large numbers (e.g. [1e7] for 10000000)
+pub fn format_token_raw(param: &Token) -> String {
+    match param {
+        Token::Uint(num) => format!("{}", num),
+        Token::FixedArray(tokens) | Token::Array(tokens) => {
+            let string = tokens.iter().map(format_token_raw).collect::<Vec<String>>().join(", ");
+            format!("[{string}]")
+        }
+        Token::Tuple(tokens) => {
+            let string = tokens.iter().map(format_token_raw).collect::<Vec<String>>().join(", ");
+            format!("({string})")
+        }
+        _ => format_token(param),
+    }
+}
+
+/// Formats a U256 number to string, adding an exponential notation _hint_ if it
+/// is larger than `10_000`, with a precision of `4` figures, and trimming the
+/// trailing zeros.
+///
+/// Examples:
+///
+/// ```text
+///   0 -> "0"
+///   1234 -> "1234"
+///   1234567890 -> "1234567890 [1.234e9]"
+///   1000000000000000000 -> "1000000000000000000 [1e18]"
+///   10000000000000000000000 -> "10000000000000000000000 [1e22]"
+/// ```
+pub fn format_uint_with_exponential_notation_hint(num: U256) -> String {
+    if num.lt(&U256::from(10_000)) {
+        return num.to_string()
+    }
+
+    let exp = to_exponential_notation(num, 4, true);
+    format!("{} {}", num, Paint::default(format!("[{}]", exp)).dimmed())
 }
 
 /// Helper trait for converting types to Functions. Helpful for allowing the `call`

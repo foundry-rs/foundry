@@ -1,9 +1,13 @@
 use crate::{init_progress, opts::RpcOpts, update_progress, utils};
-use cast::trace::{identifier::SignaturesIdentifier, CallTraceDecoder, Traces};
+use cast::{
+    executor::{EvmError, ExecutionErr},
+    trace::{identifier::SignaturesIdentifier, CallTraceDecoder, Traces},
+};
 use clap::Parser;
 use ethers::{
     abi::Address,
     prelude::{artifacts::ContractBytecodeSome, ArtifactId, Middleware},
+    types::H160,
 };
 use eyre::WrapErr;
 use forge::{
@@ -12,41 +16,50 @@ use forge::{
         inspector::cheatcodes::util::configure_tx_env, opts::EvmOpts, Backend, DeployResult,
         ExecutorBuilder, RawCallResult,
     },
+    revm::primitives::U256 as rU256,
     trace::{identifier::EtherscanIdentifier, CallTraceDecoderBuilder, TraceKind},
+    utils::h256_to_b256,
 };
 use foundry_config::{find_project_root_path, Config};
+use foundry_evm::utils::evm_spec;
 use std::{collections::BTreeMap, str::FromStr};
 use tracing::trace;
 use ui::{TUIExitReason, Tui, Ui};
 use yansi::Paint;
 
+const ARBITRUM_SENDER: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x0a, 0x4b, 0x05,
+]);
+
 /// CLI arguments for `cast run`.
 #[derive(Debug, Clone, Parser)]
 pub struct RunArgs {
-    #[clap(help = "The transaction hash.", value_name = "TXHASH")]
+    /// The transaction hash.
     tx_hash: String,
 
-    #[clap(long, short = 'd', help = "Debugs the transaction.")]
+    /// Opens the transaction in the debugger.
+    #[clap(long, short)]
     debug: bool,
 
-    #[clap(long, short = 't', help = "Print out opcode traces.")]
+    /// Print out opcode traces.
+    #[clap(long, short)]
     trace_printer: bool,
 
-    #[clap(
-        long,
-        short = 'q',
-        help = "Executes the transaction only with the state from the previous block. May result in different results than the live execution!"
-    )]
+    /// Executes the transaction only with the state from the previous block.
+    ///
+    /// May result in different results than the live execution!
+    #[clap(long, short)]
     quick: bool,
 
-    #[clap(long, short = 'v', help = "Prints full address")]
+    /// Prints the full address of the contract.
+    #[clap(long, short)]
     verbose: bool,
 
-    #[clap(
-        long,
-        help = "Labels address in the trace. 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045:vitalik.eth",
-        value_name = "LABEL"
-    )]
+    /// Label addresses in the trace.
+    ///
+    /// Example: 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045:vitalik.eth
+    #[clap(long, short)]
     label: Vec<String>,
 
     #[clap(flatten)]
@@ -81,28 +94,30 @@ impl RunArgs {
         evm_opts.fork_block_number = Some(tx_block_number - 1);
 
         // Set up the execution environment
-        let env = evm_opts.evm_env().await;
-        let db = Backend::spawn(evm_opts.get_fork(&config, env.clone()));
+        let mut env = evm_opts.evm_env().await;
+        // can safely disable base fee checks on replaying txs because can
+        // assume those checks already passed on confirmed txs
+        env.cfg.disable_base_fee = true;
+        let db = Backend::spawn(evm_opts.get_fork(&config, env.clone())).await;
 
         // configures a bare version of the evm executor: no cheatcode inspector is enabled,
         // tracing will be enabled only for the targeted transaction
-        let builder = ExecutorBuilder::default()
-            .with_config(env)
-            .with_spec(crate::utils::evm_spec(&config.evm_version));
+        let builder =
+            ExecutorBuilder::default().with_config(env).with_spec(evm_spec(&config.evm_version));
 
         let mut executor = builder.build(db);
 
         let mut env = executor.env().clone();
-        env.block.number = tx_block_number.into();
+        env.block.number = rU256::from(tx_block_number);
 
         let block = provider.get_block_with_txs(tx_block_number).await?;
         if let Some(ref block) = block {
-            env.block.timestamp = block.timestamp;
-            env.block.coinbase = block.author.unwrap_or_default();
-            env.block.difficulty = block.difficulty;
-            env.block.prevrandao = block.mix_hash;
-            env.block.basefee = block.base_fee_per_gas.unwrap_or_default();
-            env.block.gas_limit = block.gas_limit;
+            env.block.timestamp = block.timestamp.into();
+            env.block.coinbase = block.author.unwrap_or_default().into();
+            env.block.difficulty = block.difficulty.into();
+            env.block.prevrandao = block.mix_hash.map(h256_to_b256);
+            env.block.basefee = block.base_fee_per_gas.unwrap_or_default().into();
+            env.block.gas_limit = block.gas_limit.into();
         }
 
         // Set the state to the moment right before the transaction
@@ -114,6 +129,12 @@ impl RunArgs {
                 pb.set_position(0);
 
                 for (index, tx) in block.transactions.into_iter().enumerate() {
+                    // arbitrum L1 transaction at the start of every block that has gas price 0
+                    // and gas limit 0 which causes reverts, so we skip it
+                    if tx.from == ARBITRUM_SENDER {
+                        update_progress!(pb, index);
+                        continue
+                    }
                     if tx.hash().eq(&tx_hash) {
                         break
                     }
@@ -165,14 +186,26 @@ impl RunArgs {
                 }
             } else {
                 trace!(tx=?tx.hash, "executing create transaction");
-                let DeployResult { gas_used, traces, debug: run_debug, .. }: DeployResult =
-                    executor.deploy_with_env(env, None).unwrap();
-
-                RunResult {
-                    success: true,
-                    traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
-                    debug: run_debug.unwrap_or_default(),
-                    gas_used,
+                match executor.deploy_with_env(env, None) {
+                    Ok(DeployResult { gas_used, traces, debug: run_debug, .. }) => RunResult {
+                        success: true,
+                        traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
+                        debug: run_debug.unwrap_or_default(),
+                        gas_used,
+                    },
+                    Err(EvmError::Execution(inner)) => {
+                        let ExecutionErr { reverted, gas_used, traces, debug: run_debug, .. } =
+                            *inner;
+                        RunResult {
+                            success: !reverted,
+                            traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
+                            debug: run_debug.unwrap_or_default(),
+                            gas_used,
+                        }
+                    }
+                    Err(err) => {
+                        eyre::bail!("unexpected error when running create transaction: {:?}", err)
+                    }
                 }
             }
         };
@@ -180,20 +213,16 @@ impl RunArgs {
         let mut etherscan_identifier =
             EtherscanIdentifier::new(&config, evm_opts.get_remote_chain_id())?;
 
-        let labeled_addresses: BTreeMap<Address, String> = self
-            .label
-            .iter()
-            .filter_map(|label_str| {
-                let mut iter = label_str.split(':');
+        let labeled_addresses = self.label.iter().filter_map(|label_str| {
+            let mut iter = label_str.split(':');
 
-                if let Some(addr) = iter.next() {
-                    if let (Ok(address), Some(label)) = (Address::from_str(addr), iter.next()) {
-                        return Some((address, label.to_string()))
-                    }
+            if let Some(addr) = iter.next() {
+                if let (Ok(address), Some(label)) = (Address::from_str(addr), iter.next()) {
+                    return Some((address, label.to_string()))
                 }
-                None
-            })
-            .collect();
+            }
+            None
+        });
 
         let mut decoder = CallTraceDecoderBuilder::new().with_labels(labeled_addresses).build();
 
@@ -237,6 +266,7 @@ fn run_debugger(
                 (id.name, sources)
             })
             .collect(),
+        Default::default(),
     )?;
     match tui.start().expect("Failed to start tui") {
         TUIExitReason::CharExit => Ok(()),

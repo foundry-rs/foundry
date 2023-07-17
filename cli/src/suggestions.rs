@@ -27,7 +27,7 @@ mod tests {
 
     #[test]
     fn possible_artifacts_match() {
-        let candidates = vec!["MyContract", "Erc20"];
+        let candidates = ["MyContract", "Erc20"];
         assert_eq!(
             did_you_mean("MyCtrac", candidates.iter()).pop(),
             Some("MyContract".to_string())
@@ -36,7 +36,7 @@ mod tests {
 
     #[test]
     fn possible_artifacts_nomatch() {
-        let candidates = vec!["MyContract", "Erc20", "Greeter"];
+        let candidates = ["MyContract", "Erc20", "Greeter"];
         assert!(did_you_mean("Vault", candidates.iter()).pop().is_none());
     }
 }

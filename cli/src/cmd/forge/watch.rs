@@ -4,7 +4,7 @@ use crate::{
     cmd::forge::{build::BuildArgs, snapshot::SnapshotArgs, test::TestArgs},
     utils::{self, FoundryPathExt},
 };
-use clap::{ArgAction, Parser};
+use clap::Parser;
 use foundry_config::Config;
 use std::{collections::HashSet, convert::Infallible, path::PathBuf, sync::Arc};
 use tracing::trace;
@@ -26,11 +26,10 @@ pub struct WatchArgs {
     ///
     /// If no paths are provided, the source and test directories of the project are watched.
     #[clap(
-        short,
         long,
-        value_name = "PATH",
+        short,
         num_args(0..),
-        action = ArgAction::Append,
+        value_name = "PATH",
     )]
     pub watch: Option<Vec<PathBuf>>,
 
@@ -44,7 +43,7 @@ pub struct WatchArgs {
     #[clap(long)]
     pub run_all: bool,
 
-    /// File update debounce delay
+    /// File update debounce delay.
     ///
     /// During the delay, incoming change events are accumulated and
     /// only once the delay has passed, is an action taken. Note that
@@ -57,7 +56,7 @@ pub struct WatchArgs {
     ///
     /// When using --poll mode, you'll want a larger duration, or risk
     /// overloading disk I/O.
-    #[clap(long = "watch-delay", value_parser = clap::builder::NonEmptyStringValueParser::default(), value_name = "DELAY")]
+    #[clap(long, value_name = "DELAY")]
     pub watch_delay: Option<String>,
 }
 
@@ -136,8 +135,7 @@ pub async fn watch_test(args: TestArgs) -> eyre::Result<()> {
     let filter = args.filter(&config);
 
     // marker to check whether to override the command
-    let no_reconfigure = filter.args().pattern.is_some() ||
-        filter.args().test_pattern.is_some() ||
+    let no_reconfigure = filter.args().test_pattern.is_some() ||
         filter.args().path_pattern.is_some() ||
         filter.args().contract_pattern.is_some() ||
         args.watch.run_all;
@@ -332,7 +330,7 @@ fn on_action<F, T>(
             if !signals.is_empty() {
                 let mut out = Outcome::DoNothing;
                 for sig in signals {
-                    out = Outcome::both(out, Outcome::Signal(sig.into()));
+                    out = Outcome::both(out, Outcome::Signal(sig));
                 }
 
                 action.outcome(out);

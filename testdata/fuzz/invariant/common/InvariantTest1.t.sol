@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >=0.8.0;
+pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
 
@@ -30,6 +30,10 @@ contract InvariantTest is DSTest {
     }
 
     function invariant_neverFalse() public {
+        require(inv.flag1(), "false.");
+    }
+
+    function statefulFuzz_neverFalseWithInvariantAlias() public {
         require(inv.flag1(), "false.");
     }
 }

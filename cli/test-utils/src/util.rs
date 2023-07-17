@@ -1,4 +1,3 @@
-use atty::{self, Stream};
 use ethers_solc::{
     cache::SolFilesCache,
     project_util::{copy_dir, TempProject},
@@ -34,7 +33,7 @@ static CURRENT_DIR_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 static PRE_INSTALL_SOLC_LOCK: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
 // This stores `true` if the current terminal is a tty
-pub static IS_TTY: Lazy<bool> = Lazy::new(|| atty::is(Stream::Stdout));
+pub static IS_TTY: Lazy<bool> = Lazy::new(|| is_terminal::is_terminal(std::io::stdout()));
 
 /// Contains a `forge init` initialized project
 pub static FORGE_INITIALIZED: Lazy<TestProject> = Lazy::new(|| {
@@ -192,8 +191,9 @@ pub fn setup_cast_project(test: TestProject) -> (TestProject, TestCommand) {
 fn install_commonly_used_solc() {
     let mut is_preinstalled = PRE_INSTALL_SOLC_LOCK.lock();
     if !*is_preinstalled {
-        let v0_8_10 = std::thread::spawn(|| Solc::blocking_install(&"0.8.10".parse().unwrap()));
-        let v0_8_13 = std::thread::spawn(|| Solc::blocking_install(&"0.8.13".parse().unwrap()));
+        let v0_8_18 = std::thread::spawn(|| Solc::blocking_install(&"0.8.18".parse().unwrap()));
+        let v0_8_19 = std::thread::spawn(|| Solc::blocking_install(&"0.8.19".parse().unwrap()));
+        let v0_8_20 = std::thread::spawn(|| Solc::blocking_install(&"0.8.20".parse().unwrap()));
 
         let wait = |res: std::thread::JoinHandle<_>| -> Result<(), ()> {
             if let Err(err) = res.join().unwrap() {
@@ -208,7 +208,7 @@ fn install_commonly_used_solc() {
         };
 
         // only set to installed if succeeded
-        *is_preinstalled = wait(v0_8_10).and(wait(v0_8_13)).is_ok();
+        *is_preinstalled = wait(v0_8_18).and(wait(v0_8_19)).and(wait(v0_8_20)).is_ok();
     }
 }
 

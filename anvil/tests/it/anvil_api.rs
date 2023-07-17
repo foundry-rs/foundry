@@ -14,7 +14,7 @@ use ethers::{
     },
     utils::hex,
 };
-use forge::revm::SpecId;
+use forge::revm::primitives::SpecId;
 use std::{
     str::FromStr,
     sync::Arc,
@@ -93,6 +93,42 @@ async fn can_impersonate_account() {
     assert_eq!(balance, val.into());
 
     api.anvil_stop_impersonating_account(impersonate).await.unwrap();
+    let res = provider.send_transaction(tx, None).await;
+    res.unwrap_err();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_auto_impersonate_account() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let impersonate = Address::random();
+    let to = Address::random();
+    let val = 1337u64;
+    let funding = U256::from(1e18 as u64);
+    // fund the impersonated account
+    api.anvil_set_balance(impersonate, funding).await.unwrap();
+
+    let balance = api.balance(impersonate, None).await.unwrap();
+    assert_eq!(balance, funding);
+
+    let tx = TransactionRequest::new().from(impersonate).to(to).value(val);
+
+    let res = provider.send_transaction(tx.clone(), None).await;
+    res.unwrap_err();
+
+    api.anvil_auto_impersonate_account(true).await.unwrap();
+
+    let res = provider.send_transaction(tx.clone(), None).await.unwrap().await.unwrap().unwrap();
+    assert_eq!(res.from, impersonate);
+
+    let nonce = provider.get_transaction_count(impersonate, None).await.unwrap();
+    assert_eq!(nonce, 1u64.into());
+
+    let balance = provider.get_balance(to, None).await.unwrap();
+    assert_eq!(balance, val.into());
+
+    api.anvil_auto_impersonate_account(false).await.unwrap();
     let res = provider.send_transaction(tx, None).await;
     res.unwrap_err();
 }
@@ -395,7 +431,7 @@ async fn can_get_node_info() {
         current_block_number: U64([0]),
         current_block_timestamp: 1,
         current_block_hash: block.hash.unwrap(),
-        hard_fork: SpecId::LATEST,
+        hard_fork: SpecId::SHANGHAI,
         transaction_order: "fees".to_owned(),
         environment: NodeEnvironment {
             base_fee: U256::from_str("0x3b9aca00").unwrap(),

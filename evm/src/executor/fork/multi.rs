@@ -3,8 +3,9 @@
 //! The design is similar to the single `SharedBackend`, `BackendHandler` but supports multiple
 //! concurrently active pairs at once.
 
-use crate::executor::fork::{
-    BackendHandler, BlockchainDb, BlockchainDbMeta, CreateFork, SharedBackend,
+use crate::{
+    executor::fork::{BackendHandler, BlockchainDb, BlockchainDbMeta, CreateFork, SharedBackend},
+    utils::ru256_to_u256,
 };
 use ethers::{
     abi::{AbiDecode, AbiEncode, AbiError},
@@ -19,7 +20,7 @@ use futures::{
     task::{Context, Poll},
     Future, FutureExt, StreamExt,
 };
-use revm::Env;
+use revm::primitives::Env;
 use std::{
     collections::HashMap,
     fmt,
@@ -30,7 +31,6 @@ use std::{
     },
     time::Duration,
 };
-use tracing::trace;
 
 /// The identifier for a specific fork, this could be the name of the network a custom descriptive
 /// name.
@@ -81,16 +81,14 @@ impl MultiFork {
         (Self { handler, _shutdown }, MultiForkHandler::new(handler_rx))
     }
 
-    /// Creates a new pair and spawns the `MultiForkHandler` on a background thread
-    ///
-    /// Also returns the `JoinHandle` of the spawned thread.
-    pub fn spawn() -> Self {
+    /// Creates a new pair and spawns the `MultiForkHandler` on a background thread.
+    pub async fn spawn() -> Self {
         trace!(target: "fork::multi", "spawning multifork");
 
         let (fork, mut handler) = Self::new();
         // spawn a light-weight thread with a thread-local async runtime just for
         // sending and receiving data from the remote client(s)
-        let _ = std::thread::Builder::new()
+        std::thread::Builder::new()
             .name("multi-fork-backend-thread".to_string())
             .spawn(move || {
                 let rt = tokio::runtime::Builder::new_current_thread()
@@ -487,14 +485,20 @@ async fn create_fork(
     );
 
     // initialise the fork environment
-    fork.env = fork.evm_opts.fork_evm_env(&fork.url).await?;
-
+    let (env, block) = fork.evm_opts.fork_evm_env(&fork.url).await?;
+    fork.env = env;
     let meta = BlockchainDbMeta::new(fork.env.clone(), fork.url.clone());
-    let number = meta.block_env.number.as_u64();
+
+    // we need to use the block number from the block because the env's number can be different on
+    // some L2s (e.g. Arbitrum).
+    let number = block
+        .number
+        .map(|num| num.as_u64())
+        .unwrap_or_else(|| ru256_to_u256(meta.block_env.number).as_u64());
 
     // determine the cache path if caching is enabled
     let cache_path = if fork.enable_caching {
-        Config::foundry_block_cache_dir(meta.cfg_env.chain_id.as_u64(), number)
+        Config::foundry_block_cache_dir(ru256_to_u256(meta.cfg_env.chain_id).as_u64(), number)
     } else {
         None
     };

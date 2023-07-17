@@ -1,6 +1,7 @@
 use std::path::Path;
 
-use chisel::{session::ChiselSession, session_source::SessionSourceConfig};
+use chisel::session::ChiselSession;
+use ethers_solc::EvmVersion;
 use forge::executor::opts::EvmOpts;
 use foundry_config::Config;
 use serial_test::serial;
@@ -37,14 +38,18 @@ fn test_write_session() {
     let cache_dir = ChiselSession::cache_dir().unwrap();
     ChiselSession::create_cache_dir().unwrap();
 
+    // Force the solc version to be 0.8.19
+    let foundry_config = Config { evm_version: EvmVersion::London, ..Default::default() };
+
     // Create a new session
     let mut env = ChiselSession::new(chisel::session_source::SessionSourceConfig {
-        foundry_config: Config::default(),
+        foundry_config,
         evm_opts: EvmOpts::default(),
         backend: None,
         traces: false,
+        calldata: None,
     })
-    .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
+    .unwrap_or_else(|e| panic!("Failed to create ChiselSession!, {}", e));
 
     // Write the session
     let cached_session_name = env.write().unwrap();
@@ -64,9 +69,15 @@ fn test_write_session_with_name() {
     let cache_dir = ChiselSession::cache_dir().unwrap();
     ChiselSession::create_cache_dir().unwrap();
 
+    // Force the solc version to be 0.8.19
+    let foundry_config = Config { evm_version: EvmVersion::London, ..Default::default() };
+
     // Create a new session
-    let mut env = ChiselSession::new(chisel::session_source::SessionSourceConfig::default())
-        .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
+    let mut env = ChiselSession::new(chisel::session_source::SessionSourceConfig {
+        foundry_config,
+        ..Default::default()
+    })
+    .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
     env.id = Some(String::from("test"));
 
     // Write the session
@@ -81,9 +92,16 @@ fn test_write_session_with_name() {
 fn test_clear_cache() {
     // Create a session to validate clearing a non-empty cache directory
     let cache_dir = ChiselSession::cache_dir().unwrap();
+
+    // Force the solc version to be 0.8.19
+    let foundry_config = Config { evm_version: EvmVersion::London, ..Default::default() };
+
     ChiselSession::create_cache_dir().unwrap();
-    let mut env = ChiselSession::new(SessionSourceConfig::default())
-        .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
+    let mut env = ChiselSession::new(chisel::session_source::SessionSourceConfig {
+        foundry_config,
+        ..Default::default()
+    })
+    .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
     env.write().unwrap();
 
     // Clear the cache
@@ -101,9 +119,15 @@ fn test_list_sessions() {
     ChiselSession::create_cache_dir().unwrap();
     ChiselSession::clear_cache().unwrap();
 
+    // Force the solc version to be 0.8.19
+    let foundry_config = Config { evm_version: EvmVersion::London, ..Default::default() };
+
     // Create a new session
-    let mut env = ChiselSession::new(SessionSourceConfig::default())
-        .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
+    let mut env = ChiselSession::new(chisel::session_source::SessionSourceConfig {
+        foundry_config,
+        ..Default::default()
+    })
+    .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
 
     env.write().unwrap();
 
@@ -122,9 +146,15 @@ fn test_load_cache() {
     ChiselSession::create_cache_dir().unwrap();
     ChiselSession::clear_cache().unwrap();
 
+    // Force the solc version to be 0.8.19
+    let foundry_config = Config { evm_version: EvmVersion::London, ..Default::default() };
+
     // Create a new session
-    let mut env = ChiselSession::new(SessionSourceConfig::default())
-        .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
+    let mut env = ChiselSession::new(chisel::session_source::SessionSourceConfig {
+        foundry_config,
+        ..Default::default()
+    })
+    .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
     env.write().unwrap();
 
     // Load the session
@@ -147,9 +177,15 @@ fn test_write_same_session_multiple_times() {
     ChiselSession::create_cache_dir().unwrap();
     ChiselSession::clear_cache().unwrap();
 
+    // Force the solc version to be 0.8.19
+    let foundry_config = Config { evm_version: EvmVersion::London, ..Default::default() };
+
     // Create a new session
-    let mut env = ChiselSession::new(SessionSourceConfig::default())
-        .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
+    let mut env = ChiselSession::new(chisel::session_source::SessionSourceConfig {
+        foundry_config,
+        ..Default::default()
+    })
+    .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
     env.write().unwrap();
     env.write().unwrap();
     env.write().unwrap();
@@ -164,16 +200,25 @@ fn test_load_latest_cache() {
     ChiselSession::create_cache_dir().unwrap();
     ChiselSession::clear_cache().unwrap();
 
+    // Force the solc version to be 0.8.19
+    let foundry_config = Config { evm_version: EvmVersion::London, ..Default::default() };
+
     // Create sessions
-    let mut env = ChiselSession::new(SessionSourceConfig::default())
-        .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
+    let mut env = ChiselSession::new(chisel::session_source::SessionSourceConfig {
+        foundry_config: foundry_config.clone(),
+        ..Default::default()
+    })
+    .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
     env.write().unwrap();
 
     let wait_time = std::time::Duration::from_millis(100);
     std::thread::sleep(wait_time);
 
-    let mut env2 = ChiselSession::new(SessionSourceConfig::default())
-        .unwrap_or_else(|_| panic!("Failed to create ChiselSession!"));
+    let mut env2 = ChiselSession::new(chisel::session_source::SessionSourceConfig {
+        foundry_config,
+        ..Default::default()
+    })
+    .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
     env2.write().unwrap();
 
     // Load the latest session

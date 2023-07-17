@@ -16,6 +16,7 @@ use eyre::{Result, WrapErr};
 use forge::{
     decode::decode_console_logs,
     executor::{inspector::CheatsConfig, Backend, ExecutorBuilder},
+    utils::ru256_to_u256,
 };
 use solang_parser::pt::{self, CodeLocation};
 use yansi::Paint;
@@ -34,7 +35,7 @@ impl SessionSource {
         // Recompile the project and ensure no errors occurred.
         let compiled = self.build()?;
         if let Some((_, contract)) =
-            compiled.compiler_output.contracts_into_iter().find(|(name, _)| name == "REPL")
+            compiled.clone().compiler_output.contracts_into_iter().find(|(name, _)| name == "REPL")
         {
             // These *should* never panic after a successful compilation.
             let bytecode = contract
@@ -185,7 +186,7 @@ impl SessionSource {
 
         // the file compiled correctly, thus the last stack item must be the memory offset of
         // the `bytes memory inspectoor` value
-        let mut offset = stack.data().last().unwrap().as_usize();
+        let mut offset = ru256_to_u256(*stack.data().last().unwrap()).as_usize();
         let mem = memory.data();
         let len = U256::from(&mem[offset..offset + 32]).as_usize();
         offset += 32;
@@ -238,27 +239,31 @@ impl SessionSource {
         let env = self.config.evm_opts.evm_env().await;
 
         // Create an in-memory backend
-        let backend = self.config.backend.take().unwrap_or_else(|| {
-            let backend = Backend::spawn(
-                self.config.evm_opts.get_fork(&self.config.foundry_config, env.clone()),
-            );
-            self.config.backend = Some(backend.clone());
-            backend
-        });
+        let backend = match self.config.backend.take() {
+            Some(backend) => backend,
+            None => {
+                let backend = Backend::spawn(
+                    self.config.evm_opts.get_fork(&self.config.foundry_config, env.clone()),
+                )
+                .await;
+                self.config.backend = Some(backend.clone());
+                backend
+            }
+        };
 
         // Build a new executor
         let executor = ExecutorBuilder::default()
             .with_config(env)
             .with_chisel_state(final_pc)
             .set_tracing(true)
-            .with_spec(foundry_cli::utils::evm_spec(&self.config.foundry_config.evm_version))
+            .with_spec(foundry_evm::utils::evm_spec(&self.config.foundry_config.evm_version))
             .with_gas_limit(self.config.evm_opts.gas_limit())
             .with_cheatcodes(CheatsConfig::new(&self.config.foundry_config, &self.config.evm_opts))
             .build(backend);
 
         // Create a [ChiselRunner] with a default balance of [U256::MAX] and
         // the sender [Address::zero].
-        ChiselRunner::new(executor, U256::MAX, Address::zero())
+        ChiselRunner::new(executor, U256::MAX, Address::zero(), self.config.calldata.clone())
     }
 }
 
@@ -407,7 +412,6 @@ impl Type {
             pt::Expression::Type(_, ty) => Self::from_type(ty),
 
             pt::Expression::Variable(ident) => Some(Self::Custom(vec![ident.name.clone()])),
-            pt::Expression::This(_) => Some(Self::Custom(vec!["this".to_string()])),
 
             // array
             pt::Expression::ArraySubscript(_, expr, num) => {
@@ -461,7 +465,7 @@ impl Type {
             pt::Expression::New(_, inner) |                 // new <inner>
             pt::Expression::UnaryPlus(_, inner) |           // +<inner>
             // ops
-            pt::Expression::Complement(_, inner) |          // ~<inner>
+            pt::Expression::BitwiseNot(_, inner) |          // ~<inner>
             pt::Expression::ArraySlice(_, inner, _, _) |    // <inner>[*start*:*end*]
             // assign ops
             pt::Expression::PreDecrement(_, inner) |        // --<inner>
@@ -1487,10 +1491,10 @@ mod tests {
             let mut is_preinstalled = PRE_INSTALL_SOLC_LOCK.lock().unwrap();
             if !*is_preinstalled {
                 let solc =
-                    Solc::find_or_install_svm_version("0.8.17").and_then(|solc| solc.version());
+                    Solc::find_or_install_svm_version("0.8.19").and_then(|solc| solc.version());
                 if solc.is_err() {
                     // try reinstalling
-                    let solc = Solc::blocking_install(&"0.8.17".parse().unwrap());
+                    let solc = Solc::blocking_install(&"0.8.19".parse().unwrap());
                     if solc.map_err(SolcError::from).and_then(|solc| solc.version()).is_ok() {
                         *is_preinstalled = true;
                         break
@@ -1502,7 +1506,7 @@ mod tests {
             }
         }
 
-        let solc = Solc::find_or_install_svm_version("0.8.17").expect("could not install solc");
+        let solc = Solc::find_or_install_svm_version("0.8.19").expect("could not install solc");
         SessionSource::new(solc, Default::default())
     }
 

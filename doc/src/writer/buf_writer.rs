@@ -1,9 +1,10 @@
+use ethers_core::utils::hex;
 use itertools::Itertools;
 use once_cell::sync::Lazy;
 use solang_parser::pt::Parameter;
 use std::fmt::{self, Display, Write};
 
-use crate::{AsDoc, AsString, CommentTag, Comments, Markdown};
+use crate::{AsDoc, CommentTag, Comments, Deployment, Markdown};
 
 /// Solidity language name.
 const SOLIDITY: &str = "solidity";
@@ -12,6 +13,11 @@ const SOLIDITY: &str = "solidity";
 const PARAM_TABLE_HEADERS: &[&str] = &["Name", "Type", "Description"];
 static PARAM_TABLE_SEPARATOR: Lazy<String> =
     Lazy::new(|| PARAM_TABLE_HEADERS.iter().map(|h| "-".repeat(h.len())).join("|"));
+
+/// Headers and separator for rendering the deployments table.
+const DEPLOYMENTS_TABLE_HEADERS: &[&str] = &["Network", "Address"];
+static DEPLOYMENTS_TABLE_SEPARATOR: Lazy<String> =
+    Lazy::new(|| DEPLOYMENTS_TABLE_HEADERS.iter().map(|h| "-".repeat(h.len())).join("|"));
 
 /// The buffered writer.
 /// Writes various display items into the internal buffer.
@@ -152,8 +158,32 @@ impl BufWriter {
 
             let row = [
                 Markdown::Code(&param_name.unwrap_or_else(|| "<none>".to_owned())).as_doc()?,
-                Markdown::Code(&param.ty.as_string()).as_doc()?,
+                Markdown::Code(&param.ty.to_string()).as_doc()?,
                 comment.unwrap_or_default().replace('\n', " "),
+            ];
+            self.write_piped(&row.join("|"))?;
+        }
+
+        self.writeln()?;
+
+        Ok(())
+    }
+
+    /// Writes the deployment table to the buffer.
+    pub fn write_deployments_table(&mut self, deployments: Vec<Deployment>) -> fmt::Result {
+        self.write_bold("Deployments")?;
+        self.writeln()?;
+
+        self.write_piped(&DEPLOYMENTS_TABLE_HEADERS.join("|"))?;
+        self.write_piped(&DEPLOYMENTS_TABLE_SEPARATOR)?;
+
+        for deployment in deployments {
+            let mut network = deployment.network.ok_or(fmt::Error)?;
+            network[0..1].make_ascii_uppercase();
+
+            let row = [
+                Markdown::Bold(&network).as_doc()?,
+                Markdown::Code(&format!("0x{}", hex::encode(deployment.address))).as_doc()?,
             ];
             self.write_piped(&row.join("|"))?;
         }

@@ -41,6 +41,7 @@ pub struct EnvExternalities {
     pub verifier: String,
 }
 
+#[allow(dead_code)]
 impl EnvExternalities {
     pub fn address(&self) -> Option<Address> {
         let pk: LocalWallet = self.pk.parse().ok()?;

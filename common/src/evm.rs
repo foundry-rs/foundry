@@ -12,6 +12,10 @@ use foundry_config::{
     Chain, Config,
 };
 use serde::Serialize;
+use std::collections::HashMap;
+
+/// Map keyed by breakpoints char to their location (contract address, pc)
+pub type Breakpoints = HashMap<char, (Address, usize)>;
 
 /// `EvmArgs` and `EnvArgs` take the highest precedence in the Config/Figment hierarchy.
 /// All vars are opt-in, their default values are expected to be set by the
@@ -35,7 +39,7 @@ use serde::Serialize;
 /// # }
 /// ```
 #[derive(Debug, Clone, Default, Parser, Serialize)]
-#[clap(next_help_heading = "EVM options", about = None)] // override doc
+#[clap(next_help_heading = "EVM options", about = None, long_about = None)] // override doc
 pub struct EvmArgs {
     /// Fetch state over a remote endpoint instead of starting from an empty state.
     ///
@@ -80,7 +84,7 @@ pub struct EvmArgs {
     pub sender: Option<Address>,
 
     /// Enable the FFI cheatcode.
-    #[clap(help = "Enables the FFI cheatcode.", long)]
+    #[clap(long)]
     #[serde(skip)]
     pub ffi: bool,
 
@@ -97,17 +101,11 @@ pub struct EvmArgs {
     #[serde(skip)]
     pub verbosity: u8,
 
-    /// All ethereum environment related arguments
-    #[clap(flatten)]
-    #[serde(flatten)]
-    pub env: EnvArgs,
-
     /// Sets the number of assumed available compute units per second for this provider
     ///
     /// default value: 330
     ///
-    /// See --fork-url.
-    /// See also, https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups
+    /// See also --fork-url and https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups
     #[clap(
         long,
         requires = "fork_url",
@@ -119,20 +117,21 @@ pub struct EvmArgs {
 
     /// Disables rate limiting for this node's provider.
     ///
-    /// default value: false
-    ///
-    /// See --fork-url.
-    /// See also, https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups
+    /// See also --fork-url and https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups
     #[clap(
         long,
         requires = "fork_url",
         value_name = "NO_RATE_LIMITS",
-        help = "Disables rate limiting for this node provider.",
         help_heading = "Fork config",
         visible_alias = "no-rate-limit"
     )]
     #[serde(skip)]
     pub no_rpc_rate_limit: bool,
+
+    /// All ethereum environment related arguments
+    #[clap(flatten)]
+    #[serde(flatten)]
+    pub env: EnvArgs,
 }
 
 // Make this set of options a `figment::Provider` so that it can be merged into the `Config`

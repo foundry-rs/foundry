@@ -3,12 +3,14 @@ set -e
 
 echo Installing foundryup...
 
-FOUNDRY_DIR=${FOUNDRY_DIR-"$HOME/.foundry"}
+BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
+FOUNDRY_DIR=${FOUNDRY_DIR-"$BASE_DIR/.foundry"}
 FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
 FOUNDRY_MAN_DIR="$FOUNDRY_DIR/share/man/man1"
 
 BIN_URL="https://raw.githubusercontent.com/foundry-rs/foundry/master/foundryup/foundryup"
 BIN_PATH="$FOUNDRY_BIN_DIR/foundryup"
+
 
 # Create the .foundry bin directory and foundryup binary if it doesn't exist.
 mkdir -p $FOUNDRY_BIN_DIR
@@ -18,10 +20,10 @@ chmod +x $BIN_PATH
 # Create the man directory for future man files if it doesn't exist.
 mkdir -p $FOUNDRY_MAN_DIR
 
-# Store the correct profile file (i.e. .profile for bash or .zshrc for ZSH).
+# Store the correct profile file (i.e. .profile for bash or .zshenv for ZSH).
 case $SHELL in
 */zsh)
-    PROFILE=$HOME/.zshrc
+    PROFILE=${ZDOTDIR-"$HOME"}/.zshenv
     PREF_SHELL=zsh
     ;;
 */bash)
@@ -48,7 +50,7 @@ if [[ ":$PATH:" != *":${FOUNDRY_BIN_DIR}:"* ]]; then
 fi
 
 # Warn MacOS users that they may need to manually install libusb via Homebrew:
-if [[ "$OSTYPE" =~ ^darwin && ! -f /usr/local/opt/libusb/lib/libusb-1.0.0.dylib ]]; then
+if [[ "$OSTYPE" =~ ^darwin ]] && [[ ! -f /usr/local/opt/libusb/lib/libusb-1.0.0.dylib && ! -f /opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib ]]; then
     echo && echo "warning: libusb not found. You may need to install it manually on MacOS via Homebrew (brew install libusb)."
 fi
 

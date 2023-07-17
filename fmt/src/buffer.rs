@@ -40,7 +40,7 @@ impl Default for WriteState {
 /// as information about the last `write_str` command if available. The formatter may also be
 /// restricted to a single line, in which case it will throw an error on a newline
 #[derive(Clone, Debug)]
-pub struct FormatBuffer<W: Sized> {
+pub struct FormatBuffer<W> {
     pub w: W,
     indents: Vec<IndentGroup>,
     base_indent_len: usize,
@@ -51,7 +51,7 @@ pub struct FormatBuffer<W: Sized> {
     state: WriteState,
 }
 
-impl<W: Sized> FormatBuffer<W> {
+impl<W> FormatBuffer<W> {
     pub fn new(w: W, tab_width: usize) -> Self {
         Self {
             w,
@@ -413,7 +413,7 @@ mod tests {
 
     #[test]
     fn test_preserves_original_content_with_default_settings() -> std::fmt::Result {
-        let contents = vec![
+        let contents = [
             "simple line",
             r#"
             some 

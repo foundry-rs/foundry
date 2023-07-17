@@ -8,12 +8,11 @@ use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
-use tracing::{trace, warn};
 
 pub type SingleSignaturesIdentifier = Arc<RwLock<SignaturesIdentifier>>;
 
 /// An identifier that tries to identify functions and events using signatures found at
-/// `sig.eth.samczsun.com`.
+/// `https://openchain.xyz`.
 #[derive(Debug)]
 pub struct SignaturesIdentifier {
     /// Cached selectors for functions and events
@@ -29,7 +28,7 @@ pub struct SignaturesIdentifier {
 }
 
 impl SignaturesIdentifier {
-    #[tracing::instrument(target = "forge::signatures")]
+    #[instrument(target = "forge::signatures")]
     pub fn new(
         cache_path: Option<PathBuf>,
         offline: bool,
@@ -69,7 +68,7 @@ impl SignaturesIdentifier {
         Ok(Arc::new(RwLock::new(identifier)))
     }
 
-    #[tracing::instrument(target = "forge::signatures", skip(self))]
+    #[instrument(target = "forge::signatures", skip(self))]
     pub fn save(&self) {
         if let Some(cached_path) = &self.cached_path {
             if let Some(parent) = cached_path.parent() {
@@ -133,13 +132,13 @@ impl SignaturesIdentifier {
         }
     }
 
-    /// Identifies `Function` from its cache or `sig.eth.samczsun.com`
+    /// Identifies `Function` from its cache or `https://api.openchain.xyz`
     pub async fn identify_function(&mut self, identifier: &[u8]) -> Option<Function> {
         self.ensure_not_offline()?;
         self.identify(SelectorType::Function, identifier, get_func).await
     }
 
-    /// Identifies `Event` from its cache or `sig.eth.samczsun.com`
+    /// Identifies `Event` from its cache or `https://api.openchain.xyz`
     pub async fn identify_event(&mut self, identifier: &[u8]) -> Option<Event> {
         self.ensure_not_offline()?;
         self.identify(SelectorType::Event, identifier, get_event).await
@@ -162,7 +161,7 @@ pub struct CachedSignatures {
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn can_query_signatures() {
         let tmp = tempfile::tempdir().unwrap();
         {

@@ -1,8 +1,7 @@
-use cast::{Cast, SimpleCast, TxBuilder};
+use cast::{Cast, SimpleCast};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use ethers::{
-    abi::HumanReadableParser,
     core::types::{BlockId, BlockNumber::Latest, H256},
     providers::Middleware,
     types::Address,
@@ -24,6 +23,7 @@ use foundry_common::{
 };
 use foundry_config::Config;
 use rustc_hex::ToHex;
+use std::time::Instant;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -157,6 +157,10 @@ async fn main() -> eyre::Result<()> {
             let value = stdin::unwrap_line(bytes)?;
             println!("{}", SimpleCast::parse_bytes32_string(&value)?);
         }
+        Subcommands::ParseBytes32Address { bytes } => {
+            let value = stdin::unwrap_line(bytes)?;
+            println!("{}", SimpleCast::parse_bytes32_address(&value)?);
+        }
 
         // ABI encoding & decoding
         Subcommands::AbiDecode { sig, calldata, input } => {
@@ -168,7 +172,7 @@ async fn main() -> eyre::Result<()> {
             println!("{}", SimpleCast::abi_encode(&sig, &args)?);
         }
         Subcommands::CalldataDecode { sig, calldata } => {
-            let tokens = SimpleCast::abi_decode(&sig, &calldata, true)?;
+            let tokens = SimpleCast::calldata_decode(&sig, &calldata, true)?;
             let tokens = format_tokens(&tokens);
             tokens.for_each(|t| println!("{t}"));
         }
@@ -181,25 +185,23 @@ async fn main() -> eyre::Result<()> {
             let calldata = stdin::unwrap_line(calldata)?;
             println!("{}", pretty_calldata(&calldata, offline).await?);
         }
-        Subcommands::Sig { sig } => {
+        Subcommands::Sig { sig, optimize } => {
             let sig = stdin::unwrap_line(sig)?;
-            let selector = HumanReadableParser::parse_function(&sig)?.short_signature();
-            println!("0x{}", hex::encode(selector));
+            if optimize.is_none() {
+                println!("{}", SimpleCast::get_selector(&sig, None)?.0);
+            } else {
+                println!("Starting to optimize signature...");
+                let start_time = Instant::now();
+                let (selector, signature) = SimpleCast::get_selector(&sig, optimize)?;
+                let elapsed_time = start_time.elapsed();
+                println!("Successfully generated in {} seconds", elapsed_time.as_secs());
+                println!("Selector: {}", selector);
+                println!("Optimized signature: {}", signature);
+            }
         }
 
         // Blockchain & RPC queries
-        Subcommands::AccessList { address, sig, args, block, to_json, rpc } => {
-            let config = Config::from(&rpc);
-            let provider = utils::get_provider(&config)?;
-            let chain = utils::get_chain(config.chain_id, &provider).await?;
-
-            let mut builder =
-                TxBuilder::new(&provider, config.sender, Some(address), chain, false).await?;
-            builder.set_args(&sig, args).await?;
-            let builder_output = builder.peek();
-
-            println!("{}", Cast::new(&provider).access_list(builder_output, block, to_json).await?);
-        }
+        Subcommands::AccessList(cmd) => cmd.run().await?,
         Subcommands::Age { block, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
@@ -208,11 +210,11 @@ async fn main() -> eyre::Result<()> {
                 Cast::new(provider).age(block.unwrap_or(BlockId::Number(Latest))).await?
             );
         }
-        Subcommands::Balance { block, who, to_ether, rpc } => {
+        Subcommands::Balance { block, who, ether, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let value = Cast::new(provider).balance(who, block).await?;
-            if to_ether {
+            if ether {
                 println!("{}", SimpleCast::from_wei(&value.to_string(), "eth")?);
             } else {
                 println!("{value}");
@@ -226,13 +228,13 @@ async fn main() -> eyre::Result<()> {
                 Cast::new(provider).base_fee(block.unwrap_or(BlockId::Number(Latest))).await?
             );
         }
-        Subcommands::Block { block, full, field, to_json, rpc } => {
+        Subcommands::Block { block, full, field, json, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             println!(
                 "{}",
                 Cast::new(provider)
-                    .block(block.unwrap_or(BlockId::Number(Latest)), full, field, to_json)
+                    .block(block.unwrap_or(BlockId::Number(Latest)), full, field, json)
                     .await?
             );
         }
@@ -260,6 +262,11 @@ async fn main() -> eyre::Result<()> {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             println!("{}", Cast::new(provider).code(who, block, disassemble).await?);
+        }
+        Subcommands::Codesize { block, who, rpc } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
+            println!("{}", Cast::new(provider).codesize(who, block).await?);
         }
         Subcommands::ComputeAddress { address, nonce, rpc } => {
             let config = Config::from(&rpc);
@@ -323,22 +330,26 @@ async fn main() -> eyre::Result<()> {
                 println!("{}", serde_json::json!(receipt));
             }
         }
-        Subcommands::Receipt { tx_hash, field, to_json, cast_async, confirmations, rpc } => {
+        Subcommands::Receipt { tx_hash, field, json, cast_async, confirmations, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             println!(
                 "{}",
                 Cast::new(provider)
-                    .receipt(tx_hash, field, confirmations, cast_async, to_json)
+                    .receipt(tx_hash, field, confirmations, cast_async, json)
                     .await?
             );
         }
         Subcommands::Run(cmd) => cmd.run().await?,
         Subcommands::SendTx(cmd) => cmd.run().await?,
-        Subcommands::Tx { tx_hash, field, to_json, rpc } => {
+        Subcommands::Tx { tx_hash, field, raw, json, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(&provider).transaction(tx_hash, field, to_json).await?)
+
+            // Can use either --raw or specify raw as a field
+            let raw = raw || field.as_ref().is_some_and(|f| f == "raw");
+
+            println!("{}", Cast::new(&provider).transaction(tx_hash, field, raw, json).await?)
         }
 
         // 4Byte
@@ -366,7 +377,7 @@ async fn main() -> eyre::Result<()> {
                 }
             };
 
-            let tokens = SimpleCast::abi_decode(sig, &calldata, true)?;
+            let tokens = SimpleCast::calldata_decode(sig, &calldata, true)?;
             for token in format_tokens(&tokens) {
                 println!("{token}");
             }
@@ -485,6 +496,7 @@ async fn main() -> eyre::Result<()> {
             "cast",
             &mut std::io::stdout(),
         ),
+        Subcommands::Logs(cmd) => cmd.run().await?,
     };
     Ok(())
 }

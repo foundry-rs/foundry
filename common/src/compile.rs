@@ -1,5 +1,5 @@
 //! Support for compiling [ethers::solc::Project]
-use crate::{term, TestFunctionExt};
+use crate::{glob::GlobMatcher, term, TestFunctionExt};
 use comfy_table::{presets::ASCII_MARKDOWN, *};
 use ethers_etherscan::contract::Metadata;
 use ethers_solc::{
@@ -444,6 +444,7 @@ pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> 
     // add missing remappings
     if !settings.remappings.iter().any(|remapping| remapping.name.starts_with("@openzeppelin/")) {
         let oz = Remapping {
+            context: None,
             name: "@openzeppelin/".into(),
             path: sources_path.join("@openzeppelin").display().to_string(),
         };
@@ -464,6 +465,7 @@ pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> 
 
     Ok(Project::builder()
         .solc_config(SolcConfig::builder().settings(settings).build())
+        .no_auto_detect()
         .paths(paths)
         .solc(solc)
         .ephemeral()
@@ -525,11 +527,12 @@ impl FromStr for SkipBuildFilter {
 impl FileFilter for SkipBuildFilter {
     /// Matches file only if the filter does not apply
     ///
-    /// This is returns the inverse of `file.name.contains(pattern)`
+    /// This is returns the inverse of `file.name.contains(pattern) || matcher.is_match(file)`
     fn is_match(&self, file: &Path) -> bool {
         fn exclude(file: &Path, pattern: &str) -> Option<bool> {
+            let matcher: GlobMatcher = pattern.parse().unwrap();
             let file_name = file.file_name()?.to_str()?;
-            Some(file_name.contains(pattern))
+            Some(file_name.contains(pattern) || matcher.is_match(file.as_os_str().to_str()?))
         }
 
         !exclude(file, self.file_pattern()).unwrap_or_default()
@@ -551,5 +554,10 @@ mod tests {
         assert!(SkipBuildFilter::Tests.is_match(file));
         assert!(!SkipBuildFilter::Scripts.is_match(file));
         assert!(!SkipBuildFilter::Custom("A.s".to_string()).is_match(file));
+
+        let file = Path::new("/home/test/Foo.sol");
+        assert!(!SkipBuildFilter::Custom("*/test/**".to_string()).is_match(file));
+        let file = Path::new("/home/script/Contract.sol");
+        assert!(!SkipBuildFilter::Custom("*/script/**".to_string()).is_match(file));
     }
 }
